@@ -17,16 +17,33 @@ pub struct TokenVault {
     reverse: HashMap<String, String>,  // token → value
 }
 
-/// Zero out the secret key when the vault is dropped.
+/// Zero out secret key and sensitive values when the vault is dropped.
 impl Drop for TokenVault {
     fn drop(&mut self) {
-        // Overwrite secret bytes with zeros before deallocation
+        // Overwrite secret key bytes with zeros
         for byte in &mut self.secret {
-            // Use volatile write to prevent compiler from optimizing away
             unsafe { std::ptr::write_volatile(byte, 0) };
         }
         self.secret.clear();
-        // Clear sensitive values from maps
+
+        // Overwrite sensitive plaintext values in the maps before clearing
+        for (_, value) in self.forward.iter_mut() {
+            // SAFETY: overwrite string bytes in-place before deallocation
+            unsafe {
+                let bytes = value.as_bytes_mut();
+                for byte in bytes.iter_mut() {
+                    std::ptr::write_volatile(byte, 0);
+                }
+            }
+        }
+        for (_, value) in self.reverse.iter_mut() {
+            unsafe {
+                let bytes = value.as_bytes_mut();
+                for byte in bytes.iter_mut() {
+                    std::ptr::write_volatile(byte, 0);
+                }
+            }
+        }
         self.forward.clear();
         self.reverse.clear();
     }

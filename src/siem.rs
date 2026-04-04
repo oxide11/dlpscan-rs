@@ -302,6 +302,12 @@ impl SIEMAdapter for DatadogAdapter {
             "service": self.service,
         }]);
         let body = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
+        // Validate site value to prevent URL injection
+        if self.site.contains('/') || self.site.contains('?') || self.site.contains('#')
+            || self.site.contains('@') || self.site.contains(':') || self.site.is_empty()
+        {
+            return Err(format!("Invalid Datadog site value: {}", self.site));
+        }
         let url = format!(
             "https://http-intake.logs.{}/api/v2/logs",
             self.site
@@ -525,11 +531,41 @@ fn http_post_sync(
     }
 
     let addr = format!("{host}:{port}");
-    let mut stream = std::net::TcpStream::connect_timeout(
-        &addr.parse().map_err(|e: std::net::AddrParseError| e.to_string())?,
-        std::time::Duration::from_secs(30),
-    )
-    .map_err(|e| e.to_string())?;
+    let timeout = std::time::Duration::from_secs(30);
+
+    // DNS rebinding protection: resolve hostname and validate IP before connecting
+    let socket_addr: std::net::SocketAddr = {
+        use std::net::ToSocketAddrs;
+        let resolved = addr
+            .to_socket_addrs()
+            .map_err(|e| format!("DNS resolution failed for SIEM endpoint: {e}"))?
+            .next()
+            .ok_or("DNS resolution returned no addresses for SIEM endpoint")?;
+
+        match resolved.ip() {
+            std::net::IpAddr::V4(ip) => {
+                let o = ip.octets();
+                if ip.is_loopback() || ip.is_unspecified()
+                    || o[0] == 10
+                    || (o[0] == 172 && (16..=31).contains(&o[1]))
+                    || (o[0] == 192 && o[1] == 168)
+                    || (o[0] == 169 && o[1] == 254)
+                    || (o[0] == 100 && (64..=127).contains(&o[1]))
+                {
+                    return Err(format!("SIEM endpoint resolved to private IP: {ip}"));
+                }
+            }
+            std::net::IpAddr::V6(ip) => {
+                if ip.is_loopback() || ip.is_unspecified() {
+                    return Err(format!("SIEM endpoint resolved to loopback IPv6: {ip}"));
+                }
+            }
+        }
+        resolved
+    };
+
+    let mut stream = std::net::TcpStream::connect_timeout(&socket_addr, timeout)
+        .map_err(|e| e.to_string())?;
 
     stream
         .set_read_timeout(Some(std::time::Duration::from_secs(30)))
@@ -537,7 +573,10 @@ fn http_post_sync(
 
     let mut req = format!("POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Length: {}\r\n", body.len());
     for (k, v) in headers {
-        req.push_str(&format!("{k}: {v}\r\n"));
+        // Sanitize header values to prevent CRLF injection
+        let safe_k = k.replace(['\r', '\n'], "");
+        let safe_v = v.replace(['\r', '\n'], "");
+        req.push_str(&format!("{safe_k}: {safe_v}\r\n"));
     }
     req.push_str("Connection: close\r\n\r\n");
 

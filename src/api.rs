@@ -147,6 +147,9 @@ pub struct AppState {
     pub custom_patterns: RwLock<Vec<PatternResponse>>,
     pub start_time: Instant,
     pub is_shutting_down: std::sync::atomic::AtomicBool,
+    /// Server-side API key to role mapping. If populated, roles are derived from
+    /// the authenticated key, not the client-supplied X-Role header.
+    pub api_key_roles: HashMap<String, crate::rbac::Role>,
 }
 
 pub struct VaultEntry {
@@ -338,6 +341,10 @@ pub fn handle_tokenize(
 
     let token_count = vault.size();
     if let Ok(mut vaults) = vaults.write() {
+        // Enforce vault count limit
+        if vaults.len() >= MAX_VAULTS {
+            return Err(format!("Maximum vault count ({}) reached", MAX_VAULTS));
+        }
         vaults.insert(
             vault_id.clone(),
             VaultEntry {
@@ -476,6 +483,24 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
     let proto = if cfg!(feature = "tls") { "https" } else { "http" };
     tracing::info!("dlpscan API server listening on {}://{}", proto, addr);
 
+    // Load API key-to-role mapping from env: DLPSCAN_API_KEY_ROLES="key1:admin,key2:analyst"
+    let api_key_roles: HashMap<String, crate::rbac::Role> = std::env::var("DLPSCAN_API_KEY_ROLES")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|pair| {
+            let mut parts = pair.splitn(2, ':');
+            let key = parts.next()?.trim().to_string();
+            let role_str = parts.next()?.trim().to_lowercase();
+            let role = match role_str.as_str() {
+                "admin" => crate::rbac::Role::Admin,
+                "analyst" => crate::rbac::Role::Analyst,
+                "operator" => crate::rbac::Role::Operator,
+                _ => crate::rbac::Role::Viewer,
+            };
+            if key.is_empty() { None } else { Some((key, role)) }
+        })
+        .collect();
+
     let state = Arc::new(AppState {
         api_key: config.api_key,
         rate_limiter: RwLock::new(RateLimiter::new(config.rate_limit, 60)),
@@ -483,6 +508,7 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
         custom_patterns: RwLock::new(Vec::new()),
         start_time: Instant::now(),
         is_shutting_down: std::sync::atomic::AtomicBool::new(false),
+        api_key_roles,
     });
 
     let active_connections = Arc::new(AtomicUsize::new(0));
@@ -581,7 +607,7 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
                         }
                     }
 
-                    let (status, body) = route_request(&request, &state);
+                    let (status, body) = route_request(&request, &state, &peer);
 
                     let duration_ms = request_start.elapsed().as_secs_f64() * 1000.0;
                     tracing::info!(
@@ -627,7 +653,7 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[cfg(feature = "async-support")]
-fn route_request(raw: &str, state: &AppState) -> (String, String) {
+fn route_request(raw: &str, state: &AppState, client_ip: &str) -> (String, String) {
     let first_line = raw.lines().next().unwrap_or("");
     let parts: Vec<&str> = first_line.split_whitespace().collect();
     let method = parts.first().copied().unwrap_or("");
@@ -658,8 +684,20 @@ fn route_request(raw: &str, state: &AppState) -> (String, String) {
         }
     }
 
-    // RBAC enforcement
-    let role = crate::rbac::extract_role(raw);
+    // RBAC enforcement — derive role from authenticated key, not client header
+    let authenticated_key = if state.api_key.is_some() {
+        raw.lines()
+            .find(|l| l.to_lowercase().starts_with("x-api-key:"))
+            .and_then(|l| l.splitn(2, ':').nth(1))
+            .map(|v| v.trim().to_string())
+    } else {
+        None
+    };
+    let role = crate::rbac::resolve_role(
+        raw,
+        authenticated_key.as_deref(),
+        &state.api_key_roles,
+    );
     let required_perm = match (method, path) {
         ("POST", "/v1/scan") => Some(crate::rbac::Permission::Scan),
         ("POST", "/v1/batch/scan") => Some(crate::rbac::Permission::BatchScan),
@@ -682,7 +720,7 @@ fn route_request(raw: &str, state: &AppState) -> (String, String) {
     if path != "/health" && path != "/health/live" && path != "/health/ready" && path != "/metrics"
     {
         if let Ok(mut rl) = state.rate_limiter.write() {
-            if !rl.check() {
+            if !rl.check_client(client_ip) {
                 return (
                     "429 Too Many Requests".to_string(),
                     r#"{"detail":"Rate limit exceeded"}"#.to_string(),
