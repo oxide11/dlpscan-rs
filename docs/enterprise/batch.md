@@ -1,70 +1,74 @@
 # Batch Scanning
 
-Scan CSV, JSON, databases, and DataFrames at scale with parallel processing.
+Scan CSV, JSON, and JSONL files at scale.
 
 ## Basic Usage
 
-```python
-from dlpscan.batch import BatchScanner
+```rust
+use dlpscan::batch::BatchScanner;
+use dlpscan::InputGuard;
 
-scanner = BatchScanner(max_workers=4)
+let guard = InputGuard::new();
+let scanner = BatchScanner::new(guard);
 
-# Scan multiple texts
-results = scanner.scan_texts([
-    "Card: 4111111111111111",
-    "SSN: 123-45-6789",
-    "Clean text here",
-])
+// Scan multiple texts — each item is a (source_id, text) pair
+let results = scanner.scan_texts(&[
+    ("item-1", "Card: 4111111111111111"),
+    ("item-2", "SSN: 123-45-6789"),
+    ("item-3", "Clean text here"),
+]);
 
-report = BatchScanner.summarize(results)
-print(f"Found {report.total_findings} findings in {report.items_with_findings} items")
+let duration_seconds = 0.5;
+let report = BatchScanner::summarize(&results, duration_seconds);
+println!(
+    "Found {} findings in {} items",
+    report.total_findings, report.items_with_findings
+);
 ```
 
 ## CSV Scanning
 
-```python
-results = scanner.scan_csv("customers.csv", columns=["name", "email", "notes"])
+```rust
+let results = scanner.scan_csv(
+    "customers.csv",
+    &["name", "email", "notes"],  // columns to scan
+    Some(','),                     // delimiter (None for default comma)
+);
 ```
 
-## JSON / JSONL Scanning
+## JSON Scanning
 
-```python
-results = scanner.scan_json("events.jsonl", fields=["message", "user_input"])
+```rust
+let results = scanner.scan_json(
+    "events.json",
+    &["message", "user_input"],  // fields to extract and scan
+);
 ```
 
-## Database Scanning
+## JSONL Scanning
 
-```python
-# SQLite (stdlib)
-results = scanner.scan_database(
-    "sqlite:///app.db",
-    "SELECT name, email, notes FROM customers",
-    columns=["name", "email", "notes"],
-)
+```rust
+let results = scanner.scan_jsonl(
+    "events.jsonl",
+    &["message", "user_input"],  // fields to extract and scan
+);
 ```
 
-## DataFrame Scanning
+## Summary Report
 
-```python
-import pandas as pd
-df = pd.read_csv("data.csv")
-results = scanner.scan_dataframe(df, columns=["email", "phone"])
-```
+The `summarize` function takes the results and the elapsed duration in
+seconds:
 
-## Progress Tracking
+```rust
+use std::time::Instant;
 
-```python
-scanner = BatchScanner(
-    max_workers=4,
-    on_progress=lambda done, total: print(f"{done}/{total}"),
-    on_result=lambda r: print(f"{r.source_id}: {r.scan_result.finding_count} findings"),
-)
-```
+let start = Instant::now();
+let results = scanner.scan_texts(&items);
+let elapsed = start.elapsed().as_secs_f64();
 
-## Chunked Processing
-
-Large datasets are processed in chunks (default 1000) to limit memory:
-
-```python
-scanner = BatchScanner(chunk_size=500)
+let report = BatchScanner::summarize(&results, elapsed);
+println!("Total items:    {}", report.total_items);
+println!("With findings:  {}", report.items_with_findings);
+println!("Total findings: {}", report.total_findings);
+println!("Duration:       {:.2}s", report.duration_seconds);
 ```

@@ -9,32 +9,81 @@ Ship scan events to security information and event management platforms.
 | `SplunkHECAdapter` | Splunk HTTP Event Collector |
 | `ElasticsearchAdapter` | Elasticsearch / OpenSearch |
 | `SyslogAdapter` | Syslog (RFC 5424) |
-| `WebhookAdapter` | Generic webhook (POST JSON) |
+| `WebhookSIEMAdapter` | Generic webhook (POST JSON) |
 | `DatadogAdapter` | Datadog Logs API |
 
 ## Usage
 
-```python
-from dlpscan.siem import SplunkHECAdapter
+```rust
+use dlpscan::siem::SplunkHECAdapter;
 
-adapter = SplunkHECAdapter(
-    url="https://splunk.example.com:8088",
-    token="my-hec-token",
-)
-adapter.send({"action": "redact", "categories": ["Credit Card Numbers"]})
+let adapter = SplunkHECAdapter::new(
+    "https://splunk.example.com:8088",
+    "my-hec-token",
+);
+adapter.send(&serde_json::json!({
+    "action": "redact",
+    "categories": ["Credit Card Numbers"],
+}));
 ```
 
-## From Environment Variables
+## Environment Variables
+
+All adapters can be configured via environment variables. Set
+`DLPSCAN_SIEM_TYPE` to select the adapter, then set the corresponding
+variables.
+
+### Splunk
 
 ```bash
 export DLPSCAN_SIEM_TYPE=splunk
 export DLPSCAN_SIEM_URL=https://splunk:8088
-export DLPSCAN_SIEM_TOKEN=my-token
+export DLPSCAN_SIEM_TOKEN=my-hec-token
+export DLPSCAN_SIEM_SOURCE=dlpscan       # optional
 ```
 
-```python
-from dlpscan.siem import create_siem_from_env
-adapter = create_siem_from_env()
+### Elasticsearch
+
+```bash
+export DLPSCAN_SIEM_TYPE=elasticsearch
+export DLPSCAN_SIEM_URL=https://es:9200
+export DLPSCAN_SIEM_INDEX=dlpscan-events
+export DLPSCAN_SIEM_API_KEY=my-api-key
 ```
 
-## All adapters are thread-safe and enrich events with timestamp, host, and source.
+### Syslog
+
+```bash
+export DLPSCAN_SIEM_TYPE=syslog
+export DLPSCAN_SIEM_HOST=syslog.example.com
+export DLPSCAN_SIEM_PORT=514
+export DLPSCAN_SIEM_FACILITY=local0    # optional
+export DLPSCAN_SIEM_PROTOCOL=udp       # udp or tcp
+```
+
+### Datadog
+
+```bash
+export DLPSCAN_SIEM_TYPE=datadog
+export DLPSCAN_SIEM_API_KEY=dd-api-key
+export DLPSCAN_SIEM_SITE=datadoghq.com  # optional
+```
+
+### Webhook
+
+```bash
+export DLPSCAN_SIEM_TYPE=webhook
+export DLPSCAN_SIEM_URL=https://hooks.example.com/dlp
+```
+
+## Creating an Adapter from Environment
+
+```rust
+use dlpscan::siem::create_siem_from_env;
+
+let adapter = create_siem_from_env()
+    .expect("DLPSCAN_SIEM_TYPE must be set");
+adapter.send(&event);
+```
+
+All adapters are thread-safe and enrich events with timestamp, host, and source.

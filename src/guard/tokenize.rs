@@ -3,6 +3,7 @@
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::collections::HashMap;
+use zeroize::Zeroize;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -17,18 +18,27 @@ pub struct TokenVault {
     reverse: HashMap<String, String>,  // token → value
 }
 
-/// Zero out the secret key when the vault is dropped.
+/// Zeroize all sensitive data when the vault is dropped.
 impl Drop for TokenVault {
     fn drop(&mut self) {
-        // Overwrite secret bytes with zeros before deallocation
-        for byte in &mut self.secret {
-            // Use volatile write to prevent compiler from optimizing away
-            unsafe { std::ptr::write_volatile(byte, 0) };
+        // Zeroize secret key using the zeroize crate (compiler-barrier guaranteed)
+        self.secret.zeroize();
+
+        // Zeroize both keys AND values in the forward map
+        // (forward keys contain the sensitive plaintext values)
+        let forward = std::mem::take(&mut self.forward);
+        for (mut key, mut value) in forward {
+            key.zeroize();
+            value.zeroize();
         }
-        self.secret.clear();
-        // Clear sensitive values from maps
-        self.forward.clear();
-        self.reverse.clear();
+
+        // Zeroize both keys AND values in the reverse map
+        // (reverse values contain the sensitive plaintext values)
+        let reverse = std::mem::take(&mut self.reverse);
+        for (mut key, mut value) in reverse {
+            key.zeroize();
+            value.zeroize();
+        }
     }
 }
 

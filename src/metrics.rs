@@ -137,9 +137,63 @@ pub mod prom {
         HTTP_REQUEST_DURATION.observe(duration_secs);
     }
 
+    /// Total scans completed.
+    pub static SCANS_TOTAL: Lazy<prometheus::Counter> = Lazy::new(|| {
+        prometheus::register_counter!(
+            "dlpscan_scans_total",
+            "Total scan operations completed"
+        )
+        .expect("failed to register dlpscan_scans_total")
+    });
+
+    /// Total scan errors.
+    pub static SCAN_ERRORS_TOTAL: Lazy<prometheus::Counter> = Lazy::new(|| {
+        prometheus::register_counter!(
+            "dlpscan_scan_errors_total",
+            "Total scan errors"
+        )
+        .expect("failed to register dlpscan_scan_errors_total")
+    });
+
+    /// Scan duration in seconds (separate from HTTP request duration).
+    pub static SCAN_DURATION: Lazy<Histogram> = Lazy::new(|| {
+        register_histogram!(
+            "dlpscan_scan_duration_seconds",
+            "Scan operation duration in seconds",
+            vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0]
+        )
+        .expect("failed to register dlpscan_scan_duration_seconds")
+    });
+
+    /// Rate limit rejections.
+    pub static RATE_LIMIT_REJECTIONS: Lazy<prometheus::Counter> = Lazy::new(|| {
+        prometheus::register_counter!(
+            "dlpscan_rate_limit_rejections_total",
+            "Total rate limit rejections"
+        )
+        .expect("failed to register dlpscan_rate_limit_rejections_total")
+    });
+
     /// Record scan match count.
     pub fn record_matches(count: usize) {
         SCAN_MATCHES_TOTAL.inc_by(count as f64);
+    }
+
+    /// Record a completed scan.
+    pub fn record_scan(duration_secs: f64, match_count: usize) {
+        SCANS_TOTAL.inc();
+        SCAN_DURATION.observe(duration_secs);
+        SCAN_MATCHES_TOTAL.inc_by(match_count as f64);
+    }
+
+    /// Record a scan error.
+    pub fn record_scan_error() {
+        SCAN_ERRORS_TOTAL.inc();
+    }
+
+    /// Record a rate limit rejection.
+    pub fn record_rate_limit_rejection() {
+        RATE_LIMIT_REJECTIONS.inc();
     }
 }
 

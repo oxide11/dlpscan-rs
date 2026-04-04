@@ -16,7 +16,7 @@ use crate::guard::{Action, InputGuard, Preset, ScanResult, TokenVault};
 // Request / Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ScanRequest {
     pub text: String,
     #[serde(default)]
@@ -147,6 +147,9 @@ pub struct AppState {
     pub custom_patterns: RwLock<Vec<PatternResponse>>,
     pub start_time: Instant,
     pub is_shutting_down: std::sync::atomic::AtomicBool,
+    /// Server-side API key to role mapping. If populated, roles are derived from
+    /// the authenticated key, not the client-supplied X-Role header.
+    pub api_key_roles: HashMap<String, crate::rbac::Role>,
 }
 
 pub struct VaultEntry {
@@ -299,6 +302,89 @@ pub fn handle_batch_scan(req: &BatchScanRequest) -> Result<BatchScanResponse, St
     Ok(BatchScanResponse { results: responses })
 }
 
+/// Process a tokenize request.
+pub fn handle_tokenize(
+    req: &TokenizeRequest,
+    vaults: &RwLock<HashMap<String, VaultEntry>>,
+) -> Result<TokenizeResponse, String> {
+    // Build a scan config from request
+    let scan_req = ScanRequest {
+        text: req.text.clone(),
+        presets: req.presets.clone(),
+        categories: req.categories.clone(),
+        action: "tokenize".to_string(),
+        min_confidence: req.min_confidence,
+        require_context: false,
+    };
+    let guard = build_guard(&scan_req)?;
+    let result = guard.scan(&req.text).map_err(|e| format!("{e}"))?;
+
+    // Create a vault and tokenize all findings
+    let vault_id = generate_id();
+    let mut vault = TokenVault::new("TOK", None);
+    let mut tokenized = req.text.clone();
+
+    // Sort findings by position descending to replace from end to start
+    let mut findings: Vec<_> = result.findings.iter().collect();
+    findings.sort_by(|a, b| b.span.0.cmp(&a.span.0));
+
+    for finding in &findings {
+        let token = vault.tokenize(&finding.text, &finding.category);
+        let (start, end) = finding.span;
+        if start <= end && end <= tokenized.len()
+            && tokenized.is_char_boundary(start)
+            && tokenized.is_char_boundary(end)
+        {
+            tokenized.replace_range(start..end, &token);
+        }
+    }
+
+    let token_count = vault.size();
+    if let Ok(mut vaults) = vaults.write() {
+        // Enforce vault count limit
+        if vaults.len() >= MAX_VAULTS {
+            return Err(format!("Maximum vault count ({}) reached", MAX_VAULTS));
+        }
+        vaults.insert(
+            vault_id.clone(),
+            VaultEntry {
+                vault,
+                created_at: Instant::now(),
+            },
+        );
+    }
+
+    Ok(TokenizeResponse {
+        tokenized_text: tokenized,
+        token_count,
+        vault_id,
+    })
+}
+
+/// Process a detokenize request.
+pub fn handle_detokenize(
+    req: &DetokenizeRequest,
+    vaults: &RwLock<HashMap<String, VaultEntry>>,
+) -> Result<DetokenizeResponse, String> {
+    let vaults = vaults.read().map_err(|e| format!("{e}"))?;
+    let entry = vaults
+        .get(&req.vault_id)
+        .ok_or_else(|| format!("Vault '{}' not found", req.vault_id))?;
+    let original = entry.vault.detokenize_text(&req.text);
+    Ok(DetokenizeResponse {
+        original_text: original,
+    })
+}
+
+/// Process an obfuscate request.
+pub fn handle_obfuscate(req: &ScanRequest) -> Result<ScanResponse, String> {
+    let mut obf_req = req.clone();
+    obf_req.action = "obfuscate".to_string();
+    let guard = build_guard(&obf_req)?;
+    let result = guard.scan(&obf_req.text).map_err(|e| format!("{e}"))?;
+    Ok(scan_result_to_response(&result))
+}
+
 /// Basic health check (used by tests and non-server contexts).
 pub fn handle_health() -> HealthResponse {
     HealthResponse {
@@ -322,6 +408,37 @@ fn handle_health_full(state: &AppState, active: usize) -> HealthResponse {
         active_connections: Some(active),
         is_ready: Some(!shutting_down),
     }
+}
+
+/// Security response headers applied to every HTTP response.
+const SECURITY_HEADERS: &str = "\
+X-Content-Type-Options: nosniff\r\n\
+X-Frame-Options: DENY\r\n\
+Content-Security-Policy: default-src 'none'\r\n\
+Cache-Control: no-store\r\n\
+X-XSS-Protection: 0\r\n";
+
+/// Format an HTTP response with security headers.
+#[cfg(feature = "async-support")]
+fn format_response(status: &str, body: &str, request_id: &str) -> String {
+    format!(
+        "HTTP/1.1 {status}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {}\r\n\
+         X-Request-ID: {request_id}\r\n\
+         {SECURITY_HEADERS}\
+         \r\n\
+         {body}",
+        body.len(),
+    )
+}
+
+/// Generate a simple random ID (hex string).
+fn generate_id() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Verify API key (constant-time comparison via SHA-256 hashing).
@@ -389,6 +506,24 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
     let proto = if cfg!(feature = "tls") { "https" } else { "http" };
     tracing::info!("dlpscan API server listening on {}://{}", proto, addr);
 
+    // Load API key-to-role mapping from env: DLPSCAN_API_KEY_ROLES="key1:admin,key2:analyst"
+    let api_key_roles: HashMap<String, crate::rbac::Role> = std::env::var("DLPSCAN_API_KEY_ROLES")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|pair| {
+            let mut parts = pair.splitn(2, ':');
+            let key = parts.next()?.trim().to_string();
+            let role_str = parts.next()?.trim().to_lowercase();
+            let role = match role_str.as_str() {
+                "admin" => crate::rbac::Role::Admin,
+                "analyst" => crate::rbac::Role::Analyst,
+                "operator" => crate::rbac::Role::Operator,
+                _ => crate::rbac::Role::Viewer,
+            };
+            if key.is_empty() { None } else { Some((key, role)) }
+        })
+        .collect();
+
     let state = Arc::new(AppState {
         api_key: config.api_key,
         rate_limiter: RwLock::new(RateLimiter::new(config.rate_limit, 60)),
@@ -396,6 +531,7 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
         custom_patterns: RwLock::new(Vec::new()),
         start_time: Instant::now(),
         is_shutting_down: std::sync::atomic::AtomicBool::new(false),
+        api_key_roles,
     });
 
     let active_connections = Arc::new(AtomicUsize::new(0));
@@ -451,64 +587,90 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
                     let _guard = ConnGuard(active_connections);
                     let request_start = Instant::now();
                     let request_id = simple_uuid();
-
-                    let mut buf = vec![0u8; 1024 * 1024];
-                    let n = match socket.read(&mut buf).await {
-                        Ok(n) if n > 0 => n,
-                        _ => return,
-                    };
-
-                    let request = String::from_utf8_lossy(&buf[..n]);
-
-                    // Parse method + path for tracing
-                    let first_line = request.lines().next().unwrap_or("");
-                    let parts: Vec<&str> = first_line.split_whitespace().collect();
-                    let method = parts.first().copied().unwrap_or("?");
-                    let path = parts.get(1).copied().unwrap_or("/");
                     let peer = peer_addr.to_string();
 
-                    let span = tracing::info_span!("http_request",
-                        request_id = %request_id,
-                        method = %method,
-                        path = %path,
-                        peer = %peer,
-                    );
-                    let _enter = span.enter();
+                    // Timeout: entire request handling must complete within 60s
+                    let handler = async {
+                        // Read with 10s timeout to prevent slowloris
+                        let mut buf = vec![0u8; MAX_REQUEST_BODY_SIZE];
+                        let n = match tokio::time::timeout(
+                            tokio::time::Duration::from_secs(10),
+                            socket.read(&mut buf),
+                        ).await {
+                            Ok(Ok(n)) if n > 0 => n,
+                            _ => return,
+                        };
 
-                    // Check Content-Length header and reject oversized requests
-                    let content_length = request
-                        .lines()
-                        .find(|l| l.to_lowercase().starts_with("content-length:"))
-                        .and_then(|l| l.splitn(2, ':').nth(1))
-                        .and_then(|v| v.trim().parse::<usize>().ok());
-                    if let Some(cl) = content_length {
-                        if cl > MAX_REQUEST_BODY_SIZE {
-                            let body = r#"{"detail":"Request body too large"}"#;
-                            let response = format!(
-                                "HTTP/1.1 413 Payload Too Large\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                                body.len(),
-                                body,
-                            );
+                        let request = String::from_utf8_lossy(&buf[..n]);
+
+                        // Parse method + path for tracing
+                        let first_line = request.lines().next().unwrap_or("");
+                        let parts: Vec<&str> = first_line.split_whitespace().collect();
+                        let method = parts.first().copied().unwrap_or("?");
+                        let path = parts.get(1).copied().unwrap_or("/");
+
+                        let span = tracing::info_span!("http_request",
+                            request_id = %request_id,
+                            method = %method,
+                            path = %path,
+                            peer = %peer,
+                        );
+                        let _enter = span.enter();
+
+                        // HTTP request smuggling protection:
+                        // Reject Transfer-Encoding (we don't support chunked)
+                        let headers_section = request.split("\r\n\r\n").next().unwrap_or("");
+                        if headers_section.to_lowercase().contains("transfer-encoding") {
+                            let body = r#"{"detail":"Transfer-Encoding not supported"}"#;
+                            let response = format_response("400 Bad Request", body, &request_id);
                             let _ = socket.write_all(response.as_bytes()).await;
                             return;
                         }
+                        // Reject duplicate Content-Length headers
+                        let cl_count = headers_section.lines()
+                            .filter(|l| l.to_lowercase().starts_with("content-length:"))
+                            .count();
+                        if cl_count > 1 {
+                            let body = r#"{"detail":"Duplicate Content-Length headers"}"#;
+                            let response = format_response("400 Bad Request", body, &request_id);
+                            let _ = socket.write_all(response.as_bytes()).await;
+                            return;
+                        }
+
+                        // Check Content-Length against actual read size
+                        let content_length = headers_section.lines()
+                            .find(|l| l.to_lowercase().starts_with("content-length:"))
+                            .and_then(|l| l.splitn(2, ':').nth(1))
+                            .and_then(|v| v.trim().parse::<usize>().ok());
+                        if let Some(cl) = content_length {
+                            if cl > MAX_REQUEST_BODY_SIZE {
+                                let body = r#"{"detail":"Request body too large"}"#;
+                                let response = format_response("413 Payload Too Large", body, &request_id);
+                                let _ = socket.write_all(response.as_bytes()).await;
+                                return;
+                            }
+                        }
+
+                        let (status, body) = route_request(&request, &state, &peer);
+
+                        let duration_ms = request_start.elapsed().as_secs_f64() * 1000.0;
+                        tracing::info!(
+                            status = %status,
+                            duration_ms = duration_ms,
+                            "request completed"
+                        );
+
+                        let response = format_response(&status, &body, &request_id);
+                        let _ = socket.write_all(response.as_bytes()).await;
+                    };
+
+                    // Overall handler timeout: 60 seconds
+                    if tokio::time::timeout(
+                        tokio::time::Duration::from_secs(60),
+                        handler,
+                    ).await.is_err() {
+                        tracing::warn!(peer = %peer, "Request timed out after 60s");
                     }
-
-                    let (status, body) = route_request(&request, &state);
-
-                    let duration_ms = request_start.elapsed().as_secs_f64() * 1000.0;
-                    tracing::info!(
-                        status = %status,
-                        duration_ms = duration_ms,
-                        "request completed"
-                    );
-
-                    let response = format!(
-                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Request-ID: {request_id}\r\n\r\n{body}",
-                        body.len(),
-                    );
-
-                    let _ = socket.write_all(response.as_bytes()).await;
                 });
             }
             _ = &mut shutdown => {
@@ -540,7 +702,7 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[cfg(feature = "async-support")]
-fn route_request(raw: &str, state: &AppState) -> (String, String) {
+fn route_request(raw: &str, state: &AppState, client_ip: &str) -> (String, String) {
     let first_line = raw.lines().next().unwrap_or("");
     let parts: Vec<&str> = first_line.split_whitespace().collect();
     let method = parts.first().copied().unwrap_or("");
@@ -571,12 +733,27 @@ fn route_request(raw: &str, state: &AppState) -> (String, String) {
         }
     }
 
-    // RBAC enforcement
-    let role = crate::rbac::extract_role(raw);
+    // RBAC enforcement — derive role from authenticated key, not client header
+    let authenticated_key = if state.api_key.is_some() {
+        raw.lines()
+            .find(|l| l.to_lowercase().starts_with("x-api-key:"))
+            .and_then(|l| l.splitn(2, ':').nth(1))
+            .map(|v| v.trim().to_string())
+    } else {
+        None
+    };
+    let role = crate::rbac::resolve_role(
+        raw,
+        authenticated_key.as_deref(),
+        &state.api_key_roles,
+    );
     let required_perm = match (method, path) {
         ("POST", "/v1/scan") => Some(crate::rbac::Permission::Scan),
         ("POST", "/v1/batch/scan") => Some(crate::rbac::Permission::BatchScan),
         ("POST", "/v1/patterns") => Some(crate::rbac::Permission::ManagePatterns),
+        ("POST", "/v1/tokenize") => Some(crate::rbac::Permission::Scan),
+        ("POST", "/v1/detokenize") => Some(crate::rbac::Permission::Detokenize),
+        ("POST", "/v1/obfuscate") => Some(crate::rbac::Permission::Scan),
         _ => None,
     };
     if let Some(perm) = required_perm {
@@ -592,7 +769,7 @@ fn route_request(raw: &str, state: &AppState) -> (String, String) {
     if path != "/health" && path != "/health/live" && path != "/health/ready" && path != "/metrics"
     {
         if let Ok(mut rl) = state.rate_limiter.write() {
-            if !rl.check() {
+            if !rl.check_client(client_ip) {
                 return (
                     "429 Too Many Requests".to_string(),
                     r#"{"detail":"Rate limit exceeded"}"#.to_string(),
@@ -735,6 +912,63 @@ fn route_request(raw: &str, state: &AppState) -> (String, String) {
             Err(e) => (
                 "422 Unprocessable Entity".to_string(),
                 serde_json::json!({"detail": e.to_string()}).to_string(),
+            ),
+        },
+        ("POST", "/v1/tokenize") => match serde_json::from_str::<TokenizeRequest>(body) {
+            Ok(req) => match handle_tokenize(&req, &state.vaults) {
+                Ok(resp) => (
+                    "200 OK".to_string(),
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                ),
+                Err(e) => {
+                    tracing::warn!("Tokenize error: {}", e);
+                    (
+                        "400 Bad Request".to_string(),
+                        r#"{"detail":"Tokenization failed"}"#.to_string(),
+                    )
+                }
+            },
+            Err(_e) => (
+                "422 Unprocessable Entity".to_string(),
+                r#"{"detail":"Invalid request body"}"#.to_string(),
+            ),
+        },
+        ("POST", "/v1/detokenize") => match serde_json::from_str::<DetokenizeRequest>(body) {
+            Ok(req) => match handle_detokenize(&req, &state.vaults) {
+                Ok(resp) => (
+                    "200 OK".to_string(),
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                ),
+                Err(e) => {
+                    tracing::warn!("Detokenize error: {}", e);
+                    (
+                        "400 Bad Request".to_string(),
+                        r#"{"detail":"Detokenization failed"}"#.to_string(),
+                    )
+                }
+            },
+            Err(_e) => (
+                "422 Unprocessable Entity".to_string(),
+                r#"{"detail":"Invalid request body"}"#.to_string(),
+            ),
+        },
+        ("POST", "/v1/obfuscate") => match serde_json::from_str::<ScanRequest>(body) {
+            Ok(req) => match handle_obfuscate(&req) {
+                Ok(resp) => (
+                    "200 OK".to_string(),
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                ),
+                Err(e) => {
+                    tracing::warn!("Obfuscate error: {}", e);
+                    (
+                        "400 Bad Request".to_string(),
+                        r#"{"detail":"Obfuscation failed"}"#.to_string(),
+                    )
+                }
+            },
+            Err(_e) => (
+                "422 Unprocessable Entity".to_string(),
+                r#"{"detail":"Invalid request body"}"#.to_string(),
             ),
         },
         ("GET", "/v1/patterns") => {

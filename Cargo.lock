@@ -871,6 +871,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-normalization",
  "unrar",
+ "zeroize",
  "zip",
 ]
 

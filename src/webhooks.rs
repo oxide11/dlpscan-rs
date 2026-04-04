@@ -95,9 +95,11 @@ pub fn is_safe_url(url: &str) -> bool {
         return false;
     }
 
-    // Reject IPv6 loopback and private
+    // Reject IPv6 loopback, ULA (fc00::/7), and link-local (fe80::/10)
     let trimmed = host_lower.trim_start_matches('[').trim_end_matches(']');
-    if trimmed == "::1" || trimmed.starts_with("fd") {
+    if trimmed == "::1" || trimmed.starts_with("fd") || trimmed.starts_with("fc")
+        || trimmed.starts_with("fe80")
+    {
         return false;
     }
 
@@ -126,6 +128,18 @@ pub fn is_safe_url(url: &str) -> bool {
         }
         // 169.254.0.0/16 (link-local)
         if octets[0] == 169 && octets[1] == 254 {
+            return false;
+        }
+        // 100.64.0.0/10 (CGNAT, RFC 6598)
+        if octets[0] == 100 && (octets[1] >= 64 && octets[1] <= 127) {
+            return false;
+        }
+        // 198.18.0.0/15 (benchmarking, RFC 2544)
+        if octets[0] == 198 && (octets[1] == 18 || octets[1] == 19) {
+            return false;
+        }
+        // 192.0.0.0/24 (IETF protocol assignments)
+        if octets[0] == 192 && octets[1] == 0 && octets[2] == 0 {
             return false;
         }
     }

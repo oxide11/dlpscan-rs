@@ -57,8 +57,43 @@ pub fn role_has_permission(role: Role, perm: Permission) -> bool {
     }
 }
 
+/// Determine the role for a request based on the authenticated API key.
+///
+/// **Security:** The `X-Role` header is ONLY used as a hint when the server has
+/// no key-to-role mapping configured. When `api_key_roles` is provided, the role
+/// is derived server-side from the authenticated key — the client header is ignored.
+///
+/// If no API key auth is configured (open access), defaults to `Operator` (not Admin)
+/// to limit damage from unauthenticated access.
+pub fn resolve_role(
+    raw_request: &str,
+    authenticated_key: Option<&str>,
+    api_key_roles: &std::collections::HashMap<String, Role>,
+) -> Role {
+    // If we have a key-to-role mapping and an authenticated key, use it (server-authoritative)
+    if let Some(key) = authenticated_key {
+        if let Some(role) = api_key_roles.get(key) {
+            return *role;
+        }
+    }
+
+    // If no API key auth is configured at all, restrict to Operator (not Admin)
+    if authenticated_key.is_none() {
+        return Role::Operator;
+    }
+
+    // Fallback: authenticated but no role mapping — default to Viewer
+    Role::Viewer
+}
+
 /// Extract the role from an HTTP request's `X-Role` header.
-/// Returns `Viewer` if the header is missing or unrecognized.
+///
+/// # Security Warning
+///
+/// **DEPRECATED:** Use `resolve_role()` instead for production. This function
+/// trusts the client-supplied `X-Role` header, which can be trivially spoofed.
+/// It is only safe in trusted internal networks where all clients are verified.
+#[deprecated(since = "2.1.0", note = "Use resolve_role() which derives roles from authenticated API keys")]
 pub fn extract_role(raw_request: &str) -> Role {
     raw_request
         .lines()

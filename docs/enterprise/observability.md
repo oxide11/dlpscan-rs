@@ -1,56 +1,88 @@
 # Observability
 
-Prometheus and OpenTelemetry metrics for monitoring DLP operations.
+Prometheus metrics for monitoring DLP operations.
 
 ## Built-in Metrics
 
 | Metric | Type | Description |
 |--------|------|-------------|
+| `dlpscan_requests_total` | Counter | Total HTTP requests (labels: `method`, `path`, `status`) |
+| `dlpscan_request_duration_seconds` | Histogram | HTTP request latency |
+| `dlpscan_scan_matches_total` | Counter | Total pattern matches across all scans |
+| `dlpscan_active_connections` | Gauge | Currently active connections |
 | `dlpscan_scans_total` | Counter | Total scans performed |
-| `dlpscan_findings_total` | Counter | Findings detected (by category) |
-| `dlpscan_scan_duration_seconds` | Histogram | Scan latency |
+| `dlpscan_scan_duration_seconds` | Histogram | Scan processing latency |
 | `dlpscan_scan_errors_total` | Counter | Scan errors |
-| `dlpscan_active_vaults` | Gauge | Active token vaults |
-| `dlpscan_tokens_created_total` | Counter | Tokens created |
 | `dlpscan_rate_limit_rejections_total` | Counter | Rate limit rejections |
 
-## Prometheus Exporter
+## Metrics Endpoint
 
-```python
-from dlpscan.observability import PrometheusExporter
+Metrics are exposed in Prometheus text format at `GET /metrics` on the
+API server:
 
-exporter = PrometheusExporter()
-exporter.start(port=9090)
-# Metrics available at http://localhost:9090/metrics
+```bash
+curl http://localhost:8000/metrics
 ```
 
-## Recording Scan Metrics
+Example output:
 
-```python
-from dlpscan.observability import record_scan
-import time
+```text
+# HELP dlpscan_requests_total Total HTTP requests
+# TYPE dlpscan_requests_total counter
+dlpscan_requests_total{method="POST",path="/v1/scan",status="200"} 42
 
-start = time.monotonic()
-result = guard.scan(text)
-duration = time.monotonic() - start
+# HELP dlpscan_scans_total Total scans performed
+# TYPE dlpscan_scans_total counter
+dlpscan_scans_total 42
 
-record_scan(result, duration)
+# HELP dlpscan_scan_duration_seconds Scan processing latency
+# TYPE dlpscan_scan_duration_seconds histogram
+dlpscan_scan_duration_seconds_bucket{le="0.01"} 30
+dlpscan_scan_duration_seconds_bucket{le="0.1"} 40
+dlpscan_scan_duration_seconds_bucket{le="+Inf"} 42
+dlpscan_scan_duration_seconds_sum 1.234
+dlpscan_scan_duration_seconds_count 42
 ```
 
-## Prometheus Text Format
+## Using Metrics in Rust
 
-```python
-from dlpscan.observability import MetricsRegistry
+The metrics are managed by the `dlpscan::metrics` module. They are
+recorded automatically by the API server middleware.
 
-registry = MetricsRegistry()
-print(registry.to_prometheus())
+```rust
+use dlpscan::metrics;
+
+// Metrics are auto-incremented by the API layer.
+// Access the global registry for custom integrations:
+let output = metrics::export_metrics();
+println!("{}", output);
 ```
 
-## OpenTelemetry
+## Prometheus Scrape Config
 
-```python
-from dlpscan.observability import setup_opentelemetry
-setup_opentelemetry(service_name="dlpscan")
+```yaml
+scrape_configs:
+  - job_name: dlpscan
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["localhost:8000"]
+    metrics_path: /metrics
 ```
 
-Requires the `opentelemetry-api` and `opentelemetry-sdk` packages.
+## Grafana Dashboard
+
+Useful PromQL queries:
+
+```promql
+# Request rate
+rate(dlpscan_requests_total[5m])
+
+# Scan latency p99
+histogram_quantile(0.99, rate(dlpscan_scan_duration_seconds_bucket[5m]))
+
+# Error rate
+rate(dlpscan_scan_errors_total[5m])
+
+# Active connections
+dlpscan_active_connections
+```

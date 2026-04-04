@@ -15,19 +15,22 @@ Set the `DLPSCAN_API_KEY` environment variable to enable it:
 export DLPSCAN_API_KEY="your-secret-key-here"
 ```
 
-Key validation uses constant-time comparison (`hmac.compare_digest`) to
-prevent timing side-channel attacks.
+Key validation uses SHA-256 constant-time comparison to prevent timing
+side-channel attacks.
 
 !!! warning
     When `DLPSCAN_API_KEY` is not set, authentication is **disabled**.
     Always set this variable in production.
 
+### RBAC
+
+Access control is enforced via the `X-Role` header. See [RBAC](rbac.md)
+for the full role/permission matrix.
+
 ### Request Size Limits
 
 All API text fields enforce a maximum length of **1 MB** (1,000,000
-characters) to prevent memory exhaustion from oversized payloads. The
-rate limiter also enforces a per-request payload byte limit (default
-10 MB).
+characters) to prevent memory exhaustion from oversized payloads.
 
 ### Error Sanitization
 
@@ -35,55 +38,60 @@ API error responses never expose internal exception details. All
 unhandled errors return a generic `"Internal scan error"` message while
 full details are logged server-side.
 
+### TLS Support
+
+Enable TLS by setting the certificate and key paths:
+
+```bash
+export DLPSCAN_TLS_CERT=/path/to/cert.pem
+export DLPSCAN_TLS_KEY=/path/to/key.pem
+```
+
 ### Metrics Endpoint
 
-The Prometheus metrics exporter binds to `127.0.0.1` (localhost only) by
-default. It does not require authentication, so it should not be exposed
-to untrusted networks.
+The Prometheus metrics endpoint (`GET /metrics`) does not require
+authentication by default. It should not be exposed to untrusted
+networks without additional access controls.
 
-## Cryptography
+## Token Vault
 
-### Key Derivation (PBKDF2)
+### HMAC-SHA256 Tokens
 
-Vault encryption keys are derived using **PBKDF2-HMAC-SHA256** with:
+`TokenVault` uses HMAC-SHA256 with a cryptographically random secret to
+generate deterministic tokens. This prevents token precomputation even
+when no explicit secret is provided.
 
-- **600,000 iterations** (OWASP 2024 recommendation)
-- **Random 16-byte salt** generated via `os.urandom()`
+### Memory Safety
 
-When using `EncryptedVault` or `FileBackend` with `encryption_key`, the
-derived key is never stored — only the ciphertext and per-record nonces.
+Token vault secrets are protected with `zeroize` and are securely erased
+from memory on `Drop`, preventing secrets from lingering in freed memory.
 
-### Token Generation
+```rust
+use dlpscan::guard::TokenVault;
 
-`TokenVault` uses HMAC-SHA256 with a cryptographically random secret
-(via `secrets.token_bytes()`) to generate deterministic tokens. This
-prevents token precomputation even when no explicit secret is provided.
-
-### AES-256-GCM Encryption
-
-Vault encryption uses AES-256-GCM with unique 12-byte nonces per record,
-providing both confidentiality and integrity.
+let vault = TokenVault::new("TOK_", "my-secret-key");
+// Secret is zeroized when `vault` is dropped
+```
 
 ## File System Security
 
 ### Restrictive File Permissions
 
 Vault files and audit log files are created with `0o600` permissions
-(owner read/write only) using `os.open()` with explicit mode flags.
+(owner read/write only) on Unix systems.
 
 ### Symlink Protection
 
-File-based backends (`FileBackend`, `FileAuditHandler`) resolve paths
-and reject symbolic links to prevent symlink race attacks where an
-attacker substitutes a symlink to read or overwrite sensitive files.
+File-based operations resolve paths and reject symbolic links to prevent
+symlink race attacks where an attacker substitutes a symlink to read or
+overwrite sensitive files.
+
+### SSRF Protection
+
+URL inputs are validated to prevent server-side request forgery. Private
+and loopback addresses are rejected when processing external URLs.
 
 ## Input Validation
-
-### SQL Injection Prevention
-
-`BatchScanner.scan_database()` only accepts `SELECT` queries. Any
-query that does not start with `SELECT` is rejected before execution.
-Results are fetched in bounded batches of 1,000 rows.
 
 ### OCR Config Allowlist
 
@@ -103,28 +111,23 @@ of 64 levels to prevent stack overflow from deeply nested payloads.
 
 ## Rate Limiting
 
-The built-in rate limiter uses an O(1) time-window algorithm backed by
-`collections.deque` for efficient timestamp management.
+The built-in rate limiter uses a per-client sliding-window algorithm.
+Configure via environment variable:
 
-```python
-from dlpscan.rate_limit import RateLimiter
-
-limiter = RateLimiter(
-    max_requests=100,       # per window
-    window_seconds=60,      # 1 minute
-    max_payload_bytes=10 * 1024 * 1024,  # 10 MB
-)
+```bash
+export DLPSCAN_API_RATE_LIMIT=100  # requests per minute per client
 ```
+
+See [Rate Limiting](rate-limiting.md) for details.
 
 ## Deployment Recommendations
 
 1. **Always set `DLPSCAN_API_KEY`** in production API deployments.
-2. **Use `FileBackend` with `encryption_key`** — plaintext storage is
-   the default when no key is provided.
-3. **Run behind a reverse proxy** (nginx, Caddy) with TLS termination.
-4. **Restrict metrics access** — if exposing Prometheus metrics, use
+2. **Enable TLS** via `DLPSCAN_TLS_CERT` and `DLPSCAN_TLS_KEY`, or run
+   behind a reverse proxy (nginx, Caddy) with TLS termination.
+3. **Restrict metrics access** -- if exposing Prometheus metrics, use
    network policies or a sidecar proxy with authentication.
-5. **Set file umask** — ensure the process umask doesn't weaken the
+4. **Set file umask** -- ensure the process umask doesn't weaken the
    `0o600` file permissions.
-6. **Monitor audit logs** — use `FileAuditHandler` or SIEM integration
-   for compliance-grade audit trails.
+5. **Monitor audit logs** -- use SIEM integration for compliance-grade
+   audit trails.

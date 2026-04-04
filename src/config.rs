@@ -66,6 +66,45 @@ impl Default for Config {
     }
 }
 
+/// Apply environment variable overrides to a config.
+///
+/// Supported env vars:
+/// - `DLPSCAN_MIN_CONFIDENCE` — minimum confidence threshold (0.0-1.0)
+/// - `DLPSCAN_REQUIRE_CONTEXT` — require context keywords (true/false)
+/// - `DLPSCAN_FORMAT` — output format (text/json/csv/sarif)
+/// - `DLPSCAN_CATEGORIES` — comma-separated category filter
+/// - `DLPSCAN_MAX_MATCHES` — maximum matches per scan
+/// - `DLPSCAN_DEDUPLICATE` — deduplicate overlapping matches (true/false)
+pub fn apply_env_overrides(config: &mut Config) {
+    if let Ok(val) = std::env::var("DLPSCAN_MIN_CONFIDENCE") {
+        if let Ok(v) = val.parse::<f64>() {
+            config.min_confidence = v.clamp(0.0, 1.0);
+        }
+    }
+    if let Ok(val) = std::env::var("DLPSCAN_REQUIRE_CONTEXT") {
+        config.require_context = val == "true" || val == "1";
+    }
+    if let Ok(val) = std::env::var("DLPSCAN_FORMAT") {
+        if ["text", "json", "csv", "sarif"].contains(&val.as_str()) {
+            config.format = val;
+        }
+    }
+    if let Ok(val) = std::env::var("DLPSCAN_CATEGORIES") {
+        let cats: Vec<String> = val.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        if !cats.is_empty() {
+            config.categories = Some(cats);
+        }
+    }
+    if let Ok(val) = std::env::var("DLPSCAN_MAX_MATCHES") {
+        if let Ok(v) = val.parse::<usize>() {
+            config.max_matches = v;
+        }
+    }
+    if let Ok(val) = std::env::var("DLPSCAN_DEDUPLICATE") {
+        config.deduplicate = val != "false" && val != "0";
+    }
+}
+
 // ---------------------------------------------------------------------------
 // File discovery
 // ---------------------------------------------------------------------------
