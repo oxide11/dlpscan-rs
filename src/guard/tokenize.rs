@@ -3,6 +3,7 @@
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use std::collections::HashMap;
+use zeroize::Zeroize;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -17,35 +18,27 @@ pub struct TokenVault {
     reverse: HashMap<String, String>,  // token → value
 }
 
-/// Zero out secret key and sensitive values when the vault is dropped.
+/// Zeroize all sensitive data when the vault is dropped.
 impl Drop for TokenVault {
     fn drop(&mut self) {
-        // Overwrite secret key bytes with zeros
-        for byte in &mut self.secret {
-            unsafe { std::ptr::write_volatile(byte, 0) };
-        }
-        self.secret.clear();
+        // Zeroize secret key using the zeroize crate (compiler-barrier guaranteed)
+        self.secret.zeroize();
 
-        // Overwrite sensitive plaintext values in the maps before clearing
-        for (_, value) in self.forward.iter_mut() {
-            // SAFETY: overwrite string bytes in-place before deallocation
-            unsafe {
-                let bytes = value.as_bytes_mut();
-                for byte in bytes.iter_mut() {
-                    std::ptr::write_volatile(byte, 0);
-                }
-            }
+        // Zeroize both keys AND values in the forward map
+        // (forward keys contain the sensitive plaintext values)
+        let forward = std::mem::take(&mut self.forward);
+        for (mut key, mut value) in forward {
+            key.zeroize();
+            value.zeroize();
         }
-        for (_, value) in self.reverse.iter_mut() {
-            unsafe {
-                let bytes = value.as_bytes_mut();
-                for byte in bytes.iter_mut() {
-                    std::ptr::write_volatile(byte, 0);
-                }
-            }
+
+        // Zeroize both keys AND values in the reverse map
+        // (reverse values contain the sensitive plaintext values)
+        let reverse = std::mem::take(&mut self.reverse);
+        for (mut key, mut value) in reverse {
+            key.zeroize();
+            value.zeroize();
         }
-        self.forward.clear();
-        self.reverse.clear();
     }
 }
 

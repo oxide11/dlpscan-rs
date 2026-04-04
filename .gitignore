@@ -1,1 +1,24 @@
 /target
+
+# Secrets and credentials
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.csr
+*.p12
+*.pfx
+secrets/
+certs/
+
+# Logs (may contain PII from scan results)
+*.log
+
+# Databases
+*.sqlite
+*.db
+
+# OS
+.DS_Store
+Thumbs.db

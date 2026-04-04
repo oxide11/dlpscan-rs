@@ -22,9 +22,6 @@ pub const MAX_MATCHES: usize = 50_000;
 /// Maximum scan time in seconds.
 pub const MAX_SCAN_SECONDS: u64 = 120;
 
-/// Per-pattern regex timeout.
-pub const REGEX_TIMEOUT_SECONDS: u64 = 5;
-
 /// Maximum input size (10 MB).
 pub const MAX_INPUT_SIZE: usize = 10 * 1024 * 1024;
 

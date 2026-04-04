@@ -39,6 +39,7 @@ hmac = "0.12"
 sha2 = "0.10"
 rand = "0.8"
 hex = "0.4"
+zeroize = { version = "1", features = ["derive"] }
 base64 = "0.22"
 
 # Logging

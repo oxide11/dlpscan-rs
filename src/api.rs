@@ -410,6 +410,29 @@ fn handle_health_full(state: &AppState, active: usize) -> HealthResponse {
     }
 }
 
+/// Security response headers applied to every HTTP response.
+const SECURITY_HEADERS: &str = "\
+X-Content-Type-Options: nosniff\r\n\
+X-Frame-Options: DENY\r\n\
+Content-Security-Policy: default-src 'none'\r\n\
+Cache-Control: no-store\r\n\
+X-XSS-Protection: 0\r\n";
+
+/// Format an HTTP response with security headers.
+#[cfg(feature = "async-support")]
+fn format_response(status: &str, body: &str, request_id: &str) -> String {
+    format!(
+        "HTTP/1.1 {status}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {}\r\n\
+         X-Request-ID: {request_id}\r\n\
+         {SECURITY_HEADERS}\
+         \r\n\
+         {body}",
+        body.len(),
+    )
+}
+
 /// Generate a simple random ID (hex string).
 fn generate_id() -> String {
     use rand::RngCore;
@@ -564,64 +587,90 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
                     let _guard = ConnGuard(active_connections);
                     let request_start = Instant::now();
                     let request_id = simple_uuid();
-
-                    let mut buf = vec![0u8; 1024 * 1024];
-                    let n = match socket.read(&mut buf).await {
-                        Ok(n) if n > 0 => n,
-                        _ => return,
-                    };
-
-                    let request = String::from_utf8_lossy(&buf[..n]);
-
-                    // Parse method + path for tracing
-                    let first_line = request.lines().next().unwrap_or("");
-                    let parts: Vec<&str> = first_line.split_whitespace().collect();
-                    let method = parts.first().copied().unwrap_or("?");
-                    let path = parts.get(1).copied().unwrap_or("/");
                     let peer = peer_addr.to_string();
 
-                    let span = tracing::info_span!("http_request",
-                        request_id = %request_id,
-                        method = %method,
-                        path = %path,
-                        peer = %peer,
-                    );
-                    let _enter = span.enter();
+                    // Timeout: entire request handling must complete within 60s
+                    let handler = async {
+                        // Read with 10s timeout to prevent slowloris
+                        let mut buf = vec![0u8; MAX_REQUEST_BODY_SIZE];
+                        let n = match tokio::time::timeout(
+                            tokio::time::Duration::from_secs(10),
+                            socket.read(&mut buf),
+                        ).await {
+                            Ok(Ok(n)) if n > 0 => n,
+                            _ => return,
+                        };
 
-                    // Check Content-Length header and reject oversized requests
-                    let content_length = request
-                        .lines()
-                        .find(|l| l.to_lowercase().starts_with("content-length:"))
-                        .and_then(|l| l.splitn(2, ':').nth(1))
-                        .and_then(|v| v.trim().parse::<usize>().ok());
-                    if let Some(cl) = content_length {
-                        if cl > MAX_REQUEST_BODY_SIZE {
-                            let body = r#"{"detail":"Request body too large"}"#;
-                            let response = format!(
-                                "HTTP/1.1 413 Payload Too Large\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                                body.len(),
-                                body,
-                            );
+                        let request = String::from_utf8_lossy(&buf[..n]);
+
+                        // Parse method + path for tracing
+                        let first_line = request.lines().next().unwrap_or("");
+                        let parts: Vec<&str> = first_line.split_whitespace().collect();
+                        let method = parts.first().copied().unwrap_or("?");
+                        let path = parts.get(1).copied().unwrap_or("/");
+
+                        let span = tracing::info_span!("http_request",
+                            request_id = %request_id,
+                            method = %method,
+                            path = %path,
+                            peer = %peer,
+                        );
+                        let _enter = span.enter();
+
+                        // HTTP request smuggling protection:
+                        // Reject Transfer-Encoding (we don't support chunked)
+                        let headers_section = request.split("\r\n\r\n").next().unwrap_or("");
+                        if headers_section.to_lowercase().contains("transfer-encoding") {
+                            let body = r#"{"detail":"Transfer-Encoding not supported"}"#;
+                            let response = format_response("400 Bad Request", body, &request_id);
                             let _ = socket.write_all(response.as_bytes()).await;
                             return;
                         }
+                        // Reject duplicate Content-Length headers
+                        let cl_count = headers_section.lines()
+                            .filter(|l| l.to_lowercase().starts_with("content-length:"))
+                            .count();
+                        if cl_count > 1 {
+                            let body = r#"{"detail":"Duplicate Content-Length headers"}"#;
+                            let response = format_response("400 Bad Request", body, &request_id);
+                            let _ = socket.write_all(response.as_bytes()).await;
+                            return;
+                        }
+
+                        // Check Content-Length against actual read size
+                        let content_length = headers_section.lines()
+                            .find(|l| l.to_lowercase().starts_with("content-length:"))
+                            .and_then(|l| l.splitn(2, ':').nth(1))
+                            .and_then(|v| v.trim().parse::<usize>().ok());
+                        if let Some(cl) = content_length {
+                            if cl > MAX_REQUEST_BODY_SIZE {
+                                let body = r#"{"detail":"Request body too large"}"#;
+                                let response = format_response("413 Payload Too Large", body, &request_id);
+                                let _ = socket.write_all(response.as_bytes()).await;
+                                return;
+                            }
+                        }
+
+                        let (status, body) = route_request(&request, &state, &peer);
+
+                        let duration_ms = request_start.elapsed().as_secs_f64() * 1000.0;
+                        tracing::info!(
+                            status = %status,
+                            duration_ms = duration_ms,
+                            "request completed"
+                        );
+
+                        let response = format_response(&status, &body, &request_id);
+                        let _ = socket.write_all(response.as_bytes()).await;
+                    };
+
+                    // Overall handler timeout: 60 seconds
+                    if tokio::time::timeout(
+                        tokio::time::Duration::from_secs(60),
+                        handler,
+                    ).await.is_err() {
+                        tracing::warn!(peer = %peer, "Request timed out after 60s");
                     }
-
-                    let (status, body) = route_request(&request, &state, &peer);
-
-                    let duration_ms = request_start.elapsed().as_secs_f64() * 1000.0;
-                    tracing::info!(
-                        status = %status,
-                        duration_ms = duration_ms,
-                        "request completed"
-                    );
-
-                    let response = format!(
-                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Request-ID: {request_id}\r\n\r\n{body}",
-                        body.len(),
-                    );
-
-                    let _ = socket.write_all(response.as_bytes()).await;
                 });
             }
             _ = &mut shutdown => {

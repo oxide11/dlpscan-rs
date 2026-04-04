@@ -87,8 +87,13 @@ pub fn resolve_role(
 }
 
 /// Extract the role from an HTTP request's `X-Role` header.
-/// **DEPRECATED:** Use `resolve_role()` instead for production.
-/// This is only safe in trusted internal networks where clients are verified.
+///
+/// # Security Warning
+///
+/// **DEPRECATED:** Use `resolve_role()` instead for production. This function
+/// trusts the client-supplied `X-Role` header, which can be trivially spoofed.
+/// It is only safe in trusted internal networks where all clients are verified.
+#[deprecated(since = "2.1.0", note = "Use resolve_role() which derives roles from authenticated API keys")]
 pub fn extract_role(raw_request: &str) -> Role {
     raw_request
         .lines()
