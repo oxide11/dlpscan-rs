@@ -477,22 +477,33 @@ al.is_allowed(match)  # False for text='4111222233334444'
 
 | Evasion Technique | Defense | Status |
 |-------------------|---------|--------|
-| Zero-width char insertion | `strip_zero_width()` | **Defended** |
-| RTL/Bidi manipulation | Bidi chars in strip set | **Defended** |
-| Variation selectors | VS1–VS16 in strip set | **Defended** |
-| Unicode Tags steganography | Tags block in strip set | **Defended** |
-| Delimiter variation | `normalize_whitespace()` | **Defended** |
-| Homoglyph substitution | `normalize_homoglyphs()` | **Defended** (200+ mappings) |
-| Word boundary bypass | Post-normalization `\b` | **Defended** |
-| ReDoS / timeout bypass | SIGALRM + `_ThreadTimeout` | **Defended** |
+| Zero-width char insertion | `remap_strip_zero_width()` | **Defended** |
+| RTL/Bidi manipulation | Bidi chars in zero-width set | **Defended** |
+| Variation selectors | VS1–VS16 in zero-width set | **Defended** |
+| Homoglyph substitution | NFKC + `HOMOGLYPH_MAP` | **Defended** (200+ mappings) |
+| Fullwidth digits/letters | NFKC normalization | **Defended** |
+| Regional digit scripts | NFKC normalization | **Defended** |
+| URL percent-encoding | `decode_percent_encoding()` (double-decode) | **Defended** |
+| HTML decimal entities | `decode_html_entities()` (&#NNN; + &#xHH;) | **Defended** |
+| CSS comment injection | `strip_comments()` (`/**/`) | **Defended** |
+| HTML comment injection | `strip_comments()` (`<!---->`) | **Defended** |
+| Whitespace padding | `collapse_padding()` | **Defended** |
+| Mid-line-break | `collapse_padding()` (handles \n, \r\n) | **Defended** |
+| Excessive delimiters | `normalize_delimiters()` | **Defended** |
+| Hex-spaced bytes | `decode_hex_spaced()` | **Defended** |
+| Base32 encoding | `try_decode_base_encoding()` (2nd pass) | **Defended** |
+| Base64 encoding | `try_decode_base_encoding()` (2nd pass) | **Defended** |
+| ROT13 cipher | `apply_rot13()` (2nd pass) | **Defended** |
+| Text reversal | `generate_alternative_decodings()` (2nd pass) | **Defended** |
+| Leetspeak substitution | `normalize_leet()` (2nd pass) | **Defended** |
+| Morse code encoding | `decode_morse()` (2nd pass) | **Defended** |
+| Soft hyphens / word joiners | Zero-width char stripping | **Defended** |
+| Polymorphic encoding chains | 10-stage sequential pipeline | **Defended** |
+| Context keyword evasion | Aho-Corasick prefilter on normalized text | **Defended** |
+| ReDoS | Rust `regex` crate (linear-time guarantee) | **Defended** |
 | Max matches truncation | `ScanResult.scan_truncated` | **Exposed** |
-| Polymorphic encoding chains | Sequential pipeline | **Defended** |
-| Transform output pollution | `_clean_match_text()` | **Defended** |
-| Context keyword homoglyphs | Normalized before context search | **Defended** |
-| Context keyword evasion | Fuzzy Levenshtein matching | **Defended** |
 | OCR confidence manipulation | Threshold raised to 60% | **Partial** |
 | Unsupported file formats | RTF extractor + content-type detection | **Partial** |
-| Allowlist value mutation | Wildcard/glob matching | **Defended** |
 
 ---
 
