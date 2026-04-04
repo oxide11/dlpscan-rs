@@ -3459,9 +3459,9 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "Asia-Pacific - Australia",
         sub_category: "Australia TFN",
-        regex: r"\b\d{3}[\s]?\d{3}[\s]?\d{2,3}\b",
+        regex: r"\b\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{2,3}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.55,
         context_required: false,
     },
     PatternDef {

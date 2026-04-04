@@ -116,6 +116,7 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "Italy Codice Fiscale", "Italy SSN", "Sweden PIN", "Poland PESEL",
         "Belgium NRN", "Denmark CPR",
         // Asia-Pacific
+        "Australia TFN", "Australia Medicare", "Australia Passport",
         "India Aadhaar", "India PAN", "China Resident ID", "Japan My Number",
         "South Korea RRN", "Singapore NRIC", "Singapore FIN", "Hong Kong ID",
         // Latin America
@@ -313,12 +314,51 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
         tracing::warn!("Scan exceeded timeout of {}s, returning partial results", MAX_SCAN_SECONDS);
     }
 
-    // Flatten and truncate
+    // Flatten primary matches
     let mut matches: Vec<Match> = per_pattern_matches
         .into_iter()
         .flatten()
         .take(config.max_matches)
         .collect();
+
+    // Second pass: try alternative decodings (base32/64, ROT13, reversal)
+    // Only if primary scan found few/no matches and text is short enough
+    if matches.len() < 3 && text.len() < 4096 && start.elapsed().as_secs() < MAX_SCAN_SECONDS / 2
+    {
+        let alternatives = normalize::generate_alternative_decodings(&normalized);
+        for alt_text in &alternatives {
+            if alt_text.is_empty() {
+                continue;
+            }
+            let (alt_norm, _) = normalize::normalize_text(alt_text);
+            for cp in compiled.iter() {
+                if let Some(ref cats) = config.categories {
+                    if !cats.contains(cp.def.category) {
+                        continue;
+                    }
+                }
+                for mat in cp.regex.find_iter(&alt_norm) {
+                    let matched_text = mat.as_str();
+                    if cp.def.category == "Credit Card Numbers" && !is_luhn_valid(matched_text) {
+                        continue;
+                    }
+                    let confidence = compute_confidence(cp.def.sub_category, false, false);
+                    if confidence < config.min_confidence {
+                        continue;
+                    }
+                    matches.push(Match::new(
+                        matched_text.to_string(),
+                        cp.def.category.to_string(),
+                        cp.def.sub_category.to_string(),
+                        false,
+                        confidence * 0.9, // slightly lower confidence for alternative decoding
+                        (0, text.len()),
+                        false,
+                    ));
+                }
+            }
+        }
+    }
 
     // Deduplicate overlapping matches
     if config.deduplicate {
