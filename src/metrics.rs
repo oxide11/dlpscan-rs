@@ -81,6 +81,69 @@ fn get_metrics_callback() -> Option<MetricsCallback> {
 }
 
 // ---------------------------------------------------------------------------
+// Prometheus integration
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "metrics")]
+pub mod prom {
+    use once_cell::sync::Lazy;
+    use prometheus::{
+        register_counter_vec, register_gauge, register_histogram, CounterVec, Gauge, Histogram,
+    };
+
+    /// Total HTTP requests by method, path, and status.
+    pub static HTTP_REQUESTS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
+        register_counter_vec!(
+            "dlpscan_requests_total",
+            "Total HTTP requests",
+            &["method", "path", "status"]
+        )
+        .expect("failed to register dlpscan_requests_total")
+    });
+
+    /// HTTP request duration in seconds.
+    pub static HTTP_REQUEST_DURATION: Lazy<Histogram> = Lazy::new(|| {
+        register_histogram!(
+            "dlpscan_request_duration_seconds",
+            "HTTP request duration in seconds",
+            vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0]
+        )
+        .expect("failed to register dlpscan_request_duration_seconds")
+    });
+
+    /// Total scan matches found.
+    pub static SCAN_MATCHES_TOTAL: Lazy<prometheus::Counter> = Lazy::new(|| {
+        prometheus::register_counter!(
+            "dlpscan_scan_matches_total",
+            "Total sensitive data matches found"
+        )
+        .expect("failed to register dlpscan_scan_matches_total")
+    });
+
+    /// Currently active connections.
+    pub static ACTIVE_CONNECTIONS: Lazy<Gauge> = Lazy::new(|| {
+        register_gauge!(
+            "dlpscan_active_connections",
+            "Number of active HTTP connections"
+        )
+        .expect("failed to register dlpscan_active_connections")
+    });
+
+    /// Record an HTTP request in Prometheus metrics.
+    pub fn record_request(method: &str, path: &str, status: &str, duration_secs: f64) {
+        HTTP_REQUESTS_TOTAL
+            .with_label_values(&[method, path, status])
+            .inc();
+        HTTP_REQUEST_DURATION.observe(duration_secs);
+    }
+
+    /// Record scan match count.
+    pub fn record_matches(count: usize) {
+        SCAN_MATCHES_TOTAL.inc_by(count as f64);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

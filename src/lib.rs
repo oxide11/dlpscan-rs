@@ -25,6 +25,7 @@ pub mod pipeline;
 pub mod plugins;
 pub mod policy;
 pub mod profiles;
+pub mod rbac;
 pub mod scanner;
 pub mod scoring;
 pub mod siem;
