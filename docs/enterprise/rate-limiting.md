@@ -1,39 +1,52 @@
 # Rate Limiting
 
-Thread-safe token bucket rate limiter for API and service protection.
+Per-client sliding-window rate limiter built into the API server.
 
-## Usage
+## Overview
 
-```python
-from dlpscan.rate_limit import RateLimiter, rate_limited
-
-limiter = RateLimiter(max_requests=100, window_seconds=60)
-
-# Check before scanning
-if limiter.check():
-    result = guard.scan(text)
-
-# Or use as decorator
-@rate_limited(limiter)
-def scan_input(text):
-    return guard.scan(text)
-```
+The rate limiter is implemented directly in the API layer (`src/api.rs`)
+using a `HashMap<String, Vec<Instant>>` to track request timestamps per
+client. It uses a sliding-window algorithm: timestamps older than the
+window are pruned on each check.
 
 ## Configuration
 
-```python
-limiter = RateLimiter(
-    max_requests=100,      # Max requests per window
-    window_seconds=60,     # Time window in seconds
-    max_payload_bytes=1_000_000,  # Max payload size
-)
+Set the `DLPSCAN_API_RATE_LIMIT` environment variable to configure the
+maximum number of requests per minute per client (default: 100):
+
+```bash
+export DLPSCAN_API_RATE_LIMIT=100  # 100 requests per minute per client
 ```
 
-## Global Default
+## Behavior
 
-```python
-from dlpscan.rate_limit import set_default_limiter, get_default_limiter
+When a client exceeds the rate limit, the API returns:
 
-set_default_limiter(RateLimiter(max_requests=200, window_seconds=60))
-limiter = get_default_limiter()
+- HTTP status `429 Too Many Requests`
+- The `dlpscan_rate_limit_rejections_total` Prometheus metric is incremented
+
+The client is identified by IP address (or the `X-Forwarded-For` header
+when behind a reverse proxy).
+
+## Example
+
+```bash
+# Normal request
+curl -X POST http://localhost:8000/v1/scan \
+  -H "X-API-Key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "test data"}'
+
+# After exceeding the limit
+# HTTP/1.1 429 Too Many Requests
+# {"error": "Rate limit exceeded"}
+```
+
+## Monitoring
+
+Track rate limit rejections via the Prometheus metrics endpoint:
+
+```bash
+curl http://localhost:8000/metrics | grep rate_limit
+# dlpscan_rate_limit_rejections_total 5
 ```

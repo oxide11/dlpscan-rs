@@ -1,35 +1,63 @@
 # RBAC
 
-Role-based access control for detokenization operations.
+Role-based access control for API operations.
 
 ## Roles & Permissions
 
-| Role | DETOKENIZE | EXPORT_VAULT | IMPORT_VAULT | CLEAR_VAULT |
-|------|:---:|:---:|:---:|:---:|
-| ADMIN | Yes | Yes | Yes | Yes |
-| ANALYST | Yes | Yes | No | No |
-| OPERATOR | Yes | No | No | No |
-| VIEWER | No | No | No | No |
+| Role | Scan | BatchScan | ManagePatterns | Detokenize | ExportVault | ViewStatus |
+|------|:----:|:---------:|:--------------:|:----------:|:-----------:|:----------:|
+| Admin | Yes | Yes | Yes | Yes | Yes | Yes |
+| Analyst | Yes | Yes | No | Yes | No | Yes |
+| Operator | Yes | Yes | No | No | No | Yes |
+| Viewer | No | No | No | No | No | Yes |
 
-## Usage
+## How It Works
 
-```python
-from dlpscan import TokenVault, Role, RBACPolicy, SecureTokenVault
+Roles are extracted from the `X-Role` HTTP header on each request. The
+`dlpscan::rbac` module defines the `Role` and `Permission` enums and
+provides helper functions.
 
-vault = TokenVault()
-policy = RBACPolicy(
-    default_role=Role.VIEWER,
-    role_overrides={"admin": Role.ADMIN, "analyst": Role.ANALYST},
-)
-secure = SecureTokenVault(vault=vault, policy=policy)
+```rust
+use dlpscan::rbac::{Role, Permission, role_has_permission, extract_role};
 
-# Tokenize (no permission check)
-token = secure.tokenize("4111111111111111", "Credit Card Numbers")
+// Check if a role has a specific permission
+assert!(role_has_permission(&Role::Admin, &Permission::ManagePatterns));
+assert!(role_has_permission(&Role::Analyst, &Permission::Scan));
+assert!(!role_has_permission(&Role::Viewer, &Permission::Scan));
 
-# Detokenize (requires DETOKENIZE permission)
-original = secure.detokenize(token, user_id="admin")     # Works
-# secure.detokenize(token, user_id="viewer")  # Raises PermissionDeniedError
+// Extract a role from an HTTP header value
+let role = extract_role(Some("analyst"));
+assert_eq!(role, Role::Analyst);
 
-# Dynamic role assignment
-policy.set_role("new_user", Role.OPERATOR)
+// Unknown or missing header defaults to Viewer
+let role = extract_role(None);
+assert_eq!(role, Role::Viewer);
 ```
+
+## API Usage
+
+Include the `X-Role` header in your requests:
+
+```bash
+# Admin can manage patterns
+curl -X POST http://localhost:8000/v1/patterns \
+  -H "X-API-Key: your-key" \
+  -H "X-Role: admin" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "internal-id", "pattern": "PROJ-\\d+", "category": "Internal", "confidence": 0.9}'
+
+# Analyst can scan and detokenize
+curl -X POST http://localhost:8000/v1/scan \
+  -H "X-API-Key: your-key" \
+  -H "X-Role: analyst" \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Card: 4111111111111111", "action": "redact"}'
+
+# Viewer can only check status
+curl http://localhost:8000/health \
+  -H "X-API-Key: your-key" \
+  -H "X-Role: viewer"
+```
+
+Requests that require a permission the role does not have will receive a
+`403 Forbidden` response.
