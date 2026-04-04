@@ -701,6 +701,89 @@ fn base64_decode_bytes(input: &[u8]) -> Option<Vec<u8>> {
     Some(result)
 }
 
+/// Morse code lookup table: morse pattern → ASCII character.
+static MORSE_TABLE: Lazy<HashMap<&'static str, char>> = Lazy::new(|| {
+    [
+        // Letters
+        (".-", 'A'), ("-...", 'B'), ("-.-.", 'C'), ("-..", 'D'), (".", 'E'),
+        ("..-.", 'F'), ("--.", 'G'), ("....", 'H'), ("..", 'I'), (".---", 'J'),
+        ("-.-", 'K'), (".-..", 'L'), ("--", 'M'), ("-.", 'N'), ("---", 'O'),
+        (".--.", 'P'), ("--.-", 'Q'), (".-.", 'R'), ("...", 'S'), ("-", 'T'),
+        ("..-", 'U'), ("...-", 'V'), (".--", 'W'), ("-..-", 'X'), ("-.--", 'Y'),
+        ("--..", 'Z'),
+        // Digits
+        ("-----", '0'), (".----", '1'), ("..---", '2'), ("...--", '3'),
+        ("....-", '4'), (".....", '5'), ("-....", '6'), ("--...", '7'),
+        ("---..", '8'), ("----.", '9'),
+        // Common punctuation
+        (".-.-.-", '.'), ("--..--", ','), ("..--..", '?'), ("-....-", '-'),
+        (".--.-.", '@'), ("---...", ':'),
+    ]
+    .into_iter()
+    .collect()
+});
+
+/// Decode morse code text to plaintext.
+///
+/// Expects characters separated by spaces and words separated by `/`, `|`, or
+/// 3+ spaces. Returns None if the input doesn't look like valid morse code.
+fn decode_morse(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.len() < 3 {
+        return None;
+    }
+
+    // Quick check: morse code only contains '.', '-', ' ', '/', '|'
+    if !trimmed
+        .bytes()
+        .all(|b| b == b'.' || b == b'-' || b == b' ' || b == b'/' || b == b'|')
+    {
+        return None;
+    }
+
+    // Must have at least one dot or dash
+    if !trimmed.bytes().any(|b| b == b'.' || b == b'-') {
+        return None;
+    }
+
+    // Split into words (separated by / or |), then chars (separated by space)
+    let mut result = String::new();
+    let words: Vec<&str> = if trimmed.contains('/') {
+        trimmed.split('/').collect()
+    } else if trimmed.contains('|') {
+        trimmed.split('|').collect()
+    } else {
+        // Try splitting on 3+ spaces for word boundaries
+        trimmed.split("   ").collect()
+    };
+
+    let mut decoded_count = 0;
+    let mut total_symbols = 0;
+
+    for (wi, word) in words.iter().enumerate() {
+        if wi > 0 {
+            result.push(' ');
+        }
+        let chars: Vec<&str> = word.trim().split(' ').filter(|s| !s.is_empty()).collect();
+        for symbol in &chars {
+            total_symbols += 1;
+            if let Some(&ch) = MORSE_TABLE.get(symbol) {
+                result.push(ch);
+                decoded_count += 1;
+            } else {
+                return None; // Invalid morse symbol → not morse code
+            }
+        }
+    }
+
+    // Require at least 3 decoded symbols to avoid false positives
+    if decoded_count < 3 || total_symbols < 3 {
+        return None;
+    }
+
+    Some(result)
+}
+
 /// Apply ROT13 transformation to alphabetic characters.
 fn apply_rot13(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
     let bytes = input.as_bytes();
@@ -846,6 +929,11 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     let leet_decoded = normalize_leet(text);
     if leet_decoded != text {
         alternatives.push(leet_decoded);
+    }
+
+    // Try morse code decode
+    if let Some(decoded) = decode_morse(text) {
+        alternatives.push(decoded);
     }
 
     alternatives
@@ -1265,5 +1353,50 @@ mod tests {
         let alts = generate_alternative_decodings("hello world");
         // Should produce alternatives (ROT13, reversal) but not base32/64
         assert!(alts.iter().all(|a| a != "hello world"));
+    }
+
+    // === Morse code tests ===
+
+    #[test]
+    fn test_morse_decode_digits() {
+        // "123" in morse: .---- ..--- ...--
+        let alts = generate_alternative_decodings(".---- ..--- ...--");
+        assert!(alts.iter().any(|a| a == "123"));
+    }
+
+    #[test]
+    fn test_morse_decode_ssn() {
+        // "123-45-6789" — digits and hyphen in morse, words separated by /
+        let morse = ".---- ..--- ...-- -....- ....- ..... -....- -.... --... ---.. ----.";
+        let alts = generate_alternative_decodings(morse);
+        assert!(alts.iter().any(|a| a == "123-45-6789"), "got: {:?}", alts);
+    }
+
+    #[test]
+    fn test_morse_decode_letters() {
+        // "HELLO" in morse
+        let alts = generate_alternative_decodings(".... . .-.. .-.. ---");
+        assert!(alts.iter().any(|a| a == "HELLO"));
+    }
+
+    #[test]
+    fn test_morse_decode_with_word_separator() {
+        // "AB CD" with / as word separator
+        let alts = generate_alternative_decodings(".- -...|-.-.  -..");
+        assert!(alts.iter().any(|a| a == "AB CD"));
+    }
+
+    #[test]
+    fn test_morse_rejects_normal_text() {
+        // Normal text should NOT be decoded as morse
+        assert!(decode_morse("hello world").is_none());
+        assert!(decode_morse("123-45-6789").is_none());
+        assert!(decode_morse("short").is_none());
+    }
+
+    #[test]
+    fn test_morse_rejects_too_short() {
+        assert!(decode_morse(".-").is_none()); // only 1 symbol
+        assert!(decode_morse(". .").is_none()); // only 2 symbols
     }
 }
