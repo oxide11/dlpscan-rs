@@ -1,0 +1,4767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>evadex Comparison Report</title>
+<style>
+  :root{--bg:#0f1117;--surface:#1a1d27;--border:#2a2d3a;--text:#e2e8f0;--muted:#8892a4;--green:#22c55e;--red:#ef4444;--orange:#f97316;--blue:#3b82f6;--accent:#6366f1;--yellow:#eab308}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;line-height:1.5;padding:24px}
+  h1{font-size:24px;font-weight:700;color:var(--accent);margin-bottom:4px}
+  h2{font-size:16px;font-weight:600;color:var(--text);margin:28px 0 12px}
+  .meta{color:var(--muted);font-size:12px;margin-bottom:24px}
+  .cards{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:24px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px 24px;min-width:140px}
+  .card-label{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:4px}
+  .card-value{font-size:26px;font-weight:700}
+  .card.pos .card-value{color:var(--green)}
+  .card.neg .card-value{color:var(--red)}
+  .card.neu .card-value{color:var(--text)}
+  .card.rate-a .card-value{color:var(--blue)}
+  .card.rate-b .card-value{color:var(--accent)}
+  table{width:100%;border-collapse:collapse;background:var(--surface);border-radius:8px;overflow:hidden;border:1px solid var(--border);margin-bottom:24px}
+  th{background:#12151f;text-align:left;padding:10px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--border);font-weight:600}
+  td{padding:9px 12px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:rgba(255,255,255,.03)}
+  .num{text-align:right}
+  .pos{color:var(--green)}
+  .neg{color:var(--red)}
+  .neu{color:var(--muted)}
+  .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600}
+  .badge-pass{background:rgba(34,197,94,.15);color:var(--green)}
+  .badge-fail{background:rgba(239,68,68,.15);color:var(--red)}
+  .badge-error{background:rgba(249,115,22,.15);color:var(--orange)}
+  .badge-absent{background:rgba(136,146,164,.15);color:var(--muted)}
+  code{font-family:monospace;font-size:12px;background:#12151f;padding:1px 5px;border-radius:3px}
+</style>
+</head>
+<body>
+<h1>evadex Comparison Report</h1>
+<div class="meta">python-1.6.0 vs rust-2.0.0 &bull; Generated 2026-04-04 01:53 UTC</div>
+
+<div class="cards">
+  <div class="card rate-a"><div class="card-label">python-1.6.0 rate</div><div class="card-value">86.0%</div></div>
+  <div class="card rate-b"><div class="card-label">rust-2.0.0 rate</div><div class="card-value">68.7%</div></div>
+  <div class="card neg">
+    <div class="card-label">Delta</div>
+    <div class="card-value">-17.3pp</div>
+  </div>
+  <div class="card neu"><div class="card-label">Variant diffs</div><div class="card-value">385</div></div>
+</div>
+
+<h2>Per-Category</h2>
+<table>
+<thead><tr>
+  <th>Category</th>
+  <th class="num">python-1.6.0 Pass</th><th class="num">python-1.6.0%</th>
+  <th class="num">rust-2.0.0 Pass</th><th class="num">rust-2.0.0%</th>
+  <th class="num">Delta</th>
+</tr></thead>
+<tbody>
+
+<tr>
+  <td><code>aba_routing</code></td>
+  <td class="num">78</td><td class="num">90.7%</td>
+  <td class="num">61</td><td class="num">70.9%</td>
+  <td class="num neg">
+    -19.8pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>au_tfn</code></td>
+  <td class="num">80</td><td class="num">92.0%</td>
+  <td class="num">20</td><td class="num">23.0%</td>
+  <td class="num neg">
+    -69.0pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>bitcoin</code></td>
+  <td class="num">40</td><td class="num">51.3%</td>
+  <td class="num">33</td><td class="num">42.3%</td>
+  <td class="num neg">
+    -9.0pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>credit_card</code></td>
+  <td class="num">603</td><td class="num">90.0%</td>
+  <td class="num">512</td><td class="num">76.4%</td>
+  <td class="num neg">
+    -13.6pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>de_tax_id</code></td>
+  <td class="num">78</td><td class="num">89.7%</td>
+  <td class="num">61</td><td class="num">70.1%</td>
+  <td class="num neg">
+    -19.6pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>email</code></td>
+  <td class="num">43</td><td class="num">66.2%</td>
+  <td class="num">38</td><td class="num">58.5%</td>
+  <td class="num neg">
+    -7.7pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>ethereum</code></td>
+  <td class="num">39</td><td class="num">50.6%</td>
+  <td class="num">31</td><td class="num">40.3%</td>
+  <td class="num neg">
+    -10.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>fr_insee</code></td>
+  <td class="num">77</td><td class="num">90.6%</td>
+  <td class="num">65</td><td class="num">76.5%</td>
+  <td class="num neg">
+    -14.1pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>iban</code></td>
+  <td class="num">362</td><td class="num">91.0%</td>
+  <td class="num">309</td><td class="num">77.6%</td>
+  <td class="num neg">
+    -13.4pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>phone</code></td>
+  <td class="num">87</td><td class="num">91.6%</td>
+  <td class="num">67</td><td class="num">70.5%</td>
+  <td class="num neg">
+    -21.1pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>sin</code></td>
+  <td class="num">90</td><td class="num">92.8%</td>
+  <td class="num">68</td><td class="num">70.1%</td>
+  <td class="num neg">
+    -22.7pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>ssn</code></td>
+  <td class="num">88</td><td class="num">90.7%</td>
+  <td class="num">64</td><td class="num">66.0%</td>
+  <td class="num neg">
+    -24.7pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>swift_bic</code></td>
+  <td class="num">39</td><td class="num">61.9%</td>
+  <td class="num">33</td><td class="num">52.4%</td>
+  <td class="num neg">
+    -9.5pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>us_passport</code></td>
+  <td class="num">78</td><td class="num">90.7%</td>
+  <td class="num">61</td><td class="num">70.9%</td>
+  <td class="num neg">
+    -19.8pp
+  </td>
+</tr>
+
+</tbody>
+</table>
+
+<h2>Per-Technique (changed only)</h2>
+<table>
+<thead><tr>
+  <th>Generator</th><th>Technique</th>
+  <th class="num">python-1.6.0%</th>
+  <th class="num">rust-2.0.0%</th>
+  <th class="num">Delta</th>
+</tr></thead>
+<tbody>
+
+<tr>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -100.0pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -100.0pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding_digits</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -100.0pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -100.0pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>leetspeak</code></td>
+  <td><code>leet_aggressive</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -100.0pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>leetspeak</code></td>
+  <td><code>leet_moderate</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -100.0pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -100.0pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -100.0pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -100.0pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td class="num">91.3%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -91.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td class="num">91.3%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -91.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td class="num">91.3%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -91.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td class="num">91.3%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -91.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td class="num">87.0%</td>
+  <td class="num">17.4%</td>
+  <td class="num neg">
+    -69.6pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td class="num">82.6%</td>
+  <td class="num">17.4%</td>
+  <td class="num neg">
+    -65.2pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>encoding</code></td>
+  <td><code>base32_no_padding</code></td>
+  <td class="num">63.2%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -63.2pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>structural</code></td>
+  <td><code>noise_embedded</code></td>
+  <td class="num">65.2%</td>
+  <td class="num">17.4%</td>
+  <td class="num neg">
+    -47.8pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>structural</code></td>
+  <td><code>partial_first_half</code></td>
+  <td class="num">82.6%</td>
+  <td class="num">39.1%</td>
+  <td class="num neg">
+    -43.5pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>splitting</code></td>
+  <td><code>json_field_split</code></td>
+  <td class="num">82.6%</td>
+  <td class="num">52.2%</td>
+  <td class="num neg">
+    -30.4pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>splitting</code></td>
+  <td><code>mid_line_break</code></td>
+  <td class="num">82.6%</td>
+  <td class="num">52.2%</td>
+  <td class="num neg">
+    -30.4pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>structural</code></td>
+  <td><code>partial_last_half</code></td>
+  <td class="num">82.6%</td>
+  <td class="num">52.2%</td>
+  <td class="num neg">
+    -30.4pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>encoding</code></td>
+  <td><code>base64_partial</code></td>
+  <td class="num">21.7%</td>
+  <td class="num">0.0%</td>
+  <td class="num neg">
+    -21.7pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>structural</code></td>
+  <td><code>partial_minus_one</code></td>
+  <td class="num">95.7%</td>
+  <td class="num">78.3%</td>
+  <td class="num neg">
+    -17.4pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>encoding</code></td>
+  <td><code>hex_uppercase</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">87.0%</td>
+  <td class="num neg">
+    -13.0pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>encoding</code></td>
+  <td><code>reversed_full</code></td>
+  <td class="num">91.3%</td>
+  <td class="num">78.3%</td>
+  <td class="num neg">
+    -13.0pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>structural</code></td>
+  <td><code>overlapping_prefix</code></td>
+  <td class="num">39.1%</td>
+  <td class="num">26.1%</td>
+  <td class="num neg">
+    -13.0pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>encoding</code></td>
+  <td><code>rot13</code></td>
+  <td class="num">75.0%</td>
+  <td class="num">62.5%</td>
+  <td class="num neg">
+    -12.5pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>encoding</code></td>
+  <td><code>reversed_group_order</code></td>
+  <td class="num">87.0%</td>
+  <td class="num">78.3%</td>
+  <td class="num neg">
+    -8.7pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>structural</code></td>
+  <td><code>left_pad_zeros</code></td>
+  <td class="num">91.3%</td>
+  <td class="num">82.6%</td>
+  <td class="num neg">
+    -8.7pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>soft_hyphen</code></td>
+  <td><code>mixed_shy_wj</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">94.7%</td>
+  <td class="num neg">
+    -5.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>soft_hyphen</code></td>
+  <td><code>shy_between_every_char</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">94.7%</td>
+  <td class="num neg">
+    -5.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>soft_hyphen</code></td>
+  <td><code>wj_between_every_char</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">94.7%</td>
+  <td class="num neg">
+    -5.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_arabic_indic</code></td>
+  <td class="num">90.5%</td>
+  <td class="num">85.7%</td>
+  <td class="num neg">
+    -4.8pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_bengali</code></td>
+  <td class="num">90.5%</td>
+  <td class="num">85.7%</td>
+  <td class="num neg">
+    -4.8pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_devanagari</code></td>
+  <td class="num">90.5%</td>
+  <td class="num">85.7%</td>
+  <td class="num neg">
+    -4.8pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_extended_arabic_indic</code></td>
+  <td class="num">90.5%</td>
+  <td class="num">85.7%</td>
+  <td class="num neg">
+    -4.8pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_khmer</code></td>
+  <td class="num">90.5%</td>
+  <td class="num">85.7%</td>
+  <td class="num neg">
+    -4.8pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_mixed_alternating</code></td>
+  <td class="num">90.5%</td>
+  <td class="num">85.7%</td>
+  <td class="num neg">
+    -4.8pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_mixed_partial</code></td>
+  <td class="num">90.5%</td>
+  <td class="num">85.7%</td>
+  <td class="num neg">
+    -4.8pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_mongolian</code></td>
+  <td class="num">90.5%</td>
+  <td class="num">85.7%</td>
+  <td class="num neg">
+    -4.8pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_myanmar</code></td>
+  <td class="num">90.5%</td>
+  <td class="num">85.7%</td>
+  <td class="num neg">
+    -4.8pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_nko</code></td>
+  <td class="num">90.5%</td>
+  <td class="num">85.7%</td>
+  <td class="num neg">
+    -4.8pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_thai</code></td>
+  <td class="num">90.5%</td>
+  <td class="num">85.7%</td>
+  <td class="num neg">
+    -4.8pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_tibetan</code></td>
+  <td class="num">90.5%</td>
+  <td class="num">85.7%</td>
+  <td class="num neg">
+    -4.8pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>encoding</code></td>
+  <td><code>reversed_within_groups</code></td>
+  <td class="num">87.0%</td>
+  <td class="num">82.6%</td>
+  <td class="num neg">
+    -4.4pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>structural</code></td>
+  <td><code>right_pad_zeros</code></td>
+  <td class="num">87.0%</td>
+  <td class="num">82.6%</td>
+  <td class="num neg">
+    -4.4pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>bidirectional</code></td>
+  <td><code>lro_wrap</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>bidirectional</code></td>
+  <td><code>rle_embed</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>bidirectional</code></td>
+  <td><code>rli_isolate</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>bidirectional</code></td>
+  <td><code>rlo_wrap</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>context_injection</code></td>
+  <td><code>audit_note</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>context_injection</code></td>
+  <td><code>email_body</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>context_injection</code></td>
+  <td><code>json_record</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>context_injection</code></td>
+  <td><code>log_line</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>context_injection</code></td>
+  <td><code>multiline_form</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>context_injection</code></td>
+  <td><code>sentence_payment_request</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>context_injection</code></td>
+  <td><code>sentence_reference</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>context_injection</code></td>
+  <td><code>xml_record</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>encoding</code></td>
+  <td><code>hex_lowercase</code></td>
+  <td class="num">91.3%</td>
+  <td class="num">87.0%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>splitting</code></td>
+  <td><code>prefix_noise</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>splitting</code></td>
+  <td><code>suffix_noise</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>splitting</code></td>
+  <td><code>xml_tag_injection</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>structural</code></td>
+  <td><code>left_pad_spaces</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>structural</code></td>
+  <td><code>repeated</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>structural</code></td>
+  <td><code>right_pad_spaces</code></td>
+  <td class="num">100.0%</td>
+  <td class="num">95.7%</td>
+  <td class="num neg">
+    -4.3pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>bidirectional</code></td>
+  <td><code>alm_between_chars</code></td>
+  <td class="num">91.3%</td>
+  <td class="num">95.7%</td>
+  <td class="num pos">
+    +4.4pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>unicode_encoding</code></td>
+  <td><code>zero_width_injection</code></td>
+  <td class="num">91.3%</td>
+  <td class="num">95.7%</td>
+  <td class="num pos">
+    +4.4pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>unicode_encoding</code></td>
+  <td><code>fullwidth_digits</code></td>
+  <td class="num">90.5%</td>
+  <td class="num">95.2%</td>
+  <td class="num pos">
+    +4.7pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>unicode_encoding</code></td>
+  <td><code>homoglyph_substitution</code></td>
+  <td class="num">0.0%</td>
+  <td class="num">8.7%</td>
+  <td class="num pos">
+    +8.7pp
+  </td>
+</tr>
+
+<tr>
+  <td><code>bidirectional</code></td>
+  <td><code>mid_rlo_inject</code></td>
+  <td class="num">82.6%</td>
+  <td class="num">95.7%</td>
+  <td class="num pos">
+    +13.1pp
+  </td>
+</tr>
+
+</tbody>
+</table>
+
+<h2>Variant Diffs (385 changed)</h2>
+<table>
+<thead><tr>
+  <th>Payload</th><th>Category</th><th>Generator</th><th>Technique</th><th>Strategy</th>
+  <th>python-1.6.0</th><th>rust-2.0.0</th>
+</tr></thead>
+<tbody>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base64_partial</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_uppercase</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>splitting</code></td>
+  <td><code>json_field_split</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>splitting</code></td>
+  <td><code>mid_line_break</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>structural</code></td>
+  <td><code>noise_embedded</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_first_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_last_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US phone number</td>
+  <td><code>phone</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_no_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>splitting</code></td>
+  <td><code>json_field_split</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>splitting</code></td>
+  <td><code>mid_line_break</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>structural</code></td>
+  <td><code>noise_embedded</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_first_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_last_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>ABA routing number</td>
+  <td><code>aba_routing</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_no_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base64_partial</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>splitting</code></td>
+  <td><code>json_field_split</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>splitting</code></td>
+  <td><code>mid_line_break</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>structural</code></td>
+  <td><code>noise_embedded</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>structural</code></td>
+  <td><code>overlapping_prefix</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_first_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_last_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_minus_one</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Canada SIN</td>
+  <td><code>sin</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Ethereum address</td>
+  <td><code>ethereum</code></td>
+  <td><code>bidirectional</code></td>
+  <td><code>mid_rlo_inject</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-fail">fail</span></td>
+  <td><span class="badge badge-pass">pass</span></td>
+</tr>
+
+<tr>
+  <td>Ethereum address</td>
+  <td><code>ethereum</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Ethereum address</td>
+  <td><code>ethereum</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Ethereum address</td>
+  <td><code>ethereum</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Ethereum address</td>
+  <td><code>ethereum</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Ethereum address</td>
+  <td><code>ethereum</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Ethereum address</td>
+  <td><code>ethereum</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Ethereum address</td>
+  <td><code>ethereum</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>fullwidth_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-fail">fail</span></td>
+  <td><span class="badge badge-pass">pass</span></td>
+</tr>
+
+<tr>
+  <td>Ethereum address</td>
+  <td><code>ethereum</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Ethereum address</td>
+  <td><code>ethereum</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Ethereum address</td>
+  <td><code>ethereum</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Ethereum address</td>
+  <td><code>ethereum</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>bidirectional</code></td>
+  <td><code>alm_between_chars</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>bidirectional</code></td>
+  <td><code>lro_wrap</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>bidirectional</code></td>
+  <td><code>mid_rlo_inject</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>bidirectional</code></td>
+  <td><code>rle_embed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>bidirectional</code></td>
+  <td><code>rli_isolate</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>bidirectional</code></td>
+  <td><code>rlo_wrap</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>context_injection</code></td>
+  <td><code>audit_note</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>context_injection</code></td>
+  <td><code>email_body</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>context_injection</code></td>
+  <td><code>json_record</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>context_injection</code></td>
+  <td><code>log_line</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>context_injection</code></td>
+  <td><code>multiline_form</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>context_injection</code></td>
+  <td><code>sentence_payment_request</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>context_injection</code></td>
+  <td><code>sentence_reference</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>context_injection</code></td>
+  <td><code>xml_record</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base64_partial</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>reversed_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_arabic_indic</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_bengali</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_devanagari</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_extended_arabic_indic</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_khmer</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_mixed_alternating</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_mixed_partial</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_mongolian</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_myanmar</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_nko</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_thai</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>regional_digits</code></td>
+  <td><code>regional_tibetan</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>soft_hyphen</code></td>
+  <td><code>mixed_shy_wj</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>soft_hyphen</code></td>
+  <td><code>shy_between_every_char</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>soft_hyphen</code></td>
+  <td><code>wj_between_every_char</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>splitting</code></td>
+  <td><code>json_field_split</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>splitting</code></td>
+  <td><code>mid_line_break</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>splitting</code></td>
+  <td><code>prefix_noise</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>splitting</code></td>
+  <td><code>suffix_noise</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>splitting</code></td>
+  <td><code>xml_tag_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>structural</code></td>
+  <td><code>left_pad_spaces</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>structural</code></td>
+  <td><code>noise_embedded</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>structural</code></td>
+  <td><code>overlapping_prefix</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_first_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_last_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_minus_one</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>structural</code></td>
+  <td><code>repeated</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>structural</code></td>
+  <td><code>right_pad_spaces</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>fullwidth_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Australia TFN</td>
+  <td><code>au_tfn</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>zero_width_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_no_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base64_partial</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_uppercase</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>encoding</code></td>
+  <td><code>reversed_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>splitting</code></td>
+  <td><code>json_field_split</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>splitting</code></td>
+  <td><code>mid_line_break</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>structural</code></td>
+  <td><code>noise_embedded</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>structural</code></td>
+  <td><code>overlapping_prefix</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_first_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_last_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_minus_one</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US SSN</td>
+  <td><code>ssn</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Bitcoin legacy address</td>
+  <td><code>bitcoin</code></td>
+  <td><code>bidirectional</code></td>
+  <td><code>mid_rlo_inject</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-fail">fail</span></td>
+  <td><span class="badge badge-pass">pass</span></td>
+</tr>
+
+<tr>
+  <td>Bitcoin legacy address</td>
+  <td><code>bitcoin</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Bitcoin legacy address</td>
+  <td><code>bitcoin</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Bitcoin legacy address</td>
+  <td><code>bitcoin</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Bitcoin legacy address</td>
+  <td><code>bitcoin</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Bitcoin legacy address</td>
+  <td><code>bitcoin</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Bitcoin legacy address</td>
+  <td><code>bitcoin</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Bitcoin legacy address</td>
+  <td><code>bitcoin</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>fullwidth_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-fail">fail</span></td>
+  <td><span class="badge badge-pass">pass</span></td>
+</tr>
+
+<tr>
+  <td>Bitcoin legacy address</td>
+  <td><code>bitcoin</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Bitcoin legacy address</td>
+  <td><code>bitcoin</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Bitcoin legacy address</td>
+  <td><code>bitcoin</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France INSEE (NIR)</td>
+  <td><code>fr_insee</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France INSEE (NIR)</td>
+  <td><code>fr_insee</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France INSEE (NIR)</td>
+  <td><code>fr_insee</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France INSEE (NIR)</td>
+  <td><code>fr_insee</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France INSEE (NIR)</td>
+  <td><code>fr_insee</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France INSEE (NIR)</td>
+  <td><code>fr_insee</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France INSEE (NIR)</td>
+  <td><code>fr_insee</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France INSEE (NIR)</td>
+  <td><code>fr_insee</code></td>
+  <td><code>structural</code></td>
+  <td><code>noise_embedded</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France INSEE (NIR)</td>
+  <td><code>fr_insee</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France INSEE (NIR)</td>
+  <td><code>fr_insee</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France INSEE (NIR)</td>
+  <td><code>fr_insee</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France INSEE (NIR)</td>
+  <td><code>fr_insee</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Diners Club 14-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Diners Club 14-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Diners Club 14-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_no_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Diners Club 14-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Diners Club 14-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Diners Club 14-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Diners Club 14-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Diners Club 14-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Diners Club 14-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Diners Club 14-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>structural</code></td>
+  <td><code>noise_embedded</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Diners Club 14-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Diners Club 14-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Diners Club 14-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Diners Club 14-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_no_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>splitting</code></td>
+  <td><code>json_field_split</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>splitting</code></td>
+  <td><code>mid_line_break</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>structural</code></td>
+  <td><code>noise_embedded</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_first_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_last_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>US Passport number</td>
+  <td><code>us_passport</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>JCB 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>JCB 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>JCB 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_no_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>JCB 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>JCB 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>JCB 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>JCB 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>JCB 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>JCB 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>JCB 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>JCB 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>JCB 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>JCB 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Amex 15-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Amex 15-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Amex 15-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Amex 15-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Amex 15-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Amex 15-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Amex 15-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Amex 15-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Amex 15-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>structural</code></td>
+  <td><code>noise_embedded</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Amex 15-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Amex 15-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Amex 15-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Amex 15-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Visa 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Visa 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Visa 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_no_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Visa 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Visa 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Visa 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Visa 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Visa 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Visa 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Visa 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Visa 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Visa 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Visa 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Mastercard 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Mastercard 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Mastercard 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_no_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Mastercard 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Mastercard 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Mastercard 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Mastercard 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Mastercard 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Mastercard 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Mastercard 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>structural</code></td>
+  <td><code>noise_embedded</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Mastercard 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Mastercard 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Mastercard 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Mastercard 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Discover 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Discover 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Discover 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_no_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Discover 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Discover 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Discover 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Discover 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Discover 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Discover 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Discover 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Discover 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Discover 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Discover 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UnionPay 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UnionPay 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UnionPay 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UnionPay 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UnionPay 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UnionPay 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UnionPay 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UnionPay 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UnionPay 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UnionPay 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UnionPay 16-digit</td>
+  <td><code>credit_card</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_no_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>splitting</code></td>
+  <td><code>json_field_split</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>splitting</code></td>
+  <td><code>mid_line_break</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>structural</code></td>
+  <td><code>noise_embedded</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_first_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_last_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany Steuer-IdNr</td>
+  <td><code>de_tax_id</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>reversed_group_order</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_first_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Germany IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>bidirectional</code></td>
+  <td><code>alm_between_chars</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-fail">fail</span></td>
+  <td><span class="badge badge-pass">pass</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>bidirectional</code></td>
+  <td><code>mid_rlo_inject</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-fail">fail</span></td>
+  <td><span class="badge badge-pass">pass</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_hex_alphabet</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_no_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_standard</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>encoding</code></td>
+  <td><code>rot13</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>structural</code></td>
+  <td><code>left_pad_zeros</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_minus_one</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>structural</code></td>
+  <td><code>right_pad_zeros</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>homoglyph_substitution</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-fail">fail</span></td>
+  <td><span class="badge badge-pass">pass</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>SWIFT/BIC code</td>
+  <td><code>swift_bic</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>zero_width_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-fail">fail</span></td>
+  <td><span class="badge badge-pass">pass</span></td>
+</tr>
+
+<tr>
+  <td>Spain IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Spain IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base64_partial</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Spain IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Spain IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Spain IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Spain IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Spain IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Spain IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Spain IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Spain IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Spain IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Spain IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_first_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>France IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>delimiter</code></td>
+  <td><code>excessive_delimiter</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>reversed_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>reversed_group_order</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>encoding</code></td>
+  <td><code>reversed_within_groups</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>splitting</code></td>
+  <td><code>css_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>splitting</code></td>
+  <td><code>html_comment_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>splitting</code></td>
+  <td><code>whitespace_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>structural</code></td>
+  <td><code>left_pad_zeros</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>structural</code></td>
+  <td><code>partial_first_half</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>UK IBAN</td>
+  <td><code>iban</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>bidirectional</code></td>
+  <td><code>alm_between_chars</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-fail">fail</span></td>
+  <td><span class="badge badge-pass">pass</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>bidirectional</code></td>
+  <td><code>mid_rlo_inject</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-fail">fail</span></td>
+  <td><span class="badge badge-pass">pass</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>encoding</code></td>
+  <td><code>base32_no_padding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>encoding</code></td>
+  <td><code>double_url_encoding_digits</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_lowercase</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_spaced_bytes</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>encoding</code></td>
+  <td><code>hex_uppercase</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>leetspeak</code></td>
+  <td><code>leet_aggressive</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>leetspeak</code></td>
+  <td><code>leet_moderate</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>homoglyph_substitution</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-fail">fail</span></td>
+  <td><span class="badge badge-pass">pass</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>html_entity_decimal</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_full</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>url_percent_encoding_mixed</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-pass">pass</span></td>
+  <td><span class="badge badge-fail">fail</span></td>
+</tr>
+
+<tr>
+  <td>Email address</td>
+  <td><code>email</code></td>
+  <td><code>unicode_encoding</code></td>
+  <td><code>zero_width_injection</code></td>
+  <td><code>text</code></td>
+  <td><span class="badge badge-fail">fail</span></td>
+  <td><span class="badge badge-pass">pass</span></td>
+</tr>
+
+</tbody>
+</table>
+</body>
+</html>
