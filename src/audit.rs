@@ -218,10 +218,19 @@ impl AuditHandler for FileAuditHandler {
             }
         };
 
+        #[cfg(unix)]
+        let file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .mode(0o600)
+                .open(&self.path)
+        };
+        #[cfg(not(unix))]
         let file = OpenOptions::new()
             .create(true)
             .append(true)
-            .mode(0o600)
             .open(&self.path);
 
         match file {
@@ -236,10 +245,6 @@ impl AuditHandler for FileAuditHandler {
         }
     }
 }
-
-// Unix-specific: OpenOptions::mode
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 
 /// Calls a user-provided closure for each event.
 pub struct CallbackAuditHandler {

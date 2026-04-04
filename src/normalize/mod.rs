@@ -250,7 +250,7 @@ fn decode_percent_encoding(input: &str, in_offsets: &[usize]) -> (String, Vec<us
     decode_percent_single(&first, &first_off)
 }
 
-/// Decode HTML decimal character references (&#NNN; → char).
+/// Decode HTML numeric character references: decimal `&#NNN;` and hex `&#xHH;`.
 fn decode_html_entities(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
     if !input.contains("&#") {
         return (input.to_string(), in_offsets.to_vec());
@@ -264,6 +264,31 @@ fn decode_html_entities(input: &str, in_offsets: &[usize]) -> (String, Vec<usize
     while i < bytes.len() {
         if bytes[i] == b'&' && i + 2 < bytes.len() && bytes[i + 1] == b'#' {
             let entity_start = i;
+
+            // Try hex: &#xHH; or &#XHH;
+            if i + 3 < bytes.len() && (bytes[i + 2] == b'x' || bytes[i + 2] == b'X') {
+                let mut j = i + 3;
+                while j < bytes.len() && j < i + 12 && bytes[j].is_ascii_hexdigit() {
+                    j += 1;
+                }
+                if j > i + 3 && j < bytes.len() && bytes[j] == b';' {
+                    if let Ok(hex_str) = std::str::from_utf8(&bytes[i + 3..j]) {
+                        if let Ok(code) = u32::from_str_radix(hex_str, 16) {
+                            if let Some(ch) = char::from_u32(code) {
+                                let base_offset = orig_offset(in_offsets, entity_start);
+                                out.push(ch);
+                                for _ in 0..ch.len_utf8() {
+                                    offsets.push(base_offset);
+                                }
+                                i = j + 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Try decimal: &#NNN;
             let mut j = i + 2;
             while j < bytes.len() && bytes[j].is_ascii_digit() {
                 j += 1;
@@ -1083,6 +1108,19 @@ mod tests {
         // Some chars encoded, some plain
         let (result, _) = normalize_text("1&#50;3-&#52;5-6&#55;89");
         assert_eq!(result, "123-45-6789");
+    }
+
+    #[test]
+    fn test_html_entity_hex() {
+        // &#x31;&#x32;&#x33; → 123
+        let (result, _) = normalize_text("&#x31;&#x32;&#x33;");
+        assert_eq!(result, "123");
+    }
+
+    #[test]
+    fn test_html_entity_hex_uppercase() {
+        let (result, _) = normalize_text("&#X41;&#X42;&#X43;");
+        assert_eq!(result, "ABC");
     }
 
     #[test]
