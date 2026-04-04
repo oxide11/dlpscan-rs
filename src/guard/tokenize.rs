@@ -6,12 +6,30 @@ use std::collections::HashMap;
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Maximum entries per vault to prevent unbounded memory growth.
+const MAX_VAULT_ENTRIES: usize = 100_000;
+
 /// Reversible token vault — maps sensitive values to deterministic tokens.
 pub struct TokenVault {
     prefix: String,
     secret: Vec<u8>,
     forward: HashMap<String, String>,  // value → token
     reverse: HashMap<String, String>,  // token → value
+}
+
+/// Zero out the secret key when the vault is dropped.
+impl Drop for TokenVault {
+    fn drop(&mut self) {
+        // Overwrite secret bytes with zeros before deallocation
+        for byte in &mut self.secret {
+            // Use volatile write to prevent compiler from optimizing away
+            unsafe { std::ptr::write_volatile(byte, 0) };
+        }
+        self.secret.clear();
+        // Clear sensitive values from maps
+        self.forward.clear();
+        self.reverse.clear();
+    }
 }
 
 impl TokenVault {
@@ -33,9 +51,27 @@ impl TokenVault {
     }
 
     /// Tokenize a value, returning a deterministic token.
+    ///
+    /// Returns the existing token if the value was already tokenized.
+    /// Enforces a maximum entry count to prevent unbounded memory growth.
     pub fn tokenize(&mut self, value: &str, category: &str) -> String {
         if let Some(token) = self.forward.get(value) {
             return token.clone();
+        }
+
+        // Enforce size limit
+        if self.forward.len() >= MAX_VAULT_ENTRIES {
+            tracing::warn!(
+                "Token vault at capacity ({} entries), rejecting new tokenization",
+                MAX_VAULT_ENTRIES
+            );
+            // Return a hash-only token without storing the mapping
+            let mut mac =
+                HmacSha256::new_from_slice(&self.secret).expect("HMAC accepts any key length");
+            mac.update(value.as_bytes());
+            let result = mac.finalize().into_bytes();
+            let hash_hex: String = result.iter().take(16).map(|b| format!("{b:02x}")).collect();
+            return format!("{}_OVERFLOW_{hash_hex}", self.prefix);
         }
 
         let cat_abbrev = category

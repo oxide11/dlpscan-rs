@@ -119,6 +119,18 @@ fn default_action() -> String {
 // Server State
 // ---------------------------------------------------------------------------
 
+/// Maximum number of custom patterns a user can register.
+const MAX_CUSTOM_PATTERNS: usize = 100;
+
+/// Maximum regex pattern length in characters.
+const MAX_PATTERN_LENGTH: usize = 2048;
+
+/// Maximum number of token vaults.
+const MAX_VAULTS: usize = 1000;
+
+/// Vault time-to-live in seconds (1 hour).
+const VAULT_TTL_SECS: u64 = 3600;
+
 /// Shared application state for the API server.
 pub struct AppState {
     pub api_key: Option<String>,
@@ -132,9 +144,9 @@ pub struct VaultEntry {
     pub created_at: Instant,
 }
 
-/// Simple sliding-window rate limiter.
+/// Per-client sliding-window rate limiter.
 pub struct RateLimiter {
-    requests: Vec<Instant>,
+    clients: HashMap<String, Vec<Instant>>,
     max_requests: usize,
     window: std::time::Duration,
 }
@@ -142,33 +154,48 @@ pub struct RateLimiter {
 impl RateLimiter {
     pub fn new(max_requests: usize, window_secs: u64) -> Self {
         Self {
-            requests: Vec::new(),
+            clients: HashMap::new(),
             max_requests,
             window: std::time::Duration::from_secs(window_secs),
         }
     }
 
-    /// Check if a request is allowed. Returns true if under limit.
+    /// Check if a request from a client is allowed. Returns true if under limit.
     pub fn check(&mut self) -> bool {
+        self.check_client("global")
+    }
+
+    /// Check if a request from a specific client IP is allowed.
+    pub fn check_client(&mut self, client_id: &str) -> bool {
         let now = Instant::now();
-        self.requests.retain(|&t| now.duration_since(t) < self.window);
-        if self.requests.len() < self.max_requests {
-            self.requests.push(now);
+        let window = self.window;
+        let requests = self.clients.entry(client_id.to_string()).or_default();
+        requests.retain(|&t| now.duration_since(t) < window);
+        if requests.len() < self.max_requests {
+            requests.push(now);
             true
         } else {
             false
         }
     }
 
-    /// Remaining requests in the current window.
+    /// Remaining requests in the current window for the default client.
     pub fn remaining(&self) -> usize {
         let now = Instant::now();
-        let active = self
-            .requests
-            .iter()
-            .filter(|&&t| now.duration_since(t) < self.window)
-            .count();
+        let active = self.clients.get("global")
+            .map(|reqs| reqs.iter().filter(|&&t| now.duration_since(t) < self.window).count())
+            .unwrap_or(0);
         self.max_requests.saturating_sub(active)
+    }
+
+    /// Evict stale client entries to prevent memory growth.
+    pub fn cleanup(&mut self) {
+        let now = Instant::now();
+        let window = self.window;
+        self.clients.retain(|_, reqs| {
+            reqs.retain(|&t| now.duration_since(t) < window);
+            !reqs.is_empty()
+        });
     }
 }
 
@@ -201,7 +228,7 @@ impl ApiConfig {
     /// Load from environment variables.
     pub fn from_env() -> Self {
         Self {
-            host: std::env::var("DLPSCAN_API_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
+            host: std::env::var("DLPSCAN_API_HOST").unwrap_or_else(|_| "127.0.0.1".to_string()),
             port: std::env::var("DLPSCAN_API_PORT")
                 .ok()
                 .and_then(|p| p.parse().ok())
@@ -409,6 +436,15 @@ fn route_request(raw: &str, state: &AppState) -> (String, String) {
                     r#"{"detail":"Rate limit exceeded"}"#.to_string(),
                 );
             }
+            // Periodic cleanup of stale rate limiter entries
+            rl.cleanup();
+        }
+        // Evict expired vaults (TTL enforcement)
+        if let Ok(mut vaults) = state.vaults.write() {
+            let now = Instant::now();
+            vaults.retain(|_, entry| {
+                now.duration_since(entry.created_at).as_secs() < VAULT_TTL_SECS
+            });
         }
     }
 
@@ -426,14 +462,17 @@ fn route_request(raw: &str, state: &AppState) -> (String, String) {
                     "200 OK".to_string(),
                     serde_json::to_string(&resp).unwrap_or_default(),
                 ),
-                Err(e) => (
-                    "400 Bad Request".to_string(),
-                    serde_json::json!({"detail": e.to_string()}).to_string(),
-                ),
+                Err(e) => {
+                    tracing::warn!("Scan error: {}", e);
+                    (
+                        "400 Bad Request".to_string(),
+                        r#"{"detail":"Scan failed. Check input size and format."}"#.to_string(),
+                    )
+                }
             },
-            Err(e) => (
+            Err(_e) => (
                 "422 Unprocessable Entity".to_string(),
-                serde_json::json!({"detail": e.to_string()}).to_string(),
+                r#"{"detail":"Invalid request body"}"#.to_string(),
             ),
         },
         ("POST", "/v1/batch/scan") => match serde_json::from_str::<BatchScanRequest>(body) {
@@ -442,19 +481,42 @@ fn route_request(raw: &str, state: &AppState) -> (String, String) {
                     "200 OK".to_string(),
                     serde_json::to_string(&resp).unwrap_or_default(),
                 ),
-                Err(e) => (
-                    "400 Bad Request".to_string(),
-                    serde_json::json!({"detail": e.to_string()}).to_string(),
-                ),
+                Err(e) => {
+                    tracing::warn!("Batch scan error: {}", e);
+                    (
+                        "400 Bad Request".to_string(),
+                        r#"{"detail":"Batch scan failed. Check input size and format."}"#.to_string(),
+                    )
+                }
             },
-            Err(e) => (
+            Err(_e) => (
                 "422 Unprocessable Entity".to_string(),
-                serde_json::json!({"detail": e.to_string()}).to_string(),
+                r#"{"detail":"Invalid request body"}"#.to_string(),
             ),
         },
         ("POST", "/v1/patterns") => match serde_json::from_str::<PatternCreateRequest>(body) {
             Ok(req) => {
-                // Validate regex
+                // Enforce pattern length limit
+                if req.pattern.len() > MAX_PATTERN_LENGTH {
+                    return (
+                        "422 Unprocessable Entity".to_string(),
+                        serde_json::json!({"detail": format!(
+                            "Pattern too long: {} chars (max {})", req.pattern.len(), MAX_PATTERN_LENGTH
+                        )}).to_string(),
+                    );
+                }
+                // Enforce pattern count limit
+                if let Ok(patterns) = state.custom_patterns.read() {
+                    if patterns.len() >= MAX_CUSTOM_PATTERNS {
+                        return (
+                            "429 Too Many Requests".to_string(),
+                            serde_json::json!({"detail": format!(
+                                "Maximum custom patterns reached ({})", MAX_CUSTOM_PATTERNS
+                            )}).to_string(),
+                        );
+                    }
+                }
+                // Validate regex compiles
                 if regex::Regex::new(&req.pattern).is_err() {
                     return (
                         "422 Unprocessable Entity".to_string(),

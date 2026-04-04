@@ -1712,12 +1712,19 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
             .to_lowercase();
 
         if text_extensions.contains(&ext.as_str()) && entry.unpacked_size < 1_048_576 {
+            // Validate path BEFORE extraction to prevent TOCTOU
+            if sanitize_archive_path(tmp_dir.path(), &name).is_none() {
+                match header.skip() {
+                    Ok(next) => { cursor = next; continue; }
+                    Err(_) => break,
+                }
+            }
             total_extracted_size += entry.unpacked_size;
             extracted_count += 1;
             match header.extract_to(tmp_dir.path()) {
                 Ok(next) => {
                     cursor = next;
-                    // Sanitize path to prevent path traversal
+                    // Re-validate after extraction (defense in depth)
                     if let Some(dest) = sanitize_archive_path(tmp_dir.path(), &name) {
                         if let Ok(content) = std::fs::read_to_string(&dest) {
                             text.push_str(&format!("\n--- {} ---\n", name));
@@ -1755,6 +1762,14 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
 fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
     let mut text = String::new();
     let tmp_dir = tempfile::TempDir::new().map_err(|e| e.to_string())?;
+
+    // Check source file size first to catch obvious bombs.
+    // A 100:1 compression ratio is the maximum we'll tolerate.
+    let src_meta = std::fs::metadata(file_path).map_err(|e| e.to_string())?;
+    let max_decompressed = std::cmp::min(
+        src_meta.len().saturating_mul(100),
+        MAX_EXTRACT_TOTAL_SIZE,
+    );
 
     sevenz_rust::decompress_file(file_path, tmp_dir.path())
         .map_err(|e| format!("Failed to extract 7z: {}", e))?;
@@ -1798,11 +1813,15 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
             total_size += meta.len();
         }
     }
-    if total_size > MAX_EXTRACT_TOTAL_SIZE {
+    if total_size > max_decompressed {
+        // Clean up immediately before returning error
+        drop(files);
+        drop(tmp_dir);
         return Err(format!(
-            "7z archive exceeds maximum extracted size: {} bytes (max {} bytes)",
+            "7z archive exceeds maximum extracted size: {} bytes (max {} bytes). \
+             Possible zip bomb (compression ratio > 100:1).",
             total_size,
-            MAX_EXTRACT_TOTAL_SIZE
+            max_decompressed
         ));
     }
 

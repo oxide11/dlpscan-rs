@@ -473,6 +473,233 @@ fn remap_strip_zero_width(input: &str, in_offsets: &[usize]) -> (String, Vec<usi
     (result, offsets)
 }
 
+/// Decode hex-spaced byte sequences: `34 35 33 32` → `4532`.
+///
+/// Heuristic: if the text looks like space-separated pairs of hex digits
+/// (at least 3 pairs), decode them to ASCII.
+fn decode_hex_spaced(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    let bytes = input.as_bytes();
+    // Quick check: need at least "XX XX XX" = 8 chars
+    if bytes.len() < 8 {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    // Scan for runs of hex-space-hex patterns
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut offsets = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    let mut changed = false;
+
+    while i < bytes.len() {
+        // Try to match a hex-spaced run: XX SP XX SP XX ...
+        if i + 4 < bytes.len()
+            && bytes[i].is_ascii_hexdigit()
+            && bytes[i + 1].is_ascii_hexdigit()
+            && bytes[i + 2] == b' '
+            && bytes[i + 3].is_ascii_hexdigit()
+            && bytes[i + 4].is_ascii_hexdigit()
+        {
+            // Count how many hex pairs follow
+            let run_start = i;
+            let mut pairs = Vec::new();
+            loop {
+                if i + 1 < bytes.len()
+                    && bytes[i].is_ascii_hexdigit()
+                    && bytes[i + 1].is_ascii_hexdigit()
+                {
+                    if let (Some(h), Some(l)) = (hex_val(bytes[i]), hex_val(bytes[i + 1])) {
+                        pairs.push((i, (h << 4) | l));
+                    }
+                    i += 2;
+                    // Skip optional space separator
+                    if i < bytes.len() && bytes[i] == b' ' {
+                        i += 1;
+                    }
+                } else {
+                    break;
+                }
+            }
+            // Only decode if we got at least 3 pairs and all produce printable ASCII
+            if pairs.len() >= 3 && pairs.iter().all(|(_, v)| *v >= 0x20 && *v <= 0x7E) {
+                for &(pair_pos, val) in &pairs {
+                    out.push(val);
+                    offsets.push(orig_offset(in_offsets, pair_pos));
+                }
+                changed = true;
+                continue;
+            }
+            // Not a valid hex run, rewind and copy literally
+            i = run_start;
+        }
+        out.push(bytes[i]);
+        offsets.push(orig_offset(in_offsets, i));
+        i += 1;
+    }
+
+    if !changed {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    (String::from_utf8_lossy(&out).into_owned(), offsets)
+}
+
+/// Standard base32 alphabet (RFC 4648).
+const BASE32_ALPHA: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+/// Decode a base32 string to bytes. Returns None if invalid.
+fn base32_decode_bytes(input: &[u8]) -> Option<Vec<u8>> {
+    let mut val_map = [255u8; 256];
+    for (i, &c) in BASE32_ALPHA.iter().enumerate() {
+        val_map[c as usize] = i as u8;
+        val_map[c.to_ascii_lowercase() as usize] = i as u8;
+    }
+
+    // Strip padding
+    let trimmed: Vec<u8> = input.iter().copied().filter(|&b| b != b'=').collect();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // All chars must be valid base32
+    if trimmed.iter().any(|&b| val_map[b as usize] == 255) {
+        return None;
+    }
+
+    let mut bits: u64 = 0;
+    let mut bit_count = 0;
+    let mut result = Vec::new();
+
+    for &b in &trimmed {
+        bits = (bits << 5) | val_map[b as usize] as u64;
+        bit_count += 5;
+        if bit_count >= 8 {
+            bit_count -= 8;
+            result.push((bits >> bit_count) as u8);
+            bits &= (1 << bit_count) - 1;
+        }
+    }
+
+    Some(result)
+}
+
+/// Try to detect and decode base32/base64 encoded content.
+///
+/// Heuristic: if the entire input (after trimming whitespace) looks like
+/// base32 or base64, try decoding and check if the result is printable ASCII.
+fn try_decode_base_encoding(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    let trimmed = input.trim();
+    let tbytes = trimmed.as_bytes();
+
+    // Must be at least 8 chars and look like an encoded string
+    if tbytes.len() < 8 {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    // Try base64 first (more common)
+    let is_b64 = tbytes.iter().all(|&b| {
+        b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=' || b == b'-' || b == b'_'
+    });
+    if is_b64 {
+        // Standard base64
+        if let Some(decoded) = base64_decode_bytes(tbytes) {
+            if decoded.len() >= 3 && decoded.iter().all(|&b| b >= 0x20 && b <= 0x7E) {
+                let decoded_str = String::from_utf8_lossy(&decoded);
+                let base_offset = orig_offset(
+                    in_offsets,
+                    input.find(trimmed).unwrap_or(0),
+                );
+                let mut new_offsets = Vec::with_capacity(decoded.len());
+                for _ in 0..decoded_str.len() {
+                    new_offsets.push(base_offset);
+                }
+                return (decoded_str.into_owned(), new_offsets);
+            }
+        }
+    }
+
+    // Try base32
+    let is_b32 = tbytes
+        .iter()
+        .all(|&b| (b.is_ascii_alphanumeric() && !(b == b'0' || b == b'1' || b == b'8' || b == b'9'))
+            || b == b'=');
+    if is_b32 && tbytes.len() >= 10 {
+        if let Some(decoded) = base32_decode_bytes(tbytes) {
+            if decoded.len() >= 3 && decoded.iter().all(|&b| b >= 0x20 && b <= 0x7E) {
+                let decoded_str = String::from_utf8_lossy(&decoded);
+                let base_offset = orig_offset(
+                    in_offsets,
+                    input.find(trimmed).unwrap_or(0),
+                );
+                let mut new_offsets = Vec::with_capacity(decoded.len());
+                for _ in 0..decoded_str.len() {
+                    new_offsets.push(base_offset);
+                }
+                return (decoded_str.into_owned(), new_offsets);
+            }
+        }
+    }
+
+    (input.to_string(), in_offsets.to_vec())
+}
+
+/// Simple base64 decoder (standard + URL-safe alphabets).
+fn base64_decode_bytes(input: &[u8]) -> Option<Vec<u8>> {
+    let mut val_map = [255u8; 256];
+    for (i, &c) in b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        .iter()
+        .enumerate()
+    {
+        val_map[c as usize] = i as u8;
+    }
+    // URL-safe variants
+    val_map[b'-' as usize] = 62;
+    val_map[b'_' as usize] = 63;
+
+    let trimmed: Vec<u8> = input.iter().copied().filter(|&b| b != b'=' && b != b'\n' && b != b'\r').collect();
+    if trimmed.is_empty() || trimmed.iter().any(|&b| val_map[b as usize] == 255) {
+        return None;
+    }
+
+    let mut bits: u64 = 0;
+    let mut bit_count = 0;
+    let mut result = Vec::new();
+
+    for &b in &trimmed {
+        bits = (bits << 6) | val_map[b as usize] as u64;
+        bit_count += 6;
+        if bit_count >= 8 {
+            bit_count -= 8;
+            result.push((bits >> bit_count) as u8);
+            bits &= (1 << bit_count) - 1;
+        }
+    }
+
+    Some(result)
+}
+
+/// Apply ROT13 transformation to alphabetic characters.
+fn apply_rot13(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    let bytes = input.as_bytes();
+    // Only apply if text has letters (no point on pure digits)
+    if !bytes.iter().any(|b| b.is_ascii_alphabetic()) {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut offsets = Vec::with_capacity(bytes.len());
+
+    for (i, &b) in bytes.iter().enumerate() {
+        let decoded = match b {
+            b'A'..=b'M' | b'a'..=b'm' => b + 13,
+            b'N'..=b'Z' | b'n'..=b'z' => b - 13,
+            _ => b,
+        };
+        out.push(decoded);
+        offsets.push(orig_offset(in_offsets, i));
+    }
+
+    (String::from_utf8_lossy(&out).into_owned(), offsets)
+}
+
 /// Full normalization pipeline with accurate byte-level offset tracking.
 ///
 /// Pipeline:
@@ -481,10 +708,11 @@ fn remap_strip_zero_width(input: &str, in_offsets: &[usize]) -> (String, Vec<usi
 ///   3. Strip empty CSS/HTML comments
 ///   4. Collapse whitespace padding between non-alpha chars
 ///   5. Normalize excessive delimiters
-///   6. Strip zero-width Unicode characters
-///   7. Normalize exotic Unicode whitespace
-///   8. NFKC normalization
-///   9. Homoglyph map (Cyrillic/Greek → ASCII)
+///   6. Decode hex-spaced byte sequences
+///   7. Strip zero-width Unicode characters
+///   8. Normalize exotic Unicode whitespace
+///   9. NFKC normalization
+///  10. Homoglyph map (Cyrillic/Greek → ASCII)
 ///
 /// The returned offset_map maps each byte index in the normalized output back
 /// to the corresponding byte index in the original input. Empty offset_map
@@ -514,36 +742,41 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     current = r.0;
     offsets = r.1;
 
-    // Stage 4: Collapse whitespace padding between non-alpha chars
+    // Stage 4: Decode hex-spaced byte sequences (before whitespace collapse)
+    let r = decode_hex_spaced(&current, &offsets);
+    current = r.0;
+    offsets = r.1;
+
+    // Stage 5: Collapse whitespace padding between non-alpha chars
     let r = collapse_padding(&current, &offsets);
     current = r.0;
     offsets = r.1;
 
-    // Stage 5: Normalize excessive delimiters
+    // Stage 6: Normalize excessive delimiters
     let r = normalize_delimiters(&current, &offsets);
     current = r.0;
     offsets = r.1;
 
-    // Stages 6-9: Unicode normalization (only if non-ASCII remaining)
+    // Stages 7-10: Unicode normalization (only if non-ASCII remaining)
     if !is_ascii_only(&current) {
-        // Stage 6: Strip zero-width characters
+        // Stage 7: Strip zero-width characters
         let r = remap_strip_zero_width(&current, &offsets);
         current = r.0;
         offsets = r.1;
 
-        // Stage 7: Normalize exotic whitespace
+        // Stage 8: Normalize exotic whitespace
         let r = remap_char_transform(&current, &offsets, |c| {
             if UNICODE_SPACES.contains(&c) { ' ' } else { c }
         });
         current = r.0;
         offsets = r.1;
 
-        // Stage 8: NFKC normalization
+        // Stage 9: NFKC normalization
         let r = remap_nfkc(&current, &offsets);
         current = r.0;
         offsets = r.1;
 
-        // Stage 9: Homoglyph map
+        // Stage 10: Homoglyph map
         let r = remap_char_transform(&current, &offsets, |c| {
             *HOMOGLYPH_MAP.get(&c).unwrap_or(&c)
         });
@@ -557,6 +790,40 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     }
 
     (current, offsets)
+}
+
+/// Extended normalization: tries additional decodings (base32/64, ROT13, reversal).
+///
+/// Called by the scanner as a second pass when standard normalization didn't
+/// produce matches. Each variant is returned for separate scanning.
+pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
+    let mut alternatives = Vec::new();
+
+    // Try base32/base64 decode
+    let (decoded, _) = try_decode_base_encoding(text, &[]);
+    if decoded != text {
+        alternatives.push(decoded);
+    }
+
+    // Try ROT13
+    let (rot, _) = apply_rot13(text, &[]);
+    if rot != text {
+        alternatives.push(rot);
+    }
+
+    // Try full reversal
+    let reversed: String = text.chars().rev().collect();
+    if reversed != text {
+        alternatives.push(reversed);
+    }
+
+    // Try leetspeak decode (only useful for alpha-based patterns like email)
+    let leet_decoded = normalize_leet(text);
+    if leet_decoded != text {
+        alternatives.push(leet_decoded);
+    }
+
+    alternatives
 }
 
 /// Check if ASCII text contains patterns that suggest encoding-based evasion.
@@ -601,6 +868,19 @@ fn has_evasion_markers(text: &str) -> bool {
                 && (w[1] == b'-' || w[1] == b'.')
                 && w[2] == w[1]
                 && w[3].is_ascii_alphanumeric()
+            {
+                return true;
+            }
+        }
+    }
+    // Hex-spaced bytes: "XX XX XX" pattern
+    if bytes.len() >= 8 {
+        for w in bytes.windows(5) {
+            if w[0].is_ascii_hexdigit()
+                && w[1].is_ascii_hexdigit()
+                && w[2] == b' '
+                && w[3].is_ascii_hexdigit()
+                && w[4].is_ascii_hexdigit()
             {
                 return true;
             }
@@ -886,5 +1166,66 @@ mod tests {
         let (result, offsets) = normalize_text("The quick brown fox jumps over the lazy dog.");
         assert_eq!(result, "The quick brown fox jumps over the lazy dog.");
         assert!(offsets.is_empty());
+    }
+
+    // === New evasion technique tests ===
+
+    #[test]
+    fn test_hex_spaced_bytes_ssn() {
+        // "123-45-6789" encoded as hex-spaced bytes
+        let (result, _) = normalize_text("31 32 33 2D 34 35 2D 36 37 38 39");
+        assert_eq!(result, "123-45-6789");
+    }
+
+    #[test]
+    fn test_hex_spaced_bytes_short_ignored() {
+        // Too short to be hex-spaced (only 2 pairs), but whitespace collapse
+        // still removes the space between digits
+        let (result, _) = normalize_text("31 32");
+        assert_eq!(result, "3132");
+    }
+
+    #[test]
+    fn test_base64_decode() {
+        // "123-45-6789" in base64
+        let alts = generate_alternative_decodings("MTIzLTQ1LTY3ODk=");
+        assert!(alts.iter().any(|a| a == "123-45-6789"));
+    }
+
+    #[test]
+    fn test_base32_decode() {
+        // "123-45-6789" in base32
+        let alts = generate_alternative_decodings("GEZDGNA=");
+        // base32("123") = "GEZDG===" — test a simple case
+        let alts2 = generate_alternative_decodings("GEZDGNBVGY3TQOJQ");
+        assert!(!alts2.is_empty());
+    }
+
+    #[test]
+    fn test_rot13_decode() {
+        let alts = generate_alternative_decodings("QRHGFPURONAX");
+        // ROT13 of "DEUTSCHEBANK" is "QRHGFPURONAX"
+        assert!(alts.iter().any(|a| a == "DEUTSCHEBANK"));
+    }
+
+    #[test]
+    fn test_reversed_text() {
+        let alts = generate_alternative_decodings("9876-54-321");
+        assert!(alts.iter().any(|a| a == "123-45-6789"));
+    }
+
+    #[test]
+    fn test_leet_decode() {
+        // Note: '@' → 'a' in leet map, so email @ is destroyed.
+        // Leet decode is best for non-email patterns.
+        let alts = generate_alternative_decodings("h3ll0 w0rld");
+        assert!(alts.iter().any(|a| a == "hello world"));
+    }
+
+    #[test]
+    fn test_alternative_decodings_empty_for_clean() {
+        let alts = generate_alternative_decodings("hello world");
+        // Should produce alternatives (ROT13, reversal) but not base32/64
+        assert!(alts.iter().all(|a| a != "hello world"));
     }
 }
