@@ -168,47 +168,388 @@ fn is_ascii_only(text: &str) -> bool {
     text.as_bytes().iter().all(|&b| b < 128)
 }
 
-/// Full normalization pipeline with accurate byte-level offset tracking.
-///
-/// Pipeline: zero-width strip → whitespace normalize → NFKC → homoglyph map.
-/// The returned offset_map maps each byte index in the normalized output back
-/// to the corresponding byte index in the original input. Empty offset_map
-/// means identity mapping (text was pure ASCII, nothing changed).
-pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
-    if is_ascii_only(text) {
-        return (text.to_string(), Vec::new());
+// ---------------------------------------------------------------------------
+// Evasion-defeating normalization helpers
+// ---------------------------------------------------------------------------
+
+/// Get the original byte offset, handling identity mapping (empty offsets = identity).
+#[inline]
+fn orig_offset(offsets: &[usize], byte_idx: usize) -> usize {
+    if offsets.is_empty() || byte_idx >= offsets.len() {
+        byte_idx
+    } else {
+        offsets[byte_idx]
+    }
+}
+
+/// Convert a hex digit byte to its numeric value.
+#[inline]
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Check if text contains percent-encoding sequences (%XX with hex digits).
+fn has_percent_encoding(bytes: &[u8]) -> bool {
+    if bytes.len() < 3 {
+        return false;
+    }
+    for i in 0..bytes.len() - 2 {
+        if bytes[i] == b'%' && bytes[i + 1].is_ascii_hexdigit() && bytes[i + 2].is_ascii_hexdigit()
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Single pass of URL percent-decoding (%XX → byte, printable ASCII only).
+fn decode_percent_single(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    let bytes = input.as_bytes();
+    if !has_percent_encoding(bytes) {
+        return (input.to_string(), in_offsets.to_vec());
     }
 
-    // Stage 1: Strip zero-width characters, building initial offset map.
-    // offset1[output_byte] = original_byte
-    let mut current = String::with_capacity(text.len());
-    let mut offsets: Vec<usize> = Vec::with_capacity(text.len());
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut offsets = Vec::with_capacity(bytes.len());
+    let mut i = 0;
 
-    for (byte_idx, ch) in text.char_indices() {
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                let decoded = (h << 4) | l;
+                // Only decode printable ASCII (space through tilde)
+                if decoded >= 0x20 && decoded <= 0x7E {
+                    out.push(decoded);
+                    offsets.push(orig_offset(in_offsets, i));
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        offsets.push(orig_offset(in_offsets, i));
+        i += 1;
+    }
+
+    if out.len() == bytes.len() {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    (String::from_utf8_lossy(&out).into_owned(), offsets)
+}
+
+/// Decode URL percent-encoding with double-decode support (%25XX → %XX → char).
+fn decode_percent_encoding(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    let (first, first_off) = decode_percent_single(input, in_offsets);
+    // Second pass catches double-encoding (%2541 → %41 → A)
+    decode_percent_single(&first, &first_off)
+}
+
+/// Decode HTML decimal character references (&#NNN; → char).
+fn decode_html_entities(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    if !input.contains("&#") {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut offsets = Vec::with_capacity(input.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'&' && i + 2 < bytes.len() && bytes[i + 1] == b'#' {
+            let entity_start = i;
+            let mut j = i + 2;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > i + 2 && j < bytes.len() && bytes[j] == b';' {
+                if let Ok(code) = std::str::from_utf8(&bytes[i + 2..j])
+                    .unwrap_or("")
+                    .parse::<u32>()
+                {
+                    if let Some(ch) = char::from_u32(code) {
+                        let base_offset = orig_offset(in_offsets, entity_start);
+                        out.push(ch);
+                        for _ in 0..ch.len_utf8() {
+                            offsets.push(base_offset);
+                        }
+                        i = j + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        // Not an entity — copy the character preserving UTF-8
+        if bytes[i] < 0x80 {
+            out.push(bytes[i] as char);
+            offsets.push(orig_offset(in_offsets, i));
+            i += 1;
+        } else {
+            let ch = input[i..].chars().next().unwrap();
+            let ch_len = ch.len_utf8();
+            out.push(ch);
+            for k in 0..ch_len {
+                offsets.push(orig_offset(in_offsets, i + k));
+            }
+            i += ch_len;
+        }
+    }
+
+    if out.len() == input.len() && out == input {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    (out, offsets)
+}
+
+/// Strip empty CSS comments (`/**/`) and empty HTML comments (`<!---->`) from text.
+fn strip_comments(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    if !input.contains("/**/") && !input.contains("<!---->") {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut offsets = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        // Check for /**/  (4 bytes)
+        if i + 3 < bytes.len() && &bytes[i..i + 4] == b"/**/" {
+            i += 4;
+            continue;
+        }
+        // Check for <!---->  (7 bytes)
+        if i + 6 < bytes.len() && &bytes[i..i + 7] == b"<!---->" {
+            i += 7;
+            continue;
+        }
+        out.push(bytes[i]);
+        offsets.push(orig_offset(in_offsets, i));
+        i += 1;
+    }
+
+    if out.len() == bytes.len() {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    (String::from_utf8_lossy(&out).into_owned(), offsets)
+}
+
+/// Collapse whitespace padding between non-alphabetic characters.
+///
+/// Removes ASCII whitespace (space, tab, newline, CR) that appears between
+/// two non-alphabetic characters (digits, punctuation, symbols). This defeats
+/// evasion techniques like `1 2 3 - 4 5 - 6 7 8 9` while preserving natural
+/// language spacing like `social security number`.
+fn collapse_padding(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    let bytes = input.as_bytes();
+    if !bytes
+        .iter()
+        .any(|&b| b == b' ' || b == b'\n' || b == b'\r' || b == b'\t')
+    {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut offsets = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b' ' || b == b'\n' || b == b'\r' || b == b'\t' {
+            // Find previous non-whitespace byte in output
+            let prev_non_ws = out
+                .iter()
+                .rev()
+                .find(|&&c| c != b' ' && c != b'\n' && c != b'\r' && c != b'\t')
+                .copied();
+            // Find next non-whitespace byte in input
+            let next_non_ws = bytes[i + 1..]
+                .iter()
+                .find(|&&c| c != b' ' && c != b'\n' && c != b'\r' && c != b'\t')
+                .copied();
+
+            if let (Some(p), Some(n)) = (prev_non_ws, next_non_ws) {
+                if !p.is_ascii_alphabetic() && !n.is_ascii_alphabetic() {
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        out.push(b);
+        offsets.push(orig_offset(in_offsets, i));
+        i += 1;
+    }
+
+    if out.len() == bytes.len() {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    (String::from_utf8_lossy(&out).into_owned(), offsets)
+}
+
+/// Normalize excessive delimiters between alphanumeric characters.
+///
+/// Collapses runs of repeated hyphens or dots (e.g. `123--45` → `123-45`)
+/// only when surrounded by alphanumeric characters on both sides.
+fn normalize_delimiters(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut offsets = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    let mut changed = false;
+
+    while i < bytes.len() {
+        if bytes[i] == b'-' || bytes[i] == b'.' {
+            let delim = bytes[i];
+            let start = i;
+            // Count the delimiter run
+            while i + 1 < bytes.len() && bytes[i + 1] == delim {
+                i += 1;
+            }
+            let run_len = (i - start) + 1;
+
+            if run_len > 1 {
+                let prev_alnum = !out.is_empty()
+                    && out.last().map(|&b: &u8| b.is_ascii_alphanumeric()).unwrap_or(false);
+                let next_alnum =
+                    i + 1 < bytes.len() && bytes[i + 1].is_ascii_alphanumeric();
+
+                if prev_alnum && next_alnum {
+                    // Collapse to single delimiter
+                    out.push(delim);
+                    offsets.push(orig_offset(in_offsets, start));
+                    changed = true;
+                    i += 1;
+                    continue;
+                }
+            }
+
+            // Keep the full delimiter run
+            for j in start..=i {
+                out.push(bytes[j]);
+                offsets.push(orig_offset(in_offsets, j));
+            }
+        } else {
+            out.push(bytes[i]);
+            offsets.push(orig_offset(in_offsets, i));
+        }
+        i += 1;
+    }
+
+    if !changed {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    (String::from_utf8_lossy(&out).into_owned(), offsets)
+}
+
+/// Strip zero-width characters with offset composition.
+fn remap_strip_zero_width(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    let has_zw = input.chars().any(|c| ZERO_WIDTH_CHARS.contains(&c));
+    if !has_zw {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    let mut result = String::with_capacity(input.len());
+    let mut offsets = Vec::with_capacity(input.len());
+
+    for (byte_idx, ch) in input.char_indices() {
         if !ZERO_WIDTH_CHARS.contains(&ch) {
-            current.push(ch);
+            result.push(ch);
             for i in 0..ch.len_utf8() {
-                offsets.push(byte_idx + i);
+                offsets.push(orig_offset(in_offsets, byte_idx + i));
             }
         }
     }
 
-    // Stage 2: Normalize exotic whitespace (char-by-char, may change byte widths).
-    let (current, offsets) = remap_char_transform(&current, &offsets, |c| {
-        if UNICODE_SPACES.contains(&c) { ' ' } else { c }
-    });
+    (result, offsets)
+}
 
-    // Stage 3: NFKC normalization (handles fullwidth digits/letters, ligatures, etc.).
-    // NFKC can change string length — one input char may produce multiple output chars
-    // or vice versa. We track at char granularity: each output char inherits the
-    // original byte offset of the input char that produced it.
-    let (current, offsets) = remap_nfkc(&current, &offsets);
+/// Full normalization pipeline with accurate byte-level offset tracking.
+///
+/// Pipeline:
+///   1. URL percent-decode (double-decode for %25XX)
+///   2. HTML decimal entity decode (&#NNN;)
+///   3. Strip empty CSS/HTML comments
+///   4. Collapse whitespace padding between non-alpha chars
+///   5. Normalize excessive delimiters
+///   6. Strip zero-width Unicode characters
+///   7. Normalize exotic Unicode whitespace
+///   8. NFKC normalization
+///   9. Homoglyph map (Cyrillic/Greek → ASCII)
+///
+/// The returned offset_map maps each byte index in the normalized output back
+/// to the corresponding byte index in the original input. Empty offset_map
+/// means identity mapping (nothing changed).
+pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
+    // Fast path: pure ASCII with no evasion markers
+    let ascii = is_ascii_only(text);
+    if ascii && !has_evasion_markers(text) {
+        return (text.to_string(), Vec::new());
+    }
 
-    // Stage 4: Homoglyph map (Cyrillic/Greek → ASCII). Always 1:1 char replacement,
-    // but replacement char may have different UTF-8 byte width.
-    let (current, offsets) = remap_char_transform(&current, &offsets, |c| {
-        *HOMOGLYPH_MAP.get(&c).unwrap_or(&c)
-    });
+    let mut current = text.to_string();
+    let mut offsets: Vec<usize> = Vec::new(); // empty = identity mapping
+
+    // Stage 1: URL percent-decode (two passes for double encoding)
+    let r = decode_percent_encoding(&current, &offsets);
+    current = r.0;
+    offsets = r.1;
+
+    // Stage 2: HTML decimal entity decode
+    let r = decode_html_entities(&current, &offsets);
+    current = r.0;
+    offsets = r.1;
+
+    // Stage 3: Strip empty CSS/HTML comments
+    let r = strip_comments(&current, &offsets);
+    current = r.0;
+    offsets = r.1;
+
+    // Stage 4: Collapse whitespace padding between non-alpha chars
+    let r = collapse_padding(&current, &offsets);
+    current = r.0;
+    offsets = r.1;
+
+    // Stage 5: Normalize excessive delimiters
+    let r = normalize_delimiters(&current, &offsets);
+    current = r.0;
+    offsets = r.1;
+
+    // Stages 6-9: Unicode normalization (only if non-ASCII remaining)
+    if !is_ascii_only(&current) {
+        // Stage 6: Strip zero-width characters
+        let r = remap_strip_zero_width(&current, &offsets);
+        current = r.0;
+        offsets = r.1;
+
+        // Stage 7: Normalize exotic whitespace
+        let r = remap_char_transform(&current, &offsets, |c| {
+            if UNICODE_SPACES.contains(&c) { ' ' } else { c }
+        });
+        current = r.0;
+        offsets = r.1;
+
+        // Stage 8: NFKC normalization
+        let r = remap_nfkc(&current, &offsets);
+        current = r.0;
+        offsets = r.1;
+
+        // Stage 9: Homoglyph map
+        let r = remap_char_transform(&current, &offsets, |c| {
+            *HOMOGLYPH_MAP.get(&c).unwrap_or(&c)
+        });
+        current = r.0;
+        offsets = r.1;
+    }
 
     // If nothing changed, return empty offsets (identity)
     if current == text {
@@ -216,6 +557,61 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     }
 
     (current, offsets)
+}
+
+/// Check if ASCII text contains patterns that suggest encoding-based evasion.
+fn has_evasion_markers(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    // Percent-encoding: %XX
+    if has_percent_encoding(bytes) {
+        return true;
+    }
+    // HTML entities
+    if text.contains("&#") {
+        return true;
+    }
+    // Empty comments (evasion-specific)
+    if text.contains("/**/") || text.contains("<!---->") {
+        return true;
+    }
+    // Whitespace run between non-alpha chars (handles padding and multi-byte \r\n)
+    {
+        let mut prev_non_ws: Option<u8> = None;
+        let mut in_ws_run = false;
+        for &b in bytes {
+            if is_ascii_ws(b) {
+                in_ws_run = true;
+            } else {
+                if in_ws_run {
+                    if let Some(p) = prev_non_ws {
+                        if !p.is_ascii_alphabetic() && !b.is_ascii_alphabetic() {
+                            return true;
+                        }
+                    }
+                }
+                in_ws_run = false;
+                prev_non_ws = Some(b);
+            }
+        }
+    }
+    // Excessive delimiters between alphanumeric chars
+    if bytes.len() >= 4 {
+        for w in bytes.windows(4) {
+            if w[0].is_ascii_alphanumeric()
+                && (w[1] == b'-' || w[1] == b'.')
+                && w[2] == w[1]
+                && w[3].is_ascii_alphanumeric()
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[inline]
+fn is_ascii_ws(b: u8) -> bool {
+    b == b' ' || b == b'\n' || b == b'\r' || b == b'\t'
 }
 
 /// Apply a 1-char → 1-char transform while maintaining byte-level offset map.
@@ -365,5 +761,130 @@ mod tests {
         let (result, offsets) = normalize_text("hello world");
         assert_eq!(result, "hello world");
         assert!(offsets.is_empty()); // Empty = identity mapping
+    }
+
+    // === Evasion normalization tests ===
+
+    #[test]
+    fn test_percent_decode_ssn() {
+        let (result, _) = normalize_text("%31%32%33-%34%35-%36%37%38%39");
+        assert_eq!(result, "123-45-6789");
+    }
+
+    #[test]
+    fn test_percent_decode_digits_only() {
+        // url_percent_encoding_digits: only digits encoded
+        let (result, _) = normalize_text("%34532-%30151-%31283");
+        assert_eq!(result, "4532-0151-1283");
+    }
+
+    #[test]
+    fn test_percent_decode_full() {
+        // url_percent_encoding_full: everything encoded
+        let (result, _) = normalize_text("%34%35%33%32%2D%30%31%35%31");
+        assert_eq!(result, "4532-0151");
+    }
+
+    #[test]
+    fn test_double_percent_decode() {
+        // %25 decodes to %, then %31 decodes to 1
+        let (result, _) = normalize_text("%2531%2532%2533");
+        assert_eq!(result, "123");
+    }
+
+    #[test]
+    fn test_html_entity_decode_ssn() {
+        let (result, _) = normalize_text("&#49;&#50;&#51;-&#52;&#53;-&#54;&#55;&#56;&#57;");
+        assert_eq!(result, "123-45-6789");
+    }
+
+    #[test]
+    fn test_html_entity_decode_mixed() {
+        // Some chars encoded, some plain
+        let (result, _) = normalize_text("1&#50;3-&#52;5-6&#55;89");
+        assert_eq!(result, "123-45-6789");
+    }
+
+    #[test]
+    fn test_css_comment_strip() {
+        let (result, _) = normalize_text("1/**/2/**/3/**/-/**/4/**/5/**/-/**/6/**/7/**/8/**/9");
+        assert_eq!(result, "123-45-6789");
+    }
+
+    #[test]
+    fn test_html_comment_strip() {
+        let (result, _) =
+            normalize_text("1<!---->2<!---->3<!---->-<!---->4<!---->5<!---->-<!---->6789");
+        assert_eq!(result, "123-45-6789");
+    }
+
+    #[test]
+    fn test_whitespace_padding_digits() {
+        let (result, _) = normalize_text("1 2 3 - 4 5 - 6 7 8 9");
+        assert_eq!(result, "123-45-6789");
+    }
+
+    #[test]
+    fn test_whitespace_padding_preserves_words() {
+        // Spaces between alphabetic chars should be preserved
+        let (result, _) = normalize_text("social security number: 1 2 3");
+        assert_eq!(result, "social security number:123");
+    }
+
+    #[test]
+    fn test_mid_line_break() {
+        let (result, _) = normalize_text("123-45-\n6789");
+        assert_eq!(result, "123-45-6789");
+    }
+
+    #[test]
+    fn test_mid_line_break_crlf() {
+        let (result, _) = normalize_text("123-45-\r\n6789");
+        assert_eq!(result, "123-45-6789");
+    }
+
+    #[test]
+    fn test_excessive_delimiter() {
+        let (result, _) = normalize_text("123--45--6789");
+        assert_eq!(result, "123-45-6789");
+    }
+
+    #[test]
+    fn test_excessive_dots() {
+        let (result, _) = normalize_text("192..168..1..1");
+        assert_eq!(result, "192.168.1.1");
+    }
+
+    #[test]
+    fn test_excessive_delimiter_preserves_cli_flags() {
+        // --verbose should not be collapsed (no alnum before --)
+        let (result, _) = normalize_text("--verbose");
+        assert_eq!(result, "--verbose");
+    }
+
+    #[test]
+    fn test_combined_evasion_percent_and_padding() {
+        // Percent-encoded digits with spaces
+        let (result, _) = normalize_text("%31 %32 %33 - %34 %35 - %36 %37 %38 %39");
+        assert_eq!(result, "123-45-6789");
+    }
+
+    #[test]
+    fn test_offset_tracking_percent_decode() {
+        let input = "%41%42C";
+        let (result, offsets) = normalize_text(input);
+        assert_eq!(result, "ABC");
+        // 'A' from %41 at byte 0, 'B' from %42 at byte 3, 'C' at byte 6
+        assert_eq!(offsets[0], 0); // A → %41 starts at 0
+        assert_eq!(offsets[1], 3); // B → %42 starts at 3
+        assert_eq!(offsets[2], 6); // C at byte 6
+    }
+
+    #[test]
+    fn test_clean_text_fast_path() {
+        // Normal text with no evasion markers should hit fast path
+        let (result, offsets) = normalize_text("The quick brown fox jumps over the lazy dog.");
+        assert_eq!(result, "The quick brown fox jumps over the lazy dog.");
+        assert!(offsets.is_empty());
     }
 }
