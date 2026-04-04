@@ -279,12 +279,22 @@ impl ExactDataMatcher {
             "tokenizers": self.tokenizer_names,
         });
         let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
-        use std::os::unix::fs::OpenOptionsExt;
+        #[cfg(unix)]
+        let file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(path)
+                .map_err(|e| format!("Failed to open {}: {}", path, e))?
+        };
+        #[cfg(not(unix))]
         let file = std::fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(true)
-            .mode(0o600)
             .open(path)
             .map_err(|e| format!("Failed to open {}: {}", path, e))?;
         use std::io::Write;

@@ -93,6 +93,14 @@ pub struct BatchScanResponse {
 pub struct HealthResponse {
     pub status: String,
     pub version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uptime_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pattern_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_connections: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_ready: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,6 +145,8 @@ pub struct AppState {
     pub rate_limiter: RwLock<RateLimiter>,
     pub vaults: RwLock<HashMap<String, VaultEntry>>,
     pub custom_patterns: RwLock<Vec<PatternResponse>>,
+    pub start_time: Instant,
+    pub is_shutting_down: std::sync::atomic::AtomicBool,
 }
 
 pub struct VaultEntry {
@@ -289,11 +299,28 @@ pub fn handle_batch_scan(req: &BatchScanRequest) -> Result<BatchScanResponse, St
     Ok(BatchScanResponse { results: responses })
 }
 
-/// Health check.
+/// Basic health check (used by tests and non-server contexts).
 pub fn handle_health() -> HealthResponse {
     HealthResponse {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
+        uptime_secs: None,
+        pattern_count: None,
+        active_connections: None,
+        is_ready: None,
+    }
+}
+
+/// Full health check with operational data.
+fn handle_health_full(state: &AppState, active: usize) -> HealthResponse {
+    let shutting_down = state.is_shutting_down.load(Ordering::SeqCst);
+    HealthResponse {
+        status: if shutting_down { "draining".to_string() } else { "ok".to_string() },
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        uptime_secs: Some(state.start_time.elapsed().as_secs()),
+        pattern_count: Some(crate::patterns::PATTERNS.len()),
+        active_connections: Some(active),
+        is_ready: Some(!shutting_down),
     }
 }
 
@@ -323,77 +350,192 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
 
     let addr = format!("{}:{}", config.host, config.port);
     let listener = TcpListener::bind(&addr).await?;
-    tracing::info!("dlpscan API server listening on {}", addr);
+
+    // Optional TLS: if DLPSCAN_TLS_CERT and DLPSCAN_TLS_KEY are set, enable HTTPS
+    #[cfg(feature = "tls")]
+    let tls_acceptor: Option<tokio_rustls::TlsAcceptor> = {
+        match (
+            std::env::var("DLPSCAN_TLS_CERT"),
+            std::env::var("DLPSCAN_TLS_KEY"),
+        ) {
+            (Ok(cert_path), Ok(key_path)) => {
+                let cert_file = std::fs::File::open(&cert_path)
+                    .map_err(|e| format!("Failed to open TLS cert {}: {}", cert_path, e))?;
+                let key_file = std::fs::File::open(&key_path)
+                    .map_err(|e| format!("Failed to open TLS key {}: {}", key_path, e))?;
+
+                let certs: Vec<_> = rustls_pemfile::certs(&mut std::io::BufReader::new(cert_file))
+                    .filter_map(|r| r.ok())
+                    .collect();
+                let key = rustls_pemfile::private_key(&mut std::io::BufReader::new(key_file))
+                    .map_err(|e| format!("Failed to read TLS key: {}", e))?
+                    .ok_or("No private key found in TLS key file")?;
+
+                let tls_config = rustls::ServerConfig::builder()
+                    .with_no_client_auth()
+                    .with_single_cert(certs, key)
+                    .map_err(|e| format!("TLS config error: {}", e))?;
+
+                tracing::info!("TLS enabled with cert={}, key={}", cert_path, key_path);
+                Some(tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(tls_config)))
+            }
+            _ => {
+                tracing::info!("TLS not configured (set DLPSCAN_TLS_CERT and DLPSCAN_TLS_KEY to enable)");
+                None
+            }
+        }
+    };
+
+    let proto = if cfg!(feature = "tls") { "https" } else { "http" };
+    tracing::info!("dlpscan API server listening on {}://{}", proto, addr);
 
     let state = Arc::new(AppState {
         api_key: config.api_key,
         rate_limiter: RwLock::new(RateLimiter::new(config.rate_limit, 60)),
         vaults: RwLock::new(HashMap::new()),
         custom_patterns: RwLock::new(Vec::new()),
+        start_time: Instant::now(),
+        is_shutting_down: std::sync::atomic::AtomicBool::new(false),
     });
 
     let active_connections = Arc::new(AtomicUsize::new(0));
 
-    loop {
-        let (mut socket, _) = listener.accept().await?;
-        let state = state.clone();
-        let active_connections = active_connections.clone();
-
-        if active_connections.load(Ordering::SeqCst) >= MAX_CONCURRENT_CONNECTIONS {
-            let response = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: 42\r\n\r\n{\"detail\":\"Too many concurrent connections\"}";
-            let _ = tokio::io::AsyncWriteExt::write_all(&mut socket, response.as_bytes()).await;
-            continue;
+    // Graceful shutdown: listen for SIGTERM/SIGINT
+    let shutdown = async {
+        #[cfg(unix)]
+        {
+            let mut sigterm = tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::terminate(),
+            )
+            .expect("failed to install SIGTERM handler");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {},
+                _ = sigterm.recv() => {},
+            }
         }
+        #[cfg(not(unix))]
+        {
+            tokio::signal::ctrl_c().await.ok();
+        }
+    };
+    tokio::pin!(shutdown);
 
-        active_connections.fetch_add(1, Ordering::SeqCst);
+    loop {
+        tokio::select! {
+            result = listener.accept() => {
+                let (mut socket, peer_addr) = match result {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        tracing::warn!("Accept error: {}", e);
+                        continue;
+                    }
+                };
+                let state = state.clone();
+                let active_connections = active_connections.clone();
 
-        tokio::spawn(async move {
-            struct ConnGuard(Arc<AtomicUsize>);
-            impl Drop for ConnGuard {
-                fn drop(&mut self) {
-                    self.0.fetch_sub(1, Ordering::SeqCst);
+                if active_connections.load(Ordering::SeqCst) >= MAX_CONCURRENT_CONNECTIONS {
+                    let response = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: 42\r\n\r\n{\"detail\":\"Too many concurrent connections\"}";
+                    let _ = tokio::io::AsyncWriteExt::write_all(&mut socket, response.as_bytes()).await;
+                    continue;
                 }
-            }
-            let _guard = ConnGuard(active_connections);
 
-            let mut buf = vec![0u8; 1024 * 1024];
-            let n = match socket.read(&mut buf).await {
-                Ok(n) if n > 0 => n,
-                _ => return,
-            };
+                active_connections.fetch_add(1, Ordering::SeqCst);
 
-            let request = String::from_utf8_lossy(&buf[..n]);
+                tokio::spawn(async move {
+                    struct ConnGuard(Arc<AtomicUsize>);
+                    impl Drop for ConnGuard {
+                        fn drop(&mut self) {
+                            self.0.fetch_sub(1, Ordering::SeqCst);
+                        }
+                    }
+                    let _guard = ConnGuard(active_connections);
+                    let request_start = Instant::now();
+                    let request_id = simple_uuid();
 
-            // Check Content-Length header and reject oversized requests
-            let content_length = request
-                .lines()
-                .find(|l| l.to_lowercase().starts_with("content-length:"))
-                .and_then(|l| l.splitn(2, ':').nth(1))
-                .and_then(|v| v.trim().parse::<usize>().ok());
-            if let Some(cl) = content_length {
-                if cl > MAX_REQUEST_BODY_SIZE {
-                    let detail = serde_json::json!({"detail": format!("Request body size {} exceeds maximum {}", cl, MAX_REQUEST_BODY_SIZE)});
-                    let body = detail.to_string();
-                    let response = format!(
-                        "HTTP/1.1 413 Payload Too Large\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                        body.len(),
-                        body,
+                    let mut buf = vec![0u8; 1024 * 1024];
+                    let n = match socket.read(&mut buf).await {
+                        Ok(n) if n > 0 => n,
+                        _ => return,
+                    };
+
+                    let request = String::from_utf8_lossy(&buf[..n]);
+
+                    // Parse method + path for tracing
+                    let first_line = request.lines().next().unwrap_or("");
+                    let parts: Vec<&str> = first_line.split_whitespace().collect();
+                    let method = parts.first().copied().unwrap_or("?");
+                    let path = parts.get(1).copied().unwrap_or("/");
+                    let peer = peer_addr.to_string();
+
+                    let span = tracing::info_span!("http_request",
+                        request_id = %request_id,
+                        method = %method,
+                        path = %path,
+                        peer = %peer,
                     );
+                    let _enter = span.enter();
+
+                    // Check Content-Length header and reject oversized requests
+                    let content_length = request
+                        .lines()
+                        .find(|l| l.to_lowercase().starts_with("content-length:"))
+                        .and_then(|l| l.splitn(2, ':').nth(1))
+                        .and_then(|v| v.trim().parse::<usize>().ok());
+                    if let Some(cl) = content_length {
+                        if cl > MAX_REQUEST_BODY_SIZE {
+                            let body = r#"{"detail":"Request body too large"}"#;
+                            let response = format!(
+                                "HTTP/1.1 413 Payload Too Large\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                                body.len(),
+                                body,
+                            );
+                            let _ = socket.write_all(response.as_bytes()).await;
+                            return;
+                        }
+                    }
+
+                    let (status, body) = route_request(&request, &state);
+
+                    let duration_ms = request_start.elapsed().as_secs_f64() * 1000.0;
+                    tracing::info!(
+                        status = %status,
+                        duration_ms = duration_ms,
+                        "request completed"
+                    );
+
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Request-ID: {request_id}\r\n\r\n{body}",
+                        body.len(),
+                    );
+
                     let _ = socket.write_all(response.as_bytes()).await;
-                    return;
-                }
+                });
             }
+            _ = &mut shutdown => {
+                tracing::info!("Shutdown signal received, draining connections...");
+                state.is_shutting_down.store(true, Ordering::SeqCst);
 
-            let (status, body) = route_request(&request, &state);
-
-            let response = format!(
-                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Request-ID: {}\r\n\r\n{body}",
-                body.len(),
-                simple_uuid(),
-            );
-
-            let _ = socket.write_all(response.as_bytes()).await;
-        });
+                // Wait for in-flight connections to finish (max 25s)
+                let drain_deadline = tokio::time::Instant::now()
+                    + tokio::time::Duration::from_secs(25);
+                loop {
+                    let active = active_connections.load(Ordering::SeqCst);
+                    if active == 0 {
+                        tracing::info!("All connections drained, shutting down");
+                        break;
+                    }
+                    if tokio::time::Instant::now() >= drain_deadline {
+                        tracing::warn!(
+                            "Drain timeout reached with {} active connections, forcing shutdown",
+                            active
+                        );
+                        break;
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
+                return Ok(());
+            }
+        }
     }
 }
 
@@ -407,8 +549,10 @@ fn route_request(raw: &str, state: &AppState) -> (String, String) {
     // Extract body (after \r\n\r\n)
     let body = raw.split("\r\n\r\n").nth(1).unwrap_or("");
 
-    // Check API key if configured
-    if state.api_key.is_some() && path != "/health" {
+    // Check API key if configured (exempt health and metrics endpoints)
+    let auth_exempt = path == "/health" || path == "/health/live"
+        || path == "/health/ready" || path == "/metrics";
+    if state.api_key.is_some() && !auth_exempt {
         let api_key_header = raw
             .lines()
             .find(|l| l.to_lowercase().starts_with("x-api-key:"))
@@ -427,8 +571,26 @@ fn route_request(raw: &str, state: &AppState) -> (String, String) {
         }
     }
 
-    // Rate limiting
-    if path != "/health" {
+    // RBAC enforcement
+    let role = crate::rbac::extract_role(raw);
+    let required_perm = match (method, path) {
+        ("POST", "/v1/scan") => Some(crate::rbac::Permission::Scan),
+        ("POST", "/v1/batch/scan") => Some(crate::rbac::Permission::BatchScan),
+        ("POST", "/v1/patterns") => Some(crate::rbac::Permission::ManagePatterns),
+        _ => None,
+    };
+    if let Some(perm) = required_perm {
+        if !crate::rbac::role_has_permission(role, perm) {
+            return (
+                "403 Forbidden".to_string(),
+                r#"{"detail":"Insufficient permissions"}"#.to_string(),
+            );
+        }
+    }
+
+    // Rate limiting (exempt health/metrics endpoints)
+    if path != "/health" && path != "/health/live" && path != "/health/ready" && path != "/metrics"
+    {
         if let Ok(mut rl) = state.rate_limiter.write() {
             if !rl.check() {
                 return (
@@ -436,10 +598,9 @@ fn route_request(raw: &str, state: &AppState) -> (String, String) {
                     r#"{"detail":"Rate limit exceeded"}"#.to_string(),
                 );
             }
-            // Periodic cleanup of stale rate limiter entries
             rl.cleanup();
         }
-        // Evict expired vaults (TTL enforcement)
+        // Evict expired vaults
         if let Ok(mut vaults) = state.vaults.write() {
             let now = Instant::now();
             vaults.retain(|_, entry| {
@@ -450,12 +611,46 @@ fn route_request(raw: &str, state: &AppState) -> (String, String) {
 
     match (method, path) {
         ("GET", "/health") => {
-            let resp = handle_health();
+            let resp = handle_health_full(state, 0);
             (
                 "200 OK".to_string(),
                 serde_json::to_string(&resp).unwrap_or_default(),
             )
         }
+        ("GET", "/health/live") => (
+            "200 OK".to_string(),
+            r#"{"status":"ok"}"#.to_string(),
+        ),
+        ("GET", "/health/ready") => {
+            if state.is_shutting_down.load(Ordering::SeqCst) {
+                (
+                    "503 Service Unavailable".to_string(),
+                    r#"{"status":"draining","is_ready":false}"#.to_string(),
+                )
+            } else {
+                (
+                    "200 OK".to_string(),
+                    r#"{"status":"ok","is_ready":true}"#.to_string(),
+                )
+            }
+        }
+        #[cfg(feature = "metrics")]
+        ("GET", "/metrics") => {
+            let encoder = prometheus::TextEncoder::new();
+            let metric_families = prometheus::gather();
+            match encoder.encode_to_string(&metric_families) {
+                Ok(output) => ("200 OK".to_string(), output),
+                Err(e) => {
+                    tracing::warn!("Failed to encode metrics: {}", e);
+                    ("500 Internal Server Error".to_string(), String::new())
+                }
+            }
+        }
+        #[cfg(not(feature = "metrics"))]
+        ("GET", "/metrics") => (
+            "501 Not Implemented".to_string(),
+            r#"{"detail":"Metrics feature not enabled"}"#.to_string(),
+        ),
         ("POST", "/v1/scan") => match serde_json::from_str::<ScanRequest>(body) {
             Ok(req) => match handle_scan(&req) {
                 Ok(resp) => (

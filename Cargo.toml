@@ -29,7 +29,7 @@ clap = { version = "4", features = ["derive"] }
 rayon = "1"
 
 # Async runtime (for webhooks, SIEM, server)
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "signal", "time"], optional = true }
 
 # HTTP client (webhooks, SIEM adapters)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
@@ -75,6 +75,14 @@ cfb = { version = "0.10", optional = true }
 # Python bindings
 pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
 
+# TLS (for HTTPS server)
+rustls = { version = "0.23", optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+rustls-pemfile = { version = "2", optional = true }
+
+# YAML config
+serde_yaml = { version = "0.9", optional = true }
+
 [features]
 default = ["metrics"]
 metrics = ["dep:prometheus"]
@@ -84,8 +92,10 @@ archives = ["dep:sevenz-rust", "dep:unrar"]
 data-formats = ["dep:parquet", "dep:arrow", "dep:rusqlite"]
 msg = ["dep:cfb"]
 async-support = ["dep:tokio", "dep:reqwest"]
+tls = ["async-support", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile"]
+yaml-config = ["dep:serde_yaml"]
 python = ["dep:pyo3"]
-full = ["pdf", "office", "archives", "data-formats", "msg", "async-support", "metrics"]
+full = ["pdf", "office", "archives", "data-formats", "msg", "async-support", "metrics", "tls", "yaml-config"]
 
 [dev-dependencies]
 criterion = "0.5"

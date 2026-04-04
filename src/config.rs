@@ -95,6 +95,14 @@ pub fn find_config_file(start_dir: Option<&Path>) -> Option<PathBuf> {
             return Some(rc);
         }
 
+        // Check dlpscan.yaml / dlpscan.yml
+        for yaml_name in &["dlpscan.yaml", "dlpscan.yml"] {
+            let yaml_path = dir.join(yaml_name);
+            if yaml_path.is_file() {
+                return Some(yaml_path);
+            }
+        }
+
         match dir.parent() {
             Some(parent) => dir = parent,
             None => break,
@@ -139,6 +147,18 @@ fn parse_dlpscanrc(path: &Path) -> Result<Config, String> {
     Ok(config)
 }
 
+/// Parse YAML config file (requires `yaml-config` feature).
+#[cfg(feature = "yaml-config")]
+fn parse_yaml_config(path: &Path) -> Result<Config, String> {
+    let metadata = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    if metadata.len() > MAX_CONFIG_FILE_SIZE {
+        return Err(format!("Config file too large: {} bytes", metadata.len()));
+    }
+    let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let config: Config = serde_yaml::from_str(&content).map_err(|e| e.to_string())?;
+    Ok(config)
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -166,6 +186,11 @@ pub fn load_config(path: Option<&str>, start_dir: Option<&Path>) -> Config {
 
     let result = if name == "pyproject.toml" || ext == "toml" {
         parse_pyproject_toml(&config_path)
+    } else if ext == "yaml" || ext == "yml" {
+        #[cfg(feature = "yaml-config")]
+        { parse_yaml_config(&config_path) }
+        #[cfg(not(feature = "yaml-config"))]
+        { Err("YAML config requires the 'yaml-config' feature".to_string()) }
     } else {
         parse_dlpscanrc(&config_path)
     };
