@@ -9,6 +9,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+  CARGO_NET_RETRY: 10
+  CARGO_HTTP_TIMEOUT: 60
 
 jobs:
   test:
@@ -16,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Remove cargo registry overrides
+        run: rm -f ~/.cargo/config.toml ~/.cargo/config
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.75"
@@ -27,6 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Remove cargo registry overrides
+        run: rm -f ~/.cargo/config.toml ~/.cargo/config
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.75"
@@ -39,6 +46,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Remove cargo registry overrides
+        run: rm -f ~/.cargo/config.toml ~/.cargo/config
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.75"
