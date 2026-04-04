@@ -16,6 +16,7 @@ pub mod entropy;
 pub mod errors;
 pub mod extractors;
 pub mod guard;
+pub mod http_util;
 pub mod lsh;
 pub mod metrics;
 pub mod models;

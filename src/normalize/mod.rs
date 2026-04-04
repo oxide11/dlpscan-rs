@@ -4,12 +4,12 @@
 //! homoglyph substitution, and leet-speak decoding.
 
 use once_cell::sync::Lazy;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use unicode_normalization::UnicodeNormalization;
 
 /// Zero-width and invisible Unicode characters.
-pub static ZERO_WIDTH_CHARS: Lazy<Vec<char>> = Lazy::new(|| {
-    vec![
+pub static ZERO_WIDTH_CHARS: Lazy<HashSet<char>> = Lazy::new(|| {
+    [
         '\u{200B}', '\u{200C}', '\u{200D}', '\u{200E}', '\u{200F}',
         '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}',
         '\u{2060}', '\u{2061}', '\u{2062}', '\u{2063}', '\u{2064}',
@@ -19,17 +19,17 @@ pub static ZERO_WIDTH_CHARS: Lazy<Vec<char>> = Lazy::new(|| {
         '\u{FE05}', '\u{FE06}', '\u{FE07}', '\u{FE08}', '\u{FE09}',
         '\u{FE0A}', '\u{FE0B}', '\u{FE0C}', '\u{FE0D}', '\u{FE0E}',
         '\u{FE0F}',
-    ]
+    ].into_iter().collect()
 });
 
 /// Exotic Unicode whitespace characters.
-pub static UNICODE_SPACES: Lazy<Vec<char>> = Lazy::new(|| {
-    vec![
+pub static UNICODE_SPACES: Lazy<HashSet<char>> = Lazy::new(|| {
+    [
         '\u{00A0}', '\u{1680}', '\u{2000}', '\u{2001}', '\u{2002}',
         '\u{2003}', '\u{2004}', '\u{2005}', '\u{2006}', '\u{2007}',
         '\u{2008}', '\u{2009}', '\u{200A}', '\u{202F}', '\u{205F}',
         '\u{3000}',
-    ]
+    ].into_iter().collect()
 });
 
 /// Leet-speak substitution map.
