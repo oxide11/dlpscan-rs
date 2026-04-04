@@ -97,13 +97,17 @@ let vault = TokenVault::new("TOK_", "my-secret");
 
 ## RBAC
 
-Role-based access control:
+Role-based access control with server-side role resolution:
 
 ```rust
-use dlpscan::rbac::{Role, Permission, role_has_permission, extract_role};
+use dlpscan::rbac::{Role, Permission, role_has_permission, resolve_role};
 
-let role = extract_role(Some("analyst"));
-assert!(role_has_permission(&role, &Permission::Scan));
+// Server-side role resolution from API key mapping
+let key_roles = std::collections::HashMap::from([
+    ("admin-key".to_string(), Role::Admin),
+]);
+let role = resolve_role(request, Some("admin-key"), &key_roles);
+assert!(role_has_permission(role, Permission::ManagePatterns));
 ```
 
 | Item | Description |
@@ -111,7 +115,28 @@ assert!(role_has_permission(&role, &Permission::Scan));
 | `Role` | Enum: `Admin`, `Analyst`, `Operator`, `Viewer` |
 | `Permission` | Enum: `Scan`, `BatchScan`, `ManagePatterns`, `Detokenize`, `ExportVault`, `ViewStatus` |
 | `role_has_permission(role, perm)` | Check if a role has a permission |
-| `extract_role(header_value)` | Parse role from `X-Role` header value |
+| `resolve_role(request, key, key_roles)` | Derive role from authenticated API key (recommended) |
+
+## HTTP Utilities
+
+Shared HTTP, SSRF, and timestamp utilities:
+
+```rust
+use dlpscan::http_util::{is_safe_url, is_private_ip, sanitize_url, iso8601_now};
+
+assert!(is_safe_url("https://api.example.com/webhook"));
+assert!(!is_safe_url("http://127.0.0.1/internal"));
+```
+
+| Item | Description |
+|------|-------------|
+| `parse_url(url)` | Parse URL into `ParsedUrl` struct |
+| `is_safe_url(url)` | SSRF pre-resolution check |
+| `is_private_ip(ip)` | Check if IP is in a private/reserved range |
+| `safe_http_post(url, body, headers, timeout)` | HTTP POST with DNS rebinding + SSRF protection |
+| `sanitize_url(url)` | Strip credentials from URL for logging |
+| `iso8601_now()` | Current time as ISO 8601 UTC string |
+| `epoch_to_iso8601(secs)` | Convert Unix epoch to ISO 8601 |
 
 ## Enterprise Modules
 
@@ -121,5 +146,6 @@ assert!(role_has_permission(&role, &Permission::Scan));
 | `dlpscan::siem` | `SplunkHECAdapter`, `ElasticsearchAdapter`, `SyslogAdapter`, `WebhookSIEMAdapter`, `DatadogAdapter` |
 | `dlpscan::compliance` | `ComplianceReporter` |
 | `dlpscan::metrics` | Prometheus metrics (auto-recorded by API) |
-| `dlpscan::rbac` | `Role`, `Permission`, `role_has_permission`, `extract_role` |
+| `dlpscan::rbac` | `Role`, `Permission`, `role_has_permission`, `resolve_role` |
+| `dlpscan::http_util` | `ParsedUrl`, `is_safe_url`, `is_private_ip`, `safe_http_post`, `sanitize_url` |
 | `dlpscan::guard` | `TokenVault` |

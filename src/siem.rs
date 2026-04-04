@@ -407,49 +407,7 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
 // ---------------------------------------------------------------------------
 
 fn iso8601_now() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    // Simple ISO 8601 without chrono
-    let (s, m, h, day, mon, year) = epoch_to_datetime(secs);
-    format!("{year:04}-{mon:02}-{day:02}T{h:02}:{m:02}:{s:02}Z")
-}
-
-fn epoch_to_datetime(epoch: u64) -> (u64, u64, u64, u64, u64, u64) {
-    let s = epoch % 60;
-    let m = (epoch / 60) % 60;
-    let h = (epoch / 3600) % 24;
-    let mut days = epoch / 86400;
-    let mut year = 1970u64;
-    loop {
-        let yd = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
-            366
-        } else {
-            365
-        };
-        if days < yd {
-            break;
-        }
-        days -= yd;
-        year += 1;
-    }
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let mdays = [
-        31,
-        if leap { 29 } else { 28 },
-        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
-    ];
-    let mut mon = 0u64;
-    for md in mdays {
-        if days < md {
-            break;
-        }
-        days -= md;
-        mon += 1;
-    }
-    (s, m, h, days + 1, mon + 1, year)
+    crate::http_util::iso8601_now()
 }
 
 fn hostname() -> String {
@@ -458,148 +416,15 @@ fn hostname() -> String {
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
-/// Parse a URL into (scheme, host, port, path). Returns `Err` for unsupported schemes.
-fn parse_siem_url(url: &str) -> Result<(&str, &str, u16, &str), String> {
-    let (scheme, rest) = if let Some(r) = url.strip_prefix("https://") {
-        ("https", r)
-    } else if let Some(r) = url.strip_prefix("http://") {
-        ("http", r)
-    } else {
-        return Err(format!(
-            "Unsupported URL scheme (must be http:// or https://): {}",
-            crate::webhooks::sanitize_url(url)
-        ));
-    };
-
-    // Strip userinfo if present
-    let after_userinfo = if let Some(at) = rest.find('@') {
-        let slash = rest.find('/').unwrap_or(rest.len());
-        if at < slash { &rest[at + 1..] } else { rest }
-    } else {
-        rest
-    };
-
-    let (host_port, path) = after_userinfo
-        .find('/')
-        .map(|i| (&after_userinfo[..i], &after_userinfo[i..]))
-        .unwrap_or((after_userinfo, "/"));
-
-    let default_port: u16 = if scheme == "https" { 443 } else { 80 };
-    let (host, port) = if let Some(i) = host_port.find(':') {
-        (
-            &host_port[..i],
-            host_port[i + 1..].parse::<u16>().unwrap_or(default_port),
-        )
-    } else {
-        (host_port, default_port)
-    };
-
-    Ok((scheme, host, port, path))
-}
-
-/// Validate that a SIEM endpoint URL has a supported scheme.
-fn validate_siem_url(url: &str) -> Result<(), String> {
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        return Err(format!(
-            "SIEM URL must use http:// or https:// scheme (got: {})",
-            crate::webhooks::sanitize_url(url)
-        ));
-    }
-    Ok(())
-}
-
-/// Synchronous HTTP POST supporting both `http://` and `https://` URL parsing.
-///
-/// For `http://` URLs, uses a raw `TcpStream`.
-/// For `https://` URLs, returns an error directing users to enable the
-/// `async-support` feature (TLS requires additional dependencies).
+/// Send an HTTP POST to a SIEM endpoint.
+/// Delegates to the shared `http_util::safe_http_post` which handles
+/// DNS resolution, SSRF validation, and CRLF sanitization.
 fn http_post_sync(
     url: &str,
     body: &[u8],
     headers: &[(String, String)],
 ) -> Result<u16, String> {
-    use std::io::{Read, Write};
-
-    let (scheme, host, port, path) = parse_siem_url(url)?;
-
-    if scheme == "https" {
-        return Err(format!(
-            "HTTPS URLs require the `async-support` feature for TLS. \
-             Cannot connect to {} over plaintext.",
-            crate::webhooks::sanitize_url(url)
-        ));
-    }
-
-    let addr = format!("{host}:{port}");
-    let timeout = std::time::Duration::from_secs(30);
-
-    // DNS rebinding protection: resolve hostname and validate IP before connecting
-    let socket_addr: std::net::SocketAddr = {
-        use std::net::ToSocketAddrs;
-        let resolved = addr
-            .to_socket_addrs()
-            .map_err(|e| format!("DNS resolution failed for SIEM endpoint: {e}"))?
-            .next()
-            .ok_or("DNS resolution returned no addresses for SIEM endpoint")?;
-
-        match resolved.ip() {
-            std::net::IpAddr::V4(ip) => {
-                let o = ip.octets();
-                if ip.is_loopback() || ip.is_unspecified()
-                    || o[0] == 10
-                    || (o[0] == 172 && (16..=31).contains(&o[1]))
-                    || (o[0] == 192 && o[1] == 168)
-                    || (o[0] == 169 && o[1] == 254)
-                    || (o[0] == 100 && (64..=127).contains(&o[1]))
-                {
-                    return Err(format!("SIEM endpoint resolved to private IP: {ip}"));
-                }
-            }
-            std::net::IpAddr::V6(ip) => {
-                if ip.is_loopback() || ip.is_unspecified() {
-                    return Err(format!("SIEM endpoint resolved to loopback IPv6: {ip}"));
-                }
-            }
-        }
-        resolved
-    };
-
-    let mut stream = std::net::TcpStream::connect_timeout(&socket_addr, timeout)
-        .map_err(|e| e.to_string())?;
-
-    stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(30)))
-        .ok();
-
-    let mut req = format!("POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Length: {}\r\n", body.len());
-    for (k, v) in headers {
-        // Sanitize header values to prevent CRLF injection
-        let safe_k = k.replace(['\r', '\n'], "");
-        let safe_v = v.replace(['\r', '\n'], "");
-        req.push_str(&format!("{safe_k}: {safe_v}\r\n"));
-    }
-    req.push_str("Connection: close\r\n\r\n");
-
-    stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
-    stream.write_all(body).map_err(|e| e.to_string())?;
-
-    let mut response = vec![0u8; 1024];
-    let n = stream.read(&mut response).map_err(|e| e.to_string())?;
-    let resp = String::from_utf8_lossy(&response[..n]);
-
-    // Parse "HTTP/1.1 200 OK"
-    let status = resp
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(0);
-
-    if (200..300).contains(&status) {
-        Ok(status)
-    } else {
-        Err(format!("HTTP {status}"))
-    }
+    crate::http_util::safe_http_post(url, body, headers, 30)
 }
 
 // ---------------------------------------------------------------------------
@@ -640,12 +465,7 @@ mod tests {
     #[test]
     fn test_epoch_to_datetime() {
         // 2024-01-01 00:00:00 UTC = 1704067200
-        let (s, m, h, d, mon, y) = epoch_to_datetime(1704067200);
-        assert_eq!(y, 2024);
-        assert_eq!(mon, 1);
-        assert_eq!(d, 1);
-        assert_eq!(h, 0);
-        assert_eq!(m, 0);
-        assert_eq!(s, 0);
+        let result = crate::http_util::epoch_to_iso8601(1704067200);
+        assert_eq!(result, "2024-01-01T00:00:00Z");
     }
 }

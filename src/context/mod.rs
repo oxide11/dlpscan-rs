@@ -10,10 +10,12 @@ use std::collections::HashMap;
 mod keywords;
 pub use keywords::CONTEXT_KEYWORDS;
 
-/// Maximum edit distance for fuzzy matching.
+/// Maximum edit distance for fuzzy matching (reserved for future use).
+#[allow(dead_code)]
 const FUZZY_MAX_DISTANCE: usize = 2;
 
-/// Minimum keyword length for fuzzy matching.
+/// Minimum keyword length for fuzzy matching (reserved for future use).
+#[allow(dead_code)]
 const FUZZY_MIN_KEYWORD_LENGTH: usize = 5;
 
 /// Default context distance (chars before/after match).
@@ -31,8 +33,8 @@ pub struct ContextHitIndex {
     /// Map from (category, sub_category) → list of (start, end) byte positions.
     #[allow(dead_code)]
     hits: HashMap<(&'static str, &'static str), Vec<(usize, usize)>>,
-    /// Same data keyed by owned strings for O(1) lookup from non-static &str.
-    reverse: HashMap<(String, String), Vec<(usize, usize)>>,
+    /// Two-level map for allocation-free lookup: category → sub_category → positions.
+    reverse: HashMap<String, HashMap<String, Vec<(usize, usize)>>>,
 }
 
 impl ContextHitIndex {
@@ -44,11 +46,13 @@ impl ContextHitIndex {
         range_start: usize,
         range_end: usize,
     ) -> bool {
-        // Use the reverse lookup to find positions in O(1)
-        if let Some(positions) = self.reverse.get(&(category.to_string(), sub_category.to_string())) {
-            return positions
-                .iter()
-                .any(|&(start, _end)| start >= range_start && start < range_end);
+        // Two-level lookup avoids allocating Strings on every call
+        if let Some(sub_map) = self.reverse.get(category) {
+            if let Some(positions) = sub_map.get(sub_category) {
+                return positions
+                    .iter()
+                    .any(|&(start, _end)| start >= range_start && start < range_end);
+            }
         }
         false
     }
@@ -95,13 +99,14 @@ pub fn build_hit_index(text: &str) -> Option<ContextHitIndex> {
             .push((mat.start(), mat.end()));
     }
 
-    // Build reverse lookup with owned keys
-    let reverse: HashMap<(String, String), Vec<(usize, usize)>> = hits
-        .iter()
-        .map(|(&(cat, sub), positions)| {
-            ((cat.to_string(), sub.to_string()), positions.clone())
-        })
-        .collect();
+    // Build two-level reverse lookup for allocation-free lookups
+    let mut reverse: HashMap<String, HashMap<String, Vec<(usize, usize)>>> = HashMap::new();
+    for (&(cat, sub), positions) in &hits {
+        reverse
+            .entry(cat.to_string())
+            .or_default()
+            .insert(sub.to_string(), positions.clone());
+    }
 
     Some(ContextHitIndex { hits, reverse })
 }

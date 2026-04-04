@@ -58,18 +58,7 @@ fn parse_url(url: &str) -> Result<(&str, Option<&str>, &str, u16, &str), String>
 
 /// Strip credentials (userinfo) from a URL before logging.
 pub fn sanitize_url(url: &str) -> String {
-    // Find scheme
-    let scheme_end = url.find("://").map(|i| i + 3).unwrap_or(0);
-    let rest = &url[scheme_end..];
-    // Check for userinfo
-    if let Some(at) = rest.find('@') {
-        let slash = rest.find('/').unwrap_or(rest.len());
-        if at < slash {
-            // Strip userinfo
-            return format!("{}***@{}", &url[..scheme_end], &rest[at + 1..]);
-        }
-    }
-    url.to_string()
+    crate::http_util::sanitize_url(url)
 }
 
 /// Check whether a URL is safe to connect to (SSRF protection).
@@ -79,84 +68,12 @@ pub fn sanitize_url(url: &str) -> String {
 /// - `localhost` hostname
 /// - Private/internal IP ranges: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12,
 ///   192.168.0.0/16, 169.254.0.0/16, ::1, fd00::/8
+/// Check whether a URL is safe to connect to (SSRF protection).
+///
+/// Delegates to `crate::http_util::is_safe_url` — the single source of truth
+/// for SSRF validation across webhooks and SIEM adapters.
 pub fn is_safe_url(url: &str) -> bool {
-    let (_scheme, _userinfo, host, _port, _path) = match parse_url(url) {
-        Ok(parts) => parts,
-        Err(_) => return false,
-    };
-
-    let host_lower = host.to_lowercase();
-
-    // Reject localhost and common aliases
-    if host_lower == "localhost"
-        || host_lower == "localhost.localdomain"
-        || host_lower == "0.0.0.0"
-    {
-        return false;
-    }
-
-    // Reject IPv6 loopback, ULA (fc00::/7), and link-local (fe80::/10)
-    let trimmed = host_lower.trim_start_matches('[').trim_end_matches(']');
-    if trimmed == "::1" || trimmed.starts_with("fd") || trimmed.starts_with("fc")
-        || trimmed.starts_with("fe80")
-    {
-        return false;
-    }
-
-    // Try parsing as IPv4
-    if let Ok(ip) = trimmed.parse::<std::net::Ipv4Addr>() {
-        let octets = ip.octets();
-        // 0.0.0.0
-        if ip.is_unspecified() {
-            return false;
-        }
-        // 127.0.0.0/8
-        if octets[0] == 127 {
-            return false;
-        }
-        // 10.0.0.0/8
-        if octets[0] == 10 {
-            return false;
-        }
-        // 172.16.0.0/12
-        if octets[0] == 172 && (octets[1] >= 16 && octets[1] <= 31) {
-            return false;
-        }
-        // 192.168.0.0/16
-        if octets[0] == 192 && octets[1] == 168 {
-            return false;
-        }
-        // 169.254.0.0/16 (link-local)
-        if octets[0] == 169 && octets[1] == 254 {
-            return false;
-        }
-        // 100.64.0.0/10 (CGNAT, RFC 6598)
-        if octets[0] == 100 && (octets[1] >= 64 && octets[1] <= 127) {
-            return false;
-        }
-        // 198.18.0.0/15 (benchmarking, RFC 2544)
-        if octets[0] == 198 && (octets[1] == 18 || octets[1] == 19) {
-            return false;
-        }
-        // 192.0.0.0/24 (IETF protocol assignments)
-        if octets[0] == 192 && octets[1] == 0 && octets[2] == 0 {
-            return false;
-        }
-    }
-
-    // Try parsing as IPv6
-    if let Ok(ip) = trimmed.parse::<std::net::Ipv6Addr>() {
-        if ip.is_loopback() {
-            return false;
-        }
-        let segs = ip.segments();
-        // fd00::/8  (first byte is 0xfd)
-        if (segs[0] >> 8) == 0xfd {
-            return false;
-        }
-    }
-
-    true
+    crate::http_util::is_safe_url(url)
 }
 
 // ---------------------------------------------------------------------------
@@ -356,80 +273,10 @@ fn deliver(
 /// For `http://` URLs, uses a raw `TcpStream`.
 /// For `https://` URLs, returns an error directing users to enable the
 /// `async-support` feature (TLS requires additional dependencies).
+/// Send an HTTP POST. Delegates to the shared `http_util::safe_http_post`
+/// which handles DNS resolution, SSRF validation, and CRLF sanitization.
 fn http_post(url: &str, body: &[u8], timeout_secs: u64) -> Result<u16, String> {
-    use std::io::{Read, Write};
-
-    let (scheme, _userinfo, host, port, path) = parse_url(url)?;
-
-    if scheme == "https" {
-        return Err(format!(
-            "HTTPS URLs require the `async-support` feature for TLS. \
-             Cannot connect to {} over plaintext.",
-            sanitize_url(url)
-        ));
-    }
-
-    let addr = format!("{host}:{port}");
-    let timeout = std::time::Duration::from_secs(timeout_secs);
-
-    // DNS rebinding protection: resolve hostname and validate the IP
-    // before connecting. This prevents TOCTOU attacks where a hostname
-    // resolves to a safe IP at registration but an internal IP at connect time.
-    let socket_addr: std::net::SocketAddr = {
-        use std::net::ToSocketAddrs;
-        let resolved = addr.to_socket_addrs()
-            .map_err(|e| format!("DNS resolution failed: {e}"))?
-            .next()
-            .ok_or("DNS resolution returned no addresses")?;
-
-        // Validate resolved IP is not internal/private
-        match resolved.ip() {
-            std::net::IpAddr::V4(ip) => {
-                let o = ip.octets();
-                if ip.is_loopback() || ip.is_unspecified()
-                    || o[0] == 10
-                    || (o[0] == 172 && (16..=31).contains(&o[1]))
-                    || (o[0] == 192 && o[1] == 168)
-                    || (o[0] == 169 && o[1] == 254)
-                {
-                    return Err(format!(
-                        "Webhook target resolved to private IP: {}",
-                        ip
-                    ));
-                }
-            }
-            std::net::IpAddr::V6(ip) => {
-                if ip.is_loopback() || ip.is_unspecified() {
-                    return Err(format!(
-                        "Webhook target resolved to loopback IPv6: {}",
-                        ip
-                    ));
-                }
-            }
-        }
-        resolved
-    };
-
-    let mut stream = std::net::TcpStream::connect_timeout(&socket_addr, timeout)
-        .map_err(|e| e.to_string())?;
-    stream.set_read_timeout(Some(timeout)).ok();
-
-    let req = format!(
-        "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
-    stream.write_all(body).map_err(|e| e.to_string())?;
-
-    let mut response = vec![0u8; 512];
-    let n = stream.read(&mut response).map_err(|e| e.to_string())?;
-    let resp = String::from_utf8_lossy(&response[..n]);
-
-    resp.lines()
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .and_then(|s| s.parse::<u16>().ok())
-        .ok_or_else(|| "Could not parse HTTP status".to_string())
+    crate::http_util::safe_http_post(url, body, &[], timeout_secs)
 }
 
 // ---------------------------------------------------------------------------

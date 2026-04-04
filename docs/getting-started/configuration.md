@@ -45,6 +45,11 @@ export DLPSCAN_API_KEY=your-secret-key
 export DLPSCAN_API_HOST=127.0.0.1
 export DLPSCAN_API_PORT=8000
 export DLPSCAN_API_RATE_LIMIT=100
+export DLPSCAN_API_KEY_ROLES="key1:admin,key2:analyst,key3:viewer"
+
+# TLS (optional)
+export DLPSCAN_TLS_CERT=/path/to/cert.pem
+export DLPSCAN_TLS_KEY=/path/to/key.pem
 ```
 
 Environment variables override values from the config file.
