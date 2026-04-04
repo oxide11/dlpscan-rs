@@ -87,8 +87,11 @@ pub fn is_safe_url(url: &str) -> bool {
 
     let host_lower = host.to_lowercase();
 
-    // Reject localhost
-    if host_lower == "localhost" {
+    // Reject localhost and common aliases
+    if host_lower == "localhost"
+        || host_lower == "localhost.localdomain"
+        || host_lower == "0.0.0.0"
+    {
         return false;
     }
 
@@ -101,6 +104,10 @@ pub fn is_safe_url(url: &str) -> bool {
     // Try parsing as IPv4
     if let Ok(ip) = trimmed.parse::<std::net::Ipv4Addr>() {
         let octets = ip.octets();
+        // 0.0.0.0
+        if ip.is_unspecified() {
+            return false;
+        }
         // 127.0.0.0/8
         if octets[0] == 127 {
             return false;
@@ -350,11 +357,47 @@ fn http_post(url: &str, body: &[u8], timeout_secs: u64) -> Result<u16, String> {
 
     let addr = format!("{host}:{port}");
     let timeout = std::time::Duration::from_secs(timeout_secs);
-    let mut stream = std::net::TcpStream::connect_timeout(
-        &addr.parse().map_err(|e: std::net::AddrParseError| e.to_string())?,
-        timeout,
-    )
-    .map_err(|e| e.to_string())?;
+
+    // DNS rebinding protection: resolve hostname and validate the IP
+    // before connecting. This prevents TOCTOU attacks where a hostname
+    // resolves to a safe IP at registration but an internal IP at connect time.
+    let socket_addr: std::net::SocketAddr = {
+        use std::net::ToSocketAddrs;
+        let resolved = addr.to_socket_addrs()
+            .map_err(|e| format!("DNS resolution failed: {e}"))?
+            .next()
+            .ok_or("DNS resolution returned no addresses")?;
+
+        // Validate resolved IP is not internal/private
+        match resolved.ip() {
+            std::net::IpAddr::V4(ip) => {
+                let o = ip.octets();
+                if ip.is_loopback() || ip.is_unspecified()
+                    || o[0] == 10
+                    || (o[0] == 172 && (16..=31).contains(&o[1]))
+                    || (o[0] == 192 && o[1] == 168)
+                    || (o[0] == 169 && o[1] == 254)
+                {
+                    return Err(format!(
+                        "Webhook target resolved to private IP: {}",
+                        ip
+                    ));
+                }
+            }
+            std::net::IpAddr::V6(ip) => {
+                if ip.is_loopback() || ip.is_unspecified() {
+                    return Err(format!(
+                        "Webhook target resolved to loopback IPv6: {}",
+                        ip
+                    ));
+                }
+            }
+        }
+        resolved
+    };
+
+    let mut stream = std::net::TcpStream::connect_timeout(&socket_addr, timeout)
+        .map_err(|e| e.to_string())?;
     stream.set_read_timeout(Some(timeout)).ok();
 
     let req = format!(

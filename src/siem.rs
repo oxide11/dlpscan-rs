@@ -332,6 +332,10 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
     match siem_type.to_lowercase().as_str() {
         "splunk" => {
             let url = std::env::var("DLPSCAN_SIEM_URL").ok()?;
+            if !crate::webhooks::is_safe_url(&url) {
+                tracing::error!("SIEM URL rejected by SSRF filter: {}", crate::webhooks::sanitize_url(&url));
+                return None;
+            }
             let token = std::env::var("DLPSCAN_SIEM_TOKEN").ok()?;
             let mut adapter = SplunkHECAdapter::new(&url, &token);
             if let Ok(source) = std::env::var("DLPSCAN_SIEM_SOURCE") {
@@ -341,6 +345,10 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
         }
         "elasticsearch" => {
             let url = std::env::var("DLPSCAN_SIEM_URL").ok()?;
+            if !crate::webhooks::is_safe_url(&url) {
+                tracing::error!("SIEM URL rejected by SSRF filter: {}", crate::webhooks::sanitize_url(&url));
+                return None;
+            }
             let mut adapter = ElasticsearchAdapter::new(&url);
             if let Ok(index) = std::env::var("DLPSCAN_SIEM_INDEX") {
                 adapter = adapter.with_index(&index);
@@ -370,6 +378,10 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
         }
         "webhook" => {
             let url = std::env::var("DLPSCAN_SIEM_URL").ok()?;
+            if !crate::webhooks::is_safe_url(&url) {
+                tracing::error!("SIEM URL rejected by SSRF filter: {}", crate::webhooks::sanitize_url(&url));
+                return None;
+            }
             Some(Box::new(WebhookSIEMAdapter::new(&url)))
         }
         "datadog" => {
