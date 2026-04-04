@@ -218,6 +218,15 @@ impl AuditHandler for FileAuditHandler {
             }
         };
 
+        // Symlink protection: reject paths that are symbolic links
+        if std::path::Path::new(&self.path).is_symlink() {
+            tracing::error!(
+                path = %self.path,
+                "Audit log path is a symlink, refusing to write (symlink attack protection)"
+            );
+            return;
+        }
+
         #[cfg(unix)]
         let file = {
             use std::os::unix::fs::OpenOptionsExt;

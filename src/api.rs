@@ -16,7 +16,7 @@ use crate::guard::{Action, InputGuard, Preset, ScanResult, TokenVault};
 // Request / Response types
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ScanRequest {
     pub text: String,
     #[serde(default)]
@@ -299,6 +299,85 @@ pub fn handle_batch_scan(req: &BatchScanRequest) -> Result<BatchScanResponse, St
     Ok(BatchScanResponse { results: responses })
 }
 
+/// Process a tokenize request.
+pub fn handle_tokenize(
+    req: &TokenizeRequest,
+    vaults: &RwLock<HashMap<String, VaultEntry>>,
+) -> Result<TokenizeResponse, String> {
+    // Build a scan config from request
+    let scan_req = ScanRequest {
+        text: req.text.clone(),
+        presets: req.presets.clone(),
+        categories: req.categories.clone(),
+        action: "tokenize".to_string(),
+        min_confidence: req.min_confidence,
+        require_context: false,
+    };
+    let guard = build_guard(&scan_req)?;
+    let result = guard.scan(&req.text).map_err(|e| format!("{e}"))?;
+
+    // Create a vault and tokenize all findings
+    let vault_id = generate_id();
+    let mut vault = TokenVault::new("TOK", None);
+    let mut tokenized = req.text.clone();
+
+    // Sort findings by position descending to replace from end to start
+    let mut findings: Vec<_> = result.findings.iter().collect();
+    findings.sort_by(|a, b| b.span.0.cmp(&a.span.0));
+
+    for finding in &findings {
+        let token = vault.tokenize(&finding.text, &finding.category);
+        let (start, end) = finding.span;
+        if start <= end && end <= tokenized.len()
+            && tokenized.is_char_boundary(start)
+            && tokenized.is_char_boundary(end)
+        {
+            tokenized.replace_range(start..end, &token);
+        }
+    }
+
+    let token_count = vault.size();
+    if let Ok(mut vaults) = vaults.write() {
+        vaults.insert(
+            vault_id.clone(),
+            VaultEntry {
+                vault,
+                created_at: Instant::now(),
+            },
+        );
+    }
+
+    Ok(TokenizeResponse {
+        tokenized_text: tokenized,
+        token_count,
+        vault_id,
+    })
+}
+
+/// Process a detokenize request.
+pub fn handle_detokenize(
+    req: &DetokenizeRequest,
+    vaults: &RwLock<HashMap<String, VaultEntry>>,
+) -> Result<DetokenizeResponse, String> {
+    let vaults = vaults.read().map_err(|e| format!("{e}"))?;
+    let entry = vaults
+        .get(&req.vault_id)
+        .ok_or_else(|| format!("Vault '{}' not found", req.vault_id))?;
+    let original = entry.vault.detokenize_text(&req.text);
+    Ok(DetokenizeResponse {
+        original_text: original,
+    })
+}
+
+/// Process an obfuscate request.
+pub fn handle_obfuscate(req: &ScanRequest) -> Result<ScanResponse, String> {
+    let mut obf_req = req.clone();
+    obf_req.action = "obfuscate".to_string();
+    let guard = build_guard(&obf_req)?;
+    let result = guard.scan(&obf_req.text).map_err(|e| format!("{e}"))?;
+    Ok(scan_result_to_response(&result))
+}
+
 /// Basic health check (used by tests and non-server contexts).
 pub fn handle_health() -> HealthResponse {
     HealthResponse {
@@ -322,6 +401,14 @@ fn handle_health_full(state: &AppState, active: usize) -> HealthResponse {
         active_connections: Some(active),
         is_ready: Some(!shutting_down),
     }
+}
+
+/// Generate a simple random ID (hex string).
+fn generate_id() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// Verify API key (constant-time comparison via SHA-256 hashing).
@@ -577,6 +664,9 @@ fn route_request(raw: &str, state: &AppState) -> (String, String) {
         ("POST", "/v1/scan") => Some(crate::rbac::Permission::Scan),
         ("POST", "/v1/batch/scan") => Some(crate::rbac::Permission::BatchScan),
         ("POST", "/v1/patterns") => Some(crate::rbac::Permission::ManagePatterns),
+        ("POST", "/v1/tokenize") => Some(crate::rbac::Permission::Scan),
+        ("POST", "/v1/detokenize") => Some(crate::rbac::Permission::Detokenize),
+        ("POST", "/v1/obfuscate") => Some(crate::rbac::Permission::Scan),
         _ => None,
     };
     if let Some(perm) = required_perm {
@@ -735,6 +825,63 @@ fn route_request(raw: &str, state: &AppState) -> (String, String) {
             Err(e) => (
                 "422 Unprocessable Entity".to_string(),
                 serde_json::json!({"detail": e.to_string()}).to_string(),
+            ),
+        },
+        ("POST", "/v1/tokenize") => match serde_json::from_str::<TokenizeRequest>(body) {
+            Ok(req) => match handle_tokenize(&req, &state.vaults) {
+                Ok(resp) => (
+                    "200 OK".to_string(),
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                ),
+                Err(e) => {
+                    tracing::warn!("Tokenize error: {}", e);
+                    (
+                        "400 Bad Request".to_string(),
+                        r#"{"detail":"Tokenization failed"}"#.to_string(),
+                    )
+                }
+            },
+            Err(_e) => (
+                "422 Unprocessable Entity".to_string(),
+                r#"{"detail":"Invalid request body"}"#.to_string(),
+            ),
+        },
+        ("POST", "/v1/detokenize") => match serde_json::from_str::<DetokenizeRequest>(body) {
+            Ok(req) => match handle_detokenize(&req, &state.vaults) {
+                Ok(resp) => (
+                    "200 OK".to_string(),
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                ),
+                Err(e) => {
+                    tracing::warn!("Detokenize error: {}", e);
+                    (
+                        "400 Bad Request".to_string(),
+                        r#"{"detail":"Detokenization failed"}"#.to_string(),
+                    )
+                }
+            },
+            Err(_e) => (
+                "422 Unprocessable Entity".to_string(),
+                r#"{"detail":"Invalid request body"}"#.to_string(),
+            ),
+        },
+        ("POST", "/v1/obfuscate") => match serde_json::from_str::<ScanRequest>(body) {
+            Ok(req) => match handle_obfuscate(&req) {
+                Ok(resp) => (
+                    "200 OK".to_string(),
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                ),
+                Err(e) => {
+                    tracing::warn!("Obfuscate error: {}", e);
+                    (
+                        "400 Bad Request".to_string(),
+                        r#"{"detail":"Obfuscation failed"}"#.to_string(),
+                    )
+                }
+            },
+            Err(_e) => (
+                "422 Unprocessable Entity".to_string(),
+                r#"{"detail":"Invalid request body"}"#.to_string(),
             ),
         },
         ("GET", "/v1/patterns") => {
