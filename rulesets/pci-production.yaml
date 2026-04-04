@@ -1,0 +1,27 @@
+name: PCI Production
+description: >
+  Production ruleset for PCI-DSS compliance. Detects credit card numbers,
+  PANs, track data, and payment service secrets. Blocks on detection.
+
+version: "1"
+
+baselines:
+  - pci
+
+action: reject
+mode: denylist
+min_confidence: 0.6
+require_context: false
+redaction_char: "X"
+
+overrides:
+  - category: Card Expiration Dates
+    min_confidence: 0.8
+    require_context: true
+  - category: Check and MICR Data
+    min_confidence: 0.7
+
+allowlist:
+  - "4111-1111-1111-1111"   # Standard test card
+  - "5500-0000-0000-0004"   # Mastercard test
+  - "3400-0000-0000-009"    # Amex test

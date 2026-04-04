@@ -1,0 +1,29 @@
+name: Comprehensive Scan
+description: >
+  Full scan across all baselines. Useful for initial data discovery
+  and classification projects. Flags all findings for review.
+
+version: "1"
+
+baselines:
+  - pii
+  - pci
+  - phi
+  - internal_financial
+  - source_code_secrets
+  - confidential_documents
+
+action: flag
+mode: denylist
+min_confidence: 0.5
+
+exclude_categories:
+  - Dates
+  - Postal Codes
+
+overrides:
+  - category: Credit Card Numbers
+    action: reject
+    min_confidence: 0.8
+  - category: Generic Secrets
+    min_confidence: 0.7

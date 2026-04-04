@@ -1,0 +1,21 @@
+name: PII Standard
+description: >
+  Standard PII detection ruleset covering personal identifiers, contact
+  information, biometrics, and employment data. Flags findings for review.
+
+version: "1"
+
+baselines:
+  - pii
+
+action: flag
+mode: denylist
+min_confidence: 0.5
+
+overrides:
+  - category: Dates
+    min_confidence: 0.8
+    require_context: true
+  - category: Postal Codes
+    min_confidence: 0.7
+    require_context: true

@@ -1,0 +1,22 @@
+name: Internal Financial Monitoring
+description: >
+  Monitors for internal financial data including banking identifiers,
+  wire transfers, securities, cryptocurrency, and regulatory filings.
+  Aligned with SOX, GLBA, BSA/AML, and FINRA requirements.
+
+version: "1"
+
+baselines:
+  - internal_financial
+
+action: flag
+mode: denylist
+min_confidence: 0.6
+
+overrides:
+  - category: Cryptocurrency
+    min_confidence: 0.8
+  - category: Securities Identifiers
+    min_confidence: 0.7
+  - category: Financial Regulatory Labels
+    require_context: true

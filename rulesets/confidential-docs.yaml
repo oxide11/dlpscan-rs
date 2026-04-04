@@ -1,0 +1,21 @@
+name: Confidential Documents
+description: >
+  Detects classification labels, privilege markings, regulatory
+  designations, and sensitivity markers on documents.
+
+version: "1"
+
+baselines:
+  - confidential_documents
+
+action: flag
+mode: denylist
+min_confidence: 0.5
+require_context: true
+
+overrides:
+  - category: Corporate Classification
+    require_context: false
+  - category: Privileged Information
+    min_confidence: 0.7
+    require_context: false

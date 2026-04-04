@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  dlpscan:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dlpscan:latest
+    container_name: dlpscan
+    volumes:
+      - ./data:/data:ro
+    environment:
+      - RUST_LOG=info
+    command: ["scan-dir", "/data", "--format", "json"]
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # Scan a single file
+  dlpscan-file:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dlpscan:latest
+    profiles:
+      - tools
+    volumes:
+      - ./data:/data:ro
+    command: ["scan", "/data/input.txt"]
+
+  # Run with InputGuard in redact mode
+  dlpscan-guard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: dlpscan:latest
+    profiles:
+      - tools
+    environment:
+      - RUST_LOG=info
+    command: ["guard", "--action", "redact", "--presets", "pci-dss,credentials"]

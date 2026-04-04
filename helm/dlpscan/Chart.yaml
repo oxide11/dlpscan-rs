@@ -1,0 +1,14 @@
+apiVersion: v2
+name: dlpscan
+description: DLP Scanner — detect, redact, and protect sensitive data
+type: application
+version: 1.0.0
+appVersion: "2.0.0"
+keywords:
+  - dlp
+  - security
+  - compliance
+  - pii
+  - data-protection
+maintainers:
+  - name: DLPScan Team
