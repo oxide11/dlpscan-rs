@@ -568,6 +568,44 @@ fn decode_hex_spaced(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) 
     (String::from_utf8_lossy(&out).into_owned(), offsets)
 }
 
+/// Decode `\xHH` hex-escape sequences (e.g. `\x31\x32\x33` → `123`).
+///
+/// Only replaces sequences where both digits are valid hex and the decoded byte
+/// is printable ASCII (0x20–0x7E). Other sequences are passed through unchanged.
+fn decode_hex_escapes(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    let bytes = input.as_bytes();
+    if !bytes.windows(2).any(|w| w[0] == b'\\' && w[1] == b'x') {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    let mut out = String::with_capacity(input.len());
+    let mut offsets: Vec<usize> = Vec::with_capacity(input.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if i + 3 < bytes.len()
+            && bytes[i] == b'\\'
+            && bytes[i + 1] == b'x'
+        {
+            if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 2]), hex_val(bytes[i + 3])) {
+                let decoded = (hi << 4) | lo;
+                if decoded >= 0x20 && decoded <= 0x7E {
+                    out.push(decoded as char);
+                    offsets.push(orig_offset(in_offsets, i));
+                    i += 4;
+                    continue;
+                }
+            }
+        }
+        // Emit one byte (preserving multi-byte UTF-8 chars where possible).
+        out.push(bytes[i] as char);
+        offsets.push(orig_offset(in_offsets, i));
+        i += 1;
+    }
+
+    (out, offsets)
+}
+
 /// Standard base32 alphabet (RFC 4648).
 const BASE32_ALPHA: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -855,6 +893,11 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     current = r.0;
     offsets = r.1;
 
+    // Stage 4b: Decode \xHH hex-escape sequences
+    let r = decode_hex_escapes(&current, &offsets);
+    current = r.0;
+    offsets = r.1;
+
     // Stage 5: Collapse whitespace padding between non-alpha chars
     let r = collapse_padding(&current, &offsets);
     current = r.0;
@@ -998,6 +1041,10 @@ fn has_evasion_markers(text: &str) -> bool {
                 return true;
             }
         }
+    }
+    // \xHH hex-escape sequences
+    if bytes.windows(2).any(|w| w[0] == b'\\' && w[1] == b'x') {
+        return true;
     }
     false
 }
