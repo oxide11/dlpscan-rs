@@ -23,7 +23,7 @@ jobs:
         run: rm -f ~/.cargo/config.toml ~/.cargo/config
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.75"
+          toolchain: "1.85"
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --lib
 
@@ -36,7 +36,7 @@ jobs:
         run: rm -f ~/.cargo/config.toml ~/.cargo/config
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.75"
+          toolchain: "1.85"
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --lib -- -D warnings -A dead-code -A unused-imports
@@ -50,6 +50,6 @@ jobs:
         run: rm -f ~/.cargo/config.toml ~/.cargo/config
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.75"
+          toolchain: "1.85"
           components: rustfmt
       - run: cargo fmt --check
