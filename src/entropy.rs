@@ -71,7 +71,10 @@ impl ExtractedItem {
 fn format_entropy_ranges() -> HashMap<&'static str, (f64, f64)> {
     let mut m = HashMap::new();
     // Text
-    for ext in &[".txt", ".csv", ".json", ".xml", ".html", ".py", ".js", ".log", ".md", ".rs", ".toml", ".yaml"] {
+    for ext in &[
+        ".txt", ".csv", ".json", ".xml", ".html", ".py", ".js", ".log", ".md", ".rs", ".toml",
+        ".yaml",
+    ] {
         m.insert(*ext, (3.0, 5.5));
     }
     // PDF
@@ -285,7 +288,7 @@ impl RecursiveExtractor {
 
         // Try to extract as ZIP archive
         if let Ok(file) = std::fs::File::open(path) {
-            if let Ok(_) = zip::ZipArchive::new(file) {
+            if zip::ZipArchive::new(file).is_ok() {
                 if let Ok(mut items) = self.extract_zip(path, depth, parent.unwrap_or(path)) {
                     results.append(&mut items);
                 }
@@ -313,7 +316,10 @@ impl RecursiveExtractor {
         }
 
         if total_uncompressed > self.max_total_size {
-            tracing::warn!("Potential zip bomb detected: {} bytes uncompressed", total_uncompressed);
+            tracing::warn!(
+                "Potential zip bomb detected: {} bytes uncompressed",
+                total_uncompressed
+            );
             return Ok(vec![ExtractedItem {
                 path: path.to_string(),
                 original_name: "SUSPICIOUS_ARCHIVE".to_string(),
@@ -450,7 +456,11 @@ mod tests {
     fn test_analyze_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.txt");
-        std::fs::write(&path, "Hello, world! This is a test file with some content for entropy analysis.").unwrap();
+        std::fs::write(
+            &path,
+            "Hello, world! This is a test file with some content for entropy analysis.",
+        )
+        .unwrap();
 
         let analyzer = EntropyAnalyzer::default();
         let result = analyzer.analyze_file(path.to_str().unwrap()).unwrap();

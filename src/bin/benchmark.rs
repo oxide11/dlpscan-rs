@@ -136,15 +136,21 @@ fn main() {
     let text_10k = generate_text(MIXED_TEXT, 10240);
     let guard_redact_full = InputGuard::new()
         .with_presets(vec![
-            Preset::PciDss, Preset::Pii, Preset::Credentials,
-            Preset::Healthcare, Preset::ContactInfo,
+            Preset::PciDss,
+            Preset::Pii,
+            Preset::Credentials,
+            Preset::Healthcare,
+            Preset::ContactInfo,
         ])
         .with_action(Action::Redact)
         .with_mode(Mode::Denylist);
     let guard_redact_baseline = InputGuard::new()
         .with_presets(vec![
-            Preset::PciDss, Preset::Pii, Preset::Credentials,
-            Preset::Healthcare, Preset::ContactInfo,
+            Preset::PciDss,
+            Preset::Pii,
+            Preset::Credentials,
+            Preset::Healthcare,
+            Preset::ContactInfo,
         ])
         .with_action(Action::Redact)
         .with_mode(Mode::Denylist)
@@ -166,10 +172,7 @@ fn main() {
     // Throughput summary
     eprintln!("\n{}", "=".repeat(76));
     eprintln!("Throughput (1MB):");
-    eprintln!(
-        "  {:35}  {:>12}  {:>12}",
-        "Scenario", "Full", "Baseline"
-    );
+    eprintln!("  {:35}  {:>12}  {:>12}", "Scenario", "Full", "Baseline");
     eprintln!("  {}", "-".repeat(61));
     for (full, base) in &rows {
         if full.name.contains("1024KB") {
@@ -186,12 +189,19 @@ fn main() {
     // Finding count comparison
     eprintln!("\n{}", "=".repeat(76));
     eprintln!("Finding counts:");
-    for (template_name, template) in &[("mixed_10KB", MIXED_TEXT), ("kw_heavy_10KB", KEYWORD_HEAVY_TEXT)] {
+    for (template_name, template) in &[
+        ("mixed_10KB", MIXED_TEXT),
+        ("kw_heavy_10KB", KEYWORD_HEAVY_TEXT),
+    ] {
         let text = generate_text(template, 10240);
         let full_result = guard_full.scan(&text).unwrap();
         let base_result = guard_baseline.scan(&text).unwrap();
-        eprintln!("  {} — full: {} findings, baseline: {} findings",
-            template_name, full_result.findings.len(), base_result.findings.len());
+        eprintln!(
+            "  {} — full: {} findings, baseline: {} findings",
+            template_name,
+            full_result.findings.len(),
+            base_result.findings.len()
+        );
 
         // Show category diff
         let full_cats = &full_result.categories_found;
@@ -205,7 +215,8 @@ fn main() {
     // Pattern count info
     eprintln!("\nPattern classification:");
     let compiled = dlpscan::patterns::PATTERNS;
-    let always_run = compiled.iter()
+    let always_run = compiled
+        .iter()
         .filter(|p| {
             let spec = dlpscan::models::pattern_specificity(p.sub_category);
             spec >= 0.85 || is_critical(p.sub_category)
@@ -213,32 +224,83 @@ fn main() {
         .count();
     eprintln!("  Total patterns:     {}", compiled.len());
     eprintln!("  Always-run:         {} (baseline)", always_run);
-    eprintln!("  Context-gated:      {} (skipped in baseline mode)", compiled.len() - always_run);
+    eprintln!(
+        "  Context-gated:      {} (skipped in baseline mode)",
+        compiled.len() - always_run
+    );
 }
 
 fn is_critical(sub: &str) -> bool {
-    matches!(sub,
-        "USA SSN" | "USA ITIN" | "USA EIN" | "USA Passport" | "USA Passport Card"
-        | "USA Routing Number" | "US Phone Number" | "US MBI" | "US NPI"
-        | "Canada SIN" | "Canada Passport"
-        | "UK NIN" | "British NHS" | "UK Passport"
-        | "France NIR" | "Germany Tax ID" | "Netherlands BSN" | "Spain DNI"
-        | "Italy Codice Fiscale" | "Italy SSN" | "Sweden PIN" | "Poland PESEL"
-        | "Belgium NRN" | "Denmark CPR"
-        | "India Aadhaar" | "India PAN" | "China Resident ID" | "Japan My Number"
-        | "South Korea RRN" | "Singapore NRIC" | "Singapore FIN" | "Hong Kong ID"
-        | "Brazil CPF" | "Brazil CNPJ" | "Mexico CURP" | "Argentina CUIL/CUIT"
-        | "Chile RUN/RUT"
-        | "Israel Teudat Zehut" | "UAE Emirates ID" | "Saudi Arabia National ID"
-        | "Bitcoin Address (Legacy)" | "Bitcoin Address (Bech32)"
-        | "Ethereum Address" | "Litecoin Address" | "Bitcoin Cash Address"
-        | "Ripple Address"
-        | "E.164 Phone Number" | "UK Phone Number"
-        | "IPv4 Address" | "IPv6 Address" | "MAC Address"
-        | "Bearer Token" | "Generic API Key" | "Generic Secret Assignment"
-        | "Slack Webhook"
-        | "GPS Coordinates" | "PAN" | "VIN" | "IMEI" | "IMEISV" | "MEID"
-        | "ABA Routing Number" | "CUSIP" | "ISIN" | "SEDOL" | "LEI" | "Ticker Symbol"
-        | "URL with Password" | "URL with Token"
+    matches!(
+        sub,
+        "USA SSN"
+            | "USA ITIN"
+            | "USA EIN"
+            | "USA Passport"
+            | "USA Passport Card"
+            | "USA Routing Number"
+            | "US Phone Number"
+            | "US MBI"
+            | "US NPI"
+            | "Canada SIN"
+            | "Canada Passport"
+            | "UK NIN"
+            | "British NHS"
+            | "UK Passport"
+            | "France NIR"
+            | "Germany Tax ID"
+            | "Netherlands BSN"
+            | "Spain DNI"
+            | "Italy Codice Fiscale"
+            | "Italy SSN"
+            | "Sweden PIN"
+            | "Poland PESEL"
+            | "Belgium NRN"
+            | "Denmark CPR"
+            | "India Aadhaar"
+            | "India PAN"
+            | "China Resident ID"
+            | "Japan My Number"
+            | "South Korea RRN"
+            | "Singapore NRIC"
+            | "Singapore FIN"
+            | "Hong Kong ID"
+            | "Brazil CPF"
+            | "Brazil CNPJ"
+            | "Mexico CURP"
+            | "Argentina CUIL/CUIT"
+            | "Chile RUN/RUT"
+            | "Israel Teudat Zehut"
+            | "UAE Emirates ID"
+            | "Saudi Arabia National ID"
+            | "Bitcoin Address (Legacy)"
+            | "Bitcoin Address (Bech32)"
+            | "Ethereum Address"
+            | "Litecoin Address"
+            | "Bitcoin Cash Address"
+            | "Ripple Address"
+            | "E.164 Phone Number"
+            | "UK Phone Number"
+            | "IPv4 Address"
+            | "IPv6 Address"
+            | "MAC Address"
+            | "Bearer Token"
+            | "Generic API Key"
+            | "Generic Secret Assignment"
+            | "Slack Webhook"
+            | "GPS Coordinates"
+            | "PAN"
+            | "VIN"
+            | "IMEI"
+            | "IMEISV"
+            | "MEID"
+            | "ABA Routing Number"
+            | "CUSIP"
+            | "ISIN"
+            | "SEDOL"
+            | "LEI"
+            | "Ticker Symbol"
+            | "URL with Password"
+            | "URL with Token"
     )
 }

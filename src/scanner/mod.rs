@@ -7,7 +7,7 @@ use once_cell::sync::Lazy;
 use rayon::prelude::*;
 use regex::Regex;
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::context;
 use crate::models::{is_context_required, pattern_specificity, Match, PatternDef};
@@ -102,41 +102,90 @@ const SPECIFICITY_THRESHOLD: f64 = 0.85;
 static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
     [
         // US core
-        "USA SSN", "USA ITIN", "USA EIN", "USA Passport", "USA Passport Card",
-        "USA Routing Number", "US Phone Number", "US MBI", "US NPI",
+        "USA SSN",
+        "USA ITIN",
+        "USA EIN",
+        "USA Passport",
+        "USA Passport Card",
+        "USA Routing Number",
+        "US Phone Number",
+        "US MBI",
+        "US NPI",
         // Canada
-        "Canada SIN", "Canada Passport",
+        "Canada SIN",
+        "Canada Passport",
         // UK
-        "UK NIN", "British NHS", "UK Passport",
+        "UK NIN",
+        "British NHS",
+        "UK Passport",
         // Europe
-        "France NIR", "Germany Tax ID", "Netherlands BSN", "Spain DNI",
-        "Italy Codice Fiscale", "Italy SSN", "Sweden PIN", "Poland PESEL",
-        "Belgium NRN", "Denmark CPR",
+        "France NIR",
+        "Germany Tax ID",
+        "Netherlands BSN",
+        "Spain DNI",
+        "Italy Codice Fiscale",
+        "Italy SSN",
+        "Sweden PIN",
+        "Poland PESEL",
+        "Belgium NRN",
+        "Denmark CPR",
         // Asia-Pacific
-        "Australia TFN", "Australia Medicare", "Australia Passport",
-        "India Aadhaar", "India PAN", "China Resident ID", "Japan My Number",
-        "South Korea RRN", "Singapore NRIC", "Singapore FIN", "Hong Kong ID",
+        "Australia TFN",
+        "Australia Medicare",
+        "Australia Passport",
+        "India Aadhaar",
+        "India PAN",
+        "China Resident ID",
+        "Japan My Number",
+        "South Korea RRN",
+        "Singapore NRIC",
+        "Singapore FIN",
+        "Hong Kong ID",
         // Latin America
-        "Brazil CPF", "Brazil CNPJ", "Mexico CURP", "Argentina CUIL/CUIT",
+        "Brazil CPF",
+        "Brazil CNPJ",
+        "Mexico CURP",
+        "Argentina CUIL/CUIT",
         "Chile RUN/RUT",
         // Middle East
-        "Israel Teudat Zehut", "UAE Emirates ID", "Saudi Arabia National ID",
+        "Israel Teudat Zehut",
+        "UAE Emirates ID",
+        "Saudi Arabia National ID",
         // Crypto
-        "Bitcoin Address (Legacy)", "Bitcoin Address (Bech32)",
-        "Ethereum Address", "Litecoin Address", "Bitcoin Cash Address",
+        "Bitcoin Address (Legacy)",
+        "Bitcoin Address (Bech32)",
+        "Ethereum Address",
+        "Litecoin Address",
+        "Bitcoin Cash Address",
         "Ripple Address",
         // Contact & network
-        "E.164 Phone Number", "UK Phone Number",
-        "IPv4 Address", "IPv6 Address", "MAC Address",
+        "E.164 Phone Number",
+        "UK Phone Number",
+        "IPv4 Address",
+        "IPv6 Address",
+        "MAC Address",
         // Secrets (important but below threshold)
-        "Bearer Token", "Generic API Key", "Generic Secret Assignment",
+        "Bearer Token",
+        "Generic API Key",
+        "Generic Secret Assignment",
         "Slack Webhook",
         // Structurally distinctive
-        "GPS Coordinates", "PAN", "VIN", "IMEI", "IMEISV", "MEID",
+        "GPS Coordinates",
+        "PAN",
+        "VIN",
+        "IMEI",
+        "IMEISV",
+        "MEID",
         // Financial
-        "ABA Routing Number", "CUSIP", "ISIN", "SEDOL", "LEI", "Ticker Symbol",
+        "ABA Routing Number",
+        "CUSIP",
+        "ISIN",
+        "SEDOL",
+        "LEI",
+        "Ticker Symbol",
         // URLs with credentials
-        "URL with Password", "URL with Token",
+        "URL with Password",
+        "URL with Token",
     ]
     .into_iter()
     .collect()
@@ -179,12 +228,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
             .iter()
             .filter(|cp| !is_always_run(cp.def.sub_category))
             .filter(|cp| {
-                index.has_hit_in_range(
-                    cp.def.category,
-                    cp.def.sub_category,
-                    0,
-                    normalized.len(),
-                )
+                index.has_hit_in_range(cp.def.category, cp.def.sub_category, 0, normalized.len())
             })
             .map(|cp| (cp.def.category, cp.def.sub_category))
             .collect()
@@ -209,10 +253,11 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 return is_always_run(cp.def.sub_category);
             }
             // AC prefilter: skip context-gated patterns whose keywords aren't present
-            if prefilter_active && !is_always_run(cp.def.sub_category) {
-                if !active_gated.contains(&(cp.def.category, cp.def.sub_category)) {
-                    return false;
-                }
+            if prefilter_active
+                && !is_always_run(cp.def.sub_category)
+                && !active_gated.contains(&(cp.def.category, cp.def.sub_category))
+            {
+                return false;
             }
             true
         })
@@ -308,7 +353,10 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
 
     // Check if scan exceeded timeout
     if start.elapsed().as_secs() > MAX_SCAN_SECONDS {
-        tracing::warn!("Scan exceeded timeout of {}s, returning partial results", MAX_SCAN_SECONDS);
+        tracing::warn!(
+            "Scan exceeded timeout of {}s, returning partial results",
+            MAX_SCAN_SECONDS
+        );
     }
 
     // Flatten primary matches
@@ -320,8 +368,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
 
     // Second pass: try alternative decodings (base32/64, ROT13, reversal)
     // Only if primary scan found few/no matches and text is short enough
-    if matches.len() < 3 && text.len() < 4096 && start.elapsed().as_secs() < MAX_SCAN_SECONDS / 2
-    {
+    if matches.len() < 3 && text.len() < 4096 && start.elapsed().as_secs() < MAX_SCAN_SECONDS / 2 {
         let alternatives = normalize::generate_alternative_decodings(&normalized);
         for alt_text in &alternatives {
             if alt_text.is_empty() {

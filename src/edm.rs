@@ -145,14 +145,12 @@ pub struct ExactDataMatcher {
 impl ExactDataMatcher {
     /// Create a new matcher with optional salt and tokenizer names.
     pub fn new(salt: Option<&[u8]>, tokenizer_names: Option<Vec<&str>>) -> Self {
-        let salt = salt
-            .map(|s| s.to_vec())
-            .unwrap_or_else(|| {
-                let mut buf = vec![0u8; 32];
-                use rand::RngCore;
-                rand::thread_rng().fill_bytes(&mut buf);
-                buf
-            });
+        let salt = salt.map(|s| s.to_vec()).unwrap_or_else(|| {
+            let mut buf = vec![0u8; 32];
+            use rand::RngCore;
+            rand::thread_rng().fill_bytes(&mut buf);
+            buf
+        });
 
         let names = tokenizer_names
             .map(|v| v.iter().map(|s| s.to_string()).collect())
@@ -172,8 +170,7 @@ impl ExactDataMatcher {
     /// Compute HMAC-SHA256 hex digest for a value.
     fn hmac_hash(&self, value: &str) -> String {
         let normalized = normalize_value(value);
-        let mut mac =
-            HmacSha256::new_from_slice(&self.salt).expect("HMAC accepts any key length");
+        let mut mac = HmacSha256::new_from_slice(&self.salt).expect("HMAC accepts any key length");
         mac.update(normalized.as_bytes());
         hex::encode(mac.finalize().into_bytes())
     }
@@ -182,10 +179,7 @@ impl ExactDataMatcher {
     pub fn register_values(&mut self, category: &str, values: &[&str]) -> usize {
         // Pre-compute hashes to avoid borrow conflict
         let hashes: Vec<String> = values.iter().map(|v| self.hmac_hash(v)).collect();
-        let entry = self
-            .hashes
-            .entry(category.to_string())
-            .or_insert_with(HashSet::new);
+        let entry = self.hashes.entry(category.to_string()).or_default();
         for hash in hashes {
             entry.insert(hash);
         }
@@ -203,11 +197,7 @@ impl ExactDataMatcher {
     }
 
     /// Scan text for registered values.
-    pub fn scan(
-        &self,
-        text: &str,
-        categories: Option<&HashSet<String>>,
-    ) -> Vec<EDMMatch> {
+    pub fn scan(&self, text: &str, categories: Option<&HashSet<String>>) -> Vec<EDMMatch> {
         let mut matches = Vec::new();
 
         // Collect tokens using configured tokenizers
@@ -299,7 +289,9 @@ impl ExactDataMatcher {
             .map_err(|e| format!("Failed to open {}: {}", path, e))?;
         use std::io::Write;
         let mut writer = std::io::BufWriter::new(file);
-        writer.write_all(json.as_bytes()).map_err(|e| format!("Failed to write {}: {}", path, e))?;
+        writer
+            .write_all(json.as_bytes())
+            .map_err(|e| format!("Failed to write {}: {}", path, e))?;
         Ok(())
     }
 
@@ -307,12 +299,9 @@ impl ExactDataMatcher {
     pub fn load(path: &str) -> Result<Self, String> {
         use base64::Engine;
         let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        let data: serde_json::Value =
-            serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        let data: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
 
-        let salt = data["salt"]
-            .as_str()
-            .ok_or("Missing salt")?;
+        let salt = data["salt"].as_str().ok_or("Missing salt")?;
         let salt = base64::engine::general_purpose::STANDARD
             .decode(salt)
             .map_err(|e| e.to_string())?;

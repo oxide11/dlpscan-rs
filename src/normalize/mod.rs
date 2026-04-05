@@ -10,35 +10,45 @@ use unicode_normalization::UnicodeNormalization;
 /// Zero-width and invisible Unicode characters.
 pub static ZERO_WIDTH_CHARS: Lazy<HashSet<char>> = Lazy::new(|| {
     [
-        '\u{200B}', '\u{200C}', '\u{200D}', '\u{200E}', '\u{200F}',
-        '\u{202A}', '\u{202B}', '\u{202C}', '\u{202D}', '\u{202E}',
-        '\u{2060}', '\u{2061}', '\u{2062}', '\u{2063}', '\u{2064}',
-        '\u{FEFF}', '\u{00AD}', '\u{034F}', '\u{061C}',
-        '\u{180E}', '\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}',
-        '\u{FE00}', '\u{FE01}', '\u{FE02}', '\u{FE03}', '\u{FE04}',
-        '\u{FE05}', '\u{FE06}', '\u{FE07}', '\u{FE08}', '\u{FE09}',
-        '\u{FE0A}', '\u{FE0B}', '\u{FE0C}', '\u{FE0D}', '\u{FE0E}',
-        '\u{FE0F}',
-    ].into_iter().collect()
+        '\u{200B}', '\u{200C}', '\u{200D}', '\u{200E}', '\u{200F}', '\u{202A}', '\u{202B}',
+        '\u{202C}', '\u{202D}', '\u{202E}', '\u{2060}', '\u{2061}', '\u{2062}', '\u{2063}',
+        '\u{2064}', '\u{FEFF}', '\u{00AD}', '\u{034F}', '\u{061C}', '\u{180E}', '\u{2066}',
+        '\u{2067}', '\u{2068}', '\u{2069}', '\u{FE00}', '\u{FE01}', '\u{FE02}', '\u{FE03}',
+        '\u{FE04}', '\u{FE05}', '\u{FE06}', '\u{FE07}', '\u{FE08}', '\u{FE09}', '\u{FE0A}',
+        '\u{FE0B}', '\u{FE0C}', '\u{FE0D}', '\u{FE0E}', '\u{FE0F}',
+    ]
+    .into_iter()
+    .collect()
 });
 
 /// Exotic Unicode whitespace characters.
 pub static UNICODE_SPACES: Lazy<HashSet<char>> = Lazy::new(|| {
     [
-        '\u{00A0}', '\u{1680}', '\u{2000}', '\u{2001}', '\u{2002}',
-        '\u{2003}', '\u{2004}', '\u{2005}', '\u{2006}', '\u{2007}',
-        '\u{2008}', '\u{2009}', '\u{200A}', '\u{202F}', '\u{205F}',
-        '\u{3000}',
-    ].into_iter().collect()
+        '\u{00A0}', '\u{1680}', '\u{2000}', '\u{2001}', '\u{2002}', '\u{2003}', '\u{2004}',
+        '\u{2005}', '\u{2006}', '\u{2007}', '\u{2008}', '\u{2009}', '\u{200A}', '\u{202F}',
+        '\u{205F}', '\u{3000}',
+    ]
+    .into_iter()
+    .collect()
 });
 
 /// Leet-speak substitution map.
 static LEET_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
     let pairs = [
-        ('@', 'a'), ('4', 'a'), ('8', 'b'), ('(', 'c'),
-        ('3', 'e'), ('6', 'g'), ('#', 'h'), ('!', 'i'),
-        ('1', 'l'), ('0', 'o'), ('5', 's'), ('7', 't'),
-        ('+', 't'), ('2', 'z'),
+        ('@', 'a'),
+        ('4', 'a'),
+        ('8', 'b'),
+        ('(', 'c'),
+        ('3', 'e'),
+        ('6', 'g'),
+        ('#', 'h'),
+        ('!', 'i'),
+        ('1', 'l'),
+        ('0', 'o'),
+        ('5', 's'),
+        ('7', 't'),
+        ('+', 't'),
+        ('2', 'z'),
     ];
     pairs.iter().copied().collect()
 });
@@ -48,60 +58,142 @@ static LEET_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
 static HOMOGLYPH_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
     let pairs = [
         // Cyrillic uppercase
-        ('\u{0410}', 'A'), ('\u{0412}', 'B'), ('\u{0421}', 'C'),
-        ('\u{0415}', 'E'), ('\u{041D}', 'H'), ('\u{0406}', 'I'),
-        ('\u{0408}', 'J'), ('\u{041A}', 'K'), ('\u{041C}', 'M'),
-        ('\u{041E}', 'O'), ('\u{0420}', 'P'), ('\u{0405}', 'S'),
-        ('\u{0422}', 'T'), ('\u{0425}', 'X'), ('\u{0417}', 'Z'),
+        ('\u{0410}', 'A'),
+        ('\u{0412}', 'B'),
+        ('\u{0421}', 'C'),
+        ('\u{0415}', 'E'),
+        ('\u{041D}', 'H'),
+        ('\u{0406}', 'I'),
+        ('\u{0408}', 'J'),
+        ('\u{041A}', 'K'),
+        ('\u{041C}', 'M'),
+        ('\u{041E}', 'O'),
+        ('\u{0420}', 'P'),
+        ('\u{0405}', 'S'),
+        ('\u{0422}', 'T'),
+        ('\u{0425}', 'X'),
+        ('\u{0417}', 'Z'),
         // Cyrillic lowercase
-        ('\u{0430}', 'a'), ('\u{0435}', 'e'), ('\u{0456}', 'i'),
-        ('\u{0458}', 'j'), ('\u{043E}', 'o'), ('\u{0440}', 'p'),
-        ('\u{0441}', 'c'), ('\u{0443}', 'y'), ('\u{0445}', 'x'),
+        ('\u{0430}', 'a'),
+        ('\u{0435}', 'e'),
+        ('\u{0456}', 'i'),
+        ('\u{0458}', 'j'),
+        ('\u{043E}', 'o'),
+        ('\u{0440}', 'p'),
+        ('\u{0441}', 'c'),
+        ('\u{0443}', 'y'),
+        ('\u{0445}', 'x'),
         ('\u{0455}', 's'),
         // Greek uppercase
-        ('\u{0391}', 'A'), ('\u{0392}', 'B'), ('\u{0393}', 'G'),
-        ('\u{0395}', 'E'), ('\u{0397}', 'H'), ('\u{0399}', 'I'),
-        ('\u{039A}', 'K'), ('\u{039C}', 'M'), ('\u{039D}', 'N'),
-        ('\u{039F}', 'O'), ('\u{03A1}', 'P'), ('\u{03A4}', 'T'),
-        ('\u{03A5}', 'Y'), ('\u{03A7}', 'X'), ('\u{0396}', 'Z'),
+        ('\u{0391}', 'A'),
+        ('\u{0392}', 'B'),
+        ('\u{0393}', 'G'),
+        ('\u{0395}', 'E'),
+        ('\u{0397}', 'H'),
+        ('\u{0399}', 'I'),
+        ('\u{039A}', 'K'),
+        ('\u{039C}', 'M'),
+        ('\u{039D}', 'N'),
+        ('\u{039F}', 'O'),
+        ('\u{03A1}', 'P'),
+        ('\u{03A4}', 'T'),
+        ('\u{03A5}', 'Y'),
+        ('\u{03A7}', 'X'),
+        ('\u{0396}', 'Z'),
         // Greek lowercase
-        ('\u{03B1}', 'a'), ('\u{03BF}', 'o'), ('\u{03B9}', 'i'),
-        ('\u{03BA}', 'k'), ('\u{03BD}', 'v'), ('\u{03C1}', 'p'),
-        ('\u{03C5}', 'u'), ('\u{03C7}', 'x'),
+        ('\u{03B1}', 'a'),
+        ('\u{03BF}', 'o'),
+        ('\u{03B9}', 'i'),
+        ('\u{03BA}', 'k'),
+        ('\u{03BD}', 'v'),
+        ('\u{03C1}', 'p'),
+        ('\u{03C5}', 'u'),
+        ('\u{03C7}', 'x'),
         // Fullwidth digits (backup — NFKC should handle these)
-        ('\u{FF10}', '0'), ('\u{FF11}', '1'), ('\u{FF12}', '2'),
-        ('\u{FF13}', '3'), ('\u{FF14}', '4'), ('\u{FF15}', '5'),
-        ('\u{FF16}', '6'), ('\u{FF17}', '7'), ('\u{FF18}', '8'),
+        ('\u{FF10}', '0'),
+        ('\u{FF11}', '1'),
+        ('\u{FF12}', '2'),
+        ('\u{FF13}', '3'),
+        ('\u{FF14}', '4'),
+        ('\u{FF15}', '5'),
+        ('\u{FF16}', '6'),
+        ('\u{FF17}', '7'),
+        ('\u{FF18}', '8'),
         ('\u{FF19}', '9'),
         // Fullwidth ASCII letters (backup — NFKC should handle these)
-        ('\u{FF21}', 'A'), ('\u{FF22}', 'B'), ('\u{FF23}', 'C'),
-        ('\u{FF24}', 'D'), ('\u{FF25}', 'E'), ('\u{FF26}', 'F'),
-        ('\u{FF27}', 'G'), ('\u{FF28}', 'H'), ('\u{FF29}', 'I'),
-        ('\u{FF2A}', 'J'), ('\u{FF2B}', 'K'), ('\u{FF2C}', 'L'),
-        ('\u{FF2D}', 'M'), ('\u{FF2E}', 'N'), ('\u{FF2F}', 'O'),
-        ('\u{FF30}', 'P'), ('\u{FF31}', 'Q'), ('\u{FF32}', 'R'),
-        ('\u{FF33}', 'S'), ('\u{FF34}', 'T'), ('\u{FF35}', 'U'),
-        ('\u{FF36}', 'V'), ('\u{FF37}', 'W'), ('\u{FF38}', 'X'),
-        ('\u{FF39}', 'Y'), ('\u{FF3A}', 'Z'),
-        ('\u{FF41}', 'a'), ('\u{FF42}', 'b'), ('\u{FF43}', 'c'),
-        ('\u{FF44}', 'd'), ('\u{FF45}', 'e'), ('\u{FF46}', 'f'),
-        ('\u{FF47}', 'g'), ('\u{FF48}', 'h'), ('\u{FF49}', 'i'),
-        ('\u{FF4A}', 'j'), ('\u{FF4B}', 'k'), ('\u{FF4C}', 'l'),
-        ('\u{FF4D}', 'm'), ('\u{FF4E}', 'n'), ('\u{FF4F}', 'o'),
-        ('\u{FF50}', 'p'), ('\u{FF51}', 'q'), ('\u{FF52}', 'r'),
-        ('\u{FF53}', 's'), ('\u{FF54}', 't'), ('\u{FF55}', 'u'),
-        ('\u{FF56}', 'v'), ('\u{FF57}', 'w'), ('\u{FF58}', 'x'),
-        ('\u{FF59}', 'y'), ('\u{FF5A}', 'z'),
+        ('\u{FF21}', 'A'),
+        ('\u{FF22}', 'B'),
+        ('\u{FF23}', 'C'),
+        ('\u{FF24}', 'D'),
+        ('\u{FF25}', 'E'),
+        ('\u{FF26}', 'F'),
+        ('\u{FF27}', 'G'),
+        ('\u{FF28}', 'H'),
+        ('\u{FF29}', 'I'),
+        ('\u{FF2A}', 'J'),
+        ('\u{FF2B}', 'K'),
+        ('\u{FF2C}', 'L'),
+        ('\u{FF2D}', 'M'),
+        ('\u{FF2E}', 'N'),
+        ('\u{FF2F}', 'O'),
+        ('\u{FF30}', 'P'),
+        ('\u{FF31}', 'Q'),
+        ('\u{FF32}', 'R'),
+        ('\u{FF33}', 'S'),
+        ('\u{FF34}', 'T'),
+        ('\u{FF35}', 'U'),
+        ('\u{FF36}', 'V'),
+        ('\u{FF37}', 'W'),
+        ('\u{FF38}', 'X'),
+        ('\u{FF39}', 'Y'),
+        ('\u{FF3A}', 'Z'),
+        ('\u{FF41}', 'a'),
+        ('\u{FF42}', 'b'),
+        ('\u{FF43}', 'c'),
+        ('\u{FF44}', 'd'),
+        ('\u{FF45}', 'e'),
+        ('\u{FF46}', 'f'),
+        ('\u{FF47}', 'g'),
+        ('\u{FF48}', 'h'),
+        ('\u{FF49}', 'i'),
+        ('\u{FF4A}', 'j'),
+        ('\u{FF4B}', 'k'),
+        ('\u{FF4C}', 'l'),
+        ('\u{FF4D}', 'm'),
+        ('\u{FF4E}', 'n'),
+        ('\u{FF4F}', 'o'),
+        ('\u{FF50}', 'p'),
+        ('\u{FF51}', 'q'),
+        ('\u{FF52}', 'r'),
+        ('\u{FF53}', 's'),
+        ('\u{FF54}', 't'),
+        ('\u{FF55}', 'u'),
+        ('\u{FF56}', 'v'),
+        ('\u{FF57}', 'w'),
+        ('\u{FF58}', 'x'),
+        ('\u{FF59}', 'y'),
+        ('\u{FF5A}', 'z'),
         // Fullwidth punctuation commonly used in evasion
-        ('\u{FF0D}', '-'), ('\u{FF0E}', '.'), ('\u{FF20}', '@'),
-        ('\u{FF3F}', '_'), ('\u{FF0A}', '*'),
+        ('\u{FF0D}', '-'),
+        ('\u{FF0E}', '.'),
+        ('\u{FF20}', '@'),
+        ('\u{FF3F}', '_'),
+        ('\u{FF0A}', '*'),
         // Mathematical/script homoglyphs (commonly used for evasion)
-        ('\u{2070}', '0'), ('\u{00B9}', '1'), ('\u{00B2}', '2'),
+        ('\u{2070}', '0'),
+        ('\u{00B9}', '1'),
+        ('\u{00B2}', '2'),
         ('\u{00B3}', '3'),
         // Subscript digits
-        ('\u{2080}', '0'), ('\u{2081}', '1'), ('\u{2082}', '2'),
-        ('\u{2083}', '3'), ('\u{2084}', '4'), ('\u{2085}', '5'),
-        ('\u{2086}', '6'), ('\u{2087}', '7'), ('\u{2088}', '8'),
+        ('\u{2080}', '0'),
+        ('\u{2081}', '1'),
+        ('\u{2082}', '2'),
+        ('\u{2083}', '3'),
+        ('\u{2084}', '4'),
+        ('\u{2085}', '5'),
+        ('\u{2086}', '6'),
+        ('\u{2087}', '7'),
+        ('\u{2088}', '8'),
         ('\u{2089}', '9'),
         // Other common lookalikes
         ('\u{0131}', 'i'), // dotless i
@@ -223,7 +315,7 @@ fn decode_percent_single(input: &str, in_offsets: &[usize]) -> (String, Vec<usiz
             if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
                 let decoded = (h << 4) | l;
                 // Only decode printable ASCII (space through tilde)
-                if decoded >= 0x20 && decoded <= 0x7E {
+                if (0x20..=0x7E).contains(&decoded) {
                     out.push(decoded);
                     offsets.push(orig_offset(in_offsets, i));
                     i += 3;
@@ -443,9 +535,11 @@ fn normalize_delimiters(input: &str, in_offsets: &[usize]) -> (String, Vec<usize
 
             if run_len > 1 {
                 let prev_alnum = !out.is_empty()
-                    && out.last().map(|&b: &u8| b.is_ascii_alphanumeric()).unwrap_or(false);
-                let next_alnum =
-                    i + 1 < bytes.len() && bytes[i + 1].is_ascii_alphanumeric();
+                    && out
+                        .last()
+                        .map(|&b: &u8| b.is_ascii_alphanumeric())
+                        .unwrap_or(false);
+                let next_alnum = i + 1 < bytes.len() && bytes[i + 1].is_ascii_alphanumeric();
 
                 if prev_alnum && next_alnum {
                     // Collapse to single delimiter
@@ -458,8 +552,8 @@ fn normalize_delimiters(input: &str, in_offsets: &[usize]) -> (String, Vec<usize
             }
 
             // Keep the full delimiter run
-            for j in start..=i {
-                out.push(bytes[j]);
+            for (j, &b) in bytes.iter().enumerate().take(i + 1).skip(start) {
+                out.push(b);
                 offsets.push(orig_offset(in_offsets, j));
             }
         } else {
@@ -568,6 +662,41 @@ fn decode_hex_spaced(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) 
     (String::from_utf8_lossy(&out).into_owned(), offsets)
 }
 
+/// Decode `\xHH` hex-escape sequences (e.g. `\x31\x32\x33` → `123`).
+///
+/// Only replaces sequences where both digits are valid hex and the decoded byte
+/// is printable ASCII (0x20–0x7E). Other sequences are passed through unchanged.
+fn decode_hex_escapes(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    let bytes = input.as_bytes();
+    if !bytes.windows(2).any(|w| w[0] == b'\\' && w[1] == b'x') {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    let mut out = String::with_capacity(input.len());
+    let mut offsets: Vec<usize> = Vec::with_capacity(input.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if i + 3 < bytes.len() && bytes[i] == b'\\' && bytes[i + 1] == b'x' {
+            if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 2]), hex_val(bytes[i + 3])) {
+                let decoded = (hi << 4) | lo;
+                if (0x20..=0x7E).contains(&decoded) {
+                    out.push(decoded as char);
+                    offsets.push(orig_offset(in_offsets, i));
+                    i += 4;
+                    continue;
+                }
+            }
+        }
+        // Emit one byte (preserving multi-byte UTF-8 chars where possible).
+        out.push(bytes[i] as char);
+        offsets.push(orig_offset(in_offsets, i));
+        i += 1;
+    }
+
+    (out, offsets)
+}
+
 /// Standard base32 alphabet (RFC 4648).
 const BASE32_ALPHA: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -626,12 +755,9 @@ fn try_decode_base_encoding(input: &str, in_offsets: &[usize]) -> (String, Vec<u
     if is_b64 {
         // Standard base64
         if let Some(decoded) = base64_decode_bytes(tbytes) {
-            if decoded.len() >= 3 && decoded.iter().all(|&b| b >= 0x20 && b <= 0x7E) {
+            if decoded.len() >= 3 && decoded.iter().all(|&b| (0x20..=0x7E).contains(&b)) {
                 let decoded_str = String::from_utf8_lossy(&decoded);
-                let base_offset = orig_offset(
-                    in_offsets,
-                    input.find(trimmed).unwrap_or(0),
-                );
+                let base_offset = orig_offset(in_offsets, input.find(trimmed).unwrap_or(0));
                 let mut new_offsets = Vec::with_capacity(decoded.len());
                 for _ in 0..decoded_str.len() {
                     new_offsets.push(base_offset);
@@ -642,18 +768,15 @@ fn try_decode_base_encoding(input: &str, in_offsets: &[usize]) -> (String, Vec<u
     }
 
     // Try base32
-    let is_b32 = tbytes
-        .iter()
-        .all(|&b| (b.is_ascii_alphanumeric() && !(b == b'0' || b == b'1' || b == b'8' || b == b'9'))
-            || b == b'=');
+    let is_b32 = tbytes.iter().all(|&b| {
+        (b.is_ascii_alphanumeric() && !(b == b'0' || b == b'1' || b == b'8' || b == b'9'))
+            || b == b'='
+    });
     if is_b32 && tbytes.len() >= 10 {
         if let Some(decoded) = base32_decode_bytes(tbytes) {
-            if decoded.len() >= 3 && decoded.iter().all(|&b| b >= 0x20 && b <= 0x7E) {
+            if decoded.len() >= 3 && decoded.iter().all(|&b| (0x20..=0x7E).contains(&b)) {
                 let decoded_str = String::from_utf8_lossy(&decoded);
-                let base_offset = orig_offset(
-                    in_offsets,
-                    input.find(trimmed).unwrap_or(0),
-                );
+                let base_offset = orig_offset(in_offsets, input.find(trimmed).unwrap_or(0));
                 let mut new_offsets = Vec::with_capacity(decoded.len());
                 for _ in 0..decoded_str.len() {
                     new_offsets.push(base_offset);
@@ -679,7 +802,11 @@ fn base64_decode_bytes(input: &[u8]) -> Option<Vec<u8>> {
     val_map[b'-' as usize] = 62;
     val_map[b'_' as usize] = 63;
 
-    let trimmed: Vec<u8> = input.iter().copied().filter(|&b| b != b'=' && b != b'\n' && b != b'\r').collect();
+    let trimmed: Vec<u8> = input
+        .iter()
+        .copied()
+        .filter(|&b| b != b'=' && b != b'\n' && b != b'\r')
+        .collect();
     if trimmed.is_empty() || trimmed.iter().any(|&b| val_map[b as usize] == 255) {
         return None;
     }
@@ -705,19 +832,50 @@ fn base64_decode_bytes(input: &[u8]) -> Option<Vec<u8>> {
 static MORSE_TABLE: Lazy<HashMap<&'static str, char>> = Lazy::new(|| {
     [
         // Letters
-        (".-", 'A'), ("-...", 'B'), ("-.-.", 'C'), ("-..", 'D'), (".", 'E'),
-        ("..-.", 'F'), ("--.", 'G'), ("....", 'H'), ("..", 'I'), (".---", 'J'),
-        ("-.-", 'K'), (".-..", 'L'), ("--", 'M'), ("-.", 'N'), ("---", 'O'),
-        (".--.", 'P'), ("--.-", 'Q'), (".-.", 'R'), ("...", 'S'), ("-", 'T'),
-        ("..-", 'U'), ("...-", 'V'), (".--", 'W'), ("-..-", 'X'), ("-.--", 'Y'),
+        (".-", 'A'),
+        ("-...", 'B'),
+        ("-.-.", 'C'),
+        ("-..", 'D'),
+        (".", 'E'),
+        ("..-.", 'F'),
+        ("--.", 'G'),
+        ("....", 'H'),
+        ("..", 'I'),
+        (".---", 'J'),
+        ("-.-", 'K'),
+        (".-..", 'L'),
+        ("--", 'M'),
+        ("-.", 'N'),
+        ("---", 'O'),
+        (".--.", 'P'),
+        ("--.-", 'Q'),
+        (".-.", 'R'),
+        ("...", 'S'),
+        ("-", 'T'),
+        ("..-", 'U'),
+        ("...-", 'V'),
+        (".--", 'W'),
+        ("-..-", 'X'),
+        ("-.--", 'Y'),
         ("--..", 'Z'),
         // Digits
-        ("-----", '0'), (".----", '1'), ("..---", '2'), ("...--", '3'),
-        ("....-", '4'), (".....", '5'), ("-....", '6'), ("--...", '7'),
-        ("---..", '8'), ("----.", '9'),
+        ("-----", '0'),
+        (".----", '1'),
+        ("..---", '2'),
+        ("...--", '3'),
+        ("....-", '4'),
+        (".....", '5'),
+        ("-....", '6'),
+        ("--...", '7'),
+        ("---..", '8'),
+        ("----.", '9'),
         // Common punctuation
-        (".-.-.-", '.'), ("--..--", ','), ("..--..", '?'), ("-....-", '-'),
-        (".--.-.", '@'), ("---...", ':'),
+        (".-.-.-", '.'),
+        ("--..--", ','),
+        ("..--..", '?'),
+        ("-....-", '-'),
+        (".--.-.", '@'),
+        ("---...", ':'),
     ]
     .into_iter()
     .collect()
@@ -855,6 +1013,11 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     current = r.0;
     offsets = r.1;
 
+    // Stage 4b: Decode \xHH hex-escape sequences
+    let r = decode_hex_escapes(&current, &offsets);
+    current = r.0;
+    offsets = r.1;
+
     // Stage 5: Collapse whitespace padding between non-alpha chars
     let r = collapse_padding(&current, &offsets);
     current = r.0;
@@ -874,7 +1037,11 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
 
         // Stage 8: Normalize exotic whitespace
         let r = remap_char_transform(&current, &offsets, |c| {
-            if UNICODE_SPACES.contains(&c) { ' ' } else { c }
+            if UNICODE_SPACES.contains(&c) {
+                ' '
+            } else {
+                c
+            }
         });
         current = r.0;
         offsets = r.1;
@@ -885,9 +1052,7 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
         offsets = r.1;
 
         // Stage 10: Homoglyph map
-        let r = remap_char_transform(&current, &offsets, |c| {
-            *HOMOGLYPH_MAP.get(&c).unwrap_or(&c)
-        });
+        let r = remap_char_transform(&current, &offsets, |c| *HOMOGLYPH_MAP.get(&c).unwrap_or(&c));
         current = r.0;
         offsets = r.1;
     }
@@ -998,6 +1163,10 @@ fn has_evasion_markers(text: &str) -> bool {
                 return true;
             }
         }
+    }
+    // \xHH hex-escape sequences
+    if bytes.windows(2).any(|w| w[0] == b'\\' && w[1] == b'x') {
+        return true;
     }
     false
 }

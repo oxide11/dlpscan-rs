@@ -4500,10 +4500,7 @@ pub static PATTERNS: &[PatternDef] = &[
 
 /// Get all unique categories.
 pub fn categories() -> Vec<&'static str> {
-    let mut cats: Vec<&'static str> = PATTERNS
-        .iter()
-        .map(|p| p.category)
-        .collect();
+    let mut cats: Vec<&'static str> = PATTERNS.iter().map(|p| p.category).collect();
     cats.sort_unstable();
     cats.dedup();
     cats
@@ -4511,10 +4508,7 @@ pub fn categories() -> Vec<&'static str> {
 
 /// Get patterns for a specific category.
 pub fn patterns_for_category(category: &str) -> Vec<&'static PatternDef> {
-    PATTERNS
-        .iter()
-        .filter(|p| p.category == category)
-        .collect()
+    PATTERNS.iter().filter(|p| p.category == category).collect()
 }
 
 #[cfg(test)]

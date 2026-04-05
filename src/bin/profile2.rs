@@ -1,6 +1,6 @@
 //! Deeper profiling — RegexSet vs Phase 2.
 
-use regex::{Regex, RegexSet, RegexSetBuilder};
+use regex::{Regex, RegexSetBuilder};
 use std::time::Instant;
 
 fn main() {
@@ -40,11 +40,17 @@ fn main() {
         total_matches = matching.into_iter().count();
     }
     let phase1_time = start.elapsed().as_micros() as f64 / 100.0;
-    eprintln!("Phase 1 (RegexSet matches, 1KB): {:.1} us, {} patterns match", phase1_time, total_matches);
+    eprintln!(
+        "Phase 1 (RegexSet matches, 1KB): {:.1} us, {} patterns match",
+        phase1_time, total_matches
+    );
 
     // Time Phase 2: individual regex extraction for matching patterns
     let matching: Vec<usize> = regex_set.matches(&text).into_iter().collect();
-    eprintln!("Matching patterns: {:?}", matching.iter().take(20).collect::<Vec<_>>());
+    eprintln!(
+        "Matching patterns: {:?}",
+        matching.iter().take(20).collect::<Vec<_>>()
+    );
 
     // Print which patterns match
     for &idx in &matching {
@@ -62,7 +68,8 @@ fn main() {
     eprintln!("Phase 2 (individual regex, 1KB): {:.1} us", phase2_time);
 
     // Time Phase 1 with 10KB
-    let text_10k = "The quick brown fox jumps over the lazy dog. No sensitive data here. ".repeat(150);
+    let text_10k =
+        "The quick brown fox jumps over the lazy dog. No sensitive data here. ".repeat(150);
     let start = Instant::now();
     for _ in 0..10 {
         let _ = regex_set.matches(&text_10k);
@@ -84,6 +91,12 @@ fn main() {
     eprintln!("\nTop 10 slowest individual patterns on 1KB:");
     for (time_us, idx) in slowest.iter().take(10) {
         let pat = &patterns[*idx];
-        eprintln!("  {:.1} us: {} / {} — {}", time_us, pat.category, pat.sub_category, &pat.regex[..pat.regex.len().min(60)]);
+        eprintln!(
+            "  {:.1} us: {} / {} — {}",
+            time_us,
+            pat.category,
+            pat.sub_category,
+            &pat.regex[..pat.regex.len().min(60)]
+        );
     }
 }

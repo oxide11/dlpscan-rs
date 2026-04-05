@@ -90,7 +90,11 @@ pub fn apply_env_overrides(config: &mut Config) {
         }
     }
     if let Ok(val) = std::env::var("DLPSCAN_CATEGORIES") {
-        let cats: Vec<String> = val.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        let cats: Vec<String> = val
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
         if !cats.is_empty() {
             config.categories = Some(cats);
         }
@@ -227,9 +231,13 @@ pub fn load_config(path: Option<&str>, start_dir: Option<&Path>) -> Config {
         parse_pyproject_toml(&config_path)
     } else if ext == "yaml" || ext == "yml" {
         #[cfg(feature = "yaml-config")]
-        { parse_yaml_config(&config_path) }
+        {
+            parse_yaml_config(&config_path)
+        }
         #[cfg(not(feature = "yaml-config"))]
-        { Err("YAML config requires the 'yaml-config' feature".to_string()) }
+        {
+            Err("YAML config requires the 'yaml-config' feature".to_string())
+        }
     } else {
         parse_dlpscanrc(&config_path)
     };

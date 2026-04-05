@@ -32,14 +32,11 @@ pub fn deduplicate_overlapping(matches: &mut Vec<Match>) {
 
     // Sort by start position, then by length descending.
     matches.sort_by(|a, b| {
-        a.span
-            .0
-            .cmp(&b.span.0)
-            .then_with(|| {
-                let a_len = a.span.1 - a.span.0;
-                let b_len = b.span.1 - b.span.0;
-                b_len.cmp(&a_len)
-            })
+        a.span.0.cmp(&b.span.0).then_with(|| {
+            let a_len = a.span.1 - a.span.0;
+            let b_len = b.span.1 - b.span.0;
+            b_len.cmp(&a_len)
+        })
     });
 
     let mut result: Vec<Match> = Vec::with_capacity(matches.len());
@@ -91,8 +88,24 @@ mod tests {
     #[test]
     fn test_dedup_no_overlap() {
         let mut matches = vec![
-            Match::new("aaa".into(), "C".into(), "S".into(), false, 0.8, (0, 3), false),
-            Match::new("bbb".into(), "C".into(), "S".into(), false, 0.8, (5, 8), false),
+            Match::new(
+                "aaa".into(),
+                "C".into(),
+                "S".into(),
+                false,
+                0.8,
+                (0, 3),
+                false,
+            ),
+            Match::new(
+                "bbb".into(),
+                "C".into(),
+                "S".into(),
+                false,
+                0.8,
+                (5, 8),
+                false,
+            ),
         ];
         deduplicate_overlapping(&mut matches);
         assert_eq!(matches.len(), 2);
@@ -101,8 +114,24 @@ mod tests {
     #[test]
     fn test_dedup_overlap_keeps_higher() {
         let mut matches = vec![
-            Match::new("aaa".into(), "C".into(), "S".into(), false, 0.5, (0, 5), false),
-            Match::new("bbb".into(), "C".into(), "S".into(), false, 0.9, (3, 8), false),
+            Match::new(
+                "aaa".into(),
+                "C".into(),
+                "S".into(),
+                false,
+                0.5,
+                (0, 5),
+                false,
+            ),
+            Match::new(
+                "bbb".into(),
+                "C".into(),
+                "S".into(),
+                false,
+                0.9,
+                (3, 8),
+                false,
+            ),
         ];
         deduplicate_overlapping(&mut matches);
         assert_eq!(matches.len(), 1);

@@ -16,13 +16,17 @@ use crate::guard::ScanResult;
 
 /// Parse a URL into (scheme, userinfo, host, port, path).
 /// Returns `Err` if the URL is malformed or has an unsupported scheme.
+#[allow(dead_code)]
 fn parse_url(url: &str) -> Result<(&str, Option<&str>, &str, u16, &str), String> {
     let (scheme, rest) = if let Some(r) = url.strip_prefix("https://") {
         ("https", r)
     } else if let Some(r) = url.strip_prefix("http://") {
         ("http", r)
     } else {
-        return Err(format!("Unsupported URL scheme (must be http:// or https://): {}", sanitize_url(url)));
+        return Err(format!(
+            "Unsupported URL scheme (must be http:// or https://): {}",
+            sanitize_url(url)
+        ));
     };
 
     // Split off userinfo (user:pass@host)
@@ -67,7 +71,8 @@ pub fn sanitize_url(url: &str) -> String {
 /// - URLs without http:// or https:// scheme
 /// - `localhost` hostname
 /// - Private/internal IP ranges: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12,
-///   192.168.0.0/16, 169.254.0.0/16, ::1, fd00::/8
+///   192.168.0.0/16, 169.254.0.0/16, `::1`, fd00::/8
+///
 /// Check whether a URL is safe to connect to (SSRF protection).
 ///
 /// Delegates to `crate::http_util::is_safe_url` — the single source of truth
@@ -283,8 +288,7 @@ fn http_post(url: &str, body: &[u8], timeout_secs: u64) -> Result<u16, String> {
 // Global registry
 // ---------------------------------------------------------------------------
 
-static NOTIFIERS: Lazy<Mutex<Vec<Arc<WebhookNotifier>>>> =
-    Lazy::new(|| Mutex::new(Vec::new()));
+static NOTIFIERS: Lazy<Mutex<Vec<Arc<WebhookNotifier>>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
 /// Register a notifier in the global registry.
 pub fn register_notifier(notifier: Arc<WebhookNotifier>) {
@@ -329,16 +333,37 @@ fn epoch_to_parts(epoch: u64) -> (u64, u64, u64, u64, u64, u64) {
     let mut days = epoch / 86400;
     let mut year = 1970u64;
     loop {
-        let yd = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) { 366 } else { 365 };
-        if days < yd { break; }
+        let yd = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+            366
+        } else {
+            365
+        };
+        if days < yd {
+            break;
+        }
         days -= yd;
         year += 1;
     }
     let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let mdays = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let mdays = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut mon = 0u64;
     for md in mdays {
-        if days < md { break; }
+        if days < md {
+            break;
+        }
         days -= md;
         mon += 1;
     }

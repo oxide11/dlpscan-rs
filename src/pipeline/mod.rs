@@ -279,7 +279,11 @@ fn collect_files(dir: &Path, recursive: bool) -> Vec<PathBuf> {
     for entry in entries.flatten() {
         let path = entry.path();
 
-        if path.file_name().map(|n| n.to_string_lossy().starts_with('.')).unwrap_or(false) {
+        if path
+            .file_name()
+            .map(|n| n.to_string_lossy().starts_with('.'))
+            .unwrap_or(false)
+        {
             continue; // Skip hidden files
         }
 
@@ -305,10 +309,14 @@ pub fn results_to_json(results: &[PipelineResult], pretty: bool) -> crate::Resul
 }
 
 fn escape_csv_field(field: &str) -> String {
-    let needs_quoting = field.contains(',') || field.contains('"') || field.contains('\n')
+    let needs_quoting = field.contains(',')
+        || field.contains('"')
+        || field.contains('\n')
         || field.contains('\r')
-        || field.starts_with('=') || field.starts_with('+')
-        || field.starts_with('-') || field.starts_with('@');
+        || field.starts_with('=')
+        || field.starts_with('+')
+        || field.starts_with('-')
+        || field.starts_with('@');
     if needs_quoting {
         format!("\"{}\"", field.replace('"', "\"\""))
     } else {

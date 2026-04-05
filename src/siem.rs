@@ -104,20 +104,22 @@ impl SIEMAdapter for SyslogAdapter {
 
         // RFC 5424 priority = facility * 8 + severity (6 = info)
         let priority = self.facility * 8 + 6;
-        let msg = format!("<{priority}>1 {} {} dlpscan - - - {json}", iso8601_now(), hostname());
+        let msg = format!(
+            "<{priority}>1 {} {} dlpscan - - - {json}",
+            iso8601_now(),
+            hostname()
+        );
 
         let addr = format!("{}:{}", self.address, self.port);
 
         if self.protocol == "tcp" {
             use std::io::Write;
-            let mut stream =
-                std::net::TcpStream::connect(&addr).map_err(|e| e.to_string())?;
+            let mut stream = std::net::TcpStream::connect(&addr).map_err(|e| e.to_string())?;
             stream
                 .write_all(msg.as_bytes())
                 .map_err(|e| e.to_string())?;
         } else {
-            let socket =
-                std::net::UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
+            let socket = std::net::UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
             socket
                 .send_to(msg.as_bytes(), &addr)
                 .map_err(|e| e.to_string())?;
@@ -171,9 +173,15 @@ impl SIEMAdapter for SplunkHECAdapter {
             "sourcetype": self.sourcetype,
         });
         let body = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
-        let url = format!("{}/services/collector/event", self.url.trim_end_matches('/'));
+        let url = format!(
+            "{}/services/collector/event",
+            self.url.trim_end_matches('/')
+        );
         let headers = vec![
-            ("Authorization".to_string(), format!("Splunk {}", self.token)),
+            (
+                "Authorization".to_string(),
+                format!("Splunk {}", self.token),
+            ),
             ("Content-Type".to_string(), "application/json".to_string()),
         ];
         http_post_sync(&url, &body, &headers).map(|_| ())
@@ -214,11 +222,7 @@ impl SIEMAdapter for ElasticsearchAdapter {
         let _lock = self.lock.lock().map_err(|e| e.to_string())?;
         let enriched = enrich_event(event);
         let body = serde_json::to_vec(&enriched).map_err(|e| e.to_string())?;
-        let url = format!(
-            "{}/{}/_doc",
-            self.url.trim_end_matches('/'),
-            self.index
-        );
+        let url = format!("{}/{}/_doc", self.url.trim_end_matches('/'), self.index);
         let mut headers = vec![("Content-Type".to_string(), "application/json".to_string())];
         if let Some(ref key) = self.api_key {
             headers.push(("Authorization".to_string(), format!("ApiKey {key}")));
@@ -254,7 +258,11 @@ impl SIEMAdapter for WebhookSIEMAdapter {
         let _lock = self.lock.lock().map_err(|e| e.to_string())?;
         let enriched = enrich_event(event);
         let body = serde_json::to_vec(&enriched).map_err(|e| e.to_string())?;
-        let headers: Vec<(String, String)> = self.headers.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let headers: Vec<(String, String)> = self
+            .headers
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
         http_post_sync(&self.url, &body, &headers).map(|_| ())
     }
 }
@@ -303,15 +311,16 @@ impl SIEMAdapter for DatadogAdapter {
         }]);
         let body = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
         // Validate site value to prevent URL injection
-        if self.site.contains('/') || self.site.contains('?') || self.site.contains('#')
-            || self.site.contains('@') || self.site.contains(':') || self.site.is_empty()
+        if self.site.contains('/')
+            || self.site.contains('?')
+            || self.site.contains('#')
+            || self.site.contains('@')
+            || self.site.contains(':')
+            || self.site.is_empty()
         {
             return Err(format!("Invalid Datadog site value: {}", self.site));
         }
-        let url = format!(
-            "https://http-intake.logs.{}/api/v2/logs",
-            self.site
-        );
+        let url = format!("https://http-intake.logs.{}/api/v2/logs", self.site);
         let headers = vec![
             ("DD-API-KEY".to_string(), self.api_key.clone()),
             ("Content-Type".to_string(), "application/json".to_string()),
@@ -339,7 +348,10 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
         "splunk" => {
             let url = std::env::var("DLPSCAN_SIEM_URL").ok()?;
             if !crate::webhooks::is_safe_url(&url) {
-                tracing::error!("SIEM URL rejected by SSRF filter: {}", crate::webhooks::sanitize_url(&url));
+                tracing::error!(
+                    "SIEM URL rejected by SSRF filter: {}",
+                    crate::webhooks::sanitize_url(&url)
+                );
                 return None;
             }
             let token = std::env::var("DLPSCAN_SIEM_TOKEN").ok()?;
@@ -352,7 +364,10 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
         "elasticsearch" => {
             let url = std::env::var("DLPSCAN_SIEM_URL").ok()?;
             if !crate::webhooks::is_safe_url(&url) {
-                tracing::error!("SIEM URL rejected by SSRF filter: {}", crate::webhooks::sanitize_url(&url));
+                tracing::error!(
+                    "SIEM URL rejected by SSRF filter: {}",
+                    crate::webhooks::sanitize_url(&url)
+                );
                 return None;
             }
             let mut adapter = ElasticsearchAdapter::new(&url);
@@ -385,7 +400,10 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
         "webhook" => {
             let url = std::env::var("DLPSCAN_SIEM_URL").ok()?;
             if !crate::webhooks::is_safe_url(&url) {
-                tracing::error!("SIEM URL rejected by SSRF filter: {}", crate::webhooks::sanitize_url(&url));
+                tracing::error!(
+                    "SIEM URL rejected by SSRF filter: {}",
+                    crate::webhooks::sanitize_url(&url)
+                );
                 return None;
             }
             Some(Box::new(WebhookSIEMAdapter::new(&url)))
@@ -419,11 +437,7 @@ fn hostname() -> String {
 /// Send an HTTP POST to a SIEM endpoint.
 /// Delegates to the shared `http_util::safe_http_post` which handles
 /// DNS resolution, SSRF validation, and CRLF sanitization.
-fn http_post_sync(
-    url: &str,
-    body: &[u8],
-    headers: &[(String, String)],
-) -> Result<u16, String> {
+fn http_post_sync(url: &str, body: &[u8], headers: &[(String, String)]) -> Result<u16, String> {
     crate::http_util::safe_http_post(url, body, headers, 30)
 }
 

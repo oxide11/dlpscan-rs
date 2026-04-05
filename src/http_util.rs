@@ -73,7 +73,10 @@ pub fn sanitize_url(url: &str) -> String {
             if parsed.port == default_port {
                 return format!("{}://***@{}{}", parsed.scheme, parsed.host, parsed.path);
             }
-            return format!("{}://***@{}:{}{}", parsed.scheme, parsed.host, parsed.port, parsed.path);
+            return format!(
+                "{}://***@{}:{}{}",
+                parsed.scheme, parsed.host, parsed.port, parsed.path
+            );
         }
     }
     url.to_string()
@@ -98,17 +101,15 @@ pub fn is_private_ip(ip: IpAddr) -> bool {
                 || (o[0] == 169 && o[1] == 254)                         // 169.254.0.0/16 link-local
                 || (o[0] == 100 && (64..=127).contains(&o[1]))          // 100.64.0.0/10 CGNAT
                 || (o[0] == 198 && (o[1] == 18 || o[1] == 19))         // 198.18.0.0/15 benchmarking
-                || (o[0] == 192 && o[1] == 0 && o[2] == 0)             // 192.0.0.0/24 IETF
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0) // 192.0.0.0/24 IETF
         }
         IpAddr::V6(ipv6) => {
-            ipv6.is_loopback()
-                || ipv6.is_unspecified()
-                || {
-                    let seg0 = ipv6.segments()[0];
-                    (seg0 >> 8) == 0xfd                                 // fd00::/8 ULA
+            ipv6.is_loopback() || ipv6.is_unspecified() || {
+                let seg0 = ipv6.segments()[0];
+                (seg0 >> 8) == 0xfd                                 // fd00::/8 ULA
                         || (seg0 >> 8) == 0xfc                          // fc00::/8 ULA
-                        || (seg0 & 0xffc0) == 0xfe80                    // fe80::/10 link-local
-                }
+                        || (seg0 & 0xffc0) == 0xfe80 // fe80::/10 link-local
+            }
         }
     }
 }
@@ -132,7 +133,9 @@ pub fn is_safe_url(url: &str) -> bool {
 
     // Check IPv6 string patterns (before parsing)
     let trimmed = host_lower.trim_start_matches('[').trim_end_matches(']');
-    if trimmed == "::1" || trimmed.starts_with("fd") || trimmed.starts_with("fc")
+    if trimmed == "::1"
+        || trimmed.starts_with("fd")
+        || trimmed.starts_with("fc")
         || trimmed.starts_with("fe80")
     {
         return false;
@@ -200,8 +203,8 @@ pub fn safe_http_post(
         resolved
     };
 
-    let mut stream = TcpStream::connect_timeout(&socket_addr, timeout)
-        .map_err(|e| e.to_string())?;
+    let mut stream =
+        TcpStream::connect_timeout(&socket_addr, timeout).map_err(|e| e.to_string())?;
     stream.set_read_timeout(Some(timeout)).ok();
 
     // Build HTTP request with CRLF-sanitized headers
@@ -218,7 +221,9 @@ pub fn safe_http_post(
     }
     req.push_str("Connection: close\r\n\r\n");
 
-    stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|e| e.to_string())?;
     stream.write_all(body).map_err(|e| e.to_string())?;
 
     let mut response = vec![0u8; 1024];

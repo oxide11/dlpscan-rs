@@ -77,7 +77,10 @@ pub fn clear_metrics_callback() {
 }
 
 fn get_metrics_callback() -> Option<MetricsCallback> {
-    global_callback().lock().unwrap_or_else(|e| e.into_inner()).clone()
+    global_callback()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
 }
 
 // ---------------------------------------------------------------------------
@@ -139,20 +142,14 @@ pub mod prom {
 
     /// Total scans completed.
     pub static SCANS_TOTAL: Lazy<prometheus::Counter> = Lazy::new(|| {
-        prometheus::register_counter!(
-            "dlpscan_scans_total",
-            "Total scan operations completed"
-        )
-        .expect("failed to register dlpscan_scans_total")
+        prometheus::register_counter!("dlpscan_scans_total", "Total scan operations completed")
+            .expect("failed to register dlpscan_scans_total")
     });
 
     /// Total scan errors.
     pub static SCAN_ERRORS_TOTAL: Lazy<prometheus::Counter> = Lazy::new(|| {
-        prometheus::register_counter!(
-            "dlpscan_scan_errors_total",
-            "Total scan errors"
-        )
-        .expect("failed to register dlpscan_scan_errors_total")
+        prometheus::register_counter!("dlpscan_scan_errors_total", "Total scan errors")
+            .expect("failed to register dlpscan_scan_errors_total")
     });
 
     /// Scan duration in seconds (separate from HTTP request duration).
@@ -228,7 +225,11 @@ mod tests {
         let collector = MetricsCollector::new();
         std::thread::sleep(std::time::Duration::from_millis(10));
         let metrics = collector.finish();
-        assert!(metrics.duration_ms >= 5.0, "expected >=5ms, got {}", metrics.duration_ms);
+        assert!(
+            metrics.duration_ms >= 5.0,
+            "expected >=5ms, got {}",
+            metrics.duration_ms
+        );
     }
 
     #[test]

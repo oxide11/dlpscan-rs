@@ -155,8 +155,7 @@ fn days_to_ymd(days: u64) -> (i64, u64, u64) {
     let z = days as i64 + 719468;
     let era = if z >= 0 { z } else { z - 146096 } / 146097;
     let doe = (z - era * 146097) as u64; // day of era [0, 146096]
-    let yoe =
-        (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // year of era [0, 399]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // year of era [0, 399]
     let y = yoe as i64 + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // day of year [0, 365]
     let mp = (5 * doy + 2) / 153; // [0, 11]
@@ -423,13 +422,7 @@ pub fn event_from_scan(
         .with_action(action)
         .with_is_clean(result.is_clean)
         .with_finding_count(result.finding_count())
-        .with_categories_found(
-            result
-                .categories_found
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>(),
-        );
+        .with_categories_found(result.categories_found.iter().cloned().collect::<Vec<_>>());
 
     if let Some(src) = source {
         event = event.with_source(src);
@@ -488,10 +481,7 @@ mod tests {
         assert_eq!(event.finding_count, 3);
         assert!(!event.is_clean);
         assert_eq!(event.categories_found, vec!["PII", "SSN"]);
-        assert_eq!(
-            event.metadata.get("key"),
-            Some(&serde_json::json!("value"))
-        );
+        assert_eq!(event.metadata.get("key"), Some(&serde_json::json!("value")));
     }
 
     #[test]
@@ -582,8 +572,8 @@ mod tests {
         let captured: Arc<StdMutex<Vec<String>>> = Arc::new(StdMutex::new(Vec::new()));
         let c = Arc::clone(&captured);
 
-        let logger = AuditLogger::new()
-            .with_handler(Box::new(CallbackAuditHandler::new(move |e| {
+        let logger =
+            AuditLogger::new().with_handler(Box::new(CallbackAuditHandler::new(move |e| {
                 c.lock().unwrap().push(e.event_type.clone());
             })));
 
@@ -596,8 +586,7 @@ mod tests {
 
     #[test]
     fn test_audit_logger_default_user() {
-        let captured: Arc<StdMutex<Vec<Option<String>>>> =
-            Arc::new(StdMutex::new(Vec::new()));
+        let captured: Arc<StdMutex<Vec<Option<String>>>> = Arc::new(StdMutex::new(Vec::new()));
         let c = Arc::clone(&captured);
 
         let logger = AuditLogger::new()

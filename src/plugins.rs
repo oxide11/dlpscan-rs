@@ -107,7 +107,9 @@ pub fn run_post_processors(matches: Vec<Match>) -> Vec<Match> {
     with_post_processors(|processors| {
         let mut current = matches;
         for processor in processors.iter() {
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| processor(current.clone()))) {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                processor(current.clone())
+            })) {
                 Ok(result) => current = result,
                 Err(e) => {
                     tracing::error!("Post-processor panicked: {:?}", e);
