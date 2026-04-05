@@ -228,7 +228,7 @@ impl DocumentVault {
                 .truncate(true)
                 .mode(0o600)
                 .open(path)
-                .map_err(|e| format!("Failed to open {}: {}", path, e))?
+                .map_err(|e| format!("Failed to open {path}: {e}"))?
         };
         #[cfg(not(unix))]
         let file = std::fs::OpenOptions::new()
