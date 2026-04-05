@@ -68,7 +68,10 @@ impl Allowlist {
 
     /// Filter matches, keeping only non-suppressed ones.
     pub fn filter_matches(&self, matches: Vec<Match>) -> Vec<Match> {
-        matches.into_iter().filter(|m| !self.is_suppressed(m)).collect()
+        matches
+            .into_iter()
+            .filter(|m| !self.is_suppressed(m))
+            .collect()
     }
 
     /// Whether any rules are configured.
@@ -86,7 +89,13 @@ fn glob_matches(pattern: &str, text: &str) -> bool {
     glob_match_recursive(&pattern_chars, &text_chars, 0, 0, 0)
 }
 
-fn glob_match_recursive(pattern: &[char], text: &[char], pi: usize, ti: usize, depth: usize) -> bool {
+fn glob_match_recursive(
+    pattern: &[char],
+    text: &[char],
+    pi: usize,
+    ti: usize,
+    depth: usize,
+) -> bool {
     if depth > MAX_GLOB_RECURSION {
         return false; // Bail out to prevent DoS
     }

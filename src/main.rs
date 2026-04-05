@@ -123,11 +123,9 @@ fn main() {
 
     let cli = Cli::parse();
 
-    let categories: Option<HashSet<String>> = cli.categories.map(|c| {
-        c.split(',')
-            .map(|s| s.trim().to_string())
-            .collect()
-    });
+    let categories: Option<HashSet<String>> = cli
+        .categories
+        .map(|c| c.split(',').map(|s| s.trim().to_string()).collect());
 
     match cli.command {
         Commands::Scan { file } => {
@@ -249,33 +247,31 @@ fn main() {
             };
 
             match scanner::scan_text_with_config(&text, &config) {
-                Ok(matches) => {
-                    match cli.format {
-                        OutputFormat::Json => {
-                            let json_matches: Vec<_> =
-                                matches.iter().map(|m| m.to_dict(false)).collect();
+                Ok(matches) => match cli.format {
+                    OutputFormat::Json => {
+                        let json_matches: Vec<_> =
+                            matches.iter().map(|m| m.to_dict(false)).collect();
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&json_matches).unwrap_or_default()
+                        );
+                    }
+                    _ => {
+                        for m in &matches {
                             println!(
-                                "{}",
-                                serde_json::to_string_pretty(&json_matches).unwrap_or_default()
+                                "[{:.0}%] {} / {} — \"{}\" at {}..{}{}",
+                                m.confidence * 100.0,
+                                m.category,
+                                m.sub_category,
+                                m.redacted_text(),
+                                m.span.0,
+                                m.span.1,
+                                if m.has_context { " [context]" } else { "" }
                             );
                         }
-                        _ => {
-                            for m in &matches {
-                                println!(
-                                    "[{:.0}%] {} / {} — \"{}\" at {}..{}{}",
-                                    m.confidence * 100.0,
-                                    m.category,
-                                    m.sub_category,
-                                    m.redacted_text(),
-                                    m.span.0,
-                                    m.span.1,
-                                    if m.has_context { " [context]" } else { "" }
-                                );
-                            }
-                            println!("\n{} matches found.", matches.len());
-                        }
+                        println!("\n{} matches found.", matches.len());
                     }
-                }
+                },
                 Err(e) => {
                     eprintln!("Error: {e}");
                     process::exit(1);
@@ -345,32 +341,30 @@ fn main() {
                 .with_redaction_char(redact_char);
 
             match guard.scan(&text) {
-                Ok(result) => {
-                    match cli.format {
-                        OutputFormat::Json => {
+                Ok(result) => match cli.format {
+                    OutputFormat::Json => {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&result).unwrap_or_default()
+                        );
+                    }
+                    _ => {
+                        println!("Clean: {}", result.is_clean);
+                        println!("Findings: {}", result.finding_count());
+                        if let Some(ref redacted) = result.redacted_text {
+                            println!("Redacted: {redacted}");
+                        }
+                        for m in &result.findings {
                             println!(
-                                "{}",
-                                serde_json::to_string_pretty(&result).unwrap_or_default()
+                                "  [{:.0}%] {} / {} — \"{}\"",
+                                m.confidence * 100.0,
+                                m.category,
+                                m.sub_category,
+                                m.redacted_text()
                             );
                         }
-                        _ => {
-                            println!("Clean: {}", result.is_clean);
-                            println!("Findings: {}", result.finding_count());
-                            if let Some(ref redacted) = result.redacted_text {
-                                println!("Redacted: {redacted}");
-                            }
-                            for m in &result.findings {
-                                println!(
-                                    "  [{:.0}%] {} / {} — \"{}\"",
-                                    m.confidence * 100.0,
-                                    m.category,
-                                    m.sub_category,
-                                    m.redacted_text()
-                                );
-                            }
-                        }
                     }
-                }
+                },
                 Err(dlpscan::DlpError::SensitiveDataDetected {
                     finding_count,
                     categories,

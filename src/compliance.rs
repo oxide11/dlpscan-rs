@@ -476,9 +476,9 @@ mod tests {
     fn test_severity_breakdown() {
         let reporter = ComplianceReporter::new("Test");
         let findings = vec![
-            make_match("test", "a", 0.9),  // high
-            make_match("test", "b", 0.5),  // medium
-            make_match("test", "c", 0.1),  // low
+            make_match("test", "a", 0.9), // high
+            make_match("test", "b", 0.5), // medium
+            make_match("test", "c", 0.1), // low
         ];
         reporter.add_scan_result(&findings, "test");
         let report = reporter.generate();

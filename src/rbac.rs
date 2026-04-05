@@ -93,7 +93,10 @@ pub fn resolve_role(
 /// **DEPRECATED:** Use `resolve_role()` instead for production. This function
 /// trusts the client-supplied `X-Role` header, which can be trivially spoofed.
 /// It is only safe in trusted internal networks where all clients are verified.
-#[deprecated(since = "2.1.0", note = "Use resolve_role() which derives roles from authenticated API keys")]
+#[deprecated(
+    since = "2.1.0",
+    note = "Use resolve_role() which derives roles from authenticated API keys"
+)]
 pub fn extract_role(raw_request: &str) -> Role {
     raw_request
         .lines()
@@ -125,14 +128,20 @@ mod tests {
     fn test_viewer_only_status() {
         assert!(role_has_permission(Role::Viewer, Permission::ViewStatus));
         assert!(!role_has_permission(Role::Viewer, Permission::Scan));
-        assert!(!role_has_permission(Role::Viewer, Permission::ManagePatterns));
+        assert!(!role_has_permission(
+            Role::Viewer,
+            Permission::ManagePatterns
+        ));
     }
 
     #[test]
     fn test_operator_can_scan() {
         assert!(role_has_permission(Role::Operator, Permission::Scan));
         assert!(role_has_permission(Role::Operator, Permission::BatchScan));
-        assert!(!role_has_permission(Role::Operator, Permission::ManagePatterns));
+        assert!(!role_has_permission(
+            Role::Operator,
+            Permission::ManagePatterns
+        ));
         assert!(!role_has_permission(Role::Operator, Permission::Detokenize));
     }
 
@@ -140,15 +149,30 @@ mod tests {
     fn test_analyst_can_detokenize() {
         assert!(role_has_permission(Role::Analyst, Permission::Detokenize));
         assert!(role_has_permission(Role::Analyst, Permission::Scan));
-        assert!(!role_has_permission(Role::Analyst, Permission::ManagePatterns));
+        assert!(!role_has_permission(
+            Role::Analyst,
+            Permission::ManagePatterns
+        ));
     }
 
     #[test]
     fn test_extract_role_from_header() {
-        assert_eq!(extract_role("GET / HTTP/1.1\r\nX-Role: admin\r\n"), Role::Admin);
-        assert_eq!(extract_role("GET / HTTP/1.1\r\nX-Role: Analyst\r\n"), Role::Analyst);
-        assert_eq!(extract_role("GET / HTTP/1.1\r\nX-Role: OPERATOR\r\n"), Role::Operator);
+        assert_eq!(
+            extract_role("GET / HTTP/1.1\r\nX-Role: admin\r\n"),
+            Role::Admin
+        );
+        assert_eq!(
+            extract_role("GET / HTTP/1.1\r\nX-Role: Analyst\r\n"),
+            Role::Analyst
+        );
+        assert_eq!(
+            extract_role("GET / HTTP/1.1\r\nX-Role: OPERATOR\r\n"),
+            Role::Operator
+        );
         assert_eq!(extract_role("GET / HTTP/1.1\r\n"), Role::Viewer);
-        assert_eq!(extract_role("GET / HTTP/1.1\r\nX-Role: unknown\r\n"), Role::Viewer);
+        assert_eq!(
+            extract_role("GET / HTTP/1.1\r\nX-Role: unknown\r\n"),
+            Role::Viewer
+        );
     }
 }

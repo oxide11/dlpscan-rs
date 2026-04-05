@@ -87,9 +87,11 @@ fn test_category_filter() {
         categories: Some(["Contact Information".to_string()].into_iter().collect()),
         ..Default::default()
     };
-    let matches =
-        dlpscan::scanner::scan_text_with_config("Email: test@example.com SSN: 123-45-6789", &config)
-            .unwrap();
+    let matches = dlpscan::scanner::scan_text_with_config(
+        "Email: test@example.com SSN: 123-45-6789",
+        &config,
+    )
+    .unwrap();
     assert!(
         matches.iter().all(|m| m.category == "Contact Information"),
         "Category filter should exclude non-contact matches"
@@ -102,9 +104,11 @@ fn test_min_confidence_filter() {
         min_confidence: 0.9,
         ..Default::default()
     };
-    let matches =
-        dlpscan::scanner::scan_text_with_config("SSN: 123-45-6789 and email test@example.com", &config)
-            .unwrap();
+    let matches = dlpscan::scanner::scan_text_with_config(
+        "SSN: 123-45-6789 and email test@example.com",
+        &config,
+    )
+    .unwrap();
     assert!(
         matches.iter().all(|m| m.confidence >= 0.9),
         "All matches should meet min_confidence threshold"
@@ -135,7 +139,10 @@ fn test_evasion_html_entity_ssn() {
 
 #[test]
 fn test_evasion_css_comment_injection() {
-    let matches = scan_text("Card: 4/**/5/**/3/**/2/**/0/**/1/**/5/**/1/**/1/**/2/**/8/**/3/**/0/**/3/**/6/**/6").unwrap();
+    let matches = scan_text(
+        "Card: 4/**/5/**/3/**/2/**/0/**/1/**/5/**/1/**/1/**/2/**/8/**/3/**/0/**/3/**/6/**/6",
+    )
+    .unwrap();
     assert!(
         matches.iter().any(|m| m.category.contains("Credit Card")),
         "Should detect CSS-comment-injected credit card"
@@ -153,7 +160,8 @@ fn test_evasion_excessive_delimiter() {
 
 #[test]
 fn test_evasion_zero_width_chars() {
-    let matches = scan_text("SSN: 1\u{200B}2\u{200B}3-4\u{200B}5-6\u{200B}7\u{200B}8\u{200B}9").unwrap();
+    let matches =
+        scan_text("SSN: 1\u{200B}2\u{200B}3-4\u{200B}5-6\u{200B}7\u{200B}8\u{200B}9").unwrap();
     assert!(
         matches.iter().any(|m| m.sub_category == "USA SSN"),
         "Should detect SSN with zero-width characters"
@@ -162,7 +170,10 @@ fn test_evasion_zero_width_chars() {
 
 #[test]
 fn test_evasion_fullwidth_digits() {
-    let matches = scan_text("SSN: \u{FF11}\u{FF12}\u{FF13}-\u{FF14}\u{FF15}-\u{FF16}\u{FF17}\u{FF18}\u{FF19}").unwrap();
+    let matches = scan_text(
+        "SSN: \u{FF11}\u{FF12}\u{FF13}-\u{FF14}\u{FF15}-\u{FF16}\u{FF17}\u{FF18}\u{FF19}",
+    )
+    .unwrap();
     assert!(
         matches.iter().any(|m| m.sub_category == "USA SSN"),
         "Should detect fullwidth-digit SSN"
@@ -175,25 +186,31 @@ fn test_evasion_fullwidth_digits() {
 
 #[test]
 fn test_guard_flag_mode() {
-    use dlpscan::{InputGuard, Action, Preset};
+    use dlpscan::{Action, InputGuard, Preset};
     // Use PciDss preset which includes credit card category
     let guard = InputGuard::new()
         .with_action(Action::Flag)
         .with_presets(vec![Preset::PciDss]);
     let result = guard.scan("Card: 4532015112830366").unwrap();
     assert!(!result.is_clean, "Should flag text with credit card");
-    assert!(result.redacted_text.is_none(), "Flag mode should not redact");
+    assert!(
+        result.redacted_text.is_none(),
+        "Flag mode should not redact"
+    );
 }
 
 #[test]
 fn test_guard_redact_mode() {
-    use dlpscan::{InputGuard, Action, Preset};
+    use dlpscan::{Action, InputGuard, Preset};
     let guard = InputGuard::new()
         .with_action(Action::Redact)
         .with_presets(vec![Preset::PciDss]);
     let result = guard.scan("Card: 4532015112830366").unwrap();
     assert!(!result.is_clean);
-    assert!(result.redacted_text.is_some(), "Redact mode should produce redacted text");
+    assert!(
+        result.redacted_text.is_some(),
+        "Redact mode should produce redacted text"
+    );
     let redacted = result.redacted_text.unwrap();
     assert!(
         !redacted.contains("4532015112830366"),
@@ -203,17 +220,20 @@ fn test_guard_redact_mode() {
 
 #[test]
 fn test_guard_reject_mode() {
-    use dlpscan::{InputGuard, Action, Preset};
+    use dlpscan::{Action, InputGuard, Preset};
     let guard = InputGuard::new()
         .with_action(Action::Reject)
         .with_presets(vec![Preset::PciDss]);
     let result = guard.scan("Card: 4532015112830366");
-    assert!(result.is_err(), "Reject mode should return error on sensitive data");
+    assert!(
+        result.is_err(),
+        "Reject mode should return error on sensitive data"
+    );
 }
 
 #[test]
 fn test_guard_clean_text_passes() {
-    use dlpscan::{InputGuard, Action, Preset};
+    use dlpscan::{Action, InputGuard, Preset};
     let guard = InputGuard::new()
         .with_action(Action::Reject)
         .with_presets(vec![Preset::PciDss]);
@@ -227,7 +247,7 @@ fn test_guard_clean_text_passes() {
 
 #[test]
 fn test_api_handle_scan() {
-    use dlpscan::api::{handle_scan, ScanRequest, handle_health};
+    use dlpscan::api::{handle_health, handle_scan, ScanRequest};
 
     let req = ScanRequest {
         text: "My email is test@example.com".to_string(),
@@ -273,7 +293,10 @@ fn test_api_handle_batch_scan() {
 
     let resp = handle_batch_scan(&req).unwrap();
     assert_eq!(resp.results.len(), 2);
-    assert!(resp.results[0].finding_count > 0, "First item should have findings");
+    assert!(
+        resp.results[0].finding_count > 0,
+        "First item should have findings"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -282,14 +305,17 @@ fn test_api_handle_batch_scan() {
 
 #[test]
 fn test_rbac_permission_matrix() {
-    use dlpscan::rbac::{Role, Permission, role_has_permission};
+    use dlpscan::rbac::{role_has_permission, Permission, Role};
 
     assert!(role_has_permission(Role::Admin, Permission::ManagePatterns));
     assert!(role_has_permission(Role::Admin, Permission::ExportVault));
     assert!(role_has_permission(Role::Viewer, Permission::ViewStatus));
     assert!(!role_has_permission(Role::Viewer, Permission::Scan));
     assert!(role_has_permission(Role::Operator, Permission::Scan));
-    assert!(!role_has_permission(Role::Operator, Permission::ManagePatterns));
+    assert!(!role_has_permission(
+        Role::Operator,
+        Permission::ManagePatterns
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -302,10 +328,16 @@ fn test_compliance_report_generation() {
     let reporter = dlpscan::ComplianceReporter::new("Integration Test");
     reporter.add_scan_result(&matches, "test-input");
     let report = reporter.generate();
-    assert!(!report.compliance_status.is_empty(), "Should have compliance status");
+    assert!(
+        !report.compliance_status.is_empty(),
+        "Should have compliance status"
+    );
     // Serialize to JSON
     let json = serde_json::to_string(&report).unwrap();
-    assert!(json.contains("compliance_status"), "JSON should contain compliance_status");
+    assert!(
+        json.contains("compliance_status"),
+        "JSON should contain compliance_status"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -337,11 +369,15 @@ fn test_tokenize_and_detokenize() {
 #[test]
 fn test_streaming_scanner() {
     let scanner = dlpscan::StreamScanner::new(4096, 200);
-    let mut all_matches = scanner.feed("Here is an SSN: 123-45-6789 embedded in a larger document.");
+    let mut all_matches =
+        scanner.feed("Here is an SSN: 123-45-6789 embedded in a larger document.");
     all_matches.extend(scanner.flush());
     assert!(
         all_matches.iter().any(|m| m.sub_category == "USA SSN"),
         "Stream scanner should detect SSN, got: {:?}",
-        all_matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+        all_matches
+            .iter()
+            .map(|m| &m.sub_category)
+            .collect::<Vec<_>>()
     );
 }

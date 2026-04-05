@@ -195,8 +195,14 @@ impl RateLimiter {
     /// Remaining requests in the current window for the default client.
     pub fn remaining(&self) -> usize {
         let now = Instant::now();
-        let active = self.clients.get("global")
-            .map(|reqs| reqs.iter().filter(|&&t| now.duration_since(t) < self.window).count())
+        let active = self
+            .clients
+            .get("global")
+            .map(|reqs| {
+                reqs.iter()
+                    .filter(|&&t| now.duration_since(t) < self.window)
+                    .count()
+            })
             .unwrap_or(0);
         self.max_requests.saturating_sub(active)
     }
@@ -250,7 +256,9 @@ impl ApiConfig {
                 .ok()
                 .filter(|k| !k.is_empty())
                 .or_else(|| {
-                    tracing::warn!("DLPSCAN_API_KEY not set — API server running without authentication");
+                    tracing::warn!(
+                        "DLPSCAN_API_KEY not set — API server running without authentication"
+                    );
                     None
                 }),
             rate_limit: std::env::var("DLPSCAN_API_RATE_LIMIT")
@@ -272,9 +280,7 @@ impl ApiConfig {
 /// Process a scan request.
 pub fn handle_scan(req: &ScanRequest) -> Result<ScanResponse, String> {
     let guard = build_guard(req)?;
-    let result = guard
-        .scan(&req.text)
-        .map_err(|e| format!("{e}"))?;
+    let result = guard.scan(&req.text).map_err(|e| format!("{e}"))?;
     Ok(scan_result_to_response(&result))
 }
 
@@ -283,11 +289,19 @@ pub fn handle_batch_scan(req: &BatchScanRequest) -> Result<BatchScanResponse, St
     const MAX_BATCH_ITEMS: usize = 1000;
     const MAX_TEXT_SIZE: usize = 10 * 1024 * 1024; // 10 MB
     if req.items.len() > MAX_BATCH_ITEMS {
-        return Err(format!("Batch size {} exceeds maximum {}", req.items.len(), MAX_BATCH_ITEMS));
+        return Err(format!(
+            "Batch size {} exceeds maximum {}",
+            req.items.len(),
+            MAX_BATCH_ITEMS
+        ));
     }
     for item in &req.items {
         if item.text.len() > MAX_TEXT_SIZE {
-            return Err(format!("Text size {} exceeds maximum {}", item.text.len(), MAX_TEXT_SIZE));
+            return Err(format!(
+                "Text size {} exceeds maximum {}",
+                item.text.len(),
+                MAX_TEXT_SIZE
+            ));
         }
     }
 
@@ -331,7 +345,8 @@ pub fn handle_tokenize(
     for finding in &findings {
         let token = vault.tokenize(&finding.text, &finding.category);
         let (start, end) = finding.span;
-        if start <= end && end <= tokenized.len()
+        if start <= end
+            && end <= tokenized.len()
             && tokenized.is_char_boundary(start)
             && tokenized.is_char_boundary(end)
         {
@@ -401,7 +416,11 @@ pub fn handle_health() -> HealthResponse {
 fn handle_health_full(state: &AppState, active: usize) -> HealthResponse {
     let shutting_down = state.is_shutting_down.load(Ordering::SeqCst);
     HealthResponse {
-        status: if shutting_down { "draining".to_string() } else { "ok".to_string() },
+        status: if shutting_down {
+            "draining".to_string()
+        } else {
+            "ok".to_string()
+        },
         version: env!("CARGO_PKG_VERSION").to_string(),
         uptime_secs: Some(state.start_time.elapsed().as_secs()),
         pattern_count: Some(crate::patterns::PATTERNS.len()),
@@ -443,7 +462,7 @@ fn generate_id() -> String {
 
 /// Verify API key (constant-time comparison via SHA-256 hashing).
 pub fn verify_api_key(expected: &str, provided: &str) -> bool {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let expected_hash = Sha256::digest(expected.as_bytes());
     let provided_hash = Sha256::digest(provided.as_bytes());
     let mut result = 0u8;
@@ -494,16 +513,24 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
                     .map_err(|e| format!("TLS config error: {}", e))?;
 
                 tracing::info!("TLS enabled with cert={}, key={}", cert_path, key_path);
-                Some(tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(tls_config)))
+                Some(tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(
+                    tls_config,
+                )))
             }
             _ => {
-                tracing::info!("TLS not configured (set DLPSCAN_TLS_CERT and DLPSCAN_TLS_KEY to enable)");
+                tracing::info!(
+                    "TLS not configured (set DLPSCAN_TLS_CERT and DLPSCAN_TLS_KEY to enable)"
+                );
                 None
             }
         }
     };
 
-    let proto = if cfg!(feature = "tls") { "https" } else { "http" };
+    let proto = if cfg!(feature = "tls") {
+        "https"
+    } else {
+        "http"
+    };
     tracing::info!("dlpscan API server listening on {}://{}", proto, addr);
 
     // Load API key-to-role mapping from env: DLPSCAN_API_KEY_ROLES="key1:admin,key2:analyst"
@@ -520,7 +547,11 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
                 "operator" => crate::rbac::Role::Operator,
                 _ => crate::rbac::Role::Viewer,
             };
-            if key.is_empty() { None } else { Some((key, role)) }
+            if key.is_empty() {
+                None
+            } else {
+                Some((key, role))
+            }
         })
         .collect();
 
@@ -540,10 +571,9 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
     let shutdown = async {
         #[cfg(unix)]
         {
-            let mut sigterm = tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::terminate(),
-            )
-            .expect("failed to install SIGTERM handler");
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to install SIGTERM handler");
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {},
                 _ = sigterm.recv() => {},
@@ -712,8 +742,10 @@ fn route_request(raw: &str, state: &AppState, client_ip: &str) -> (String, Strin
     let body = raw.split("\r\n\r\n").nth(1).unwrap_or("");
 
     // Check API key if configured (exempt health and metrics endpoints)
-    let auth_exempt = path == "/health" || path == "/health/live"
-        || path == "/health/ready" || path == "/metrics";
+    let auth_exempt = path == "/health"
+        || path == "/health/live"
+        || path == "/health/ready"
+        || path == "/metrics";
     if state.api_key.is_some() && !auth_exempt {
         let api_key_header = raw
             .lines()
@@ -742,11 +774,7 @@ fn route_request(raw: &str, state: &AppState, client_ip: &str) -> (String, Strin
     } else {
         None
     };
-    let role = crate::rbac::resolve_role(
-        raw,
-        authenticated_key.as_deref(),
-        &state.api_key_roles,
-    );
+    let role = crate::rbac::resolve_role(raw, authenticated_key.as_deref(), &state.api_key_roles);
     let required_perm = match (method, path) {
         ("POST", "/v1/scan") => Some(crate::rbac::Permission::Scan),
         ("POST", "/v1/batch/scan") => Some(crate::rbac::Permission::BatchScan),
@@ -780,9 +808,8 @@ fn route_request(raw: &str, state: &AppState, client_ip: &str) -> (String, Strin
         // Evict expired vaults
         if let Ok(mut vaults) = state.vaults.write() {
             let now = Instant::now();
-            vaults.retain(|_, entry| {
-                now.duration_since(entry.created_at).as_secs() < VAULT_TTL_SECS
-            });
+            vaults
+                .retain(|_, entry| now.duration_since(entry.created_at).as_secs() < VAULT_TTL_SECS);
         }
     }
 
@@ -794,10 +821,7 @@ fn route_request(raw: &str, state: &AppState, client_ip: &str) -> (String, Strin
                 serde_json::to_string(&resp).unwrap_or_default(),
             )
         }
-        ("GET", "/health/live") => (
-            "200 OK".to_string(),
-            r#"{"status":"ok"}"#.to_string(),
-        ),
+        ("GET", "/health/live") => ("200 OK".to_string(), r#"{"status":"ok"}"#.to_string()),
         ("GET", "/health/ready") => {
             if state.is_shutting_down.load(Ordering::SeqCst) {
                 (
@@ -857,7 +881,8 @@ fn route_request(raw: &str, state: &AppState, client_ip: &str) -> (String, Strin
                     tracing::warn!("Batch scan error: {}", e);
                     (
                         "400 Bad Request".to_string(),
-                        r#"{"detail":"Batch scan failed. Check input size and format."}"#.to_string(),
+                        r#"{"detail":"Batch scan failed. Check input size and format."}"#
+                            .to_string(),
                     )
                 }
             },
@@ -884,7 +909,8 @@ fn route_request(raw: &str, state: &AppState, client_ip: &str) -> (String, Strin
                             "429 Too Many Requests".to_string(),
                             serde_json::json!({"detail": format!(
                                 "Maximum custom patterns reached ({})", MAX_CUSTOM_PATTERNS
-                            )}).to_string(),
+                            )})
+                            .to_string(),
                         );
                     }
                 }

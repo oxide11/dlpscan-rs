@@ -38,7 +38,11 @@ pub fn is_luhn_valid(card_number: &str) -> bool {
         .map(|(idx, &d)| {
             if idx % 2 == 1 {
                 let doubled = d * 2;
-                if doubled > 9 { doubled - 9 } else { doubled }
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
             } else {
                 d
             }

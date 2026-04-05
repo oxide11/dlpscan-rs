@@ -58,8 +58,14 @@ impl DocumentVault {
     /// - `threshold`: Minimum Jaccard similarity (0..1]
     /// - `shingle_size`: Words per shingle
     pub fn new(num_hashes: usize, bands: usize, threshold: f64, shingle_size: usize) -> Self {
-        assert!(num_hashes % bands == 0, "num_hashes must be divisible by bands");
-        assert!(threshold > 0.0 && threshold <= 1.0, "threshold must be in (0, 1]");
+        assert!(
+            num_hashes % bands == 0,
+            "num_hashes must be divisible by bands"
+        );
+        assert!(
+            threshold > 0.0 && threshold <= 1.0,
+            "threshold must be in (0, 1]"
+        );
 
         let rows_per_band = num_hashes / bands;
         let hash_funcs = make_hash_funcs(num_hashes, 42);
@@ -84,7 +90,10 @@ impl DocumentVault {
 
     /// Number of registered documents.
     pub fn document_count(&self) -> usize {
-        self.documents.lock().unwrap_or_else(|e| e.into_inner()).len()
+        self.documents
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 
     /// Register a document.
@@ -117,7 +126,12 @@ impl DocumentVault {
 
     /// Unregister a document. Returns true if it existed.
     pub fn unregister(&self, doc_id: &str) -> bool {
-        let existed = self.documents.lock().unwrap_or_else(|e| e.into_inner()).remove(doc_id).is_some();
+        let existed = self
+            .documents
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(doc_id)
+            .is_some();
         if existed {
             self.remove_from_index(doc_id);
         }
@@ -155,7 +169,11 @@ impl DocumentVault {
             })
             .collect();
 
-        matches.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+        matches.sort_by(|a, b| {
+            b.similarity
+                .partial_cmp(&a.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         matches
     }
 
@@ -166,7 +184,10 @@ impl DocumentVault {
 
     /// Remove all documents.
     pub fn clear(&self) {
-        self.documents.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.documents
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         let mut index = self.band_index.lock().unwrap_or_else(|e| e.into_inner());
         for band in index.iter_mut() {
             band.clear();
@@ -218,15 +239,16 @@ impl DocumentVault {
             .map_err(|e| format!("Failed to open {}: {}", path, e))?;
         use std::io::Write;
         let mut writer = std::io::BufWriter::new(file);
-        writer.write_all(json.as_bytes()).map_err(|e| format!("Failed to write {}: {}", path, e))?;
+        writer
+            .write_all(json.as_bytes())
+            .map_err(|e| format!("Failed to write {}: {}", path, e))?;
         Ok(())
     }
 
     /// Load vault from JSON file.
     pub fn load(path: &str) -> Result<Self, String> {
         let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        let data: serde_json::Value =
-            serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        let data: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
 
         let num_hashes = data["num_hashes"].as_u64().unwrap_or(128) as usize;
         let bands = data["bands"].as_u64().unwrap_or(16) as usize;
@@ -258,16 +280,20 @@ impl DocumentVault {
                 let shingle_count = doc["shingle_count"].as_u64().unwrap_or(0) as usize;
 
                 vault.add_to_index(doc_id, &signature);
-                vault.documents.lock().unwrap_or_else(|e| e.into_inner()).insert(
-                    doc_id.to_string(),
-                    DocumentEntry {
-                        doc_id: doc_id.to_string(),
-                        signature,
-                        sensitivity: sensitivity.to_string(),
-                        metadata,
-                        shingle_count,
-                    },
-                );
+                vault
+                    .documents
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(
+                        doc_id.to_string(),
+                        DocumentEntry {
+                            doc_id: doc_id.to_string(),
+                            signature,
+                            sensitivity: sensitivity.to_string(),
+                            metadata,
+                            shingle_count,
+                        },
+                    );
             }
         }
 
@@ -333,10 +359,7 @@ fn shingle(text: &str, k: usize) -> HashSet<String> {
             .collect();
     }
 
-    words
-        .windows(k)
-        .map(|w| w.join(" "))
-        .collect()
+    words.windows(k).map(|w| w.join(" ")).collect()
 }
 
 /// Generate hash function coefficients.
@@ -344,9 +367,13 @@ fn make_hash_funcs(num_hashes: usize, seed: u64) -> Vec<(u64, u64)> {
     let mut funcs = Vec::with_capacity(num_hashes);
     let mut rng_state = seed;
     for _ in 0..num_hashes {
-        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let a = (rng_state >> 16) % LARGE_PRIME;
-        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        rng_state = rng_state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         let b = (rng_state >> 16) % LARGE_PRIME;
         funcs.push((a.max(1), b));
     }
@@ -418,7 +445,10 @@ mod tests {
     #[test]
     fn test_minhash_deterministic() {
         let funcs = make_hash_funcs(64, 42);
-        let shingles: HashSet<String> = ["hello world", "world foo"].iter().map(|s| s.to_string()).collect();
+        let shingles: HashSet<String> = ["hello world", "world foo"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let sig1 = minhash(&shingles, &funcs);
         let sig2 = minhash(&shingles, &funcs);
         assert_eq!(sig1, sig2);
@@ -427,7 +457,12 @@ mod tests {
     #[test]
     fn test_similarity_identical() {
         let vault = DocumentVault::new(64, 8, 0.5, 3);
-        vault.register("doc1", "the quick brown fox jumps over the lazy dog", "sensitive", None);
+        vault.register(
+            "doc1",
+            "the quick brown fox jumps over the lazy dog",
+            "sensitive",
+            None,
+        );
 
         let matches = vault.query("the quick brown fox jumps over the lazy dog", None);
         assert!(!matches.is_empty());
@@ -437,7 +472,12 @@ mod tests {
     #[test]
     fn test_similarity_different() {
         let vault = DocumentVault::new(64, 8, 0.5, 3);
-        vault.register("doc1", "the quick brown fox jumps over the lazy dog", "sensitive", None);
+        vault.register(
+            "doc1",
+            "the quick brown fox jumps over the lazy dog",
+            "sensitive",
+            None,
+        );
 
         let matches = vault.query("completely unrelated text about nothing similar", Some(0.5));
         assert!(matches.is_empty());
@@ -446,7 +486,12 @@ mod tests {
     #[test]
     fn test_unregister() {
         let vault = DocumentVault::new(64, 8, 0.5, 3);
-        vault.register("doc1", "test document content here for matching", "sensitive", None);
+        vault.register(
+            "doc1",
+            "test document content here for matching",
+            "sensitive",
+            None,
+        );
         assert_eq!(vault.document_count(), 1);
         assert!(vault.unregister("doc1"));
         assert_eq!(vault.document_count(), 0);

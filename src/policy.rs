@@ -165,7 +165,9 @@ impl PolicyEngine {
             .filter_map(|s| parse_preset(s))
             .collect();
 
-        let mut guard = InputGuard::new().with_presets(presets).with_action(Action::Flag);
+        let mut guard = InputGuard::new()
+            .with_presets(presets)
+            .with_action(Action::Flag);
 
         if !scan.categories.is_empty() {
             let cats: HashSet<String> = scan.categories.iter().cloned().collect();
@@ -346,7 +348,10 @@ pub fn validate_policy(policy: &Policy) -> Vec<String> {
     let mut warnings = Vec::new();
 
     if policy.version != "1" {
-        warnings.push(format!("Unknown version '{}', expected '1'", policy.version));
+        warnings.push(format!(
+            "Unknown version '{}', expected '1'",
+            policy.version
+        ));
     }
     if policy.name.is_empty() {
         warnings.push("Policy name is empty".to_string());

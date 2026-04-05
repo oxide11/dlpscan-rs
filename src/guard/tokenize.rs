@@ -14,8 +14,8 @@ const MAX_VAULT_ENTRIES: usize = 100_000;
 pub struct TokenVault {
     prefix: String,
     secret: Vec<u8>,
-    forward: HashMap<String, String>,  // value → token
-    reverse: HashMap<String, String>,  // token → value
+    forward: HashMap<String, String>, // value → token
+    reverse: HashMap<String, String>, // token → value
 }
 
 /// Zeroize all sensitive data when the vault is dropped.

@@ -1,11 +1,11 @@
 //! Realistic fake data generators for the Obfuscate action.
 
 use crate::models::Match;
-use rand::Rng;
+use once_cell::sync::Lazy;
 use rand::rngs::StdRng;
+use rand::Rng;
 use rand::SeedableRng;
 use std::sync::Mutex;
-use once_cell::sync::Lazy;
 
 static OBFUSCATION_RNG: Lazy<Mutex<StdRng>> = Lazy::new(|| Mutex::new(StdRng::from_entropy()));
 
@@ -30,8 +30,11 @@ pub fn obfuscate_match(m: &Match) -> String {
         "MAC Address" => obfuscate_mac(&m.text),
         _ => match m.category.as_str() {
             "Credit Card Numbers" | "Primary Account Numbers" => obfuscate_credit_card(m),
-            "Generic Secrets" | "Cloud Provider Secrets" | "Code Platform Secrets"
-            | "Payment Service Secrets" | "Messaging Service Secrets" => obfuscate_secret(&m.text),
+            "Generic Secrets"
+            | "Cloud Provider Secrets"
+            | "Code Platform Secrets"
+            | "Payment Service Secrets"
+            | "Messaging Service Secrets" => obfuscate_secret(&m.text),
             _ => obfuscate_generic(&m.text),
         },
     }
@@ -76,12 +79,7 @@ fn obfuscate_credit_card(m: &Match) -> String {
     generate_luhn_number(&mut *rng, length, &prefix, &m.text)
 }
 
-fn generate_luhn_number(
-    rng: &mut impl Rng,
-    length: usize,
-    prefix: &str,
-    original: &str,
-) -> String {
+fn generate_luhn_number(rng: &mut impl Rng, length: usize, prefix: &str, original: &str) -> String {
     let mut digits: Vec<u8> = prefix.bytes().map(|b| b - b'0').collect();
     while digits.len() < length - 1 {
         digits.push(rng.gen_range(0..10));
@@ -126,12 +124,7 @@ fn obfuscate_email() -> String {
     let user: String = (0..8)
         .map(|_| (b'a' + rng.gen_range(0..26)) as char)
         .collect();
-    let domains = [
-        "example.net",
-        "example.org",
-        "test.invalid",
-        "sample.test",
-    ];
+    let domains = ["example.net", "example.org", "test.invalid", "sample.test"];
     let domain = domains[rng.gen_range(0..domains.len())];
     format!("{user}@{domain}")
 }
@@ -199,10 +192,9 @@ fn obfuscate_mac(original: &str) -> String {
 
 fn obfuscate_secret(original: &str) -> String {
     let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
-    let charset: Vec<char> =
-        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-            .chars()
-            .collect();
+    let charset: Vec<char> = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        .chars()
+        .collect();
     original
         .chars()
         .map(|c| {
@@ -274,7 +266,7 @@ mod tests {
         };
         let fake = obfuscate_credit_card(&m);
         assert!(fake.starts_with('4')); // Visa prefix
-        // Verify Luhn on digits only
+                                        // Verify Luhn on digits only
         let digits: String = fake.chars().filter(|c| c.is_ascii_digit()).collect();
         assert!(crate::validation::is_luhn_valid(&digits));
     }

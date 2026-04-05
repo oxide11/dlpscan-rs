@@ -254,13 +254,16 @@ impl InputGuard {
 
         for finding in sorted {
             let (start, end) = finding.span;
-            if start < result.len() && end <= result.len()
-                && result.is_char_boundary(start) && result.is_char_boundary(end)
+            if start < result.len()
+                && end <= result.len()
+                && result.is_char_boundary(start)
+                && result.is_char_boundary(end)
             {
                 let span_text = &result[start..end];
                 let char_count = span_text.chars().count();
-                let replacement: String =
-                    std::iter::repeat(self.redaction_char).take(char_count).collect();
+                let replacement: String = std::iter::repeat(self.redaction_char)
+                    .take(char_count)
+                    .collect();
                 result.replace_range(start..end, &replacement);
             }
         }

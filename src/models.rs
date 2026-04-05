@@ -50,7 +50,15 @@ impl Match {
             "*".repeat(self.text.len())
         } else {
             let first: String = self.text.chars().take(3).collect();
-            let last: String = self.text.chars().rev().take(3).collect::<Vec<_>>().into_iter().rev().collect();
+            let last: String = self
+                .text
+                .chars()
+                .rev()
+                .take(3)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
             let middle_len = self.text.chars().count().saturating_sub(6);
             format!("{}{}{}", first, "*".repeat(middle_len), last)
         }
@@ -61,7 +69,10 @@ impl Match {
         let mut val = serde_json::to_value(self).unwrap_or_default();
         if redact {
             if let Some(obj) = val.as_object_mut() {
-                obj.insert("text".into(), serde_json::Value::String(self.redacted_text()));
+                obj.insert(
+                    "text".into(),
+                    serde_json::Value::String(self.redacted_text()),
+                );
             }
         }
         val

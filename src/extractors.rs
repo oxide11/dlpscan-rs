@@ -106,7 +106,11 @@ pub fn get_extractor(file_path: &str) -> Option<ExtractorFn> {
         .map(|e| e.to_lowercase())?;
 
     // Check custom extractors first
-    if let Some(func) = CUSTOM_EXTRACTORS.lock().unwrap_or_else(|e| e.into_inner()).get(&ext) {
+    if let Some(func) = CUSTOM_EXTRACTORS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&ext)
+    {
         return Some(*func);
     }
 
@@ -114,12 +118,11 @@ pub fn get_extractor(file_path: &str) -> Option<ExtractorFn> {
     match ext.as_str() {
         // Plain text formats (including TSV and certificate/key files)
         "txt" | "csv" | "tsv" | "log" | "json" | "xml" | "html" | "htm" | "yaml" | "yml"
-        | "toml" | "ini" | "cfg" | "conf" | "md" | "rst" | "py" | "js" | "ts" | "java"
-        | "go" | "rs" | "rb" | "php" | "sh" | "bat" | "ps1" | "sql" | "env" | "c" | "cpp"
-        | "h" | "hpp" | "css" | "scss" | "less" | "jsx" | "tsx" | "vue" | "svelte" | "swift"
-        | "kt" | "scala" | "r" | "m" | "mm"
-        | "pem" | "cer" | "crt" | "key" | "pub" | "csr" | "der" | "p12" | "pfx"
-            => Some(extract_plain_text),
+        | "toml" | "ini" | "cfg" | "conf" | "md" | "rst" | "py" | "js" | "ts" | "java" | "go"
+        | "rs" | "rb" | "php" | "sh" | "bat" | "ps1" | "sql" | "env" | "c" | "cpp" | "h"
+        | "hpp" | "css" | "scss" | "less" | "jsx" | "tsx" | "vue" | "svelte" | "swift" | "kt"
+        | "scala" | "r" | "m" | "mm" | "pem" | "cer" | "crt" | "key" | "pub" | "csr" | "der"
+        | "p12" | "pfx" => Some(extract_plain_text),
 
         // RTF (custom parser, no deps)
         "rtf" => Some(extract_rtf),
@@ -192,15 +195,10 @@ pub fn extract_text(file_path: &str) -> Result<ExtractionResult, String> {
 pub fn supported_extensions() -> Vec<String> {
     let mut exts: Vec<String> = vec![
         "txt", "csv", "tsv", "log", "json", "xml", "html", "htm", "yaml", "yml", "toml", "ini",
-        "cfg", "conf", "md", "rst", "py", "js", "ts", "java", "go", "rs", "rb", "php", "sh",
-        "bat", "ps1", "sql", "env", "rtf", "eml", "vcf", "vcard", "contact", "ldif",
-        "c", "cpp", "h", "hpp", "css", "scss",
-        "pem", "cer", "crt", "key", "pub", "csr",
-        "ics", "ical",
-        "mbox", "mbx",
-        "mhtml", "mht",
-        "warc",
-        "odt", "ods", "odp",
+        "cfg", "conf", "md", "rst", "py", "js", "ts", "java", "go", "rs", "rb", "php", "sh", "bat",
+        "ps1", "sql", "env", "rtf", "eml", "vcf", "vcard", "contact", "ldif", "c", "cpp", "h",
+        "hpp", "css", "scss", "pem", "cer", "crt", "key", "pub", "csr", "ics", "ical", "mbox",
+        "mbx", "mhtml", "mht", "warc", "odt", "ods", "odp",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -369,8 +367,15 @@ fn parse_rtf(input: &str) -> String {
 
     // Groups to skip
     let skip_groups = [
-        "fonttbl", "colortbl", "stylesheet", "info", "pict", "header", "footer",
-        "footnote", "annotation",
+        "fonttbl",
+        "colortbl",
+        "stylesheet",
+        "info",
+        "pict",
+        "header",
+        "footer",
+        "footnote",
+        "annotation",
     ];
 
     while let Some(ch) = chars.next() {
@@ -554,7 +559,9 @@ fn extract_zip_based(file_path: &str) -> Result<ExtractionResult, String> {
             if name.ends_with(".xml") {
                 match format {
                     "docx" if name.starts_with("word/") => Some(name),
-                    "xlsx" if name.starts_with("xl/worksheets/") || name.contains("sharedStrings") => {
+                    "xlsx"
+                        if name.starts_with("xl/worksheets/") || name.contains("sharedStrings") =>
+                    {
                         Some(name)
                     }
                     "pptx" if name.starts_with("ppt/slides/") => Some(name),
@@ -614,7 +621,11 @@ fn strip_xml_tags(xml: &str) -> String {
                 last_was_close = true;
             }
             _ if !in_tag => {
-                if last_was_close && !output.is_empty() && !output.ends_with(' ') && !output.ends_with('\n') {
+                if last_was_close
+                    && !output.is_empty()
+                    && !output.ends_with(' ')
+                    && !output.ends_with('\n')
+                {
                     // Add space between text from different tags
                 }
                 output.push(ch);
@@ -690,7 +701,10 @@ fn extract_vcard(file_path: &str) -> Result<ExtractionResult, String> {
             .to_uppercase();
 
         // Decode value (handle quoted-printable)
-        let value = if prop_with_params.to_uppercase().contains("ENCODING=QUOTED-PRINTABLE") {
+        let value = if prop_with_params
+            .to_uppercase()
+            .contains("ENCODING=QUOTED-PRINTABLE")
+        {
             decode_quoted_printable(raw_value)
         } else {
             raw_value.to_string()
@@ -805,9 +819,7 @@ fn extract_vcard_type(prop_params: &str) -> Option<String> {
             return Some(types.replace(',', "/"));
         }
         // vCard 2.1 style: TEL;HOME;VOICE:
-        if ["HOME", "WORK", "CELL", "VOICE", "FAX", "PAGER", "PREF"]
-            .contains(&part)
-        {
+        if ["HOME", "WORK", "CELL", "VOICE", "FAX", "PAGER", "PREF"].contains(&part) {
             return Some(part.to_string());
         }
     }
@@ -865,10 +877,7 @@ fn decode_quoted_printable(input: &str) -> String {
                     };
                     continue;
                 }
-                if let (Some(hi), Some(lo)) = (
-                    hex_digit(bytes[i + 1]),
-                    hex_digit(bytes[i + 2]),
-                ) {
+                if let (Some(hi), Some(lo)) = (hex_digit(bytes[i + 1]), hex_digit(bytes[i + 2])) {
                     result.push(hi * 16 + lo);
                     i += 3;
                     continue;
@@ -1031,10 +1040,9 @@ fn extract_ldif(file_path: &str) -> Result<ExtractionResult, String> {
             // Base64 encoded value (attr:: value)
             if value.starts_with(':') {
                 let b64 = value[1..].trim();
-                if let Ok(decoded) = base64::Engine::decode(
-                    &base64::engine::general_purpose::STANDARD,
-                    b64,
-                ) {
+                if let Ok(decoded) =
+                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, b64)
+                {
                     value = String::from_utf8_lossy(&decoded).to_string();
                 }
             }
@@ -1060,8 +1068,8 @@ fn extract_ldif(file_path: &str) -> Result<ExtractionResult, String> {
 /// Extract text from jCard (JSON vCard, RFC 7095) files.
 fn extract_jcard(file_path: &str) -> Result<ExtractionResult, String> {
     let content = std::fs::read_to_string(file_path).map_err(|e| e.to_string())?;
-    let value: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Invalid JSON: {}", e))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("Invalid JSON: {}", e))?;
 
     let mut text = String::new();
 
@@ -1085,9 +1093,7 @@ fn extract_jcard(file_path: &str) -> Result<ExtractionResult, String> {
         }
 
         let properties = match vcard.as_array() {
-            Some(arr) if arr.len() >= 2 => {
-                arr[1].as_array()
-            }
+            Some(arr) if arr.len() >= 2 => arr[1].as_array(),
             _ => continue,
         };
 
@@ -1242,7 +1248,10 @@ fn extract_ics(file_path: &str) -> Result<ExtractionResult, String> {
             "ORGANIZER" => {
                 // ORGANIZER;CN=Name:mailto:email
                 let cn = extract_ics_param(&prop_with_params, "CN");
-                let email = value.strip_prefix("mailto:").or_else(|| value.strip_prefix("MAILTO:")).unwrap_or(&value);
+                let email = value
+                    .strip_prefix("mailto:")
+                    .or_else(|| value.strip_prefix("MAILTO:"))
+                    .unwrap_or(&value);
                 if let Some(name) = cn {
                     text.push_str(&format!("Organizer: {} <{}>\n", name, email));
                 } else {
@@ -1251,7 +1260,10 @@ fn extract_ics(file_path: &str) -> Result<ExtractionResult, String> {
             }
             "ATTENDEE" => {
                 let cn = extract_ics_param(&prop_with_params, "CN");
-                let email = value.strip_prefix("mailto:").or_else(|| value.strip_prefix("MAILTO:")).unwrap_or(&value);
+                let email = value
+                    .strip_prefix("mailto:")
+                    .or_else(|| value.strip_prefix("MAILTO:"))
+                    .unwrap_or(&value);
                 if let Some(name) = cn {
                     text.push_str(&format!("Attendee: {} <{}>\n", name, email));
                 } else {
@@ -1362,16 +1374,14 @@ fn extract_mhtml(file_path: &str) -> Result<ExtractionResult, String> {
     let mut text = String::new();
 
     // Find boundary from Content-Type header
-    let boundary = content
-        .lines()
-        .find_map(|line| {
-            if line.to_lowercase().contains("boundary=") {
-                let bnd = line.split("boundary=").nth(1)?;
-                Some(bnd.trim_matches('"').trim_matches('\'').trim().to_string())
-            } else {
-                None
-            }
-        });
+    let boundary = content.lines().find_map(|line| {
+        if line.to_lowercase().contains("boundary=") {
+            let bnd = line.split("boundary=").nth(1)?;
+            Some(bnd.trim_matches('"').trim_matches('\'').trim().to_string())
+        } else {
+            None
+        }
+    });
 
     if let Some(boundary) = boundary {
         let separator = format!("--{}", boundary);
@@ -1481,7 +1491,10 @@ fn extract_warc(file_path: &str) -> Result<ExtractionResult, String> {
             if lower.starts_with("warc-target-uri:") {
                 let uri = line.split(':').nth(1).unwrap_or("").trim();
                 if !uri.is_empty() {
-                    text.push_str(&format!("URL: {}\n", line["WARC-Target-URI:".len()..].trim()));
+                    text.push_str(&format!(
+                        "URL: {}\n",
+                        line["WARC-Target-URI:".len()..].trim()
+                    ));
                 }
             }
             // Empty line separates WARC headers from payload
@@ -1661,8 +1674,10 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
     }
 
     // Extract and read text content from small text files
-    let text_extensions = ["txt", "csv", "tsv", "log", "json", "xml", "html", "yml",
-        "yaml", "toml", "ini", "cfg", "conf", "md", "eml", "vcf", "ics", "sql", "env"];
+    let text_extensions = [
+        "txt", "csv", "tsv", "log", "json", "xml", "html", "yml", "yaml", "toml", "ini", "cfg",
+        "conf", "md", "eml", "vcf", "ics", "sql", "env",
+    ];
 
     let tmp_dir = tempfile::TempDir::new().map_err(|e| e.to_string())?;
 
@@ -1681,18 +1696,26 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
         // Check file count limit
         if extracted_count >= MAX_EXTRACT_FILE_COUNT {
             match header.skip() {
-                Ok(next) => { cursor = next; continue; }
+                Ok(next) => {
+                    cursor = next;
+                    continue;
+                }
                 Err(_) => break,
             }
         }
 
         // Validate entry name for path traversal BEFORE extraction
         let name_path = std::path::Path::new(&name);
-        let has_traversal = name_path.components().any(|c| matches!(c, std::path::Component::ParentDir))
+        let has_traversal = name_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
             || name_path.is_absolute();
         if has_traversal {
             match header.skip() {
-                Ok(next) => { cursor = next; continue; }
+                Ok(next) => {
+                    cursor = next;
+                    continue;
+                }
                 Err(_) => break,
             }
         }
@@ -1700,7 +1723,10 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
         // Check total extracted size limit
         if total_extracted_size + entry.unpacked_size > MAX_EXTRACT_TOTAL_SIZE {
             match header.skip() {
-                Ok(next) => { cursor = next; continue; }
+                Ok(next) => {
+                    cursor = next;
+                    continue;
+                }
                 Err(_) => break,
             }
         }
@@ -1715,7 +1741,10 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
             // Validate path BEFORE extraction to prevent TOCTOU
             if sanitize_archive_path(tmp_dir.path(), &name).is_none() {
                 match header.skip() {
-                    Ok(next) => { cursor = next; continue; }
+                    Ok(next) => {
+                        cursor = next;
+                        continue;
+                    }
                     Err(_) => break,
                 }
             }
@@ -1766,17 +1795,17 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
     // Check source file size first to catch obvious bombs.
     // A 100:1 compression ratio is the maximum we'll tolerate.
     let src_meta = std::fs::metadata(file_path).map_err(|e| e.to_string())?;
-    let max_decompressed = std::cmp::min(
-        src_meta.len().saturating_mul(100),
-        MAX_EXTRACT_TOTAL_SIZE,
-    );
+    let max_decompressed =
+        std::cmp::min(src_meta.len().saturating_mul(100), MAX_EXTRACT_TOTAL_SIZE);
 
     sevenz_rust::decompress_file(file_path, tmp_dir.path())
         .map_err(|e| format!("Failed to extract 7z: {}", e))?;
 
     let mut file_count = 0u32;
-    let text_extensions = ["txt", "csv", "tsv", "log", "json", "xml", "html", "yml",
-        "yaml", "toml", "ini", "cfg", "conf", "md", "eml", "vcf", "ics", "sql", "env"];
+    let text_extensions = [
+        "txt", "csv", "tsv", "log", "json", "xml", "html", "yml", "yaml", "toml", "ini", "cfg",
+        "conf", "md", "eml", "vcf", "ics", "sql", "env",
+    ];
 
     // Walk extracted files
     fn walk_dir(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
@@ -1797,7 +1826,10 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
     files.sort();
 
     // Canonicalize base path for path traversal checks
-    let canonical_base = tmp_dir.path().canonicalize().unwrap_or_else(|_| tmp_dir.path().to_path_buf());
+    let canonical_base = tmp_dir
+        .path()
+        .canonicalize()
+        .unwrap_or_else(|_| tmp_dir.path().to_path_buf());
 
     // Archive bomb checks: enforce file count and total size limits
     if files.len() > MAX_EXTRACT_FILE_COUNT {
@@ -1820,8 +1852,7 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
         return Err(format!(
             "7z archive exceeds maximum extracted size: {} bytes (max {} bytes). \
              Possible zip bomb (compression ratio > 100:1).",
-            total_size,
-            max_decompressed
+            total_size, max_decompressed
         ));
     }
 
@@ -1852,7 +1883,8 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
             continue;
         }
 
-        let ext = f.extension()
+        let ext = f
+            .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
@@ -1890,8 +1922,8 @@ fn extract_parquet(file_path: &str) -> Result<ExtractionResult, String> {
     use parquet::record::reader::RowIter;
 
     let file = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
-    let reader = SerializedFileReader::new(file)
-        .map_err(|e| format!("Invalid Parquet file: {}", e))?;
+    let reader =
+        SerializedFileReader::new(file).map_err(|e| format!("Invalid Parquet file: {}", e))?;
 
     let metadata = reader.metadata();
     let schema = metadata.file_metadata().schema();
@@ -1999,9 +2031,7 @@ fn extract_sqlite(file_path: &str) -> Result<ExtractionResult, String> {
         let mut rows = select_stmt.query([]).map_err(|e| e.to_string())?;
         while let Some(row) = rows.next().map_err(|e| e.to_string())? {
             let values: Vec<String> = (0..col_count)
-                .map(|i| {
-                    row.get::<_, String>(i).unwrap_or_default()
-                })
+                .map(|i| row.get::<_, String>(i).unwrap_or_default())
                 .collect();
             text.push_str(&values.join("\t"));
             text.push('\n');
@@ -2079,7 +2109,10 @@ mod tests {
 
     #[test]
     fn test_extract_vcard_structured_name() {
-        let f = write_temp("vcf", "BEGIN:VCARD\r\nVERSION:3.0\r\nN:Doe;John;;Mr.;\r\nFN:Mr. John Doe\r\nEND:VCARD\r\n");
+        let f = write_temp(
+            "vcf",
+            "BEGIN:VCARD\r\nVERSION:3.0\r\nN:Doe;John;;Mr.;\r\nFN:Mr. John Doe\r\nEND:VCARD\r\n",
+        );
         let result = extract_vcard(f.path().to_str().unwrap()).unwrap();
         assert!(result.text.contains("Structured Name:"));
         assert!(result.text.contains("Doe"));
@@ -2108,12 +2141,17 @@ mod tests {
         let f = write_temp("vcf", "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:A Very Long Name That Gets\r\n Folded Across Lines\r\nEND:VCARD\r\n");
         let result = extract_vcard(f.path().to_str().unwrap()).unwrap();
         // After unfolding, continuation space is consumed, so words join directly
-        assert!(result.text.contains("A Very Long Name That GetsFolded Across Lines"));
+        assert!(result
+            .text
+            .contains("A Very Long Name That GetsFolded Across Lines"));
     }
 
     #[test]
     fn test_extract_vcard_birthday() {
-        let f = write_temp("vcf", "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Jane\r\nBDAY:1990-05-15\r\nEND:VCARD\r\n");
+        let f = write_temp(
+            "vcf",
+            "BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Jane\r\nBDAY:1990-05-15\r\nEND:VCARD\r\n",
+        );
         let result = extract_vcard(f.path().to_str().unwrap()).unwrap();
         assert!(result.text.contains("Birthday: 1990-05-15"));
     }
@@ -2139,7 +2177,10 @@ mod tests {
 
     #[test]
     fn test_extract_jcard_basic() {
-        let f = write_temp("json", r#"["vcard",[["version",{},"text","4.0"],["fn",{},"text","John Doe"],["email",{},"text","john@example.com"],["tel",{},"uri","tel:+1-555-123-4567"]]]"#);
+        let f = write_temp(
+            "json",
+            r#"["vcard",[["version",{},"text","4.0"],["fn",{},"text","John Doe"],["email",{},"text","john@example.com"],["tel",{},"uri","tel:+1-555-123-4567"]]]"#,
+        );
         let result = extract_jcard(f.path().to_str().unwrap()).unwrap();
         assert!(result.text.contains("John Doe"));
         assert!(result.text.contains("john@example.com"));
@@ -2148,7 +2189,10 @@ mod tests {
 
     #[test]
     fn test_extract_jcard_array() {
-        let f = write_temp("json", r#"[["vcard",[["version",{},"text","4.0"],["fn",{},"text","Alice"]]],["vcard",[["version",{},"text","4.0"],["fn",{},"text","Bob"]]]]"#);
+        let f = write_temp(
+            "json",
+            r#"[["vcard",[["version",{},"text","4.0"],["fn",{},"text","Alice"]]],["vcard",[["version",{},"text","4.0"],["fn",{},"text","Bob"]]]]"#,
+        );
         let result = extract_jcard(f.path().to_str().unwrap()).unwrap();
         assert!(result.text.contains("Alice"));
         assert!(result.text.contains("Bob"));
@@ -2318,7 +2362,8 @@ mod tests {
                 .compression_method(zip::CompressionMethod::Stored);
 
             zip.start_file("mimetype", options).unwrap();
-            zip.write_all(b"application/vnd.oasis.opendocument.text").unwrap();
+            zip.write_all(b"application/vnd.oasis.opendocument.text")
+                .unwrap();
 
             zip.start_file("content.xml", options).unwrap();
             zip.write_all(b"<?xml version=\"1.0\"?><office:document-content><office:body><office:text><text:p>Hello from ODT with email test@example.com</text:p></office:text></office:body></office:document-content>").unwrap();
@@ -2395,10 +2440,7 @@ mod tests {
             extract_ics_param("ATTENDEE;RSVP=TRUE;CN=\"Jane Smith\"", "CN"),
             Some("Jane Smith")
         );
-        assert_eq!(
-            extract_ics_param("ORGANIZER;CN=Test", "ROLE"),
-            None
-        );
+        assert_eq!(extract_ics_param("ORGANIZER;CN=Test", "ROLE"), None);
     }
 
     #[test]

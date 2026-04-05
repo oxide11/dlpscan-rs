@@ -38,9 +38,15 @@ pub struct MaskingProfile {
     pub confidence_overrides: HashMap<String, f64>,
 }
 
-fn default_action() -> String { "redact".to_string() }
-fn default_mode() -> String { "denylist".to_string() }
-fn default_redaction_char() -> String { "X".to_string() }
+fn default_action() -> String {
+    "redact".to_string()
+}
+fn default_mode() -> String {
+    "denylist".to_string()
+}
+fn default_redaction_char() -> String {
+    "X".to_string()
+}
 
 impl MaskingProfile {
     /// Create an InputGuard from this profile's settings.
@@ -72,11 +78,7 @@ impl MaskingProfile {
             _ => Mode::Denylist,
         };
 
-        let redaction_char = self
-            .redaction_char
-            .chars()
-            .next()
-            .unwrap_or('X');
+        let redaction_char = self.redaction_char.chars().next().unwrap_or('X');
 
         let mut guard = InputGuard::new()
             .with_presets(presets)
@@ -176,7 +178,13 @@ fn builtin_profiles() -> Vec<MaskingProfile> {
         MaskingProfile {
             name: "FULL_SCAN".to_string(),
             description: "Full scan — flag all categories".to_string(),
-            presets: vec!["pii".into(), "pci_dss".into(), "credentials".into(), "healthcare".into(), "contact_info".into()],
+            presets: vec![
+                "pii".into(),
+                "pci_dss".into(),
+                "credentials".into(),
+                "healthcare".into(),
+                "contact_info".into(),
+            ],
             categories: vec![],
             action: "flag".to_string(),
             mode: "denylist".to_string(),
@@ -188,7 +196,13 @@ fn builtin_profiles() -> Vec<MaskingProfile> {
         MaskingProfile {
             name: "DEVELOPMENT".to_string(),
             description: "Development — obfuscate all with low threshold".to_string(),
-            presets: vec!["pii".into(), "pci_dss".into(), "credentials".into(), "healthcare".into(), "contact_info".into()],
+            presets: vec![
+                "pii".into(),
+                "pci_dss".into(),
+                "credentials".into(),
+                "healthcare".into(),
+                "contact_info".into(),
+            ],
             categories: vec![],
             action: "obfuscate".to_string(),
             mode: "denylist".to_string(),
@@ -200,7 +214,13 @@ fn builtin_profiles() -> Vec<MaskingProfile> {
         MaskingProfile {
             name: "CI_PIPELINE".to_string(),
             description: "CI/CD pipeline — reject with context required".to_string(),
-            presets: vec!["pii".into(), "pci_dss".into(), "credentials".into(), "healthcare".into(), "contact_info".into()],
+            presets: vec![
+                "pii".into(),
+                "pci_dss".into(),
+                "credentials".into(),
+                "healthcare".into(),
+                "contact_info".into(),
+            ],
             categories: vec![],
             action: "reject".to_string(),
             mode: "denylist".to_string(),
@@ -262,8 +282,7 @@ impl ProfileRegistry {
     /// Load profiles from a JSON file (array or object).
     pub fn load_from_file(&self, path: &str) -> Result<(), String> {
         let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-        let value: serde_json::Value =
-            serde_json::from_str(&content).map_err(|e| e.to_string())?;
+        let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
 
         let profiles: Vec<MaskingProfile> = if value.is_array() {
             serde_json::from_value(value).map_err(|e| e.to_string())?

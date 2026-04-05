@@ -44,10 +44,7 @@ pub static PRESET_CATEGORIES: Lazy<HashMap<Preset, Vec<&'static str>>> = Lazy::n
 
     m.insert(
         Preset::SsnSin,
-        vec![
-            "North America - United States",
-            "North America - Canada",
-        ],
+        vec!["North America - United States", "North America - Canada"],
     );
 
     m.insert(
@@ -125,16 +122,10 @@ pub static PRESET_CATEGORIES: Lazy<HashMap<Preset, Vec<&'static str>>> = Lazy::n
 
     m.insert(
         Preset::Healthcare,
-        vec![
-            "Medical Identifiers",
-            "Insurance Identifiers",
-        ],
+        vec!["Medical Identifiers", "Insurance Identifiers"],
     );
 
-    m.insert(
-        Preset::ContactInfo,
-        vec!["Contact Information"],
-    );
+    m.insert(Preset::ContactInfo, vec!["Contact Information"]);
 
     m
 });

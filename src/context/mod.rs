@@ -94,9 +94,7 @@ pub fn build_hit_index(text: &str) -> Option<ContextHitIndex> {
     // AC is built with ascii_case_insensitive(true), no need to lowercase
     for mat in ac.find_iter(text) {
         let key = pattern_keys[mat.pattern().as_usize()];
-        hits.entry(key)
-            .or_default()
-            .push((mat.start(), mat.end()));
+        hits.entry(key).or_default().push((mat.start(), mat.end()));
     }
 
     // Build two-level reverse lookup for allocation-free lookups
@@ -245,8 +243,7 @@ fn fuzzy_keyword_match(text_lower: &str, keywords: &[&str]) -> bool {
                 if len_diff > FUZZY_MAX_DISTANCE {
                     continue;
                 }
-                if levenshtein_distance(word, &kw_lower, FUZZY_MAX_DISTANCE) <= FUZZY_MAX_DISTANCE
-                {
+                if levenshtein_distance(word, &kw_lower, FUZZY_MAX_DISTANCE) <= FUZZY_MAX_DISTANCE {
                     return true;
                 }
             }
@@ -261,8 +258,7 @@ fn fuzzy_keyword_match(text_lower: &str, keywords: &[&str]) -> bool {
                 if len_diff > FUZZY_MAX_DISTANCE {
                     continue;
                 }
-                if levenshtein_distance(&ngram, &kw_lower, FUZZY_MAX_DISTANCE)
-                    <= FUZZY_MAX_DISTANCE
+                if levenshtein_distance(&ngram, &kw_lower, FUZZY_MAX_DISTANCE) <= FUZZY_MAX_DISTANCE
                 {
                     return true;
                 }
