@@ -993,25 +993,35 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     let mut current = text.to_string();
     let mut offsets: Vec<usize> = Vec::new(); // empty = identity mapping
 
+    // Helper macro: only call a stage if its quick-check would pass,
+    // avoiding the allocation of (String, Vec) on the no-change path.
+    macro_rules! apply_stage {
+        ($fn:ident, $current:expr, $offsets:expr) => {{
+            let r = $fn(&$current, &$offsets);
+            $current = r.0;
+            $offsets = r.1;
+        }};
+    }
+
     // Stage 1: URL percent-decode (two passes for double encoding)
-    let r = decode_percent_encoding(&current, &offsets);
-    current = r.0;
-    offsets = r.1;
+    if current.contains('%') {
+        apply_stage!(decode_percent_encoding, current, offsets);
+    }
 
     // Stage 2: HTML decimal entity decode
-    let r = decode_html_entities(&current, &offsets);
-    current = r.0;
-    offsets = r.1;
+    if current.contains("&#") {
+        apply_stage!(decode_html_entities, current, offsets);
+    }
 
     // Stage 3: Strip empty CSS/HTML comments
-    let r = strip_comments(&current, &offsets);
-    current = r.0;
-    offsets = r.1;
+    if current.contains("/**/") || current.contains("<!---->") {
+        apply_stage!(strip_comments, current, offsets);
+    }
 
-    // Stage 4: Decode hex-spaced byte sequences (before whitespace collapse)
-    let r = decode_hex_spaced(&current, &offsets);
-    current = r.0;
-    offsets = r.1;
+    // Stage 4: Decode hex-spaced byte sequences
+    if current.len() >= 8 {
+        apply_stage!(decode_hex_spaced, current, offsets);
+    }
 
     // Stage 4b: Decode \xHH hex-escape sequences
     let r = decode_hex_escapes(&current, &offsets);
@@ -1019,14 +1029,12 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     offsets = r.1;
 
     // Stage 5: Collapse whitespace padding between non-alpha chars
-    let r = collapse_padding(&current, &offsets);
-    current = r.0;
-    offsets = r.1;
+    if current.as_bytes().iter().any(|&b| b == b' ' || b == b'\n' || b == b'\r' || b == b'\t') {
+        apply_stage!(collapse_padding, current, offsets);
+    }
 
     // Stage 6: Normalize excessive delimiters
-    let r = normalize_delimiters(&current, &offsets);
-    current = r.0;
-    offsets = r.1;
+    apply_stage!(normalize_delimiters, current, offsets);
 
     // Stages 7-10: Unicode normalization (only if non-ASCII remaining)
     if !is_ascii_only(&current) {
