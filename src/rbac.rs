@@ -66,7 +66,7 @@ pub fn role_has_permission(role: Role, perm: Permission) -> bool {
 /// If no API key auth is configured (open access), defaults to `Operator` (not Admin)
 /// to limit damage from unauthenticated access.
 pub fn resolve_role(
-    raw_request: &str,
+    _raw_request: &str,
     authenticated_key: Option<&str>,
     api_key_roles: &std::collections::HashMap<String, Role>,
 ) -> Role {
@@ -101,7 +101,7 @@ pub fn extract_role(raw_request: &str) -> Role {
     raw_request
         .lines()
         .find(|l| l.to_lowercase().starts_with("x-role:"))
-        .and_then(|l| l.splitn(2, ':').nth(1))
+        .and_then(|l| l.split_once(':').map(|x| x.1))
         .map(|v| v.trim().to_lowercase())
         .map(|v| match v.as_str() {
             "admin" => Role::Admin,

@@ -288,7 +288,7 @@ impl RecursiveExtractor {
 
         // Try to extract as ZIP archive
         if let Ok(file) = std::fs::File::open(path) {
-            if let Ok(_) = zip::ZipArchive::new(file) {
+            if zip::ZipArchive::new(file).is_ok() {
                 if let Ok(mut items) = self.extract_zip(path, depth, parent.unwrap_or(path)) {
                     results.append(&mut items);
                 }

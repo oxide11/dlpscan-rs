@@ -139,11 +139,15 @@ impl ComplianceReporter {
                 .push(m);
 
             if m.confidence >= 0.75 {
-                severity_counts.get_mut("high").map(|v| *v += 1);
+                if let Some(v) = severity_counts.get_mut("high") {
+                    *v += 1;
+                }
             } else if m.confidence >= 0.40 {
-                severity_counts.get_mut("medium").map(|v| *v += 1);
-            } else {
-                severity_counts.get_mut("low").map(|v| *v += 1);
+                if let Some(v) = severity_counts.get_mut("medium") {
+                    *v += 1;
+                }
+            } else if let Some(v) = severity_counts.get_mut("low") {
+                *v += 1;
             }
         }
 

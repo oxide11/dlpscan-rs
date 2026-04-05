@@ -6,8 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::atomic::Ordering;
+use std::sync::RwLock;
 use std::time::Instant;
 
 use crate::guard::{Action, InputGuard, Preset, ScanResult, TokenVault};
@@ -128,15 +128,18 @@ fn default_action() -> String {
 // ---------------------------------------------------------------------------
 
 /// Maximum number of custom patterns a user can register.
+#[allow(dead_code)]
 const MAX_CUSTOM_PATTERNS: usize = 100;
 
 /// Maximum regex pattern length in characters.
+#[allow(dead_code)]
 const MAX_PATTERN_LENGTH: usize = 2048;
 
 /// Maximum number of token vaults.
 const MAX_VAULTS: usize = 1000;
 
 /// Vault time-to-live in seconds (1 hour).
+#[allow(dead_code)]
 const VAULT_TTL_SECS: u64 = 3600;
 
 /// Shared application state for the API server.
@@ -307,7 +310,7 @@ pub fn handle_batch_scan(req: &BatchScanRequest) -> Result<BatchScanResponse, St
 
     use rayon::prelude::*;
     let results: Vec<Result<ScanResponse, String>> =
-        req.items.par_iter().map(|item| handle_scan(item)).collect();
+        req.items.par_iter().map(handle_scan).collect();
 
     let mut responses = Vec::new();
     for r in results {
@@ -413,6 +416,7 @@ pub fn handle_health() -> HealthResponse {
 }
 
 /// Full health check with operational data.
+#[allow(dead_code)]
 fn handle_health_full(state: &AppState, active: usize) -> HealthResponse {
     let shutting_down = state.is_shutting_down.load(Ordering::SeqCst);
     HealthResponse {
@@ -430,6 +434,7 @@ fn handle_health_full(state: &AppState, active: usize) -> HealthResponse {
 }
 
 /// Security response headers applied to every HTTP response.
+#[allow(dead_code)]
 const SECURITY_HEADERS: &str = "\
 X-Content-Type-Options: nosniff\r\n\
 X-Frame-Options: DENY\r\n\
@@ -476,7 +481,9 @@ pub fn verify_api_key(expected: &str, provided: &str) -> bool {
 // Server (requires async-support feature)
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 const MAX_CONCURRENT_CONNECTIONS: usize = 256;
+#[allow(dead_code)]
 const MAX_REQUEST_BODY_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 
 #[cfg(feature = "async-support")]

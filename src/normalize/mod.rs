@@ -315,7 +315,7 @@ fn decode_percent_single(input: &str, in_offsets: &[usize]) -> (String, Vec<usiz
             if let (Some(h), Some(l)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
                 let decoded = (h << 4) | l;
                 // Only decode printable ASCII (space through tilde)
-                if decoded >= 0x20 && decoded <= 0x7E {
+                if (0x20..=0x7E).contains(&decoded) {
                     out.push(decoded);
                     offsets.push(orig_offset(in_offsets, i));
                     i += 3;
@@ -552,8 +552,8 @@ fn normalize_delimiters(input: &str, in_offsets: &[usize]) -> (String, Vec<usize
             }
 
             // Keep the full delimiter run
-            for j in start..=i {
-                out.push(bytes[j]);
+            for (j, &b) in bytes.iter().enumerate().take(i + 1).skip(start) {
+                out.push(b);
                 offsets.push(orig_offset(in_offsets, j));
             }
         } else {
@@ -680,7 +680,7 @@ fn decode_hex_escapes(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>)
         if i + 3 < bytes.len() && bytes[i] == b'\\' && bytes[i + 1] == b'x' {
             if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 2]), hex_val(bytes[i + 3])) {
                 let decoded = (hi << 4) | lo;
-                if decoded >= 0x20 && decoded <= 0x7E {
+                if (0x20..=0x7E).contains(&decoded) {
                     out.push(decoded as char);
                     offsets.push(orig_offset(in_offsets, i));
                     i += 4;
@@ -755,7 +755,7 @@ fn try_decode_base_encoding(input: &str, in_offsets: &[usize]) -> (String, Vec<u
     if is_b64 {
         // Standard base64
         if let Some(decoded) = base64_decode_bytes(tbytes) {
-            if decoded.len() >= 3 && decoded.iter().all(|&b| b >= 0x20 && b <= 0x7E) {
+            if decoded.len() >= 3 && decoded.iter().all(|&b| (0x20..=0x7E).contains(&b)) {
                 let decoded_str = String::from_utf8_lossy(&decoded);
                 let base_offset = orig_offset(in_offsets, input.find(trimmed).unwrap_or(0));
                 let mut new_offsets = Vec::with_capacity(decoded.len());
@@ -774,7 +774,7 @@ fn try_decode_base_encoding(input: &str, in_offsets: &[usize]) -> (String, Vec<u
     });
     if is_b32 && tbytes.len() >= 10 {
         if let Some(decoded) = base32_decode_bytes(tbytes) {
-            if decoded.len() >= 3 && decoded.iter().all(|&b| b >= 0x20 && b <= 0x7E) {
+            if decoded.len() >= 3 && decoded.iter().all(|&b| (0x20..=0x7E).contains(&b)) {
                 let decoded_str = String::from_utf8_lossy(&decoded);
                 let base_offset = orig_offset(in_offsets, input.find(trimmed).unwrap_or(0));
                 let mut new_offsets = Vec::with_capacity(decoded.len());

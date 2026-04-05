@@ -7,7 +7,7 @@ use once_cell::sync::Lazy;
 use rayon::prelude::*;
 use regex::Regex;
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use crate::context;
 use crate::models::{is_context_required, pattern_specificity, Match, PatternDef};
@@ -253,10 +253,11 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 return is_always_run(cp.def.sub_category);
             }
             // AC prefilter: skip context-gated patterns whose keywords aren't present
-            if prefilter_active && !is_always_run(cp.def.sub_category) {
-                if !active_gated.contains(&(cp.def.category, cp.def.sub_category)) {
-                    return false;
-                }
+            if prefilter_active
+                && !is_always_run(cp.def.sub_category)
+                && !active_gated.contains(&(cp.def.category, cp.def.sub_category))
+            {
+                return false;
             }
             true
         })

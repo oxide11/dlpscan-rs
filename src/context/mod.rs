@@ -58,32 +58,33 @@ impl ContextHitIndex {
     }
 }
 
+type AcMatcherInner = Option<(AhoCorasick, Vec<(&'static str, &'static str)>)>;
+
 /// Global Aho-Corasick matcher built from all context keywords.
-static AC_MATCHER: Lazy<Option<(AhoCorasick, Vec<(&'static str, &'static str)>)>> =
-    Lazy::new(|| {
-        let keywords = CONTEXT_KEYWORDS;
-        if keywords.is_empty() {
-            return None;
+static AC_MATCHER: Lazy<AcMatcherInner> = Lazy::new(|| {
+    let keywords = CONTEXT_KEYWORDS;
+    if keywords.is_empty() {
+        return None;
+    }
+
+    let mut patterns: Vec<String> = Vec::new();
+    let mut pattern_keys: Vec<(&'static str, &'static str)> = Vec::new();
+
+    for &(category, sub_category, entry) in keywords {
+        for &kw in entry.keywords {
+            patterns.push(kw.to_lowercase());
+            pattern_keys.push((category, sub_category));
         }
+    }
 
-        let mut patterns: Vec<String> = Vec::new();
-        let mut pattern_keys: Vec<(&'static str, &'static str)> = Vec::new();
+    let ac = AhoCorasickBuilder::new()
+        .match_kind(MatchKind::LeftmostFirst)
+        .ascii_case_insensitive(true)
+        .build(&patterns)
+        .ok()?;
 
-        for &(category, sub_category, entry) in keywords {
-            for &kw in entry.keywords {
-                patterns.push(kw.to_lowercase());
-                pattern_keys.push((category, sub_category));
-            }
-        }
-
-        let ac = AhoCorasickBuilder::new()
-            .match_kind(MatchKind::LeftmostFirst)
-            .ascii_case_insensitive(true)
-            .build(&patterns)
-            .ok()?;
-
-        Some((ac, pattern_keys))
-    });
+    Some((ac, pattern_keys))
+});
 
 /// Search text for all context keywords using Aho-Corasick.
 pub fn build_hit_index(text: &str) -> Option<ContextHitIndex> {
@@ -218,6 +219,7 @@ fn get_keywords(category: &str, sub_category: &str) -> &'static [&'static str] {
 }
 
 /// Fuzzy keyword matching using Levenshtein distance.
+#[allow(dead_code)]
 fn fuzzy_keyword_match(text_lower: &str, keywords: &[&str]) -> bool {
     let words: Vec<&str> = text_lower.split_whitespace().collect();
     if words.is_empty() {
@@ -269,6 +271,7 @@ fn fuzzy_keyword_match(text_lower: &str, keywords: &[&str]) -> bool {
 }
 
 /// Compute Levenshtein edit distance with early termination.
+#[allow(dead_code)]
 fn levenshtein_distance(s1: &str, s2: &str, max_dist: usize) -> usize {
     let s1_chars: Vec<char> = s1.chars().collect();
     let s2_chars: Vec<char> = s2.chars().collect();

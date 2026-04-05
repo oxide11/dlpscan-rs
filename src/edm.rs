@@ -179,10 +179,7 @@ impl ExactDataMatcher {
     pub fn register_values(&mut self, category: &str, values: &[&str]) -> usize {
         // Pre-compute hashes to avoid borrow conflict
         let hashes: Vec<String> = values.iter().map(|v| self.hmac_hash(v)).collect();
-        let entry = self
-            .hashes
-            .entry(category.to_string())
-            .or_insert_with(HashSet::new);
+        let entry = self.hashes.entry(category.to_string()).or_default();
         for hash in hashes {
             entry.insert(hash);
         }

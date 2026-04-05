@@ -309,7 +309,7 @@ impl DocumentVault {
                 let bucket_key = band_hash(chunk);
                 index[band_idx]
                     .entry(bucket_key)
-                    .or_insert_with(HashSet::new)
+                    .or_default()
                     .insert(doc_id.to_string());
             }
         }

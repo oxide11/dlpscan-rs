@@ -63,7 +63,7 @@ pub fn obfuscate_matches(text: &str, matches: &[Match]) -> String {
 fn obfuscate_credit_card(m: &Match) -> String {
     let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
     let clean: String = m.text.chars().filter(|c| c.is_ascii_digit()).collect();
-    let length = clean.len().max(13).min(19);
+    let length = clean.len().clamp(13, 19);
 
     let prefix = match m.sub_category.as_str() {
         "Visa" => "4".to_string(),

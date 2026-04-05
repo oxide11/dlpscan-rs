@@ -16,6 +16,7 @@ use crate::guard::ScanResult;
 
 /// Parse a URL into (scheme, userinfo, host, port, path).
 /// Returns `Err` if the URL is malformed or has an unsupported scheme.
+#[allow(dead_code)]
 fn parse_url(url: &str) -> Result<(&str, Option<&str>, &str, u16, &str), String> {
     let (scheme, rest) = if let Some(r) = url.strip_prefix("https://") {
         ("https", r)
@@ -70,7 +71,8 @@ pub fn sanitize_url(url: &str) -> String {
 /// - URLs without http:// or https:// scheme
 /// - `localhost` hostname
 /// - Private/internal IP ranges: 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12,
-///   192.168.0.0/16, 169.254.0.0/16, ::1, fd00::/8
+///   192.168.0.0/16, 169.254.0.0/16, `::1`, fd00::/8
+///
 /// Check whether a URL is safe to connect to (SSRF protection).
 ///
 /// Delegates to `crate::http_util::is_safe_url` — the single source of truth

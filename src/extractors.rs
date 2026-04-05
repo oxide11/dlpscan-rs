@@ -23,6 +23,7 @@ const MAX_EXTRACT_FILE_COUNT: usize = 10_000;
 
 /// Sanitize an archive entry name to prevent path traversal attacks.
 /// Returns None if the path is unsafe (contains `..`, absolute paths, etc).
+#[allow(dead_code)]
 fn sanitize_archive_path(base: &std::path::Path, entry_name: &str) -> Option<std::path::PathBuf> {
     let cleaned = Path::new(entry_name)
         .components()
@@ -319,10 +320,10 @@ fn detect_and_extract(file_path: &str) -> Option<ExtractorFn> {
         }
 
         // MHTML: MIME with multipart/related
-        if trimmed.starts_with("MIME-Version:") || trimmed.starts_with("From:") {
-            if trimmed.contains("multipart/related") || trimmed.contains("multipart/alternative") {
-                return Some(extract_mhtml);
-            }
+        if (trimmed.starts_with("MIME-Version:") || trimmed.starts_with("From:"))
+            && (trimmed.contains("multipart/related") || trimmed.contains("multipart/alternative"))
+        {
+            return Some(extract_mhtml);
         }
 
         // WARC: WARC/1.x
@@ -711,7 +712,7 @@ fn extract_vcard(file_path: &str) -> Result<ExtractionResult, String> {
         };
 
         // Extract type label if present
-        let type_label = extract_vcard_type(&prop_with_params);
+        let type_label = extract_vcard_type(prop_with_params);
 
         match prop_name.as_str() {
             "FN" => {
@@ -1218,9 +1219,8 @@ fn extract_ics(file_path: &str) -> Result<ExtractionResult, String> {
             // Calendar-level: X-WR-CALNAME, PRODID
             if let Some((prop, val)) = split_vcard_line(trimmed) {
                 let prop_name = prop.split(';').next().unwrap_or("").to_uppercase();
-                match prop_name.as_str() {
-                    "X-WR-CALNAME" => text.push_str(&format!("Calendar: {}\n", val)),
-                    _ => {}
+                if prop_name.as_str() == "X-WR-CALNAME" {
+                    text.push_str(&format!("Calendar: {}\n", val))
                 }
             }
             continue;
@@ -1247,11 +1247,11 @@ fn extract_ics(file_path: &str) -> Result<ExtractionResult, String> {
             "LOCATION" => text.push_str(&format!("Location: {}\n", value)),
             "ORGANIZER" => {
                 // ORGANIZER;CN=Name:mailto:email
-                let cn = extract_ics_param(&prop_with_params, "CN");
+                let cn = extract_ics_param(prop_with_params, "CN");
                 let email = value
                     .strip_prefix("mailto:")
                     .or_else(|| value.strip_prefix("MAILTO:"))
-                    .unwrap_or(&value);
+                    .unwrap_or(value);
                 if let Some(name) = cn {
                     text.push_str(&format!("Organizer: {} <{}>\n", name, email));
                 } else {
@@ -1259,11 +1259,11 @@ fn extract_ics(file_path: &str) -> Result<ExtractionResult, String> {
                 }
             }
             "ATTENDEE" => {
-                let cn = extract_ics_param(&prop_with_params, "CN");
+                let cn = extract_ics_param(prop_with_params, "CN");
                 let email = value
                     .strip_prefix("mailto:")
                     .or_else(|| value.strip_prefix("MAILTO:"))
-                    .unwrap_or(&value);
+                    .unwrap_or(value);
                 if let Some(name) = cn {
                     text.push_str(&format!("Attendee: {} <{}>\n", name, email));
                 } else {

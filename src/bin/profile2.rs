@@ -1,6 +1,6 @@
 //! Deeper profiling — RegexSet vs Phase 2.
 
-use regex::{Regex, RegexSet, RegexSetBuilder};
+use regex::{Regex, RegexSetBuilder};
 use std::time::Instant;
 
 fn main() {
