@@ -286,12 +286,12 @@ impl ExactDataMatcher {
             .create(true)
             .truncate(true)
             .open(path)
-            .map_err(|e| format!("Failed to open {}: {}", path, e))?;
+            .map_err(|e| format!("Failed to open {path}: {e}"))?;
         use std::io::Write;
         let mut writer = std::io::BufWriter::new(file);
         writer
             .write_all(json.as_bytes())
-            .map_err(|e| format!("Failed to write {}: {}", path, e))?;
+            .map_err(|e| format!("Failed to write {path}: {e}"))?;
         Ok(())
     }
 

@@ -162,7 +162,7 @@ impl ComplianceReporter {
                     let text = &m.text;
                     if text.len() > 20 {
                         let truncated: String = text.chars().take(17).collect();
-                        format!("{}...", truncated)
+                        format!("{truncated}...")
                     } else {
                         text.clone()
                     }
@@ -236,12 +236,12 @@ impl ComplianceReporter {
         lines.push(String::new());
         lines.push("  Severity:".to_string());
         for (sev, count) in &report.scan_summary.severity_breakdown {
-            lines.push(format!("    {}: {}", sev, count));
+            lines.push(format!("    {sev}: {count}"));
         }
         lines.push(String::new());
         lines.push("  Categories:".to_string());
         for (cat, count) in &report.scan_summary.categories_breakdown {
-            lines.push(format!("    {}: {}", cat, count));
+            lines.push(format!("    {cat}: {count}"));
         }
         lines.push(String::new());
 
@@ -249,7 +249,7 @@ impl ComplianceReporter {
         lines.push("-".repeat(40));
         for (framework, pass) in &report.compliance_status {
             let status = if *pass { "PASS" } else { "FAIL" };
-            lines.push(format!("  {}: {}", framework, status));
+            lines.push(format!("  {framework}: {status}"));
         }
         lines.push(String::new());
 

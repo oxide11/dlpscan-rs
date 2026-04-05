@@ -499,7 +499,7 @@ fn extract_eml(file_path: &str) -> Result<ExtractionResult, String> {
                 let value = line[pos + 1..].trim().to_string();
                 // Include important headers
                 if ["from", "to", "subject", "date", "cc", "bcc"].contains(&key.as_str()) {
-                    text.push_str(&format!("{}: {}\n", key, value));
+                    text.push_str(&format!("{key}: {value}\n"));
                     headers.insert(key, value);
                 }
             }
@@ -716,7 +716,7 @@ fn extract_vcard(file_path: &str) -> Result<ExtractionResult, String> {
 
         match prop_name.as_str() {
             "FN" => {
-                text.push_str(&format!("Name: {}\n", value));
+                text.push_str(&format!("Name: {value}\n"));
             }
             "N" => {
                 // N:family;given;additional;prefix;suffix
@@ -732,11 +732,11 @@ fn extract_vcard(file_path: &str) -> Result<ExtractionResult, String> {
             }
             "EMAIL" => {
                 let label = type_label.as_deref().unwrap_or("Email");
-                text.push_str(&format!("{}: {}\n", label, value));
+                text.push_str(&format!("{label}: {value}\n"));
             }
             "TEL" => {
                 let label = type_label.as_deref().unwrap_or("Phone");
-                text.push_str(&format!("{}: {}\n", label, value));
+                text.push_str(&format!("{label}: {value}\n"));
             }
             "ADR" => {
                 // ADR: PO Box;extended;street;city;state;postal;country
@@ -752,41 +752,41 @@ fn extract_vcard(file_path: &str) -> Result<ExtractionResult, String> {
                 }
             }
             "BDAY" => {
-                text.push_str(&format!("Birthday: {}\n", value));
+                text.push_str(&format!("Birthday: {value}\n"));
             }
             "ORG" => {
                 let org = value.replace(';', ", ");
-                text.push_str(&format!("Organization: {}\n", org));
+                text.push_str(&format!("Organization: {org}\n"));
             }
             "TITLE" => {
-                text.push_str(&format!("Title: {}\n", value));
+                text.push_str(&format!("Title: {value}\n"));
             }
             "NOTE" => {
-                text.push_str(&format!("Note: {}\n", value));
+                text.push_str(&format!("Note: {value}\n"));
             }
             "URL" => {
-                text.push_str(&format!("URL: {}\n", value));
+                text.push_str(&format!("URL: {value}\n"));
             }
             "GENDER" => {
-                text.push_str(&format!("Gender: {}\n", value));
+                text.push_str(&format!("Gender: {value}\n"));
             }
             "NICKNAME" => {
-                text.push_str(&format!("Nickname: {}\n", value));
+                text.push_str(&format!("Nickname: {value}\n"));
             }
             "CATEGORIES" => {
-                text.push_str(&format!("Categories: {}\n", value));
+                text.push_str(&format!("Categories: {value}\n"));
             }
             "ROLE" => {
-                text.push_str(&format!("Role: {}\n", value));
+                text.push_str(&format!("Role: {value}\n"));
             }
             "GEO" => {
-                text.push_str(&format!("Geo: {}\n", value));
+                text.push_str(&format!("Geo: {value}\n"));
             }
             "IMPP" | "X-JABBER" | "X-SKYPE-USERNAME" | "X-AIM" => {
-                text.push_str(&format!("IM: {}\n", value));
+                text.push_str(&format!("IM: {value}\n"));
             }
             "X-SOCIALPROFILE" => {
-                text.push_str(&format!("Social: {}\n", value));
+                text.push_str(&format!("Social: {value}\n"));
             }
             _ => {
                 // Skip VERSION, PRODID, UID, REV, PHOTO, LOGO, SOUND, KEY, etc.
@@ -934,11 +934,11 @@ fn extract_windows_contact(file_path: &str) -> Result<ExtractionResult, String> 
     ];
 
     for (element, label) in &pii_elements {
-        let open_tag = format!("<c:{}>", element);
-        let close_tag = format!("</c:{}>", element);
+        let open_tag = format!("<c:{element}>");
+        let close_tag = format!("</c:{element}>");
         // Also handle without namespace prefix
-        let open_tag2 = format!("<{}>", element);
-        let close_tag2 = format!("</{}>", element);
+        let open_tag2 = format!("<{element}>");
+        let close_tag2 = format!("</{element}>");
 
         for (open, close) in [(&open_tag, &close_tag), (&open_tag2, &close_tag2)] {
             let mut search_from = 0;
@@ -947,7 +947,7 @@ fn extract_windows_contact(file_path: &str) -> Result<ExtractionResult, String> 
                 if let Some(end) = content[abs_start..].find(close.as_str()) {
                     let value = content[abs_start..abs_start + end].trim();
                     if !value.is_empty() && !value.starts_with('<') {
-                        text.push_str(&format!("{}: {}\n", label, value));
+                        text.push_str(&format!("{label}: {value}\n"));
                     }
                     search_from = abs_start + end + close.len();
                 } else {
@@ -1055,7 +1055,7 @@ fn extract_ldif(file_path: &str) -> Result<ExtractionResult, String> {
 
             if let Some(label) = pii_attrs.get(attr.as_str()) {
                 if !value.is_empty() {
-                    text.push_str(&format!("{}: {}\n", label, value));
+                    text.push_str(&format!("{label}: {value}\n"));
                 }
             }
         }
@@ -1070,7 +1070,7 @@ fn extract_ldif(file_path: &str) -> Result<ExtractionResult, String> {
 fn extract_jcard(file_path: &str) -> Result<ExtractionResult, String> {
     let content = std::fs::read_to_string(file_path).map_err(|e| e.to_string())?;
     let value: serde_json::Value =
-        serde_json::from_str(&content).map_err(|e| format!("Invalid JSON: {}", e))?;
+        serde_json::from_str(&content).map_err(|e| format!("Invalid JSON: {e}"))?;
 
     let mut text = String::new();
 
@@ -1142,31 +1142,31 @@ fn extract_jcard(file_path: &str) -> Result<ExtractionResult, String> {
                 .filter(|s| !s.is_empty());
 
             match name {
-                "fn" => text.push_str(&format!("Name: {}\n", value_str)),
-                "n" => text.push_str(&format!("Structured Name: {}\n", value_str)),
+                "fn" => text.push_str(&format!("Name: {value_str}\n")),
+                "n" => text.push_str(&format!("Structured Name: {value_str}\n")),
                 "email" => {
                     let label = type_label.as_deref().unwrap_or("Email");
-                    text.push_str(&format!("{}: {}\n", label, value_str));
+                    text.push_str(&format!("{label}: {value_str}\n"));
                 }
                 "tel" => {
                     let label = type_label.as_deref().unwrap_or("Phone");
                     // Strip tel: URI prefix
                     let phone = value_str.strip_prefix("tel:").unwrap_or(&value_str);
-                    text.push_str(&format!("{}: {}\n", label, phone));
+                    text.push_str(&format!("{label}: {phone}\n"));
                 }
                 "adr" => {
                     let label = type_label.as_deref().unwrap_or("Address");
-                    text.push_str(&format!("{}: {}\n", label, value_str));
+                    text.push_str(&format!("{label}: {value_str}\n"));
                 }
-                "bday" => text.push_str(&format!("Birthday: {}\n", value_str)),
-                "org" => text.push_str(&format!("Organization: {}\n", value_str)),
-                "title" => text.push_str(&format!("Title: {}\n", value_str)),
-                "note" => text.push_str(&format!("Note: {}\n", value_str)),
-                "url" => text.push_str(&format!("URL: {}\n", value_str)),
-                "gender" => text.push_str(&format!("Gender: {}\n", value_str)),
-                "nickname" => text.push_str(&format!("Nickname: {}\n", value_str)),
-                "geo" => text.push_str(&format!("Geo: {}\n", value_str)),
-                "impp" => text.push_str(&format!("IM: {}\n", value_str)),
+                "bday" => text.push_str(&format!("Birthday: {value_str}\n")),
+                "org" => text.push_str(&format!("Organization: {value_str}\n")),
+                "title" => text.push_str(&format!("Title: {value_str}\n")),
+                "note" => text.push_str(&format!("Note: {value_str}\n")),
+                "url" => text.push_str(&format!("URL: {value_str}\n")),
+                "gender" => text.push_str(&format!("Gender: {value_str}\n")),
+                "nickname" => text.push_str(&format!("Nickname: {value_str}\n")),
+                "geo" => text.push_str(&format!("Geo: {value_str}\n")),
+                "impp" => text.push_str(&format!("IM: {value_str}\n")),
                 _ => {}
             }
         }
@@ -1220,7 +1220,7 @@ fn extract_ics(file_path: &str) -> Result<ExtractionResult, String> {
             if let Some((prop, val)) = split_vcard_line(trimmed) {
                 let prop_name = prop.split(';').next().unwrap_or("").to_uppercase();
                 if prop_name.as_str() == "X-WR-CALNAME" {
-                    text.push_str(&format!("Calendar: {}\n", val))
+                    text.push_str(&format!("Calendar: {val}\n"))
                 }
             }
             continue;
@@ -1242,9 +1242,9 @@ fn extract_ics(file_path: &str) -> Result<ExtractionResult, String> {
             .to_uppercase();
 
         match prop_name.as_str() {
-            "SUMMARY" => text.push_str(&format!("Summary: {}\n", value)),
-            "DESCRIPTION" => text.push_str(&format!("Description: {}\n", value)),
-            "LOCATION" => text.push_str(&format!("Location: {}\n", value)),
+            "SUMMARY" => text.push_str(&format!("Summary: {value}\n")),
+            "DESCRIPTION" => text.push_str(&format!("Description: {value}\n")),
+            "LOCATION" => text.push_str(&format!("Location: {value}\n")),
             "ORGANIZER" => {
                 // ORGANIZER;CN=Name:mailto:email
                 let cn = extract_ics_param(prop_with_params, "CN");
@@ -1253,9 +1253,9 @@ fn extract_ics(file_path: &str) -> Result<ExtractionResult, String> {
                     .or_else(|| value.strip_prefix("MAILTO:"))
                     .unwrap_or(value);
                 if let Some(name) = cn {
-                    text.push_str(&format!("Organizer: {} <{}>\n", name, email));
+                    text.push_str(&format!("Organizer: {name} <{email}>\n"));
                 } else {
-                    text.push_str(&format!("Organizer: {}\n", email));
+                    text.push_str(&format!("Organizer: {email}\n"));
                 }
             }
             "ATTENDEE" => {
@@ -1265,18 +1265,18 @@ fn extract_ics(file_path: &str) -> Result<ExtractionResult, String> {
                     .or_else(|| value.strip_prefix("MAILTO:"))
                     .unwrap_or(value);
                 if let Some(name) = cn {
-                    text.push_str(&format!("Attendee: {} <{}>\n", name, email));
+                    text.push_str(&format!("Attendee: {name} <{email}>\n"));
                 } else {
-                    text.push_str(&format!("Attendee: {}\n", email));
+                    text.push_str(&format!("Attendee: {email}\n"));
                 }
             }
-            "CONTACT" => text.push_str(&format!("Contact: {}\n", value)),
-            "COMMENT" => text.push_str(&format!("Comment: {}\n", value)),
-            "URL" => text.push_str(&format!("URL: {}\n", value)),
-            "GEO" => text.push_str(&format!("Geo: {}\n", value)),
-            "DTSTART" => text.push_str(&format!("Start: {}\n", value)),
-            "DTEND" => text.push_str(&format!("End: {}\n", value)),
-            "CATEGORIES" => text.push_str(&format!("Categories: {}\n", value)),
+            "CONTACT" => text.push_str(&format!("Contact: {value}\n")),
+            "COMMENT" => text.push_str(&format!("Comment: {value}\n")),
+            "URL" => text.push_str(&format!("URL: {value}\n")),
+            "GEO" => text.push_str(&format!("Geo: {value}\n")),
+            "DTSTART" => text.push_str(&format!("Start: {value}\n")),
+            "DTEND" => text.push_str(&format!("End: {value}\n")),
+            "CATEGORIES" => text.push_str(&format!("Categories: {value}\n")),
             _ => {}
         }
     }
@@ -1343,7 +1343,7 @@ fn extract_mbox(file_path: &str) -> Result<ExtractionResult, String> {
                 if ["from", "to", "subject", "date", "cc", "bcc", "reply-to"]
                     .contains(&key.as_str())
                 {
-                    text.push_str(&format!("{}: {}\n", key, value));
+                    text.push_str(&format!("{key}: {value}\n"));
                 }
             }
         } else if in_body {
@@ -1384,7 +1384,7 @@ fn extract_mhtml(file_path: &str) -> Result<ExtractionResult, String> {
     });
 
     if let Some(boundary) = boundary {
-        let separator = format!("--{}", boundary);
+        let separator = format!("--{boundary}");
         let parts: Vec<&str> = content.split(&separator).collect();
 
         for part in parts.iter().skip(1) {
@@ -1440,7 +1440,7 @@ fn extract_mhtml(file_path: &str) -> Result<ExtractionResult, String> {
                     let key = line[..colon_pos].trim().to_lowercase();
                     let value = line[colon_pos + 1..].trim();
                     if ["from", "to", "subject", "date"].contains(&key.as_str()) {
-                        text.push_str(&format!("{}: {}\n", key, value));
+                        text.push_str(&format!("{key}: {value}\n"));
                     }
                 }
             } else {
