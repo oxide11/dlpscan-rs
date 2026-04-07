@@ -4,16 +4,16 @@ High-performance DLP scanner written in Rust. Detects, redacts, and protects
 sensitive data with exceptional throughput.
 
 **560 patterns** across **126 categories** — full parity with the Python version.
-**17,000+ lines** of Rust across 37 modules. **305 tests** passing.
+**17,000+ lines** of Rust across 37 modules. **331 tests** passing.
 
 ## Performance
 
 | Scenario (1MB) | Full (560 patterns) | Baseline (108 patterns) |
 |---|---:|---:|
-| Clean text | 60.9 MB/s | 62.0 MB/s |
-| Mixed content | 19.3 MB/s | 20.3 MB/s |
-| Dense sensitive data | 21.5 MB/s | 21.6 MB/s |
-| Keyword-heavy text | 35.7 MB/s | 38.0 MB/s |
+| Clean text | 66.8 MB/s | 66.4 MB/s |
+| Mixed content | 20.4 MB/s | 20.8 MB/s |
+| Dense sensitive data | 20.9 MB/s | 21.5 MB/s |
+| Keyword-heavy text | 34.4 MB/s | 38.9 MB/s |
 
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for full results including optimization
 journey, latency tables, and baseline-vs-full comparison.
@@ -105,13 +105,45 @@ println!("{}", result.redacted_text.unwrap()); // "card: 4758286118069724"
 
 ### QR code and barcode scanning
 
-With the `barcode` feature, images are decoded for embedded QR codes,
-Data Matrix, UPC, EAN, Code 128, and other 2D/1D barcodes. Decoded text
-is scanned for sensitive data patterns.
+With the `barcode` feature, image files are automatically decoded for
+embedded barcodes and QR codes. Any decoded text is scanned for sensitive
+data patterns -- catching credit cards, SSNs, API keys, or other data
+hidden in 2D codes.
 
 ```bash
 cargo build --release --features barcode
 ```
+
+**Supported formats:**
+
+| Type | Formats |
+|---|---|
+| 2D codes | QR Code, Data Matrix, Aztec, PDF417 |
+| 1D codes | UPC-A, UPC-E, EAN-8, EAN-13, Code 39, Code 128, ITF, Codabar |
+| Image types | PNG, JPG, JPEG, GIF, BMP, TIFF, WebP |
+
+**Usage:**
+
+```rust
+use dlpscan::extractors::extract_text;
+
+// Automatically decodes barcodes from images when barcode feature is enabled
+let result = extract_text("boarding-pass.png")?;
+// result.text contains decoded barcode content, scanned for patterns
+// result.metadata["barcode_count"] = "3"
+// result.metadata["formats"] = "QR Code, PDF417"
+```
+
+```bash
+# CLI: scan an image for barcodes containing sensitive data
+dlpscan boarding-pass.png
+
+# Scan a directory of scanned documents
+dlpscan --features barcode ./scanned-forms/
+```
+
+**Safety limits:** 20 MB max image size, 100 barcodes per image,
+4 KB max decoded text per barcode.
 
 ### File type controls
 
@@ -344,8 +376,13 @@ dlpscan is hardened for enterprise deployment in regulated environments
   length, preventing offset corruption in multi-byte text
 - **Constant-time EDM matching** -- Exact Data Match uses XOR comparison
   across all registered hashes (no timing leak)
-- **Luhn structural validation** -- minimum 12 digits, rejects all-same-digit
-  sequences
+- **Structural validators** -- SWIFT/BIC (ISO 3166 country code + 400-word
+  false-positive filter), CUSIP/SEDOL (check digit), Australia TFN (weighted
+  checksum), SSN (area code rules), Luhn (min 12 digits, same-digit rejection)
+- **Context gating** -- low-specificity patterns (Account Balance, Ticker
+  Symbol, CUSIP, SEDOL, Teller ID) require nearby keywords to fire
+- **Corrupted file recovery** -- corrupted ZIP/DOCX falls back to raw byte
+  scanning; binary files with unknown extensions get printable string extraction
 - **Token vault TTL** -- vaults expire after 1 hour with panic-safe background
   eviction; detokenize rejects expired vaults
 - **Tenant-isolated caching** -- `key_with_namespace()` prevents cross-tenant

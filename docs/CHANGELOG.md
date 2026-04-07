@@ -29,8 +29,36 @@ All notable changes to dlpscan will be documented in this file.
 - `is_blocked_extension()`, `is_path_blocked()`, `is_unreadable_extension()`,
   `is_likely_encrypted()` public API functions
 
+### False Positive Reduction
+- SWIFT/BIC: ISO 3166 country code validation + 400-word English blocklist +
+  specificity lowered to 0.65 (context-gated)
+- CUSIP: check-digit validation (modified Luhn), specificity 0.70 → 0.50,
+  context-required
+- SEDOL: weighted checksum validation, specificity 0.70 → 0.50, context-required
+- Australia TFN: weighted checksum (mod 11), context-required
+- SSN: structural validation (area code 000/666/900+ rejected, group/serial 0 rejected)
+- UK Phone: regex tightened to require valid area code prefix (01x/020/03x/07x/08x)
+- Context-required additions: Account Balance, Balance with Currency Code,
+  Income Amount, Teller ID, Ticker Symbol (lowered to 0.60)
+- Net result: 8 → 5 false positives on sample business text; with min_confidence
+  0.50, only true positives remain
+
+### Evasion Resilience
+- Corrupted ZIP/DOCX recovery: falls back to raw byte printable string extraction
+  when central directory is damaged (format: "zip-recovered")
+- Pipeline binary fallback: when both extract_text and read_to_string fail,
+  extracts printable ASCII strings from raw bytes (format: "binary-strings")
+- Extension mismatch handled: magic byte detection overrides extension for
+  unknown types; known extensions always trusted (prevents polyglot attacks)
+- Zip bomb protection verified: nested ZIPs and high-compression-ratio archives
+  properly bounded by MAX_EXTRACT_TOTAL_SIZE / MAX_EXTRACT_FILE_COUNT
+- Offset map stress tested: 60k zero-width-spaced credit cards handled with
+  MAX_MATCHES cap, no OOM, no Rayon panic
+
 ### Testing
-- 305 tests (268 unit + 37 integration), up from 127
+- 331 tests (282 unit + 12 evasion + 37 integration), up from 127
+- New evasion test suite: extension mismatch, corrupted headers, offset map
+  stress, zip bombs, extractor fallback (12 attack vectors)
 - New unit tests across 12 modules covering all hardening and new features
 - New integration tests for audit signing, compliance redaction, Luhn,
   file blocking, Unicode evasion, SSRF, CAB/DAT extraction, vault TTL, RBAC

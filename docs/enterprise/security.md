@@ -276,6 +276,40 @@ Credit card Luhn checks enforce:
 - Minimum 12 digits (rejects short sequences)
 - Rejects all-same-digit sequences (e.g., `0000000000000000`)
 
+### Structural Validators (False Positive Reduction)
+
+Several patterns have post-match validation to eliminate common false
+positives. These run after regex matching but before confidence scoring:
+
+| Pattern | Validation | What it rejects |
+|---|---|---|
+| Credit Cards | Luhn checksum | Invalid card numbers |
+| SWIFT/BIC | ISO 3166 country code + 400-word English blocklist | DECEMBER, SECURITY, PLATFORM, etc. |
+| CUSIP | Modified Luhn check digit (alphanumeric) | Random 9-char strings |
+| SEDOL | Weighted checksum mod 10 | Random 7-char strings |
+| Australia TFN | Weighted checksum mod 11 | Random 8-9 digit numbers |
+| SSN | Area code rules (not 000/666/900+), group/serial not all-zero | Invalid area numbers |
+
+Additionally, these patterns are **context-required** (suppressed without
+nearby keywords): Account Balance, Ticker Symbol, CUSIP, SEDOL, Teller ID,
+Australia TFN, Balance with Currency Code, Income Amount.
+
+### Corrupted File Recovery
+
+When structured extractors fail (e.g., corrupted ZIP central directory),
+the scanner falls back to raw byte scanning:
+
+1. **ZIP/DOCX recovery** -- if `ZipArchive::new()` fails, raw bytes are
+   scanned for printable ASCII strings (min 12 chars). STORED-compression
+   payloads are fully recovered. Format tagged as `zip-recovered`.
+2. **Pipeline binary fallback** -- when both `extract_text()` and
+   `read_to_string()` fail (binary file, unknown extension), the pipeline
+   reads raw bytes and extracts printable strings. Format tagged as
+   `binary-strings`.
+
+This ensures an attacker cannot evade detection by corrupting a file's
+metadata while leaving the sensitive payload intact.
+
 ## File Type Controls
 
 ### Blocked Extensions

@@ -529,9 +529,30 @@ fn extract_eml(file_path: &str) -> Result<ExtractionResult, String> {
 }
 
 /// Extract text from ZIP-based formats (docx, xlsx, pptx).
+/// If the central directory is corrupted, falls back to raw-byte scanning
+/// for printable text strings.
 fn extract_zip_based(file_path: &str) -> Result<ExtractionResult, String> {
     let file = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    match zip::ZipArchive::new(file) {
+        Ok(mut archive) => extract_zip_archive(&mut archive),
+        Err(_) => {
+            // Central directory is corrupted — fall back to raw byte scanning.
+            // The payload may still be present as uncompressed or partially
+            // readable data in the local file entries.
+            let data = std::fs::read(file_path).map_err(|e| e.to_string())?;
+            let text = extract_printable_strings(&data, 12);
+            if text.is_empty() {
+                return Err("ZIP central directory corrupted and no printable text recoverable".to_string());
+            }
+            let mut result = ExtractionResult::new(text, "zip-recovered");
+            result = result.with_warning("ZIP central directory corrupted — extracted from raw bytes");
+            Ok(result)
+        }
+    }
+}
+
+/// Extract from a valid ZIP archive.
+fn extract_zip_archive(archive: &mut zip::ZipArchive<std::fs::File>) -> Result<ExtractionResult, String> {
     let mut text = String::new();
 
     // Detect format by checking for key files
@@ -2187,6 +2208,12 @@ pub fn extract_dat(file_path: &str) -> Result<ExtractionResult, String> {
 
 /// Maximum extracted text output from binary string extraction (10 MB).
 const MAX_PRINTABLE_OUTPUT: usize = 10 * 1024 * 1024;
+
+/// Public API: extract printable ASCII strings from binary data.
+/// Used by the pipeline as a last-resort fallback for binary files.
+pub fn extract_printable_strings_public(data: &[u8], min_length: usize) -> String {
+    extract_printable_strings(data, min_length)
+}
 
 /// Extract printable ASCII strings from binary data.
 /// Only includes runs of at least `min_length` printable characters.

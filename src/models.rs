@@ -111,7 +111,7 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
 
         // Banking
         "IBAN Generic" => 0.90,
-        "SWIFT/BIC" => 0.85,
+        "SWIFT/BIC" => 0.65, // lowered from 0.85 — context-gated + country code validation
         "ABA Routing Number" => 0.55,
         "US Bank Account Number" => 0.20,
         "Canada Transit Number" => 0.40,
@@ -123,12 +123,12 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
         "MICR Line" => 0.90,
         "Check Number" => 0.15,
         "Cashier Check Number" => 0.20,
-        "CUSIP" => 0.70,
+        "CUSIP" => 0.50,    // lowered — 9-char alphanumeric is common; context-gated + check digit
         "ISIN" => 0.75,
-        "SEDOL" => 0.70,
+        "SEDOL" => 0.50,   // lowered — 7-char alphanumeric is common; context-gated + check digit
         "FIGI" => 0.90,
         "LEI" => 0.80,
-        "Ticker Symbol" => 0.80,
+        "Ticker Symbol" => 0.60, // lowered — $WORD is common in shell/templates; context-gated
         "Loan Number" => 0.45,
         "MERS MIN" => 0.50,
         "Universal Loan Identifier" => 0.75,
@@ -241,5 +241,14 @@ pub fn is_context_required(sub_category: &str) -> bool {
             | "Date of Birth"
             | "LTV Ratio"
             | "DTI Ratio"
+            // Added to reduce false positives on common text
+            | "Account Balance"
+            | "Balance with Currency Code"
+            | "Income Amount"
+            | "Teller ID"
+            | "Ticker Symbol"
+            | "CUSIP"
+            | "SEDOL"
+            | "Australia TFN"
     )
 }

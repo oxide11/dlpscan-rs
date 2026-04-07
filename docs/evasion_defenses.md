@@ -529,3 +529,43 @@ These evasion vectors are identified but not yet fully defended:
 
 See the [Priority Remediation Roadmap](evasion_techniques.md#priority-remediation-roadmap)
 in evasion_techniques.md for the full backlog.
+
+---
+
+## Recently Added Defenses (v2.1.0)
+
+### Malformed File / Polyglot Resilience
+
+- **Corrupted ZIP recovery** -- when the ZIP central directory is damaged
+  (common in polyglot attacks), the scanner falls back to extracting
+  printable ASCII strings from raw bytes. Payloads in STORED-compression
+  entries are fully recovered.
+- **Binary fallback pipeline** -- binary files with unknown extensions
+  no longer silently fail. The pipeline reads raw bytes and extracts
+  printable strings (min 12 chars) as a last resort.
+- **Extension mismatch handling** -- known extensions always take
+  precedence; unknown extensions fall back to magic byte detection.
+  HTML-as-DOCX and HTML-as-PDF are correctly handled.
+
+### Structural Validators (False Positive Reduction)
+
+Post-match validation eliminates common false positives without reducing
+detection of real sensitive data:
+
+- **SWIFT/BIC** -- ISO 3166 country code validation + 400-word English
+  word blocklist eliminates matches on DECEMBER, SECURITY, PLATFORM, etc.
+- **CUSIP** -- modified Luhn check digit rejects random 9-char strings
+- **SEDOL** -- weighted checksum rejects random 7-char sequences
+- **Australia TFN** -- weighted checksum (mod 11) rejects random digit runs
+- **SSN** -- area code rules reject 000, 666, and 900+ prefixes
+- **UK Phone** -- regex requires valid area code prefix (01x, 020, 03x, 07x, 08x)
+
+### Resource Exhaustion Protection (Verified)
+
+Evasion testing confirmed these limits hold under stress:
+
+- **60k zero-width-spaced credit cards** -- MAX_MATCHES cap respected,
+  no OOM, offset map handles correctly
+- **Nested ZIP (3 levels)** -- no infinite recursion, graceful handling
+- **Zip bomb (100 x 1MB)** -- extraction size limits prevent OOM
+- **Dense zero-width SSN evasion** -- normalization properly strips and detects

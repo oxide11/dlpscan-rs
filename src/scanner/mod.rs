@@ -284,6 +284,41 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     continue;
                 }
 
+                // SSN structural validation — reject invalid area codes
+                if pat.sub_category == "USA SSN"
+                    && !crate::validation::is_valid_ssn(matched_text)
+                {
+                    continue;
+                }
+
+                // SWIFT/BIC validation — country code + false-positive word filter
+                if pat.sub_category == "SWIFT/BIC"
+                    && !crate::validation::is_valid_swift(matched_text)
+                {
+                    continue;
+                }
+
+                // CUSIP check-digit validation
+                if pat.sub_category == "CUSIP"
+                    && !crate::validation::is_valid_cusip(matched_text)
+                {
+                    continue;
+                }
+
+                // SEDOL check-digit validation
+                if pat.sub_category == "SEDOL"
+                    && !crate::validation::is_valid_sedol(matched_text)
+                {
+                    continue;
+                }
+
+                // Australia TFN weighted checksum
+                if pat.sub_category == "Australia TFN"
+                    && !crate::validation::is_valid_australia_tfn(matched_text)
+                {
+                    continue;
+                }
+
                 // Context checking
                 let has_context = context::check_context(
                     &normalized,
@@ -384,6 +419,31 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 for mat in cp.regex.find_iter(&alt_norm) {
                     let matched_text = mat.as_str();
                     if cp.def.category == "Credit Card Numbers" && !is_luhn_valid(matched_text) {
+                        continue;
+                    }
+                    if cp.def.sub_category == "USA SSN"
+                        && !crate::validation::is_valid_ssn(matched_text)
+                    {
+                        continue;
+                    }
+                    if cp.def.sub_category == "SWIFT/BIC"
+                        && !crate::validation::is_valid_swift(matched_text)
+                    {
+                        continue;
+                    }
+                    if cp.def.sub_category == "CUSIP"
+                        && !crate::validation::is_valid_cusip(matched_text)
+                    {
+                        continue;
+                    }
+                    if cp.def.sub_category == "SEDOL"
+                        && !crate::validation::is_valid_sedol(matched_text)
+                    {
+                        continue;
+                    }
+                    if cp.def.sub_category == "Australia TFN"
+                        && !crate::validation::is_valid_australia_tfn(matched_text)
+                    {
                         continue;
                     }
                     let confidence = compute_confidence(cp.def.sub_category, false, false);

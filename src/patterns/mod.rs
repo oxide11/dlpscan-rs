@@ -2235,7 +2235,7 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "Europe - United Kingdom",
         sub_category: "UK Phone Number",
-        regex: r"(?:\+44[-.\s]?|0)(?:\d[-.\s]?){9,10}\b",
+        regex: r"(?:\+44[-.\s]?|0)(?:1\d|20|3\d|5\d|7[0-9]|8[0-9])(?:[-.\s]?\d){7,8}\b",
         case_insensitive: false,
         specificity: 0.40,
         context_required: false,
