@@ -4,7 +4,7 @@ High-performance DLP scanner written in Rust. Detects, redacts, and protects
 sensitive data with exceptional throughput.
 
 **560 patterns** across **126 categories** — full parity with the Python version.
-**15,000+ lines** of Rust across 37 modules. **127 tests** passing.
+**17,000+ lines** of Rust across 37 modules. **305 tests** passing.
 
 ## Performance
 
@@ -115,16 +115,16 @@ cargo build --release --features barcode
 
 ### File type controls
 
-Cryptographic certificate files (`.der`, `.p12`, `.pfx`, `.p7m`, etc.)
-are blocked by default in the pipeline. Configure via `blocked_extensions`
-in your config file, or use `block_unreadable` to also block unknown
-binary and encrypted file types:
+Configure which file types the pipeline blocks or skips:
 
 ```toml
 # .dlpscanrc or pyproject.toml [tool.dlpscan]
-blocked_extensions = ["der", "p12", "pfx", "p7m", "jks"]
+blocked_extensions = ["der", "p12", "pfx", "p7m", "p8", "ppk", "jks"]
 block_unreadable = true  # also blocks .exe, .dll, .gpg, .kdbx, etc.
 ```
+
+Crypto certificates are blocked by default. See the [Security](#file-type-controls-1)
+section for details on symlink resolution and double-extension protection.
 
 ### Baseline-only mode
 
@@ -346,10 +346,23 @@ dlpscan is hardened for enterprise deployment in regulated environments
   across all registered hashes (no timing leak)
 - **Luhn structural validation** -- minimum 12 digits, rejects all-same-digit
   sequences
-- **Token vault TTL** -- vaults expire after 1 hour with background eviction;
-  detokenize rejects expired vaults
+- **Token vault TTL** -- vaults expire after 1 hour with panic-safe background
+  eviction; detokenize rejects expired vaults
 - **Tenant-isolated caching** -- `key_with_namespace()` prevents cross-tenant
   cache poisoning
+- **EDM safety limits** -- warns when hash count exceeds 50k to prevent
+  O(N*M) performance degradation in constant-time scan
+
+### File type controls
+
+- **Blocked extensions** -- cryptographic material (`.der`, `.p12`, `.pfx`,
+  `.p7m`, `.p8`, `.ppk`, `.jks`, `.gpg`, `.pgp`) blocked by default
+- **Block unreadable** -- opt-in blocking of executables, compiled objects,
+  encrypted containers, and media files
+- **Double-extension bypass prevention** -- `secret.der.txt` correctly blocked
+  by checking ALL dot-separated segments
+- **Symlink resolution** -- paths canonicalized before extension check to
+  prevent `safe.txt` -> `secret.der` bypass
 
 See [docs/enterprise/security.md](docs/enterprise/security.md) for full details.
 
