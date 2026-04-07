@@ -433,29 +433,6 @@ fn handle_health_full(state: &AppState, active: usize) -> HealthResponse {
     }
 }
 
-/// Security response headers applied to every HTTP response.
-#[allow(dead_code)]
-const SECURITY_HEADERS: &str = "\
-X-Content-Type-Options: nosniff\r\n\
-X-Frame-Options: DENY\r\n\
-Content-Security-Policy: default-src 'none'\r\n\
-Cache-Control: no-store\r\n\
-X-XSS-Protection: 0\r\n";
-
-/// Format an HTTP response with security headers.
-#[cfg(feature = "async-support")]
-fn format_response(status: &str, body: &str, request_id: &str) -> String {
-    format!(
-        "HTTP/1.1 {status}\r\n\
-         Content-Type: application/json\r\n\
-         Content-Length: {}\r\n\
-         X-Request-ID: {request_id}\r\n\
-         {SECURITY_HEADERS}\
-         \r\n\
-         {body}",
-        body.len(),
-    )
-}
 
 /// Generate a simple random ID (hex string).
 fn generate_id() -> String {
@@ -477,553 +454,9 @@ pub fn verify_api_key(expected: &str, provided: &str) -> bool {
     result == 0
 }
 
-// ---------------------------------------------------------------------------
-// Server (requires async-support feature)
-// ---------------------------------------------------------------------------
-
-#[allow(dead_code)]
-const MAX_CONCURRENT_CONNECTIONS: usize = 256;
-#[allow(dead_code)]
-const MAX_REQUEST_BODY_SIZE: usize = 10 * 1024 * 1024; // 10 MB
-
-#[cfg(feature = "async-support")]
-pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
-
-    let addr = format!("{}:{}", config.host, config.port);
-    let listener = TcpListener::bind(&addr).await?;
-
-    // Optional TLS: if DLPSCAN_TLS_CERT and DLPSCAN_TLS_KEY are set, enable HTTPS
-    #[cfg(feature = "tls")]
-    let tls_acceptor: Option<tokio_rustls::TlsAcceptor> = {
-        match (
-            std::env::var("DLPSCAN_TLS_CERT"),
-            std::env::var("DLPSCAN_TLS_KEY"),
-        ) {
-            (Ok(cert_path), Ok(key_path)) => {
-                let cert_file = std::fs::File::open(&cert_path)
-                    .map_err(|e| format!("Failed to open TLS cert {}: {}", cert_path, e))?;
-                let key_file = std::fs::File::open(&key_path)
-                    .map_err(|e| format!("Failed to open TLS key {}: {}", key_path, e))?;
-
-                let certs: Vec<_> = rustls_pemfile::certs(&mut std::io::BufReader::new(cert_file))
-                    .filter_map(|r| r.ok())
-                    .collect();
-                let key = rustls_pemfile::private_key(&mut std::io::BufReader::new(key_file))
-                    .map_err(|e| format!("Failed to read TLS key: {}", e))?
-                    .ok_or("No private key found in TLS key file")?;
-
-                let tls_config = rustls::ServerConfig::builder()
-                    .with_no_client_auth()
-                    .with_single_cert(certs, key)
-                    .map_err(|e| format!("TLS config error: {}", e))?;
-
-                tracing::info!("TLS enabled with cert={}, key={}", cert_path, key_path);
-                Some(tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(
-                    tls_config,
-                )))
-            }
-            _ => {
-                tracing::info!(
-                    "TLS not configured (set DLPSCAN_TLS_CERT and DLPSCAN_TLS_KEY to enable)"
-                );
-                None
-            }
-        }
-    };
-
-    let proto = if cfg!(feature = "tls") {
-        "https"
-    } else {
-        "http"
-    };
-    tracing::info!("dlpscan API server listening on {}://{}", proto, addr);
-
-    // Load API key-to-role mapping from env: DLPSCAN_API_KEY_ROLES="key1:admin,key2:analyst"
-    let api_key_roles: HashMap<String, crate::rbac::Role> = std::env::var("DLPSCAN_API_KEY_ROLES")
-        .unwrap_or_default()
-        .split(',')
-        .filter_map(|pair| {
-            let mut parts = pair.splitn(2, ':');
-            let key = parts.next()?.trim().to_string();
-            let role_str = parts.next()?.trim().to_lowercase();
-            let role = match role_str.as_str() {
-                "admin" => crate::rbac::Role::Admin,
-                "analyst" => crate::rbac::Role::Analyst,
-                "operator" => crate::rbac::Role::Operator,
-                _ => crate::rbac::Role::Viewer,
-            };
-            if key.is_empty() {
-                None
-            } else {
-                Some((key, role))
-            }
-        })
-        .collect();
-
-    let state = Arc::new(AppState {
-        api_key: config.api_key,
-        rate_limiter: RwLock::new(RateLimiter::new(config.rate_limit, 60)),
-        vaults: RwLock::new(HashMap::new()),
-        custom_patterns: RwLock::new(Vec::new()),
-        start_time: Instant::now(),
-        is_shutting_down: std::sync::atomic::AtomicBool::new(false),
-        api_key_roles,
-    });
-
-    let active_connections = Arc::new(AtomicUsize::new(0));
-
-    // Graceful shutdown: listen for SIGTERM/SIGINT
-    let shutdown = async {
-        #[cfg(unix)]
-        {
-            let mut sigterm =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("failed to install SIGTERM handler");
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {},
-                _ = sigterm.recv() => {},
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            tokio::signal::ctrl_c().await.ok();
-        }
-    };
-    tokio::pin!(shutdown);
-
-    loop {
-        tokio::select! {
-            result = listener.accept() => {
-                let (mut socket, peer_addr) = match result {
-                    Ok(conn) => conn,
-                    Err(e) => {
-                        tracing::warn!("Accept error: {}", e);
-                        continue;
-                    }
-                };
-                let state = state.clone();
-                let active_connections = active_connections.clone();
-
-                if active_connections.load(Ordering::SeqCst) >= MAX_CONCURRENT_CONNECTIONS {
-                    let response = "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: 42\r\n\r\n{\"detail\":\"Too many concurrent connections\"}";
-                    let _ = tokio::io::AsyncWriteExt::write_all(&mut socket, response.as_bytes()).await;
-                    continue;
-                }
-
-                active_connections.fetch_add(1, Ordering::SeqCst);
-
-                tokio::spawn(async move {
-                    struct ConnGuard(Arc<AtomicUsize>);
-                    impl Drop for ConnGuard {
-                        fn drop(&mut self) {
-                            self.0.fetch_sub(1, Ordering::SeqCst);
-                        }
-                    }
-                    let _guard = ConnGuard(active_connections);
-                    let request_start = Instant::now();
-                    let request_id = simple_uuid();
-                    let peer = peer_addr.to_string();
-
-                    // Timeout: entire request handling must complete within 60s
-                    let handler = async {
-                        // Read with 10s timeout to prevent slowloris
-                        let mut buf = vec![0u8; MAX_REQUEST_BODY_SIZE];
-                        let n = match tokio::time::timeout(
-                            tokio::time::Duration::from_secs(10),
-                            socket.read(&mut buf),
-                        ).await {
-                            Ok(Ok(n)) if n > 0 => n,
-                            _ => return,
-                        };
-
-                        let request = String::from_utf8_lossy(&buf[..n]);
-
-                        // Parse method + path for tracing
-                        let first_line = request.lines().next().unwrap_or("");
-                        let parts: Vec<&str> = first_line.split_whitespace().collect();
-                        let method = parts.first().copied().unwrap_or("?");
-                        let path = parts.get(1).copied().unwrap_or("/");
-
-                        let span = tracing::info_span!("http_request",
-                            request_id = %request_id,
-                            method = %method,
-                            path = %path,
-                            peer = %peer,
-                        );
-                        let _enter = span.enter();
-
-                        // HTTP request smuggling protection:
-                        // Reject Transfer-Encoding (we don't support chunked)
-                        let headers_section = request.split("\r\n\r\n").next().unwrap_or("");
-                        if headers_section.to_lowercase().contains("transfer-encoding") {
-                            let body = r#"{"detail":"Transfer-Encoding not supported"}"#;
-                            let response = format_response("400 Bad Request", body, &request_id);
-                            let _ = socket.write_all(response.as_bytes()).await;
-                            return;
-                        }
-                        // Reject duplicate Content-Length headers
-                        let cl_count = headers_section.lines()
-                            .filter(|l| l.to_lowercase().starts_with("content-length:"))
-                            .count();
-                        if cl_count > 1 {
-                            let body = r#"{"detail":"Duplicate Content-Length headers"}"#;
-                            let response = format_response("400 Bad Request", body, &request_id);
-                            let _ = socket.write_all(response.as_bytes()).await;
-                            return;
-                        }
-
-                        // Check Content-Length against actual read size
-                        let content_length = headers_section.lines()
-                            .find(|l| l.to_lowercase().starts_with("content-length:"))
-                            .and_then(|l| l.splitn(2, ':').nth(1))
-                            .and_then(|v| v.trim().parse::<usize>().ok());
-                        if let Some(cl) = content_length {
-                            if cl > MAX_REQUEST_BODY_SIZE {
-                                let body = r#"{"detail":"Request body too large"}"#;
-                                let response = format_response("413 Payload Too Large", body, &request_id);
-                                let _ = socket.write_all(response.as_bytes()).await;
-                                return;
-                            }
-                        }
-
-                        let (status, body) = route_request(&request, &state, &peer);
-
-                        let duration_ms = request_start.elapsed().as_secs_f64() * 1000.0;
-                        tracing::info!(
-                            status = %status,
-                            duration_ms = duration_ms,
-                            "request completed"
-                        );
-
-                        let response = format_response(&status, &body, &request_id);
-                        let _ = socket.write_all(response.as_bytes()).await;
-                    };
-
-                    // Overall handler timeout: 60 seconds
-                    if tokio::time::timeout(
-                        tokio::time::Duration::from_secs(60),
-                        handler,
-                    ).await.is_err() {
-                        tracing::warn!(peer = %peer, "Request timed out after 60s");
-                    }
-                });
-            }
-            _ = &mut shutdown => {
-                tracing::info!("Shutdown signal received, draining connections...");
-                state.is_shutting_down.store(true, Ordering::SeqCst);
-
-                // Wait for in-flight connections to finish (max 25s)
-                let drain_deadline = tokio::time::Instant::now()
-                    + tokio::time::Duration::from_secs(25);
-                loop {
-                    let active = active_connections.load(Ordering::SeqCst);
-                    if active == 0 {
-                        tracing::info!("All connections drained, shutting down");
-                        break;
-                    }
-                    if tokio::time::Instant::now() >= drain_deadline {
-                        tracing::warn!(
-                            "Drain timeout reached with {} active connections, forcing shutdown",
-                            active
-                        );
-                        break;
-                    }
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                }
-                return Ok(());
-            }
-        }
-    }
-}
-
-#[cfg(feature = "async-support")]
-fn route_request(raw: &str, state: &AppState, client_ip: &str) -> (String, String) {
-    let first_line = raw.lines().next().unwrap_or("");
-    let parts: Vec<&str> = first_line.split_whitespace().collect();
-    let method = parts.first().copied().unwrap_or("");
-    let path = parts.get(1).copied().unwrap_or("/");
-
-    // Extract body (after \r\n\r\n)
-    let body = raw.split("\r\n\r\n").nth(1).unwrap_or("");
-
-    // Check API key if configured (exempt health and metrics endpoints)
-    let auth_exempt = path == "/health"
-        || path == "/health/live"
-        || path == "/health/ready"
-        || path == "/metrics";
-    if state.api_key.is_some() && !auth_exempt {
-        let api_key_header = raw
-            .lines()
-            .find(|l| l.to_lowercase().starts_with("x-api-key:"))
-            .map(|l| l.splitn(2, ':').nth(1).unwrap_or("").trim());
-
-        if let Some(expected) = &state.api_key {
-            match api_key_header {
-                Some(provided) if verify_api_key(expected, provided) => {}
-                _ => {
-                    return (
-                        "401 Unauthorized".to_string(),
-                        r#"{"detail":"Invalid or missing API key"}"#.to_string(),
-                    );
-                }
-            }
-        }
-    }
-
-    // RBAC enforcement — derive role from authenticated key, not client header
-    let authenticated_key = if state.api_key.is_some() {
-        raw.lines()
-            .find(|l| l.to_lowercase().starts_with("x-api-key:"))
-            .and_then(|l| l.splitn(2, ':').nth(1))
-            .map(|v| v.trim().to_string())
-    } else {
-        None
-    };
-    let role = crate::rbac::resolve_role(raw, authenticated_key.as_deref(), &state.api_key_roles);
-    let required_perm = match (method, path) {
-        ("POST", "/v1/scan") => Some(crate::rbac::Permission::Scan),
-        ("POST", "/v1/batch/scan") => Some(crate::rbac::Permission::BatchScan),
-        ("POST", "/v1/patterns") => Some(crate::rbac::Permission::ManagePatterns),
-        ("POST", "/v1/tokenize") => Some(crate::rbac::Permission::Scan),
-        ("POST", "/v1/detokenize") => Some(crate::rbac::Permission::Detokenize),
-        ("POST", "/v1/obfuscate") => Some(crate::rbac::Permission::Scan),
-        _ => None,
-    };
-    if let Some(perm) = required_perm {
-        if !crate::rbac::role_has_permission(role, perm) {
-            return (
-                "403 Forbidden".to_string(),
-                r#"{"detail":"Insufficient permissions"}"#.to_string(),
-            );
-        }
-    }
-
-    // Rate limiting (exempt health/metrics endpoints)
-    if path != "/health" && path != "/health/live" && path != "/health/ready" && path != "/metrics"
-    {
-        if let Ok(mut rl) = state.rate_limiter.write() {
-            if !rl.check_client(client_ip) {
-                return (
-                    "429 Too Many Requests".to_string(),
-                    r#"{"detail":"Rate limit exceeded"}"#.to_string(),
-                );
-            }
-            rl.cleanup();
-        }
-        // Evict expired vaults
-        if let Ok(mut vaults) = state.vaults.write() {
-            let now = Instant::now();
-            vaults
-                .retain(|_, entry| now.duration_since(entry.created_at).as_secs() < VAULT_TTL_SECS);
-        }
-    }
-
-    match (method, path) {
-        ("GET", "/health") => {
-            let resp = handle_health_full(state, 0);
-            (
-                "200 OK".to_string(),
-                serde_json::to_string(&resp).unwrap_or_default(),
-            )
-        }
-        ("GET", "/health/live") => ("200 OK".to_string(), r#"{"status":"ok"}"#.to_string()),
-        ("GET", "/health/ready") => {
-            if state.is_shutting_down.load(Ordering::SeqCst) {
-                (
-                    "503 Service Unavailable".to_string(),
-                    r#"{"status":"draining","is_ready":false}"#.to_string(),
-                )
-            } else {
-                (
-                    "200 OK".to_string(),
-                    r#"{"status":"ok","is_ready":true}"#.to_string(),
-                )
-            }
-        }
-        #[cfg(feature = "metrics")]
-        ("GET", "/metrics") => {
-            let encoder = prometheus::TextEncoder::new();
-            let metric_families = prometheus::gather();
-            match encoder.encode_to_string(&metric_families) {
-                Ok(output) => ("200 OK".to_string(), output),
-                Err(e) => {
-                    tracing::warn!("Failed to encode metrics: {}", e);
-                    ("500 Internal Server Error".to_string(), String::new())
-                }
-            }
-        }
-        #[cfg(not(feature = "metrics"))]
-        ("GET", "/metrics") => (
-            "501 Not Implemented".to_string(),
-            r#"{"detail":"Metrics feature not enabled"}"#.to_string(),
-        ),
-        ("POST", "/v1/scan") => match serde_json::from_str::<ScanRequest>(body) {
-            Ok(req) => match handle_scan(&req) {
-                Ok(resp) => (
-                    "200 OK".to_string(),
-                    serde_json::to_string(&resp).unwrap_or_default(),
-                ),
-                Err(e) => {
-                    tracing::warn!("Scan error: {}", e);
-                    (
-                        "400 Bad Request".to_string(),
-                        r#"{"detail":"Scan failed. Check input size and format."}"#.to_string(),
-                    )
-                }
-            },
-            Err(_e) => (
-                "422 Unprocessable Entity".to_string(),
-                r#"{"detail":"Invalid request body"}"#.to_string(),
-            ),
-        },
-        ("POST", "/v1/batch/scan") => match serde_json::from_str::<BatchScanRequest>(body) {
-            Ok(req) => match handle_batch_scan(&req) {
-                Ok(resp) => (
-                    "200 OK".to_string(),
-                    serde_json::to_string(&resp).unwrap_or_default(),
-                ),
-                Err(e) => {
-                    tracing::warn!("Batch scan error: {}", e);
-                    (
-                        "400 Bad Request".to_string(),
-                        r#"{"detail":"Batch scan failed. Check input size and format."}"#
-                            .to_string(),
-                    )
-                }
-            },
-            Err(_e) => (
-                "422 Unprocessable Entity".to_string(),
-                r#"{"detail":"Invalid request body"}"#.to_string(),
-            ),
-        },
-        ("POST", "/v1/patterns") => match serde_json::from_str::<PatternCreateRequest>(body) {
-            Ok(req) => {
-                // Enforce pattern length limit
-                if req.pattern.len() > MAX_PATTERN_LENGTH {
-                    return (
-                        "422 Unprocessable Entity".to_string(),
-                        serde_json::json!({"detail": format!(
-                            "Pattern too long: {} chars (max {})", req.pattern.len(), MAX_PATTERN_LENGTH
-                        )}).to_string(),
-                    );
-                }
-                // Enforce pattern count limit
-                if let Ok(patterns) = state.custom_patterns.read() {
-                    if patterns.len() >= MAX_CUSTOM_PATTERNS {
-                        return (
-                            "429 Too Many Requests".to_string(),
-                            serde_json::json!({"detail": format!(
-                                "Maximum custom patterns reached ({})", MAX_CUSTOM_PATTERNS
-                            )})
-                            .to_string(),
-                        );
-                    }
-                }
-                // Validate regex compiles
-                if regex::Regex::new(&req.pattern).is_err() {
-                    return (
-                        "422 Unprocessable Entity".to_string(),
-                        r#"{"detail":"Invalid regex pattern"}"#.to_string(),
-                    );
-                }
-                let resp = PatternResponse {
-                    name: req.name,
-                    pattern: req.pattern,
-                    category: req.category,
-                    confidence: req.confidence,
-                };
-                if let Ok(mut patterns) = state.custom_patterns.write() {
-                    patterns.push(resp.clone());
-                }
-                (
-                    "201 Created".to_string(),
-                    serde_json::to_string(&resp).unwrap_or_default(),
-                )
-            }
-            Err(e) => (
-                "422 Unprocessable Entity".to_string(),
-                serde_json::json!({"detail": e.to_string()}).to_string(),
-            ),
-        },
-        ("POST", "/v1/tokenize") => match serde_json::from_str::<TokenizeRequest>(body) {
-            Ok(req) => match handle_tokenize(&req, &state.vaults) {
-                Ok(resp) => (
-                    "200 OK".to_string(),
-                    serde_json::to_string(&resp).unwrap_or_default(),
-                ),
-                Err(e) => {
-                    tracing::warn!("Tokenize error: {}", e);
-                    (
-                        "400 Bad Request".to_string(),
-                        r#"{"detail":"Tokenization failed"}"#.to_string(),
-                    )
-                }
-            },
-            Err(_e) => (
-                "422 Unprocessable Entity".to_string(),
-                r#"{"detail":"Invalid request body"}"#.to_string(),
-            ),
-        },
-        ("POST", "/v1/detokenize") => match serde_json::from_str::<DetokenizeRequest>(body) {
-            Ok(req) => match handle_detokenize(&req, &state.vaults) {
-                Ok(resp) => (
-                    "200 OK".to_string(),
-                    serde_json::to_string(&resp).unwrap_or_default(),
-                ),
-                Err(e) => {
-                    tracing::warn!("Detokenize error: {}", e);
-                    (
-                        "400 Bad Request".to_string(),
-                        r#"{"detail":"Detokenization failed"}"#.to_string(),
-                    )
-                }
-            },
-            Err(_e) => (
-                "422 Unprocessable Entity".to_string(),
-                r#"{"detail":"Invalid request body"}"#.to_string(),
-            ),
-        },
-        ("POST", "/v1/obfuscate") => match serde_json::from_str::<ScanRequest>(body) {
-            Ok(req) => match handle_obfuscate(&req) {
-                Ok(resp) => (
-                    "200 OK".to_string(),
-                    serde_json::to_string(&resp).unwrap_or_default(),
-                ),
-                Err(e) => {
-                    tracing::warn!("Obfuscate error: {}", e);
-                    (
-                        "400 Bad Request".to_string(),
-                        r#"{"detail":"Obfuscation failed"}"#.to_string(),
-                    )
-                }
-            },
-            Err(_e) => (
-                "422 Unprocessable Entity".to_string(),
-                r#"{"detail":"Invalid request body"}"#.to_string(),
-            ),
-        },
-        ("GET", "/v1/patterns") => {
-            let patterns = state
-                .custom_patterns
-                .read()
-                .map(|p| p.clone())
-                .unwrap_or_default();
-            (
-                "200 OK".to_string(),
-                serde_json::to_string(&patterns).unwrap_or_default(),
-            )
-        }
-        _ => (
-            "404 Not Found".to_string(),
-            r#"{"detail":"Not found"}"#.to_string(),
-        ),
-    }
-}
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Internal helpers
 // ---------------------------------------------------------------------------
 
 fn build_guard(req: &ScanRequest) -> Result<InputGuard, String> {
@@ -1086,19 +519,326 @@ fn scan_result_to_response(result: &ScanResult) -> ScanResponse {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Server (requires async-support feature) — hyper-based HTTP/1.1 + HTTP/2
+// ---------------------------------------------------------------------------
+
 #[cfg(feature = "async-support")]
-fn simple_uuid() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    format!(
-        "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
-        rng.gen::<u32>(),
-        rng.gen::<u16>(),
-        rng.gen::<u16>() & 0x0FFF,
-        (rng.gen::<u16>() & 0x3FFF) | 0x8000,
-        rng.gen::<u64>() & 0xFFFFFFFFFFFF,
-    )
+const MAX_REQUEST_BODY_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+
+/// Start the API server with HTTP/1.1 and HTTP/2 support via hyper.
+#[cfg(feature = "async-support")]
+pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
+    use hyper::server::conn::auto::Builder as HttpBuilder;
+    use hyper::service::service_fn;
+    use hyper::{Request, Response, StatusCode};
+    use hyper::body::Incoming;
+    use hyper_util::rt::TokioIo;
+    use http_body_util::{BodyExt, Full};
+    use bytes::Bytes;
+    use tokio::net::TcpListener;
+
+    let addr = format!("{}:{}", config.host, config.port);
+    let listener = TcpListener::bind(&addr).await?;
+    tracing::info!("dlpscan API server listening on {} (HTTP/1.1 + HTTP/2)", addr);
+
+    // Load API key-to-role mapping
+    let api_key_roles: HashMap<String, crate::rbac::Role> = std::env::var("DLPSCAN_API_KEY_ROLES")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|pair| {
+            let mut parts = pair.splitn(2, ':');
+            let key = parts.next()?.trim().to_string();
+            let role_str = parts.next()?.trim().to_lowercase();
+            let role = match role_str.as_str() {
+                "admin" => crate::rbac::Role::Admin,
+                "analyst" => crate::rbac::Role::Analyst,
+                "operator" => crate::rbac::Role::Operator,
+                _ => crate::rbac::Role::Viewer,
+            };
+            if key.is_empty() { None } else { Some((key, role)) }
+        })
+        .collect();
+
+    let state = Arc::new(AppState {
+        api_key: config.api_key,
+        rate_limiter: RwLock::new(RateLimiter::new(config.rate_limit, 60)),
+        vaults: RwLock::new(HashMap::new()),
+        custom_patterns: RwLock::new(Vec::new()),
+        start_time: Instant::now(),
+        is_shutting_down: std::sync::atomic::AtomicBool::new(false),
+        api_key_roles,
+    });
+
+    // Graceful shutdown signal
+    let shutdown = async {
+        #[cfg(unix)]
+        {
+            let mut sigterm = tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::terminate(),
+            ).expect("failed to install SIGTERM handler");
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {},
+                _ = sigterm.recv() => {},
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            tokio::signal::ctrl_c().await.ok();
+        }
+    };
+    tokio::pin!(shutdown);
+
+    let graceful = hyper_util::server::graceful::GracefulShutdown::new();
+
+    loop {
+        tokio::select! {
+            result = listener.accept() => {
+                let (stream, peer_addr) = match result {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        tracing::warn!("Accept error: {}", e);
+                        continue;
+                    }
+                };
+                let state = state.clone();
+                let io = TokioIo::new(stream);
+                let peer = peer_addr.to_string();
+
+                let svc = service_fn(move |req: Request<Incoming>| {
+                    let state = state.clone();
+                    let peer = peer.clone();
+                    async move {
+                        let request_start = Instant::now();
+                        let request_id = generate_id();
+                        let method = req.method().to_string();
+                        let path = req.uri().path().to_string();
+
+                        let span = tracing::info_span!("http_request",
+                            request_id = %request_id,
+                            method = %method,
+                            path = %path,
+                            peer = %peer,
+                        );
+                        let _enter = span.enter();
+
+                        // Extract API key header before consuming body
+                        let api_key_header = req.headers()
+                            .get("x-api-key")
+                            .and_then(|v| v.to_str().ok())
+                            .map(|s| s.to_string());
+
+                        // Read body with size limit
+                        let body_bytes = match req.collect().await {
+                            Ok(collected) => {
+                                let b = collected.to_bytes();
+                                if b.len() > MAX_REQUEST_BODY_SIZE {
+                                    return Ok::<_, hyper::Error>(
+                                        build_hyper_response(StatusCode::PAYLOAD_TOO_LARGE,
+                                            r#"{"detail":"Request body too large"}"#,
+                                            &request_id)
+                                    );
+                                }
+                                b
+                            }
+                            Err(_) => bytes::Bytes::new(),
+                        };
+
+                        let body_str = String::from_utf8_lossy(&body_bytes).to_string();
+
+                        let (status_code, response_body) = hyper_route_request(
+                            &method, &path, &body_str, api_key_header.as_deref(),
+                            &state, &peer,
+                        );
+
+                        let duration_ms = request_start.elapsed().as_secs_f64() * 1000.0;
+                        tracing::info!(
+                            status = status_code.as_u16(),
+                            duration_ms = duration_ms,
+                            "request completed"
+                        );
+
+                        Ok(build_hyper_response(status_code, &response_body, &request_id))
+                    }
+                });
+
+                let conn = HttpBuilder::new(hyper_util::rt::TokioExecutor::new())
+                    .serve_connection_with_upgrades(io, svc);
+                let conn = graceful.watch(conn);
+
+                tokio::spawn(async move {
+                    if let Err(e) = conn.await {
+                        tracing::debug!("Connection error: {}", e);
+                    }
+                });
+            }
+            _ = &mut shutdown => {
+                tracing::info!("Shutdown signal received, draining connections...");
+                state.is_shutting_down.store(true, Ordering::SeqCst);
+                tokio::pin!(let shutdown_future = graceful.shutdown());
+                tokio::select! {
+                    _ = &mut shutdown_future => {
+                        tracing::info!("All connections drained, shutting down");
+                    }
+                    _ = tokio::time::sleep(tokio::time::Duration::from_secs(25)) => {
+                        tracing::warn!("Drain timeout reached, forcing shutdown");
+                    }
+                }
+                return Ok(());
+            }
+        }
+    }
 }
+
+/// Build an HTTP response with security headers.
+#[cfg(feature = "async-support")]
+fn build_hyper_response(
+    status: hyper::StatusCode,
+    body: &str,
+    request_id: &str,
+) -> hyper::Response<http_body_util::Full<bytes::Bytes>> {
+    hyper::Response::builder()
+        .status(status)
+        .header("content-type", "application/json")
+        .header("x-request-id", request_id)
+        .header("x-content-type-options", "nosniff")
+        .header("x-frame-options", "DENY")
+        .header("content-security-policy", "default-src 'none'")
+        .header("cache-control", "no-store")
+        .header("x-xss-protection", "0")
+        .body(http_body_util::Full::new(bytes::Bytes::from(body.to_string())))
+        .unwrap_or_else(|_| hyper::Response::new(http_body_util::Full::new(bytes::Bytes::from("{}"))))
+}
+
+/// Route an HTTP request to the appropriate handler.
+#[cfg(feature = "async-support")]
+fn hyper_route_request(
+    method: &str,
+    path: &str,
+    body: &str,
+    api_key_header: Option<&str>,
+    state: &AppState,
+    client_ip: &str,
+) -> (hyper::StatusCode, String) {
+    use hyper::StatusCode;
+
+    // Auth check (exempt health and metrics)
+    let auth_exempt = path == "/health" || path == "/health/live"
+        || path == "/health/ready" || path == "/metrics";
+    if state.api_key.is_some() && !auth_exempt {
+        if let Some(expected) = &state.api_key {
+            match api_key_header {
+                Some(provided) if verify_api_key(expected, provided) => {}
+                _ => return (StatusCode::UNAUTHORIZED, r#"{"detail":"Invalid or missing API key"}"#.to_string()),
+            }
+        }
+    }
+
+    // RBAC
+    let role = crate::rbac::resolve_role("", api_key_header, &state.api_key_roles);
+    let required_perm = match (method, path) {
+        ("POST", "/v1/scan") => Some(crate::rbac::Permission::Scan),
+        ("POST", "/v1/batch/scan") => Some(crate::rbac::Permission::BatchScan),
+        ("POST", "/v1/patterns") => Some(crate::rbac::Permission::ManagePatterns),
+        ("POST", "/v1/tokenize") => Some(crate::rbac::Permission::Scan),
+        ("POST", "/v1/detokenize") => Some(crate::rbac::Permission::Detokenize),
+        ("POST", "/v1/obfuscate") => Some(crate::rbac::Permission::Scan),
+        _ => None,
+    };
+    if let Some(perm) = required_perm {
+        if !crate::rbac::role_has_permission(role, perm) {
+            return (StatusCode::FORBIDDEN, r#"{"detail":"Insufficient permissions"}"#.to_string());
+        }
+    }
+
+    // Rate limiting
+    if !auth_exempt {
+        if let Ok(mut rl) = state.rate_limiter.write() {
+            if !rl.check_client(client_ip) {
+                return (StatusCode::TOO_MANY_REQUESTS, r#"{"detail":"Rate limit exceeded"}"#.to_string());
+            }
+            rl.cleanup();
+        }
+    }
+
+    // Route dispatch
+    match (method, path) {
+        ("GET", "/health") => {
+            let resp = handle_health_full(state, 0);
+            (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default())
+        }
+        ("GET", "/health/live") => (StatusCode::OK, r#"{"status":"ok"}"#.to_string()),
+        ("GET", "/health/ready") => {
+            if state.is_shutting_down.load(Ordering::SeqCst) {
+                (StatusCode::SERVICE_UNAVAILABLE, r#"{"status":"draining","is_ready":false}"#.to_string())
+            } else {
+                (StatusCode::OK, r#"{"status":"ok","is_ready":true}"#.to_string())
+            }
+        }
+        #[cfg(feature = "metrics")]
+        ("GET", "/metrics") => {
+            let encoder = prometheus::TextEncoder::new();
+            match encoder.encode_to_string(&prometheus::gather()) {
+                Ok(output) => (StatusCode::OK, output),
+                Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, String::new()),
+            }
+        }
+        #[cfg(not(feature = "metrics"))]
+        ("GET", "/metrics") => (StatusCode::NOT_IMPLEMENTED, r#"{"detail":"Metrics not enabled"}"#.to_string()),
+        ("POST", "/v1/scan") => match serde_json::from_str::<ScanRequest>(body) {
+            Ok(req) => match handle_scan(&req) {
+                Ok(resp) => (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default()),
+                Err(e) => { tracing::warn!("Scan error: {}", e); (StatusCode::BAD_REQUEST, r#"{"detail":"Scan failed"}"#.to_string()) }
+            },
+            Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+        },
+        ("POST", "/v1/batch/scan") => match serde_json::from_str::<BatchScanRequest>(body) {
+            Ok(req) => match handle_batch_scan(&req) {
+                Ok(resp) => (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default()),
+                Err(e) => { tracing::warn!("Batch error: {}", e); (StatusCode::BAD_REQUEST, r#"{"detail":"Batch scan failed"}"#.to_string()) }
+            },
+            Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+        },
+        ("POST", "/v1/tokenize") => match serde_json::from_str::<TokenizeRequest>(body) {
+            Ok(req) => match handle_tokenize(&req, &state.vaults) {
+                Ok(resp) => (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default()),
+                Err(e) => { tracing::warn!("Tokenize error: {}", e); (StatusCode::BAD_REQUEST, r#"{"detail":"Tokenization failed"}"#.to_string()) }
+            },
+            Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+        },
+        ("POST", "/v1/detokenize") => match serde_json::from_str::<DetokenizeRequest>(body) {
+            Ok(req) => match handle_detokenize(&req, &state.vaults) {
+                Ok(resp) => (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default()),
+                Err(e) => { tracing::warn!("Detokenize error: {}", e); (StatusCode::BAD_REQUEST, r#"{"detail":"Detokenization failed"}"#.to_string()) }
+            },
+            Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+        },
+        ("POST", "/v1/obfuscate") => match serde_json::from_str::<ScanRequest>(body) {
+            Ok(req) => match handle_obfuscate(&req) {
+                Ok(resp) => (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default()),
+                Err(e) => { tracing::warn!("Obfuscate error: {}", e); (StatusCode::BAD_REQUEST, r#"{"detail":"Obfuscation failed"}"#.to_string()) }
+            },
+            Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+        },
+        ("POST", "/v1/patterns") => match serde_json::from_str::<PatternCreateRequest>(body) {
+            Ok(req) => {
+                if regex::Regex::new(&req.pattern).is_err() {
+                    return (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid regex"}"#.to_string());
+                }
+                let resp = PatternResponse { name: req.name, pattern: req.pattern, category: req.category, confidence: req.confidence };
+                if let Ok(mut patterns) = state.custom_patterns.write() { patterns.push(resp.clone()); }
+                (StatusCode::CREATED, serde_json::to_string(&resp).unwrap_or_default())
+            }
+            Err(e) => (StatusCode::UNPROCESSABLE_ENTITY, serde_json::json!({"detail": e.to_string()}).to_string()),
+        },
+        ("GET", "/v1/patterns") => {
+            let patterns = state.custom_patterns.read().map(|p| p.clone()).unwrap_or_default();
+            (StatusCode::OK, serde_json::to_string(&patterns).unwrap_or_default())
+        }
+        _ => (StatusCode::NOT_FOUND, r#"{"detail":"Not found"}"#.to_string()),
+    }
+}
+
 
 // ---------------------------------------------------------------------------
 // Tests

@@ -29,7 +29,13 @@ clap = { version = "4", features = ["derive"] }
 rayon = "1"
 
 # Async runtime (for webhooks, SIEM, server)
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "signal", "time"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "signal", "time", "net"], optional = true }
+
+# HTTP server (supports HTTP/1.1 and HTTP/2)
+hyper = { version = "1", features = ["http1", "http2", "server"], optional = true }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto", "server-graceful"], optional = true }
+http-body-util = { version = "0.1", optional = true }
+bytes = { version = "1", optional = true }
 
 # HTTP client (webhooks, SIEM adapters)
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
@@ -92,7 +98,7 @@ office = ["dep:calamine", "dep:quick-xml"]
 archives = ["dep:sevenz-rust", "dep:unrar"]
 data-formats = ["dep:parquet", "dep:arrow", "dep:rusqlite"]
 msg = ["dep:cfb"]
-async-support = ["dep:tokio", "dep:reqwest"]
+async-support = ["dep:tokio", "dep:reqwest", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:bytes"]
 tls = ["async-support", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile"]
 yaml-config = ["dep:serde_yaml"]
 python = ["dep:pyo3"]
