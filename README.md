@@ -105,13 +105,45 @@ println!("{}", result.redacted_text.unwrap()); // "card: 4758286118069724"
 
 ### QR code and barcode scanning
 
-With the `barcode` feature, images are decoded for embedded QR codes,
-Data Matrix, UPC, EAN, Code 128, and other 2D/1D barcodes. Decoded text
-is scanned for sensitive data patterns.
+With the `barcode` feature, image files are automatically decoded for
+embedded barcodes and QR codes. Any decoded text is scanned for sensitive
+data patterns -- catching credit cards, SSNs, API keys, or other data
+hidden in 2D codes.
 
 ```bash
 cargo build --release --features barcode
 ```
+
+**Supported formats:**
+
+| Type | Formats |
+|---|---|
+| 2D codes | QR Code, Data Matrix, Aztec, PDF417 |
+| 1D codes | UPC-A, UPC-E, EAN-8, EAN-13, Code 39, Code 128, ITF, Codabar |
+| Image types | PNG, JPG, JPEG, GIF, BMP, TIFF, WebP |
+
+**Usage:**
+
+```rust
+use dlpscan::extractors::extract_text;
+
+// Automatically decodes barcodes from images when barcode feature is enabled
+let result = extract_text("boarding-pass.png")?;
+// result.text contains decoded barcode content, scanned for patterns
+// result.metadata["barcode_count"] = "3"
+// result.metadata["formats"] = "QR Code, PDF417"
+```
+
+```bash
+# CLI: scan an image for barcodes containing sensitive data
+dlpscan boarding-pass.png
+
+# Scan a directory of scanned documents
+dlpscan --features barcode ./scanned-forms/
+```
+
+**Safety limits:** 20 MB max image size, 100 barcodes per image,
+4 KB max decoded text per barcode.
 
 ### File type controls
 
