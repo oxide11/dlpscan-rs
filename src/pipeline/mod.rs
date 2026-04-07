@@ -267,16 +267,31 @@ fn detect_format(path: &Path) -> String {
     }
 }
 
-/// Collect all text files in a directory.
+/// Maximum files the pipeline will collect from a directory tree.
+const MAX_PIPELINE_FILES: usize = 100_000;
+
+/// Collect all text files in a directory, bounded to [`MAX_PIPELINE_FILES`].
 fn collect_files(dir: &Path, recursive: bool) -> Vec<PathBuf> {
     let mut files = Vec::new();
+    collect_files_bounded(dir, recursive, &mut files);
+    files
+}
 
+fn collect_files_bounded(dir: &Path, recursive: bool, files: &mut Vec<PathBuf>) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
-        Err(_) => return files,
+        Err(_) => return,
     };
 
     for entry in entries.flatten() {
+        if files.len() >= MAX_PIPELINE_FILES {
+            tracing::warn!(
+                "Pipeline file limit ({}) reached, skipping remaining files",
+                MAX_PIPELINE_FILES
+            );
+            return;
+        }
+
         let path = entry.path();
 
         if path
@@ -289,14 +304,12 @@ fn collect_files(dir: &Path, recursive: bool) -> Vec<PathBuf> {
 
         if path.is_dir() {
             if recursive {
-                files.extend(collect_files(&path, true));
+                collect_files_bounded(&path, true, files);
             }
         } else if path.is_file() {
             files.push(path);
         }
     }
-
-    files
 }
 
 /// Export results as JSON.

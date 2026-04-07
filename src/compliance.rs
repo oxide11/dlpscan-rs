@@ -158,15 +158,7 @@ impl ComplianceReporter {
             let avg_conf: f64 = group.iter().map(|m| m.confidence).sum::<f64>() / count as f64;
             let sample = group
                 .first()
-                .map(|m| {
-                    let text = &m.text;
-                    if text.len() > 20 {
-                        let truncated: String = text.chars().take(17).collect();
-                        format!("{truncated}...")
-                    } else {
-                        text.clone()
-                    }
-                })
+                .map(|m| m.redacted_text())
                 .unwrap_or_default();
 
             findings_rows.push(FindingRow {
