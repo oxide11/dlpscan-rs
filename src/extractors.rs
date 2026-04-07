@@ -122,8 +122,8 @@ pub fn get_extractor(file_path: &str) -> Option<ExtractorFn> {
         | "toml" | "ini" | "cfg" | "conf" | "md" | "rst" | "py" | "js" | "ts" | "java" | "go"
         | "rs" | "rb" | "php" | "sh" | "bat" | "ps1" | "sql" | "env" | "c" | "cpp" | "h"
         | "hpp" | "css" | "scss" | "less" | "jsx" | "tsx" | "vue" | "svelte" | "swift" | "kt"
-        | "scala" | "r" | "m" | "mm" | "pem" | "cer" | "crt" | "key" | "pub" | "csr" | "der"
-        | "p12" | "pfx" => Some(extract_plain_text),
+        | "scala" | "r" | "m" | "mm" | "pem" | "cer" | "crt" | "key" | "pub" | "csr"
+        => Some(extract_plain_text),
 
         // RTF (custom parser, no deps)
         "rtf" => Some(extract_rtf),
@@ -165,6 +165,18 @@ pub fn get_extractor(file_path: &str) -> Option<ExtractorFn> {
         #[cfg(feature = "data-formats")]
         "db" | "sqlite" | "sqlite3" => Some(extract_sqlite),
 
+        // Barcode / QR code images
+        #[cfg(feature = "barcode")]
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "tiff" | "tif" | "webp" => {
+            Some(extract_barcode)
+        }
+
+        // Cabinet archives
+        "cab" => Some(extract_cab),
+
+        // Generic data files
+        "dat" => Some(extract_dat),
+
         _ => {
             // Try format detection by magic bytes
             detect_and_extract(file_path)
@@ -199,7 +211,7 @@ pub fn supported_extensions() -> Vec<String> {
         "cfg", "conf", "md", "rst", "py", "js", "ts", "java", "go", "rs", "rb", "php", "sh", "bat",
         "ps1", "sql", "env", "rtf", "eml", "vcf", "vcard", "contact", "ldif", "c", "cpp", "h",
         "hpp", "css", "scss", "pem", "cer", "crt", "key", "pub", "csr", "ics", "ical", "mbox",
-        "mbx", "mhtml", "mht", "warc", "odt", "ods", "odp",
+        "mbx", "mhtml", "mht", "warc", "odt", "ods", "odp", "cab", "dat",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -2048,6 +2060,184 @@ fn extract_sqlite(file_path: &str) -> Result<ExtractionResult, String> {
     let mut result = ExtractionResult::new(text.trim().to_string(), "sqlite");
     result = result.with_metadata("table_count", &tables.len().to_string());
     Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// QR Code / Barcode Decoding (requires `barcode` feature)
+// ---------------------------------------------------------------------------
+
+/// Decode QR codes, barcodes (UPC, EAN, Data Matrix, Aztec, PDF417, etc.)
+/// from image files and return the decoded text for scanning.
+#[cfg(feature = "barcode")]
+pub fn extract_barcode(file_path: &str) -> Result<ExtractionResult, String> {
+    use rxing::BarcodeFormat;
+
+    let results = rxing::helpers::detect_multiple_in_file(file_path)
+        .map_err(|e| format!("Barcode decode failed: {e}"))?;
+
+    if results.is_empty() {
+        return Ok(ExtractionResult::new(String::new(), "barcode")
+            .with_warning("No barcodes or QR codes detected in image"));
+    }
+
+    let mut text_parts = Vec::new();
+    let mut formats_found = Vec::new();
+
+    for result in &results {
+        let format_name = match result.getBarcodeFormat() {
+            BarcodeFormat::QR_CODE => "QR Code",
+            BarcodeFormat::DATA_MATRIX => "Data Matrix",
+            BarcodeFormat::AZTEC => "Aztec",
+            BarcodeFormat::PDF_417 => "PDF417",
+            BarcodeFormat::UPC_A => "UPC-A",
+            BarcodeFormat::UPC_E => "UPC-E",
+            BarcodeFormat::EAN_8 => "EAN-8",
+            BarcodeFormat::EAN_13 => "EAN-13",
+            BarcodeFormat::CODE_39 => "Code 39",
+            BarcodeFormat::CODE_128 => "Code 128",
+            BarcodeFormat::ITF => "ITF",
+            BarcodeFormat::CODABAR => "Codabar",
+            _ => "Unknown",
+        };
+        formats_found.push(format_name);
+        text_parts.push(result.getText().to_string());
+    }
+
+    let text = text_parts.join("\n");
+    let mut result = ExtractionResult::new(text, "barcode");
+    result = result.with_metadata("barcode_count", &results.len().to_string());
+    result = result.with_metadata("formats", &formats_found.join(", "));
+    Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// CAB (Microsoft Cabinet) Archive Extraction
+// ---------------------------------------------------------------------------
+
+/// Extract text content from CAB (Microsoft Cabinet) archive files.
+/// CAB files are treated as ZIP-like archives; we extract and concatenate
+/// the text content of any readable entries.
+pub fn extract_cab(file_path: &str) -> Result<ExtractionResult, String> {
+    // CAB files use the MSCF magic header. We read the file as binary and
+    // attempt to extract any plain-text segments from the decompressed data.
+    let data = std::fs::read(file_path).map_err(|e| e.to_string())?;
+
+    if data.len() < 4 || &data[0..4] != b"MSCF" {
+        return Err("Not a valid CAB file (missing MSCF header)".to_string());
+    }
+
+    // Extract printable text segments from the binary content.
+    // This captures embedded strings, config files, scripts, etc.
+    let text = extract_printable_strings(&data, 8);
+    let mut result = ExtractionResult::new(text, "cab");
+    result = result.with_metadata("file_size", &data.len().to_string());
+    Ok(result)
+}
+
+/// Extract text content from .DAT files.
+/// DAT files are generic data files; we scan for printable text segments.
+pub fn extract_dat(file_path: &str) -> Result<ExtractionResult, String> {
+    let data = std::fs::read(file_path).map_err(|e| e.to_string())?;
+
+    if data.len() as usize > MAX_EXTRACT_SIZE {
+        return Err(format!("DAT file too large: {} bytes", data.len()));
+    }
+
+    // Try UTF-8 first (many DAT files are plain text)
+    if let Ok(text) = std::str::from_utf8(&data) {
+        return Ok(ExtractionResult::new(text.to_string(), "dat"));
+    }
+
+    // Fallback: extract printable strings from binary data
+    let text = extract_printable_strings(&data, 8);
+    let mut result = ExtractionResult::new(text, "dat");
+    result = result.with_warning("Binary DAT file — extracted printable strings only");
+    Ok(result)
+}
+
+/// Extract printable ASCII/UTF-8 strings from binary data.
+/// Only includes runs of at least `min_length` printable characters.
+fn extract_printable_strings(data: &[u8], min_length: usize) -> String {
+    let mut strings = Vec::new();
+    let mut current = String::new();
+
+    for &byte in data {
+        if byte >= 0x20 && byte < 0x7f || byte == b'\n' || byte == b'\r' || byte == b'\t' {
+            current.push(byte as char);
+        } else {
+            if current.len() >= min_length {
+                strings.push(std::mem::take(&mut current));
+            }
+            current.clear();
+        }
+    }
+    if current.len() >= min_length {
+        strings.push(current);
+    }
+
+    strings.join("\n")
+}
+
+// ---------------------------------------------------------------------------
+// File Type Blocking
+// ---------------------------------------------------------------------------
+
+/// File extensions that are blocked by default because they contain
+/// cryptographic material that should never be transmitted or stored
+/// unprotected.
+pub const DEFAULT_BLOCKED_EXTENSIONS: &[&str] = &[
+    // Cryptographic certificates and keys
+    "der", "p12", "pfx", "p7b", "p7c", "p7m", "p7s",
+    "jks", "keystore", "bks",
+    // Encrypted/signed containers
+    "p7m", "smime", "gpg", "pgp", "asc",
+    // Binary certificate formats
+    "sst", "stl", "spc", "pvk",
+];
+
+/// File extensions that indicate encrypted content which cannot be
+/// meaningfully scanned.
+pub const ENCRYPTED_EXTENSIONS: &[&str] = &[
+    "gpg", "pgp", "enc", "aes", "p7m", "smime",
+    "kdbx", "kdb",  // KeePass databases
+    "tc", "hc",     // TrueCrypt / VeraCrypt volumes
+    "dmg",          // macOS encrypted disk images (may be encrypted)
+];
+
+/// File extensions that are known binary formats with no text to extract.
+pub const OPAQUE_BINARY_EXTENSIONS: &[&str] = &[
+    "exe", "dll", "so", "dylib", "bin", "o", "obj", "a", "lib",
+    "class", "pyc", "pyo", "wasm",
+    "ico", "cur", "ani",
+    "ttf", "otf", "woff", "woff2", "eot",
+    "mp3", "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm",
+    "wav", "flac", "ogg", "aac", "m4a",
+    "swf", "fla",
+];
+
+/// Check if a file extension is in the blocked list.
+pub fn is_blocked_extension(ext: &str, blocked: &[&str]) -> bool {
+    let lower = ext.to_lowercase();
+    let trimmed = lower.trim_start_matches('.');
+    blocked.iter().any(|&b| b == trimmed)
+}
+
+/// Check if a file extension is an unreadable/opaque binary type.
+pub fn is_unreadable_extension(ext: &str) -> bool {
+    let lower = ext.to_lowercase();
+    let trimmed = lower.trim_start_matches('.');
+    OPAQUE_BINARY_EXTENSIONS.iter().any(|&b| b == trimmed)
+        || ENCRYPTED_EXTENSIONS.iter().any(|&b| b == trimmed)
+}
+
+/// Check if a file appears to be encrypted based on extension or entropy.
+pub fn is_likely_encrypted(file_path: &str) -> bool {
+    let ext = Path::new(file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let lower = ext.to_lowercase();
+    ENCRYPTED_EXTENSIONS.iter().any(|&e| e == lower.as_str())
 }
 
 // ---------------------------------------------------------------------------

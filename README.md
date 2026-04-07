@@ -41,6 +41,7 @@ cargo run --release --bin benchmark
 | `archives` | No | RAR and 7z archive extraction via `unrar` + `sevenz-rust` |
 | `data-formats` | No | Parquet, SQLite extraction via `parquet` + `arrow` + `rusqlite` |
 | `msg` | No | Outlook MSG extraction via `cfb` |
+| `barcode` | No | QR code and barcode decoding via `rxing` + `image` |
 | `async-support` | No | Async HTTP server and webhooks via `tokio` + `reqwest` |
 | `python` | No | Python bindings via `pyo3` |
 | `full` | No | All optional features |
@@ -101,6 +102,29 @@ println!("{}", result.redacted_text.unwrap()); // "card: 4758286118069724"
 | `Action::Flag` | Returns findings without modifying text |
 | `Action::Tokenize` | Replaces with reversible tokens |
 | `Action::Obfuscate` | Replaces with realistic fake data (Luhn-valid CCs, etc.) |
+
+### QR code and barcode scanning
+
+With the `barcode` feature, images are decoded for embedded QR codes,
+Data Matrix, UPC, EAN, Code 128, and other 2D/1D barcodes. Decoded text
+is scanned for sensitive data patterns.
+
+```bash
+cargo build --release --features barcode
+```
+
+### File type controls
+
+Cryptographic certificate files (`.der`, `.p12`, `.pfx`, `.p7m`, etc.)
+are blocked by default in the pipeline. Configure via `blocked_extensions`
+in your config file, or use `block_unreadable` to also block unknown
+binary and encrypted file types:
+
+```toml
+# .dlpscanrc or pyproject.toml [tool.dlpscan]
+blocked_extensions = ["der", "p12", "pfx", "p7m", "jks"]
+block_unreadable = true  # also blocks .exe, .dll, .gpg, .kdbx, etc.
+```
 
 ### Baseline-only mode
 
@@ -194,7 +218,7 @@ Full reference:
 | `pipeline` | Concurrent file processing pipeline |
 | `batch` | CSV, JSON/JSONL parallel batch scanning |
 | `streaming` | Streaming scanner with chunk buffering |
-| `extractors` | Text extraction from 20+ formats (DOCX, XLSX, PDF, EML, MBOX, ICS, WARC, ZIP, RAR, 7z, Parquet, SQLite, etc.) |
+| `extractors` | Text extraction from 20+ formats (DOCX, XLSX, PDF, EML, MBOX, ICS, WARC, ZIP, RAR, 7z, CAB, DAT, Parquet, SQLite, QR/barcode, etc.) |
 | `cache` | Thread-safe LRU scan cache with TTL eviction |
 | `config` | Config file loading (pyproject.toml, .dlpscanrc) |
 

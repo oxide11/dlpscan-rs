@@ -34,6 +34,16 @@ pub struct Config {
     pub ignore_paths: Vec<String>,
     #[serde(default = "default_context_backend")]
     pub context_backend: String,
+    /// File extensions to block during pipeline scanning. Files with these
+    /// extensions are flagged and skipped. Defaults to cryptographic certificate
+    /// formats (DER, P12, PFX, P7M, etc.) via `DEFAULT_BLOCKED_EXTENSIONS`.
+    #[serde(default = "default_blocked_extensions")]
+    pub blocked_extensions: Vec<String>,
+    /// When true, block files with unknown or opaque binary extensions
+    /// (executables, compiled objects, media) and encrypted containers
+    /// (GPG, KeePass, VeraCrypt). Default: false.
+    #[serde(default)]
+    pub block_unreadable: bool,
 }
 
 fn default_true() -> bool {
@@ -47,6 +57,12 @@ fn default_format() -> String {
 }
 fn default_context_backend() -> String {
     "regex".to_string()
+}
+fn default_blocked_extensions() -> Vec<String> {
+    crate::extractors::DEFAULT_BLOCKED_EXTENSIONS
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 impl Default for Config {
@@ -62,6 +78,8 @@ impl Default for Config {
             ignore_patterns: vec![],
             ignore_paths: vec![],
             context_backend: "regex".to_string(),
+            blocked_extensions: default_blocked_extensions(),
+            block_unreadable: false,
         }
     }
 }
