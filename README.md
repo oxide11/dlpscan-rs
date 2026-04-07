@@ -4,7 +4,7 @@ High-performance DLP scanner written in Rust. Detects, redacts, and protects
 sensitive data with exceptional throughput.
 
 **560 patterns** across **126 categories** — full parity with the Python version.
-**17,000+ lines** of Rust across 37 modules. **305 tests** passing.
+**17,000+ lines** of Rust across 37 modules. **331 tests** passing.
 
 ## Performance
 
@@ -376,8 +376,13 @@ dlpscan is hardened for enterprise deployment in regulated environments
   length, preventing offset corruption in multi-byte text
 - **Constant-time EDM matching** -- Exact Data Match uses XOR comparison
   across all registered hashes (no timing leak)
-- **Luhn structural validation** -- minimum 12 digits, rejects all-same-digit
-  sequences
+- **Structural validators** -- SWIFT/BIC (ISO 3166 country code + 400-word
+  false-positive filter), CUSIP/SEDOL (check digit), Australia TFN (weighted
+  checksum), SSN (area code rules), Luhn (min 12 digits, same-digit rejection)
+- **Context gating** -- low-specificity patterns (Account Balance, Ticker
+  Symbol, CUSIP, SEDOL, Teller ID) require nearby keywords to fire
+- **Corrupted file recovery** -- corrupted ZIP/DOCX falls back to raw byte
+  scanning; binary files with unknown extensions get printable string extraction
 - **Token vault TTL** -- vaults expire after 1 hour with panic-safe background
   eviction; detokenize rejects expired vaults
 - **Tenant-isolated caching** -- `key_with_namespace()` prevents cross-tenant
