@@ -143,12 +143,15 @@ impl Pipeline {
     /// Process a single file.
     pub fn process_file(&self, path: &Path) -> PipelineResult {
         let start = Instant::now();
+        // Resolve symlinks before blocking check to prevent bypass via safe-named symlinks
+        let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let file_path = path.display().to_string();
 
-        // Check blocked extensions (checks ALL extensions in filename, not just last)
+        // Check blocked extensions on RESOLVED path (checks ALL extensions, not just last)
         {
+            let resolved_str = resolved.display().to_string();
             let blocked_refs: Vec<&str> = self.blocked_extensions.iter().map(|s| s.as_str()).collect();
-            if crate::extractors::is_path_blocked(&file_path, &blocked_refs) {
+            if crate::extractors::is_path_blocked(&resolved_str, &blocked_refs) {
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("unknown");
                 return PipelineResult {
                     file_path,
@@ -161,7 +164,7 @@ impl Pipeline {
                 };
             }
             if self.block_unreadable {
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                if let Some(ext) = resolved.extension().and_then(|e| e.to_str()) {
                     if crate::extractors::is_unreadable_extension(ext) {
                         return PipelineResult {
                             file_path,

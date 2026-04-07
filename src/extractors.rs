@@ -2267,15 +2267,18 @@ pub fn is_blocked_extension(ext: &str, blocked: &[&str]) -> bool {
 
 /// Check if any extension in a file path (including double extensions) is blocked.
 /// For example, `secret.der.txt` checks both "txt" and "der".
+/// Empty segments and empty blocked entries are ignored.
 pub fn is_path_blocked(file_path: &str, blocked: &[&str]) -> bool {
     let name = Path::new(file_path)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("");
-    // Check all dot-separated segments as potential extensions
     for segment in name.split('.').skip(1) {
+        if segment.is_empty() {
+            continue;
+        }
         let lower = segment.to_lowercase();
-        if blocked.iter().any(|&b| b == lower.as_str()) {
+        if blocked.iter().any(|&b| !b.is_empty() && b == lower.as_str()) {
             return true;
         }
     }
