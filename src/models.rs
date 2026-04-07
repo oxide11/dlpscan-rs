@@ -111,7 +111,7 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
 
         // Banking
         "IBAN Generic" => 0.90,
-        "SWIFT/BIC" => 0.85,
+        "SWIFT/BIC" => 0.65, // lowered from 0.85 — context-gated + country code validation
         "ABA Routing Number" => 0.55,
         "US Bank Account Number" => 0.20,
         "Canada Transit Number" => 0.40,
