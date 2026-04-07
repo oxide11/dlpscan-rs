@@ -134,18 +134,23 @@ impl AuditEvent {
     /// Compute and attach an HMAC-SHA256 signature over the canonical event JSON.
     /// The `signature` field is excluded from the signed payload to allow
     /// verification: strip `signature`, re-serialize, and compare HMACs.
-    pub fn sign(mut self, key: &[u8]) -> Self {
+    /// Compute and attach an HMAC-SHA256 signature over the canonical event JSON.
+    /// The `signature` field is excluded from the signed payload to allow
+    /// verification: strip `signature`, re-serialize, and compare HMACs.
+    /// Returns `Err` if serialization fails (never signs over empty data).
+    pub fn sign(mut self, key: &[u8]) -> Result<Self, String> {
         use hmac::{Hmac, Mac};
         use sha2::Sha256;
         // Clear signature before computing so it's not part of the signed data
         self.signature = None;
-        let canonical = serde_json::to_string(&self).unwrap_or_default();
+        let canonical = serde_json::to_string(&self)
+            .map_err(|e| format!("Failed to serialize event for signing: {e}"))?;
         let mut mac = <Hmac<Sha256>>::new_from_slice(key)
             .expect("HMAC can accept any key length");
         mac.update(canonical.as_bytes());
         let result = mac.finalize().into_bytes();
         self.signature = Some(hex::encode(result));
-        self
+        Ok(self)
     }
 
     /// Verify the HMAC-SHA256 signature of this event against `key`.
@@ -163,7 +168,11 @@ impl AuditEvent {
         };
         let mut unsigned = self.clone();
         unsigned.signature = None;
-        let canonical = serde_json::to_string(&unsigned).unwrap_or_default();
+        // If serialization fails, verification fails (never verify against empty data)
+        let canonical = match serde_json::to_string(&unsigned) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
         let mut mac = match <Hmac<Sha256>>::new_from_slice(key) {
             Ok(m) => m,
             Err(_) => return false,
@@ -350,14 +359,25 @@ impl RotatingFileAuditHandler {
     }
 
     fn rotate(&self) {
-        // Shift existing rotated files: .9 → deleted, .8 → .9, ... .1 → .2
+        // Delete the oldest file if it exists
+        let oldest = format!("{}.{}", self.path, self.max_files);
+        let _ = std::fs::remove_file(&oldest);
+        // Shift existing rotated files: .N-1 → .N, ... .1 → .2
         for i in (1..self.max_files).rev() {
             let from = format!("{}.{}", self.path, i);
             let to = format!("{}.{}", self.path, i + 1);
-            let _ = std::fs::rename(&from, &to);
+            if let Err(e) = std::fs::rename(&from, &to) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!(from = %from, to = %to, error = %e, "Audit log rotation rename failed");
+                }
+            }
         }
         // Move current file to .1
-        let _ = std::fs::rename(&self.path, format!("{}.1", self.path));
+        if let Err(e) = std::fs::rename(&self.path, format!("{}.1", self.path)) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(path = %self.path, error = %e, "Audit log rotation failed");
+            }
+        }
     }
 }
 

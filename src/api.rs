@@ -797,12 +797,12 @@ fn hyper_route_request(
     // Auth check (exempt health probes only; metrics requires auth)
     let auth_exempt = path == "/health" || path == "/health/live"
         || path == "/health/ready";
-    let api_key_configured = state.api_key_hash.read().map(|g| g.is_some()).unwrap_or(false);
-    if api_key_configured && !auth_exempt {
-        let expected = state.api_key_hash.read().ok().and_then(|g| *g);
-        if let Some(expected_hash) = expected {
+    // Single atomic read to avoid TOCTOU race during key rotation
+    let expected_hash = state.api_key_hash.read().ok().and_then(|g| *g);
+    if expected_hash.is_some() && !auth_exempt {
+        if let Some(ref hash) = expected_hash {
             match api_key_header {
-                Some(provided) if verify_api_key_hash(&expected_hash, provided) => {}
+                Some(provided) if verify_api_key_hash(hash, provided) => {}
                 _ => return (StatusCode::UNAUTHORIZED, r#"{"detail":"Invalid or missing API key"}"#.to_string()),
             }
         }
@@ -823,6 +823,8 @@ fn hyper_route_request(
         ("POST", "/v1/tokenize") => Some(crate::rbac::Permission::Scan),
         ("POST", "/v1/detokenize") => Some(crate::rbac::Permission::Detokenize),
         ("POST", "/v1/obfuscate") => Some(crate::rbac::Permission::Scan),
+        ("GET", "/v1/patterns") => Some(crate::rbac::Permission::ManagePatterns),
+        ("GET", "/metrics") => Some(crate::rbac::Permission::ViewStatus),
         _ => None,
     };
     if let Some(perm) = required_perm {
@@ -956,7 +958,9 @@ fn hyper_route_request(
                             .with_action("rotate_api_key")
                             .with_source_ip(client_ip)
                             .with_outcome("success")
-                            .with_user(api_key_header.unwrap_or("admin"));
+                            .with_user(&api_key_header
+                            .map(|k| format!("key:{:x}", md5_like_hash(k)))
+                            .unwrap_or_else(|| "admin".to_string()));
                         crate::audit::audit_event(&event);
                     }
                     (StatusCode::OK, r#"{"detail":"API key rotated"}"#.to_string())

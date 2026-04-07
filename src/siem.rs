@@ -381,7 +381,7 @@ fn require_https(url: &str) -> bool {
     {
         return true;
     }
-    url.starts_with("https://")
+    url.to_lowercase().starts_with("https://")
 }
 
 /// Create a SIEM adapter from environment variables.
@@ -410,7 +410,7 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
                 return None;
             }
             if !require_https(&url) {
-                tracing::error!("SIEM Splunk URL must use HTTPS (set DLPSCAN_SIEM_ALLOW_HTTP=1 to override)");
+                tracing::error!("SIEM Splunk URL must use HTTPS");
                 return None;
             }
             let token = std::env::var("DLPSCAN_SIEM_TOKEN").ok()?;
@@ -430,7 +430,7 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
                 return None;
             }
             if !require_https(&url) {
-                tracing::error!("SIEM Elasticsearch URL must use HTTPS (set DLPSCAN_SIEM_ALLOW_HTTP=1 to override)");
+                tracing::error!("SIEM Elasticsearch URL must use HTTPS");
                 return None;
             }
             let mut adapter = ElasticsearchAdapter::new(&url);
@@ -470,7 +470,7 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
                 return None;
             }
             if !require_https(&url) {
-                tracing::error!("SIEM Webhook URL must use HTTPS (set DLPSCAN_SIEM_ALLOW_HTTP=1 to override)");
+                tracing::error!("SIEM Webhook URL must use HTTPS");
                 return None;
             }
             Some(Box::new(WebhookSIEMAdapter::new(&url)))
