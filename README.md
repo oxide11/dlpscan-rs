@@ -14,7 +14,7 @@ sensitive data with exceptional throughput.
 | Mixed content | 1.0 MB/s | 30.2 MB/s | **30x** |
 | Dense sensitive data | 0.5 MB/s | 31.9 MB/s | **64x** |
 
-See [BENCHMARKS.md](BENCHMARKS.md) for full results including optimization
+See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for full results including optimization
 journey, latency tables, and baseline-vs-full comparison.
 
 ## Installation
@@ -131,6 +131,35 @@ let config = ScanConfig {
 let matches = scan_text_with_config("Card: 4532015112830366", &config)?;
 ```
 
+## Patterns and Keywords
+
+dlpscan detects sensitive data using a two-layer system:
+
+1. **560 regex patterns** match data formats (credit cards, SSNs, IBANs, API keys, etc.)
+2. **560+ context keywords** confirm detections via Aho-Corasick proximity matching
+
+Each pattern has a **specificity score** (0.0-1.0) indicating base confidence.
+When a context keyword appears within the configured distance of a match,
+confidence is boosted by +0.20. Some low-specificity patterns are **context-required** --
+they are suppressed entirely without a nearby keyword.
+
+| Category | Patterns | Examples |
+|---|---:|---|
+| Credit Card Numbers | 7 | Visa, MasterCard, Amex, Discover, JCB, Diners Club, UnionPay |
+| National IDs (50+ regions) | 250+ | SSN, SIN, Aadhaar, NIN, DNI, CPF, CURP, and more |
+| Secrets & Credentials | 20+ | JWT, AWS keys, GitHub tokens, Slack tokens, Stripe keys |
+| Banking & Financial | 30+ | IBAN, SWIFT/BIC, ABA routing, wire transfers, securities |
+| Healthcare | 10+ | DEA numbers, ICD-10 codes, NDC codes, insurance IDs |
+| Contact Information | 5 | Email, phone (E.164/US/UK), IPv4/IPv6, MAC address |
+| Cryptocurrency | 7 | Bitcoin, Ethereum, Litecoin, Monero, Ripple, Bitcoin Cash |
+| Classification Labels | 40+ | Top Secret, Confidential, HIPAA, GDPR, Attorney-Client |
+| Device & Biometric | 7 | IMEI, ICCID, IDFA, biometric hashes |
+| Geolocation & Postal | 8 | GPS coordinates, geohash, ZIP+4, UK postcode |
+
+Full reference:
+- **[docs/PATTERNS.md](docs/PATTERNS.md)** -- All 560 patterns with regex, specificity scores, and context-required flags
+- **[docs/KEYWORDS.md](docs/KEYWORDS.md)** -- All 560+ context keywords with proximity distances
+
 ## Modules
 
 ### Core scanning
@@ -244,6 +273,23 @@ cargo build --release --features full
 cargo fmt --check
 cargo clippy
 ```
+
+## Documentation
+
+| Document | Description |
+|---|---|
+| [docs/PATTERNS.md](docs/PATTERNS.md) | All 560 patterns with regex, specificity, and context flags |
+| [docs/KEYWORDS.md](docs/KEYWORDS.md) | All 560+ context keywords with proximity distances |
+| [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Performance analysis and optimization journey |
+| [docs/CHANGELOG.md](docs/CHANGELOG.md) | Version history |
+| [docs/api-reference.md](docs/api-reference.md) | Comprehensive API documentation |
+| [docs/advanced_techniques.md](docs/advanced_techniques.md) | Advanced usage patterns |
+| [docs/evasion_techniques.md](docs/evasion_techniques.md) | Known evasion attacks |
+| [docs/evasion_defenses.md](docs/evasion_defenses.md) | Countermeasures implemented |
+| [docs/baselines/](docs/baselines/) | Control baselines (PCI, PII, PHI, secrets, financial, confidential) |
+| [docs/getting-started/](docs/getting-started/) | Installation, quickstart, configuration |
+| [docs/deployment/](docs/deployment/) | Docker, CI/CD, pre-commit hooks |
+| [docs/enterprise/](docs/enterprise/) | API server, audit, compliance, SIEM, RBAC |
 
 ## License
 
