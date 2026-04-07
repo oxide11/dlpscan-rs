@@ -30,6 +30,8 @@ pub enum Permission {
     ExportVault,
     /// View health and metrics
     ViewStatus,
+    /// Admin-only operations (key rotation, configuration changes)
+    AdminAction,
 }
 
 /// Check whether a role has a given permission.

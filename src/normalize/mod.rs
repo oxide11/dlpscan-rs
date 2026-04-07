@@ -408,7 +408,10 @@ fn decode_html_entities(input: &str, in_offsets: &[usize]) -> (String, Vec<usize
             offsets.push(orig_offset(in_offsets, i));
             i += 1;
         } else {
-            let ch = input[i..].chars().next().unwrap();
+            let ch = match input[i..].chars().next() {
+                Some(c) => c,
+                None => break,
+            };
             let ch_len = ch.len_utf8();
             out.push(ch);
             for k in 0..ch_len {

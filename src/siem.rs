@@ -12,6 +12,39 @@ pub trait SIEMAdapter: Send + Sync {
     fn send(&self, event: &HashMap<String, serde_json::Value>) -> Result<(), String>;
 }
 
+/// Maximum retries for SIEM send operations.
+const SIEM_MAX_RETRIES: usize = 3;
+
+/// Send with retry and exponential backoff (200ms, 400ms, 800ms).
+/// Returns Ok on first success, or the last error after all retries.
+pub fn send_with_retry(
+    adapter: &dyn SIEMAdapter,
+    event: &HashMap<String, serde_json::Value>,
+) -> Result<(), String> {
+    let mut last_err = String::new();
+    for attempt in 0..=SIEM_MAX_RETRIES {
+        match adapter.send(event) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = e;
+                if attempt < SIEM_MAX_RETRIES {
+                    let delay = std::time::Duration::from_millis(200 << attempt);
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max = SIEM_MAX_RETRIES,
+                        delay_ms = delay.as_millis() as u64,
+                        error = %last_err,
+                        "SIEM send failed, retrying"
+                    );
+                    std::thread::sleep(delay);
+                }
+            }
+        }
+    }
+    tracing::error!(error = %last_err, "SIEM send failed after all retries");
+    Err(last_err)
+}
+
 /// Enrich an event with timestamp and hostname if not present.
 pub fn enrich_event(
     event: &HashMap<String, serde_json::Value>,
