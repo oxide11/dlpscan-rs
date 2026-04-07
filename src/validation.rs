@@ -27,7 +27,13 @@ pub fn is_luhn_valid(card_number: &str) -> bool {
         .filter_map(|c| c.to_digit(10))
         .collect();
 
-    if digits.is_empty() {
+    // Minimum 12 digits for valid card numbers; reject trivial sequences
+    if digits.len() < 12 {
+        return false;
+    }
+
+    // Reject all-same-digit sequences (e.g., "0000000000000000")
+    if digits.iter().all(|&d| d == digits[0]) {
         return false;
     }
 

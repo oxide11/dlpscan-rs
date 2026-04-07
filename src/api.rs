@@ -700,6 +700,21 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
                             .and_then(|v| v.to_str().ok())
                             .map(|s| s.to_string());
 
+                        // Pre-check Content-Length before reading body to avoid OOM
+                        if let Some(cl) = req.headers()
+                            .get("content-length")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|v| v.parse::<usize>().ok())
+                        {
+                            if cl > MAX_REQUEST_BODY_SIZE {
+                                return Ok::<_, hyper::Error>(
+                                    build_hyper_response(StatusCode::PAYLOAD_TOO_LARGE,
+                                        r#"{"detail":"Request body too large"}"#,
+                                        &request_id)
+                                );
+                            }
+                        }
+
                         // Read body with size limit
                         let body_bytes = match req.collect().await {
                             Ok(collected) => {
@@ -860,8 +875,17 @@ fn hyper_route_request(
     // Route dispatch
     match (method, path) {
         ("GET", "/health") => {
-            let resp = handle_health_full(state, 0);
-            (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default())
+            // Authenticated users get full health details; unauthenticated get minimal
+            let is_authed = expected_hash
+                .as_ref()
+                .and_then(|h| api_key_header.map(|k| verify_api_key_hash(h, k)))
+                .unwrap_or(true); // No key configured = always full
+            if is_authed {
+                let resp = handle_health_full(state, 0);
+                (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default())
+            } else {
+                (StatusCode::OK, r#"{"status":"ok"}"#.to_string())
+            }
         }
         ("GET", "/health/live") => (StatusCode::OK, r#"{"status":"ok"}"#.to_string()),
         ("GET", "/health/ready") => {
@@ -948,10 +972,14 @@ fn hyper_route_request(
             struct RotateKeyRequest { new_key: String }
             match serde_json::from_str::<RotateKeyRequest>(body) {
                 Ok(req) => {
-                    if req.new_key.len() < 16 {
-                        return (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Key must be at least 16 characters"}"#.to_string());
+                    let trimmed = req.new_key.trim();
+                    if trimmed.len() < 16 {
+                        return (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Key must be at least 16 non-whitespace characters"}"#.to_string());
                     }
-                    rotate_api_key(state, &req.new_key);
+                    if !trimmed.bytes().any(|b| !b.is_ascii_alphanumeric()) && trimmed.len() < 24 {
+                        return (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Key must be at least 24 characters if purely alphanumeric"}"#.to_string());
+                    }
+                    rotate_api_key(state, trimmed);
                     // Audit the rotation event
                     if let Ok(event) = crate::audit::AuditEvent::new("SCAN") {
                         let event = event

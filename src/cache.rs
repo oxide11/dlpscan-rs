@@ -61,9 +61,21 @@ impl ScanCache {
         }
     }
 
-    /// Compute SHA-256 key for text.
+    /// Compute SHA-256 cache key for text.
+    ///
+    /// Includes an optional `namespace` to isolate cache entries between
+    /// tenants in multi-tenant deployments.
     fn key(text: &str) -> String {
+        Self::key_with_namespace(text, None)
+    }
+
+    /// Compute SHA-256 cache key with optional tenant namespace.
+    fn key_with_namespace(text: &str, namespace: Option<&str>) -> String {
         let mut hasher = Sha256::new();
+        if let Some(ns) = namespace {
+            hasher.update(ns.as_bytes());
+            hasher.update(b"\x00"); // separator to prevent prefix collisions
+        }
         hasher.update(text.as_bytes());
         hex::encode(hasher.finalize())
     }
