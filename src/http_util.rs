@@ -213,21 +213,25 @@ pub fn safe_http_post(
     let addr = format!("{}:{}", parsed.host, parsed.port);
     let timeout = Duration::from_secs(timeout_secs);
 
-    // DNS rebinding protection: resolve and validate IP before connecting
+    // DNS rebinding protection: resolve, validate ALL IPs, connect to first safe one
     let socket_addr: SocketAddr = {
-        let resolved = addr
+        let all_addrs: Vec<SocketAddr> = addr
             .to_socket_addrs()
             .map_err(|e| format!("DNS resolution failed: {e}"))?
-            .next()
-            .ok_or("DNS resolution returned no addresses")?;
-
-        if is_private_ip(resolved.ip()) {
-            return Err(format!(
-                "Target resolved to private/reserved IP: {}",
-                resolved.ip()
-            ));
+            .collect();
+        if all_addrs.is_empty() {
+            return Err("DNS resolution returned no addresses".to_string());
         }
-        resolved
+        // Reject if ANY resolved address is private (prevents DNS round-robin bypass)
+        for resolved in &all_addrs {
+            if is_private_ip(resolved.ip()) {
+                return Err(format!(
+                    "Target resolved to private/reserved IP: {}",
+                    resolved.ip()
+                ));
+            }
+        }
+        all_addrs[0]
     };
 
     let mut stream =
@@ -235,10 +239,11 @@ pub fn safe_http_post(
     stream.set_read_timeout(Some(timeout)).ok();
 
     // Build HTTP request with CRLF-sanitized headers
+    let safe_host = parsed.host.replace(['\r', '\n'], "");
     let mut req = format!(
         "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
         parsed.path,
-        parsed.host,
+        safe_host,
         body.len()
     );
     for (k, v) in headers {

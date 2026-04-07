@@ -88,8 +88,7 @@ static HOMOGLYPH_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
         ('\u{0443}', 'y'),
         ('\u{0445}', 'x'),
         ('\u{0455}', 's'),
-        ('\u{044A}', 'b'), // Cyrillic ъ → b (visual lookalike)
-        ('\u{0432}', 'b'), // Cyrillic в → b (visual lookalike)
+        ('\u{0432}', 'b'), // Cyrillic в → b (visual lookalike in some fonts)
         // Greek uppercase
         ('\u{0391}', 'A'),
         ('\u{0392}', 'B'),
