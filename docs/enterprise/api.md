@@ -31,7 +31,13 @@ curl -X POST http://localhost:8000/v1/scan \
   -d '{"text": "Card: 4111111111111111", "action": "redact"}'
 ```
 
-RBAC is controlled via the `X-Role` header. See [RBAC](rbac.md) for details.
+RBAC is controlled via server-side key-to-role mapping (not client headers).
+See [RBAC](rbac.md) for the full permission matrix.
+
+```bash
+# Map API keys to roles (comma-separated key:role pairs)
+export DLPSCAN_API_KEY_ROLES="admin-key-here:admin,analyst-key:analyst"
+```
 
 ## Configuration
 
@@ -39,17 +45,23 @@ RBAC is controlled via the `X-Role` header. See [RBAC](rbac.md) for details.
 |----------------------|---------|-------------|
 | `DLPSCAN_API_HOST` | `127.0.0.1` | Bind address |
 | `DLPSCAN_API_PORT` | `8000` | Listen port |
-| `DLPSCAN_API_KEY` | *(none)* | API key for authentication |
-| `DLPSCAN_API_RATE_LIMIT` | `100` | Max requests per minute per client |
+| `DLPSCAN_API_KEY` | *(none)* | API key for authentication (hashed at rest) |
+| `DLPSCAN_API_RATE_LIMIT` | `100` | Max requests per minute per client/key |
+| `DLPSCAN_API_KEY_ROLES` | *(none)* | Key-to-role mapping (e.g., `key1:admin,key2:analyst`) |
 
 ## Endpoints
 
 ### `GET /health`
 
-Health check endpoint.
+Health check endpoint. Returns minimal response without authentication,
+or full details (uptime, pattern count, connections) when authenticated.
 
 ```json
+// Unauthenticated
 {"status": "ok"}
+
+// Authenticated
+{"status": "ok", "version": "2.0.0", "uptime_secs": 3600, "pattern_count": 560, "is_ready": true}
 ```
 
 ### `GET /health/live`
@@ -125,7 +137,8 @@ Tokenize sensitive data (reversible).
 
 ### `POST /v1/detokenize`
 
-Reverse tokenization using a `vault_id`.
+Reverse tokenization using a `vault_id`. Vaults expire after 1 hour;
+expired vaults return an error.
 
 **Request (`DetokenizeRequest`):**
 ```json
@@ -141,7 +154,8 @@ Replace sensitive data with realistic fakes. Uses `ScanRequest` with `action` se
 
 ### `POST /v1/patterns`
 
-Register a custom detection pattern.
+Register a custom detection pattern. Maximum 100 custom patterns;
+pattern regex length limited to 2048 characters.
 
 **Request (`PatternCreateRequest`):**
 ```json
@@ -153,15 +167,33 @@ Register a custom detection pattern.
 }
 ```
 
+Requires **ManagePatterns** permission (Admin role).
+
 ### `GET /v1/patterns`
 
-List all registered custom patterns.
+List all registered custom patterns. Requires **ManagePatterns** permission.
+
+### `POST /v1/admin/rotate-key`
+
+Rotate the API key at runtime. Requires **Admin** role.
+
+**Request:**
+```json
+{
+  "new_key": "new-secret-key-at-least-16-chars"
+}
+```
+
+The old key is immediately invalidated. The rotation event is logged
+to the audit trail.
 
 ## Rate Limiting
 
-Configure via `DLPSCAN_API_RATE_LIMIT` (default: 100 requests/minute per client).
+Rate limits are tracked per API key (when provided) or per source IP.
+Configure via `DLPSCAN_API_RATE_LIMIT` (default: 100 requests/minute).
 
-Returns `429 Too Many Requests` when exceeded.
+Returns `429 Too Many Requests` when exceeded. Every rejection is
+logged to the audit trail with source IP and request path.
 
 ## Docker Deployment
 

@@ -2,6 +2,51 @@
 
 All notable changes to dlpscan will be documented in this file.
 
+## [2.1.0] - 2026-04-07
+
+### Security Hardening (4 rounds, 44 findings addressed)
+
+#### Critical
+- Compliance reports now use `redacted_text()` — no raw sensitive data in samples (PCI-DSS 3.2.1)
+- Token vaults enforce 1-hour TTL with background eviction task (PCI-DSS 3.2.2)
+- Audit events support HMAC-SHA256 signing via `sign(key)` / `verify(key)` (PCI-DSS 10.3.2)
+- SIEM HTTP adapters require HTTPS by default (PCI-DSS 4.1)
+- SSRF protection blocks IPv6-mapped IPv4 (`::ffff:127.0.0.1`) and validates ALL DNS addresses
+- API key stored as SHA-256 hash in memory, never plaintext
+- Content-Length pre-check rejects oversized bodies before allocating memory
+- HMAC signing returns `Result`, never signs over empty data on serialization failure
+- TOCTOU race on API key hash eliminated with single atomic read
+
+#### High
+- `MAX_PATTERN_LENGTH` (2048) and `MAX_CUSTOM_PATTERNS` (100) enforced on registration
+- `/metrics` endpoint requires authentication (ViewStatus permission)
+- Per-API-key rate limiting (falls back to per-IP)
+- `RotatingFileAuditHandler` with size-based log rotation
+- Pipeline file collection bounded to 100k files
+- Runtime API key rotation via `POST /v1/admin/rotate-key` (Admin-only)
+- `GET /v1/patterns` requires ManagePatterns permission
+- `/health` returns minimal response for unauthenticated clients
+- Redaction preserves exact byte span length (multi-byte safety)
+- EDM uses constant-time XOR comparison for hash matching
+- Unicode homoglyphs expanded: Greek ε/η/σ/τ/ω, Cyrillic Ё/У/в
+
+#### Medium
+- Syslog hostname sanitized against header injection
+- Audit events include `source_ip`, `request_id`, `outcome` fields
+- `unwrap()` removed from production extractors.rs and normalize.rs
+- SIEM error messages no longer disclose bypass hints
+- Rotation failures logged instead of silently discarded
+- Cache supports tenant namespace isolation (`key_with_namespace`)
+- Luhn check requires 12+ digits, rejects all-same-digit sequences
+- DNS rebinding protection validates all resolved addresses
+- Host header CRLF sanitization in outbound HTTP
+- Rate limit rejections logged to audit trail
+- SIEM retry with exponential backoff (3 retries, 200/400/800ms)
+- Policy rules support `priority` field for deterministic evaluation order
+- Policy version "2" supported alongside "1"
+- Rotate-key validates trimmed key length and complexity
+- Streaming scanner UTF-8 safe overlap splitting
+
 ## [2.0.0] - 2026-04-02
 
 ### Rust Port (`dlpscan-rs`)

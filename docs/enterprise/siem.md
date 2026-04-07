@@ -87,3 +87,41 @@ adapter.send(&event);
 ```
 
 All adapters are thread-safe and enrich events with timestamp, host, and source.
+
+## HTTPS Enforcement
+
+HTTP-based adapters (Splunk, Elasticsearch, Webhook) require HTTPS URLs
+by default. This prevents audit events and tokens from being transmitted
+in plaintext.
+
+To permit HTTP in development/testing environments:
+
+```bash
+export DLPSCAN_SIEM_ALLOW_HTTP=1
+```
+
+!!! warning
+    Never set `DLPSCAN_SIEM_ALLOW_HTTP=1` in production.
+
+## Retry with Exponential Backoff
+
+Use `send_with_retry()` for automatic retry on transient failures:
+
+```rust
+use dlpscan::siem::{send_with_retry, SplunkHECAdapter};
+
+let adapter = SplunkHECAdapter::new("https://splunk:8088", "token");
+send_with_retry(&adapter, &event)?;
+```
+
+Retry behavior:
+- **3 retries** with exponential backoff (200ms, 400ms, 800ms)
+- Each retry attempt is logged via `tracing::warn`
+- Final failure logged via `tracing::error`
+- Returns the last error after all retries are exhausted
+
+## Syslog Security
+
+The Syslog adapter sanitizes the hostname field to prevent header
+injection attacks. Control characters and spaces are stripped from
+the hostname before constructing the RFC 5424 message.

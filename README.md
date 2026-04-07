@@ -210,13 +210,13 @@ Full reference:
 
 | Module | Description |
 |---|---|
-| `policy` | TOML-based policy engine with rule matching |
+| `policy` | TOML-based policy engine with priority-based rule matching |
 | `compliance` | PCI-DSS/HIPAA/SOC2/GDPR compliance reports (JSON/text/HTML) |
-| `audit` | Audit event logging with pluggable handlers |
+| `audit` | Audit event logging with HMAC signing and pluggable handlers |
 | `metrics` | Scan metrics collection with callbacks |
-| `siem` | SIEM adapters (Splunk HEC, Elasticsearch, Syslog, Datadog) |
+| `siem` | SIEM adapters (Splunk HEC, Elasticsearch, Syslog, Datadog) with retry |
 | `webhooks` | Webhook notifications with retry and exponential backoff |
-| `api` | HTTP API server with rate limiting and auth |
+| `api` | HTTP API server with per-key rate limiting, RBAC, and key rotation |
 
 ## Architecture
 
@@ -274,6 +274,60 @@ cargo build --release --features full
 cargo fmt --check
 cargo clippy
 ```
+
+## Security
+
+dlpscan is hardened for enterprise deployment in regulated environments
+(PCI-DSS, HIPAA, SOC 2, GDPR).
+
+### API security
+
+- **API key hashed at rest** -- SHA-256 hash stored in memory, never plaintext
+- **Constant-time key verification** -- prevents timing side-channel attacks
+- **Per-API-key rate limiting** -- falls back to per-IP when no key provided
+- **RBAC enforcement** -- server-side role resolution from authenticated keys;
+  Admin, Analyst, Operator, Viewer roles with least-privilege defaults
+- **Runtime key rotation** -- `POST /v1/admin/rotate-key` (Admin-only)
+  with minimum complexity enforcement
+- **Content-Length pre-check** -- rejects oversized bodies before reading
+- **Authenticated metrics** -- `/metrics` requires auth when API key is set
+
+### Audit
+
+- **HMAC-SHA256 event signing** -- tamper-evident audit trail with
+  `sign(key)` / `verify(key)` on every event
+- **Structured fields** -- `source_ip`, `request_id`, `outcome` for
+  correlation and forensics
+- **Rotating file handler** -- size-based rotation with configurable
+  `max_bytes` and `max_files`; symlink attack protection; `0o600` permissions
+- **Rate limit rejections audited** -- every throttled request logged
+
+### Network
+
+- **SSRF protection** -- blocks private IPs, IPv6-mapped IPv4
+  (`::ffff:127.0.0.1`), DNS round-robin bypass (validates ALL resolved
+  addresses), CRLF header injection
+- **HTTPS enforced for SIEM** -- HTTP-based adapters (Splunk, Elasticsearch,
+  Webhook) require HTTPS by default
+- **SIEM retry with backoff** -- 3 retries at 200/400/800ms for transient
+  failures
+
+### Detection hardening
+
+- **Unicode evasion defense** -- Cyrillic, Greek, fullwidth homoglyphs;
+  zero-width character stripping; leet-speak decoding; NFKC normalization
+- **Byte-preserving redaction** -- replacement preserves exact span byte
+  length, preventing offset corruption in multi-byte text
+- **Constant-time EDM matching** -- Exact Data Match uses XOR comparison
+  across all registered hashes (no timing leak)
+- **Luhn structural validation** -- minimum 12 digits, rejects all-same-digit
+  sequences
+- **Token vault TTL** -- vaults expire after 1 hour with background eviction;
+  detokenize rejects expired vaults
+- **Tenant-isolated caching** -- `key_with_namespace()` prevents cross-tenant
+  cache poisoning
+
+See [docs/enterprise/security.md](docs/enterprise/security.md) for full details.
 
 ## Documentation
 
