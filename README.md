@@ -8,11 +8,12 @@ sensitive data with exceptional throughput.
 
 ## Performance
 
-| Scenario (1MB) | Python | Rust | Speedup |
-|---|---:|---:|---:|
-| Clean text | 2.5 MB/s | 83.2 MB/s | **33x** |
-| Mixed content | 1.0 MB/s | 30.2 MB/s | **30x** |
-| Dense sensitive data | 0.5 MB/s | 31.9 MB/s | **64x** |
+| Scenario (1MB) | Full (560 patterns) | Baseline (108 patterns) |
+|---|---:|---:|
+| Clean text | 60.9 MB/s | 62.0 MB/s |
+| Mixed content | 19.3 MB/s | 20.3 MB/s |
+| Dense sensitive data | 21.5 MB/s | 21.6 MB/s |
+| Keyword-heavy text | 35.7 MB/s | 38.0 MB/s |
 
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for full results including optimization
 journey, latency tables, and baseline-vs-full comparison.
