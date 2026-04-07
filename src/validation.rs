@@ -166,6 +166,103 @@ pub fn is_valid_swift(code: &str) -> bool {
     true
 }
 
+/// Validate a CUSIP identifier (9 characters: 6 issuer + 2 issue + 1 check digit).
+/// Uses the CUSIP check-digit algorithm (modified Luhn on alphanumeric).
+pub fn is_valid_cusip(cusip: &str) -> bool {
+    let chars: Vec<char> = cusip.chars().collect();
+    if chars.len() != 9 {
+        return false;
+    }
+    let mut sum = 0u32;
+    for (i, &ch) in chars[..8].iter().enumerate() {
+        let val = if ch.is_ascii_digit() {
+            ch as u32 - '0' as u32
+        } else if ch.is_ascii_uppercase() {
+            (ch as u32 - 'A' as u32) + 10
+        } else {
+            return false; // invalid character
+        };
+        let v = if i % 2 == 1 { val * 2 } else { val };
+        sum += v / 10 + v % 10;
+    }
+    let check = (10 - (sum % 10)) % 10;
+    let expected = chars[8].to_digit(10);
+    expected == Some(check)
+}
+
+/// Validate a SEDOL identifier (7 characters: 6 data + 1 check digit).
+/// Uses weighted sum mod 10.
+pub fn is_valid_sedol(sedol: &str) -> bool {
+    let chars: Vec<char> = sedol.chars().collect();
+    if chars.len() != 7 {
+        return false;
+    }
+    // SEDOL doesn't use vowels
+    let weights = [1, 3, 1, 7, 3, 9];
+    let mut sum = 0u32;
+    for (i, &ch) in chars[..6].iter().enumerate() {
+        let val = if ch.is_ascii_digit() {
+            ch as u32 - '0' as u32
+        } else if ch.is_ascii_uppercase() && !"AEIOU".contains(ch) {
+            (ch as u32 - 'A' as u32) + 10
+        } else {
+            return false;
+        };
+        sum += val * weights[i];
+    }
+    let check = (10 - (sum % 10)) % 10;
+    let expected = chars[6].to_digit(10);
+    expected == Some(check)
+}
+
+/// Validate an Australian Tax File Number using the weighted check algorithm.
+/// TFN is 8 or 9 digits with a specific weighted checksum.
+pub fn is_valid_australia_tfn(tfn: &str) -> bool {
+    let digits: Vec<u32> = tfn
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    // Modern TFNs are 9 digits; legacy are 8
+    if digits.len() != 8 && digits.len() != 9 {
+        return false;
+    }
+    // Reject all-same
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let weights_9 = [1, 4, 3, 7, 5, 8, 6, 9, 10];
+    let weights_8 = [10, 7, 8, 4, 6, 3, 5, 1];
+    let weights = if digits.len() == 9 { &weights_9[..] } else { &weights_8[..] };
+    let sum: u32 = digits.iter().zip(weights.iter()).map(|(&d, &w)| d * w).sum();
+    sum % 11 == 0
+}
+
+/// Validate a US Social Security Number for structural correctness.
+/// Rejects invalid area numbers (000, 666, 900-999) and group/serial all-zeros.
+pub fn is_valid_ssn(ssn: &str) -> bool {
+    let digits: Vec<u32> = ssn
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 9 {
+        return false;
+    }
+    let area = digits[0] * 100 + digits[1] * 10 + digits[2];
+    let group = digits[3] * 10 + digits[4];
+    let serial = digits[5] * 1000 + digits[6] * 100 + digits[7] * 10 + digits[8];
+    // SSA rules: area cannot be 000, 666, or 900-999
+    if area == 0 || area == 666 || area >= 900 {
+        return false;
+    }
+    // Group and serial cannot be all zeros
+    if group == 0 || serial == 0 {
+        return false;
+    }
+    true
+}
+
 /// Validate a credit-card number using the Luhn algorithm.
 pub fn is_luhn_valid(card_number: &str) -> bool {
     let digits: Vec<u32> = card_number
@@ -252,6 +349,68 @@ mod tests {
     fn test_luhn_rejects_all_zeros() {
         assert!(!is_luhn_valid("0000000000000000"));
         assert!(!is_luhn_valid("000000000000"));
+    }
+
+    #[test]
+    fn test_ssn_valid() {
+        assert!(is_valid_ssn("123-45-6789"));
+        assert!(is_valid_ssn("123456789")); // no dashes
+        assert!(is_valid_ssn("001-01-0001")); // minimum valid
+    }
+
+    #[test]
+    fn test_ssn_invalid_area() {
+        assert!(!is_valid_ssn("000-12-3456")); // area 000
+        assert!(!is_valid_ssn("666-12-3456")); // area 666
+        assert!(!is_valid_ssn("900-12-3456")); // area 900+
+        assert!(!is_valid_ssn("999-12-3456")); // area 999
+    }
+
+    #[test]
+    fn test_ssn_invalid_group_serial() {
+        assert!(!is_valid_ssn("123-00-6789")); // group 00
+        assert!(!is_valid_ssn("123-45-0000")); // serial 0000
+    }
+
+    #[test]
+    fn test_cusip_valid() {
+        assert!(is_valid_cusip("037833100")); // Apple
+        assert!(is_valid_cusip("594918104")); // Microsoft
+        assert!(is_valid_cusip("17275R102")); // Cisco
+    }
+
+    #[test]
+    fn test_cusip_invalid() {
+        assert!(!is_valid_cusip("037833101")); // wrong check digit
+        assert!(!is_valid_cusip("789456123")); // random 9 digits (our FP case)
+        assert!(!is_valid_cusip("ABCDEFGH9")); // nonsense
+        assert!(!is_valid_cusip("12345"));     // too short
+    }
+
+    #[test]
+    fn test_sedol_valid() {
+        assert!(is_valid_sedol("0263494")); // BAE Systems
+    }
+
+    #[test]
+    fn test_sedol_invalid() {
+        assert!(!is_valid_sedol("1234567")); // random
+        assert!(!is_valid_sedol("ABCDEFG")); // vowels not allowed
+        assert!(!is_valid_sedol("12345"));   // too short
+    }
+
+    #[test]
+    fn test_australia_tfn_valid() {
+        // Known valid TFN pattern (public test value)
+        assert!(is_valid_australia_tfn("123456782"));
+    }
+
+    #[test]
+    fn test_australia_tfn_invalid() {
+        assert!(!is_valid_australia_tfn("123456789")); // fails checksum
+        assert!(!is_valid_australia_tfn("999999999")); // all same
+        assert!(!is_valid_australia_tfn("12345"));     // too short
+        assert!(!is_valid_australia_tfn("000000000")); // all zeros
     }
 
     #[test]
