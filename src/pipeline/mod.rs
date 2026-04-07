@@ -145,30 +145,35 @@ impl Pipeline {
         let start = Instant::now();
         let file_path = path.display().to_string();
 
-        // Check blocked extensions
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        // Check blocked extensions (checks ALL extensions in filename, not just last)
+        {
             let blocked_refs: Vec<&str> = self.blocked_extensions.iter().map(|s| s.as_str()).collect();
-            if crate::extractors::is_blocked_extension(ext, &blocked_refs) {
+            if crate::extractors::is_path_blocked(&file_path, &blocked_refs) {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("unknown");
                 return PipelineResult {
                     file_path,
                     matches: vec![],
                     format_detected: "blocked".into(),
                     duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                    error: Some(format!("Blocked file type: .{}", ext.to_lowercase())),
+                    error: Some(format!("Blocked file type in path: {}", ext.to_lowercase())),
                     file_size_bytes: 0,
                     extracted_text_length: 0,
                 };
             }
-            if self.block_unreadable && crate::extractors::is_unreadable_extension(ext) {
-                return PipelineResult {
-                    file_path,
-                    matches: vec![],
-                    format_detected: "blocked".into(),
-                    duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                    error: Some(format!("Unreadable/encrypted file type: .{}", ext.to_lowercase())),
-                    file_size_bytes: 0,
-                    extracted_text_length: 0,
-                };
+            if self.block_unreadable {
+                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                    if crate::extractors::is_unreadable_extension(ext) {
+                        return PipelineResult {
+                            file_path,
+                            matches: vec![],
+                            format_detected: "blocked".into(),
+                            duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+                            error: Some(format!("Unreadable/encrypted file type: .{}", ext.to_lowercase())),
+                            file_size_bytes: 0,
+                            extracted_text_length: 0,
+                        };
+                    }
+                }
             }
         }
 

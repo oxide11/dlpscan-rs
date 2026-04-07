@@ -2068,9 +2068,31 @@ fn extract_sqlite(file_path: &str) -> Result<ExtractionResult, String> {
 
 /// Decode QR codes, barcodes (UPC, EAN, Data Matrix, Aztec, PDF417, etc.)
 /// from image files and return the decoded text for scanning.
+/// Maximum image file size for barcode decoding (20 MB).
+#[cfg(feature = "barcode")]
+const MAX_BARCODE_IMAGE_SIZE: u64 = 20 * 1024 * 1024;
+
+/// Maximum number of barcodes to decode per image.
+#[cfg(feature = "barcode")]
+const MAX_BARCODES_PER_IMAGE: usize = 100;
+
+/// Maximum decoded text length per barcode (4 KB).
+#[cfg(feature = "barcode")]
+const MAX_BARCODE_TEXT_LEN: usize = 4096;
+
 #[cfg(feature = "barcode")]
 pub fn extract_barcode(file_path: &str) -> Result<ExtractionResult, String> {
     use rxing::BarcodeFormat;
+
+    // Pre-check image file size to prevent decompression bombs
+    let meta = std::fs::metadata(file_path).map_err(|e| e.to_string())?;
+    if meta.len() > MAX_BARCODE_IMAGE_SIZE {
+        return Err(format!(
+            "Image too large for barcode decoding: {} bytes (max {})",
+            meta.len(),
+            MAX_BARCODE_IMAGE_SIZE
+        ));
+    }
 
     let results = rxing::helpers::detect_multiple_in_file(file_path)
         .map_err(|e| format!("Barcode decode failed: {e}"))?;
@@ -2083,7 +2105,7 @@ pub fn extract_barcode(file_path: &str) -> Result<ExtractionResult, String> {
     let mut text_parts = Vec::new();
     let mut formats_found = Vec::new();
 
-    for result in &results {
+    for result in results.iter().take(MAX_BARCODES_PER_IMAGE) {
         let format_name = match result.getBarcodeFormat() {
             BarcodeFormat::QR_CODE => "QR Code",
             BarcodeFormat::DATA_MATRIX => "Data Matrix",
@@ -2100,7 +2122,13 @@ pub fn extract_barcode(file_path: &str) -> Result<ExtractionResult, String> {
             _ => "Unknown",
         };
         formats_found.push(format_name);
-        text_parts.push(result.getText().to_string());
+        // Cap decoded text length to prevent memory exhaustion from malicious barcodes
+        let decoded = result.getText();
+        if decoded.len() <= MAX_BARCODE_TEXT_LEN {
+            text_parts.push(decoded.to_string());
+        } else {
+            text_parts.push(decoded[..MAX_BARCODE_TEXT_LEN].to_string());
+        }
     }
 
     let text = text_parts.join("\n");
@@ -2118,16 +2146,18 @@ pub fn extract_barcode(file_path: &str) -> Result<ExtractionResult, String> {
 /// CAB files are treated as ZIP-like archives; we extract and concatenate
 /// the text content of any readable entries.
 pub fn extract_cab(file_path: &str) -> Result<ExtractionResult, String> {
-    // CAB files use the MSCF magic header. We read the file as binary and
-    // attempt to extract any plain-text segments from the decompressed data.
+    let metadata = std::fs::metadata(file_path).map_err(|e| e.to_string())?;
+    if metadata.len() as usize > MAX_EXTRACT_SIZE {
+        return Err(format!("CAB file too large: {} bytes", metadata.len()));
+    }
+
     let data = std::fs::read(file_path).map_err(|e| e.to_string())?;
 
     if data.len() < 4 || &data[0..4] != b"MSCF" {
         return Err("Not a valid CAB file (missing MSCF header)".to_string());
     }
 
-    // Extract printable text segments from the binary content.
-    // This captures embedded strings, config files, scripts, etc.
+    // Extract printable text segments (capped at MAX_PRINTABLE_OUTPUT)
     let text = extract_printable_strings(&data, 8);
     let mut result = ExtractionResult::new(text, "cab");
     result = result.with_metadata("file_size", &data.len().to_string());
@@ -2155,23 +2185,34 @@ pub fn extract_dat(file_path: &str) -> Result<ExtractionResult, String> {
     Ok(result)
 }
 
-/// Extract printable ASCII/UTF-8 strings from binary data.
+/// Maximum extracted text output from binary string extraction (10 MB).
+const MAX_PRINTABLE_OUTPUT: usize = 10 * 1024 * 1024;
+
+/// Extract printable ASCII strings from binary data.
 /// Only includes runs of at least `min_length` printable characters.
+/// Output is capped at [`MAX_PRINTABLE_OUTPUT`] bytes to prevent memory exhaustion.
 fn extract_printable_strings(data: &[u8], min_length: usize) -> String {
     let mut strings = Vec::new();
     let mut current = String::new();
+    let mut total_len: usize = 0;
 
     for &byte in data {
-        if byte >= 0x20 && byte < 0x7f || byte == b'\n' || byte == b'\r' || byte == b'\t' {
+        // ASCII printable range + common whitespace (explicit parentheses for clarity)
+        if (byte >= 0x20 && byte < 0x7f) || byte == b'\n' || byte == b'\r' || byte == b'\t' {
+            // Safe: all accepted bytes are valid single-byte ASCII/UTF-8
             current.push(byte as char);
         } else {
             if current.len() >= min_length {
+                total_len += current.len() + 1; // +1 for join separator
+                if total_len > MAX_PRINTABLE_OUTPUT {
+                    break;
+                }
                 strings.push(std::mem::take(&mut current));
             }
             current.clear();
         }
     }
-    if current.len() >= min_length {
+    if current.len() >= min_length && total_len + current.len() <= MAX_PRINTABLE_OUTPUT {
         strings.push(current);
     }
 
@@ -2220,6 +2261,23 @@ pub fn is_blocked_extension(ext: &str, blocked: &[&str]) -> bool {
     let lower = ext.to_lowercase();
     let trimmed = lower.trim_start_matches('.');
     blocked.iter().any(|&b| b == trimmed)
+}
+
+/// Check if any extension in a file path (including double extensions) is blocked.
+/// For example, `secret.der.txt` checks both "txt" and "der".
+pub fn is_path_blocked(file_path: &str, blocked: &[&str]) -> bool {
+    let name = Path::new(file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    // Check all dot-separated segments as potential extensions
+    for segment in name.split('.').skip(1) {
+        let lower = segment.to_lowercase();
+        if blocked.iter().any(|&b| b == lower.as_str()) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Check if a file extension is an unreadable/opaque binary type.
