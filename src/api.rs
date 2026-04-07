@@ -637,7 +637,12 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
-                evict_expired_vaults(&vaults.vaults);
+                // Catch panics to prevent silent task death
+                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    evict_expired_vaults(&vaults.vaults);
+                })).is_err() {
+                    tracing::error!("Vault eviction task panicked — recovering");
+                }
             }
         });
     }
@@ -875,11 +880,12 @@ fn hyper_route_request(
     // Route dispatch
     match (method, path) {
         ("GET", "/health") => {
-            // Authenticated users get full health details; unauthenticated get minimal
-            let is_authed = expected_hash
-                .as_ref()
-                .and_then(|h| api_key_header.map(|k| verify_api_key_hash(h, k)))
-                .unwrap_or(true); // No key configured = always full
+            // Authenticated users get full health details; unauthenticated get minimal.
+            // When no API key is configured, return minimal response (defense-in-depth).
+            let is_authed = match expected_hash.as_ref() {
+                Some(h) => api_key_header.map(|k| verify_api_key_hash(h, k)).unwrap_or(false),
+                None => false, // No key configured = minimal response
+            };
             if is_authed {
                 let resp = handle_health_full(state, 0);
                 (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default())

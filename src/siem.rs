@@ -3,6 +3,7 @@
 //! Supports Splunk HEC, Elasticsearch, Syslog (UDP/TCP), generic Webhooks,
 //! and Datadog. HTTP adapters are available with the `async-support` feature.
 
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -374,11 +375,16 @@ impl SIEMAdapter for DatadogAdapter {
 
 /// Returns true if the URL is allowed for SIEM. Requires HTTPS unless
 /// `DLPSCAN_SIEM_ALLOW_HTTP=1` is set (for development/testing only).
-fn require_https(url: &str) -> bool {
-    if std::env::var("DLPSCAN_SIEM_ALLOW_HTTP")
+/// Whether plaintext HTTP is allowed for SIEM adapters.
+/// Cached at first use to prevent runtime env var manipulation.
+static SIEM_ALLOW_HTTP: Lazy<bool> = Lazy::new(|| {
+    std::env::var("DLPSCAN_SIEM_ALLOW_HTTP")
         .map(|v| v == "1" || v == "true")
         .unwrap_or(false)
-    {
+});
+
+fn require_https(url: &str) -> bool {
+    if *SIEM_ALLOW_HTTP {
         return true;
     }
     url.to_lowercase().starts_with("https://")

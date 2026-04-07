@@ -352,8 +352,8 @@ impl RotatingFileAuditHandler {
     pub fn new(path: &str, max_bytes: u64, max_files: usize) -> Self {
         Self {
             path: path.to_string(),
-            max_bytes,
-            max_files,
+            max_bytes: max_bytes.max(1024), // minimum 1 KB
+            max_files: max_files.max(1),    // minimum 1 rotated file
             lock: Mutex::new(()),
         }
     }

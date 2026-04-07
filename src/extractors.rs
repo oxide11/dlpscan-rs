@@ -2229,9 +2229,11 @@ fn extract_printable_strings(data: &[u8], min_length: usize) -> String {
 pub const DEFAULT_BLOCKED_EXTENSIONS: &[&str] = &[
     // Cryptographic certificates and keys
     "der", "p12", "pfx", "p7b", "p7c", "p7m", "p7s",
+    "p8",   // PKCS#8 private keys
+    "ppk",  // PuTTY private keys
     "jks", "keystore", "bks",
     // Encrypted/signed containers
-    "p7m", "smime", "gpg", "pgp", "asc",
+    "smime", "gpg", "pgp", "asc",
     // Binary certificate formats
     "sst", "stl", "spc", "pvk",
 ];
