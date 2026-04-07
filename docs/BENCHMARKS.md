@@ -6,6 +6,7 @@ scanning mode.
 
 **Environment:** Linux 6.18.5, Rust 1.75+ (release profile with LTO), Python 3.x  
 **Pattern count:** 560 total (108 always-run, 452 context-gated)  
+**Version:** 2.1.0  
 **Date:** April 2026
 
 ---
@@ -105,23 +106,23 @@ of keyword presence.
 - **Financial:** IBAN, SWIFT/BIC, CUSIP, ISIN, SEDOL, LEI
 - **Other:** GPS Coordinates, VIN, IMEI, Track 1/2 Data
 
-### Latency Comparison
+### Latency Comparison (v2.1.0)
 
 | Test (1MB) | Full (ms) | Baseline (ms) | Speedup |
 |---|---:|---:|---:|
-| scan_clean_1MB | 12.18 | 11.69 | 1.0x |
-| scan_mixed_1MB | 33.14 | 34.11 | 1.0x |
-| scan_dense_1MB | 31.57 | 30.49 | 1.0x |
-| **scan_kw_heavy_1MB** | **16.89** | **14.60** | **1.2x** |
+| scan_clean_1MB | 14.97 | 15.07 | 1.0x |
+| scan_mixed_1MB | 49.07 | 47.96 | 1.0x |
+| scan_dense_1MB | 47.84 | 46.50 | 1.0x |
+| **scan_kw_heavy_1MB** | **29.08** | **25.73** | **1.1x** |
 
-### Throughput Comparison (1MB)
+### Throughput Comparison (1MB, v2.1.0)
 
 | Scenario | Full | Baseline |
 |---|---:|---:|
-| Clean text | 82.1 MB/s | 85.6 MB/s |
-| Mixed content | 30.2 MB/s | 29.3 MB/s |
-| Dense sensitive data | 31.7 MB/s | 32.8 MB/s |
-| **Keyword-heavy text** | **59.2 MB/s** | **68.5 MB/s** |
+| Clean text | 66.8 MB/s | 66.4 MB/s |
+| Mixed content | 20.4 MB/s | 20.8 MB/s |
+| Dense sensitive data | 20.9 MB/s | 21.5 MB/s |
+| **Keyword-heavy text** | **34.4 MB/s** | **38.9 MB/s** |
 
 ### Finding Counts (10KB Mixed Text)
 
@@ -130,6 +131,28 @@ of keyword presence.
 | Full | 164 | Credit Card Numbers, Contact Information, Cloud Provider Secrets |
 | Baseline | 164 | Credit Card Numbers, Contact Information, Cloud Provider Secrets |
 
+### Full Latency Table (v2.1.0)
+
+| Test | Full (ms) | Baseline (ms) | Speedup |
+|---|---:|---:|---:|
+| scan_clean_1KB | 0.45 | 0.34 | 1.3x |
+| scan_mixed_1KB | 0.26 | 0.15 | 1.7x |
+| scan_dense_1KB | 0.23 | 0.21 | 1.1x |
+| scan_kw_heavy_1KB | 0.35 | 0.33 | 1.1x |
+| scan_clean_10KB | 0.35 | 0.31 | 1.1x |
+| scan_mixed_10KB | 0.55 | 0.54 | 1.0x |
+| scan_dense_10KB | 0.62 | 0.67 | 0.9x |
+| scan_kw_heavy_10KB | 0.56 | 0.50 | 1.1x |
+| scan_clean_100KB | 1.79 | 1.86 | 1.0x |
+| scan_mixed_100KB | 3.36 | 3.20 | 1.1x |
+| scan_dense_100KB | 4.09 | 4.00 | 1.0x |
+| scan_kw_heavy_100KB | 2.95 | 2.89 | 1.0x |
+| scan_clean_1MB | 14.97 | 15.07 | 1.0x |
+| scan_mixed_1MB | 49.07 | 47.96 | 1.0x |
+| scan_dense_1MB | 47.84 | 46.50 | 1.0x |
+| scan_kw_heavy_1MB | 29.08 | 25.73 | 1.1x |
+| redact_mixed_10KB | 0.56 | 0.52 | 1.1x |
+
 ### Analysis
 
 The AC prefilter already eliminates ~80% of regex work in full mode, so
@@ -137,7 +160,7 @@ baseline mode provides only marginal additional speedup in most cases.
 The difference is most visible on **keyword-heavy text** (text containing
 many context keywords like "account number", "social security", "bank"
 that trigger context-gated patterns to run even though no actual sensitive
-data matches). In that scenario, baseline mode is **1.2x faster** (59 → 69 MB/s).
+data matches). In that scenario, baseline mode is **1.1x faster** (34 → 39 MB/s).
 
 Baseline mode is best suited for:
 - High-throughput pipelines where only critical/high-confidence patterns matter
