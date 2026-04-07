@@ -220,16 +220,39 @@ impl Pipeline {
                 // Extractor failed, try reading as plain text
                 match fs::read_to_string(path) {
                     Ok(t) => (t, detect_format(path)),
-                    Err(e) => {
-                        return PipelineResult {
-                            file_path,
-                            matches: vec![],
-                            format_detected: "binary".into(),
-                            duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                            error: Some(format!("Cannot read file: {e}")),
-                            file_size_bytes: metadata.len(),
-                            extracted_text_length: 0,
-                        };
+                    Err(_) => {
+                        // UTF-8 read failed (binary file). Last resort: extract
+                        // printable ASCII strings from raw bytes. This catches
+                        // sensitive data embedded in binary formats with unknown
+                        // or corrupted extensions.
+                        match fs::read(path) {
+                            Ok(bytes) if bytes.len() <= self.max_file_size => {
+                                let text = crate::extractors::extract_printable_strings_public(&bytes, 12);
+                                if text.is_empty() {
+                                    return PipelineResult {
+                                        file_path,
+                                        matches: vec![],
+                                        format_detected: "binary".into(),
+                                        duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+                                        error: Some("Binary file with no extractable text".into()),
+                                        file_size_bytes: metadata.len(),
+                                        extracted_text_length: 0,
+                                    };
+                                }
+                                (text, "binary-strings".into())
+                            }
+                            _ => {
+                                return PipelineResult {
+                                    file_path,
+                                    matches: vec![],
+                                    format_detected: "binary".into(),
+                                    duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+                                    error: Some("Cannot read binary file".into()),
+                                    file_size_bytes: metadata.len(),
+                                    extracted_text_length: 0,
+                                };
+                            }
+                        }
                     }
                 }
             }

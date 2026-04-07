@@ -186,22 +186,33 @@ fn test_corrupted_docx_fail_behavior() {
     }
 }
 
-/// Tests that a corrupted ZIP doesn't cause a panic.
+/// Tests that a corrupted ZIP doesn't panic and attempts recovery.
 #[test]
 fn test_corrupted_zip_no_panic() {
     let f = tempfile::Builder::new()
         .suffix(".docx")
         .tempfile()
         .unwrap();
-    // Write garbage with ZIP magic bytes
+    // Write garbage with ZIP magic bytes + embedded text
     let mut data = b"PK\x03\x04".to_vec();
     data.extend_from_slice(&[0xFF; 200]);
-    data.extend_from_slice(b"hidden SSN 123-45-6789 here");
+    data.extend_from_slice(b"hidden SSN 123-45-6789 here in the raw bytes of the file");
     std::fs::write(f.path(), &data).unwrap();
 
-    // Must not panic
+    // Must not panic — may succeed via raw byte recovery or fail gracefully
     let result = dlpscan::extractors::extract_text(f.path().to_str().unwrap());
-    assert!(result.is_err(), "Garbage ZIP should fail gracefully, not panic");
+    match result {
+        Ok(r) => {
+            // Recovery succeeded — verify it found the embedded text
+            assert!(
+                r.text.contains("123-45-6789"),
+                "ZIP recovery should find embedded SSN: {}", &r.text[..r.text.len().min(200)]
+            );
+        }
+        Err(_) => {
+            // Graceful failure — acceptable if no printable strings found
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -408,7 +419,7 @@ fn test_corrupted_docx_renamed_txt() {
 }
 
 /// Binary file with embedded text payload, unknown extension.
-/// Tests: does the scanner extract printable strings or silently fail?
+/// Tests: the pipeline's binary fallback extracts printable strings.
 #[test]
 fn test_unknown_extension_binary_with_payload() {
     let mut data = vec![0u8; 100];
@@ -421,21 +432,65 @@ fn test_unknown_extension_binary_with_payload() {
         .unwrap();
     std::fs::write(f.path(), &data).unwrap();
 
-    // Unknown extension falls through to detect_and_extract (magic bytes),
-    // then to extract_plain_text fallback. Binary data will fail read_to_string.
+    // extract_text may fail for binary with unknown extension, BUT
+    // the pipeline's binary fallback should use extract_printable_strings_public.
+    // Test the public API directly:
+    let text = dlpscan::extractors::extract_printable_strings_public(&data, 12);
+    assert!(
+        text.contains("4532015112830366"),
+        "Printable string extraction should find card number in binary: {text}"
+    );
+    assert!(
+        text.contains("078-05-1120"),
+        "Printable string extraction should find SSN in binary"
+    );
+}
+
+/// Corrupted ZIP with STORED entries should recover data via raw byte scan.
+#[test]
+fn test_corrupted_zip_raw_byte_recovery() {
+    let f = tempfile::Builder::new()
+        .suffix(".docx")
+        .tempfile()
+        .unwrap();
+    {
+        let file = std::fs::File::create(f.path()).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip.start_file("word/document.xml", options).unwrap();
+        zip.write_all(b"<w:t>card number is 4532015112830366 hidden here</w:t>")
+            .unwrap();
+        zip.finish().unwrap();
+    }
+
+    // Corrupt the central directory
+    let mut data = std::fs::read(f.path()).unwrap();
+    let len = data.len();
+    if len > 30 {
+        for b in data[len - 22..].iter_mut() {
+            *b = 0xFF;
+        }
+    }
+    std::fs::write(f.path(), &data).unwrap();
+
+    // extract_text should now recover via raw byte fallback
     let result = dlpscan::extractors::extract_text(f.path().to_str().unwrap());
-    // The question: is the data lost?
     match result {
         Ok(r) => {
-            if !r.text.is_empty() {
-                eprintln!("Unknown extension extracted {} bytes", r.text.len());
-            }
+            assert!(
+                r.text.contains("4532015112830366"),
+                "Corrupted ZIP recovery should find card number: format={}, text_len={}",
+                r.format, r.text.len()
+            );
+            assert!(
+                r.format == "zip-recovered",
+                "Format should indicate recovery: {}",
+                r.format
+            );
         }
-        Err(_) => {
-            // Extraction failed. In pipeline mode, it would try read_to_string
-            // which would also fail on binary. The payload is LOST.
-            // This is a known gap — document it.
-            eprintln!("Known gap: binary file with unknown extension loses embedded text");
+        Err(e) => {
+            panic!("Corrupted ZIP should recover via raw bytes, but got error: {e}");
         }
     }
 }
