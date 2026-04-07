@@ -262,4 +262,29 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(10));
         assert!(cache.get("x").is_none());
     }
+
+    #[test]
+    fn test_key_with_namespace_isolation() {
+        let k1 = ScanCache::key_with_namespace("hello", Some("tenant-a"));
+        let k2 = ScanCache::key_with_namespace("hello", Some("tenant-b"));
+        let k3 = ScanCache::key_with_namespace("hello", None);
+        // Same text, different namespaces produce different keys
+        assert_ne!(k1, k2);
+        assert_ne!(k1, k3);
+        assert_ne!(k2, k3);
+    }
+
+    #[test]
+    fn test_key_with_namespace_deterministic() {
+        let k1 = ScanCache::key_with_namespace("data", Some("ns"));
+        let k2 = ScanCache::key_with_namespace("data", Some("ns"));
+        assert_eq!(k1, k2);
+    }
+
+    #[test]
+    fn test_key_without_namespace_matches_key() {
+        let k1 = ScanCache::key("some text");
+        let k2 = ScanCache::key_with_namespace("some text", None);
+        assert_eq!(k1, k2);
+    }
 }

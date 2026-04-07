@@ -155,7 +155,10 @@ maps are zeroized before deallocation.
 
 - **MAX_VAULT_ENTRIES**: 100,000 per vault (overflow returns hash-only token)
 - **MAX_VAULTS**: 1,000 concurrent vaults
-- **VAULT_TTL**: 1 hour (expired vaults evicted on each request)
+- **VAULT_TTL**: 1 hour — expired vaults rejected on detokenize and evicted
+  by a background task every 60 seconds
+- **Panic-safe eviction**: the background task is wrapped in `catch_unwind`
+  to prevent silent death; panics are logged and the task continues
 
 ## Network Security
 
@@ -264,11 +267,63 @@ The Exact Data Match module uses bitwise XOR comparison that iterates
 all registered hashes regardless of match status, preventing timing
 side-channel attacks that could reveal which values are registered.
 
+A warning is logged when total registered hashes exceed 50,000 to alert
+operators to potential O(N*M) performance degradation.
+
 ### Luhn Validation
 
 Credit card Luhn checks enforce:
 - Minimum 12 digits (rejects short sequences)
 - Rejects all-same-digit sequences (e.g., `0000000000000000`)
+
+## File Type Controls
+
+### Blocked Extensions
+
+Cryptographic material is blocked by default in the pipeline to prevent
+accidental extraction of binary key/certificate data:
+
+```
+.der .p12 .pfx .p7b .p7c .p7m .p7s .p8 .ppk
+.jks .keystore .bks .gpg .pgp .asc .sst .stl .spc .pvk
+```
+
+PEM-encoded text files (`.pem`, `.key`, `.crt`, `.pub`, `.csr`) are NOT
+blocked because they contain ASCII text and the scanner's "Private Key"
+pattern detects `-----BEGIN.*PRIVATE KEY-----` in them — blocking them
+would create a detection gap.
+
+Configure via the `blocked_extensions` field in your config file.
+
+### Block Unreadable
+
+Set `block_unreadable: true` to also block:
+
+- **Executables**: `.exe`, `.dll`, `.so`, `.dylib`, `.wasm`, `.class`
+- **Compiled objects**: `.o`, `.obj`, `.pyc`, `.pyo`
+- **Encrypted containers**: `.gpg`, `.enc`, `.aes`, `.kdbx`, `.tc`, `.hc`
+- **Media files**: `.mp3`, `.mp4`, `.avi`, `.mkv`, `.wav`, `.flac`
+- **Fonts**: `.ttf`, `.otf`, `.woff`, `.woff2`
+
+### Double-Extension Prevention
+
+The pipeline checks ALL dot-separated segments in a filename, not just
+the last extension. For example, `secret.der.txt` is correctly blocked
+because `der` appears as a segment.
+
+### Symlink Resolution
+
+Paths are canonicalized via `std::fs::canonicalize()` before the extension
+check runs. This prevents bypass via `safe.txt` -> `secret.der` symlinks.
+
+### QR Code / Barcode Safety (feature: `barcode`)
+
+Image files decoded for barcodes are subject to:
+
+- **20 MB** maximum image file size before decoding
+- **100** maximum barcodes per image
+- **4 KB** maximum decoded text per barcode
+- Feature-gated: disabled unless `barcode` feature is compiled in
 
 ## Deployment Recommendations
 

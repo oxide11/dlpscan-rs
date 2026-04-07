@@ -176,14 +176,25 @@ impl ExactDataMatcher {
     }
 
     /// Register sensitive values under a category. Returns total hash count.
+    ///
+    /// Warns when total hash count exceeds [`Self::MAX_CONSTANT_TIME_HASHES`],
+    /// as constant-time scan performance degrades linearly with hash count.
     pub fn register_values(&mut self, category: &str, values: &[&str]) -> usize {
-        // Pre-compute hashes to avoid borrow conflict
         let hashes: Vec<String> = values.iter().map(|v| self.hmac_hash(v)).collect();
         let entry = self.hashes.entry(category.to_string()).or_default();
         for hash in hashes {
             entry.insert(hash);
         }
-        entry.len()
+        let cat_len = entry.len();
+        let total = self.total_hashes();
+        if total > Self::MAX_CONSTANT_TIME_HASHES {
+            tracing::warn!(
+                total_hashes = total,
+                max = Self::MAX_CONSTANT_TIME_HASHES,
+                "EDM hash count exceeds recommended maximum for constant-time scan — scan performance will degrade"
+            );
+        }
+        cat_len
     }
 
     /// List registered categories.
@@ -195,6 +206,10 @@ impl ExactDataMatcher {
     pub fn total_hashes(&self) -> usize {
         self.hashes.values().map(|s| s.len()).sum()
     }
+
+    /// Maximum total hashes across all categories for constant-time scan.
+    /// Beyond this threshold, the O(tokens * hashes) scan becomes a DoS risk.
+    const MAX_CONSTANT_TIME_HASHES: usize = 50_000;
 
     /// Scan text for registered values.
     pub fn scan(&self, text: &str, categories: Option<&HashSet<String>>) -> Vec<EDMMatch> {

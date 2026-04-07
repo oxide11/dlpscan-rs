@@ -79,6 +79,10 @@ rusqlite = { version = "0.32", optional = true, features = ["bundled"] }
 # OLE2 (MSG files)
 cfb = { version = "0.10", optional = true }
 
+# Barcode / QR code decoding
+rxing = { version = "0.6", optional = true }
+image = { version = "0.25", optional = true }
+
 # Python bindings
 pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
 
@@ -98,11 +102,12 @@ office = ["dep:calamine", "dep:quick-xml"]
 archives = ["dep:sevenz-rust", "dep:unrar"]
 data-formats = ["dep:parquet", "dep:arrow", "dep:rusqlite"]
 msg = ["dep:cfb"]
+barcode = ["dep:rxing", "dep:image"]
 async-support = ["dep:tokio", "dep:reqwest", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:bytes"]
 tls = ["async-support", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile"]
 yaml-config = ["dep:serde_yaml"]
 python = ["dep:pyo3"]
-full = ["pdf", "office", "archives", "data-formats", "msg", "async-support", "metrics", "tls", "yaml-config"]
+full = ["pdf", "office", "archives", "data-formats", "msg", "barcode", "async-support", "metrics", "tls", "yaml-config"]
 
 [dev-dependencies]
 criterion = "0.5"

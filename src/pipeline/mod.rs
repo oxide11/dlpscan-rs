@@ -74,6 +74,10 @@ pub struct Pipeline {
     deduplicate: bool,
     /// Allowlist for suppression.
     allowlist: Option<Allowlist>,
+    /// File extensions to block (flagged and skipped).
+    blocked_extensions: Vec<String>,
+    /// When true, block unknown/opaque binary and encrypted file types.
+    block_unreadable: bool,
 }
 
 impl Pipeline {
@@ -86,6 +90,11 @@ impl Pipeline {
             min_confidence: 0.0,
             deduplicate: true,
             allowlist: None,
+            blocked_extensions: crate::extractors::DEFAULT_BLOCKED_EXTENSIONS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            block_unreadable: false,
         }
     }
 
@@ -119,10 +128,57 @@ impl Pipeline {
         self
     }
 
+    /// Set blocked file extensions.
+    pub fn with_blocked_extensions(mut self, extensions: Vec<String>) -> Self {
+        self.blocked_extensions = extensions;
+        self
+    }
+
+    /// Block unknown/opaque binary and encrypted file types.
+    pub fn with_block_unreadable(mut self, block: bool) -> Self {
+        self.block_unreadable = block;
+        self
+    }
+
     /// Process a single file.
     pub fn process_file(&self, path: &Path) -> PipelineResult {
         let start = Instant::now();
+        // Resolve symlinks before blocking check to prevent bypass via safe-named symlinks
+        let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let file_path = path.display().to_string();
+
+        // Check blocked extensions on RESOLVED path (checks ALL extensions, not just last)
+        {
+            let resolved_str = resolved.display().to_string();
+            let blocked_refs: Vec<&str> = self.blocked_extensions.iter().map(|s| s.as_str()).collect();
+            if crate::extractors::is_path_blocked(&resolved_str, &blocked_refs) {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("unknown");
+                return PipelineResult {
+                    file_path,
+                    matches: vec![],
+                    format_detected: "blocked".into(),
+                    duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+                    error: Some(format!("Blocked file type in path: {}", ext.to_lowercase())),
+                    file_size_bytes: 0,
+                    extracted_text_length: 0,
+                };
+            }
+            if self.block_unreadable {
+                if let Some(ext) = resolved.extension().and_then(|e| e.to_str()) {
+                    if crate::extractors::is_unreadable_extension(ext) {
+                        return PipelineResult {
+                            file_path,
+                            matches: vec![],
+                            format_detected: "blocked".into(),
+                            duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+                            error: Some(format!("Unreadable/encrypted file type: .{}", ext.to_lowercase())),
+                            file_size_bytes: 0,
+                            extracted_text_length: 0,
+                        };
+                    }
+                }
+            }
+        }
 
         // Check file size
         let metadata = match fs::metadata(path) {

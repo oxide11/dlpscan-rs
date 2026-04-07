@@ -139,7 +139,7 @@ const MAX_PATTERN_LENGTH: usize = 2048;
 const MAX_VAULTS: usize = 1000;
 
 /// Vault time-to-live in seconds (1 hour).
-const VAULT_TTL_SECS: u64 = 3600;
+pub const VAULT_TTL_SECS: u64 = 3600;
 
 /// Shared application state for the API server.
 pub struct AppState {
@@ -637,7 +637,12 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
             loop {
                 interval.tick().await;
-                evict_expired_vaults(&vaults.vaults);
+                // Catch panics to prevent silent task death
+                if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    evict_expired_vaults(&vaults.vaults);
+                })).is_err() {
+                    tracing::error!("Vault eviction task panicked — recovering");
+                }
             }
         });
     }
@@ -875,11 +880,12 @@ fn hyper_route_request(
     // Route dispatch
     match (method, path) {
         ("GET", "/health") => {
-            // Authenticated users get full health details; unauthenticated get minimal
-            let is_authed = expected_hash
-                .as_ref()
-                .and_then(|h| api_key_header.map(|k| verify_api_key_hash(h, k)))
-                .unwrap_or(true); // No key configured = always full
+            // Authenticated users get full health details; unauthenticated get minimal.
+            // When no API key is configured, return minimal response (defense-in-depth).
+            let is_authed = match expected_hash.as_ref() {
+                Some(h) => api_key_header.map(|k| verify_api_key_hash(h, k)).unwrap_or(false),
+                None => false, // No key configured = minimal response
+            };
             if is_authed {
                 let resp = handle_health_full(state, 0);
                 (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default())
@@ -1053,5 +1059,79 @@ mod tests {
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 8000);
         assert_eq!(config.rate_limit, 100);
+    }
+
+    #[test]
+    fn test_hash_api_key_deterministic() {
+        let h1 = hash_api_key("test-key");
+        let h2 = hash_api_key("test-key");
+        assert_eq!(h1, h2);
+        let h3 = hash_api_key("different-key");
+        assert_ne!(h1, h3);
+    }
+
+    #[test]
+    fn test_verify_api_key_hash_wrong_key() {
+        let hash = hash_api_key("correct-key");
+        assert!(!verify_api_key_hash(&hash, ""));
+        assert!(!verify_api_key_hash(&hash, "wrong"));
+        assert!(!verify_api_key_hash(&hash, "correct-ke")); // prefix
+    }
+
+    #[test]
+    fn test_rate_limiter_per_client() {
+        let mut rl = RateLimiter::new(2, 60);
+        assert!(rl.check_client("ip:1.1.1.1"));
+        assert!(rl.check_client("ip:1.1.1.1"));
+        assert!(!rl.check_client("ip:1.1.1.1")); // exhausted
+        // Different client still has quota
+        assert!(rl.check_client("ip:2.2.2.2"));
+        assert!(rl.check_client("key:abc123"));
+    }
+
+    #[test]
+    fn test_vault_ttl_enforcement() {
+        let vaults: RwLock<HashMap<String, VaultEntry>> = RwLock::new(HashMap::new());
+        let vault = crate::guard::TokenVault::new("TOK", None);
+        // Insert a vault with created_at in the past (simulate expiry)
+        vaults.write().unwrap().insert("test-vault".to_string(), VaultEntry {
+            vault,
+            created_at: Instant::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 1),
+        });
+        // Detokenize should fail for expired vault
+        let req = DetokenizeRequest {
+            text: "some text".to_string(),
+            vault_id: "test-vault".to_string(),
+        };
+        let result = handle_detokenize(&req, &vaults);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("expired"));
+    }
+
+    #[test]
+    fn test_evict_expired_vaults() {
+        let vaults: RwLock<HashMap<String, VaultEntry>> = RwLock::new(HashMap::new());
+        // Insert expired vault
+        vaults.write().unwrap().insert("expired".to_string(), VaultEntry {
+            vault: crate::guard::TokenVault::new("TOK", None),
+            created_at: Instant::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 1),
+        });
+        // Insert active vault
+        vaults.write().unwrap().insert("active".to_string(), VaultEntry {
+            vault: crate::guard::TokenVault::new("TOK", None),
+            created_at: Instant::now(),
+        });
+        evict_expired_vaults(&vaults);
+        let guard = vaults.read().unwrap();
+        assert!(!guard.contains_key("expired"));
+        assert!(guard.contains_key("active"));
+    }
+
+    #[cfg(feature = "async-support")]
+    #[test]
+    fn test_pattern_length_limit() {
+        let long_pattern = "a".repeat(3000);
+        assert_eq!(MAX_PATTERN_LENGTH, 2048);
+        assert!(long_pattern.len() > MAX_PATTERN_LENGTH);
     }
 }

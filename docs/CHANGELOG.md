@@ -4,7 +4,38 @@ All notable changes to dlpscan will be documented in this file.
 
 ## [2.1.0] - 2026-04-07
 
-### Security Hardening (4 rounds, 44 findings addressed)
+### New Features
+
+#### QR Code and Barcode Scanning (feature: `barcode`)
+- Decode QR Code, Data Matrix, Aztec, PDF417, UPC-A/E, EAN-8/13,
+  Code 39/128, ITF, Codabar from image files (PNG, JPG, GIF, BMP, TIFF, WebP)
+- Decoded text scanned for all 560 patterns
+- Image size pre-check (20 MB), barcode count limit (100), text cap (4 KB/barcode)
+
+#### New File Format Support
+- `.cab` — Microsoft Cabinet archive extraction (MSCF header validation,
+  printable string extraction with 10 MB output cap)
+- `.dat` — generic data files (UTF-8 first, binary string fallback)
+
+#### File Type Blocking
+- `blocked_extensions` config field with crypto cert defaults
+  (`.der`, `.p12`, `.pfx`, `.p7b`, `.p7c`, `.p7m`, `.p7s`, `.p8`, `.ppk`,
+  `.jks`, `.keystore`, `.bks`, `.gpg`, `.pgp`, `.asc`, `.sst`, `.stl`,
+  `.spc`, `.pvk`)
+- `block_unreadable` opt-in mode blocks executables, compiled objects,
+  encrypted containers (`.gpg`, `.kdbx`, `.tc`, `.enc`), and media files
+- Double-extension bypass prevention (`secret.der.txt` correctly blocked)
+- Symlink resolution before extension check (canonicalize path first)
+- `is_blocked_extension()`, `is_path_blocked()`, `is_unreadable_extension()`,
+  `is_likely_encrypted()` public API functions
+
+### Testing
+- 305 tests (268 unit + 37 integration), up from 127
+- New unit tests across 12 modules covering all hardening and new features
+- New integration tests for audit signing, compliance redaction, Luhn,
+  file blocking, Unicode evasion, SSRF, CAB/DAT extraction, vault TTL, RBAC
+
+### Security Hardening (6 rounds, 51 findings addressed)
 
 #### Critical
 - Compliance reports now use `redacted_text()` — no raw sensitive data in samples (PCI-DSS 3.2.1)
@@ -46,6 +77,16 @@ All notable changes to dlpscan will be documented in this file.
 - Policy version "2" supported alongside "1"
 - Rotate-key validates trimmed key length and complexity
 - Streaming scanner UTF-8 safe overlap splitting
+- Vault eviction task wrapped in `catch_unwind` to prevent silent death
+- `/health` returns minimal response even when no API key is configured
+- `RotatingFileAuditHandler` validates `max_files >= 1`, `max_bytes >= 1024`
+- `.p8` (PKCS#8) and `.ppk` (PuTTY) private keys added to blocked defaults
+- `DLPSCAN_SIEM_ALLOW_HTTP` env var cached at startup via `Lazy` static
+- EDM warns when hash count exceeds 50k (constant-time scan performance)
+- `is_path_blocked()` skips empty segments and empty blocked entries
+- Pipeline canonicalizes paths before extension check (symlink bypass fix)
+- Printable string extraction capped at 10 MB output
+- Barcode decoder: 20 MB image limit, 100 barcodes/image, 4 KB text/barcode
 
 ## [2.0.0] - 2026-04-02
 

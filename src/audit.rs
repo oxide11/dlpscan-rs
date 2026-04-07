@@ -352,8 +352,8 @@ impl RotatingFileAuditHandler {
     pub fn new(path: &str, max_bytes: u64, max_files: usize) -> Self {
         Self {
             path: path.to_string(),
-            max_bytes,
-            max_files,
+            max_bytes: max_bytes.max(1024), // minimum 1 KB
+            max_files: max_files.max(1),    // minimum 1 rotated file
             lock: Mutex::new(()),
         }
     }
@@ -866,5 +866,100 @@ mod tests {
 
         let event = event_from_scan(&scan_result, "unknown_action", None, None, None);
         assert_eq!(event.event_type, "SCAN");
+    }
+
+    #[test]
+    fn test_sign_and_verify() {
+        let key = b"test-signing-key-32bytes!!!!!!!!";
+        let event = AuditEvent::new("SCAN").unwrap()
+            .with_action("scan")
+            .with_outcome("success");
+        let signed = event.sign(key).expect("signing should succeed");
+        assert!(signed.signature.is_some());
+        assert!(signed.verify(key));
+    }
+
+    #[test]
+    fn test_verify_fails_wrong_key() {
+        let key = b"correct-key-for-signing-1234567";
+        let event = AuditEvent::new("SCAN").unwrap()
+            .sign(key).unwrap();
+        assert!(!event.verify(b"wrong-key-for-verification!!!!!"));
+    }
+
+    #[test]
+    fn test_verify_fails_tampered_event() {
+        let key = b"tamper-detection-key-1234567890";
+        let mut event = AuditEvent::new("REDACT").unwrap()
+            .with_finding_count(5)
+            .sign(key).unwrap();
+        // Tamper with the event
+        event.finding_count = 0;
+        assert!(!event.verify(key));
+    }
+
+    #[test]
+    fn test_verify_fails_no_signature() {
+        let event = AuditEvent::new("SCAN").unwrap();
+        assert!(!event.verify(b"any-key"));
+    }
+
+    #[test]
+    fn test_new_audit_fields() {
+        let event = AuditEvent::new("SCAN").unwrap()
+            .with_source_ip("192.168.1.1")
+            .with_request_id("req-12345")
+            .with_outcome("success");
+        assert_eq!(event.source_ip.as_deref(), Some("192.168.1.1"));
+        assert_eq!(event.request_id.as_deref(), Some("req-12345"));
+        assert_eq!(event.outcome.as_deref(), Some("success"));
+
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("source_ip"));
+        assert!(json.contains("request_id"));
+        assert!(json.contains("outcome"));
+    }
+
+    #[test]
+    fn test_event_from_scan_outcome() {
+        use crate::guard::ScanResult;
+        let clean = ScanResult {
+            text: String::new(),
+            is_clean: true,
+            findings: vec![],
+            categories_found: std::collections::HashSet::new(),
+            redacted_text: None,
+            scan_truncated: false,
+        };
+        let event = event_from_scan(&clean, "flag", None, None, None);
+        assert_eq!(event.outcome.as_deref(), Some("success"));
+
+        let dirty = ScanResult {
+            text: String::new(),
+            is_clean: false,
+            findings: vec![],
+            categories_found: std::collections::HashSet::new(),
+            redacted_text: None,
+            scan_truncated: false,
+        };
+        let event = event_from_scan(&dirty, "REJECT", None, None, None);
+        assert_eq!(event.outcome.as_deref(), Some("rejected"));
+
+        let event = event_from_scan(&dirty, "flag", None, None, None);
+        assert_eq!(event.outcome.as_deref(), Some("findings_detected"));
+    }
+
+    #[test]
+    fn test_rotating_handler_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.jsonl");
+        let handler = RotatingFileAuditHandler::new(
+            path.to_str().unwrap(), 1024 * 1024, 5,
+        );
+        let event = AuditEvent::new("SCAN").unwrap();
+        handler.handle(&event);
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("SCAN"));
     }
 }

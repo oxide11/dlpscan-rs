@@ -100,6 +100,10 @@ To permit HTTP in development/testing environments:
 export DLPSCAN_SIEM_ALLOW_HTTP=1
 ```
 
+This environment variable is read once at process startup and cached.
+Changing it at runtime has no effect (defense against runtime env
+manipulation).
+
 !!! warning
     Never set `DLPSCAN_SIEM_ALLOW_HTTP=1` in production.
 

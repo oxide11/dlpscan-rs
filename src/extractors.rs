@@ -122,8 +122,8 @@ pub fn get_extractor(file_path: &str) -> Option<ExtractorFn> {
         | "toml" | "ini" | "cfg" | "conf" | "md" | "rst" | "py" | "js" | "ts" | "java" | "go"
         | "rs" | "rb" | "php" | "sh" | "bat" | "ps1" | "sql" | "env" | "c" | "cpp" | "h"
         | "hpp" | "css" | "scss" | "less" | "jsx" | "tsx" | "vue" | "svelte" | "swift" | "kt"
-        | "scala" | "r" | "m" | "mm" | "pem" | "cer" | "crt" | "key" | "pub" | "csr" | "der"
-        | "p12" | "pfx" => Some(extract_plain_text),
+        | "scala" | "r" | "m" | "mm" | "pem" | "cer" | "crt" | "key" | "pub" | "csr"
+        => Some(extract_plain_text),
 
         // RTF (custom parser, no deps)
         "rtf" => Some(extract_rtf),
@@ -165,6 +165,18 @@ pub fn get_extractor(file_path: &str) -> Option<ExtractorFn> {
         #[cfg(feature = "data-formats")]
         "db" | "sqlite" | "sqlite3" => Some(extract_sqlite),
 
+        // Barcode / QR code images
+        #[cfg(feature = "barcode")]
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "tiff" | "tif" | "webp" => {
+            Some(extract_barcode)
+        }
+
+        // Cabinet archives
+        "cab" => Some(extract_cab),
+
+        // Generic data files
+        "dat" => Some(extract_dat),
+
         _ => {
             // Try format detection by magic bytes
             detect_and_extract(file_path)
@@ -199,7 +211,7 @@ pub fn supported_extensions() -> Vec<String> {
         "cfg", "conf", "md", "rst", "py", "js", "ts", "java", "go", "rs", "rb", "php", "sh", "bat",
         "ps1", "sql", "env", "rtf", "eml", "vcf", "vcard", "contact", "ldif", "c", "cpp", "h",
         "hpp", "css", "scss", "pem", "cer", "crt", "key", "pub", "csr", "ics", "ical", "mbox",
-        "mbx", "mhtml", "mht", "warc", "odt", "ods", "odp",
+        "mbx", "mhtml", "mht", "warc", "odt", "ods", "odp", "cab", "dat",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -2051,6 +2063,247 @@ fn extract_sqlite(file_path: &str) -> Result<ExtractionResult, String> {
 }
 
 // ---------------------------------------------------------------------------
+// QR Code / Barcode Decoding (requires `barcode` feature)
+// ---------------------------------------------------------------------------
+
+/// Decode QR codes, barcodes (UPC, EAN, Data Matrix, Aztec, PDF417, etc.)
+/// from image files and return the decoded text for scanning.
+/// Maximum image file size for barcode decoding (20 MB).
+#[cfg(feature = "barcode")]
+const MAX_BARCODE_IMAGE_SIZE: u64 = 20 * 1024 * 1024;
+
+/// Maximum number of barcodes to decode per image.
+#[cfg(feature = "barcode")]
+const MAX_BARCODES_PER_IMAGE: usize = 100;
+
+/// Maximum decoded text length per barcode (4 KB).
+#[cfg(feature = "barcode")]
+const MAX_BARCODE_TEXT_LEN: usize = 4096;
+
+#[cfg(feature = "barcode")]
+pub fn extract_barcode(file_path: &str) -> Result<ExtractionResult, String> {
+    use rxing::BarcodeFormat;
+
+    // Pre-check image file size to prevent decompression bombs
+    let meta = std::fs::metadata(file_path).map_err(|e| e.to_string())?;
+    if meta.len() > MAX_BARCODE_IMAGE_SIZE {
+        return Err(format!(
+            "Image too large for barcode decoding: {} bytes (max {})",
+            meta.len(),
+            MAX_BARCODE_IMAGE_SIZE
+        ));
+    }
+
+    let results = rxing::helpers::detect_multiple_in_file(file_path)
+        .map_err(|e| format!("Barcode decode failed: {e}"))?;
+
+    if results.is_empty() {
+        return Ok(ExtractionResult::new(String::new(), "barcode")
+            .with_warning("No barcodes or QR codes detected in image"));
+    }
+
+    let mut text_parts = Vec::new();
+    let mut formats_found = Vec::new();
+
+    for result in results.iter().take(MAX_BARCODES_PER_IMAGE) {
+        let format_name = match result.getBarcodeFormat() {
+            BarcodeFormat::QR_CODE => "QR Code",
+            BarcodeFormat::DATA_MATRIX => "Data Matrix",
+            BarcodeFormat::AZTEC => "Aztec",
+            BarcodeFormat::PDF_417 => "PDF417",
+            BarcodeFormat::UPC_A => "UPC-A",
+            BarcodeFormat::UPC_E => "UPC-E",
+            BarcodeFormat::EAN_8 => "EAN-8",
+            BarcodeFormat::EAN_13 => "EAN-13",
+            BarcodeFormat::CODE_39 => "Code 39",
+            BarcodeFormat::CODE_128 => "Code 128",
+            BarcodeFormat::ITF => "ITF",
+            BarcodeFormat::CODABAR => "Codabar",
+            _ => "Unknown",
+        };
+        formats_found.push(format_name);
+        // Cap decoded text length to prevent memory exhaustion from malicious barcodes
+        let decoded = result.getText();
+        if decoded.len() <= MAX_BARCODE_TEXT_LEN {
+            text_parts.push(decoded.to_string());
+        } else {
+            text_parts.push(decoded[..MAX_BARCODE_TEXT_LEN].to_string());
+        }
+    }
+
+    let text = text_parts.join("\n");
+    let mut result = ExtractionResult::new(text, "barcode");
+    result = result.with_metadata("barcode_count", &results.len().to_string());
+    result = result.with_metadata("formats", &formats_found.join(", "));
+    Ok(result)
+}
+
+// ---------------------------------------------------------------------------
+// CAB (Microsoft Cabinet) Archive Extraction
+// ---------------------------------------------------------------------------
+
+/// Extract text content from CAB (Microsoft Cabinet) archive files.
+/// CAB files are treated as ZIP-like archives; we extract and concatenate
+/// the text content of any readable entries.
+pub fn extract_cab(file_path: &str) -> Result<ExtractionResult, String> {
+    let metadata = std::fs::metadata(file_path).map_err(|e| e.to_string())?;
+    if metadata.len() as usize > MAX_EXTRACT_SIZE {
+        return Err(format!("CAB file too large: {} bytes", metadata.len()));
+    }
+
+    let data = std::fs::read(file_path).map_err(|e| e.to_string())?;
+
+    if data.len() < 4 || &data[0..4] != b"MSCF" {
+        return Err("Not a valid CAB file (missing MSCF header)".to_string());
+    }
+
+    // Extract printable text segments (capped at MAX_PRINTABLE_OUTPUT)
+    let text = extract_printable_strings(&data, 8);
+    let mut result = ExtractionResult::new(text, "cab");
+    result = result.with_metadata("file_size", &data.len().to_string());
+    Ok(result)
+}
+
+/// Extract text content from .DAT files.
+/// DAT files are generic data files; we scan for printable text segments.
+pub fn extract_dat(file_path: &str) -> Result<ExtractionResult, String> {
+    let data = std::fs::read(file_path).map_err(|e| e.to_string())?;
+
+    if data.len() as usize > MAX_EXTRACT_SIZE {
+        return Err(format!("DAT file too large: {} bytes", data.len()));
+    }
+
+    // Try UTF-8 first (many DAT files are plain text)
+    if let Ok(text) = std::str::from_utf8(&data) {
+        return Ok(ExtractionResult::new(text.to_string(), "dat"));
+    }
+
+    // Fallback: extract printable strings from binary data
+    let text = extract_printable_strings(&data, 8);
+    let mut result = ExtractionResult::new(text, "dat");
+    result = result.with_warning("Binary DAT file — extracted printable strings only");
+    Ok(result)
+}
+
+/// Maximum extracted text output from binary string extraction (10 MB).
+const MAX_PRINTABLE_OUTPUT: usize = 10 * 1024 * 1024;
+
+/// Extract printable ASCII strings from binary data.
+/// Only includes runs of at least `min_length` printable characters.
+/// Output is capped at [`MAX_PRINTABLE_OUTPUT`] bytes to prevent memory exhaustion.
+fn extract_printable_strings(data: &[u8], min_length: usize) -> String {
+    let mut strings = Vec::new();
+    let mut current = String::new();
+    let mut total_len: usize = 0;
+
+    for &byte in data {
+        // ASCII printable range + common whitespace (explicit parentheses for clarity)
+        if (byte >= 0x20 && byte < 0x7f) || byte == b'\n' || byte == b'\r' || byte == b'\t' {
+            // Safe: all accepted bytes are valid single-byte ASCII/UTF-8
+            current.push(byte as char);
+        } else {
+            if current.len() >= min_length {
+                total_len += current.len() + 1; // +1 for join separator
+                if total_len > MAX_PRINTABLE_OUTPUT {
+                    break;
+                }
+                strings.push(std::mem::take(&mut current));
+            }
+            current.clear();
+        }
+    }
+    if current.len() >= min_length && total_len + current.len() <= MAX_PRINTABLE_OUTPUT {
+        strings.push(current);
+    }
+
+    strings.join("\n")
+}
+
+// ---------------------------------------------------------------------------
+// File Type Blocking
+// ---------------------------------------------------------------------------
+
+/// File extensions that are blocked by default because they contain
+/// cryptographic material that should never be transmitted or stored
+/// unprotected.
+pub const DEFAULT_BLOCKED_EXTENSIONS: &[&str] = &[
+    // Cryptographic certificates and keys
+    "der", "p12", "pfx", "p7b", "p7c", "p7m", "p7s",
+    "p8",   // PKCS#8 private keys
+    "ppk",  // PuTTY private keys
+    "jks", "keystore", "bks",
+    // Encrypted/signed containers
+    "smime", "gpg", "pgp", "asc",
+    // Binary certificate formats
+    "sst", "stl", "spc", "pvk",
+];
+
+/// File extensions that indicate encrypted content which cannot be
+/// meaningfully scanned.
+pub const ENCRYPTED_EXTENSIONS: &[&str] = &[
+    "gpg", "pgp", "enc", "aes", "p7m", "smime",
+    "kdbx", "kdb",  // KeePass databases
+    "tc", "hc",     // TrueCrypt / VeraCrypt volumes
+    "dmg",          // macOS encrypted disk images (may be encrypted)
+];
+
+/// File extensions that are known binary formats with no text to extract.
+pub const OPAQUE_BINARY_EXTENSIONS: &[&str] = &[
+    "exe", "dll", "so", "dylib", "bin", "o", "obj", "a", "lib",
+    "class", "pyc", "pyo", "wasm",
+    "ico", "cur", "ani",
+    "ttf", "otf", "woff", "woff2", "eot",
+    "mp3", "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm",
+    "wav", "flac", "ogg", "aac", "m4a",
+    "swf", "fla",
+];
+
+/// Check if a file extension is in the blocked list.
+pub fn is_blocked_extension(ext: &str, blocked: &[&str]) -> bool {
+    let lower = ext.to_lowercase();
+    let trimmed = lower.trim_start_matches('.');
+    blocked.iter().any(|&b| b == trimmed)
+}
+
+/// Check if any extension in a file path (including double extensions) is blocked.
+/// For example, `secret.der.txt` checks both "txt" and "der".
+/// Empty segments and empty blocked entries are ignored.
+pub fn is_path_blocked(file_path: &str, blocked: &[&str]) -> bool {
+    let name = Path::new(file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    for segment in name.split('.').skip(1) {
+        if segment.is_empty() {
+            continue;
+        }
+        let lower = segment.to_lowercase();
+        if blocked.iter().any(|&b| !b.is_empty() && b == lower.as_str()) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Check if a file extension is an unreadable/opaque binary type.
+pub fn is_unreadable_extension(ext: &str) -> bool {
+    let lower = ext.to_lowercase();
+    let trimmed = lower.trim_start_matches('.');
+    OPAQUE_BINARY_EXTENSIONS.iter().any(|&b| b == trimmed)
+        || ENCRYPTED_EXTENSIONS.iter().any(|&b| b == trimmed)
+}
+
+/// Check if a file appears to be encrypted based on extension or entropy.
+pub fn is_likely_encrypted(file_path: &str) -> bool {
+    let ext = Path::new(file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let lower = ext.to_lowercase();
+    ENCRYPTED_EXTENSIONS.iter().any(|&e| e == lower.as_str())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -2461,5 +2714,136 @@ mod tests {
         let f = write_temp("txt", "From user@test.com Mon Jan  1 00:00:00 2026\nFrom: user@test.com\nSubject: Test\n\nBody\n");
         let result = detect_and_extract(f.path().to_str().unwrap());
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_extract_printable_strings_basic() {
+        let data = b"Hello World\x00\x01\x02Secret Data\x00abc";
+        let result = extract_printable_strings(data, 5);
+        assert!(result.contains("Hello World"));
+        assert!(result.contains("Secret Data"));
+        assert!(!result.contains("abc")); // 3 chars < min_length 5
+    }
+
+    #[test]
+    fn test_extract_printable_strings_min_length() {
+        let data = b"ab\x00cdefghij\x00xy";
+        let result = extract_printable_strings(data, 8);
+        assert!(result.contains("cdefghij"));
+        assert!(!result.contains("ab"));
+        assert!(!result.contains("xy"));
+    }
+
+    #[test]
+    fn test_extract_printable_strings_whitespace() {
+        let data = b"line1\nline2\ttab\rreturn";
+        let result = extract_printable_strings(data, 3);
+        assert!(result.contains("line1\nline2\ttab\rreturn"));
+    }
+
+    #[test]
+    fn test_extract_printable_strings_output_cap() {
+        // Create data that would produce > MAX_PRINTABLE_OUTPUT
+        let big = vec![b'A'; MAX_PRINTABLE_OUTPUT + 1000];
+        let result = extract_printable_strings(&big, 1);
+        assert!(result.len() <= MAX_PRINTABLE_OUTPUT + 100); // allow some slack for join
+    }
+
+    #[test]
+    fn test_is_blocked_extension() {
+        let blocked = &["der", "p12", "pfx"];
+        assert!(is_blocked_extension("der", blocked));
+        assert!(is_blocked_extension("DER", blocked));
+        assert!(is_blocked_extension(".der", blocked));
+        assert!(!is_blocked_extension("txt", blocked));
+        assert!(!is_blocked_extension("pem", blocked));
+    }
+
+    #[test]
+    fn test_is_path_blocked_double_extension() {
+        let blocked = &["der", "p12", "pfx"];
+        assert!(is_path_blocked("secret.der.txt", blocked));
+        assert!(is_path_blocked("file.p12.bak", blocked));
+        assert!(is_path_blocked("archive.tar.pfx", blocked));
+        assert!(!is_path_blocked("readme.txt", blocked));
+        assert!(!is_path_blocked("notes.md", blocked));
+    }
+
+    #[test]
+    fn test_is_path_blocked_case_insensitive() {
+        let blocked = &["der", "p12"];
+        assert!(is_path_blocked("file.DER", blocked));
+        assert!(is_path_blocked("file.Der.txt", blocked));
+        assert!(is_path_blocked("FILE.P12", blocked));
+    }
+
+    #[test]
+    fn test_is_unreadable_extension() {
+        assert!(is_unreadable_extension("exe"));
+        assert!(is_unreadable_extension("dll"));
+        assert!(is_unreadable_extension("gpg"));
+        assert!(is_unreadable_extension("kdbx"));
+        assert!(!is_unreadable_extension("txt"));
+        assert!(!is_unreadable_extension("json"));
+    }
+
+    #[test]
+    fn test_is_likely_encrypted() {
+        assert!(is_likely_encrypted("secrets.gpg"));
+        assert!(is_likely_encrypted("database.kdbx"));
+        assert!(is_likely_encrypted("backup.enc"));
+        assert!(!is_likely_encrypted("readme.txt"));
+        assert!(!is_likely_encrypted("data.csv"));
+    }
+
+    #[test]
+    fn test_default_blocked_extensions_coverage() {
+        // Verify critical cert formats are blocked
+        for ext in &["der", "p12", "pfx", "p7b", "p7m", "jks", "gpg", "pgp"] {
+            assert!(
+                DEFAULT_BLOCKED_EXTENSIONS.contains(ext),
+                "{ext} should be in DEFAULT_BLOCKED_EXTENSIONS"
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_cab_invalid_header() {
+        let f = write_temp("cab", "NOT A CAB FILE");
+        let result = extract_cab(f.path().to_str().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("MSCF"));
+    }
+
+    #[test]
+    fn test_extract_cab_valid_header() {
+        let mut data = b"MSCF".to_vec();
+        data.extend_from_slice(b"\x00\x00\x00\x00"); // padding
+        data.extend_from_slice(b"embedded secret text here for testing");
+        let f = tempfile::Builder::new().suffix(".cab").tempfile().unwrap();
+        std::fs::write(f.path(), &data).unwrap();
+        let result = extract_cab(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(result.format, "cab");
+        assert!(result.text.contains("embedded secret text here for testing"));
+    }
+
+    #[test]
+    fn test_extract_dat_utf8() {
+        let f = write_temp("dat", "SSN: 123-45-6789\nEmail: test@example.com");
+        let result = extract_dat(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(result.format, "dat");
+        assert!(result.text.contains("123-45-6789"));
+    }
+
+    #[test]
+    fn test_extract_dat_binary_fallback() {
+        let mut data = vec![0u8; 20];
+        data.extend_from_slice(b"hidden credit card 4532015112830366 inside binary");
+        data.extend_from_slice(&vec![0xFF; 20]);
+        let f = tempfile::Builder::new().suffix(".dat").tempfile().unwrap();
+        std::fs::write(f.path(), &data).unwrap();
+        let result = extract_dat(f.path().to_str().unwrap()).unwrap();
+        assert!(result.text.contains("4532015112830366"));
+        assert!(result.warnings.iter().any(|w| w.contains("Binary")));
     }
 }

@@ -4,7 +4,7 @@ High-performance DLP scanner written in Rust. Detects, redacts, and protects
 sensitive data with exceptional throughput.
 
 **560 patterns** across **126 categories** — full parity with the Python version.
-**15,000+ lines** of Rust across 37 modules. **127 tests** passing.
+**17,000+ lines** of Rust across 37 modules. **305 tests** passing.
 
 ## Performance
 
@@ -41,6 +41,7 @@ cargo run --release --bin benchmark
 | `archives` | No | RAR and 7z archive extraction via `unrar` + `sevenz-rust` |
 | `data-formats` | No | Parquet, SQLite extraction via `parquet` + `arrow` + `rusqlite` |
 | `msg` | No | Outlook MSG extraction via `cfb` |
+| `barcode` | No | QR code and barcode decoding via `rxing` + `image` |
 | `async-support` | No | Async HTTP server and webhooks via `tokio` + `reqwest` |
 | `python` | No | Python bindings via `pyo3` |
 | `full` | No | All optional features |
@@ -101,6 +102,29 @@ println!("{}", result.redacted_text.unwrap()); // "card: 4758286118069724"
 | `Action::Flag` | Returns findings without modifying text |
 | `Action::Tokenize` | Replaces with reversible tokens |
 | `Action::Obfuscate` | Replaces with realistic fake data (Luhn-valid CCs, etc.) |
+
+### QR code and barcode scanning
+
+With the `barcode` feature, images are decoded for embedded QR codes,
+Data Matrix, UPC, EAN, Code 128, and other 2D/1D barcodes. Decoded text
+is scanned for sensitive data patterns.
+
+```bash
+cargo build --release --features barcode
+```
+
+### File type controls
+
+Configure which file types the pipeline blocks or skips:
+
+```toml
+# .dlpscanrc or pyproject.toml [tool.dlpscan]
+blocked_extensions = ["der", "p12", "pfx", "p7m", "p8", "ppk", "jks"]
+block_unreadable = true  # also blocks .exe, .dll, .gpg, .kdbx, etc.
+```
+
+Crypto certificates are blocked by default. See the [Security](#file-type-controls-1)
+section for details on symlink resolution and double-extension protection.
 
 ### Baseline-only mode
 
@@ -194,7 +218,7 @@ Full reference:
 | `pipeline` | Concurrent file processing pipeline |
 | `batch` | CSV, JSON/JSONL parallel batch scanning |
 | `streaming` | Streaming scanner with chunk buffering |
-| `extractors` | Text extraction from 20+ formats (DOCX, XLSX, PDF, EML, MBOX, ICS, WARC, ZIP, RAR, 7z, Parquet, SQLite, etc.) |
+| `extractors` | Text extraction from 20+ formats (DOCX, XLSX, PDF, EML, MBOX, ICS, WARC, ZIP, RAR, 7z, CAB, DAT, Parquet, SQLite, QR/barcode, etc.) |
 | `cache` | Thread-safe LRU scan cache with TTL eviction |
 | `config` | Config file loading (pyproject.toml, .dlpscanrc) |
 
@@ -322,10 +346,23 @@ dlpscan is hardened for enterprise deployment in regulated environments
   across all registered hashes (no timing leak)
 - **Luhn structural validation** -- minimum 12 digits, rejects all-same-digit
   sequences
-- **Token vault TTL** -- vaults expire after 1 hour with background eviction;
-  detokenize rejects expired vaults
+- **Token vault TTL** -- vaults expire after 1 hour with panic-safe background
+  eviction; detokenize rejects expired vaults
 - **Tenant-isolated caching** -- `key_with_namespace()` prevents cross-tenant
   cache poisoning
+- **EDM safety limits** -- warns when hash count exceeds 50k to prevent
+  O(N*M) performance degradation in constant-time scan
+
+### File type controls
+
+- **Blocked extensions** -- cryptographic material (`.der`, `.p12`, `.pfx`,
+  `.p7m`, `.p8`, `.ppk`, `.jks`, `.gpg`, `.pgp`) blocked by default
+- **Block unreadable** -- opt-in blocking of executables, compiled objects,
+  encrypted containers, and media files
+- **Double-extension bypass prevention** -- `secret.der.txt` correctly blocked
+  by checking ALL dot-separated segments
+- **Symlink resolution** -- paths canonicalized before extension check to
+  prevent `safe.txt` -> `secret.der` bypass
 
 See [docs/enterprise/security.md](docs/enterprise/security.md) for full details.
 

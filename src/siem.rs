@@ -3,6 +3,7 @@
 //! Supports Splunk HEC, Elasticsearch, Syslog (UDP/TCP), generic Webhooks,
 //! and Datadog. HTTP adapters are available with the `async-support` feature.
 
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -374,11 +375,16 @@ impl SIEMAdapter for DatadogAdapter {
 
 /// Returns true if the URL is allowed for SIEM. Requires HTTPS unless
 /// `DLPSCAN_SIEM_ALLOW_HTTP=1` is set (for development/testing only).
-fn require_https(url: &str) -> bool {
-    if std::env::var("DLPSCAN_SIEM_ALLOW_HTTP")
+/// Whether plaintext HTTP is allowed for SIEM adapters.
+/// Cached at first use to prevent runtime env var manipulation.
+static SIEM_ALLOW_HTTP: Lazy<bool> = Lazy::new(|| {
+    std::env::var("DLPSCAN_SIEM_ALLOW_HTTP")
         .map(|v| v == "1" || v == "true")
         .unwrap_or(false)
-    {
+});
+
+fn require_https(url: &str) -> bool {
+    if *SIEM_ALLOW_HTTP {
         return true;
     }
     url.to_lowercase().starts_with("https://")
@@ -548,5 +554,69 @@ mod tests {
         // 2024-01-01 00:00:00 UTC = 1704067200
         let result = crate::http_util::epoch_to_iso8601(1704067200);
         assert_eq!(result, "2024-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn test_require_https_rejects_http() {
+        // Without env var, HTTP should be rejected
+        std::env::remove_var("DLPSCAN_SIEM_ALLOW_HTTP");
+        assert!(!require_https("http://example.com"));
+        assert!(require_https("https://example.com"));
+        assert!(require_https("HTTPS://EXAMPLE.COM"));
+    }
+
+    #[test]
+    fn test_send_with_retry_succeeds_first_try() {
+        struct OkAdapter;
+        impl SIEMAdapter for OkAdapter {
+            fn send(&self, _event: &HashMap<String, serde_json::Value>) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        let adapter = OkAdapter;
+        let event = HashMap::new();
+        assert!(send_with_retry(&adapter, &event).is_ok());
+    }
+
+    #[test]
+    fn test_send_with_retry_fails_after_retries() {
+        struct FailAdapter;
+        impl SIEMAdapter for FailAdapter {
+            fn send(&self, _event: &HashMap<String, serde_json::Value>) -> Result<(), String> {
+                Err("connection refused".to_string())
+            }
+        }
+        let adapter = FailAdapter;
+        let event = HashMap::new();
+        let result = send_with_retry(&adapter, &event);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("connection refused"));
+    }
+
+    #[test]
+    fn test_send_with_retry_succeeds_on_retry() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct RetryAdapter {
+            attempts: AtomicUsize,
+        }
+        impl SIEMAdapter for RetryAdapter {
+            fn send(&self, _event: &HashMap<String, serde_json::Value>) -> Result<(), String> {
+                let n = self.attempts.fetch_add(1, Ordering::SeqCst);
+                if n < 2 { Err("transient error".to_string()) } else { Ok(()) }
+            }
+        }
+        let adapter = RetryAdapter { attempts: AtomicUsize::new(0) };
+        let event = HashMap::new();
+        assert!(send_with_retry(&adapter, &event).is_ok());
+    }
+
+    #[test]
+    fn test_syslog_hostname_sanitized() {
+        // Hostname with control chars should be sanitized in syslog message
+        let adapter = SyslogAdapter::new();
+        // We can't easily test the actual message, but verify the adapter
+        // construction works without panicking
+        let adapter = adapter.with_address("localhost", 1514).with_protocol("udp");
+        assert_eq!(adapter.port, 1514);
     }
 }

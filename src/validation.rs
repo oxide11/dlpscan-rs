@@ -87,4 +87,30 @@ mod tests {
     fn test_validate_normal() {
         assert!(validate_text_input("hello world").is_ok());
     }
+
+    #[test]
+    fn test_luhn_rejects_short() {
+        // Less than 12 digits should fail
+        assert!(!is_luhn_valid("123456789")); // 9 digits
+        assert!(!is_luhn_valid("12345678901")); // 11 digits
+    }
+
+    #[test]
+    fn test_luhn_accepts_12_plus() {
+        // 16-digit valid Visa
+        assert!(is_luhn_valid("4532015112830366"));
+    }
+
+    #[test]
+    fn test_luhn_rejects_all_zeros() {
+        assert!(!is_luhn_valid("0000000000000000"));
+        assert!(!is_luhn_valid("000000000000"));
+    }
+
+    #[test]
+    fn test_luhn_rejects_all_same_digit() {
+        assert!(!is_luhn_valid("1111111111111111"));
+        assert!(!is_luhn_valid("5555555555555555"));
+        assert!(!is_luhn_valid("9999999999999999"));
+    }
 }
