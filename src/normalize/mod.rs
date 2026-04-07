@@ -1593,4 +1593,44 @@ mod tests {
         assert!(decode_morse(".-").is_none()); // only 1 symbol
         assert!(decode_morse(". .").is_none()); // only 2 symbols
     }
+
+    #[test]
+    fn test_greek_epsilon_homoglyph() {
+        // Greek ε (U+03B5) should normalize to 'e'
+        let input = "t\u{03B5}st@example.com";
+        let (normalized, _) = normalize_text(input);
+        assert!(normalized.contains("test@example.com"));
+    }
+
+    #[test]
+    fn test_cyrillic_yo_homoglyph() {
+        // Cyrillic Ё (U+0401) should normalize to 'E'
+        let input = "\u{0401}mail";
+        let (normalized, _) = normalize_text(input);
+        assert!(normalized.contains("Email") || normalized.contains("email"));
+    }
+
+    #[test]
+    fn test_cyrillic_lowercase_yo_homoglyph() {
+        // Cyrillic ё (U+0451) should normalize to 'e'
+        let input = "t\u{0451}st";
+        let (normalized, _) = normalize_text(input);
+        assert!(normalized.contains("test"));
+    }
+
+    #[test]
+    fn test_greek_sigma_tau_omega() {
+        // Greek σ → s, τ → t, ω → w
+        let input = "\u{03C3}\u{03C4}\u{03C9}";
+        let (normalized, _) = normalize_text(input);
+        assert!(normalized.contains("stw"));
+    }
+
+    #[test]
+    fn test_cyrillic_ve_homoglyph() {
+        // Cyrillic в (U+0432) should normalize to 'b'
+        let input = "\u{0432}ank";
+        let (normalized, _) = normalize_text(input);
+        assert!(normalized.contains("bank"));
+    }
 }

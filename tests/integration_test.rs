@@ -381,3 +381,184 @@ fn test_streaming_scanner() {
             .collect::<Vec<_>>()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Security hardening integration tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_audit_event_signing_roundtrip() {
+    use dlpscan::audit::AuditEvent;
+    let key = b"integration-test-signing-key!!!!";
+    let event = AuditEvent::new("REDACT")
+        .unwrap()
+        .with_action("redact")
+        .with_finding_count(3)
+        .with_source_ip("10.0.0.1")
+        .with_request_id("req-abc")
+        .with_outcome("findings_detected")
+        .sign(key)
+        .expect("signing must succeed");
+
+    // Serialize, deserialize, verify
+    let json = serde_json::to_string(&event).unwrap();
+    let deserialized: AuditEvent = serde_json::from_str(&json).unwrap();
+    assert!(deserialized.verify(key), "Deserialized event must verify");
+    assert!(!deserialized.verify(b"wrong-key-should-fail-verificatn"));
+}
+
+#[test]
+fn test_compliance_report_redacts_samples() {
+    use dlpscan::{InputGuard, Preset, Action};
+    use dlpscan::compliance::ComplianceReporter;
+
+    let guard = InputGuard::new()
+        .with_presets(vec![Preset::PciDss])
+        .with_action(Action::Flag);
+    let result = guard.scan("Card: 4532015112830366").unwrap();
+
+    let reporter = ComplianceReporter::new("Test");
+    reporter.add_scan_result(&result.findings, "test");
+    let report_text = reporter.to_text();
+
+    // The sample should be redacted, not contain the raw card number
+    assert!(
+        !report_text.contains("4532015112830366"),
+        "Compliance report must not contain raw card number"
+    );
+}
+
+#[test]
+fn test_luhn_rejects_trivial_sequences() {
+    use dlpscan::validation::is_luhn_valid;
+    // All zeros should fail despite passing Luhn checksum
+    assert!(!is_luhn_valid("0000000000000000"));
+    // All same digit should fail
+    assert!(!is_luhn_valid("1111111111111111"));
+    // Short sequences should fail
+    assert!(!is_luhn_valid("12345"));
+    // Valid card still passes
+    assert!(is_luhn_valid("4532015112830366"));
+}
+
+#[test]
+fn test_file_type_blocking() {
+    use dlpscan::extractors::{is_blocked_extension, is_path_blocked, is_unreadable_extension,
+        DEFAULT_BLOCKED_EXTENSIONS};
+
+    // Direct extension check
+    assert!(is_blocked_extension("der", DEFAULT_BLOCKED_EXTENSIONS));
+    assert!(is_blocked_extension("P12", DEFAULT_BLOCKED_EXTENSIONS));
+    assert!(!is_blocked_extension("txt", DEFAULT_BLOCKED_EXTENSIONS));
+
+    // Double extension bypass prevention
+    assert!(is_path_blocked("secrets.der.txt", DEFAULT_BLOCKED_EXTENSIONS));
+    assert!(is_path_blocked("cert.pfx.bak", DEFAULT_BLOCKED_EXTENSIONS));
+    assert!(!is_path_blocked("readme.md", DEFAULT_BLOCKED_EXTENSIONS));
+
+    // Unreadable types
+    assert!(is_unreadable_extension("exe"));
+    assert!(is_unreadable_extension("gpg"));
+    assert!(!is_unreadable_extension("csv"));
+}
+
+#[test]
+fn test_evasion_greek_epsilon() {
+    // Greek epsilon (ε) should be normalized to 'e', allowing detection
+    let text = "t\u{03B5}st@example.com";
+    let matches = scan_text(text).unwrap();
+    assert!(
+        matches.iter().any(|m| m.category == "Contact Information"),
+        "Greek epsilon evasion should still detect email: {:?}",
+        matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_evasion_cyrillic_yo() {
+    // Cyrillic ё (U+0451) should normalize to 'e'
+    let text = "SSN: 123-45-6789 with \u{0451}vasion";
+    let matches = scan_text(text).unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "USA SSN"),
+        "Cyrillic yo evasion should not hide SSN"
+    );
+}
+
+#[test]
+fn test_ipv6_mapped_ipv4_ssrf() {
+    use dlpscan::http_util::is_private_ip;
+    use std::net::IpAddr;
+
+    // ::ffff:127.0.0.1 must be blocked
+    let ip: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+    assert!(is_private_ip(ip), "IPv4-mapped loopback must be blocked");
+
+    // ::ffff:10.0.0.1 must be blocked
+    let ip: IpAddr = "::ffff:10.0.0.1".parse().unwrap();
+    assert!(is_private_ip(ip), "IPv4-mapped private must be blocked");
+
+    // ::ffff:8.8.8.8 must be allowed
+    let ip: IpAddr = "::ffff:8.8.8.8".parse().unwrap();
+    assert!(!is_private_ip(ip), "IPv4-mapped public must be allowed");
+}
+
+#[test]
+fn test_printable_string_extraction_from_binary() {
+    use dlpscan::extractors::extract_text;
+
+    // Create a DAT file with sensitive data embedded in binary
+    let mut data = vec![0u8; 50];
+    data.extend_from_slice(b"SSN: 123-45-6789 embedded in binary data here");
+    data.extend_from_slice(&vec![0xFF; 50]);
+
+    let f = tempfile::Builder::new().suffix(".dat").tempfile().unwrap();
+    std::fs::write(f.path(), &data).unwrap();
+
+    let result = extract_text(f.path().to_str().unwrap()).unwrap();
+    assert!(result.text.contains("123-45-6789"), "DAT extraction should find SSN in binary");
+}
+
+#[test]
+fn test_cab_extraction_with_mscf_header() {
+    use dlpscan::extractors::extract_text;
+
+    let mut data = b"MSCF".to_vec();
+    data.extend_from_slice(&vec![0u8; 20]);
+    data.extend_from_slice(b"credit card 4532015112830366 inside cabinet");
+
+    let f = tempfile::Builder::new().suffix(".cab").tempfile().unwrap();
+    std::fs::write(f.path(), &data).unwrap();
+
+    let result = extract_text(f.path().to_str().unwrap()).unwrap();
+    assert!(result.text.contains("4532015112830366"), "CAB extraction should find card number");
+}
+
+#[test]
+fn test_vault_ttl_expired_rejection() {
+    use dlpscan::api::{handle_detokenize, DetokenizeRequest, VaultEntry, VAULT_TTL_SECS};
+    use dlpscan::guard::TokenVault;
+    use std::sync::RwLock;
+    use std::collections::HashMap;
+    use std::time::Instant;
+
+    let vaults: RwLock<HashMap<String, VaultEntry>> = RwLock::new(HashMap::new());
+    vaults.write().unwrap().insert("v1".to_string(), VaultEntry {
+        vault: TokenVault::new("TOK", None),
+        created_at: Instant::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 100),
+    });
+
+    let req = DetokenizeRequest { text: "hello".to_string(), vault_id: "v1".to_string() };
+    let err = handle_detokenize(&req, &vaults).unwrap_err();
+    assert!(err.contains("expired"), "Expired vault should be rejected: {err}");
+}
+
+#[test]
+fn test_rbac_admin_action_restricted() {
+    use dlpscan::rbac::{role_has_permission, Role, Permission};
+
+    assert!(role_has_permission(Role::Admin, Permission::AdminAction));
+    assert!(!role_has_permission(Role::Analyst, Permission::AdminAction));
+    assert!(!role_has_permission(Role::Operator, Permission::AdminAction));
+    assert!(!role_has_permission(Role::Viewer, Permission::AdminAction));
+}

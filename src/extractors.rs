@@ -2710,4 +2710,135 @@ mod tests {
         let result = detect_and_extract(f.path().to_str().unwrap());
         assert!(result.is_some());
     }
+
+    #[test]
+    fn test_extract_printable_strings_basic() {
+        let data = b"Hello World\x00\x01\x02Secret Data\x00abc";
+        let result = extract_printable_strings(data, 5);
+        assert!(result.contains("Hello World"));
+        assert!(result.contains("Secret Data"));
+        assert!(!result.contains("abc")); // 3 chars < min_length 5
+    }
+
+    #[test]
+    fn test_extract_printable_strings_min_length() {
+        let data = b"ab\x00cdefghij\x00xy";
+        let result = extract_printable_strings(data, 8);
+        assert!(result.contains("cdefghij"));
+        assert!(!result.contains("ab"));
+        assert!(!result.contains("xy"));
+    }
+
+    #[test]
+    fn test_extract_printable_strings_whitespace() {
+        let data = b"line1\nline2\ttab\rreturn";
+        let result = extract_printable_strings(data, 3);
+        assert!(result.contains("line1\nline2\ttab\rreturn"));
+    }
+
+    #[test]
+    fn test_extract_printable_strings_output_cap() {
+        // Create data that would produce > MAX_PRINTABLE_OUTPUT
+        let big = vec![b'A'; MAX_PRINTABLE_OUTPUT + 1000];
+        let result = extract_printable_strings(&big, 1);
+        assert!(result.len() <= MAX_PRINTABLE_OUTPUT + 100); // allow some slack for join
+    }
+
+    #[test]
+    fn test_is_blocked_extension() {
+        let blocked = &["der", "p12", "pfx"];
+        assert!(is_blocked_extension("der", blocked));
+        assert!(is_blocked_extension("DER", blocked));
+        assert!(is_blocked_extension(".der", blocked));
+        assert!(!is_blocked_extension("txt", blocked));
+        assert!(!is_blocked_extension("pem", blocked));
+    }
+
+    #[test]
+    fn test_is_path_blocked_double_extension() {
+        let blocked = &["der", "p12", "pfx"];
+        assert!(is_path_blocked("secret.der.txt", blocked));
+        assert!(is_path_blocked("file.p12.bak", blocked));
+        assert!(is_path_blocked("archive.tar.pfx", blocked));
+        assert!(!is_path_blocked("readme.txt", blocked));
+        assert!(!is_path_blocked("notes.md", blocked));
+    }
+
+    #[test]
+    fn test_is_path_blocked_case_insensitive() {
+        let blocked = &["der", "p12"];
+        assert!(is_path_blocked("file.DER", blocked));
+        assert!(is_path_blocked("file.Der.txt", blocked));
+        assert!(is_path_blocked("FILE.P12", blocked));
+    }
+
+    #[test]
+    fn test_is_unreadable_extension() {
+        assert!(is_unreadable_extension("exe"));
+        assert!(is_unreadable_extension("dll"));
+        assert!(is_unreadable_extension("gpg"));
+        assert!(is_unreadable_extension("kdbx"));
+        assert!(!is_unreadable_extension("txt"));
+        assert!(!is_unreadable_extension("json"));
+    }
+
+    #[test]
+    fn test_is_likely_encrypted() {
+        assert!(is_likely_encrypted("secrets.gpg"));
+        assert!(is_likely_encrypted("database.kdbx"));
+        assert!(is_likely_encrypted("backup.enc"));
+        assert!(!is_likely_encrypted("readme.txt"));
+        assert!(!is_likely_encrypted("data.csv"));
+    }
+
+    #[test]
+    fn test_default_blocked_extensions_coverage() {
+        // Verify critical cert formats are blocked
+        for ext in &["der", "p12", "pfx", "p7b", "p7m", "jks", "gpg", "pgp"] {
+            assert!(
+                DEFAULT_BLOCKED_EXTENSIONS.contains(ext),
+                "{ext} should be in DEFAULT_BLOCKED_EXTENSIONS"
+            );
+        }
+    }
+
+    #[test]
+    fn test_extract_cab_invalid_header() {
+        let f = write_temp("cab", "NOT A CAB FILE");
+        let result = extract_cab(f.path().to_str().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("MSCF"));
+    }
+
+    #[test]
+    fn test_extract_cab_valid_header() {
+        let mut data = b"MSCF".to_vec();
+        data.extend_from_slice(b"\x00\x00\x00\x00"); // padding
+        data.extend_from_slice(b"embedded secret text here for testing");
+        let f = tempfile::Builder::new().suffix(".cab").tempfile().unwrap();
+        std::fs::write(f.path(), &data).unwrap();
+        let result = extract_cab(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(result.format, "cab");
+        assert!(result.text.contains("embedded secret text here for testing"));
+    }
+
+    #[test]
+    fn test_extract_dat_utf8() {
+        let f = write_temp("dat", "SSN: 123-45-6789\nEmail: test@example.com");
+        let result = extract_dat(f.path().to_str().unwrap()).unwrap();
+        assert_eq!(result.format, "dat");
+        assert!(result.text.contains("123-45-6789"));
+    }
+
+    #[test]
+    fn test_extract_dat_binary_fallback() {
+        let mut data = vec![0u8; 20];
+        data.extend_from_slice(b"hidden credit card 4532015112830366 inside binary");
+        data.extend_from_slice(&vec![0xFF; 20]);
+        let f = tempfile::Builder::new().suffix(".dat").tempfile().unwrap();
+        std::fs::write(f.path(), &data).unwrap();
+        let result = extract_dat(f.path().to_str().unwrap()).unwrap();
+        assert!(result.text.contains("4532015112830366"));
+        assert!(result.warnings.iter().any(|w| w.contains("Binary")));
+    }
 }

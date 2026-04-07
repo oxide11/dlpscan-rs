@@ -377,4 +377,19 @@ max_matches = 100
         // Should return defaults
         assert_eq!(config.min_confidence, 0.0);
     }
+
+    #[test]
+    fn test_config_default_blocked_extensions() {
+        let config = Config::default();
+        assert!(!config.blocked_extensions.is_empty());
+        assert!(config.blocked_extensions.contains(&"der".to_string()));
+        assert!(config.blocked_extensions.contains(&"p12".to_string()));
+        assert!(config.blocked_extensions.contains(&"pfx".to_string()));
+    }
+
+    #[test]
+    fn test_config_default_block_unreadable_off() {
+        let config = Config::default();
+        assert!(!config.block_unreadable);
+    }
 }

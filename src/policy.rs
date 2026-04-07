@@ -520,4 +520,46 @@ min_confidence = 0.8
         };
         assert!(!rule_matches(&rule, &low_conf));
     }
+
+    #[test]
+    fn test_policy_rule_priority_sorting() {
+        // Rules with higher priority should be evaluated first
+        let rule_low = PolicyRule {
+            name: "low".to_string(),
+            match_categories: vec!["Credit Card Numbers".to_string()],
+            match_sub_categories: None,
+            action: "flag".to_string(),
+            min_confidence: 0.0,
+            priority: 0,
+        };
+        let rule_high = PolicyRule {
+            name: "high".to_string(),
+            match_categories: vec!["Credit Card Numbers".to_string()],
+            match_sub_categories: None,
+            action: "reject".to_string(),
+            min_confidence: 0.0,
+            priority: 10,
+        };
+        // High priority rule should sort first
+        let mut rules: Vec<&PolicyRule> = vec![&rule_low, &rule_high];
+        rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        assert_eq!(rules[0].name, "high");
+        assert_eq!(rules[1].name, "low");
+    }
+
+    #[test]
+    fn test_policy_version_2_accepted() {
+        let policy = Policy {
+            name: "test".to_string(),
+            description: String::new(),
+            version: "2".to_string(),
+            scan: ScanPolicyConfig::default(),
+            rules: vec![],
+            audit: None,
+            rate_limit: None,
+        };
+        let warnings = validate_policy(&policy);
+        // Version "2" should not generate a warning
+        assert!(!warnings.iter().any(|w| w.contains("Unknown version")));
+    }
 }

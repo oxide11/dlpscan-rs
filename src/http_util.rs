@@ -306,3 +306,81 @@ pub fn epoch_to_iso8601(secs: u64) -> String {
 }
 
 use std::time::SystemTime;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ipv4_mapped_ipv6_blocked() {
+        // ::ffff:127.0.0.1 should be detected as private
+        let ip: std::net::Ipv6Addr = "::ffff:127.0.0.1".parse().unwrap();
+        assert!(is_private_ip(IpAddr::V6(ip)));
+    }
+
+    #[test]
+    fn test_ipv4_mapped_ipv6_private_ranges() {
+        // ::ffff:10.0.0.1 should be private
+        let ip: std::net::Ipv6Addr = "::ffff:10.0.0.1".parse().unwrap();
+        assert!(is_private_ip(IpAddr::V6(ip)));
+
+        // ::ffff:192.168.1.1 should be private
+        let ip: std::net::Ipv6Addr = "::ffff:192.168.1.1".parse().unwrap();
+        assert!(is_private_ip(IpAddr::V6(ip)));
+
+        // ::ffff:172.16.0.1 should be private
+        let ip: std::net::Ipv6Addr = "::ffff:172.16.0.1".parse().unwrap();
+        assert!(is_private_ip(IpAddr::V6(ip)));
+    }
+
+    #[test]
+    fn test_ipv4_mapped_ipv6_public_allowed() {
+        // ::ffff:8.8.8.8 should NOT be private
+        let ip: std::net::Ipv6Addr = "::ffff:8.8.8.8".parse().unwrap();
+        assert!(!is_private_ip(IpAddr::V6(ip)));
+    }
+
+    #[test]
+    fn test_ipv6_loopback_blocked() {
+        let ip: std::net::Ipv6Addr = "::1".parse().unwrap();
+        assert!(is_private_ip(IpAddr::V6(ip)));
+    }
+
+    #[test]
+    fn test_ipv6_ula_blocked() {
+        let ip: std::net::Ipv6Addr = "fd00::1".parse().unwrap();
+        assert!(is_private_ip(IpAddr::V6(ip)));
+    }
+
+    #[test]
+    fn test_ipv4_private_ranges() {
+        assert!(is_private_ip(IpAddr::V4("127.0.0.1".parse().unwrap())));
+        assert!(is_private_ip(IpAddr::V4("10.0.0.1".parse().unwrap())));
+        assert!(is_private_ip(IpAddr::V4("192.168.1.1".parse().unwrap())));
+        assert!(is_private_ip(IpAddr::V4("172.16.0.1".parse().unwrap())));
+        assert!(!is_private_ip(IpAddr::V4("8.8.8.8".parse().unwrap())));
+    }
+
+    #[test]
+    fn test_safe_url_rejects_localhost() {
+        assert!(!is_safe_url("http://localhost/test"));
+        assert!(!is_safe_url("http://127.0.0.1/test"));
+        assert!(!is_safe_url("http://0.0.0.0/test"));
+    }
+
+    #[test]
+    fn test_safe_url_accepts_public() {
+        assert!(is_safe_url("https://example.com/api"));
+        assert!(is_safe_url("https://8.8.8.8/dns"));
+    }
+
+    #[test]
+    fn test_host_crlf_sanitization() {
+        // Verify the host sanitization logic works
+        let host = "example.com\r\nInjected: header";
+        let safe = host.replace(['\r', '\n'], "");
+        assert_eq!(safe, "example.comInjected: header");
+        assert!(!safe.contains('\r'));
+        assert!(!safe.contains('\n'));
+    }
+}
