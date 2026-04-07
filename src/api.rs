@@ -361,7 +361,7 @@ pub fn handle_tokenize(
     if let Ok(mut vaults) = vaults.write() {
         // Enforce vault count limit
         if vaults.len() >= MAX_VAULTS {
-            return Err(format!("Maximum vault count ({}) reached", MAX_VAULTS));
+            return Err(format!("Maximum vault count ({MAX_VAULTS}) reached"));
         }
         vaults.insert(
             vault_id.clone(),

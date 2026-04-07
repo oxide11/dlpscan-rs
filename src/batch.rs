@@ -46,7 +46,7 @@ fn truncate(text: &str, max_chars: usize) -> String {
         text.to_string()
     } else {
         let truncated: String = text.chars().take(max_chars).collect();
-        format!("{}...", truncated)
+        format!("{truncated}...")
     }
 }
 
@@ -150,7 +150,7 @@ impl BatchScanner {
                 if text.is_empty() {
                     continue;
                 }
-                let source_id = format!("{}:record:{}", path, idx);
+                let source_id = format!("{path}:record:{idx}");
                 results.push(self.scan_one(&source_id, &text));
             }
         } else {
@@ -165,7 +165,7 @@ impl BatchScanner {
                     if text.is_empty() {
                         continue;
                     }
-                    let source_id = format!("{}:record:{}", path, idx);
+                    let source_id = format!("{path}:record:{idx}");
                     results.push(self.scan_one(&source_id, &text));
                 }
             }

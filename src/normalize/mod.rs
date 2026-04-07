@@ -1029,7 +1029,11 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     offsets = r.1;
 
     // Stage 5: Collapse whitespace padding between non-alpha chars
-    if current.as_bytes().iter().any(|&b| b == b' ' || b == b'\n' || b == b'\r' || b == b'\t') {
+    if current
+        .as_bytes()
+        .iter()
+        .any(|&b| b == b' ' || b == b'\n' || b == b'\r' || b == b'\t')
+    {
         apply_stage!(collapse_padding, current, offsets);
     }
 

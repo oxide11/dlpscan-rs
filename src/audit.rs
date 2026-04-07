@@ -61,7 +61,7 @@ impl AuditEvent {
     /// Returns an error if `event_type` is not one of [`VALID_EVENT_TYPES`].
     pub fn new(event_type: &str) -> Result<Self, String> {
         if !VALID_EVENT_TYPES.contains(&event_type) {
-            return Err(format!("Invalid event type: {}", event_type));
+            return Err(format!("Invalid event type: {event_type}"));
         }
 
         Ok(Self {
@@ -143,10 +143,7 @@ fn iso8601_now() -> String {
     // Days since 1970-01-01 to calendar date (Gregorian).
     let (year, month, day) = days_to_ymd(days);
 
-    format!(
-        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-        year, month, day, hours, minutes, seconds
-    )
+    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
 }
 
 /// Convert days since 1970-01-01 to (year, month, day).

@@ -185,7 +185,7 @@ pub fn check_context(
     let range_end = ceil_char_boundary(text, range_end);
     let pre_text = &text[range_start..start];
     let post_text = &text[end..range_end];
-    let context_window = format!("{} {}", pre_text, post_text);
+    let context_window = format!("{pre_text} {post_text}");
     let context_lower = context_window.to_lowercase();
 
     for &kw in keywords {
