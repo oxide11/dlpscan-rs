@@ -26,6 +26,10 @@ pub struct PolicyRule {
     pub action: String,
     #[serde(default)]
     pub min_confidence: f64,
+    /// Rule priority (higher = evaluated first). Rules with equal priority
+    /// are evaluated in definition order. Default is 0.
+    #[serde(default)]
+    pub priority: i32,
 }
 
 /// Complete DLP scanning policy loaded from TOML.
@@ -183,10 +187,17 @@ impl PolicyEngine {
     }
 
     /// Apply per-category rules to override actions on findings.
+    ///
+    /// Rules are evaluated in priority order (highest first). Among rules
+    /// with equal priority, the definition order is preserved.
     pub fn apply_rules(&self, result: ScanResult) -> ScanResult {
         if self.policy.rules.is_empty() {
             return result;
         }
+
+        // Sort rules by priority descending (stable sort preserves insertion order for ties)
+        let mut sorted_rules: Vec<&PolicyRule> = self.policy.rules.iter().collect();
+        sorted_rules.sort_by(|a, b| b.priority.cmp(&a.priority));
 
         let mut redact_findings: Vec<&Match> = Vec::new();
         let default_action = parse_action(&self.policy.scan.action);
@@ -194,7 +205,7 @@ impl PolicyEngine {
         for finding in &result.findings {
             let mut matched_action = default_action;
 
-            for rule in &self.policy.rules {
+            for rule in &sorted_rules {
                 if rule_matches(rule, finding) {
                     matched_action = parse_action(&rule.action);
                     break;
@@ -347,10 +358,12 @@ pub fn load_policies_from_dir(dir_path: &str) -> crate::Result<HashMap<String, P
 pub fn validate_policy(policy: &Policy) -> Vec<String> {
     let mut warnings = Vec::new();
 
-    if policy.version != "1" {
+    let supported_versions = ["1", "2"];
+    if !supported_versions.contains(&policy.version.as_str()) {
         warnings.push(format!(
-            "Unknown version '{}', expected '1'",
-            policy.version
+            "Unknown version '{}', supported: {}",
+            policy.version,
+            supported_versions.join(", ")
         ));
     }
     if policy.name.is_empty() {
@@ -460,6 +473,7 @@ min_confidence = 0.8
                 match_sub_categories: None,
                 action: "nope".to_string(),
                 min_confidence: 0.0,
+                priority: 0,
             }],
             audit: None,
             rate_limit: None,
@@ -485,6 +499,7 @@ min_confidence = 0.8
             match_sub_categories: Some(vec!["Visa".to_string()]),
             action: "reject".to_string(),
             min_confidence: 0.5,
+            priority: 0,
         };
 
         let finding = Match {

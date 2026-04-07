@@ -105,7 +105,34 @@ pub fn is_private_ip(ip: IpAddr) -> bool {
         }
         IpAddr::V6(ipv6) => {
             ipv6.is_loopback() || ipv6.is_unspecified() || {
-                let seg0 = ipv6.segments()[0];
+                let segs = ipv6.segments();
+                let seg0 = segs[0];
+                // Check IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
+                let is_v4_mapped = segs[0] == 0 && segs[1] == 0 && segs[2] == 0
+                    && segs[3] == 0 && segs[4] == 0 && segs[5] == 0xffff;
+                if is_v4_mapped {
+                    // Extract the embedded IPv4 and check it
+                    let ipv4 = Ipv4Addr::new(
+                        (segs[6] >> 8) as u8,
+                        segs[6] as u8,
+                        (segs[7] >> 8) as u8,
+                        segs[7] as u8,
+                    );
+                    return is_private_ip(IpAddr::V4(ipv4));
+                }
+                // Check IPv4-compatible IPv6 (::x.x.x.x, deprecated but still routable)
+                let is_v4_compat = segs[0] == 0 && segs[1] == 0 && segs[2] == 0
+                    && segs[3] == 0 && segs[4] == 0 && segs[5] == 0
+                    && (segs[6] != 0 || segs[7] > 1);
+                if is_v4_compat {
+                    let ipv4 = Ipv4Addr::new(
+                        (segs[6] >> 8) as u8,
+                        segs[6] as u8,
+                        (segs[7] >> 8) as u8,
+                        segs[7] as u8,
+                    );
+                    return is_private_ip(IpAddr::V4(ipv4));
+                }
                 (seg0 >> 8) == 0xfd                                 // fd00::/8 ULA
                         || (seg0 >> 8) == 0xfc                          // fc00::/8 ULA
                         || (seg0 & 0xffc0) == 0xfe80 // fe80::/10 link-local
@@ -186,21 +213,25 @@ pub fn safe_http_post(
     let addr = format!("{}:{}", parsed.host, parsed.port);
     let timeout = Duration::from_secs(timeout_secs);
 
-    // DNS rebinding protection: resolve and validate IP before connecting
+    // DNS rebinding protection: resolve, validate ALL IPs, connect to first safe one
     let socket_addr: SocketAddr = {
-        let resolved = addr
+        let all_addrs: Vec<SocketAddr> = addr
             .to_socket_addrs()
             .map_err(|e| format!("DNS resolution failed: {e}"))?
-            .next()
-            .ok_or("DNS resolution returned no addresses")?;
-
-        if is_private_ip(resolved.ip()) {
-            return Err(format!(
-                "Target resolved to private/reserved IP: {}",
-                resolved.ip()
-            ));
+            .collect();
+        if all_addrs.is_empty() {
+            return Err("DNS resolution returned no addresses".to_string());
         }
-        resolved
+        // Reject if ANY resolved address is private (prevents DNS round-robin bypass)
+        for resolved in &all_addrs {
+            if is_private_ip(resolved.ip()) {
+                return Err(format!(
+                    "Target resolved to private/reserved IP: {}",
+                    resolved.ip()
+                ));
+            }
+        }
+        all_addrs[0]
     };
 
     let mut stream =
@@ -208,10 +239,11 @@ pub fn safe_http_post(
     stream.set_read_timeout(Some(timeout)).ok();
 
     // Build HTTP request with CRLF-sanitized headers
+    let safe_host = parsed.host.replace(['\r', '\n'], "");
     let mut req = format!(
         "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n",
         parsed.path,
-        parsed.host,
+        safe_host,
         body.len()
     );
     for (k, v) in headers {

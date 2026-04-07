@@ -40,9 +40,14 @@ impl StreamScanner {
 
         if buf.len() >= self.buffer_size {
             let text = buf.clone();
-            // Keep overlap for cross-boundary matches
+            // Keep overlap for cross-boundary matches (ensure UTF-8 char boundary)
             if text.len() > self.overlap {
-                *buf = text[text.len() - self.overlap..].to_string();
+                let mut split_at = text.len() - self.overlap;
+                // Walk forward to a valid char boundary
+                while split_at < text.len() && !text.is_char_boundary(split_at) {
+                    split_at += 1;
+                }
+                *buf = text[split_at..].to_string();
             } else {
                 buf.clear();
             }

@@ -12,6 +12,39 @@ pub trait SIEMAdapter: Send + Sync {
     fn send(&self, event: &HashMap<String, serde_json::Value>) -> Result<(), String>;
 }
 
+/// Maximum retries for SIEM send operations.
+const SIEM_MAX_RETRIES: usize = 3;
+
+/// Send with retry and exponential backoff (200ms, 400ms, 800ms).
+/// Returns Ok on first success, or the last error after all retries.
+pub fn send_with_retry(
+    adapter: &dyn SIEMAdapter,
+    event: &HashMap<String, serde_json::Value>,
+) -> Result<(), String> {
+    let mut last_err = String::new();
+    for attempt in 0..=SIEM_MAX_RETRIES {
+        match adapter.send(event) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = e;
+                if attempt < SIEM_MAX_RETRIES {
+                    let delay = std::time::Duration::from_millis(200 << attempt);
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max = SIEM_MAX_RETRIES,
+                        delay_ms = delay.as_millis() as u64,
+                        error = %last_err,
+                        "SIEM send failed, retrying"
+                    );
+                    std::thread::sleep(delay);
+                }
+            }
+        }
+    }
+    tracing::error!(error = %last_err, "SIEM send failed after all retries");
+    Err(last_err)
+}
+
 /// Enrich an event with timestamp and hostname if not present.
 pub fn enrich_event(
     event: &HashMap<String, serde_json::Value>,
@@ -104,10 +137,16 @@ impl SIEMAdapter for SyslogAdapter {
 
         // RFC 5424 priority = facility * 8 + severity (6 = info)
         let priority = self.facility * 8 + 6;
+        // Sanitize hostname to prevent syslog header injection (strip control chars)
+        let safe_host: String = hostname()
+            .chars()
+            .filter(|c| !c.is_control() && *c != ' ')
+            .take(255)
+            .collect();
         let msg = format!(
             "<{priority}>1 {} {} dlpscan - - - {json}",
             iso8601_now(),
-            hostname()
+            safe_host
         );
 
         let addr = format!("{}:{}", self.address, self.port);
@@ -333,6 +372,18 @@ impl SIEMAdapter for DatadogAdapter {
 // Factory
 // ---------------------------------------------------------------------------
 
+/// Returns true if the URL is allowed for SIEM. Requires HTTPS unless
+/// `DLPSCAN_SIEM_ALLOW_HTTP=1` is set (for development/testing only).
+fn require_https(url: &str) -> bool {
+    if std::env::var("DLPSCAN_SIEM_ALLOW_HTTP")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    url.to_lowercase().starts_with("https://")
+}
+
 /// Create a SIEM adapter from environment variables.
 ///
 /// - `DLPSCAN_SIEM_TYPE`: splunk, elasticsearch, syslog, webhook, datadog
@@ -341,6 +392,10 @@ impl SIEMAdapter for DatadogAdapter {
 /// - Syslog: `DLPSCAN_SIEM_HOST`, `DLPSCAN_SIEM_PORT`, `DLPSCAN_SIEM_FACILITY`, `DLPSCAN_SIEM_PROTOCOL`
 /// - Webhook: `DLPSCAN_SIEM_URL`
 /// - Datadog: `DLPSCAN_SIEM_API_KEY`, `DLPSCAN_SIEM_SITE`
+///
+/// HTTP-based adapters (Splunk, Elasticsearch, Webhook) require HTTPS URLs
+/// by default. Set `DLPSCAN_SIEM_ALLOW_HTTP=1` to permit plaintext HTTP
+/// in development environments.
 pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
     let siem_type = std::env::var("DLPSCAN_SIEM_TYPE").ok()?;
 
@@ -352,6 +407,10 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
                     "SIEM URL rejected by SSRF filter: {}",
                     crate::webhooks::sanitize_url(&url)
                 );
+                return None;
+            }
+            if !require_https(&url) {
+                tracing::error!("SIEM Splunk URL must use HTTPS");
                 return None;
             }
             let token = std::env::var("DLPSCAN_SIEM_TOKEN").ok()?;
@@ -368,6 +427,10 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
                     "SIEM URL rejected by SSRF filter: {}",
                     crate::webhooks::sanitize_url(&url)
                 );
+                return None;
+            }
+            if !require_https(&url) {
+                tracing::error!("SIEM Elasticsearch URL must use HTTPS");
                 return None;
             }
             let mut adapter = ElasticsearchAdapter::new(&url);
@@ -404,6 +467,10 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
                     "SIEM URL rejected by SSRF filter: {}",
                     crate::webhooks::sanitize_url(&url)
                 );
+                return None;
+            }
+            if !require_https(&url) {
+                tracing::error!("SIEM Webhook URL must use HTTPS");
                 return None;
             }
             Some(Box::new(WebhookSIEMAdapter::new(&url)))

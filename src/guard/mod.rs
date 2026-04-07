@@ -259,11 +259,19 @@ impl InputGuard {
                 && result.is_char_boundary(start)
                 && result.is_char_boundary(end)
             {
-                let span_text = &result[start..end];
-                let char_count = span_text.chars().count();
-                let replacement: String = std::iter::repeat(self.redaction_char)
-                    .take(char_count)
+                let span_byte_len = end - start;
+                let redaction_byte_len = self.redaction_char.len_utf8();
+                // Fill the exact byte span to preserve string offsets for
+                // earlier (lower-index) findings processed afterward.
+                let full_chars = span_byte_len / redaction_byte_len;
+                let remainder = span_byte_len % redaction_byte_len;
+                let mut replacement: String = std::iter::repeat(self.redaction_char)
+                    .take(full_chars)
                     .collect();
+                // Pad any remaining bytes with spaces to keep exact byte length
+                for _ in 0..remainder {
+                    replacement.push(' ');
+                }
                 result.replace_range(start..end, &replacement);
             }
         }

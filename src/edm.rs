@@ -208,9 +208,10 @@ impl ExactDataMatcher {
             }
         }
 
-        // Check each token against all category hashes
+        // Check each token against all category hashes using constant-time comparison
         for (token_text, span) in &tokens {
             let hash = self.hmac_hash(token_text);
+            let hash_bytes = hash.as_bytes();
 
             for (category, hash_set) in &self.hashes {
                 if let Some(cats) = categories {
@@ -218,7 +219,19 @@ impl ExactDataMatcher {
                         continue;
                     }
                 }
-                if hash_set.contains(&hash) {
+                // Constant-time scan: always iterate ALL hashes to prevent timing leaks
+                let mut found = false;
+                for registered in hash_set.iter() {
+                    let reg_bytes = registered.as_bytes();
+                    if reg_bytes.len() == hash_bytes.len() {
+                        let mut diff = 0u8;
+                        for (a, b) in reg_bytes.iter().zip(hash_bytes.iter()) {
+                            diff |= a ^ b;
+                        }
+                        found |= diff == 0;
+                    }
+                }
+                if found {
                     matches.push(EDMMatch {
                         value_hash: hash.clone(),
                         category: category.clone(),
@@ -233,17 +246,28 @@ impl ExactDataMatcher {
         matches
     }
 
-    /// Check if a specific value is registered.
+    /// Check if a specific value is registered (constant-time comparison).
     pub fn check_value(&self, value: &str, category: Option<&str>) -> bool {
         let hash = self.hmac_hash(value);
-        match category {
-            Some(cat) => self
-                .hashes
-                .get(cat)
-                .map(|s| s.contains(&hash))
-                .unwrap_or(false),
-            None => self.hashes.values().any(|s| s.contains(&hash)),
+        let hash_bytes = hash.as_bytes();
+        let sets: Vec<&std::collections::HashSet<String>> = match category {
+            Some(cat) => self.hashes.get(cat).into_iter().collect(),
+            None => self.hashes.values().collect(),
+        };
+        let mut found = false;
+        for set in sets {
+            for registered in set.iter() {
+                let reg_bytes = registered.as_bytes();
+                if reg_bytes.len() == hash_bytes.len() {
+                    let mut diff = 0u8;
+                    for (a, b) in reg_bytes.iter().zip(hash_bytes.iter()) {
+                        diff |= a ^ b;
+                    }
+                    found |= diff == 0;
+                }
+            }
         }
+        found
     }
 
     /// Clear hashes for a category, or all categories.

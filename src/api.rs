@@ -128,31 +128,59 @@ fn default_action() -> String {
 // ---------------------------------------------------------------------------
 
 /// Maximum number of custom patterns a user can register.
-#[allow(dead_code)]
+#[cfg(feature = "async-support")]
 const MAX_CUSTOM_PATTERNS: usize = 100;
 
 /// Maximum regex pattern length in characters.
-#[allow(dead_code)]
+#[cfg(feature = "async-support")]
 const MAX_PATTERN_LENGTH: usize = 2048;
 
 /// Maximum number of token vaults.
 const MAX_VAULTS: usize = 1000;
 
 /// Vault time-to-live in seconds (1 hour).
-#[allow(dead_code)]
 const VAULT_TTL_SECS: u64 = 3600;
 
 /// Shared application state for the API server.
 pub struct AppState {
-    pub api_key: Option<String>,
+    /// SHA-256 hash of the configured API key (never stores plaintext).
+    /// Wrapped in RwLock to support runtime key rotation.
+    pub api_key_hash: RwLock<Option<[u8; 32]>>,
     pub rate_limiter: RwLock<RateLimiter>,
     pub vaults: RwLock<HashMap<String, VaultEntry>>,
     pub custom_patterns: RwLock<Vec<PatternResponse>>,
     pub start_time: Instant,
     pub is_shutting_down: std::sync::atomic::AtomicBool,
-    /// Server-side API key to role mapping. If populated, roles are derived from
-    /// the authenticated key, not the client-supplied X-Role header.
-    pub api_key_roles: HashMap<String, crate::rbac::Role>,
+    /// Server-side API key hash-to-role mapping. If populated, roles are derived
+    /// from the authenticated key, not the client-supplied X-Role header.
+    /// Wrapped in RwLock to support runtime key rotation.
+    pub api_key_roles: RwLock<HashMap<[u8; 32], crate::rbac::Role>>,
+}
+
+/// Rotate the API key at runtime without restart.
+/// The old key is immediately invalidated.
+pub fn rotate_api_key(state: &AppState, new_key: &str) {
+    let hash = hash_api_key(new_key);
+    if let Ok(mut guard) = state.api_key_hash.write() {
+        *guard = Some(hash);
+    }
+    tracing::info!("API key rotated successfully");
+}
+
+/// Add or update an API key-to-role mapping at runtime.
+pub fn set_api_key_role(state: &AppState, key: &str, role: crate::rbac::Role) {
+    let hash = hash_api_key(key);
+    if let Ok(mut guard) = state.api_key_roles.write() {
+        guard.insert(hash, role);
+    }
+}
+
+/// Remove an API key-to-role mapping at runtime.
+pub fn revoke_api_key_role(state: &AppState, key: &str) {
+    let hash = hash_api_key(key);
+    if let Ok(mut guard) = state.api_key_roles.write() {
+        guard.remove(&hash);
+    }
 }
 
 pub struct VaultEntry {
@@ -181,7 +209,7 @@ impl RateLimiter {
         self.check_client("global")
     }
 
-    /// Check if a request from a specific client IP is allowed.
+    /// Check if a request from a specific client (IP or API key hash) is allowed.
     pub fn check_client(&mut self, client_id: &str) -> bool {
         let now = Instant::now();
         let window = self.window;
@@ -387,11 +415,22 @@ pub fn handle_detokenize(
     let vaults = vaults.read().map_err(|e| format!("{e}"))?;
     let entry = vaults
         .get(&req.vault_id)
-        .ok_or_else(|| format!("Vault '{}' not found", req.vault_id))?;
+        .ok_or("Vault not found")?;
+    // Enforce vault TTL
+    if entry.created_at.elapsed().as_secs() > VAULT_TTL_SECS {
+        return Err("Vault has expired".to_string());
+    }
     let original = entry.vault.detokenize_text(&req.text);
     Ok(DetokenizeResponse {
         original_text: original,
     })
+}
+
+/// Evict expired vaults. Call periodically or before vault operations.
+pub fn evict_expired_vaults(vaults: &RwLock<HashMap<String, VaultEntry>>) {
+    if let Ok(mut vaults) = vaults.write() {
+        vaults.retain(|_, entry| entry.created_at.elapsed().as_secs() <= VAULT_TTL_SECS);
+    }
 }
 
 /// Process an obfuscate request.
@@ -434,6 +473,17 @@ fn handle_health_full(state: &AppState, active: usize) -> HealthResponse {
 }
 
 
+/// Quick hash for rate-limit key derivation (not cryptographic, just for bucketing).
+#[cfg(feature = "async-support")]
+fn md5_like_hash(input: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in input.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
 /// Generate a simple random ID (hex string).
 fn generate_id() -> String {
     use rand::RngCore;
@@ -442,11 +492,18 @@ fn generate_id() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Verify API key (constant-time comparison via SHA-256 hashing).
-pub fn verify_api_key(expected: &str, provided: &str) -> bool {
+/// Hash an API key with SHA-256.
+pub fn hash_api_key(key: &str) -> [u8; 32] {
     use sha2::{Digest, Sha256};
-    let expected_hash = Sha256::digest(expected.as_bytes());
-    let provided_hash = Sha256::digest(provided.as_bytes());
+    let hash = Sha256::digest(key.as_bytes());
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&hash);
+    out
+}
+
+/// Verify API key (constant-time comparison of SHA-256 hashes).
+pub fn verify_api_key_hash(expected_hash: &[u8; 32], provided: &str) -> bool {
+    let provided_hash = hash_api_key(provided);
     let mut result = 0u8;
     for (a, b) in expected_hash.iter().zip(provided_hash.iter()) {
         result |= a ^ b;
@@ -542,8 +599,8 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
     let listener = TcpListener::bind(&addr).await?;
     tracing::info!("dlpscan API server listening on {} (HTTP/1.1 + HTTP/2)", addr);
 
-    // Load API key-to-role mapping
-    let api_key_roles: HashMap<String, crate::rbac::Role> = std::env::var("DLPSCAN_API_KEY_ROLES")
+    // Load API key-to-role mapping (store hashed keys, never plaintext)
+    let api_key_roles: HashMap<[u8; 32], crate::rbac::Role> = std::env::var("DLPSCAN_API_KEY_ROLES")
         .unwrap_or_default()
         .split(',')
         .filter_map(|pair| {
@@ -556,19 +613,34 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
                 "operator" => crate::rbac::Role::Operator,
                 _ => crate::rbac::Role::Viewer,
             };
-            if key.is_empty() { None } else { Some((key, role)) }
+            if key.is_empty() { None } else { Some((hash_api_key(&key), role)) }
         })
         .collect();
 
+    // Store only the hash of the API key, never the plaintext
+    let api_key_hash = config.api_key.as_deref().map(hash_api_key);
+
     let state = Arc::new(AppState {
-        api_key: config.api_key,
+        api_key_hash: RwLock::new(api_key_hash),
         rate_limiter: RwLock::new(RateLimiter::new(config.rate_limit, 60)),
         vaults: RwLock::new(HashMap::new()),
         custom_patterns: RwLock::new(Vec::new()),
         start_time: Instant::now(),
         is_shutting_down: std::sync::atomic::AtomicBool::new(false),
-        api_key_roles,
+        api_key_roles: RwLock::new(api_key_roles),
     });
+
+    // Background task: evict expired vaults every 60 seconds
+    {
+        let vaults = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                evict_expired_vaults(&vaults.vaults);
+            }
+        });
+    }
 
     // Graceful shutdown signal
     let shutdown = async {
@@ -627,6 +699,21 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
                             .get("x-api-key")
                             .and_then(|v| v.to_str().ok())
                             .map(|s| s.to_string());
+
+                        // Pre-check Content-Length before reading body to avoid OOM
+                        if let Some(cl) = req.headers()
+                            .get("content-length")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|v| v.parse::<usize>().ok())
+                        {
+                            if cl > MAX_REQUEST_BODY_SIZE {
+                                return Ok::<_, hyper::Error>(
+                                    build_hyper_response(StatusCode::PAYLOAD_TOO_LARGE,
+                                        r#"{"detail":"Request body too large"}"#,
+                                        &request_id)
+                                );
+                            }
+                        }
 
                         // Read body with size limit
                         let body_bytes = match req.collect().await {
@@ -722,20 +809,28 @@ fn hyper_route_request(
 ) -> (hyper::StatusCode, String) {
     use hyper::StatusCode;
 
-    // Auth check (exempt health and metrics)
+    // Auth check (exempt health probes only; metrics requires auth)
     let auth_exempt = path == "/health" || path == "/health/live"
-        || path == "/health/ready" || path == "/metrics";
-    if state.api_key.is_some() && !auth_exempt {
-        if let Some(expected) = &state.api_key {
+        || path == "/health/ready";
+    // Single atomic read to avoid TOCTOU race during key rotation
+    let expected_hash = state.api_key_hash.read().ok().and_then(|g| *g);
+    if expected_hash.is_some() && !auth_exempt {
+        if let Some(ref hash) = expected_hash {
             match api_key_header {
-                Some(provided) if verify_api_key(expected, provided) => {}
+                Some(provided) if verify_api_key_hash(hash, provided) => {}
                 _ => return (StatusCode::UNAUTHORIZED, r#"{"detail":"Invalid or missing API key"}"#.to_string()),
             }
         }
     }
 
-    // RBAC
-    let role = crate::rbac::resolve_role("", api_key_header, &state.api_key_roles);
+    // RBAC (resolve role from hashed key)
+    let role = {
+        let resolved = api_key_header.and_then(|key| {
+            let h = hash_api_key(key);
+            state.api_key_roles.read().ok().and_then(|roles| roles.get(&h).copied())
+        });
+        resolved.unwrap_or(crate::rbac::Role::Operator)
+    };
     let required_perm = match (method, path) {
         ("POST", "/v1/scan") => Some(crate::rbac::Permission::Scan),
         ("POST", "/v1/batch/scan") => Some(crate::rbac::Permission::BatchScan),
@@ -743,6 +838,8 @@ fn hyper_route_request(
         ("POST", "/v1/tokenize") => Some(crate::rbac::Permission::Scan),
         ("POST", "/v1/detokenize") => Some(crate::rbac::Permission::Detokenize),
         ("POST", "/v1/obfuscate") => Some(crate::rbac::Permission::Scan),
+        ("GET", "/v1/patterns") => Some(crate::rbac::Permission::ManagePatterns),
+        ("GET", "/metrics") => Some(crate::rbac::Permission::ViewStatus),
         _ => None,
     };
     if let Some(perm) = required_perm {
@@ -751,10 +848,24 @@ fn hyper_route_request(
         }
     }
 
-    // Rate limiting
+    // Rate limiting (per API key when available, otherwise per IP)
     if !auth_exempt {
+        let rate_key = api_key_header
+            .map(|k| format!("key:{:x}", md5_like_hash(k)))
+            .unwrap_or_else(|| format!("ip:{client_ip}"));
         if let Ok(mut rl) = state.rate_limiter.write() {
-            if !rl.check_client(client_ip) {
+            if !rl.check_client(&rate_key) {
+                tracing::warn!(client_ip = %client_ip, rate_key = %rate_key, path = %path, "Rate limit exceeded");
+                // Log to audit trail
+                if let Ok(event) = crate::audit::AuditEvent::new("REJECT") {
+                    let event = event
+                        .with_action("rate_limit")
+                        .with_source_ip(client_ip)
+                        .with_outcome("rejected")
+                        .with_metadata("reason", serde_json::json!("rate_limit_exceeded"))
+                        .with_metadata("path", serde_json::json!(path));
+                    crate::audit::audit_event(&event);
+                }
                 return (StatusCode::TOO_MANY_REQUESTS, r#"{"detail":"Rate limit exceeded"}"#.to_string());
             }
             rl.cleanup();
@@ -764,8 +875,17 @@ fn hyper_route_request(
     // Route dispatch
     match (method, path) {
         ("GET", "/health") => {
-            let resp = handle_health_full(state, 0);
-            (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default())
+            // Authenticated users get full health details; unauthenticated get minimal
+            let is_authed = expected_hash
+                .as_ref()
+                .and_then(|h| api_key_header.map(|k| verify_api_key_hash(h, k)))
+                .unwrap_or(true); // No key configured = always full
+            if is_authed {
+                let resp = handle_health_full(state, 0);
+                (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default())
+            } else {
+                (StatusCode::OK, r#"{"status":"ok"}"#.to_string())
+            }
         }
         ("GET", "/health/live") => (StatusCode::OK, r#"{"status":"ok"}"#.to_string()),
         ("GET", "/health/ready") => {
@@ -822,18 +942,59 @@ fn hyper_route_request(
         },
         ("POST", "/v1/patterns") => match serde_json::from_str::<PatternCreateRequest>(body) {
             Ok(req) => {
+                if req.pattern.len() > MAX_PATTERN_LENGTH {
+                    return (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Pattern too long"}"#.to_string());
+                }
                 if regex::Regex::new(&req.pattern).is_err() {
                     return (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid regex"}"#.to_string());
+                }
+                if let Ok(patterns) = state.custom_patterns.read() {
+                    if patterns.len() >= MAX_CUSTOM_PATTERNS {
+                        return (StatusCode::CONFLICT, r#"{"detail":"Maximum custom pattern limit reached"}"#.to_string());
+                    }
                 }
                 let resp = PatternResponse { name: req.name, pattern: req.pattern, category: req.category, confidence: req.confidence };
                 if let Ok(mut patterns) = state.custom_patterns.write() { patterns.push(resp.clone()); }
                 (StatusCode::CREATED, serde_json::to_string(&resp).unwrap_or_default())
             }
-            Err(e) => (StatusCode::UNPROCESSABLE_ENTITY, serde_json::json!({"detail": e.to_string()}).to_string()),
+            Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
         },
         ("GET", "/v1/patterns") => {
             let patterns = state.custom_patterns.read().map(|p| p.clone()).unwrap_or_default();
             (StatusCode::OK, serde_json::to_string(&patterns).unwrap_or_default())
+        }
+        ("POST", "/v1/admin/rotate-key") => {
+            // Admin-only: rotate the API key at runtime
+            if !crate::rbac::role_has_permission(role, crate::rbac::Permission::AdminAction) {
+                return (StatusCode::FORBIDDEN, r#"{"detail":"Admin role required"}"#.to_string());
+            }
+            #[derive(Deserialize)]
+            struct RotateKeyRequest { new_key: String }
+            match serde_json::from_str::<RotateKeyRequest>(body) {
+                Ok(req) => {
+                    let trimmed = req.new_key.trim();
+                    if trimmed.len() < 16 {
+                        return (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Key must be at least 16 non-whitespace characters"}"#.to_string());
+                    }
+                    if !trimmed.bytes().any(|b| !b.is_ascii_alphanumeric()) && trimmed.len() < 24 {
+                        return (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Key must be at least 24 characters if purely alphanumeric"}"#.to_string());
+                    }
+                    rotate_api_key(state, trimmed);
+                    // Audit the rotation event
+                    if let Ok(event) = crate::audit::AuditEvent::new("SCAN") {
+                        let event = event
+                            .with_action("rotate_api_key")
+                            .with_source_ip(client_ip)
+                            .with_outcome("success")
+                            .with_user(&api_key_header
+                            .map(|k| format!("key:{:x}", md5_like_hash(k)))
+                            .unwrap_or_else(|| "admin".to_string()));
+                        crate::audit::audit_event(&event);
+                    }
+                    (StatusCode::OK, r#"{"detail":"API key rotated"}"#.to_string())
+                }
+                Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+            }
         }
         _ => (StatusCode::NOT_FOUND, r#"{"detail":"Not found"}"#.to_string()),
     }
@@ -879,9 +1040,11 @@ mod tests {
 
     #[test]
     fn test_verify_api_key() {
-        assert!(verify_api_key("secret123", "secret123"));
-        assert!(!verify_api_key("secret123", "wrong"));
-        assert!(!verify_api_key("short", "longer_key"));
+        let hash = hash_api_key("secret123");
+        assert!(verify_api_key_hash(&hash, "secret123"));
+        assert!(!verify_api_key_hash(&hash, "wrong"));
+        let hash2 = hash_api_key("short");
+        assert!(!verify_api_key_hash(&hash2, "longer_key"));
     }
 
     #[test]

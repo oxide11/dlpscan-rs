@@ -73,9 +73,13 @@ static HOMOGLYPH_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
         ('\u{0422}', 'T'),
         ('\u{0425}', 'X'),
         ('\u{0417}', 'Z'),
+        ('\u{0423}', 'Y'), // Cyrillic У → Y
+        ('\u{0401}', 'E'), // Cyrillic Ё → E
+        ('\u{040D}', 'I'), // Cyrillic Ѝ → I
         // Cyrillic lowercase
         ('\u{0430}', 'a'),
         ('\u{0435}', 'e'),
+        ('\u{0451}', 'e'), // Cyrillic ё → e
         ('\u{0456}', 'i'),
         ('\u{0458}', 'j'),
         ('\u{043E}', 'o'),
@@ -84,6 +88,7 @@ static HOMOGLYPH_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
         ('\u{0443}', 'y'),
         ('\u{0445}', 'x'),
         ('\u{0455}', 's'),
+        ('\u{0432}', 'b'), // Cyrillic в → b (visual lookalike in some fonts)
         // Greek uppercase
         ('\u{0391}', 'A'),
         ('\u{0392}', 'B'),
@@ -102,13 +107,18 @@ static HOMOGLYPH_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
         ('\u{0396}', 'Z'),
         // Greek lowercase
         ('\u{03B1}', 'a'),
+        ('\u{03B5}', 'e'), // Greek ε (epsilon) → e
+        ('\u{03B7}', 'n'), // Greek η (eta) → n (visual lookalike)
         ('\u{03BF}', 'o'),
         ('\u{03B9}', 'i'),
         ('\u{03BA}', 'k'),
         ('\u{03BD}', 'v'),
         ('\u{03C1}', 'p'),
+        ('\u{03C3}', 's'), // Greek σ (sigma) → s (visual in some fonts)
+        ('\u{03C4}', 't'), // Greek τ (tau) → t (visual lookalike)
         ('\u{03C5}', 'u'),
         ('\u{03C7}', 'x'),
+        ('\u{03C9}', 'w'), // Greek ω (omega) → w (visual lookalike)
         // Fullwidth digits (backup — NFKC should handle these)
         ('\u{FF10}', '0'),
         ('\u{FF11}', '1'),
@@ -408,7 +418,10 @@ fn decode_html_entities(input: &str, in_offsets: &[usize]) -> (String, Vec<usize
             offsets.push(orig_offset(in_offsets, i));
             i += 1;
         } else {
-            let ch = input[i..].chars().next().unwrap();
+            let ch = match input[i..].chars().next() {
+                Some(c) => c,
+                None => break,
+            };
             let ch_len = ch.len_utf8();
             out.push(ch);
             for k in 0..ch_len {

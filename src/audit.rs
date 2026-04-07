@@ -51,8 +51,21 @@ pub struct AuditEvent {
     pub source: Option<String>,
     #[serde(default)]
     pub duration_ms: Option<f64>,
+    /// Source IP address of the request (if from API).
+    #[serde(default)]
+    pub source_ip: Option<String>,
+    /// Unique request identifier for correlation.
+    #[serde(default)]
+    pub request_id: Option<String>,
+    /// Outcome of the operation (e.g., "success", "rejected", "error").
+    #[serde(default)]
+    pub outcome: Option<String>,
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
+    /// HMAC-SHA256 integrity signature (hex-encoded). Computed over the
+    /// canonical JSON of all other fields when a signing key is configured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
 }
 
 impl AuditEvent {
@@ -75,7 +88,11 @@ impl AuditEvent {
             is_clean: false,
             source: None,
             duration_ms: None,
+            source_ip: None,
+            request_id: None,
+            outcome: None,
             metadata: HashMap::new(),
+            signature: None,
         })
     }
 
@@ -97,6 +114,71 @@ impl AuditEvent {
     pub fn with_duration_ms(mut self, ms: f64) -> Self {
         self.duration_ms = Some(ms);
         self
+    }
+
+    pub fn with_source_ip(mut self, ip: &str) -> Self {
+        self.source_ip = Some(ip.to_string());
+        self
+    }
+
+    pub fn with_request_id(mut self, id: &str) -> Self {
+        self.request_id = Some(id.to_string());
+        self
+    }
+
+    pub fn with_outcome(mut self, outcome: &str) -> Self {
+        self.outcome = Some(outcome.to_string());
+        self
+    }
+
+    /// Compute and attach an HMAC-SHA256 signature over the canonical event JSON.
+    /// The `signature` field is excluded from the signed payload to allow
+    /// verification: strip `signature`, re-serialize, and compare HMACs.
+    /// Compute and attach an HMAC-SHA256 signature over the canonical event JSON.
+    /// The `signature` field is excluded from the signed payload to allow
+    /// verification: strip `signature`, re-serialize, and compare HMACs.
+    /// Returns `Err` if serialization fails (never signs over empty data).
+    pub fn sign(mut self, key: &[u8]) -> Result<Self, String> {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        // Clear signature before computing so it's not part of the signed data
+        self.signature = None;
+        let canonical = serde_json::to_string(&self)
+            .map_err(|e| format!("Failed to serialize event for signing: {e}"))?;
+        let mut mac = <Hmac<Sha256>>::new_from_slice(key)
+            .expect("HMAC can accept any key length");
+        mac.update(canonical.as_bytes());
+        let result = mac.finalize().into_bytes();
+        self.signature = Some(hex::encode(result));
+        Ok(self)
+    }
+
+    /// Verify the HMAC-SHA256 signature of this event against `key`.
+    /// Returns `true` if the signature is valid.
+    pub fn verify(&self, key: &[u8]) -> bool {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        let sig = match &self.signature {
+            Some(s) => s.clone(),
+            None => return false,
+        };
+        let sig_bytes = match hex::decode(&sig) {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+        let mut unsigned = self.clone();
+        unsigned.signature = None;
+        // If serialization fails, verification fails (never verify against empty data)
+        let canonical = match serde_json::to_string(&unsigned) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        let mut mac = match <Hmac<Sha256>>::new_from_slice(key) {
+            Ok(m) => m,
+            Err(_) => return false,
+        };
+        mac.update(canonical.as_bytes());
+        mac.verify_slice(&sig_bytes).is_ok()
     }
 
     pub fn with_finding_count(mut self, count: usize) -> Self {
@@ -221,6 +303,106 @@ impl AuditHandler for FileAuditHandler {
                 "Audit log path is a symlink, refusing to write (symlink attack protection)"
             );
             return;
+        }
+
+        #[cfg(unix)]
+        let file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .mode(0o600)
+                .open(&self.path)
+        };
+        #[cfg(not(unix))]
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path);
+
+        match file {
+            Ok(mut f) => {
+                if let Err(e) = writeln!(f, "{json}") {
+                    tracing::error!(path = %self.path, error = %e, "Failed to write audit log");
+                }
+            }
+            Err(e) => {
+                tracing::error!(path = %self.path, error = %e, "Failed to open audit log file");
+            }
+        }
+    }
+}
+
+/// Writes JSON lines to a file with size-based rotation (thread-safe, append mode, 0o600).
+///
+/// When the active log exceeds `max_bytes`, it is renamed to `{path}.1` (shifting
+/// any existing rotated files up to `max_files`), and a fresh file is opened.
+pub struct RotatingFileAuditHandler {
+    path: String,
+    max_bytes: u64,
+    max_files: usize,
+    lock: Mutex<()>,
+}
+
+impl RotatingFileAuditHandler {
+    /// Create a rotating file handler.
+    ///
+    /// - `max_bytes`: rotate when the active file exceeds this size (default 50 MB).
+    /// - `max_files`: keep at most this many rotated files (default 10).
+    pub fn new(path: &str, max_bytes: u64, max_files: usize) -> Self {
+        Self {
+            path: path.to_string(),
+            max_bytes,
+            max_files,
+            lock: Mutex::new(()),
+        }
+    }
+
+    fn rotate(&self) {
+        // Delete the oldest file if it exists
+        let oldest = format!("{}.{}", self.path, self.max_files);
+        let _ = std::fs::remove_file(&oldest);
+        // Shift existing rotated files: .N-1 → .N, ... .1 → .2
+        for i in (1..self.max_files).rev() {
+            let from = format!("{}.{}", self.path, i);
+            let to = format!("{}.{}", self.path, i + 1);
+            if let Err(e) = std::fs::rename(&from, &to) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!(from = %from, to = %to, error = %e, "Audit log rotation rename failed");
+                }
+            }
+        }
+        // Move current file to .1
+        if let Err(e) = std::fs::rename(&self.path, format!("{}.1", self.path)) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::warn!(path = %self.path, error = %e, "Audit log rotation failed");
+            }
+        }
+    }
+}
+
+impl AuditHandler for RotatingFileAuditHandler {
+    fn handle(&self, event: &AuditEvent) {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let json = match serde_json::to_string(event) {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::error!(path = %self.path, error = %e, "Failed to serialize audit event");
+                return;
+            }
+        };
+
+        // Symlink protection
+        if std::path::Path::new(&self.path).is_symlink() {
+            tracing::error!(path = %self.path, "Audit log path is a symlink, refusing to write");
+            return;
+        }
+
+        // Check if rotation is needed
+        if let Ok(meta) = std::fs::metadata(&self.path) {
+            if meta.len() >= self.max_bytes {
+                self.rotate();
+            }
         }
 
         #[cfg(unix)]
@@ -410,16 +592,29 @@ pub fn event_from_scan(
                 is_clean: false,
                 source: None,
                 duration_ms: None,
+                source_ip: None,
+                request_id: None,
+                outcome: None,
                 metadata: HashMap::new(),
+                signature: None,
             });
         }
+    };
+
+    let outcome = if result.is_clean {
+        "success"
+    } else if action.eq_ignore_ascii_case("REJECT") {
+        "rejected"
+    } else {
+        "findings_detected"
     };
 
     event = event
         .with_action(action)
         .with_is_clean(result.is_clean)
         .with_finding_count(result.finding_count())
-        .with_categories_found(result.categories_found.iter().cloned().collect::<Vec<_>>());
+        .with_categories_found(result.categories_found.iter().cloned().collect::<Vec<_>>())
+        .with_outcome(outcome);
 
     if let Some(src) = source {
         event = event.with_source(src);
