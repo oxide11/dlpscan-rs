@@ -263,6 +263,25 @@ pub fn is_valid_ssn(ssn: &str) -> bool {
     true
 }
 
+/// Run structural validation for a matched pattern.
+/// Returns `true` if the match is valid (should be kept).
+/// Patterns without a registered validator always return `true`.
+pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) -> bool {
+    // Credit card Luhn check (by category)
+    if category == "Credit Card Numbers" {
+        return is_luhn_valid(matched_text);
+    }
+    // Per-pattern structural validators
+    match sub_category {
+        "USA SSN" => is_valid_ssn(matched_text),
+        "SWIFT/BIC" => is_valid_swift(matched_text),
+        "CUSIP" => is_valid_cusip(matched_text),
+        "SEDOL" => is_valid_sedol(matched_text),
+        "Australia TFN" => is_valid_australia_tfn(matched_text),
+        _ => true, // No validator — accept
+    }
+}
+
 /// Validate a credit-card number using the Luhn algorithm.
 pub fn is_luhn_valid(card_number: &str) -> bool {
     let digits: Vec<u32> = card_number

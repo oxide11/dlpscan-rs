@@ -31,6 +31,7 @@ pub mod scanner;
 pub mod scoring;
 pub mod siem;
 pub mod streaming;
+pub mod tui;
 pub mod validation;
 pub mod webhooks;
 

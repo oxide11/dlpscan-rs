@@ -302,6 +302,35 @@ pub fn merge_configs(file: &Config, overrides: &HashMap<String, serde_json::Valu
 }
 
 // ---------------------------------------------------------------------------
+// Config discovery and JSON persistence (used by CLI and TUI)
+// ---------------------------------------------------------------------------
+
+/// Find the first existing config file, or return the default path.
+pub fn find_config_path() -> String {
+    for name in &[".dlpscanrc", "dlpscan.json"] {
+        if std::path::Path::new(name).exists() {
+            return name.to_string();
+        }
+    }
+    ".dlpscanrc".to_string()
+}
+
+/// Load config from a JSON file, falling back to defaults.
+pub fn load_config_json(path: &str) -> Config {
+    if let Ok(content) = std::fs::read_to_string(path) {
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        Config::default()
+    }
+}
+
+/// Save config to a JSON file.
+pub fn save_config_json(path: &str, config: &Config) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
+    std::fs::write(path, json).map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 

@@ -86,7 +86,9 @@ image = { version = "0.25", optional = true }
 # Python bindings
 pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
 
-# TLS (for HTTPS server)
+# TUI (terminal UI)
+ratatui = { version = "0.29", optional = true }
+crossterm = { version = "0.28", optional = true }
 rustls = { version = "0.23", optional = true }
 tokio-rustls = { version = "0.26", optional = true }
 rustls-pemfile = { version = "2", optional = true }
@@ -103,11 +105,12 @@ archives = ["dep:sevenz-rust", "dep:unrar"]
 data-formats = ["dep:parquet", "dep:arrow", "dep:rusqlite"]
 msg = ["dep:cfb"]
 barcode = ["dep:rxing", "dep:image"]
+tui = ["dep:ratatui", "dep:crossterm"]
 async-support = ["dep:tokio", "dep:reqwest", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:bytes"]
 tls = ["async-support", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile"]
 yaml-config = ["dep:serde_yaml"]
 python = ["dep:pyo3"]
-full = ["pdf", "office", "archives", "data-formats", "msg", "barcode", "async-support", "metrics", "tls", "yaml-config"]
+full = ["pdf", "office", "archives", "data-formats", "msg", "barcode", "tui", "async-support", "metrics", "tls", "yaml-config"]
 
 [dev-dependencies]
 criterion = "0.5"
