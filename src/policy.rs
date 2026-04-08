@@ -510,6 +510,7 @@ min_confidence = 0.8
             confidence: 0.8,
             span: (0, 16),
             context_required: false,
+            metadata: std::collections::HashMap::new(),
         };
 
         assert!(rule_matches(&rule, &finding));

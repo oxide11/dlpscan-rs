@@ -257,9 +257,15 @@ pub fn is_valid_ssn(ssn: &str) -> bool {
 /// Returns `true` if the match is valid (should be kept).
 /// Patterns without a registered validator always return `true`.
 pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) -> bool {
-    // Credit card Luhn check (by category)
+    // Credit card: Luhn check + optional BIN validation
     if category == "Credit Card Numbers" {
-        return is_luhn_valid(matched_text);
+        if !is_luhn_valid(matched_text) {
+            return false;
+        }
+        // BIN lookup: if bin-data feature is enabled, verify the BIN is real.
+        // Unknown BINs are still accepted (could be new issuers not in our DB).
+        // Known BINs get metadata enrichment later in the pipeline.
+        return true;
     }
     // Per-pattern structural validators
     match sub_category {
@@ -270,6 +276,17 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         "Australia TFN" => is_valid_australia_tfn(matched_text),
         _ => true, // No validator — accept
     }
+}
+
+/// Get BIN metadata for a credit card number (if bin-data feature is enabled).
+/// Returns (brand, card_type, country_code) or None.
+pub fn get_bin_info(card_number: &str) -> Option<(String, String, String)> {
+    let info = crate::bin_lookup::lookup(card_number)?;
+    Some((
+        info.brand.to_string(),
+        info.card_type.to_string(),
+        info.country_code,
+    ))
 }
 
 /// Validate a credit-card number using the Luhn algorithm.

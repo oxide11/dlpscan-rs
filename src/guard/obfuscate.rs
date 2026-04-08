@@ -263,6 +263,7 @@ mod tests {
             confidence: 0.8,
             span: (0, 19),
             context_required: false,
+            metadata: std::collections::HashMap::new(),
         };
         let fake = obfuscate_credit_card(&m);
         assert!(fake.starts_with('4')); // Visa prefix
