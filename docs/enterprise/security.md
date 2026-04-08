@@ -283,7 +283,7 @@ positives. These run after regex matching but before confidence scoring:
 
 | Pattern | Validation | What it rejects |
 |---|---|---|
-| Credit Cards | Luhn checksum | Invalid card numbers |
+| Credit Cards | Luhn checksum + BIN lookup (374k issuers) | Random numbers; enriches with issuer, country, card type |
 | SWIFT/BIC | ISO 3166 country code + 400-word English blocklist | DECEMBER, SECURITY, PLATFORM, etc. |
 | CUSIP | Modified Luhn check digit (alphanumeric) | Random 9-char strings |
 | SEDOL | Weighted checksum mod 10 | Random 7-char strings |
