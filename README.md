@@ -4,7 +4,7 @@ High-performance DLP scanner written in Rust. Detects, redacts, and protects
 sensitive data with exceptional throughput.
 
 **560 patterns** across **126 categories** — full parity with the Python version.
-**18,000+ lines** of Rust across 37 modules. **347 tests** passing.
+**18,000+ lines** of Rust across 37 modules. **352 tests** passing.
 
 ## Performance
 
@@ -216,12 +216,16 @@ let matches = scan_text_with_config("Card: 4532015112830366", &config)?;
 dlpscan detects sensitive data using a two-layer system:
 
 1. **560 regex patterns** match data formats (credit cards, SSNs, IBANs, API keys, etc.)
-2. **560+ context keywords** confirm detections via Aho-Corasick proximity matching
+2. **3,100+ context keywords** (English + French) confirm detections via Aho-Corasick proximity matching
 
 Each pattern has a **specificity score** (0.0-1.0) indicating base confidence.
 When a context keyword appears within the configured distance of a match,
 confidence is boosted by +0.20. Some low-specificity patterns are **context-required** --
 they are suppressed entirely without a nearby keyword.
+
+Keywords include both English and French/French-Canadian translations for
+bilingual document scanning (e.g., `credit card` / `carte de crédit`,
+`social insurance number` / `numéro d'assurance sociale`).
 
 | Category | Patterns | Examples |
 |---|---:|---|
@@ -238,7 +242,7 @@ they are suppressed entirely without a nearby keyword.
 
 Full reference:
 - **[docs/PATTERNS.md](docs/PATTERNS.md)** -- All 560 patterns with regex, specificity scores, and context-required flags
-- **[docs/KEYWORDS.md](docs/KEYWORDS.md)** -- All 560+ context keywords with proximity distances
+- **[docs/KEYWORDS.md](docs/KEYWORDS.md)** -- All 3,100+ context keywords (English + French) with proximity distances
 
 ## Modules
 

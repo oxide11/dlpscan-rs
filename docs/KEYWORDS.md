@@ -5,7 +5,7 @@ proximity-based detection. Each keyword group lists the terms that
 must appear within the specified character distance of a regex match
 to boost (or gate) detection confidence.
 
-**560 keyword groups** across **126 categories** — approximately **2531 unique keywords**.
+**560 keyword groups** across **126 categories** — **3140 keywords** (English + French).
 
 ## How context matching works
 
@@ -16,139 +16,12 @@ of a regex match, the match receives a confidence boost of +0.20
 (capped at 1.0). Patterns marked as **context-required** are suppressed
 entirely unless a keyword is found nearby.
 
+Keywords include both English and French/French-Canadian translations
+for bilingual document scanning (e.g., `credit card` / `carte de crédit`,
+`social insurance number` / `numéro d'assurance sociale`).
+
 > See [PATTERNS.md](PATTERNS.md) for the corresponding regex patterns and
 > specificity scores.
-
----
-
-## Table of Contents
-
-- [Africa - Egypt (3)](#africa---egypt-3-keyword-groups)
-- [Africa - Ethiopia (3)](#africa---ethiopia-3-keyword-groups)
-- [Africa - Ghana (4)](#africa---ghana-4-keyword-groups)
-- [Africa - Kenya (4)](#africa---kenya-4-keyword-groups)
-- [Africa - Morocco (3)](#africa---morocco-3-keyword-groups)
-- [Africa - Nigeria (6)](#africa---nigeria-6-keyword-groups)
-- [Africa - South Africa (3)](#africa---south-africa-3-keyword-groups)
-- [Africa - Tanzania (3)](#africa---tanzania-3-keyword-groups)
-- [Africa - Tunisia (2)](#africa---tunisia-2-keyword-groups)
-- [Africa - Uganda (2)](#africa---uganda-2-keyword-groups)
-- [Asia-Pacific - Australia (11)](#asia-pacific---australia-11-keyword-groups)
-- [Asia-Pacific - Bangladesh (3)](#asia-pacific---bangladesh-3-keyword-groups)
-- [Asia-Pacific - China (5)](#asia-pacific---china-5-keyword-groups)
-- [Asia-Pacific - India (6)](#asia-pacific---india-6-keyword-groups)
-- [Asia-Pacific - Indonesia (3)](#asia-pacific---indonesia-3-keyword-groups)
-- [Asia-Pacific - Japan (6)](#asia-pacific---japan-6-keyword-groups)
-- [Asia-Pacific - Malaysia (2)](#asia-pacific---malaysia-2-keyword-groups)
-- [Asia-Pacific - New Zealand (4)](#asia-pacific---new-zealand-4-keyword-groups)
-- [Asia-Pacific - Pakistan (3)](#asia-pacific---pakistan-3-keyword-groups)
-- [Asia-Pacific - Philippines (6)](#asia-pacific---philippines-6-keyword-groups)
-- [Asia-Pacific - Singapore (4)](#asia-pacific---singapore-4-keyword-groups)
-- [Asia-Pacific - South Korea (3)](#asia-pacific---south-korea-3-keyword-groups)
-- [Asia-Pacific - Sri Lanka (3)](#asia-pacific---sri-lanka-3-keyword-groups)
-- [Asia-Pacific - Thailand (4)](#asia-pacific---thailand-4-keyword-groups)
-- [Asia-Pacific - Vietnam (3)](#asia-pacific---vietnam-3-keyword-groups)
-- [Authentication Tokens (1)](#authentication-tokens-1-keyword-groups)
-- [Banking Authentication (3)](#banking-authentication-3-keyword-groups)
-- [Banking and Financial (5)](#banking-and-financial-5-keyword-groups)
-- [Biometric Identifiers (2)](#biometric-identifiers-2-keyword-groups)
-- [Card Expiration Dates (1)](#card-expiration-dates-1-keyword-groups)
-- [Card Track Data (2)](#card-track-data-2-keyword-groups)
-- [Check and MICR Data (3)](#check-and-micr-data-3-keyword-groups)
-- [Cloud Provider Secrets (3)](#cloud-provider-secrets-3-keyword-groups)
-- [Code Platform Secrets (5)](#code-platform-secrets-5-keyword-groups)
-- [Contact Information (5)](#contact-information-5-keyword-groups)
-- [Corporate Classification (9)](#corporate-classification-9-keyword-groups)
-- [Credit Card Numbers (7)](#credit-card-numbers-7-keyword-groups)
-- [Cryptocurrency (7)](#cryptocurrency-7-keyword-groups)
-- [Customer Financial Data (4)](#customer-financial-data-4-keyword-groups)
-- [Data Classification Labels (8)](#data-classification-labels-8-keyword-groups)
-- [Dates (3)](#dates-3-keyword-groups)
-- [Device Identifiers (5)](#device-identifiers-5-keyword-groups)
-- [Education Identifiers (1)](#education-identifiers-1-keyword-groups)
-- [Employment Identifiers (2)](#employment-identifiers-2-keyword-groups)
-- [Europe - Austria (5)](#europe---austria-5-keyword-groups)
-- [Europe - Belgium (4)](#europe---belgium-4-keyword-groups)
-- [Europe - Bulgaria (4)](#europe---bulgaria-4-keyword-groups)
-- [Europe - Croatia (4)](#europe---croatia-4-keyword-groups)
-- [Europe - Cyprus (3)](#europe---cyprus-3-keyword-groups)
-- [Europe - Czech Republic (4)](#europe---czech-republic-4-keyword-groups)
-- [Europe - Denmark (3)](#europe---denmark-3-keyword-groups)
-- [Europe - EU (2)](#europe---eu-2-keyword-groups)
-- [Europe - Estonia (3)](#europe---estonia-3-keyword-groups)
-- [Europe - Finland (3)](#europe---finland-3-keyword-groups)
-- [Europe - France (5)](#europe---france-5-keyword-groups)
-- [Europe - Germany (6)](#europe---germany-6-keyword-groups)
-- [Europe - Greece (5)](#europe---greece-5-keyword-groups)
-- [Europe - Hungary (5)](#europe---hungary-5-keyword-groups)
-- [Europe - Iceland (2)](#europe---iceland-2-keyword-groups)
-- [Europe - Ireland (4)](#europe---ireland-4-keyword-groups)
-- [Europe - Italy (5)](#europe---italy-5-keyword-groups)
-- [Europe - Latvia (3)](#europe---latvia-3-keyword-groups)
-- [Europe - Liechtenstein (2)](#europe---liechtenstein-2-keyword-groups)
-- [Europe - Lithuania (3)](#europe---lithuania-3-keyword-groups)
-- [Europe - Luxembourg (3)](#europe---luxembourg-3-keyword-groups)
-- [Europe - Malta (3)](#europe---malta-3-keyword-groups)
-- [Europe - Netherlands (4)](#europe---netherlands-4-keyword-groups)
-- [Europe - Norway (4)](#europe---norway-4-keyword-groups)
-- [Europe - Poland (6)](#europe---poland-6-keyword-groups)
-- [Europe - Portugal (4)](#europe---portugal-4-keyword-groups)
-- [Europe - Romania (4)](#europe---romania-4-keyword-groups)
-- [Europe - Slovakia (3)](#europe---slovakia-3-keyword-groups)
-- [Europe - Slovenia (4)](#europe---slovenia-4-keyword-groups)
-- [Europe - Spain (5)](#europe---spain-5-keyword-groups)
-- [Europe - Sweden (4)](#europe---sweden-4-keyword-groups)
-- [Europe - Switzerland (4)](#europe---switzerland-4-keyword-groups)
-- [Europe - Turkey (4)](#europe---turkey-4-keyword-groups)
-- [Europe - United Kingdom (7)](#europe---united-kingdom-7-keyword-groups)
-- [Financial Regulatory Labels (7)](#financial-regulatory-labels-7-keyword-groups)
-- [Generic Secrets (6)](#generic-secrets-6-keyword-groups)
-- [Geolocation (3)](#geolocation-3-keyword-groups)
-- [Insurance Identifiers (2)](#insurance-identifiers-2-keyword-groups)
-- [Internal Banking References (2)](#internal-banking-references-2-keyword-groups)
-- [Latin America - Argentina (3)](#latin-america---argentina-3-keyword-groups)
-- [Latin America - Brazil (6)](#latin-america---brazil-6-keyword-groups)
-- [Latin America - Chile (2)](#latin-america---chile-2-keyword-groups)
-- [Latin America - Colombia (4)](#latin-america---colombia-4-keyword-groups)
-- [Latin America - Costa Rica (3)](#latin-america---costa-rica-3-keyword-groups)
-- [Latin America - Ecuador (3)](#latin-america---ecuador-3-keyword-groups)
-- [Latin America - Paraguay (3)](#latin-america---paraguay-3-keyword-groups)
-- [Latin America - Peru (4)](#latin-america---peru-4-keyword-groups)
-- [Latin America - Uruguay (3)](#latin-america---uruguay-3-keyword-groups)
-- [Latin America - Venezuela (3)](#latin-america---venezuela-3-keyword-groups)
-- [Legal Identifiers (2)](#legal-identifiers-2-keyword-groups)
-- [Loan and Mortgage Data (4)](#loan-and-mortgage-data-4-keyword-groups)
-- [Medical Identifiers (4)](#medical-identifiers-4-keyword-groups)
-- [Messaging Service Secrets (6)](#messaging-service-secrets-6-keyword-groups)
-- [Middle East - Bahrain (2)](#middle-east---bahrain-2-keyword-groups)
-- [Middle East - Iran (2)](#middle-east---iran-2-keyword-groups)
-- [Middle East - Iraq (2)](#middle-east---iraq-2-keyword-groups)
-- [Middle East - Israel (2)](#middle-east---israel-2-keyword-groups)
-- [Middle East - Jordan (2)](#middle-east---jordan-2-keyword-groups)
-- [Middle East - Kuwait (2)](#middle-east---kuwait-2-keyword-groups)
-- [Middle East - Lebanon (2)](#middle-east---lebanon-2-keyword-groups)
-- [Middle East - Qatar (2)](#middle-east---qatar-2-keyword-groups)
-- [Middle East - Saudi Arabia (2)](#middle-east---saudi-arabia-2-keyword-groups)
-- [Middle East - UAE (3)](#middle-east---uae-3-keyword-groups)
-- [North America - Canada (29)](#north-america---canada-29-keyword-groups)
-- [North America - Mexico (7)](#north-america---mexico-7-keyword-groups)
-- [North America - US Generic DL (1)](#north-america---us-generic-dl-1-keyword-groups)
-- [North America - United States (63)](#north-america---united-states-63-keyword-groups)
-- [PCI Sensitive Data (1)](#pci-sensitive-data-1-keyword-groups)
-- [Payment Service Secrets (2)](#payment-service-secrets-2-keyword-groups)
-- [Personal Identifiers (2)](#personal-identifiers-2-keyword-groups)
-- [Postal Codes (5)](#postal-codes-5-keyword-groups)
-- [Primary Account Numbers (2)](#primary-account-numbers-2-keyword-groups)
-- [Privacy Classification (10)](#privacy-classification-10-keyword-groups)
-- [Privileged Information (7)](#privileged-information-7-keyword-groups)
-- [Property Identifiers (2)](#property-identifiers-2-keyword-groups)
-- [Regulatory Identifiers (6)](#regulatory-identifiers-6-keyword-groups)
-- [Securities Identifiers (6)](#securities-identifiers-6-keyword-groups)
-- [Social Media Identifiers (2)](#social-media-identifiers-2-keyword-groups)
-- [Supervisory Information (6)](#supervisory-information-6-keyword-groups)
-- [URLs with Credentials (2)](#urls-with-credentials-2-keyword-groups)
-- [Vehicle Identification (1)](#vehicle-identification-1-keyword-groups)
-- [Wire Transfer Data (6)](#wire-transfer-data-6-keyword-groups)
 
 ---
 
@@ -156,84 +29,84 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Egypt National ID | `national id`, `raqam qawmi`, `egyptian id`, `identity card`, `civil registry` | 50 |
-| Egypt Passport | `egyptian passport`, `egypt passport`, `passport number`, `jawaz safar` | 50 |
-| Egypt Tax ID | `tax id`, `tax registration`, `maslahat al-darayeb`, `tax number`, `eta` | 50 |
+| Egypt National ID | `national id`, `raqam qawmi`, `egyptian id`, `identity card`, `civil registry`, `carte d'identité`, `carte nationale d'identité`, `identité nationale`, `pièce d'identité` | 50 |
+| Egypt Passport | `egyptian passport`, `egypt passport`, `passport number`, `jawaz safar`, `no de passeport`, `numéro de passeport` | 50 |
+| Egypt Tax ID | `tax id`, `tax registration`, `maslahat al-darayeb`, `tax number`, `eta`, `identifiant fiscal`, `numéro d'impôt`, `numéro fiscal` | 50 |
 
 ## Africa - Ethiopia (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Ethiopia National ID | `fayda`, `national id`, `ethiopian id`, `identity number`, `fayda id` | 50 |
-| Ethiopia Passport | `ethiopian passport`, `ethiopia passport`, `passport number`, `immigration` | 50 |
-| Ethiopia TIN | `tin`, `tax identification`, `erca`, `ministry of revenue`, `tax number` | 50 |
+| Ethiopia National ID | `fayda`, `national id`, `ethiopian id`, `identity number`, `fayda id`, `carte nationale d'identité`, `identité nationale`, `numéro d'identité` | 50 |
+| Ethiopia Passport | `ethiopian passport`, `ethiopia passport`, `passport number`, `immigration`, `no de passeport`, `numéro de passeport` | 50 |
+| Ethiopia TIN | `tin`, `tax identification`, `erca`, `ministry of revenue`, `tax number`, `identification fiscale`, `numéro d'impôt`, `numéro fiscal` | 50 |
 
 ## Africa - Ghana (4 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Ghana Card | `ghana card`, `nia`, `national identification`, `identity card`, `ghana id` | 50 |
-| Ghana NHIS | `nhis`, `national health insurance`, `health insurance`, `nhia`, `health card` | 50 |
-| Ghana Passport | `ghanaian passport`, `ghana passport`, `passport number`, `immigration` | 50 |
-| Ghana TIN | `tin`, `tax identification`, `gra`, `taxpayer`, `tax number` | 50 |
+| Ghana Card | `ghana card`, `nia`, `national identification`, `identity card`, `ghana id`, `carte d'identité`, `pièce d'identité` | 50 |
+| Ghana NHIS | `nhis`, `national health insurance`, `health insurance`, `nhia`, `health card`, `assurance maladie`, `assurance santé`, `carte d'assurance maladie`, `carte santé` | 50 |
+| Ghana Passport | `ghanaian passport`, `ghana passport`, `passport number`, `immigration`, `no de passeport`, `numéro de passeport` | 50 |
+| Ghana TIN | `tin`, `tax identification`, `gra`, `taxpayer`, `tax number`, `contribuable`, `identification fiscale`, `numéro d'impôt`, `numéro fiscal` | 50 |
 
 ## Africa - Kenya (4 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Kenya KRA PIN | `kra pin`, `kra`, `kenya revenue`, `tax pin`, `itax` | 50 |
-| Kenya NHIF | `nhif`, `national hospital insurance`, `health insurance`, `nhif number` | 50 |
-| Kenya National ID | `national id`, `kenyan id`, `identity card`, `huduma namba`, `maisha namba` | 50 |
-| Kenya Passport | `kenyan passport`, `kenya passport`, `passport number`, `immigration` | 50 |
+| Kenya NHIF | `nhif`, `national hospital insurance`, `health insurance`, `nhif number`, `assurance maladie`, `assurance santé` | 50 |
+| Kenya National ID | `national id`, `kenyan id`, `identity card`, `huduma namba`, `maisha namba`, `carte d'identité`, `carte nationale d'identité`, `identité nationale`, `pièce d'identité` | 50 |
+| Kenya Passport | `kenyan passport`, `kenya passport`, `passport number`, `immigration`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Africa - Morocco (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Morocco CIN | `cin`, `cnie`, `carte nationale`, `carte identite`, `identite nationale` | 50 |
-| Morocco Passport | `moroccan passport`, `morocco passport`, `passeport`, `passport number` | 50 |
-| Morocco Tax ID | `identifiant fiscal`, `if`, `dgi`, `tax id`, `impots` | 50 |
+| Morocco Passport | `moroccan passport`, `morocco passport`, `passeport`, `passport number`, `no de passeport`, `numéro de passeport` | 50 |
+| Morocco Tax ID | `identifiant fiscal`, `if`, `dgi`, `tax id`, `impots`, `numéro fiscal` | 50 |
 
 ## Africa - Nigeria (6 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Nigeria BVN | `bvn`, `bank verification number`, `bank verification`, `nibss`, `cbn` | 50 |
-| Nigeria Driver Licence | `driver's licence`, `driving licence`, `frsc`, `licence number`, `ndl` | 50 |
-| Nigeria NIN | `nin`, `national identification number`, `nimc`, `national identity`, `identity number` | 50 |
-| Nigeria Passport | `nigerian passport`, `nigeria passport`, `passport number`, `immigration` | 50 |
-| Nigeria TIN | `tin`, `tax identification number`, `firs`, `tax id`, `joint tax board` | 50 |
+| Nigeria Driver Licence | `driver's licence`, `driving licence`, `frsc`, `licence number`, `ndl`, `no de permis`, `numéro de permis`, `permis de conduire` | 50 |
+| Nigeria NIN | `nin`, `national identification number`, `nimc`, `national identity`, `identity number`, `numéro d'identité` | 50 |
+| Nigeria Passport | `nigerian passport`, `nigeria passport`, `passport number`, `immigration`, `no de passeport`, `numéro de passeport` | 50 |
+| Nigeria TIN | `tin`, `tax identification number`, `firs`, `tax id`, `joint tax board`, `identifiant fiscal`, `numéro fiscal` | 50 |
 | Nigeria Voter Card | `voter card`, `pvc`, `voter identification`, `inec`, `permanent voter` | 50 |
 
 ## Africa - South Africa (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| South Africa DL | `driver's licence`, `driving licence`, `south african dl`, `licence number`, `traffic department` | 50 |
-| South Africa ID | `south african id`, `sa id`, `identity number`, `id number`, `home affairs` | 50 |
-| South Africa Passport | `south african passport`, `sa passport`, `passport number`, `home affairs` | 50 |
+| South Africa DL | `driver's licence`, `driving licence`, `south african dl`, `licence number`, `traffic department`, `no de permis`, `numéro de permis`, `permis de conduire` | 50 |
+| South Africa ID | `south african id`, `sa id`, `identity number`, `id number`, `home affairs`, `numéro d'identité` | 50 |
+| South Africa Passport | `south african passport`, `sa passport`, `passport number`, `home affairs`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Africa - Tanzania (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Tanzania NIDA | `nida`, `national id`, `tanzanian id`, `nin`, `national identification` | 50 |
-| Tanzania Passport | `tanzanian passport`, `tanzania passport`, `passport number`, `immigration` | 50 |
-| Tanzania TIN | `tin`, `tax identification`, `tra`, `tanzania revenue`, `tax number` | 50 |
+| Tanzania NIDA | `nida`, `national id`, `tanzanian id`, `nin`, `national identification`, `carte nationale d'identité`, `identité nationale` | 50 |
+| Tanzania Passport | `tanzanian passport`, `tanzania passport`, `passport number`, `immigration`, `no de passeport`, `numéro de passeport` | 50 |
+| Tanzania TIN | `tin`, `tax identification`, `tra`, `tanzania revenue`, `tax number`, `identification fiscale`, `numéro d'impôt`, `numéro fiscal` | 50 |
 
 ## Africa - Tunisia (2 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Tunisia CIN | `cin`, `carte identite nationale`, `carte identite`, `tunisian id`, `identity card` | 50 |
-| Tunisia Passport | `tunisian passport`, `tunisia passport`, `passeport`, `passport number` | 50 |
+| Tunisia CIN | `cin`, `carte identite nationale`, `carte identite`, `tunisian id`, `identity card`, `carte d'identité`, `pièce d'identité` | 50 |
+| Tunisia Passport | `tunisian passport`, `tunisia passport`, `passeport`, `passport number`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Africa - Uganda (2 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Uganda NIN | `nin`, `national identification number`, `nira`, `national id`, `ugandan id` | 50 |
-| Uganda Passport | `ugandan passport`, `uganda passport`, `passport number`, `immigration` | 50 |
+| Uganda NIN | `nin`, `national identification number`, `nira`, `national id`, `ugandan id`, `carte nationale d'identité`, `identité nationale` | 50 |
+| Uganda Passport | `ugandan passport`, `uganda passport`, `passport number`, `immigration`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Asia-Pacific - Australia (11 keyword groups)
 
@@ -247,36 +120,36 @@ entirely unless a keyword is found nearby.
 | Australia DL TAS | `tas licence`, `tasmania licence`, `tasmanian driver` | 50 |
 | Australia DL VIC | `vic licence`, `victoria licence`, `vicroads`, `victorian driver` | 50 |
 | Australia DL WA | `wa licence`, `western australia licence`, `wa driver`, `dol wa` | 50 |
-| Australia Medicare | `medicare`, `medicare number`, `medicare card`, `health insurance`, `bulk billing` | 50 |
-| Australia Passport | `australian passport`, `australia passport`, `passport number`, `travel document` | 50 |
+| Australia Medicare | `medicare`, `medicare number`, `medicare card`, `health insurance`, `bulk billing`, `assurance maladie`, `assurance santé` | 50 |
+| Australia Passport | `australian passport`, `australia passport`, `passport number`, `travel document`, `no de passeport`, `numéro de passeport` | 50 |
 | Australia TFN | `tax file number`, `tfn`, `australian tax`, `ato`, `tax return` | 50 |
 
 ## Asia-Pacific - Bangladesh (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Bangladesh NID | `nid`, `national id`, `voter id`, `national identity`, `smart card bangladesh` | 50 |
-| Bangladesh Passport | `bangladeshi passport`, `bangladesh passport`, `passport number`, `e-passport` | 50 |
-| Bangladesh TIN | `tin`, `tax identification`, `nbr`, `national board of revenue`, `taxpayer` | 50 |
+| Bangladesh NID | `nid`, `national id`, `voter id`, `national identity`, `smart card bangladesh`, `carte nationale d'identité`, `identité nationale` | 50 |
+| Bangladesh Passport | `bangladeshi passport`, `bangladesh passport`, `passport number`, `e-passport`, `no de passeport`, `numéro de passeport` | 50 |
+| Bangladesh TIN | `tin`, `tax identification`, `nbr`, `national board of revenue`, `taxpayer`, `contribuable`, `identification fiscale` | 50 |
 
 ## Asia-Pacific - China (5 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| China Passport | `chinese passport`, `china passport`, `passport number`, `huzhao` | 50 |
-| China Resident ID | `resident id`, `identity card`, `shenfenzheng`, `id card number`, `citizen id` | 50 |
-| Hong Kong ID | `hong kong id`, `hkid`, `identity card`, `hk id card`, `hong kong identity` | 50 |
+| China Passport | `chinese passport`, `china passport`, `passport number`, `huzhao`, `no de passeport`, `numéro de passeport` | 50 |
+| China Resident ID | `resident id`, `identity card`, `shenfenzheng`, `id card number`, `citizen id`, `carte d'identité`, `pièce d'identité` | 50 |
+| Hong Kong ID | `hong kong id`, `hkid`, `identity card`, `hk id card`, `hong kong identity`, `carte d'identité`, `pièce d'identité` | 50 |
 | Macau ID | `macau id`, `bir`, `macau identity`, `macau resident`, `bilhete de identidade` | 50 |
-| Taiwan National ID | `taiwan id`, `national id`, `identity number`, `taiwan national`, `roc id` | 50 |
+| Taiwan National ID | `taiwan id`, `national id`, `identity number`, `taiwan national`, `roc id`, `carte nationale d'identité`, `identité nationale`, `numéro d'identité` | 50 |
 
 ## Asia-Pacific - India (6 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | India Aadhaar | `aadhaar`, `aadhar`, `aadhaar number`, `uid number`, `uidai` | 50 |
-| India DL | `driving licence`, `driver licence`, `indian dl`, `driving license india`, `rto` | 50 |
+| India DL | `driving licence`, `driver licence`, `indian dl`, `driving license india`, `rto`, `permis de conduire` | 50 |
 | India PAN | `permanent account number`, `pan`, `pan card`, `income tax`, `pan no` | 50 |
-| India Passport | `indian passport`, `india passport`, `passport number`, `passport no`, `travel document` | 50 |
+| India Passport | `indian passport`, `india passport`, `passport number`, `passport no`, `travel document`, `no de passeport`, `numéro de passeport` | 50 |
 | India Ration Card | `ration card`, `ration number`, `public distribution`, `food supply`, `bpl card` | 50 |
 | India Voter ID | `voter id`, `epic`, `election commission`, `voter card`, `electoral` | 50 |
 
@@ -284,97 +157,97 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Indonesia NIK | `nik`, `nomor induk kependudukan`, `ktp`, `identity card`, `kartu tanda penduduk` | 50 |
-| Indonesia NPWP | `npwp`, `nomor pokok wajib pajak`, `tax id`, `taxpayer number`, `pajak` | 50 |
-| Indonesia Passport | `indonesian passport`, `indonesia passport`, `passport number`, `paspor` | 50 |
+| Indonesia NIK | `nik`, `nomor induk kependudukan`, `ktp`, `identity card`, `kartu tanda penduduk`, `carte d'identité`, `pièce d'identité` | 50 |
+| Indonesia NPWP | `npwp`, `nomor pokok wajib pajak`, `tax id`, `taxpayer number`, `pajak`, `identifiant fiscal`, `numéro fiscal` | 50 |
+| Indonesia Passport | `indonesian passport`, `indonesia passport`, `passport number`, `paspor`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Asia-Pacific - Japan (6 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Japan DL | `driving licence`, `driver license`, `unten menkyo`, `japan licence`, `japanese dl` | 50 |
-| Japan Health Insurance | `health insurance`, `hoken`, `insurer number`, `hokensho`, `medical insurance` | 50 |
+| Japan DL | `driving licence`, `driver license`, `unten menkyo`, `japan licence`, `japanese dl`, `permis de conduire` | 50 |
+| Japan Health Insurance | `health insurance`, `hoken`, `insurer number`, `hokensho`, `medical insurance`, `assurance maladie`, `assurance santé` | 50 |
 | Japan Juminhyo Code | `juminhyo`, `resident record`, `resident registration`, `juki net`, `basic resident registry` | 50 |
 | Japan My Number | `my number`, `individual number`, `kojin bango`, `mynumber`, `social security tax` | 50 |
-| Japan Passport | `japanese passport`, `japan passport`, `passport number`, `ryoken` | 50 |
+| Japan Passport | `japanese passport`, `japan passport`, `passport number`, `ryoken`, `no de passeport`, `numéro de passeport` | 50 |
 | Japan Residence Card | `residence card`, `zairyu card`, `zairyu`, `residence permit`, `foreigner registration` | 50 |
 
 ## Asia-Pacific - Malaysia (2 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Malaysia MyKad | `mykad`, `ic number`, `identity card`, `kad pengenalan`, `nric malaysia` | 50 |
-| Malaysia Passport | `malaysian passport`, `malaysia passport`, `passport number`, `pasport` | 50 |
+| Malaysia MyKad | `mykad`, `ic number`, `identity card`, `kad pengenalan`, `nric malaysia`, `carte d'identité`, `pièce d'identité` | 50 |
+| Malaysia Passport | `malaysian passport`, `malaysia passport`, `passport number`, `pasport`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Asia-Pacific - New Zealand (4 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| New Zealand DL | `driving licence`, `driver licence`, `nz licence`, `nzta`, `waka kotahi` | 50 |
-| New Zealand IRD | `ird`, `inland revenue`, `tax number`, `ird number`, `nz tax` | 50 |
+| New Zealand DL | `driving licence`, `driver licence`, `nz licence`, `nzta`, `waka kotahi`, `permis de conduire` | 50 |
+| New Zealand IRD | `ird`, `inland revenue`, `tax number`, `ird number`, `nz tax`, `numéro d'impôt`, `numéro fiscal` | 50 |
 | New Zealand NHI | `nhi`, `national health index`, `health index`, `nhi number`, `health system` | 50 |
-| New Zealand Passport | `new zealand passport`, `nz passport`, `passport number`, `aotearoa passport` | 50 |
+| New Zealand Passport | `new zealand passport`, `nz passport`, `passport number`, `aotearoa passport`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Asia-Pacific - Pakistan (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Pakistan CNIC | `cnic`, `computerized national identity`, `nadra`, `national identity card`, `identity card` | 50 |
+| Pakistan CNIC | `cnic`, `computerized national identity`, `nadra`, `national identity card`, `identity card`, `carte d'identité`, `pièce d'identité` | 50 |
 | Pakistan NICOP | `nicop`, `national identity card overseas`, `overseas pakistani`, `nadra nicop` | 50 |
-| Pakistan Passport | `pakistani passport`, `pakistan passport`, `passport number`, `travel document` | 50 |
+| Pakistan Passport | `pakistani passport`, `pakistan passport`, `passport number`, `travel document`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Asia-Pacific - Philippines (6 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Philippines Passport | `philippine passport`, `philippines passport`, `passport number`, `dfa passport` | 50 |
-| Philippines PhilHealth | `philhealth`, `health insurance`, `pin`, `philhealth number`, `medical insurance` | 50 |
-| Philippines PhilSys | `philsys`, `national id`, `philid`, `psn`, `philippine identification` | 50 |
+| Philippines Passport | `philippine passport`, `philippines passport`, `passport number`, `dfa passport`, `no de passeport`, `numéro de passeport` | 50 |
+| Philippines PhilHealth | `philhealth`, `health insurance`, `pin`, `philhealth number`, `medical insurance`, `assurance maladie`, `assurance santé` | 50 |
+| Philippines PhilSys | `philsys`, `national id`, `philid`, `psn`, `philippine identification`, `carte nationale d'identité`, `identité nationale` | 50 |
 | Philippines SSS | `sss`, `social security`, `sss number`, `social security system` | 50 |
-| Philippines TIN | `tin`, `tax identification`, `bir`, `bureau of internal revenue`, `taxpayer` | 50 |
+| Philippines TIN | `tin`, `tax identification`, `bir`, `bureau of internal revenue`, `taxpayer`, `contribuable`, `identification fiscale` | 50 |
 | Philippines UMID | `umid`, `unified multi-purpose`, `crn`, `common reference number`, `umid card` | 50 |
 
 ## Asia-Pacific - Singapore (4 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Singapore DL | `driving licence`, `driver license`, `singapore dl`, `singapore licence`, `traffic police` | 50 |
-| Singapore FIN | `fin`, `foreign identification`, `foreign id`, `work permit`, `employment pass` | 50 |
-| Singapore NRIC | `nric`, `national registration`, `identity card`, `singapore id`, `ic number` | 50 |
-| Singapore Passport | `singapore passport`, `passport number`, `sg passport`, `travel document` | 50 |
+| Singapore DL | `driving licence`, `driver license`, `singapore dl`, `singapore licence`, `traffic police`, `permis de conduire` | 50 |
+| Singapore FIN | `fin`, `foreign identification`, `foreign id`, `work permit`, `employment pass`, `permis de travail` | 50 |
+| Singapore NRIC | `nric`, `national registration`, `identity card`, `singapore id`, `ic number`, `carte d'identité`, `pièce d'identité` | 50 |
+| Singapore Passport | `singapore passport`, `passport number`, `sg passport`, `travel document`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Asia-Pacific - South Korea (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| South Korea DL | `driving licence`, `driver license`, `korean dl`, `unjon myonho`, `korea licence` | 50 |
-| South Korea Passport | `korean passport`, `korea passport`, `passport number`, `yeogwon` | 50 |
+| South Korea DL | `driving licence`, `driver license`, `korean dl`, `unjon myonho`, `korea licence`, `permis de conduire` | 50 |
+| South Korea Passport | `korean passport`, `korea passport`, `passport number`, `yeogwon`, `no de passeport`, `numéro de passeport` | 50 |
 | South Korea RRN | `resident registration`, `rrn`, `jumin deungnok`, `jumin`, `resident number` | 50 |
 
 ## Asia-Pacific - Sri Lanka (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Sri Lanka NIC New | `nic`, `national identity card`, `identity card`, `sri lanka id`, `new nic` | 50 |
-| Sri Lanka NIC Old | `nic`, `national identity card`, `identity card`, `sri lanka id`, `jatika handunumpat` | 50 |
-| Sri Lanka Passport | `sri lankan passport`, `sri lanka passport`, `passport number`, `travel document` | 50 |
+| Sri Lanka NIC New | `nic`, `national identity card`, `identity card`, `sri lanka id`, `new nic`, `carte d'identité`, `pièce d'identité` | 50 |
+| Sri Lanka NIC Old | `nic`, `national identity card`, `identity card`, `sri lanka id`, `jatika handunumpat`, `carte d'identité`, `pièce d'identité` | 50 |
+| Sri Lanka Passport | `sri lankan passport`, `sri lanka passport`, `passport number`, `travel document`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Asia-Pacific - Thailand (4 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Thailand DL | `driving licence`, `driver license`, `thai dl`, `bai kap khi`, `land transport` | 50 |
-| Thailand National ID | `thai id`, `national id`, `bat prachakon`, `citizen id`, `identity card` | 50 |
-| Thailand Passport | `thai passport`, `thailand passport`, `passport number`, `nangsue doen thang` | 50 |
-| Thailand Tax ID | `tax id`, `tax number`, `revenue department`, `tin thailand`, `vat number` | 50 |
+| Thailand DL | `driving licence`, `driver license`, `thai dl`, `bai kap khi`, `land transport`, `permis de conduire` | 50 |
+| Thailand National ID | `thai id`, `national id`, `bat prachakon`, `citizen id`, `identity card`, `carte d'identité`, `carte nationale d'identité`, `identité nationale`, `pièce d'identité` | 50 |
+| Thailand Passport | `thai passport`, `thailand passport`, `passport number`, `nangsue doen thang`, `no de passeport`, `numéro de passeport` | 50 |
+| Thailand Tax ID | `tax id`, `tax number`, `revenue department`, `tin thailand`, `vat number`, `identifiant fiscal`, `numéro d'impôt`, `numéro fiscal` | 50 |
 
 ## Asia-Pacific - Vietnam (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Vietnam CCCD | `cccd`, `cmnd`, `citizen id`, `can cuoc cong dan`, `identity card` | 50 |
-| Vietnam Passport | `vietnamese passport`, `vietnam passport`, `passport number`, `ho chieu` | 50 |
-| Vietnam Tax Code | `tax code`, `ma so thue`, `mst`, `tax id`, `tax number` | 50 |
+| Vietnam CCCD | `cccd`, `cmnd`, `citizen id`, `can cuoc cong dan`, `identity card`, `carte d'identité`, `pièce d'identité` | 50 |
+| Vietnam Passport | `vietnamese passport`, `vietnam passport`, `passport number`, `ho chieu`, `no de passeport`, `numéro de passeport` | 50 |
+| Vietnam Tax Code | `tax code`, `ma so thue`, `mst`, `tax id`, `tax number`, `identifiant fiscal`, `numéro d'impôt`, `numéro fiscal` | 50 |
 
 ## Authentication Tokens (1 keyword groups)
 
@@ -394,11 +267,11 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| ABA Routing Number | `routing number`, `routing no`, `aba`, `aba routing`, `transit routing`, `bank routing`, `rtn` | 50 |
+| ABA Routing Number | `routing number`, `routing no`, `aba`, `aba routing`, `transit routing`, `bank routing`, `rtn`, `numero de transit`, `numéro de transit`, `transit bancaire` | 50 |
 | Canada Transit Number | `transit number`, `institution number`, `canadian bank`, `bank transit` | 50 |
-| IBAN Generic | `iban`, `international bank account number`, `bank account` | 50 |
-| SWIFT/BIC | `swift`, `bic`, `bank identifier code`, `swift code`, `routing code` | 50 |
-| US Bank Account Number | `account number`, `account no`, `bank account`, `checking account`, `savings account`, `acct`, `acct no`, `deposit account` | 50 |
+| IBAN Generic | `iban`, `international bank account number`, `bank account`, `compte bancaire`, `compte de banque`, `numéro de compte bancaire international` | 50 |
+| SWIFT/BIC | `swift`, `bic`, `bank identifier code`, `swift code`, `routing code`, `code d'identification bancaire` | 50 |
+| US Bank Account Number | `account number`, `account no`, `bank account`, `checking account`, `savings account`, `acct`, `acct no`, `deposit account`, `compte bancaire`, `compte chèques`, `compte d'épargne`, `compte de banque`, `compte de dépôt`, `no de compte`, `numero de compte`, `numéro de compte` | 50 |
 
 ## Biometric Identifiers (2 keyword groups)
 
@@ -411,7 +284,7 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Card Expiry | `expiry`, `expiration`, `exp date`, `exp`, `valid thru`, `valid through`, `good thru`, `card expires`, `mm/yy` | 30 |
+| Card Expiry | `expiry`, `expiration`, `exp date`, `exp`, `valid thru`, `valid through`, `good thru`, `card expires`, `mm/yy`, `carte expire`, `date d'exp`, `date d'expiration`, `valide jusqu'au`, `échéance` | 30 |
 
 ## Card Track Data (2 keyword groups)
 
@@ -450,37 +323,37 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| E.164 Phone Number | `phone`, `telephone`, `tel`, `mobile`, `contact number` | 50 |
-| Email Address | `email`, `e-mail`, `email address`, `mail to`, `contact` | 50 |
-| IPv4 Address | `ip address`, `ip`, `server`, `host`, `network` | 50 |
-| IPv6 Address | `ip address`, `ipv6`, `server`, `host`, `network` | 50 |
-| MAC Address | `mac address`, `hardware address`, `physical address`, `mac` | 50 |
+| E.164 Phone Number | `phone`, `telephone`, `tel`, `mobile`, `contact number`, `cellulaire`, `numéro de téléphone`, `portable`, `tél`, `téléphone` | 50 |
+| Email Address | `email`, `e-mail`, `email address`, `mail to`, `contact`, `adresse courriel`, `adresse électronique`, `coordonnées`, `courriel`, `courrier électronique`, `destinataire`, `envoyer à` | 50 |
+| IPv4 Address | `ip address`, `ip`, `server`, `host`, `network`, `adresse ip`, `hôte`, `réseau`, `serveur` | 50 |
+| IPv6 Address | `ip address`, `ipv6`, `server`, `host`, `network`, `adresse ip`, `hôte`, `réseau`, `serveur` | 50 |
+| MAC Address | `mac address`, `hardware address`, `physical address`, `mac`, `adresse mac` | 50 |
 
 ## Corporate Classification (9 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Corporate Confidential | `confidential`, `company`, `corporate`, `business`, `proprietary` | 80 |
+| Corporate Confidential | `confidential`, `company`, `corporate`, `business`, `proprietary`, `confidentiel`, `confidentielle`, `exclusif`, `propriétaire` | 80 |
 | Do Not Distribute | `distribute`, `distribution`, `circulation`, `forward`, `share` | 80 |
-| Embargoed | `embargo`, `embargoed`, `hold until`, `not for release`, `publication date` | 80 |
-| Eyes Only | `eyes only`, `recipient only`, `personal`, `addressee only` | 80 |
-| Highly Confidential | `highly confidential`, `sensitive`, `restricted`, `executive only` | 80 |
-| Internal Only | `internal`, `company`, `employees only`, `staff only`, `not for external` | 80 |
-| Need to Know | `need to know`, `restricted access`, `limited distribution`, `authorized personnel` | 80 |
-| Proprietary | `proprietary`, `trade secret`, `intellectual property`, `confidential business` | 80 |
-| Restricted | `restricted`, `limited distribution`, `access controlled`, `need to know` | 80 |
+| Embargoed | `embargo`, `embargoed`, `hold until`, `not for release`, `publication date`, `sous embargo` | 80 |
+| Eyes Only | `eyes only`, `recipient only`, `personal`, `addressee only`, `pour vos yeux seulement` | 80 |
+| Highly Confidential | `highly confidential`, `sensitive`, `restricted`, `executive only`, `accès restreint`, `restreint`, `restreinte` | 80 |
+| Internal Only | `internal`, `company`, `employees only`, `staff only`, `not for external`, `employés seulement`, `interne`, `ne pas diffuser à l'externe`, `réservé aux employés` | 80 |
+| Need to Know | `need to know`, `restricted access`, `limited distribution`, `authorized personnel`, `besoin de savoir`, `diffusion restreinte` | 80 |
+| Proprietary | `proprietary`, `trade secret`, `intellectual property`, `confidential business`, `exclusif`, `propriétaire`, `secret commercial`, `secret d'affaires` | 80 |
+| Restricted | `restricted`, `limited distribution`, `access controlled`, `need to know`, `accès restreint`, `besoin de savoir`, `diffusion restreinte`, `restreint`, `restreinte` | 80 |
 
 ## Credit Card Numbers (7 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Amex | `amex`, `american express`, `credit card`, `card number`, `pan`, `primary account` | 50 |
-| Diners Club | `diners club`, `diners`, `credit card`, `card number`, `pan`, `primary account` | 50 |
-| Discover | `discover`, `credit card`, `card number`, `pan`, `primary account` | 50 |
-| JCB | `jcb`, `credit card`, `card number`, `pan`, `primary account` | 50 |
-| MasterCard | `mastercard`, `credit card`, `card number`, `card no`, `pan`, `primary account` | 50 |
-| UnionPay | `unionpay`, `union pay`, `credit card`, `card number`, `pan`, `primary account` | 50 |
-| Visa | `visa`, `credit card`, `card number`, `card no`, `pan`, `primary account` | 50 |
+| Amex | `amex`, `american express`, `credit card`, `card number`, `pan`, `primary account`, `carte de credit`, `carte de crédit`, `compte principal`, `no de carte`, `numero de carte`, `numéro de carte` | 50 |
+| Diners Club | `diners club`, `diners`, `credit card`, `card number`, `pan`, `primary account`, `carte de credit`, `carte de crédit`, `compte principal`, `no de carte`, `numero de carte`, `numéro de carte` | 50 |
+| Discover | `discover`, `credit card`, `card number`, `pan`, `primary account`, `carte de credit`, `carte de crédit`, `compte principal`, `no de carte`, `numero de carte`, `numéro de carte` | 50 |
+| JCB | `jcb`, `credit card`, `card number`, `pan`, `primary account`, `carte de credit`, `carte de crédit`, `compte principal`, `no de carte`, `numero de carte`, `numéro de carte` | 50 |
+| MasterCard | `mastercard`, `credit card`, `card number`, `card no`, `pan`, `primary account`, `carte de credit`, `carte de crédit`, `compte principal`, `no de carte`, `numero de carte`, `numéro de carte` | 50 |
+| UnionPay | `unionpay`, `union pay`, `credit card`, `card number`, `pan`, `primary account`, `carte de credit`, `carte de crédit`, `compte principal`, `no de carte`, `numero de carte`, `numéro de carte` | 50 |
+| Visa | `visa`, `credit card`, `card number`, `card no`, `pan`, `primary account`, `carte de credit`, `carte de crédit`, `compte principal`, `no de carte`, `numero de carte`, `numéro de carte` | 50 |
 
 ## Cryptocurrency (7 keyword groups)
 
@@ -498,31 +371,31 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Account Balance | `balance`, `account balance`, `available balance`, `current balance`, `ledger balance`, `closing balance` | 50 |
-| Balance with Currency Code | `balance`, `amount`, `total`, `funds`, `available`, `ledger` | 50 |
+| Account Balance | `balance`, `account balance`, `available balance`, `current balance`, `ledger balance`, `closing balance`, `solde`, `solde courant`, `solde disponible`, `solde du compte` | 50 |
+| Balance with Currency Code | `balance`, `amount`, `total`, `funds`, `available`, `ledger`, `solde` | 50 |
 | DTI Ratio | `dti`, `debt-to-income`, `debt to income`, `dti ratio`, `debt ratio` | 50 |
-| Income Amount | `income`, `salary`, `annual income`, `monthly income`, `gross income`, `net income`, `compensation`, `wages`, `earnings` | 50 |
+| Income Amount | `income`, `salary`, `annual income`, `monthly income`, `gross income`, `net income`, `compensation`, `wages`, `earnings`, `revenu`, `revenu annuel`, `revenu brut`, `revenu mensuel`, `revenu net`, `salaire` | 50 |
 
 ## Data Classification Labels (8 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | CUI | `cui`, `controlled unclassified`, `sensitive information`, `marking` | 100 |
-| Confidential Classification | `classified`, `confidential`, `national security`, `government` | 100 |
+| Confidential Classification | `classified`, `confidential`, `national security`, `government`, `classifié`, `classifiée`, `confidentiel`, `confidentielle` | 100 |
 | FOUO | `official use`, `fouo`, `government`, `not for public release` | 100 |
 | LES | `law enforcement`, `sensitive`, `les`, `police`, `investigation` | 100 |
 | NOFORN | `noforn`, `foreign nationals`, `not releasable`, `classification` | 100 |
 | SBU | `sensitive`, `unclassified`, `sbu`, `government` | 100 |
-| Secret Classification | `classified`, `secret`, `national security`, `clearance`, `noforn` | 100 |
-| Top Secret | `classified`, `top secret`, `ts`, `sci`, `national security`, `clearance` | 100 |
+| Secret Classification | `classified`, `secret`, `national security`, `clearance`, `noforn`, `classifié`, `classifiée` | 100 |
+| Top Secret | `classified`, `top secret`, `ts`, `sci`, `national security`, `clearance`, `classifié`, `classifiée`, `très secret`, `ultra secret` | 100 |
 
 ## Dates (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Date EU | `date of birth`, `dob`, `birth date`, `birthday`, `born on`, `born`, `birthdate` | 50 |
-| Date ISO | `date of birth`, `dob`, `birth date`, `birthday`, `born on`, `born`, `birthdate` | 50 |
-| Date US | `date of birth`, `dob`, `birth date`, `birthday`, `born on`, `born`, `birthdate` | 50 |
+| Date EU | `date of birth`, `dob`, `birth date`, `birthday`, `born on`, `born`, `birthdate`, `anniversaire`, `date de naissance`, `né le`, `née le` | 50 |
+| Date ISO | `date of birth`, `dob`, `birth date`, `birthday`, `born on`, `born`, `birthdate`, `anniversaire`, `date de naissance`, `né le`, `née le` | 50 |
+| Date US | `date of birth`, `dob`, `birth date`, `birthday`, `born on`, `born`, `birthdate`, `anniversaire`, `date de naissance`, `né le`, `née le` | 50 |
 
 ## Device Identifiers (5 keyword groups)
 
@@ -544,18 +417,18 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Employee ID | `employee id`, `employee number`, `emp id`, `staff id`, `personnel number`, `emp no`, `worker id`, `badge number` | 50 |
-| Work Permit Number | `work permit`, `work visa`, `employment authorization`, `ead`, `labor permit`, `work authorization` | 50 |
+| Employee ID | `employee id`, `employee number`, `emp id`, `staff id`, `personnel number`, `emp no`, `worker id`, `badge number`, `matricule`, `numéro d'employé`, `numéro du personnel` | 50 |
+| Work Permit Number | `work permit`, `work visa`, `employment authorization`, `ead`, `labor permit`, `work authorization`, `autorisation de travail`, `permis de travail` | 50 |
 
 ## Europe - Austria (5 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Austria DL | `fuhrerschein`, `austrian driving`, `driving licence` | 50 |
-| Austria ID Card | `personalausweis`, `austrian id`, `identity card` | 50 |
+| Austria DL | `fuhrerschein`, `austrian driving`, `driving licence`, `permis de conduire` | 50 |
+| Austria ID Card | `personalausweis`, `austrian id`, `identity card`, `carte d'identité`, `pièce d'identité` | 50 |
 | Austria Passport | `austrian passport`, `osterreichischer reisepass`, `reisepass` | 50 |
 | Austria SVN | `sozialversicherungsnummer`, `svnr`, `sv-nummer`, `austrian social security`, `versicherungsnummer` | 50 |
-| Austria Tax Number | `steuernummer`, `austrian tax`, `tax number`, `abgabenkontonummer` | 50 |
+| Austria Tax Number | `steuernummer`, `austrian tax`, `tax number`, `abgabenkontonummer`, `numéro d'impôt`, `numéro fiscal` | 50 |
 
 ## Europe - Belgium (4 keyword groups)
 
@@ -571,7 +444,7 @@ entirely unless a keyword is found nearby.
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Bulgaria EGN | `egn`, `edinen grazhdanski nomer`, `bulgarian personal`, `unified civil number` | 50 |
-| Bulgaria ID Card | `lichna karta`, `bulgarian id`, `identity card` | 50 |
+| Bulgaria ID Card | `lichna karta`, `bulgarian id`, `identity card`, `carte d'identité`, `pièce d'identité` | 50 |
 | Bulgaria LNC | `lnch`, `lichna karta`, `foreigner number`, `personal number of foreigner` | 50 |
 | Bulgaria Passport | `bulgarian passport`, `bulgarski pasport` | 50 |
 
@@ -579,8 +452,8 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Croatia DL | `vozacka dozvola`, `croatian driving`, `driving licence` | 50 |
-| Croatia ID Card | `osobna iskaznica`, `croatian id`, `identity card` | 50 |
+| Croatia DL | `vozacka dozvola`, `croatian driving`, `driving licence`, `permis de conduire` | 50 |
+| Croatia ID Card | `osobna iskaznica`, `croatian id`, `identity card`, `carte d'identité`, `pièce d'identité` | 50 |
 | Croatia OIB | `oib`, `osobni identifikacijski broj`, `croatian personal`, `personal identification number` | 50 |
 | Croatia Passport | `croatian passport`, `hrvatska putovnica` | 50 |
 
@@ -588,16 +461,16 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Cyprus ID Card | `cypriot id`, `identity card`, `taftotita` | 50 |
+| Cyprus ID Card | `cypriot id`, `identity card`, `taftotita`, `carte d'identité`, `pièce d'identité` | 50 |
 | Cyprus Passport | `cypriot passport`, `kypriako diavatirio` | 50 |
-| Cyprus TIN | `cypriot tax`, `tin`, `tax identification` | 50 |
+| Cyprus TIN | `cypriot tax`, `tin`, `tax identification`, `identification fiscale` | 50 |
 
 ## Europe - Czech Republic (4 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Czech Birth Number | `rodne cislo`, `birth number`, `czech personal`, `rc` | 50 |
-| Czech DL | `ridicsky prukaz`, `czech driving`, `driving licence` | 50 |
+| Czech DL | `ridicsky prukaz`, `czech driving`, `driving licence`, `permis de conduire` | 50 |
 | Czech ICO | `ico`, `identifikacni cislo`, `business id` | 50 |
 | Czech Passport | `czech passport`, `cesky pas` | 50 |
 
@@ -606,7 +479,7 @@ entirely unless a keyword is found nearby.
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Denmark CPR | `cpr`, `personnummer`, `cpr-nummer`, `danish personal`, `civil registration` | 50 |
-| Denmark DL | `korekort`, `danish driving`, `driving licence` | 50 |
+| Denmark DL | `korekort`, `danish driving`, `driving licence`, `permis de conduire` | 50 |
 | Denmark Passport | `danish passport`, `dansk pas` | 50 |
 
 ## Europe - EU (2 keyword groups)
@@ -620,7 +493,7 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Estonia DL | `juhiluba`, `estonian driving`, `driving licence` | 50 |
+| Estonia DL | `juhiluba`, `estonian driving`, `driving licence`, `permis de conduire` | 50 |
 | Estonia Isikukood | `isikukood`, `estonian personal`, `personal identification code`, `id-kood` | 50 |
 | Estonia Passport | `estonian passport`, `eesti pass` | 50 |
 
@@ -628,7 +501,7 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Finland DL | `ajokortti`, `finnish driving`, `driving licence` | 50 |
+| Finland DL | `ajokortti`, `finnish driving`, `driving licence`, `permis de conduire` | 50 |
 | Finland HETU | `henkilotunnus`, `hetu`, `finnish personal identity`, `personal identity code`, `henkilotunnus` | 50 |
 | Finland Passport | `finnish passport`, `suomen passi` | 50 |
 
@@ -646,21 +519,21 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Germany DL | `fuhrerschein`, `driving licence`, `german driving`, `fahrerlaubnis` | 50 |
+| Germany DL | `fuhrerschein`, `driving licence`, `german driving`, `fahrerlaubnis`, `permis de conduire` | 50 |
 | Germany IBAN | `iban`, `german bank`, `bankverbindung`, `kontonummer` | 50 |
 | Germany ID | `personalausweis`, `german id`, `identification number`, `ausweisnummer` | 50 |
 | Germany Passport | `german passport`, `germany passport`, `reisepass` | 50 |
 | Germany Social Insurance | `sozialversicherungsnummer`, `social insurance`, `sv-nummer`, `rentenversicherung` | 50 |
-| Germany Tax ID | `steueridentifikationsnummer`, `steuer-id`, `tax identification`, `tin`, `steuernummer` | 50 |
+| Germany Tax ID | `steueridentifikationsnummer`, `steuer-id`, `tax identification`, `tin`, `steuernummer`, `identification fiscale` | 50 |
 
 ## Europe - Greece (5 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Greece AFM | `afm`, `arithmos forologikou mitroou`, `greek tax`, `tax number` | 50 |
+| Greece AFM | `afm`, `arithmos forologikou mitroou`, `greek tax`, `tax number`, `numéro d'impôt`, `numéro fiscal` | 50 |
 | Greece AMKA | `amka`, `social security`, `arithmos mitroou koinonikis asfalisis` | 50 |
-| Greece DL | `adeia odigisis`, `greek driving`, `driving licence` | 50 |
-| Greece ID Card | `taftotita`, `greek id`, `deltio taftotitas`, `identity card` | 50 |
+| Greece DL | `adeia odigisis`, `greek driving`, `driving licence`, `permis de conduire` | 50 |
+| Greece ID Card | `taftotita`, `greek id`, `deltio taftotitas`, `identity card`, `carte d'identité`, `pièce d'identité` | 50 |
 | Greece Passport | `greek passport`, `elliniko diavatirio` | 50 |
 
 ## Europe - Hungary (5 keyword groups)
@@ -671,7 +544,7 @@ entirely unless a keyword is found nearby.
 | Hungary Passport | `hungarian passport`, `magyar utlevel` | 50 |
 | Hungary Personal ID | `szemelyazonosito`, `personal id`, `hungarian id`, `szemelyi szam` | 50 |
 | Hungary TAJ | `taj szam`, `social security`, `taj`, `egeszsegbiztositasi` | 50 |
-| Hungary Tax Number | `adoazonosito`, `tax number`, `hungarian tax`, `ado szam` | 50 |
+| Hungary Tax Number | `adoazonosito`, `tax number`, `hungarian tax`, `ado szam`, `numéro d'impôt`, `numéro fiscal` | 50 |
 
 ## Europe - Iceland (2 keyword groups)
 
@@ -684,7 +557,7 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Ireland DL | `irish driving`, `driving licence`, `ceadunas tiomana` | 50 |
+| Ireland DL | `irish driving`, `driving licence`, `ceadunas tiomana`, `permis de conduire` | 50 |
 | Ireland Eircode | `eircode`, `irish postcode`, `postal code` | 50 |
 | Ireland PPS | `pps`, `ppsn`, `personal public service`, `pps number` | 50 |
 | Ireland Passport | `irish passport`, `ireland passport` | 50 |
@@ -697,13 +570,13 @@ entirely unless a keyword is found nearby.
 | Italy DL | `patente di guida`, `italian driving`, `patente` | 50 |
 | Italy Partita IVA | `partita iva`, `vat number`, `p.iva`, `piva` | 50 |
 | Italy Passport | `italian passport`, `italy passport`, `passaporto` | 50 |
-| Italy SSN | `italian ssn`, `tessera sanitaria`, `health card` | 50 |
+| Italy SSN | `italian ssn`, `tessera sanitaria`, `health card`, `carte d'assurance maladie`, `carte santé` | 50 |
 
 ## Europe - Latvia (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Latvia DL | `vaditaja aplieciba`, `latvian driving`, `driving licence` | 50 |
+| Latvia DL | `vaditaja aplieciba`, `latvian driving`, `driving licence`, `permis de conduire` | 50 |
 | Latvia Passport | `latvian passport`, `latvijas pase` | 50 |
 | Latvia Personas Kods | `personas kods`, `latvian personal`, `personal code`, `pk` | 50 |
 
@@ -719,7 +592,7 @@ entirely unless a keyword is found nearby.
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Lithuania Asmens Kodas | `asmens kodas`, `lithuanian personal`, `personal code`, `ak` | 50 |
-| Lithuania DL | `vairuotojo pazymejimas`, `lithuanian driving`, `driving licence` | 50 |
+| Lithuania DL | `vairuotojo pazymejimas`, `lithuanian driving`, `driving licence`, `permis de conduire` | 50 |
 | Lithuania Passport | `lithuanian passport`, `lietuvos pasas` | 50 |
 
 ## Europe - Luxembourg (3 keyword groups)
@@ -734,9 +607,9 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Malta ID Card | `maltese id`, `identity card`, `karta tal-identita` | 50 |
+| Malta ID Card | `maltese id`, `identity card`, `karta tal-identita`, `carte d'identité`, `pièce d'identité` | 50 |
 | Malta Passport | `maltese passport`, `passaport malti` | 50 |
-| Malta TIN | `maltese tax`, `tin`, `tax identification` | 50 |
+| Malta TIN | `maltese tax`, `tin`, `tax identification`, `identification fiscale` | 50 |
 
 ## Europe - Netherlands (4 keyword groups)
 
@@ -752,7 +625,7 @@ entirely unless a keyword is found nearby.
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Norway D-Number | `d-nummer`, `d-number`, `norwegian temporary` | 50 |
-| Norway DL | `forerkort`, `norwegian driving`, `driving licence` | 50 |
+| Norway DL | `forerkort`, `norwegian driving`, `driving licence`, `permis de conduire` | 50 |
 | Norway FNR | `fodselsnummer`, `fnr`, `norwegian personal`, `birth number`, `personnummer` | 50 |
 | Norway Passport | `norwegian passport`, `norsk pass` | 50 |
 
@@ -760,9 +633,9 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Poland DL | `prawo jazdy`, `polish driving`, `driving licence` | 50 |
-| Poland ID Card | `dowod osobisty`, `polish id card`, `identity card` | 50 |
-| Poland NIP | `nip`, `numer identyfikacji podatkowej`, `tax identification` | 50 |
+| Poland DL | `prawo jazdy`, `polish driving`, `driving licence`, `permis de conduire` | 50 |
+| Poland ID Card | `dowod osobisty`, `polish id card`, `identity card`, `carte d'identité`, `pièce d'identité` | 50 |
+| Poland NIP | `nip`, `numer identyfikacji podatkowej`, `tax identification`, `identification fiscale` | 50 |
 | Poland PESEL | `pesel`, `polish id`, `personal identification number`, `numer pesel` | 50 |
 | Poland Passport | `polish passport`, `paszport` | 50 |
 | Poland REGON | `regon`, `statistical number`, `business registration` | 50 |
@@ -772,7 +645,7 @@ entirely unless a keyword is found nearby.
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Portugal CC | `cartao cidadao`, `citizen card`, `cartao de cidadao`, `cc number` | 50 |
-| Portugal NIF | `nif`, `contribuinte`, `tax identification`, `numero fiscal` | 50 |
+| Portugal NIF | `nif`, `contribuinte`, `tax identification`, `numero fiscal`, `identification fiscale` | 50 |
 | Portugal NISS | `niss`, `seguranca social`, `social security`, `numero seguranca` | 50 |
 | Portugal Passport | `portuguese passport`, `passaporte` | 50 |
 
@@ -782,7 +655,7 @@ entirely unless a keyword is found nearby.
 |---|---|---:|
 | Romania CIF | `cif`, `cod identificare fiscala`, `romanian tax`, `fiscal code` | 50 |
 | Romania CNP | `cnp`, `cod numeric personal`, `romanian personal`, `personal numeric code` | 50 |
-| Romania DL | `permis de conducere`, `romanian driving`, `driving licence` | 50 |
+| Romania DL | `permis de conducere`, `romanian driving`, `driving licence`, `permis de conduire` | 50 |
 | Romania Passport | `romanian passport`, `pasaport` | 50 |
 
 ## Europe - Slovakia (3 keyword groups)
@@ -790,17 +663,17 @@ entirely unless a keyword is found nearby.
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Slovakia Birth Number | `rodne cislo`, `birth number`, `slovak personal`, `rc` | 50 |
-| Slovakia DL | `vodicsky preukaz`, `slovak driving`, `driving licence` | 50 |
+| Slovakia DL | `vodicsky preukaz`, `slovak driving`, `driving licence`, `permis de conduire` | 50 |
 | Slovakia Passport | `slovak passport`, `slovensky pas` | 50 |
 
 ## Europe - Slovenia (4 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Slovenia DL | `voznisko dovoljenje`, `slovenian driving`, `driving licence` | 50 |
+| Slovenia DL | `voznisko dovoljenje`, `slovenian driving`, `driving licence`, `permis de conduire` | 50 |
 | Slovenia EMSO | `emso`, `enotna maticna stevilka`, `slovenian personal`, `personal number` | 50 |
 | Slovenia Passport | `slovenian passport`, `slovenski potni list` | 50 |
-| Slovenia Tax Number | `davcna stevilka`, `slovenian tax`, `tax number` | 50 |
+| Slovenia Tax Number | `davcna stevilka`, `slovenian tax`, `tax number`, `numéro d'impôt`, `numéro fiscal` | 50 |
 
 ## Europe - Spain (5 keyword groups)
 
@@ -816,7 +689,7 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Sweden DL | `korkort`, `swedish driving`, `driving licence` | 50 |
+| Sweden DL | `korkort`, `swedish driving`, `driving licence`, `permis de conduire` | 50 |
 | Sweden Organisation Number | `organisationsnummer`, `org number`, `swedish company` | 50 |
 | Sweden PIN | `personnummer`, `swedish id`, `personal identity number`, `swedish personal number` | 50 |
 | Sweden Passport | `swedish passport`, `sverige pass` | 50 |
@@ -844,35 +717,35 @@ entirely unless a keyword is found nearby.
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | British NHS | `nhs number`, `nhs no`, `national health service`, `nhs` | 50 |
-| UK DL | `driving licence`, `driver licence`, `dvla`, `uk driving`, `uk dl` | 50 |
+| UK DL | `driving licence`, `driver licence`, `dvla`, `uk driving`, `uk dl`, `permis de conduire` | 50 |
 | UK NIN | `national insurance number`, `nin`, `national insurance no`, `ni number` | 50 |
 | UK Passport | `uk passport`, `british passport`, `united kingdom passport`, `hmpo` | 50 |
-| UK Phone Number | `phone`, `telephone`, `tel`, `mobile`, `uk phone` | 50 |
-| UK Sort Code | `sort code`, `uk sort`, `bank sort`, `bank account` | 50 |
+| UK Phone Number | `phone`, `telephone`, `tel`, `mobile`, `uk phone`, `cellulaire`, `portable`, `tél`, `téléphone` | 50 |
+| UK Sort Code | `sort code`, `uk sort`, `bank sort`, `bank account`, `compte bancaire`, `compte de banque` | 50 |
 | UK UTR | `unique taxpayer reference`, `utr`, `tax reference`, `self assessment` | 50 |
 
 ## Financial Regulatory Labels (7 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Draft Not for Circulation | `draft`, `circulation`, `preliminary`, `not final`, `review only` | 80 |
+| Draft Not for Circulation | `draft`, `circulation`, `preliminary`, `not final`, `review only`, `brouillon`, `provisoire`, `ébauche` | 80 |
 | Information Barrier | `information barrier`, `chinese wall`, `wall crossing`, `restricted side`, `public side` | 80 |
 | Inside Information | `inside information`, `insider`, `material`, `non-public`, `trading restriction` | 80 |
 | Investment Restricted | `restricted list`, `watch list`, `grey list`, `restricted securities`, `trading restriction` | 80 |
 | MNPI | `mnpi`, `material`, `non-public`, `insider`, `trading`, `securities` | 80 |
 | Market Sensitive | `market sensitive`, `price sensitive`, `stock`, `securities`, `trading` | 80 |
-| Pre-Decisional | `pre-decisional`, `draft`, `deliberative`, `not final`, `preliminary` | 80 |
+| Pre-Decisional | `pre-decisional`, `draft`, `deliberative`, `not final`, `preliminary`, `brouillon`, `provisoire`, `ébauche` | 80 |
 
 ## Generic Secrets (6 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Bearer Token | `authorization`, `bearer`, `auth token` | 80 |
-| Database Connection String | `database`, `db connection`, `connection string`, `mongodb`, `postgres`, `mysql`, `redis` | 80 |
-| Generic API Key | `api key`, `api_key`, `apikey`, `api secret` | 80 |
-| Generic Secret Assignment | `password`, `secret`, `credential`, `passwd` | 80 |
-| JWT Token | `jwt`, `json web token`, `auth`, `token` | 80 |
-| Private Key | `private key`, `rsa`, `ssh key`, `pem` | 80 |
+| Database Connection String | `database`, `db connection`, `connection string`, `mongodb`, `postgres`, `mysql`, `redis`, `base de données`, `chaîne de connexion` | 80 |
+| Generic API Key | `api key`, `api_key`, `apikey`, `api secret`, `clé api` | 80 |
+| Generic Secret Assignment | `password`, `secret`, `credential`, `passwd`, `identifiant`, `justificatif`, `mot de passe` | 80 |
+| JWT Token | `jwt`, `json web token`, `auth`, `token`, `jeton` | 80 |
+| Private Key | `private key`, `rsa`, `ssh key`, `pem`, `clé privée` | 80 |
 
 ## Geolocation (3 keyword groups)
 
@@ -886,15 +759,15 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Insurance Claim Number | `claim number`, `claim no`, `claim id`, `claim#`, `claims reference`, `incident number` | 50 |
-| Insurance Policy Number | `policy number`, `policy no`, `insurance policy`, `policy id`, `coverage number`, `policy#` | 50 |
+| Insurance Claim Number | `claim number`, `claim no`, `claim id`, `claim#`, `claims reference`, `incident number`, `no de réclamation`, `numéro de réclamation` | 50 |
+| Insurance Policy Number | `policy number`, `policy no`, `insurance policy`, `policy id`, `coverage number`, `policy#`, `no de police`, `numéro de police`, `police d'assurance` | 50 |
 
 ## Internal Banking References (2 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Internal Account Ref | `internal reference`, `account reference`, `internal id`, `system id`, `core banking id` | 50 |
-| Teller ID | `teller id`, `teller number`, `officer id`, `banker id`, `employee id`, `user id` | 50 |
+| Teller ID | `teller id`, `teller number`, `officer id`, `banker id`, `employee id`, `user id`, `matricule`, `numéro d'employé` | 50 |
 
 ## Latin America - Argentina (3 keyword groups)
 
@@ -902,16 +775,16 @@ entirely unless a keyword is found nearby.
 |---|---|---:|
 | Argentina CUIL/CUIT | `cuil`, `cuit`, `clave unica`, `identificacion tributaria`, `afip` | 50 |
 | Argentina DNI | `dni`, `documento nacional de identidad`, `documento nacional`, `identidad`, `renaper` | 50 |
-| Argentina Passport | `pasaporte`, `argentinian passport`, `argentina passport`, `passport number` | 50 |
+| Argentina Passport | `pasaporte`, `argentinian passport`, `argentina passport`, `passport number`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Latin America - Brazil (6 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Brazil CNH | `cnh`, `carteira de habilitacao`, `habilitacao`, `driving licence`, `carteira nacional` | 50 |
+| Brazil CNH | `cnh`, `carteira de habilitacao`, `habilitacao`, `driving licence`, `carteira nacional`, `permis de conduire` | 50 |
 | Brazil CNPJ | `cnpj`, `cadastro nacional`, `pessoa juridica`, `empresa`, `razao social` | 50 |
 | Brazil CPF | `cpf`, `cadastro de pessoas fisicas`, `cadastro pessoa fisica`, `contribuinte`, `receita federal` | 50 |
-| Brazil Passport | `passaporte`, `brazilian passport`, `brazil passport`, `passport number` | 50 |
+| Brazil Passport | `passaporte`, `brazilian passport`, `brazil passport`, `passport number`, `no de passeport`, `numéro de passeport` | 50 |
 | Brazil RG | `rg`, `registro geral`, `identidade`, `carteira de identidade`, `documento de identidade` | 50 |
 | Brazil SUS Card | `sus`, `cartao nacional de saude`, `cns`, `saude`, `cartao sus` | 50 |
 
@@ -919,7 +792,7 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Chile Passport | `pasaporte`, `chilean passport`, `chile passport`, `passport number` | 50 |
+| Chile Passport | `pasaporte`, `chilean passport`, `chile passport`, `passport number`, `no de passeport`, `numéro de passeport` | 50 |
 | Chile RUN/RUT | `rut`, `run`, `rol unico tributario`, `rol unico nacional`, `cedula identidad` | 50 |
 
 ## Latin America - Colombia (4 keyword groups)
@@ -927,9 +800,9 @@ entirely unless a keyword is found nearby.
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Colombia Cedula | `cedula`, `cedula de ciudadania`, `cc`, `documento identidad`, `registraduria` | 50 |
-| Colombia NIT | `nit`, `numero de identificacion tributaria`, `dian`, `contribuyente`, `tax id` | 50 |
+| Colombia NIT | `nit`, `numero de identificacion tributaria`, `dian`, `contribuyente`, `tax id`, `identifiant fiscal`, `numéro fiscal` | 50 |
 | Colombia NUIP | `nuip`, `numero unico de identificacion personal`, `identificacion personal`, `tarjeta identidad` | 50 |
-| Colombia Passport | `pasaporte`, `colombian passport`, `colombia passport`, `passport number` | 50 |
+| Colombia Passport | `pasaporte`, `colombian passport`, `colombia passport`, `passport number`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Latin America - Costa Rica (3 keyword groups)
 
@@ -937,22 +810,22 @@ entirely unless a keyword is found nearby.
 |---|---|---:|
 | Costa Rica Cedula | `cedula`, `cedula de identidad`, `tse`, `costarricense`, `tribunal supremo` | 50 |
 | Costa Rica DIMEX | `dimex`, `documento migratorio`, `extranjero`, `migracion`, `residencia` | 50 |
-| Costa Rica Passport | `pasaporte`, `costa rican passport`, `costa rica passport`, `passport number` | 50 |
+| Costa Rica Passport | `pasaporte`, `costa rican passport`, `costa rica passport`, `passport number`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Latin America - Ecuador (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Ecuador Cedula | `cedula`, `cedula de identidad`, `cedula ciudadania`, `registro civil`, `identidad` | 50 |
-| Ecuador Passport | `pasaporte`, `ecuadorian passport`, `ecuador passport`, `passport number` | 50 |
-| Ecuador RUC | `ruc`, `registro unico de contribuyentes`, `sri`, `contribuyente`, `tax id` | 50 |
+| Ecuador Passport | `pasaporte`, `ecuadorian passport`, `ecuador passport`, `passport number`, `no de passeport`, `numéro de passeport` | 50 |
+| Ecuador RUC | `ruc`, `registro unico de contribuyentes`, `sri`, `contribuyente`, `tax id`, `identifiant fiscal`, `numéro fiscal` | 50 |
 
 ## Latin America - Paraguay (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Paraguay Cedula | `cedula`, `cedula de identidad`, `identidad civil`, `documento identidad`, `policia nacional` | 50 |
-| Paraguay Passport | `pasaporte`, `paraguayan passport`, `paraguay passport`, `passport number` | 50 |
+| Paraguay Passport | `pasaporte`, `paraguayan passport`, `paraguay passport`, `passport number`, `no de passeport`, `numéro de passeport` | 50 |
 | Paraguay RUC | `ruc`, `registro unico de contribuyentes`, `set`, `dnit`, `contribuyente` | 50 |
 
 ## Latin America - Peru (4 keyword groups)
@@ -961,23 +834,23 @@ entirely unless a keyword is found nearby.
 |---|---|---:|
 | Peru Carnet Extranjeria | `carnet de extranjeria`, `carnet extranjeria`, `ce`, `migraciones`, `extranjero` | 50 |
 | Peru DNI | `dni`, `documento nacional de identidad`, `reniec`, `identidad`, `documento identidad` | 50 |
-| Peru Passport | `pasaporte`, `peruvian passport`, `peru passport`, `passport number` | 50 |
-| Peru RUC | `ruc`, `registro unico de contribuyentes`, `sunat`, `contribuyente`, `tax id` | 50 |
+| Peru Passport | `pasaporte`, `peruvian passport`, `peru passport`, `passport number`, `no de passeport`, `numéro de passeport` | 50 |
+| Peru RUC | `ruc`, `registro unico de contribuyentes`, `sunat`, `contribuyente`, `tax id`, `identifiant fiscal`, `numéro fiscal` | 50 |
 
 ## Latin America - Uruguay (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Uruguay Cedula | `cedula`, `cedula de identidad`, `documento identidad`, `identidad`, `dnic` | 50 |
-| Uruguay Passport | `pasaporte`, `uruguayan passport`, `uruguay passport`, `passport number` | 50 |
-| Uruguay RUT | `rut`, `registro unico tributario`, `dgi`, `contribuyente`, `tax id` | 50 |
+| Uruguay Passport | `pasaporte`, `uruguayan passport`, `uruguay passport`, `passport number`, `no de passeport`, `numéro de passeport` | 50 |
+| Uruguay RUT | `rut`, `registro unico tributario`, `dgi`, `contribuyente`, `tax id`, `identifiant fiscal`, `numéro fiscal` | 50 |
 
 ## Latin America - Venezuela (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Venezuela Cedula | `cedula`, `cedula de identidad`, `ci`, `saime`, `venezolano` | 50 |
-| Venezuela Passport | `pasaporte`, `venezuelan passport`, `venezuela passport`, `passport number` | 50 |
+| Venezuela Passport | `pasaporte`, `venezuelan passport`, `venezuela passport`, `passport number`, `no de passeport`, `numéro de passeport` | 50 |
 | Venezuela RIF | `rif`, `registro de informacion fiscal`, `seniat`, `fiscal`, `contribuyente` | 50 |
 
 ## Legal Identifiers (2 keyword groups)
@@ -992,7 +865,7 @@ entirely unless a keyword is found nearby.
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | LTV Ratio | `ltv`, `loan-to-value`, `loan to value`, `ltv ratio`, `combined ltv`, `cltv` | 50 |
-| Loan Number | `loan number`, `loan no`, `loan id`, `loan account`, `loan#`, `lending number` | 50 |
+| Loan Number | `loan number`, `loan no`, `loan id`, `loan account`, `loan#`, `lending number`, `compte de prêt`, `numéro de prêt` | 50 |
 | MERS MIN | `mers`, `mortgage identification number`, `min number`, `mers min`, `mortgage electronic` | 50 |
 | Universal Loan Identifier | `uli`, `universal loan identifier`, `hmda`, `loan identifier` | 50 |
 
@@ -1000,16 +873,16 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| DEA Number | `dea`, `dea number`, `drug enforcement`, `prescriber`, `controlled substance` | 50 |
-| Health Plan ID | `health plan`, `insurance id`, `beneficiary`, `member id`, `subscriber id` | 50 |
-| ICD-10 Code | `icd`, `icd-10`, `diagnosis code`, `diagnostic code`, `condition code`, `icd code` | 50 |
-| NDC Code | `ndc`, `national drug code`, `drug code`, `medication code`, `pharmaceutical` | 50 |
+| DEA Number | `dea`, `dea number`, `drug enforcement`, `prescriber`, `controlled substance`, `contrôle des drogues` | 50 |
+| Health Plan ID | `health plan`, `insurance id`, `beneficiary`, `member id`, `subscriber id`, `bénéficiaire`, `no d'assurance`, `numéro d'abonné`, `numéro d'assurance`, `numéro de membre`, `régime d'assurance maladie`, `régime de santé` | 50 |
+| ICD-10 Code | `icd`, `icd-10`, `diagnosis code`, `diagnostic code`, `condition code`, `icd code`, `code de diagnostic` | 50 |
+| NDC Code | `ndc`, `national drug code`, `drug code`, `medication code`, `pharmaceutical`, `code de médicament`, `code national de médicament` | 50 |
 
 ## Messaging Service Secrets (6 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Mailgun API Key | `mailgun`, `email` | 80 |
+| Mailgun API Key | `mailgun`, `email`, `courriel`, `courrier électronique` | 80 |
 | SendGrid API Key | `sendgrid`, `email api` | 80 |
 | Slack Bot Token | `slack`, `bot token`, `slack bot` | 80 |
 | Slack User Token | `slack`, `user token`, `slack user` | 80 |
@@ -1020,71 +893,71 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Bahrain CPR | `cpr`, `central population registration`, `bahrain id`, `personal number`, `identity card` | 50 |
-| Bahrain Passport | `bahraini passport`, `bahrain passport`, `passport number`, `passport` | 50 |
+| Bahrain CPR | `cpr`, `central population registration`, `bahrain id`, `personal number`, `identity card`, `carte d'identité`, `pièce d'identité` | 50 |
+| Bahrain Passport | `bahraini passport`, `bahrain passport`, `passport number`, `passport`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Middle East - Iran (2 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Iran Melli Code | `melli code`, `shomareh melli`, `kart melli`, `national code`, `iranian id` | 50 |
-| Iran Passport | `iranian passport`, `iran passport`, `passport number`, `gozarnameh` | 50 |
+| Iran Passport | `iranian passport`, `iran passport`, `passport number`, `gozarnameh`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Middle East - Iraq (2 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Iraq National ID | `national card`, `bitaqa wataniya`, `iraqi id`, `civil status`, `identity card` | 50 |
-| Iraq Passport | `iraqi passport`, `iraq passport`, `passport number`, `passport` | 50 |
+| Iraq National ID | `national card`, `bitaqa wataniya`, `iraqi id`, `civil status`, `identity card`, `carte d'identité`, `pièce d'identité` | 50 |
+| Iraq Passport | `iraqi passport`, `iraq passport`, `passport number`, `passport`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Middle East - Israel (2 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Israel Passport | `israeli passport`, `israel passport`, `darkon`, `passport number` | 50 |
-| Israel Teudat Zehut | `teudat zehut`, `mispar zehut`, `identity number`, `israeli id`, `zehut` | 50 |
+| Israel Passport | `israeli passport`, `israel passport`, `darkon`, `passport number`, `no de passeport`, `numéro de passeport` | 50 |
+| Israel Teudat Zehut | `teudat zehut`, `mispar zehut`, `identity number`, `israeli id`, `zehut`, `numéro d'identité` | 50 |
 
 ## Middle East - Jordan (2 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Jordan National ID | `national number`, `raqam watani`, `jordanian id`, `civil status`, `identity card` | 50 |
-| Jordan Passport | `jordanian passport`, `jordan passport`, `passport number`, `passport` | 50 |
+| Jordan National ID | `national number`, `raqam watani`, `jordanian id`, `civil status`, `identity card`, `carte d'identité`, `pièce d'identité` | 50 |
+| Jordan Passport | `jordanian passport`, `jordan passport`, `passport number`, `passport`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Middle East - Kuwait (2 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Kuwait Civil ID | `civil id`, `paci`, `kuwait id`, `civil information`, `identity card` | 50 |
-| Kuwait Passport | `kuwaiti passport`, `kuwait passport`, `passport number`, `passport` | 50 |
+| Kuwait Civil ID | `civil id`, `paci`, `kuwait id`, `civil information`, `identity card`, `carte d'identité`, `pièce d'identité` | 50 |
+| Kuwait Passport | `kuwaiti passport`, `kuwait passport`, `passport number`, `passport`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Middle East - Lebanon (2 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Lebanon ID | `lebanese id`, `national id`, `identity card`, `hawiyya`, `interior ministry` | 50 |
-| Lebanon Passport | `lebanese passport`, `lebanon passport`, `passport number`, `general security` | 50 |
+| Lebanon ID | `lebanese id`, `national id`, `identity card`, `hawiyya`, `interior ministry`, `carte d'identité`, `carte nationale d'identité`, `identité nationale`, `pièce d'identité` | 50 |
+| Lebanon Passport | `lebanese passport`, `lebanon passport`, `passport number`, `general security`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Middle East - Qatar (2 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Qatar Passport | `qatar passport`, `qatari passport`, `passport number`, `jawaz` | 50 |
-| Qatar QID | `qid`, `qatar id`, `resident permit`, `moi qatar`, `identity card` | 50 |
+| Qatar Passport | `qatar passport`, `qatari passport`, `passport number`, `jawaz`, `no de passeport`, `numéro de passeport` | 50 |
+| Qatar QID | `qid`, `qatar id`, `resident permit`, `moi qatar`, `identity card`, `carte d'identité`, `pièce d'identité` | 50 |
 
 ## Middle East - Saudi Arabia (2 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Saudi Arabia National ID | `national id`, `iqama`, `saudi id`, `huwiyya`, `ministry of interior` | 50 |
-| Saudi Arabia Passport | `saudi passport`, `saudi arabia passport`, `jawaz safar`, `passport number` | 50 |
+| Saudi Arabia National ID | `national id`, `iqama`, `saudi id`, `huwiyya`, `ministry of interior`, `carte nationale d'identité`, `identité nationale` | 50 |
+| Saudi Arabia Passport | `saudi passport`, `saudi arabia passport`, `jawaz safar`, `passport number`, `no de passeport`, `numéro de passeport` | 50 |
 
 ## Middle East - UAE (3 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| UAE Emirates ID | `emirates id`, `eid`, `uae id`, `identity card`, `federal authority` | 50 |
-| UAE Passport | `uae passport`, `emirati passport`, `passport number`, `passport` | 50 |
+| UAE Emirates ID | `emirates id`, `eid`, `uae id`, `identity card`, `federal authority`, `carte d'identité`, `pièce d'identité` | 50 |
+| UAE Passport | `uae passport`, `emirati passport`, `passport number`, `passport`, `no de passeport`, `numéro de passeport` | 50 |
 | UAE Visa Number | `visa number`, `entry permit`, `uae visa`, `residence visa`, `visa file` | 50 |
 
 ## North America - Canada (29 keyword groups)
@@ -1095,12 +968,12 @@ entirely unless a keyword is found nearby.
 | Alberta HC | `ahcip`, `alberta health card`, `alberta phn`, `alberta health care insurance`, `ab health` | 50 |
 | BC HC | `bc msp`, `medical services plan`, `bc health card`, `bc phn`, `personal health number` | 50 |
 | British Columbia DL | `british columbia driver's licence`, `bc dl`, `bc driver's licence` | 50 |
-| Canada BN | `business number`, `canada bn`, `cra business` | 50 |
+| Canada BN | `business number`, `canada bn`, `cra business`, `numéro d'entreprise` | 50 |
 | Canada Bank Code | `transit number`, `institution number`, `bank transit` | 50 |
 | Canada NEXUS | `nexus`, `nexus card`, `pass id`, `trusted traveler`, `nexus number`, `cbp pass` | 50 |
-| Canada PR Card | `permanent resident`, `pr card`, `permanent resident card`, `immigration`, `landed immigrant` | 50 |
-| Canada Passport | `canadian passport`, `canada passport`, `passport canada` | 50 |
-| Canada SIN | `social insurance number`, `sin`, `social insurance no` | 50 |
+| Canada PR Card | `permanent resident`, `pr card`, `permanent resident card`, `immigration`, `landed immigrant`, `carte de résident permanent`, `carte rp`, `résident permanent`, `résidente permanente` | 50 |
+| Canada Passport | `canadian passport`, `canada passport`, `passport canada`, `passeport canadien`, `passeport du canada` | 50 |
+| Canada SIN | `social insurance number`, `sin`, `social insurance no`, `nas`, `no d'assurance sociale`, `numéro d'assurance sociale` | 50 |
 | Manitoba DL | `manitoba driver's licence`, `manitoba dl`, `mb dl` | 50 |
 | Manitoba HC | `manitoba phin`, `manitoba health card`, `mb health`, `personal health identification number` | 50 |
 | NWT DL | `northwest territories driver's licence`, `nwt dl`, `nt dl` | 50 |
@@ -1137,81 +1010,81 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Generic US DL | `driver's license`, `dl number`, `driving license`, `license id`, `driver license`, `drivers license`, `licence number`, `license number`, `dl no` | 50 |
+| Generic US DL | `driver's license`, `dl number`, `driving license`, `license id`, `driver license`, `drivers license`, `licence number`, `license number`, `dl no`, `no de permis`, `numéro de permis`, `permis de conduire` | 50 |
 
 ## North America - United States (63 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Alabama DL | `driver license`, `drivers license`, `driver's license`, `dl`, `alabama dl`, `alabama license` | 50 |
-| Alaska DL | `driver license`, `drivers license`, `driver's license`, `dl`, `alaska dl`, `alaska license` | 50 |
-| Arizona DL | `driver license`, `drivers license`, `driver's license`, `dl`, `arizona dl`, `arizona license` | 50 |
-| Arkansas DL | `driver license`, `drivers license`, `driver's license`, `dl`, `arkansas dl`, `arkansas license` | 50 |
-| California DL | `driver license`, `drivers license`, `driver's license`, `dl`, `california dl`, `california license` | 50 |
-| Colorado DL | `driver license`, `drivers license`, `driver's license`, `dl`, `colorado dl`, `colorado license` | 50 |
-| Connecticut DL | `driver license`, `drivers license`, `driver's license`, `dl`, `connecticut dl`, `connecticut license` | 50 |
-| DC DL | `driver license`, `drivers license`, `driver's license`, `dl`, `dc dl`, `district of columbia license` | 50 |
-| Delaware DL | `driver license`, `drivers license`, `driver's license`, `dl`, `delaware dl`, `delaware license` | 50 |
-| Florida DL | `driver license`, `drivers license`, `driver's license`, `dl`, `florida dl`, `florida license` | 50 |
-| Georgia DL | `driver license`, `drivers license`, `driver's license`, `dl`, `georgia dl`, `georgia license` | 50 |
-| Hawaii DL | `driver license`, `drivers license`, `driver's license`, `dl`, `hawaii dl`, `hawaii license` | 50 |
-| Idaho DL | `driver license`, `drivers license`, `driver's license`, `dl`, `idaho dl`, `idaho license` | 50 |
-| Illinois DL | `driver license`, `drivers license`, `driver's license`, `dl`, `illinois dl`, `illinois license` | 50 |
-| Indiana DL | `driver license`, `drivers license`, `driver's license`, `dl`, `indiana dl`, `indiana license` | 50 |
-| Iowa DL | `driver license`, `drivers license`, `driver's license`, `dl`, `iowa dl`, `iowa license` | 50 |
-| Kansas DL | `driver license`, `drivers license`, `driver's license`, `dl`, `kansas dl`, `kansas license` | 50 |
-| Kentucky DL | `driver license`, `drivers license`, `driver's license`, `dl`, `kentucky dl`, `kentucky license` | 50 |
-| Louisiana DL | `driver license`, `drivers license`, `driver's license`, `dl`, `louisiana dl`, `louisiana license` | 50 |
-| Maine DL | `driver license`, `drivers license`, `driver's license`, `dl`, `maine dl`, `maine license` | 50 |
-| Maryland DL | `driver license`, `drivers license`, `driver's license`, `dl`, `maryland dl`, `maryland license` | 50 |
-| Massachusetts DL | `driver license`, `drivers license`, `driver's license`, `dl`, `massachusetts dl`, `massachusetts license` | 50 |
-| Michigan DL | `driver license`, `drivers license`, `driver's license`, `dl`, `michigan dl`, `michigan license` | 50 |
-| Minnesota DL | `driver license`, `drivers license`, `driver's license`, `dl`, `minnesota dl`, `minnesota license` | 50 |
-| Mississippi DL | `driver license`, `drivers license`, `driver's license`, `dl`, `mississippi dl`, `mississippi license` | 50 |
-| Missouri DL | `driver license`, `drivers license`, `driver's license`, `dl`, `missouri dl`, `missouri license` | 50 |
-| Montana DL | `driver license`, `drivers license`, `driver's license`, `dl`, `montana dl`, `montana license` | 50 |
-| Nebraska DL | `driver license`, `drivers license`, `driver's license`, `dl`, `nebraska dl`, `nebraska license` | 50 |
-| Nevada DL | `driver license`, `drivers license`, `driver's license`, `dl`, `nevada dl`, `nevada license` | 50 |
-| New Hampshire DL | `driver license`, `drivers license`, `driver's license`, `dl`, `new hampshire dl`, `new hampshire license` | 50 |
-| New Jersey DL | `driver license`, `drivers license`, `driver's license`, `dl`, `new jersey dl`, `new jersey license` | 50 |
-| New Mexico DL | `driver license`, `drivers license`, `driver's license`, `dl`, `new mexico dl`, `new mexico license` | 50 |
-| New York DL | `driver license`, `drivers license`, `driver's license`, `dl`, `new york dl`, `new york license` | 50 |
-| North Carolina DL | `driver license`, `drivers license`, `driver's license`, `dl`, `north carolina dl`, `north carolina license` | 50 |
-| North Dakota DL | `driver license`, `drivers license`, `driver's license`, `dl`, `north dakota dl`, `north dakota license` | 50 |
-| Ohio DL | `driver license`, `drivers license`, `driver's license`, `dl`, `ohio dl`, `ohio license` | 50 |
-| Oklahoma DL | `driver license`, `drivers license`, `driver's license`, `dl`, `oklahoma dl`, `oklahoma license` | 50 |
-| Oregon DL | `driver license`, `drivers license`, `driver's license`, `dl`, `oregon dl`, `oregon license` | 50 |
-| Pennsylvania DL | `driver license`, `drivers license`, `driver's license`, `dl`, `pennsylvania dl`, `pennsylvania license` | 50 |
-| Rhode Island DL | `driver license`, `drivers license`, `driver's license`, `dl`, `rhode island dl`, `rhode island license` | 50 |
-| South Carolina DL | `driver license`, `drivers license`, `driver's license`, `dl`, `south carolina dl`, `south carolina license` | 50 |
-| South Dakota DL | `driver license`, `drivers license`, `driver's license`, `dl`, `south dakota dl`, `south dakota license` | 50 |
-| Tennessee DL | `driver license`, `drivers license`, `driver's license`, `dl`, `tennessee dl`, `tennessee license` | 50 |
-| Texas DL | `driver license`, `drivers license`, `driver's license`, `dl`, `texas dl`, `texas license` | 50 |
-| US DEA Number | `dea number`, `dea registration`, `dea no`, `drug enforcement` | 50 |
+| Alabama DL | `driver license`, `drivers license`, `driver's license`, `dl`, `alabama dl`, `alabama license`, `permis de conduire` | 50 |
+| Alaska DL | `driver license`, `drivers license`, `driver's license`, `dl`, `alaska dl`, `alaska license`, `permis de conduire` | 50 |
+| Arizona DL | `driver license`, `drivers license`, `driver's license`, `dl`, `arizona dl`, `arizona license`, `permis de conduire` | 50 |
+| Arkansas DL | `driver license`, `drivers license`, `driver's license`, `dl`, `arkansas dl`, `arkansas license`, `permis de conduire` | 50 |
+| California DL | `driver license`, `drivers license`, `driver's license`, `dl`, `california dl`, `california license`, `permis de conduire` | 50 |
+| Colorado DL | `driver license`, `drivers license`, `driver's license`, `dl`, `colorado dl`, `colorado license`, `permis de conduire` | 50 |
+| Connecticut DL | `driver license`, `drivers license`, `driver's license`, `dl`, `connecticut dl`, `connecticut license`, `permis de conduire` | 50 |
+| DC DL | `driver license`, `drivers license`, `driver's license`, `dl`, `dc dl`, `district of columbia license`, `permis de conduire` | 50 |
+| Delaware DL | `driver license`, `drivers license`, `driver's license`, `dl`, `delaware dl`, `delaware license`, `permis de conduire` | 50 |
+| Florida DL | `driver license`, `drivers license`, `driver's license`, `dl`, `florida dl`, `florida license`, `permis de conduire` | 50 |
+| Georgia DL | `driver license`, `drivers license`, `driver's license`, `dl`, `georgia dl`, `georgia license`, `permis de conduire` | 50 |
+| Hawaii DL | `driver license`, `drivers license`, `driver's license`, `dl`, `hawaii dl`, `hawaii license`, `permis de conduire` | 50 |
+| Idaho DL | `driver license`, `drivers license`, `driver's license`, `dl`, `idaho dl`, `idaho license`, `permis de conduire` | 50 |
+| Illinois DL | `driver license`, `drivers license`, `driver's license`, `dl`, `illinois dl`, `illinois license`, `permis de conduire` | 50 |
+| Indiana DL | `driver license`, `drivers license`, `driver's license`, `dl`, `indiana dl`, `indiana license`, `permis de conduire` | 50 |
+| Iowa DL | `driver license`, `drivers license`, `driver's license`, `dl`, `iowa dl`, `iowa license`, `permis de conduire` | 50 |
+| Kansas DL | `driver license`, `drivers license`, `driver's license`, `dl`, `kansas dl`, `kansas license`, `permis de conduire` | 50 |
+| Kentucky DL | `driver license`, `drivers license`, `driver's license`, `dl`, `kentucky dl`, `kentucky license`, `permis de conduire` | 50 |
+| Louisiana DL | `driver license`, `drivers license`, `driver's license`, `dl`, `louisiana dl`, `louisiana license`, `permis de conduire` | 50 |
+| Maine DL | `driver license`, `drivers license`, `driver's license`, `dl`, `maine dl`, `maine license`, `permis de conduire` | 50 |
+| Maryland DL | `driver license`, `drivers license`, `driver's license`, `dl`, `maryland dl`, `maryland license`, `permis de conduire` | 50 |
+| Massachusetts DL | `driver license`, `drivers license`, `driver's license`, `dl`, `massachusetts dl`, `massachusetts license`, `permis de conduire` | 50 |
+| Michigan DL | `driver license`, `drivers license`, `driver's license`, `dl`, `michigan dl`, `michigan license`, `permis de conduire` | 50 |
+| Minnesota DL | `driver license`, `drivers license`, `driver's license`, `dl`, `minnesota dl`, `minnesota license`, `permis de conduire` | 50 |
+| Mississippi DL | `driver license`, `drivers license`, `driver's license`, `dl`, `mississippi dl`, `mississippi license`, `permis de conduire` | 50 |
+| Missouri DL | `driver license`, `drivers license`, `driver's license`, `dl`, `missouri dl`, `missouri license`, `permis de conduire` | 50 |
+| Montana DL | `driver license`, `drivers license`, `driver's license`, `dl`, `montana dl`, `montana license`, `permis de conduire` | 50 |
+| Nebraska DL | `driver license`, `drivers license`, `driver's license`, `dl`, `nebraska dl`, `nebraska license`, `permis de conduire` | 50 |
+| Nevada DL | `driver license`, `drivers license`, `driver's license`, `dl`, `nevada dl`, `nevada license`, `permis de conduire` | 50 |
+| New Hampshire DL | `driver license`, `drivers license`, `driver's license`, `dl`, `new hampshire dl`, `new hampshire license`, `permis de conduire` | 50 |
+| New Jersey DL | `driver license`, `drivers license`, `driver's license`, `dl`, `new jersey dl`, `new jersey license`, `permis de conduire` | 50 |
+| New Mexico DL | `driver license`, `drivers license`, `driver's license`, `dl`, `new mexico dl`, `new mexico license`, `permis de conduire` | 50 |
+| New York DL | `driver license`, `drivers license`, `driver's license`, `dl`, `new york dl`, `new york license`, `permis de conduire` | 50 |
+| North Carolina DL | `driver license`, `drivers license`, `driver's license`, `dl`, `north carolina dl`, `north carolina license`, `permis de conduire` | 50 |
+| North Dakota DL | `driver license`, `drivers license`, `driver's license`, `dl`, `north dakota dl`, `north dakota license`, `permis de conduire` | 50 |
+| Ohio DL | `driver license`, `drivers license`, `driver's license`, `dl`, `ohio dl`, `ohio license`, `permis de conduire` | 50 |
+| Oklahoma DL | `driver license`, `drivers license`, `driver's license`, `dl`, `oklahoma dl`, `oklahoma license`, `permis de conduire` | 50 |
+| Oregon DL | `driver license`, `drivers license`, `driver's license`, `dl`, `oregon dl`, `oregon license`, `permis de conduire` | 50 |
+| Pennsylvania DL | `driver license`, `drivers license`, `driver's license`, `dl`, `pennsylvania dl`, `pennsylvania license`, `permis de conduire` | 50 |
+| Rhode Island DL | `driver license`, `drivers license`, `driver's license`, `dl`, `rhode island dl`, `rhode island license`, `permis de conduire` | 50 |
+| South Carolina DL | `driver license`, `drivers license`, `driver's license`, `dl`, `south carolina dl`, `south carolina license`, `permis de conduire` | 50 |
+| South Dakota DL | `driver license`, `drivers license`, `driver's license`, `dl`, `south dakota dl`, `south dakota license`, `permis de conduire` | 50 |
+| Tennessee DL | `driver license`, `drivers license`, `driver's license`, `dl`, `tennessee dl`, `tennessee license`, `permis de conduire` | 50 |
+| Texas DL | `driver license`, `drivers license`, `driver's license`, `dl`, `texas dl`, `texas license`, `permis de conduire` | 50 |
+| US DEA Number | `dea number`, `dea registration`, `dea no`, `drug enforcement`, `contrôle des drogues` | 50 |
 | US DoD ID | `dod id`, `military id`, `edipi`, `cac card`, `common access card`, `department of defense` | 50 |
 | US Known Traveler Number | `known traveler`, `ktn`, `global entry`, `trusted traveler`, `pass id`, `nexus`, `sentri` | 50 |
 | US MBI | `mbi`, `medicare beneficiary`, `beneficiary identifier`, `medicare number`, `medicare id` | 50 |
 | US NPI | `npi`, `national provider identifier`, `provider number` | 50 |
-| US Phone Number | `phone`, `telephone`, `tel`, `cell`, `mobile`, `call`, `fax` | 50 |
+| US Phone Number | `phone`, `telephone`, `tel`, `cell`, `mobile`, `call`, `fax`, `cellulaire`, `portable`, `tél`, `téléphone` | 50 |
 | USA EIN | `employer identification`, `ein`, `federal tax id`, `fein` | 50 |
 | USA ITIN | `individual taxpayer`, `itin`, `taxpayer identification` | 50 |
-| USA Passport | `us passport`, `usa passport`, `american passport`, `passport number`, `passport book` | 50 |
+| USA Passport | `us passport`, `usa passport`, `american passport`, `passport number`, `passport book`, `no de passeport`, `numéro de passeport` | 50 |
 | USA Passport Card | `passport card`, `us passport card`, `usa passport card` | 50 |
-| USA Routing Number | `routing number`, `aba routing`, `routing transit` | 50 |
-| USA SSN | `social security number`, `ssn`, `social security no` | 50 |
-| Utah DL | `driver license`, `drivers license`, `driver's license`, `dl`, `utah dl`, `utah license` | 50 |
-| Vermont DL | `driver license`, `drivers license`, `driver's license`, `dl`, `vermont dl`, `vermont license` | 50 |
-| Virginia DL | `driver license`, `drivers license`, `driver's license`, `dl`, `virginia dl`, `virginia license` | 50 |
-| Washington DL | `driver license`, `drivers license`, `driver's license`, `dl`, `washington dl`, `washington license` | 50 |
-| West Virginia DL | `driver license`, `drivers license`, `driver's license`, `dl`, `west virginia dl`, `west virginia license` | 50 |
-| Wisconsin DL | `driver license`, `drivers license`, `driver's license`, `dl`, `wisconsin dl`, `wisconsin license` | 50 |
-| Wyoming DL | `driver license`, `drivers license`, `driver's license`, `dl`, `wyoming dl`, `wyoming license` | 50 |
+| USA Routing Number | `routing number`, `aba routing`, `routing transit`, `numero de transit`, `numéro de transit` | 50 |
+| USA SSN | `social security number`, `ssn`, `social security no`, `numéro d'assurance sociale`, `numéro de sécurité sociale` | 50 |
+| Utah DL | `driver license`, `drivers license`, `driver's license`, `dl`, `utah dl`, `utah license`, `permis de conduire` | 50 |
+| Vermont DL | `driver license`, `drivers license`, `driver's license`, `dl`, `vermont dl`, `vermont license`, `permis de conduire` | 50 |
+| Virginia DL | `driver license`, `drivers license`, `driver's license`, `dl`, `virginia dl`, `virginia license`, `permis de conduire` | 50 |
+| Washington DL | `driver license`, `drivers license`, `driver's license`, `dl`, `washington dl`, `washington license`, `permis de conduire` | 50 |
+| West Virginia DL | `driver license`, `drivers license`, `driver's license`, `dl`, `west virginia dl`, `west virginia license`, `permis de conduire` | 50 |
+| Wisconsin DL | `driver license`, `drivers license`, `driver's license`, `dl`, `wisconsin dl`, `wisconsin license`, `permis de conduire` | 50 |
+| Wyoming DL | `driver license`, `drivers license`, `driver's license`, `dl`, `wyoming dl`, `wyoming license`, `permis de conduire` | 50 |
 
 ## PCI Sensitive Data (1 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Cardholder Name Pattern | `cardholder`, `cardholder name`, `name on card`, `card holder`, `card member` | 30 |
+| Cardholder Name Pattern | `cardholder`, `cardholder name`, `name on card`, `card holder`, `card member`, `détenteur de carte`, `membre de la carte`, `nom du titulaire`, `nom sur la carte`, `titulaire de la carte` | 30 |
 
 ## Payment Service Secrets (2 keyword groups)
 
@@ -1224,8 +1097,8 @@ entirely unless a keyword is found nearby.
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Date of Birth | `date of birth`, `dob`, `born on`, `birth date`, `birthday`, `birthdate`, `d.o.b` | 30 |
-| Gender Marker | `gender`, `sex`, `identified as`, `gender identity`, `biological sex` | 30 |
+| Date of Birth | `date of birth`, `dob`, `born on`, `birth date`, `birthday`, `birthdate`, `d.o.b`, `anniversaire`, `date de naissance`, `né le`, `née le` | 30 |
+| Gender Marker | `gender`, `sex`, `identified as`, `gender identity`, `biological sex`, `genre`, `sexe` | 30 |
 
 ## Postal Codes (5 keyword groups)
 
@@ -1242,7 +1115,7 @@ entirely unless a keyword is found nearby.
 | Pattern | Keywords | Distance |
 |---|---|---:|
 | Masked PAN | `masked pan`, `truncated pan`, `masked card`, `truncated card`, `last four`, `first six` | 50 |
-| PAN | `pan`, `primary account number`, `account number`, `card number`, `cardholder number`, `full card` | 50 |
+| PAN | `pan`, `primary account number`, `account number`, `card number`, `cardholder number`, `full card`, `no de carte`, `no de compte`, `numero de carte`, `numero de compte`, `numéro de carte`, `numéro de compte` | 50 |
 
 ## Privacy Classification (10 keyword groups)
 
@@ -1250,26 +1123,26 @@ entirely unless a keyword is found nearby.
 |---|---|---:|
 | CCPA/CPRA | `ccpa`, `cpra`, `california consumer`, `california privacy`, `consumer rights` | 80 |
 | FERPA | `ferpa`, `educational records`, `student records`, `student privacy` | 80 |
-| GDPR Personal Data | `gdpr`, `personal data`, `data subject`, `data protection`, `eu regulation` | 80 |
-| GLBA | `glba`, `gramm-leach-bliley`, `financial privacy`, `consumer financial` | 80 |
-| HIPAA | `hipaa`, `health insurance portability`, `medical privacy`, `health data` | 80 |
-| NPI | `npi`, `non-public personal`, `financial privacy`, `glba`, `consumer information` | 80 |
+| GDPR Personal Data | `gdpr`, `personal data`, `data subject`, `data protection`, `eu regulation`, `données personnelles`, `données à caractère personnel`, `protection des données` | 80 |
+| GLBA | `glba`, `gramm-leach-bliley`, `financial privacy`, `consumer financial`, `confidentialité financière` | 80 |
+| HIPAA | `hipaa`, `health insurance portability`, `medical privacy`, `health data`, `confidentialité médicale` | 80 |
+| NPI | `npi`, `non-public personal`, `financial privacy`, `glba`, `consumer information`, `confidentialité financière` | 80 |
 | PCI-DSS | `pci`, `pci-dss`, `cardholder data`, `payment card`, `card data environment` | 80 |
-| PHI Label | `phi`, `protected health`, `health information`, `medical records`, `patient data` | 80 |
-| PII Label | `pii`, `personally identifiable`, `personal information`, `sensitive data` | 80 |
+| PHI Label | `phi`, `protected health`, `health information`, `medical records`, `patient data`, `informations de santé`, `renseignements sur la santé` | 80 |
+| PII Label | `pii`, `personally identifiable`, `personal information`, `sensitive data`, `données personnelles`, `informations personnelles`, `renseignements personnels` | 80 |
 | SOX | `sox`, `sarbanes-oxley`, `financial reporting`, `internal controls`, `audit` | 80 |
 
 ## Privileged Information (7 keyword groups)
 
 | Pattern | Keywords | Distance |
 |---|---|---:|
-| Attorney-Client Privilege | `attorney`, `client`, `privilege`, `legal counsel`, `law firm`, `privileged communication` | 100 |
-| Legal Privilege | `legal`, `privilege`, `attorney`, `counsel`, `protected communication` | 100 |
-| Litigation Hold | `litigation`, `legal hold`, `preservation`, `hold notice`, `document retention` | 100 |
-| Privileged Information | `privileged`, `legal`, `attorney`, `counsel`, `protected` | 100 |
-| Privileged and Confidential | `privileged`, `confidential`, `legal`, `attorney`, `counsel` | 100 |
-| Protected by Privilege | `privilege`, `protected`, `attorney`, `legal`, `exempt from disclosure` | 100 |
-| Work Product | `work product`, `attorney`, `litigation`, `legal`, `prepared in anticipation` | 100 |
+| Attorney-Client Privilege | `attorney`, `client`, `privilege`, `legal counsel`, `law firm`, `privileged communication`, `avocat`, `avocate`, `privilège` | 100 |
+| Legal Privilege | `legal`, `privilege`, `attorney`, `counsel`, `protected communication`, `avocat`, `avocate`, `conseiller juridique`, `juridique`, `légal`, `privilège` | 100 |
+| Litigation Hold | `litigation`, `legal hold`, `preservation`, `hold notice`, `document retention`, `contentieux`, `litige`, `mise en suspens juridique` | 100 |
+| Privileged Information | `privileged`, `legal`, `attorney`, `counsel`, `protected`, `avocat`, `avocate`, `conseiller juridique`, `juridique`, `légal`, `privilégié`, `privilégiée` | 100 |
+| Privileged and Confidential | `privileged`, `confidential`, `legal`, `attorney`, `counsel`, `avocat`, `avocate`, `confidentiel`, `confidentielle`, `conseiller juridique`, `juridique`, `légal`, `privilégié`, `privilégiée` | 100 |
+| Protected by Privilege | `privilege`, `protected`, `attorney`, `legal`, `exempt from disclosure`, `avocat`, `avocate`, `juridique`, `légal`, `privilège` | 100 |
+| Work Product | `work product`, `attorney`, `litigation`, `legal`, `prepared in anticipation`, `avocat`, `avocate`, `contentieux`, `juridique`, `litige`, `légal`, `produit du travail` | 100 |
 
 ## Property Identifiers (2 keyword groups)
 
@@ -1314,8 +1187,8 @@ entirely unless a keyword is found nearby.
 | CSI | `confidential supervisory`, `csi`, `examination report`, `regulatory report`, `supervisory letter` | 80 |
 | Examination Findings | `examination`, `mra`, `mria`, `findings`, `regulatory`, `corrective action`, `consent order` | 80 |
 | Non-Public Supervisory | `non-public`, `supervisory`, `regulatory`, `examination`, `not for release` | 80 |
-| Restricted Supervisory | `restricted`, `supervisory`, `regulatory`, `compliance`, `enforcement` | 80 |
-| Supervisory Confidential | `supervisory`, `confidential`, `regulator`, `examination`, `bank examination` | 80 |
+| Restricted Supervisory | `restricted`, `supervisory`, `regulatory`, `compliance`, `enforcement`, `accès restreint`, `restreint`, `restreinte` | 80 |
+| Supervisory Confidential | `supervisory`, `confidential`, `regulator`, `examination`, `bank examination`, `confidentiel`, `confidentielle` | 80 |
 | Supervisory Controlled | `supervisory`, `controlled`, `occ`, `fdic`, `federal reserve`, `regulator`, `examination` | 80 |
 
 ## URLs with Credentials (2 keyword groups)
@@ -1338,6 +1211,6 @@ entirely unless a keyword is found nearby.
 | ACH Batch Number | `ach batch`, `batch number`, `batch id`, `ach file`, `nacha batch` | 50 |
 | ACH Trace Number | `ach trace`, `trace number`, `trace id`, `ach transaction`, `ach payment`, `nacha` | 50 |
 | CHIPS UID | `chips`, `chips uid`, `chips transfer`, `clearing house`, `interbank payment` | 50 |
-| Fedwire IMAD | `imad`, `input message accountability`, `fedwire`, `fed reference`, `wire reference` | 50 |
+| Fedwire IMAD | `imad`, `input message accountability`, `fedwire`, `fed reference`, `wire reference`, `référence de virement` | 50 |
 | SEPA Reference | `sepa`, `sepa reference`, `end-to-end`, `e2e reference`, `sepa transfer`, `sepa credit` | 50 |
-| Wire Reference Number | `wire reference`, `wire transfer`, `wire number`, `remittance reference`, `payment reference`, `transfer reference` | 50 |
+| Wire Reference Number | `wire reference`, `wire transfer`, `wire number`, `remittance reference`, `payment reference`, `transfer reference`, `référence de virement`, `virement`, `virement bancaire` | 50 |

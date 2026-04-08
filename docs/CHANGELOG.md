@@ -6,6 +6,20 @@ All notable changes to dlpscan will be documented in this file.
 
 ### New Features
 
+#### French/French-Canadian Bilingual Keywords
+- 609 French keywords added across all major pattern categories
+- Coverage: credit cards, banking, contact, identity/PII, Canada SIN,
+  healthcare, classification, legal, secrets, financial, employee, regulatory
+- Examples: `carte de crédit`, `numéro d'assurance sociale`, `courriel`,
+  `date de naissance`, `confidentiel`, `mot de passe`, `permis de conduire`
+- Zero performance impact (Aho-Corasick O(n) scan absorbs additional keywords)
+- Total keywords: 3,100+ (English + French)
+
+#### Filename as Context
+- Filenames like "sin.txt" or "ssn_report.csv" now provide context
+  keywords that boost detection confidence for patterns in file content
+- Filename words prepended as context preamble before scanning
+
 #### QR Code and Barcode Scanning (feature: `barcode`)
 - Decode QR Code, Data Matrix, Aztec, PDF417, UPC-A/E, EAN-8/13,
   Code 39/128, ITF, Codabar from image files (PNG, JPG, GIF, BMP, TIFF, WebP)
@@ -69,7 +83,7 @@ All notable changes to dlpscan will be documented in this file.
   MAX_MATCHES cap, no OOM, no Rayon panic
 
 ### Testing
-- 347 tests (290 unit + 12 evasion + 45 integration), up from 127
+- 352 tests (290 unit + 12 evasion + 50 integration), up from 127
 - New evasion test suite: extension mismatch, corrupted headers, offset map
   stress, zip bombs, extractor fallback (12 attack vectors)
 - New unit tests across 12 modules covering all hardening and new features

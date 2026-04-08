@@ -109,7 +109,8 @@ dlpscan scan-text "some text" --min-confidence 0.5
 ## Context Keywords
 
 **Context keywords** are terms that appear near a regex match and boost
-confidence that the match is a true positive.
+confidence that the match is a true positive. dlpscan ships with
+**3,100+ keywords** in both English and French/French-Canadian.
 
 For example, the text `"card number: 4532015112830366"` has the keyword
 `"card number"` near the Visa regex match. This boosts confidence by
