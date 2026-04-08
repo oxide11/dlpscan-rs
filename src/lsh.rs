@@ -96,7 +96,10 @@ impl DocumentVault {
             .len()
     }
 
-    /// Register a document.
+    /// Maximum documents in a vault to prevent memory exhaustion.
+    pub const MAX_DOCUMENTS: usize = 100_000;
+
+    /// Register a document. Returns false if the vault is full.
     pub fn register(
         &self,
         doc_id: &str,
@@ -104,6 +107,13 @@ impl DocumentVault {
         sensitivity: &str,
         metadata: Option<HashMap<String, String>>,
     ) {
+        if self.document_count() >= Self::MAX_DOCUMENTS {
+            tracing::warn!(
+                max = Self::MAX_DOCUMENTS,
+                "LSH vault full — document not registered"
+            );
+            return;
+        }
         let shingles = shingle(text, self.shingle_size);
         let signature = minhash(&shingles, &self.hash_funcs);
 
@@ -245,8 +255,18 @@ impl DocumentVault {
         Ok(())
     }
 
+    /// Maximum state file size (100 MB).
+    const MAX_STATE_FILE_SIZE: u64 = 100 * 1024 * 1024;
+
     /// Load vault from JSON file.
     pub fn load(path: &str) -> Result<Self, String> {
+        let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+        if meta.len() > Self::MAX_STATE_FILE_SIZE {
+            return Err(format!(
+                "LSH state file too large: {} bytes (max {})",
+                meta.len(), Self::MAX_STATE_FILE_SIZE
+            ));
+        }
         let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let data: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
 
