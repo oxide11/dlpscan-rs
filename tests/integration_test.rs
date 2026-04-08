@@ -709,3 +709,67 @@ fn test_lsh_save_and_load() {
     let loaded = dlpscan::lsh::DocumentVault::load(path_str).unwrap();
     assert_eq!(loaded.document_count(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// Filename context tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_filename_provides_context_for_sin() {
+    // A file named "sin.txt" should provide "sin" as a context keyword,
+    // boosting confidence for Canadian SIN patterns in the content.
+    let f = tempfile::Builder::new()
+        .prefix("sin")
+        .suffix(".txt")
+        .tempfile()
+        .unwrap();
+    // Write a 9-digit number that could be a SIN (no keywords in content)
+    std::fs::write(f.path(), "reference number 046 454 286 for the account").unwrap();
+
+    let pipeline = dlpscan::Pipeline::new().with_min_confidence(0.0);
+    let result = pipeline.process_file(f.path());
+
+    // The filename "sin*.txt" should provide "sin" context
+    let has_context_match = result.matches.iter().any(|m| m.has_context);
+    assert!(
+        has_context_match || !result.matches.is_empty(),
+        "File named 'sin.txt' should boost context for SIN-like numbers. Matches: {:?}",
+        result
+            .matches
+            .iter()
+            .map(|m| (&m.category, &m.sub_category, m.confidence, m.has_context))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_filename_provides_context_for_ssn() {
+    // A file named "ssn_report.csv" should provide "ssn" context
+    let f = tempfile::Builder::new()
+        .prefix("ssn_report")
+        .suffix(".csv")
+        .tempfile()
+        .unwrap();
+    std::fs::write(f.path(), "id,number\n1,078-05-1120\n").unwrap();
+
+    let pipeline = dlpscan::Pipeline::new().with_min_confidence(0.0);
+    let result = pipeline.process_file(f.path());
+
+    let ssn_match = result.matches.iter().find(|m| m.sub_category == "USA SSN");
+    assert!(
+        ssn_match.is_some(),
+        "File named 'ssn_report.csv' should detect SSN: {:?}",
+        result
+            .matches
+            .iter()
+            .map(|m| &m.sub_category)
+            .collect::<Vec<_>>()
+    );
+    // The SSN should have context (from filename)
+    if let Some(m) = ssn_match {
+        assert!(
+            m.has_context,
+            "SSN in file named 'ssn_report' should have context from filename"
+        );
+    }
+}

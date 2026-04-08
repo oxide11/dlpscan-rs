@@ -309,6 +309,24 @@ impl Pipeline {
 
         let text_len = text.len();
 
+        // Prepend filename as context for keyword matching.
+        // This ensures that filenames like "sin.txt", "ssn_report.csv", or
+        // "credit-cards.xlsx" provide context keywords to the scanner.
+        let filename_context = {
+            let name = resolved.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            // Extract words from filename (split on non-alphanumeric)
+            let words: Vec<&str> = name
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .collect();
+            words.join(" ")
+        };
+        let text_with_context = if !filename_context.is_empty() {
+            format!("{filename_context}\n{text}")
+        } else {
+            text
+        };
+
         let config = ScanConfig {
             categories: self.categories.clone(),
             require_context: self.require_context,
@@ -317,7 +335,13 @@ impl Pipeline {
             ..Default::default()
         };
 
-        let mut matches = match scanner::scan_text_with_config(&text, &config) {
+        // Scan with filename context prepended
+        let context_offset = if !filename_context.is_empty() {
+            filename_context.len() + 1 // +1 for the \n separator
+        } else {
+            0
+        };
+        let mut matches = match scanner::scan_text_with_config(&text_with_context, &config) {
             Ok(m) => m,
             Err(e) => {
                 return PipelineResult {
@@ -333,6 +357,15 @@ impl Pipeline {
                 };
             }
         };
+
+        // Filter out matches from the filename preamble and adjust spans
+        if context_offset > 0 {
+            matches.retain(|m| m.span.1 > context_offset);
+            for m in &mut matches {
+                m.span.0 = m.span.0.saturating_sub(context_offset);
+                m.span.1 = m.span.1.saturating_sub(context_offset);
+            }
+        }
 
         // Apply allowlist
         if let Some(ref allowlist) = self.allowlist {
