@@ -9,10 +9,7 @@ pub mod app {
         terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
         ExecutableCommand,
     };
-    use ratatui::{
-        prelude::*,
-        widgets::*,
-    };
+    use ratatui::{prelude::*, widgets::*};
     use std::io::stdout;
     use std::time::{Duration, Instant};
 
@@ -136,10 +133,8 @@ pub mod app {
                     if self.stats.recent_scans.len() > 100 {
                         self.stats.recent_scans.remove(0);
                     }
-                    self.status = format!(
-                        "{} findings in {:.1}ms",
-                        finding_count, self.scan_time_ms
-                    );
+                    self.status =
+                        format!("{} findings in {:.1}ms", finding_count, self.scan_time_ms);
                     self.screen = Screen::ScanResult;
                 }
                 Err(e) => {
@@ -304,7 +299,7 @@ pub mod app {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(5),  // header
+                Constraint::Length(5), // header
                 Constraint::Min(12),   // menu
                 Constraint::Length(3), // status bar
             ])
@@ -314,10 +309,13 @@ pub mod app {
         let header = Paragraph::new(vec![
             Line::from(Span::styled(
                 " dlpscan",
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from(Span::styled(
-                format!(" v{}  |  {} patterns  |  {} categories",
+                format!(
+                    " v{}  |  {} patterns  |  {} categories",
                     env!("CARGO_PKG_VERSION"),
                     crate::patterns::PATTERNS.len(),
                     crate::patterns::categories().len()
@@ -325,7 +323,11 @@ pub mod app {
                 Style::default().fg(Color::DarkGray),
             )),
         ])
-        .block(Block::default().borders(Borders::ALL).title(" DLP Scanner "));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" DLP Scanner "),
+        );
         frame.render_widget(header, chunks[0]);
 
         // Menu
@@ -344,8 +346,11 @@ pub mod app {
                 ListItem::new(format!("  {item}")).style(style)
             })
             .collect();
-        let menu = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title(" Menu (j/k or arrows, Enter to select) "));
+        let menu = List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Menu (j/k or arrows, Enter to select) "),
+        );
         frame.render_widget(menu, chunks[1]);
 
         // Status bar
@@ -366,13 +371,17 @@ pub mod app {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3), // title
-                Constraint::Min(5),   // input
+                Constraint::Min(5),    // input
                 Constraint::Length(3), // help
             ])
             .split(area);
 
         let title = Paragraph::new(" Quick Scan — type text and press Enter to scan")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::ALL));
         frame.render_widget(title, chunks[0]);
 
@@ -389,10 +398,11 @@ pub mod app {
         let input = Paragraph::new(input_text)
             .style(input_style)
             .wrap(Wrap { trim: false })
-            .block(Block::default().borders(Borders::ALL).title(format!(
-                " Input ({} chars) ",
-                app.scan_input.len()
-            )));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(" Input ({} chars) ", app.scan_input.len())),
+            );
         frame.render_widget(input, chunks[1]);
 
         let help = Paragraph::new(" Enter: scan  |  Esc: back to menu")
@@ -407,19 +417,24 @@ pub mod app {
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3), // summary
-                Constraint::Min(5),   // findings
+                Constraint::Min(5),    // findings
                 Constraint::Length(3), // help
             ])
             .split(area);
 
         let is_clean = app.scan_results.is_empty();
         let summary_style = if is_clean {
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
         };
         let summary_text = if is_clean {
-            format!(" CLEAN — no sensitive data found ({:.1}ms)", app.scan_time_ms)
+            format!(
+                " CLEAN — no sensitive data found ({:.1}ms)",
+                app.scan_time_ms
+            )
         } else {
             format!(
                 " {} findings detected ({:.1}ms)",
@@ -427,14 +442,20 @@ pub mod app {
                 app.scan_time_ms
             )
         };
-        let summary = Paragraph::new(summary_text)
-            .style(summary_style)
-            .block(Block::default().borders(Borders::ALL).title(" Scan Results "));
+        let summary = Paragraph::new(summary_text).style(summary_style).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Scan Results "),
+        );
         frame.render_widget(summary, chunks[0]);
 
         // Findings table
         let header = Row::new(vec!["Conf", "Category", "Pattern", "Match", "Ctx"])
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .bottom_margin(1);
 
         let rows: Vec<Row> = app
@@ -491,7 +512,11 @@ pub mod app {
             .split(area);
 
         let title = Paragraph::new(" Configuration")
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::ALL));
         frame.render_widget(title, chunks[0]);
 
@@ -502,7 +527,10 @@ pub mod app {
             format!("max_matches:        {}", app.config.max_matches),
             format!("format:             {}", app.config.format),
             format!("block_unreadable:   {}", app.config.block_unreadable),
-            format!("blocked_extensions: {} types", app.config.blocked_extensions.len()),
+            format!(
+                "blocked_extensions: {} types",
+                app.config.blocked_extensions.len()
+            ),
             format!("context_backend:    {}", app.config.context_backend),
         ];
 
@@ -519,8 +547,11 @@ pub mod app {
             })
             .collect();
 
-        let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title(" Settings (use `dlpscan config set` to modify) "));
+        let list = List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Settings (use `dlpscan config set` to modify) "),
+        );
         frame.render_widget(list, chunks[1]);
 
         let help = Paragraph::new(" Esc/q: back to menu  |  j/k: navigate")
@@ -534,15 +565,24 @@ pub mod app {
 
         let exts = crate::extractors::supported_extensions();
         let mut features = vec!["core"];
-        #[cfg(feature = "metrics")] features.push("metrics");
-        #[cfg(feature = "pdf")] features.push("pdf");
-        #[cfg(feature = "office")] features.push("office");
-        #[cfg(feature = "archives")] features.push("archives");
-        #[cfg(feature = "data-formats")] features.push("data-formats");
-        #[cfg(feature = "msg")] features.push("msg");
-        #[cfg(feature = "barcode")] features.push("barcode");
-        #[cfg(feature = "async-support")] features.push("async-support");
-        #[cfg(feature = "tui")] features.push("tui");
+        #[cfg(feature = "metrics")]
+        features.push("metrics");
+        #[cfg(feature = "pdf")]
+        features.push("pdf");
+        #[cfg(feature = "office")]
+        features.push("office");
+        #[cfg(feature = "archives")]
+        features.push("archives");
+        #[cfg(feature = "data-formats")]
+        features.push("data-formats");
+        #[cfg(feature = "msg")]
+        features.push("msg");
+        #[cfg(feature = "barcode")]
+        features.push("barcode");
+        #[cfg(feature = "async-support")]
+        features.push("async-support");
+        #[cfg(feature = "tui")]
+        features.push("tui");
 
         let info_text = vec![
             Line::from(""),
@@ -552,7 +592,8 @@ pub mod app {
             ]),
             Line::from(vec![
                 Span::styled("  Patterns:    ", Style::default().fg(Color::Cyan)),
-                Span::raw(format!("{} across {} categories",
+                Span::raw(format!(
+                    "{} across {} categories",
                     crate::patterns::PATTERNS.len(),
                     crate::patterns::categories().len()
                 )),
@@ -567,7 +608,8 @@ pub mod app {
             ]),
             Line::from(vec![
                 Span::styled("  Blocked:     ", Style::default().fg(Color::Cyan)),
-                Span::raw(format!("{} extensions blocked by default",
+                Span::raw(format!(
+                    "{} extensions blocked by default",
                     crate::extractors::DEFAULT_BLOCKED_EXTENSIONS.len()
                 )),
             ]),
@@ -578,8 +620,11 @@ pub mod app {
             )),
         ];
 
-        let info = Paragraph::new(info_text)
-            .block(Block::default().borders(Borders::ALL).title(" System Info (Esc to go back) "));
+        let info = Paragraph::new(info_text).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" System Info (Esc to go back) "),
+        );
         frame.render_widget(info, area);
     }
 
@@ -588,8 +633,8 @@ pub mod app {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // title
-                Constraint::Length(9),  // stats panel
+                Constraint::Length(3), // title
+                Constraint::Length(9), // stats panel
                 Constraint::Min(6),    // recent scans
                 Constraint::Length(3), // throughput gauge
                 Constraint::Length(3), // help
@@ -605,7 +650,11 @@ pub mod app {
         );
 
         let title = Paragraph::new(format!(" dlpscan Live Dashboard  |  Uptime: {uptime}"))
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .block(Block::default().borders(Borders::ALL));
         frame.render_widget(title, chunks[0]);
 
@@ -628,7 +677,9 @@ pub mod app {
                 Span::styled("  Total Scans:      ", Style::default().fg(Color::Cyan)),
                 Span::styled(
                     format!("{}", app.stats.total_scans),
-                    Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(format!("  ({scans_per_sec:.1}/s)")),
             ]),
@@ -636,11 +687,13 @@ pub mod app {
                 Span::styled("  Total Findings:   ", Style::default().fg(Color::Cyan)),
                 Span::styled(
                     format!("{}", app.stats.total_findings),
-                    Style::default().fg(if app.stats.total_findings > 0 {
-                        Color::Red
-                    } else {
-                        Color::Green
-                    }).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(if app.stats.total_findings > 0 {
+                            Color::Red
+                        } else {
+                            Color::Green
+                        })
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
@@ -666,7 +719,11 @@ pub mod app {
 
         // Recent scans
         let header = Row::new(vec!["Time", "Findings", "Latency"])
-            .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
             .bottom_margin(1);
 
         let rows: Vec<Row> = app
@@ -682,7 +739,11 @@ pub mod app {
                 } else {
                     format!("{}m ago", ago / 60)
                 };
-                let color = if *findings > 0 { Color::Red } else { Color::Green };
+                let color = if *findings > 0 {
+                    Color::Red
+                } else {
+                    Color::Green
+                };
                 Row::new(vec![
                     Cell::from(time_str),
                     Cell::from(format!("{findings}")).style(Style::default().fg(color)),
@@ -700,7 +761,11 @@ pub mod app {
             ],
         )
         .header(header)
-        .block(Block::default().borders(Borders::ALL).title(" Recent Scans "));
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Recent Scans "),
+        );
         frame.render_widget(table, chunks[2]);
 
         // Throughput gauge

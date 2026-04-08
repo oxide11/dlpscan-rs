@@ -156,10 +156,7 @@ impl ComplianceReporter {
         for ((cat, sub), group) in &group_data {
             let count = group.len();
             let avg_conf: f64 = group.iter().map(|m| m.confidence).sum::<f64>() / count as f64;
-            let sample = group
-                .first()
-                .map(|m| m.redacted_text())
-                .unwrap_or_default();
+            let sample = group.first().map(|m| m.redacted_text()).unwrap_or_default();
 
             findings_rows.push(FindingRow {
                 category: cat.clone(),

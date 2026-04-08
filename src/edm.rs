@@ -348,7 +348,8 @@ impl ExactDataMatcher {
         if meta.len() > Self::MAX_STATE_FILE_SIZE {
             return Err(format!(
                 "EDM state file too large: {} bytes (max {})",
-                meta.len(), Self::MAX_STATE_FILE_SIZE
+                meta.len(),
+                Self::MAX_STATE_FILE_SIZE
             ));
         }
         let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;

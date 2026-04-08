@@ -108,8 +108,12 @@ pub fn is_private_ip(ip: IpAddr) -> bool {
                 let segs = ipv6.segments();
                 let seg0 = segs[0];
                 // Check IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
-                let is_v4_mapped = segs[0] == 0 && segs[1] == 0 && segs[2] == 0
-                    && segs[3] == 0 && segs[4] == 0 && segs[5] == 0xffff;
+                let is_v4_mapped = segs[0] == 0
+                    && segs[1] == 0
+                    && segs[2] == 0
+                    && segs[3] == 0
+                    && segs[4] == 0
+                    && segs[5] == 0xffff;
                 if is_v4_mapped {
                     // Extract the embedded IPv4 and check it
                     let ipv4 = Ipv4Addr::new(
@@ -121,8 +125,12 @@ pub fn is_private_ip(ip: IpAddr) -> bool {
                     return is_private_ip(IpAddr::V4(ipv4));
                 }
                 // Check IPv4-compatible IPv6 (::x.x.x.x, deprecated but still routable)
-                let is_v4_compat = segs[0] == 0 && segs[1] == 0 && segs[2] == 0
-                    && segs[3] == 0 && segs[4] == 0 && segs[5] == 0
+                let is_v4_compat = segs[0] == 0
+                    && segs[1] == 0
+                    && segs[2] == 0
+                    && segs[3] == 0
+                    && segs[4] == 0
+                    && segs[5] == 0
                     && (segs[6] != 0 || segs[7] > 1);
                 if is_v4_compat {
                     let ipv4 = Ipv4Addr::new(

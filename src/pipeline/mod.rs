@@ -60,7 +60,13 @@ pub struct PipelineResult {
 
 impl PipelineResult {
     /// Create an error result with no matches.
-    pub fn error_result(file_path: String, format: &str, error: String, elapsed_secs: f64, file_size: u64) -> Self {
+    pub fn error_result(
+        file_path: String,
+        format: &str,
+        error: String,
+        elapsed_secs: f64,
+        file_size: u64,
+    ) -> Self {
         Self {
             file_path,
             matches: vec![],
@@ -173,9 +179,13 @@ impl Pipeline {
         // Check blocked extensions on RESOLVED path (checks ALL extensions, not just last)
         {
             let resolved_str = resolved.display().to_string();
-            let blocked_refs: Vec<&str> = self.blocked_extensions.iter().map(|s| s.as_str()).collect();
+            let blocked_refs: Vec<&str> =
+                self.blocked_extensions.iter().map(|s| s.as_str()).collect();
             if crate::extractors::is_path_blocked(&resolved_str, &blocked_refs) {
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("unknown");
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("unknown");
                 return PipelineResult {
                     file_path,
                     matches: vec![],
@@ -196,7 +206,10 @@ impl Pipeline {
                             matches: vec![],
                             format_detected: "blocked".into(),
                             duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                            error: Some(format!("Unreadable/encrypted file type: .{}", ext.to_lowercase())),
+                            error: Some(format!(
+                                "Unreadable/encrypted file type: .{}",
+                                ext.to_lowercase()
+                            )),
                             file_size_bytes: 0,
                             extracted_text_length: 0,
                             file_entropy: None,
@@ -258,7 +271,8 @@ impl Pipeline {
                         // or corrupted extensions.
                         match fs::read(path) {
                             Ok(bytes) if bytes.len() <= self.max_file_size => {
-                                let text = crate::extractors::extract_printable_strings_public(&bytes, 12);
+                                let text =
+                                    crate::extractors::extract_printable_strings_public(&bytes, 12);
                                 if text.is_empty() {
                                     return PipelineResult {
                                         file_path,

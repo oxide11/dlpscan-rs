@@ -122,8 +122,9 @@ pub fn get_extractor(file_path: &str) -> Option<ExtractorFn> {
         | "toml" | "ini" | "cfg" | "conf" | "md" | "rst" | "py" | "js" | "ts" | "java" | "go"
         | "rs" | "rb" | "php" | "sh" | "bat" | "ps1" | "sql" | "env" | "c" | "cpp" | "h"
         | "hpp" | "css" | "scss" | "less" | "jsx" | "tsx" | "vue" | "svelte" | "swift" | "kt"
-        | "scala" | "r" | "m" | "mm" | "pem" | "cer" | "crt" | "key" | "pub" | "csr"
-        => Some(extract_plain_text),
+        | "scala" | "r" | "m" | "mm" | "pem" | "cer" | "crt" | "key" | "pub" | "csr" => {
+            Some(extract_plain_text)
+        }
 
         // RTF (custom parser, no deps)
         "rtf" => Some(extract_rtf),
@@ -167,9 +168,7 @@ pub fn get_extractor(file_path: &str) -> Option<ExtractorFn> {
 
         // Barcode / QR code images
         #[cfg(feature = "barcode")]
-        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "tiff" | "tif" | "webp" => {
-            Some(extract_barcode)
-        }
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "tiff" | "tif" | "webp" => Some(extract_barcode),
 
         // Cabinet archives
         "cab" => Some(extract_cab),
@@ -542,17 +541,22 @@ fn extract_zip_based(file_path: &str) -> Result<ExtractionResult, String> {
             let data = std::fs::read(file_path).map_err(|e| e.to_string())?;
             let text = extract_printable_strings(&data, 12);
             if text.is_empty() {
-                return Err("ZIP central directory corrupted and no printable text recoverable".to_string());
+                return Err(
+                    "ZIP central directory corrupted and no printable text recoverable".to_string(),
+                );
             }
             let mut result = ExtractionResult::new(text, "zip-recovered");
-            result = result.with_warning("ZIP central directory corrupted — extracted from raw bytes");
+            result =
+                result.with_warning("ZIP central directory corrupted — extracted from raw bytes");
             Ok(result)
         }
     }
 }
 
 /// Extract from a valid ZIP archive.
-fn extract_zip_archive(archive: &mut zip::ZipArchive<std::fs::File>) -> Result<ExtractionResult, String> {
+fn extract_zip_archive(
+    archive: &mut zip::ZipArchive<std::fs::File>,
+) -> Result<ExtractionResult, String> {
     let mut text = String::new();
 
     // Detect format by checking for key files
@@ -2190,7 +2194,7 @@ pub fn extract_cab(file_path: &str) -> Result<ExtractionResult, String> {
 pub fn extract_dat(file_path: &str) -> Result<ExtractionResult, String> {
     let data = std::fs::read(file_path).map_err(|e| e.to_string())?;
 
-    if data.len() as usize > MAX_EXTRACT_SIZE {
+    if data.len() > MAX_EXTRACT_SIZE {
         return Err(format!("DAT file too large: {} bytes", data.len()));
     }
 
@@ -2225,7 +2229,7 @@ fn extract_printable_strings(data: &[u8], min_length: usize) -> String {
 
     for &byte in data {
         // ASCII printable range + common whitespace (explicit parentheses for clarity)
-        if (byte >= 0x20 && byte < 0x7f) || byte == b'\n' || byte == b'\r' || byte == b'\t' {
+        if (0x20..0x7f).contains(&byte) || byte == b'\n' || byte == b'\r' || byte == b'\t' {
             // Safe: all accepted bytes are valid single-byte ASCII/UTF-8
             current.push(byte as char);
         } else {
@@ -2255,41 +2259,33 @@ fn extract_printable_strings(data: &[u8], min_length: usize) -> String {
 /// unprotected.
 pub const DEFAULT_BLOCKED_EXTENSIONS: &[&str] = &[
     // Cryptographic certificates and keys
-    "der", "p12", "pfx", "p7b", "p7c", "p7m", "p7s",
-    "p8",   // PKCS#8 private keys
-    "ppk",  // PuTTY private keys
-    "jks", "keystore", "bks",
-    // Encrypted/signed containers
-    "smime", "gpg", "pgp", "asc",
-    // Binary certificate formats
+    "der", "p12", "pfx", "p7b", "p7c", "p7m", "p7s", "p8",  // PKCS#8 private keys
+    "ppk", // PuTTY private keys
+    "jks", "keystore", "bks", // Encrypted/signed containers
+    "smime", "gpg", "pgp", "asc", // Binary certificate formats
     "sst", "stl", "spc", "pvk",
 ];
 
 /// File extensions that indicate encrypted content which cannot be
 /// meaningfully scanned.
 pub const ENCRYPTED_EXTENSIONS: &[&str] = &[
-    "gpg", "pgp", "enc", "aes", "p7m", "smime",
-    "kdbx", "kdb",  // KeePass databases
-    "tc", "hc",     // TrueCrypt / VeraCrypt volumes
-    "dmg",          // macOS encrypted disk images (may be encrypted)
+    "gpg", "pgp", "enc", "aes", "p7m", "smime", "kdbx", "kdb", // KeePass databases
+    "tc", "hc",  // TrueCrypt / VeraCrypt volumes
+    "dmg", // macOS encrypted disk images (may be encrypted)
 ];
 
 /// File extensions that are known binary formats with no text to extract.
 pub const OPAQUE_BINARY_EXTENSIONS: &[&str] = &[
-    "exe", "dll", "so", "dylib", "bin", "o", "obj", "a", "lib",
-    "class", "pyc", "pyo", "wasm",
-    "ico", "cur", "ani",
-    "ttf", "otf", "woff", "woff2", "eot",
-    "mp3", "mp4", "avi", "mkv", "mov", "wmv", "flv", "webm",
-    "wav", "flac", "ogg", "aac", "m4a",
-    "swf", "fla",
+    "exe", "dll", "so", "dylib", "bin", "o", "obj", "a", "lib", "class", "pyc", "pyo", "wasm",
+    "ico", "cur", "ani", "ttf", "otf", "woff", "woff2", "eot", "mp3", "mp4", "avi", "mkv", "mov",
+    "wmv", "flv", "webm", "wav", "flac", "ogg", "aac", "m4a", "swf", "fla",
 ];
 
 /// Check if a file extension is in the blocked list.
 pub fn is_blocked_extension(ext: &str, blocked: &[&str]) -> bool {
     let lower = ext.to_lowercase();
     let trimmed = lower.trim_start_matches('.');
-    blocked.iter().any(|&b| b == trimmed)
+    blocked.contains(&trimmed)
 }
 
 /// Check if any extension in a file path (including double extensions) is blocked.
@@ -2305,7 +2301,7 @@ pub fn is_path_blocked(file_path: &str, blocked: &[&str]) -> bool {
             continue;
         }
         let lower = segment.to_lowercase();
-        if blocked.iter().any(|&b| !b.is_empty() && b == lower.as_str()) {
+        if blocked.iter().any(|&b| !b.is_empty() && b == lower) {
             return true;
         }
     }
@@ -2316,8 +2312,7 @@ pub fn is_path_blocked(file_path: &str, blocked: &[&str]) -> bool {
 pub fn is_unreadable_extension(ext: &str) -> bool {
     let lower = ext.to_lowercase();
     let trimmed = lower.trim_start_matches('.');
-    OPAQUE_BINARY_EXTENSIONS.iter().any(|&b| b == trimmed)
-        || ENCRYPTED_EXTENSIONS.iter().any(|&b| b == trimmed)
+    OPAQUE_BINARY_EXTENSIONS.contains(&trimmed) || ENCRYPTED_EXTENSIONS.contains(&trimmed)
 }
 
 /// Check if a file appears to be encrypted based on extension or entropy.
@@ -2327,7 +2322,7 @@ pub fn is_likely_encrypted(file_path: &str) -> bool {
         .and_then(|e| e.to_str())
         .unwrap_or("");
     let lower = ext.to_lowercase();
-    ENCRYPTED_EXTENSIONS.iter().any(|&e| e == lower.as_str())
+    ENCRYPTED_EXTENSIONS.contains(&lower.as_str())
 }
 
 // ---------------------------------------------------------------------------
@@ -2851,7 +2846,9 @@ mod tests {
         std::fs::write(f.path(), &data).unwrap();
         let result = extract_cab(f.path().to_str().unwrap()).unwrap();
         assert_eq!(result.format, "cab");
-        assert!(result.text.contains("embedded secret text here for testing"));
+        assert!(result
+            .text
+            .contains("embedded secret text here for testing"));
     }
 
     #[test]

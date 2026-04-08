@@ -123,9 +123,9 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
         "MICR Line" => 0.90,
         "Check Number" => 0.15,
         "Cashier Check Number" => 0.20,
-        "CUSIP" => 0.50,    // lowered — 9-char alphanumeric is common; context-gated + check digit
+        "CUSIP" => 0.50, // lowered — 9-char alphanumeric is common; context-gated + check digit
         "ISIN" => 0.75,
-        "SEDOL" => 0.50,   // lowered — 7-char alphanumeric is common; context-gated + check digit
+        "SEDOL" => 0.50, // lowered — 7-char alphanumeric is common; context-gated + check digit
         "FIGI" => 0.90,
         "LEI" => 0.80,
         "Ticker Symbol" => 0.60, // lowered — $WORD is common in shell/templates; context-gated

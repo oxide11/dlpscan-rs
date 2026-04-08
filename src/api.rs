@@ -415,9 +415,7 @@ pub fn handle_detokenize(
     vaults: &RwLock<HashMap<String, VaultEntry>>,
 ) -> Result<DetokenizeResponse, String> {
     let vaults = vaults.read().map_err(|e| format!("{e}"))?;
-    let entry = vaults
-        .get(&req.vault_id)
-        .ok_or("Vault not found")?;
+    let entry = vaults.get(&req.vault_id).ok_or("Vault not found")?;
     // Enforce vault TTL
     if entry.created_at.elapsed().as_secs() > VAULT_TTL_SECS {
         return Err("Vault has expired".to_string());
@@ -474,7 +472,6 @@ fn handle_health_full(state: &AppState, active: usize) -> HealthResponse {
     }
 }
 
-
 /// Quick hash for rate-limit key derivation (not cryptographic, just for bucketing).
 #[cfg(feature = "async-support")]
 fn md5_like_hash(input: &str) -> u64 {
@@ -512,7 +509,6 @@ pub fn verify_api_key_hash(expected_hash: &[u8; 32], provided: &str) -> bool {
     }
     result == 0
 }
-
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -563,7 +559,10 @@ fn load_edm_from_env() -> Option<std::sync::Arc<crate::edm::ExactDataMatcher>> {
     let path = std::env::var("DLPSCAN_EDM_STATE").ok()?;
     match crate::edm::ExactDataMatcher::load(&path) {
         Ok(edm) => {
-            tracing::info!("Loaded EDM state from {path} ({} hashes)", edm.total_hashes());
+            tracing::info!(
+                "Loaded EDM state from {path} ({} hashes)",
+                edm.total_hashes()
+            );
             Some(std::sync::Arc::new(edm))
         }
         Err(e) => {
@@ -579,7 +578,10 @@ fn load_lsh_from_env() -> Option<std::sync::Arc<crate::lsh::DocumentVault>> {
     let path = std::env::var("DLPSCAN_LSH_STATE").ok()?;
     match crate::lsh::DocumentVault::load(&path) {
         Ok(vault) => {
-            tracing::info!("Loaded LSH vault from {path} ({} documents)", vault.document_count());
+            tracing::info!(
+                "Loaded LSH vault from {path} ({} documents)",
+                vault.document_count()
+            );
             Some(std::sync::Arc::new(vault))
         }
         Err(e) => {
@@ -620,36 +622,44 @@ const MAX_REQUEST_BODY_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 /// Start the API server with HTTP/1.1 and HTTP/2 support via hyper.
 #[cfg(feature = "async-support")]
 pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
+    use bytes::Bytes;
+    use http_body_util::{BodyExt, Full};
+    use hyper::body::Incoming;
     use hyper::server::conn::auto::Builder as HttpBuilder;
     use hyper::service::service_fn;
     use hyper::{Request, Response, StatusCode};
-    use hyper::body::Incoming;
     use hyper_util::rt::TokioIo;
-    use http_body_util::{BodyExt, Full};
-    use bytes::Bytes;
     use tokio::net::TcpListener;
 
     let addr = format!("{}:{}", config.host, config.port);
     let listener = TcpListener::bind(&addr).await?;
-    tracing::info!("dlpscan API server listening on {} (HTTP/1.1 + HTTP/2)", addr);
+    tracing::info!(
+        "dlpscan API server listening on {} (HTTP/1.1 + HTTP/2)",
+        addr
+    );
 
     // Load API key-to-role mapping (store hashed keys, never plaintext)
-    let api_key_roles: HashMap<[u8; 32], crate::rbac::Role> = std::env::var("DLPSCAN_API_KEY_ROLES")
-        .unwrap_or_default()
-        .split(',')
-        .filter_map(|pair| {
-            let mut parts = pair.splitn(2, ':');
-            let key = parts.next()?.trim().to_string();
-            let role_str = parts.next()?.trim().to_lowercase();
-            let role = match role_str.as_str() {
-                "admin" => crate::rbac::Role::Admin,
-                "analyst" => crate::rbac::Role::Analyst,
-                "operator" => crate::rbac::Role::Operator,
-                _ => crate::rbac::Role::Viewer,
-            };
-            if key.is_empty() { None } else { Some((hash_api_key(&key), role)) }
-        })
-        .collect();
+    let api_key_roles: HashMap<[u8; 32], crate::rbac::Role> =
+        std::env::var("DLPSCAN_API_KEY_ROLES")
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|pair| {
+                let mut parts = pair.splitn(2, ':');
+                let key = parts.next()?.trim().to_string();
+                let role_str = parts.next()?.trim().to_lowercase();
+                let role = match role_str.as_str() {
+                    "admin" => crate::rbac::Role::Admin,
+                    "analyst" => crate::rbac::Role::Analyst,
+                    "operator" => crate::rbac::Role::Operator,
+                    _ => crate::rbac::Role::Viewer,
+                };
+                if key.is_empty() {
+                    None
+                } else {
+                    Some((hash_api_key(&key), role))
+                }
+            })
+            .collect();
 
     // Store only the hash of the API key, never the plaintext
     let api_key_hash = config.api_key.as_deref().map(hash_api_key);
@@ -676,7 +686,9 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
                 // Catch panics to prevent silent task death
                 if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     evict_expired_vaults(&vaults.vaults);
-                })).is_err() {
+                }))
+                .is_err()
+                {
                     tracing::error!("Vault eviction task panicked — recovering");
                 }
             }
@@ -687,9 +699,9 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
     let shutdown = async {
         #[cfg(unix)]
         {
-            let mut sigterm = tokio::signal::unix::signal(
-                tokio::signal::unix::SignalKind::terminate(),
-            ).expect("failed to install SIGTERM handler");
+            let mut sigterm =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                    .expect("failed to install SIGTERM handler");
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {},
                 _ = sigterm.recv() => {},
@@ -834,8 +846,12 @@ fn build_hyper_response(
         .header("content-security-policy", "default-src 'none'")
         .header("cache-control", "no-store")
         .header("x-xss-protection", "0")
-        .body(http_body_util::Full::new(bytes::Bytes::from(body.to_string())))
-        .unwrap_or_else(|_| hyper::Response::new(http_body_util::Full::new(bytes::Bytes::from("{}"))))
+        .body(http_body_util::Full::new(bytes::Bytes::from(
+            body.to_string(),
+        )))
+        .unwrap_or_else(|_| {
+            hyper::Response::new(http_body_util::Full::new(bytes::Bytes::from("{}")))
+        })
 }
 
 /// Check authentication. Returns the expected hash (for health endpoint auth check)
@@ -846,14 +862,21 @@ fn check_auth(
     api_key_header: Option<&str>,
     state: &AppState,
 ) -> (Option<[u8; 32]>, Option<(hyper::StatusCode, String)>) {
-    let auth_exempt = path == "/health" || path == "/health/live"
-        || path == "/health/ready";
+    let auth_exempt = path == "/health" || path == "/health/live" || path == "/health/ready";
     let expected_hash = state.api_key_hash.read().ok().and_then(|g| *g);
     if expected_hash.is_some() && !auth_exempt {
         if let Some(ref hash) = expected_hash {
             match api_key_header {
                 Some(provided) if verify_api_key_hash(hash, provided) => {}
-                _ => return (expected_hash, Some((hyper::StatusCode::UNAUTHORIZED, r#"{"detail":"Invalid or missing API key"}"#.to_string()))),
+                _ => {
+                    return (
+                        expected_hash,
+                        Some((
+                            hyper::StatusCode::UNAUTHORIZED,
+                            r#"{"detail":"Invalid or missing API key"}"#.to_string(),
+                        )),
+                    )
+                }
             }
         }
     }
@@ -871,7 +894,11 @@ fn check_rbac(
     let role = api_key_header
         .and_then(|key| {
             let h = hash_api_key(key);
-            state.api_key_roles.read().ok().and_then(|roles| roles.get(&h).copied())
+            state
+                .api_key_roles
+                .read()
+                .ok()
+                .and_then(|roles| roles.get(&h).copied())
         })
         .unwrap_or(crate::rbac::Role::Operator);
 
@@ -893,7 +920,10 @@ fn check_rbac(
     };
     if let Some(perm) = required_perm {
         if !crate::rbac::role_has_permission(role, perm) {
-            return Err((hyper::StatusCode::FORBIDDEN, r#"{"detail":"Insufficient permissions"}"#.to_string()));
+            return Err((
+                hyper::StatusCode::FORBIDDEN,
+                r#"{"detail":"Insufficient permissions"}"#.to_string(),
+            ));
         }
     }
     Ok(role)
@@ -907,8 +937,7 @@ fn check_rate_limit(
     state: &AppState,
     client_ip: &str,
 ) -> Option<(hyper::StatusCode, String)> {
-    let auth_exempt = path == "/health" || path == "/health/live"
-        || path == "/health/ready";
+    let auth_exempt = path == "/health" || path == "/health/live" || path == "/health/ready";
     if auth_exempt {
         return None;
     }
@@ -927,7 +956,10 @@ fn check_rate_limit(
                     .with_metadata("path", serde_json::json!(path));
                 crate::audit::audit_event(&event);
             }
-            return Some((hyper::StatusCode::TOO_MANY_REQUESTS, r#"{"detail":"Rate limit exceeded"}"#.to_string()));
+            return Some((
+                hyper::StatusCode::TOO_MANY_REQUESTS,
+                r#"{"detail":"Rate limit exceeded"}"#.to_string(),
+            ));
         }
         rl.cleanup();
     }
@@ -969,12 +1001,17 @@ fn hyper_route_request(
             // Authenticated users get full health details; unauthenticated get minimal.
             // When no API key is configured, return minimal response (defense-in-depth).
             let is_authed = match expected_hash.as_ref() {
-                Some(h) => api_key_header.map(|k| verify_api_key_hash(h, k)).unwrap_or(false),
+                Some(h) => api_key_header
+                    .map(|k| verify_api_key_hash(h, k))
+                    .unwrap_or(false),
                 None => false, // No key configured = minimal response
             };
             if is_authed {
                 let resp = handle_health_full(state, 0);
-                (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default())
+                (
+                    StatusCode::OK,
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                )
             } else {
                 (StatusCode::OK, r#"{"status":"ok"}"#.to_string())
             }
@@ -982,9 +1019,15 @@ fn hyper_route_request(
         ("GET", "/health/live") => (StatusCode::OK, r#"{"status":"ok"}"#.to_string()),
         ("GET", "/health/ready") => {
             if state.is_shutting_down.load(Ordering::SeqCst) {
-                (StatusCode::SERVICE_UNAVAILABLE, r#"{"status":"draining","is_ready":false}"#.to_string())
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    r#"{"status":"draining","is_ready":false}"#.to_string(),
+                )
             } else {
-                (StatusCode::OK, r#"{"status":"ok","is_ready":true}"#.to_string())
+                (
+                    StatusCode::OK,
+                    r#"{"status":"ok","is_ready":true}"#.to_string(),
+                )
             }
         }
         #[cfg(feature = "metrics")]
@@ -996,77 +1039,178 @@ fn hyper_route_request(
             }
         }
         #[cfg(not(feature = "metrics"))]
-        ("GET", "/metrics") => (StatusCode::NOT_IMPLEMENTED, r#"{"detail":"Metrics not enabled"}"#.to_string()),
+        ("GET", "/metrics") => (
+            StatusCode::NOT_IMPLEMENTED,
+            r#"{"detail":"Metrics not enabled"}"#.to_string(),
+        ),
         ("POST", "/v1/scan") => match serde_json::from_str::<ScanRequest>(body) {
             Ok(req) => match handle_scan(&req) {
-                Ok(resp) => (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default()),
-                Err(e) => { tracing::warn!("Scan error: {}", e); (StatusCode::BAD_REQUEST, r#"{"detail":"Scan failed"}"#.to_string()) }
+                Ok(resp) => (
+                    StatusCode::OK,
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                ),
+                Err(e) => {
+                    tracing::warn!("Scan error: {}", e);
+                    (
+                        StatusCode::BAD_REQUEST,
+                        r#"{"detail":"Scan failed"}"#.to_string(),
+                    )
+                }
             },
-            Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+            Err(_) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                r#"{"detail":"Invalid request body"}"#.to_string(),
+            ),
         },
         ("POST", "/v1/batch/scan") => match serde_json::from_str::<BatchScanRequest>(body) {
             Ok(req) => match handle_batch_scan(&req) {
-                Ok(resp) => (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default()),
-                Err(e) => { tracing::warn!("Batch error: {}", e); (StatusCode::BAD_REQUEST, r#"{"detail":"Batch scan failed"}"#.to_string()) }
+                Ok(resp) => (
+                    StatusCode::OK,
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                ),
+                Err(e) => {
+                    tracing::warn!("Batch error: {}", e);
+                    (
+                        StatusCode::BAD_REQUEST,
+                        r#"{"detail":"Batch scan failed"}"#.to_string(),
+                    )
+                }
             },
-            Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+            Err(_) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                r#"{"detail":"Invalid request body"}"#.to_string(),
+            ),
         },
         ("POST", "/v1/tokenize") => match serde_json::from_str::<TokenizeRequest>(body) {
             Ok(req) => match handle_tokenize(&req, &state.vaults) {
-                Ok(resp) => (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default()),
-                Err(e) => { tracing::warn!("Tokenize error: {}", e); (StatusCode::BAD_REQUEST, r#"{"detail":"Tokenization failed"}"#.to_string()) }
+                Ok(resp) => (
+                    StatusCode::OK,
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                ),
+                Err(e) => {
+                    tracing::warn!("Tokenize error: {}", e);
+                    (
+                        StatusCode::BAD_REQUEST,
+                        r#"{"detail":"Tokenization failed"}"#.to_string(),
+                    )
+                }
             },
-            Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+            Err(_) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                r#"{"detail":"Invalid request body"}"#.to_string(),
+            ),
         },
         ("POST", "/v1/detokenize") => match serde_json::from_str::<DetokenizeRequest>(body) {
             Ok(req) => match handle_detokenize(&req, &state.vaults) {
-                Ok(resp) => (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default()),
-                Err(e) => { tracing::warn!("Detokenize error: {}", e); (StatusCode::BAD_REQUEST, r#"{"detail":"Detokenization failed"}"#.to_string()) }
+                Ok(resp) => (
+                    StatusCode::OK,
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                ),
+                Err(e) => {
+                    tracing::warn!("Detokenize error: {}", e);
+                    (
+                        StatusCode::BAD_REQUEST,
+                        r#"{"detail":"Detokenization failed"}"#.to_string(),
+                    )
+                }
             },
-            Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+            Err(_) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                r#"{"detail":"Invalid request body"}"#.to_string(),
+            ),
         },
         ("POST", "/v1/obfuscate") => match serde_json::from_str::<ScanRequest>(body) {
             Ok(req) => match handle_obfuscate(&req) {
-                Ok(resp) => (StatusCode::OK, serde_json::to_string(&resp).unwrap_or_default()),
-                Err(e) => { tracing::warn!("Obfuscate error: {}", e); (StatusCode::BAD_REQUEST, r#"{"detail":"Obfuscation failed"}"#.to_string()) }
+                Ok(resp) => (
+                    StatusCode::OK,
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                ),
+                Err(e) => {
+                    tracing::warn!("Obfuscate error: {}", e);
+                    (
+                        StatusCode::BAD_REQUEST,
+                        r#"{"detail":"Obfuscation failed"}"#.to_string(),
+                    )
+                }
             },
-            Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+            Err(_) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                r#"{"detail":"Invalid request body"}"#.to_string(),
+            ),
         },
         ("POST", "/v1/patterns") => match serde_json::from_str::<PatternCreateRequest>(body) {
             Ok(req) => {
                 if req.pattern.len() > MAX_PATTERN_LENGTH {
-                    return (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Pattern too long"}"#.to_string());
+                    return (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        r#"{"detail":"Pattern too long"}"#.to_string(),
+                    );
                 }
                 if regex::Regex::new(&req.pattern).is_err() {
-                    return (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid regex"}"#.to_string());
+                    return (
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        r#"{"detail":"Invalid regex"}"#.to_string(),
+                    );
                 }
                 if let Ok(patterns) = state.custom_patterns.read() {
                     if patterns.len() >= MAX_CUSTOM_PATTERNS {
-                        return (StatusCode::CONFLICT, r#"{"detail":"Maximum custom pattern limit reached"}"#.to_string());
+                        return (
+                            StatusCode::CONFLICT,
+                            r#"{"detail":"Maximum custom pattern limit reached"}"#.to_string(),
+                        );
                     }
                 }
-                let resp = PatternResponse { name: req.name, pattern: req.pattern, category: req.category, confidence: req.confidence };
-                if let Ok(mut patterns) = state.custom_patterns.write() { patterns.push(resp.clone()); }
-                (StatusCode::CREATED, serde_json::to_string(&resp).unwrap_or_default())
+                let resp = PatternResponse {
+                    name: req.name,
+                    pattern: req.pattern,
+                    category: req.category,
+                    confidence: req.confidence,
+                };
+                if let Ok(mut patterns) = state.custom_patterns.write() {
+                    patterns.push(resp.clone());
+                }
+                (
+                    StatusCode::CREATED,
+                    serde_json::to_string(&resp).unwrap_or_default(),
+                )
             }
-            Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+            Err(_) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                r#"{"detail":"Invalid request body"}"#.to_string(),
+            ),
         },
         ("GET", "/v1/patterns") => {
-            let patterns = state.custom_patterns.read().map(|p| p.clone()).unwrap_or_default();
-            (StatusCode::OK, serde_json::to_string(&patterns).unwrap_or_default())
+            let patterns = state
+                .custom_patterns
+                .read()
+                .map(|p| p.clone())
+                .unwrap_or_default();
+            (
+                StatusCode::OK,
+                serde_json::to_string(&patterns).unwrap_or_default(),
+            )
         }
         ("POST", "/v1/admin/rotate-key") => {
             // Admin-only: rotate the API key at runtime
             if !crate::rbac::role_has_permission(role, crate::rbac::Permission::AdminAction) {
-                return (StatusCode::FORBIDDEN, r#"{"detail":"Admin role required"}"#.to_string());
+                return (
+                    StatusCode::FORBIDDEN,
+                    r#"{"detail":"Admin role required"}"#.to_string(),
+                );
             }
             #[derive(Deserialize)]
-            struct RotateKeyRequest { new_key: String }
+            struct RotateKeyRequest {
+                new_key: String,
+            }
             match serde_json::from_str::<RotateKeyRequest>(body) {
                 Ok(req) => {
                     let trimmed = req.new_key.trim();
                     if trimmed.len() < 16 {
-                        return (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Key must be at least 16 non-whitespace characters"}"#.to_string());
+                        return (
+                            StatusCode::UNPROCESSABLE_ENTITY,
+                            r#"{"detail":"Key must be at least 16 non-whitespace characters"}"#
+                                .to_string(),
+                        );
                     }
                     if !trimmed.bytes().any(|b| !b.is_ascii_alphanumeric()) && trimmed.len() < 24 {
                         return (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Key must be at least 24 characters if purely alphanumeric"}"#.to_string());
@@ -1078,30 +1222,49 @@ fn hyper_route_request(
                             .with_action("rotate_api_key")
                             .with_source_ip(client_ip)
                             .with_outcome("success")
-                            .with_user(&api_key_header
-                            .map(|k| format!("key:{:x}", md5_like_hash(k)))
-                            .unwrap_or_else(|| "admin".to_string()));
+                            .with_user(
+                                &api_key_header
+                                    .map(|k| format!("key:{:x}", md5_like_hash(k)))
+                                    .unwrap_or_else(|| "admin".to_string()),
+                            );
                         crate::audit::audit_event(&event);
                     }
-                    (StatusCode::OK, r#"{"detail":"API key rotated"}"#.to_string())
+                    (
+                        StatusCode::OK,
+                        r#"{"detail":"API key rotated"}"#.to_string(),
+                    )
                 }
-                Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+                Err(_) => (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    r#"{"detail":"Invalid request body"}"#.to_string(),
+                ),
             }
         }
         // EDM: register values
         ("POST", "/v1/edm/register") => {
             if !crate::rbac::role_has_permission(role, crate::rbac::Permission::AdminAction) {
-                return (StatusCode::FORBIDDEN, r#"{"detail":"Admin role required"}"#.to_string());
+                return (
+                    StatusCode::FORBIDDEN,
+                    r#"{"detail":"Admin role required"}"#.to_string(),
+                );
             }
             #[derive(Deserialize)]
-            struct EdmRegisterReq { category: String, values: Vec<String> }
+            struct EdmRegisterReq {
+                category: String,
+                values: Vec<String>,
+            }
             match serde_json::from_str::<EdmRegisterReq>(body) {
                 Ok(req) => {
                     let refs: Vec<&str> = req.values.iter().map(|s| s.as_str()).collect();
                     // Create or update the shared EDM engine
                     let mut edm_guard = match state.edm.write() {
                         Ok(g) => g,
-                        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, r#"{"detail":"EDM lock error"}"#.to_string()),
+                        Err(_) => {
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                r#"{"detail":"EDM lock error"}"#.to_string(),
+                            )
+                        }
                     };
                     let edm = edm_guard.get_or_insert_with(|| {
                         std::sync::Arc::new(crate::edm::ExactDataMatcher::new(None, None))
@@ -1109,13 +1272,20 @@ fn hyper_route_request(
                     // Arc::make_mut clones if needed for shared ownership
                     let edm_mut = std::sync::Arc::make_mut(edm);
                     let count = edm_mut.register_values(&req.category, &refs);
-                    (StatusCode::OK, serde_json::json!({
-                        "category": req.category,
-                        "registered": req.values.len(),
-                        "total_hashes": count,
-                    }).to_string())
+                    (
+                        StatusCode::OK,
+                        serde_json::json!({
+                            "category": req.category,
+                            "registered": req.values.len(),
+                            "total_hashes": count,
+                        })
+                        .to_string(),
+                    )
                 }
-                Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+                Err(_) => (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    r#"{"detail":"Invalid request body"}"#.to_string(),
+                ),
             }
         }
         // EDM: list categories
@@ -1124,18 +1294,28 @@ fn hyper_route_request(
             match edm_guard.as_ref() {
                 Some(edm) => {
                     let cats = edm.categories();
-                    (StatusCode::OK, serde_json::json!({
-                        "categories": cats,
-                        "total_hashes": edm.total_hashes(),
-                    }).to_string())
+                    (
+                        StatusCode::OK,
+                        serde_json::json!({
+                            "categories": cats,
+                            "total_hashes": edm.total_hashes(),
+                        })
+                        .to_string(),
+                    )
                 }
-                None => (StatusCode::OK, r#"{"categories":[],"total_hashes":0}"#.to_string()),
+                None => (
+                    StatusCode::OK,
+                    r#"{"categories":[],"total_hashes":0}"#.to_string(),
+                ),
             }
         }
         // LSH: register document
         ("POST", "/v1/lsh/register") => {
             if !crate::rbac::role_has_permission(role, crate::rbac::Permission::AdminAction) {
-                return (StatusCode::FORBIDDEN, r#"{"detail":"Admin role required"}"#.to_string());
+                return (
+                    StatusCode::FORBIDDEN,
+                    r#"{"detail":"Admin role required"}"#.to_string(),
+                );
             }
             #[derive(Deserialize)]
             struct LshRegisterReq {
@@ -1144,24 +1324,38 @@ fn hyper_route_request(
                 #[serde(default = "default_sensitivity")]
                 sensitivity: String,
             }
-            fn default_sensitivity() -> String { "sensitive".to_string() }
+            fn default_sensitivity() -> String {
+                "sensitive".to_string()
+            }
             match serde_json::from_str::<LshRegisterReq>(body) {
                 Ok(req) => {
                     let mut lsh_guard = match state.lsh.write() {
                         Ok(g) => g,
-                        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, r#"{"detail":"LSH lock error"}"#.to_string()),
+                        Err(_) => {
+                            return (
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                r#"{"detail":"LSH lock error"}"#.to_string(),
+                            )
+                        }
                     };
                     let vault = lsh_guard.get_or_insert_with(|| {
                         std::sync::Arc::new(crate::lsh::DocumentVault::default_vault())
                     });
                     let vault_mut = std::sync::Arc::make_mut(vault);
                     vault_mut.register(&req.doc_id, &req.text, &req.sensitivity, None);
-                    (StatusCode::OK, serde_json::json!({
-                        "doc_id": req.doc_id,
-                        "document_count": vault_mut.document_count(),
-                    }).to_string())
+                    (
+                        StatusCode::OK,
+                        serde_json::json!({
+                            "doc_id": req.doc_id,
+                            "document_count": vault_mut.document_count(),
+                        })
+                        .to_string(),
+                    )
                 }
-                Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+                Err(_) => (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    r#"{"detail":"Invalid request body"}"#.to_string(),
+                ),
             }
         }
         // LSH: query similar documents
@@ -1172,44 +1366,59 @@ fn hyper_route_request(
                 #[serde(default = "default_threshold")]
                 threshold: f64,
             }
-            fn default_threshold() -> f64 { 0.8 }
+            fn default_threshold() -> f64 {
+                0.8
+            }
             match serde_json::from_str::<LshQueryReq>(body) {
                 Ok(req) => {
                     let lsh_guard = state.lsh.read().unwrap_or_else(|e| e.into_inner());
                     match lsh_guard.as_ref() {
                         Some(vault) => {
                             let matches = vault.query(&req.text, Some(req.threshold));
-                            let results: Vec<serde_json::Value> = matches.iter().map(|m| {
-                                serde_json::json!({
-                                    "doc_id": m.doc_id,
-                                    "similarity": (m.similarity * 10000.0).round() / 10000.0,
-                                    "sensitivity": m.sensitivity,
+                            let results: Vec<serde_json::Value> = matches
+                                .iter()
+                                .map(|m| {
+                                    serde_json::json!({
+                                        "doc_id": m.doc_id,
+                                        "similarity": (m.similarity * 10000.0).round() / 10000.0,
+                                        "sensitivity": m.sensitivity,
+                                    })
                                 })
-                            }).collect();
-                            (StatusCode::OK, serde_json::json!({"matches": results}).to_string())
+                                .collect();
+                            (
+                                StatusCode::OK,
+                                serde_json::json!({"matches": results}).to_string(),
+                            )
                         }
                         None => (StatusCode::OK, r#"{"matches":[]}"#.to_string()),
                     }
                 }
-                Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+                Err(_) => (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    r#"{"detail":"Invalid request body"}"#.to_string(),
+                ),
             }
         }
         // LSH: list documents
         ("GET", "/v1/lsh/documents") => {
             let lsh_guard = state.lsh.read().unwrap_or_else(|e| e.into_inner());
             match lsh_guard.as_ref() {
-                Some(vault) => {
-                    (StatusCode::OK, serde_json::json!({
+                Some(vault) => (
+                    StatusCode::OK,
+                    serde_json::json!({
                         "document_count": vault.document_count(),
-                    }).to_string())
-                }
+                    })
+                    .to_string(),
+                ),
                 None => (StatusCode::OK, r#"{"document_count":0}"#.to_string()),
             }
         }
-        _ => (StatusCode::NOT_FOUND, r#"{"detail":"Not found"}"#.to_string()),
+        _ => (
+            StatusCode::NOT_FOUND,
+            r#"{"detail":"Not found"}"#.to_string(),
+        ),
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -1288,7 +1497,7 @@ mod tests {
         assert!(rl.check_client("ip:1.1.1.1"));
         assert!(rl.check_client("ip:1.1.1.1"));
         assert!(!rl.check_client("ip:1.1.1.1")); // exhausted
-        // Different client still has quota
+                                                 // Different client still has quota
         assert!(rl.check_client("ip:2.2.2.2"));
         assert!(rl.check_client("key:abc123"));
     }
@@ -1298,10 +1507,13 @@ mod tests {
         let vaults: RwLock<HashMap<String, VaultEntry>> = RwLock::new(HashMap::new());
         let vault = crate::guard::TokenVault::new("TOK", None);
         // Insert a vault with created_at in the past (simulate expiry)
-        vaults.write().unwrap().insert("test-vault".to_string(), VaultEntry {
-            vault,
-            created_at: Instant::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 1),
-        });
+        vaults.write().unwrap().insert(
+            "test-vault".to_string(),
+            VaultEntry {
+                vault,
+                created_at: Instant::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 1),
+            },
+        );
         // Detokenize should fail for expired vault
         let req = DetokenizeRequest {
             text: "some text".to_string(),
@@ -1316,15 +1528,21 @@ mod tests {
     fn test_evict_expired_vaults() {
         let vaults: RwLock<HashMap<String, VaultEntry>> = RwLock::new(HashMap::new());
         // Insert expired vault
-        vaults.write().unwrap().insert("expired".to_string(), VaultEntry {
-            vault: crate::guard::TokenVault::new("TOK", None),
-            created_at: Instant::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 1),
-        });
+        vaults.write().unwrap().insert(
+            "expired".to_string(),
+            VaultEntry {
+                vault: crate::guard::TokenVault::new("TOK", None),
+                created_at: Instant::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 1),
+            },
+        );
         // Insert active vault
-        vaults.write().unwrap().insert("active".to_string(), VaultEntry {
-            vault: crate::guard::TokenVault::new("TOK", None),
-            created_at: Instant::now(),
-        });
+        vaults.write().unwrap().insert(
+            "active".to_string(),
+            VaultEntry {
+                vault: crate::guard::TokenVault::new("TOK", None),
+                created_at: Instant::now(),
+            },
+        );
         evict_expired_vaults(&vaults);
         let guard = vaults.read().unwrap();
         assert!(!guard.contains_key("expired"));
