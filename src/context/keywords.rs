@@ -19,6 +19,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "card no",
                 "pan",
                 "primary account",
+                // French / Français
+                "carte de credit",
+                "carte de crédit",
+                "compte principal",
+                "no de carte",
+                "numero de carte",
+                "numéro de carte",
             ],
             distance: 50,
         },
@@ -34,6 +41,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "card no",
                 "pan",
                 "primary account",
+                // French / Français
+                "carte de credit",
+                "carte de crédit",
+                "compte principal",
+                "no de carte",
+                "numero de carte",
+                "numéro de carte",
             ],
             distance: 50,
         },
@@ -49,6 +63,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "card number",
                 "pan",
                 "primary account",
+                // French / Français
+                "carte de credit",
+                "carte de crédit",
+                "compte principal",
+                "no de carte",
+                "numero de carte",
+                "numéro de carte",
             ],
             distance: 50,
         },
@@ -63,6 +84,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "card number",
                 "pan",
                 "primary account",
+                // French / Français
+                "carte de credit",
+                "carte de crédit",
+                "compte principal",
+                "no de carte",
+                "numero de carte",
+                "numéro de carte",
             ],
             distance: 50,
         },
@@ -77,6 +105,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "card number",
                 "pan",
                 "primary account",
+                // French / Français
+                "carte de credit",
+                "carte de crédit",
+                "compte principal",
+                "no de carte",
+                "numero de carte",
+                "numéro de carte",
             ],
             distance: 50,
         },
@@ -92,6 +127,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "card number",
                 "pan",
                 "primary account",
+                // French / Français
+                "carte de credit",
+                "carte de crédit",
+                "compte principal",
+                "no de carte",
+                "numero de carte",
+                "numéro de carte",
             ],
             distance: 50,
         },
@@ -107,6 +149,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "card number",
                 "pan",
                 "primary account",
+                // French / Français
+                "carte de credit",
+                "carte de crédit",
+                "compte principal",
+                "no de carte",
+                "numero de carte",
+                "numéro de carte",
             ],
             distance: 50,
         },
@@ -123,6 +172,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "card number",
                 "cardholder number",
                 "full card",
+                // French / Français
+                "no de carte",
+                "no de compte",
+                "numero de carte",
+                "numero de compte",
+                "numéro de carte",
+                "numéro de compte",
             ],
             distance: 50,
         },
@@ -188,6 +244,12 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "good thru",
                 "card expires",
                 "mm/yy",
+                // French / Français
+                "carte expire",
+                "date d'exp",
+                "date d'expiration",
+                "valide jusqu'au",
+                "échéance",
             ],
             distance: 30,
         },
@@ -197,7 +259,21 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Contact Information",
         "Email Address",
         ContextEntry {
-            keywords: &["email", "e-mail", "email address", "mail to", "contact"],
+            keywords: &[
+                "email",
+                "e-mail",
+                "email address",
+                "mail to",
+                "contact",
+                // French / Français
+                "adresse courriel",
+                "adresse électronique",
+                "coordonnées",
+                "courriel",
+                "courrier électronique",
+                "destinataire",
+                "envoyer à",
+            ],
             distance: 50,
         },
     ),
@@ -205,7 +281,19 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Contact Information",
         "E.164 Phone Number",
         ContextEntry {
-            keywords: &["phone", "telephone", "tel", "mobile", "contact number"],
+            keywords: &[
+                "phone",
+                "telephone",
+                "tel",
+                "mobile",
+                "contact number",
+                // French / Français
+                "cellulaire",
+                "numéro de téléphone",
+                "portable",
+                "tél",
+                "téléphone",
+            ],
             distance: 50,
         },
     ),
@@ -213,7 +301,18 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Contact Information",
         "IPv4 Address",
         ContextEntry {
-            keywords: &["ip address", "ip", "server", "host", "network"],
+            keywords: &[
+                "ip address",
+                "ip",
+                "server",
+                "host",
+                "network",
+                // French / Français
+                "adresse ip",
+                "hôte",
+                "réseau",
+                "serveur",
+            ],
             distance: 50,
         },
     ),
@@ -221,7 +320,18 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Contact Information",
         "IPv6 Address",
         ContextEntry {
-            keywords: &["ip address", "ipv6", "server", "host", "network"],
+            keywords: &[
+                "ip address",
+                "ipv6",
+                "server",
+                "host",
+                "network",
+                // French / Français
+                "adresse ip",
+                "hôte",
+                "réseau",
+                "serveur",
+            ],
             distance: 50,
         },
     ),
@@ -229,7 +339,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Contact Information",
         "MAC Address",
         ContextEntry {
-            keywords: &["mac address", "hardware address", "physical address", "mac"],
+            keywords: &[
+                "mac address",
+                "hardware address",
+                "physical address",
+                "mac",
+                // French / Français
+                "adresse mac",
+            ],
             distance: 50,
         },
     ),
@@ -238,7 +355,15 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Banking and Financial",
         "IBAN Generic",
         ContextEntry {
-            keywords: &["iban", "international bank account number", "bank account"],
+            keywords: &[
+                "iban",
+                "international bank account number",
+                "bank account",
+                // French / Français
+                "compte bancaire",
+                "compte de banque",
+                "numéro de compte bancaire international",
+            ],
             distance: 50,
         },
     ),
@@ -252,6 +377,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "bank identifier code",
                 "swift code",
                 "routing code",
+                // French / Français
+                "code d'identification bancaire",
             ],
             distance: 50,
         },
@@ -268,6 +395,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "transit routing",
                 "bank routing",
                 "rtn",
+                // French / Français
+                "numero de transit",
+                "numéro de transit",
+                "transit bancaire",
             ],
             distance: 50,
         },
@@ -285,6 +416,15 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "acct",
                 "acct no",
                 "deposit account",
+                // French / Français
+                "compte bancaire",
+                "compte chèques",
+                "compte d'épargne",
+                "compte de banque",
+                "compte de dépôt",
+                "no de compte",
+                "numero de compte",
+                "numéro de compte",
             ],
             distance: 50,
         },
@@ -313,6 +453,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "fedwire",
                 "fed reference",
                 "wire reference",
+                // French / Français
+                "référence de virement",
             ],
             distance: 50,
         },
@@ -342,6 +484,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "remittance reference",
                 "payment reference",
                 "transfer reference",
+                // French / Français
+                "référence de virement",
+                "virement",
+                "virement bancaire",
             ],
             distance: 50,
         },
@@ -534,6 +680,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "loan account",
                 "loan#",
                 "lending number",
+                // French / Français
+                "compte de prêt",
+                "numéro de prêt",
             ],
             distance: 50,
         },
@@ -726,6 +875,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "current balance",
                 "ledger balance",
                 "closing balance",
+                // French / Français
+                "solde",
+                "solde courant",
+                "solde disponible",
+                "solde du compte",
             ],
             distance: 50,
         },
@@ -734,7 +888,16 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Customer Financial Data",
         "Balance with Currency Code",
         ContextEntry {
-            keywords: &["balance", "amount", "total", "funds", "available", "ledger"],
+            keywords: &[
+                "balance",
+                "amount",
+                "total",
+                "funds",
+                "available",
+                "ledger",
+                // French / Français
+                "solde",
+            ],
             distance: 50,
         },
     ),
@@ -752,6 +915,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "compensation",
                 "wages",
                 "earnings",
+                // French / Français
+                "revenu",
+                "revenu annuel",
+                "revenu brut",
+                "revenu mensuel",
+                "revenu net",
+                "salaire",
             ],
             distance: 50,
         },
@@ -796,6 +966,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "banker id",
                 "employee id",
                 "user id",
+                // French / Français
+                "matricule",
+                "numéro d'employé",
             ],
             distance: 50,
         },
@@ -811,6 +984,12 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "name on card",
                 "card holder",
                 "card member",
+                // French / Français
+                "détenteur de carte",
+                "membre de la carte",
+                "nom du titulaire",
+                "nom sur la carte",
+                "titulaire de la carte",
             ],
             distance: 30,
         },
@@ -900,6 +1079,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "born on",
                 "born",
                 "birthdate",
+                // French / Français
+                "anniversaire",
+                "date de naissance",
+                "né le",
+                "née le",
             ],
             distance: 50,
         },
@@ -916,6 +1100,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "born on",
                 "born",
                 "birthdate",
+                // French / Français
+                "anniversaire",
+                "date de naissance",
+                "né le",
+                "née le",
             ],
             distance: 50,
         },
@@ -932,6 +1121,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "born on",
                 "born",
                 "birthdate",
+                // French / Français
+                "anniversaire",
+                "date de naissance",
+                "né le",
+                "née le",
             ],
             distance: 50,
         },
@@ -966,7 +1160,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Generic Secrets",
         "JWT Token",
         ContextEntry {
-            keywords: &["jwt", "json web token", "auth", "token"],
+            keywords: &[
+                "jwt",
+                "json web token",
+                "auth",
+                "token",
+                // French / Français
+                "jeton",
+            ],
             distance: 80,
         },
     ),
@@ -974,7 +1175,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Generic Secrets",
         "Private Key",
         ContextEntry {
-            keywords: &["private key", "rsa", "ssh key", "pem"],
+            keywords: &[
+                "private key",
+                "rsa",
+                "ssh key",
+                "pem",
+                // French / Français
+                "clé privée",
+            ],
             distance: 80,
         },
     ),
@@ -982,7 +1190,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Generic Secrets",
         "Generic API Key",
         ContextEntry {
-            keywords: &["api key", "api_key", "apikey", "api secret"],
+            keywords: &[
+                "api key",
+                "api_key",
+                "apikey",
+                "api secret",
+                // French / Français
+                "clé api",
+            ],
             distance: 80,
         },
     ),
@@ -990,7 +1205,16 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Generic Secrets",
         "Generic Secret Assignment",
         ContextEntry {
-            keywords: &["password", "secret", "credential", "passwd"],
+            keywords: &[
+                "password",
+                "secret",
+                "credential",
+                "passwd",
+                // French / Français
+                "identifiant",
+                "justificatif",
+                "mot de passe",
+            ],
             distance: 80,
         },
     ),
@@ -1006,6 +1230,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "postgres",
                 "mysql",
                 "redis",
+                // French / Français
+                "base de données",
+                "chaîne de connexion",
             ],
             distance: 80,
         },
@@ -1023,6 +1250,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "birthday",
                 "birthdate",
                 "d.o.b",
+                // French / Français
+                "anniversaire",
+                "date de naissance",
+                "né le",
+                "née le",
             ],
             distance: 30,
         },
@@ -1037,6 +1269,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "identified as",
                 "gender identity",
                 "biological sex",
+                // French / Français
+                "genre",
+                "sexe",
             ],
             distance: 30,
         },
@@ -1215,6 +1450,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "beneficiary",
                 "member id",
                 "subscriber id",
+                // French / Français
+                "bénéficiaire",
+                "no d'assurance",
+                "numéro d'abonné",
+                "numéro d'assurance",
+                "numéro de membre",
+                "régime d'assurance maladie",
+                "régime de santé",
             ],
             distance: 50,
         },
@@ -1229,6 +1472,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "drug enforcement",
                 "prescriber",
                 "controlled substance",
+                // French / Français
+                "contrôle des drogues",
             ],
             distance: 50,
         },
@@ -1244,6 +1489,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "diagnostic code",
                 "condition code",
                 "icd code",
+                // French / Français
+                "code de diagnostic",
             ],
             distance: 50,
         },
@@ -1258,6 +1505,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "drug code",
                 "medication code",
                 "pharmaceutical",
+                // French / Français
+                "code de médicament",
+                "code national de médicament",
             ],
             distance: 50,
         },
@@ -1274,6 +1524,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "policy id",
                 "coverage number",
                 "policy#",
+                // French / Français
+                "no de police",
+                "numéro de police",
+                "police d'assurance",
             ],
             distance: 50,
         },
@@ -1289,6 +1543,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "claim#",
                 "claims reference",
                 "incident number",
+                // French / Français
+                "no de réclamation",
+                "numéro de réclamation",
             ],
             distance: 50,
         },
@@ -1396,6 +1653,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "emp no",
                 "worker id",
                 "badge number",
+                // French / Français
+                "matricule",
+                "numéro d'employé",
+                "numéro du personnel",
             ],
             distance: 50,
         },
@@ -1411,6 +1672,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "ead",
                 "labor permit",
                 "work authorization",
+                // French / Français
+                "autorisation de travail",
+                "permis de travail",
             ],
             distance: 50,
         },
@@ -1505,6 +1769,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "regulator",
                 "examination",
                 "bank examination",
+                // French / Français
+                "confidentiel",
+                "confidentielle",
             ],
             distance: 80,
         },
@@ -1547,6 +1814,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "regulatory",
                 "compliance",
                 "enforcement",
+                // French / Français
+                "accès restreint",
+                "restreint",
+                "restreinte",
             ],
             distance: 80,
         },
@@ -1579,6 +1850,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "legal counsel",
                 "law firm",
                 "privileged communication",
+                // French / Français
+                "avocat",
+                "avocate",
+                "privilège",
             ],
             distance: 100,
         },
@@ -1587,7 +1862,23 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Privileged Information",
         "Privileged and Confidential",
         ContextEntry {
-            keywords: &["privileged", "confidential", "legal", "attorney", "counsel"],
+            keywords: &[
+                "privileged",
+                "confidential",
+                "legal",
+                "attorney",
+                "counsel",
+                // French / Français
+                "avocat",
+                "avocate",
+                "confidentiel",
+                "confidentielle",
+                "conseiller juridique",
+                "juridique",
+                "légal",
+                "privilégié",
+                "privilégiée",
+            ],
             distance: 100,
         },
     ),
@@ -1601,6 +1892,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "litigation",
                 "legal",
                 "prepared in anticipation",
+                // French / Français
+                "avocat",
+                "avocate",
+                "contentieux",
+                "juridique",
+                "litige",
+                "légal",
+                "produit du travail",
             ],
             distance: 100,
         },
@@ -1609,7 +1908,21 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Privileged Information",
         "Privileged Information",
         ContextEntry {
-            keywords: &["privileged", "legal", "attorney", "counsel", "protected"],
+            keywords: &[
+                "privileged",
+                "legal",
+                "attorney",
+                "counsel",
+                "protected",
+                // French / Français
+                "avocat",
+                "avocate",
+                "conseiller juridique",
+                "juridique",
+                "légal",
+                "privilégié",
+                "privilégiée",
+            ],
             distance: 100,
         },
     ),
@@ -1623,6 +1936,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "attorney",
                 "counsel",
                 "protected communication",
+                // French / Français
+                "avocat",
+                "avocate",
+                "conseiller juridique",
+                "juridique",
+                "légal",
+                "privilège",
             ],
             distance: 100,
         },
@@ -1637,6 +1957,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "preservation",
                 "hold notice",
                 "document retention",
+                // French / Français
+                "contentieux",
+                "litige",
+                "mise en suspens juridique",
             ],
             distance: 100,
         },
@@ -1651,6 +1975,12 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "attorney",
                 "legal",
                 "exempt from disclosure",
+                // French / Français
+                "avocat",
+                "avocate",
+                "juridique",
+                "légal",
+                "privilège",
             ],
             distance: 100,
         },
@@ -1667,6 +1997,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "sci",
                 "national security",
                 "clearance",
+                // French / Français
+                "classifié",
+                "classifiée",
+                "très secret",
+                "ultra secret",
             ],
             distance: 100,
         },
@@ -1681,6 +2016,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "national security",
                 "clearance",
                 "noforn",
+                // French / Français
+                "classifié",
+                "classifiée",
             ],
             distance: 100,
         },
@@ -1694,6 +2032,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "confidential",
                 "national security",
                 "government",
+                // French / Français
+                "classifié",
+                "classifiée",
+                "confidentiel",
+                "confidentielle",
             ],
             distance: 100,
         },
@@ -1770,6 +2113,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "employees only",
                 "staff only",
                 "not for external",
+                // French / Français
+                "employés seulement",
+                "interne",
+                "ne pas diffuser à l'externe",
+                "réservé aux employés",
             ],
             distance: 80,
         },
@@ -1783,6 +2131,12 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "limited distribution",
                 "access controlled",
                 "need to know",
+                // French / Français
+                "accès restreint",
+                "besoin de savoir",
+                "diffusion restreinte",
+                "restreint",
+                "restreinte",
             ],
             distance: 80,
         },
@@ -1797,6 +2151,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "corporate",
                 "business",
                 "proprietary",
+                // French / Français
+                "confidentiel",
+                "confidentielle",
+                "exclusif",
+                "propriétaire",
             ],
             distance: 80,
         },
@@ -1810,6 +2169,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "sensitive",
                 "restricted",
                 "executive only",
+                // French / Français
+                "accès restreint",
+                "restreint",
+                "restreinte",
             ],
             distance: 80,
         },
@@ -1837,6 +2200,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "restricted access",
                 "limited distribution",
                 "authorized personnel",
+                // French / Français
+                "besoin de savoir",
+                "diffusion restreinte",
             ],
             distance: 80,
         },
@@ -1845,7 +2211,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Corporate Classification",
         "Eyes Only",
         ContextEntry {
-            keywords: &["eyes only", "recipient only", "personal", "addressee only"],
+            keywords: &[
+                "eyes only",
+                "recipient only",
+                "personal",
+                "addressee only",
+                // French / Français
+                "pour vos yeux seulement",
+            ],
             distance: 80,
         },
     ),
@@ -1858,6 +2231,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "trade secret",
                 "intellectual property",
                 "confidential business",
+                // French / Français
+                "exclusif",
+                "propriétaire",
+                "secret commercial",
+                "secret d'affaires",
             ],
             distance: 80,
         },
@@ -1872,6 +2250,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "hold until",
                 "not for release",
                 "publication date",
+                // French / Français
+                "sous embargo",
             ],
             distance: 80,
         },
@@ -1916,6 +2296,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "deliberative",
                 "not final",
                 "preliminary",
+                // French / Français
+                "brouillon",
+                "provisoire",
+                "ébauche",
             ],
             distance: 80,
         },
@@ -1930,6 +2314,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "preliminary",
                 "not final",
                 "review only",
+                // French / Français
+                "brouillon",
+                "provisoire",
+                "ébauche",
             ],
             distance: 80,
         },
@@ -1986,6 +2374,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "personally identifiable",
                 "personal information",
                 "sensitive data",
+                // French / Français
+                "données personnelles",
+                "informations personnelles",
+                "renseignements personnels",
             ],
             distance: 80,
         },
@@ -2000,6 +2392,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "health information",
                 "medical records",
                 "patient data",
+                // French / Français
+                "informations de santé",
+                "renseignements sur la santé",
             ],
             distance: 80,
         },
@@ -2013,6 +2408,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "health insurance portability",
                 "medical privacy",
                 "health data",
+                // French / Français
+                "confidentialité médicale",
             ],
             distance: 80,
         },
@@ -2027,6 +2424,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "data subject",
                 "data protection",
                 "eu regulation",
+                // French / Français
+                "données personnelles",
+                "données à caractère personnel",
+                "protection des données",
             ],
             distance: 80,
         },
@@ -2067,6 +2468,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "gramm-leach-bliley",
                 "financial privacy",
                 "consumer financial",
+                // French / Français
+                "confidentialité financière",
             ],
             distance: 80,
         },
@@ -2109,6 +2512,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "financial privacy",
                 "glba",
                 "consumer information",
+                // French / Français
+                "confidentialité financière",
             ],
             distance: 80,
         },
@@ -2241,7 +2646,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Messaging Service Secrets",
         "Mailgun API Key",
         ContextEntry {
-            keywords: &["mailgun", "email"],
+            keywords: &[
+                "mailgun",
+                "email",
+                // French / Français
+                "courriel",
+                "courrier électronique",
+            ],
             distance: 80,
         },
     ),
@@ -2250,7 +2661,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "North America - United States",
         "USA SSN",
         ContextEntry {
-            keywords: &["social security number", "ssn", "social security no"],
+            keywords: &[
+                "social security number",
+                "ssn",
+                "social security no",
+                // French / Français
+                "numéro d'assurance sociale",
+                "numéro de sécurité sociale",
+            ],
             distance: 50,
         },
     ),
@@ -2280,6 +2698,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "american passport",
                 "passport number",
                 "passport book",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -2296,7 +2717,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "North America - United States",
         "USA Routing Number",
         ContextEntry {
-            keywords: &["routing number", "aba routing", "routing transit"],
+            keywords: &[
+                "routing number",
+                "aba routing",
+                "routing transit",
+                // French / Français
+                "numero de transit",
+                "numéro de transit",
+            ],
             distance: 50,
         },
     ),
@@ -2309,6 +2737,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dea registration",
                 "dea no",
                 "drug enforcement",
+                // French / Français
+                "contrôle des drogues",
             ],
             distance: 50,
         },
@@ -2370,7 +2800,20 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "North America - United States",
         "US Phone Number",
         ContextEntry {
-            keywords: &["phone", "telephone", "tel", "cell", "mobile", "call", "fax"],
+            keywords: &[
+                "phone",
+                "telephone",
+                "tel",
+                "cell",
+                "mobile",
+                "call",
+                "fax",
+                // French / Français
+                "cellulaire",
+                "portable",
+                "tél",
+                "téléphone",
+            ],
             distance: 50,
         },
     ),
@@ -2385,6 +2828,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "alabama dl",
                 "alabama license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2400,6 +2845,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "alaska dl",
                 "alaska license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2415,6 +2862,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "arizona dl",
                 "arizona license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2430,6 +2879,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "arkansas dl",
                 "arkansas license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2445,6 +2896,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "california dl",
                 "california license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2460,6 +2913,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "colorado dl",
                 "colorado license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2475,6 +2930,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "connecticut dl",
                 "connecticut license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2490,6 +2947,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "delaware dl",
                 "delaware license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2505,6 +2964,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "dc dl",
                 "district of columbia license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2520,6 +2981,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "florida dl",
                 "florida license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2535,6 +2998,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "georgia dl",
                 "georgia license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2550,6 +3015,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "hawaii dl",
                 "hawaii license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2565,6 +3032,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "idaho dl",
                 "idaho license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2580,6 +3049,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "illinois dl",
                 "illinois license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2595,6 +3066,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "indiana dl",
                 "indiana license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2610,6 +3083,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "iowa dl",
                 "iowa license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2625,6 +3100,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "kansas dl",
                 "kansas license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2640,6 +3117,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "kentucky dl",
                 "kentucky license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2655,6 +3134,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "louisiana dl",
                 "louisiana license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2670,6 +3151,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "maine dl",
                 "maine license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2685,6 +3168,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "maryland dl",
                 "maryland license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2700,6 +3185,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "massachusetts dl",
                 "massachusetts license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2715,6 +3202,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "michigan dl",
                 "michigan license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2730,6 +3219,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "minnesota dl",
                 "minnesota license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2745,6 +3236,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "mississippi dl",
                 "mississippi license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2760,6 +3253,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "missouri dl",
                 "missouri license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2775,6 +3270,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "montana dl",
                 "montana license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2790,6 +3287,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "nebraska dl",
                 "nebraska license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2805,6 +3304,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "nevada dl",
                 "nevada license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2820,6 +3321,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "new hampshire dl",
                 "new hampshire license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2835,6 +3338,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "new jersey dl",
                 "new jersey license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2850,6 +3355,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "new mexico dl",
                 "new mexico license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2865,6 +3372,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "new york dl",
                 "new york license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2880,6 +3389,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "north carolina dl",
                 "north carolina license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2895,6 +3406,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "north dakota dl",
                 "north dakota license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2910,6 +3423,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "ohio dl",
                 "ohio license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2925,6 +3440,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "oklahoma dl",
                 "oklahoma license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2940,6 +3457,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "oregon dl",
                 "oregon license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2955,6 +3474,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "pennsylvania dl",
                 "pennsylvania license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2970,6 +3491,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "rhode island dl",
                 "rhode island license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -2985,6 +3508,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "south carolina dl",
                 "south carolina license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -3000,6 +3525,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "south dakota dl",
                 "south dakota license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -3015,6 +3542,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "tennessee dl",
                 "tennessee license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -3030,6 +3559,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "texas dl",
                 "texas license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -3045,6 +3576,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "utah dl",
                 "utah license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -3060,6 +3593,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "vermont dl",
                 "vermont license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -3075,6 +3610,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "virginia dl",
                 "virginia license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -3090,6 +3627,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "washington dl",
                 "washington license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -3105,6 +3644,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "west virginia dl",
                 "west virginia license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -3120,6 +3661,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "wisconsin dl",
                 "wisconsin license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -3135,6 +3678,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dl",
                 "wyoming dl",
                 "wyoming license",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -3154,6 +3699,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "licence number",
                 "license number",
                 "dl no",
+                // French / Français
+                "no de permis",
+                "numéro de permis",
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -3163,7 +3712,15 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "North America - Canada",
         "Canada SIN",
         ContextEntry {
-            keywords: &["social insurance number", "sin", "social insurance no"],
+            keywords: &[
+                "social insurance number",
+                "sin",
+                "social insurance no",
+                // French / Français
+                "nas",
+                "no d'assurance sociale",
+                "numéro d'assurance sociale",
+            ],
             distance: 50,
         },
     ),
@@ -3171,7 +3728,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "North America - Canada",
         "Canada BN",
         ContextEntry {
-            keywords: &["business number", "canada bn", "cra business"],
+            keywords: &[
+                "business number",
+                "canada bn",
+                "cra business",
+                // French / Français
+                "numéro d'entreprise",
+            ],
             distance: 50,
         },
     ),
@@ -3179,7 +3742,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "North America - Canada",
         "Canada Passport",
         ContextEntry {
-            keywords: &["canadian passport", "canada passport", "passport canada"],
+            keywords: &[
+                "canadian passport",
+                "canada passport",
+                "passport canada",
+                // French / Français
+                "passeport canadien",
+                "passeport du canada",
+            ],
             distance: 50,
         },
     ),
@@ -3201,6 +3771,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "permanent resident card",
                 "immigration",
                 "landed immigrant",
+                // French / Français
+                "carte de résident permanent",
+                "carte rp",
+                "résident permanent",
+                "résidente permanente",
             ],
             distance: 50,
         },
@@ -3618,7 +4193,15 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - United Kingdom",
         "UK Sort Code",
         ContextEntry {
-            keywords: &["sort code", "uk sort", "bank sort", "bank account"],
+            keywords: &[
+                "sort code",
+                "uk sort",
+                "bank sort",
+                "bank account",
+                // French / Français
+                "compte bancaire",
+                "compte de banque",
+            ],
             distance: 50,
         },
     ),
@@ -3634,7 +4217,18 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - United Kingdom",
         "UK Phone Number",
         ContextEntry {
-            keywords: &["phone", "telephone", "tel", "mobile", "uk phone"],
+            keywords: &[
+                "phone",
+                "telephone",
+                "tel",
+                "mobile",
+                "uk phone",
+                // French / Français
+                "cellulaire",
+                "portable",
+                "tél",
+                "téléphone",
+            ],
             distance: 50,
         },
     ),
@@ -3648,6 +4242,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dvla",
                 "uk driving",
                 "uk dl",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -3684,6 +4280,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "tax identification",
                 "tin",
                 "steuernummer",
+                // French / Français
+                "identification fiscale",
             ],
             distance: 50,
         },
@@ -3710,6 +4308,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "driving licence",
                 "german driving",
                 "fahrerlaubnis",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -3798,7 +4398,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Italy",
         "Italy SSN",
         ContextEntry {
-            keywords: &["italian ssn", "tessera sanitaria", "health card"],
+            keywords: &[
+                "italian ssn",
+                "tessera sanitaria",
+                "health card",
+                // French / Français
+                "carte d'assurance maladie",
+                "carte santé",
+            ],
             distance: 50,
         },
     ),
@@ -3915,6 +4522,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "nip",
                 "numer identyfikacji podatkowej",
                 "tax identification",
+                // French / Français
+                "identification fiscale",
             ],
             distance: 50,
         },
@@ -3931,7 +4540,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Poland",
         "Poland ID Card",
         ContextEntry {
-            keywords: &["dowod osobisty", "polish id card", "identity card"],
+            keywords: &[
+                "dowod osobisty",
+                "polish id card",
+                "identity card",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
+            ],
             distance: 50,
         },
     ),
@@ -3947,7 +4563,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Poland",
         "Poland DL",
         ContextEntry {
-            keywords: &["prawo jazdy", "polish driving", "driving licence"],
+            keywords: &[
+                "prawo jazdy",
+                "polish driving",
+                "driving licence",
+                // French / Français
+                "permis de conduire",
+            ],
             distance: 50,
         },
     ),
@@ -3977,7 +4599,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Sweden",
         "Sweden DL",
         ContextEntry {
-            keywords: &["korkort", "swedish driving", "driving licence"],
+            keywords: &[
+                "korkort",
+                "swedish driving",
+                "driving licence",
+                // French / Français
+                "permis de conduire",
+            ],
             distance: 50,
         },
     ),
@@ -3994,7 +4622,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Portugal",
         "Portugal NIF",
         ContextEntry {
-            keywords: &["nif", "contribuinte", "tax identification", "numero fiscal"],
+            keywords: &[
+                "nif",
+                "contribuinte",
+                "tax identification",
+                "numero fiscal",
+                // French / Français
+                "identification fiscale",
+            ],
             distance: 50,
         },
     ),
@@ -4139,7 +4774,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Austria",
         "Austria ID Card",
         ContextEntry {
-            keywords: &["personalausweis", "austrian id", "identity card"],
+            keywords: &[
+                "personalausweis",
+                "austrian id",
+                "identity card",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
+            ],
             distance: 50,
         },
     ),
@@ -4147,7 +4789,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Austria",
         "Austria DL",
         ContextEntry {
-            keywords: &["fuhrerschein", "austrian driving", "driving licence"],
+            keywords: &[
+                "fuhrerschein",
+                "austrian driving",
+                "driving licence",
+                // French / Français
+                "permis de conduire",
+            ],
             distance: 50,
         },
     ),
@@ -4160,6 +4808,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "austrian tax",
                 "tax number",
                 "abgabenkontonummer",
+                // French / Français
+                "numéro d'impôt",
+                "numéro fiscal",
             ],
             distance: 50,
         },
@@ -4234,7 +4885,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Ireland",
         "Ireland DL",
         ContextEntry {
-            keywords: &["irish driving", "driving licence", "ceadunas tiomana"],
+            keywords: &[
+                "irish driving",
+                "driving licence",
+                "ceadunas tiomana",
+                // French / Français
+                "permis de conduire",
+            ],
             distance: 50,
         },
     ),
@@ -4273,7 +4930,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Denmark",
         "Denmark DL",
         ContextEntry {
-            keywords: &["korekort", "danish driving", "driving licence"],
+            keywords: &[
+                "korekort",
+                "danish driving",
+                "driving licence",
+                // French / Français
+                "permis de conduire",
+            ],
             distance: 50,
         },
     ),
@@ -4304,7 +4967,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Finland",
         "Finland DL",
         ContextEntry {
-            keywords: &["ajokortti", "finnish driving", "driving licence"],
+            keywords: &[
+                "ajokortti",
+                "finnish driving",
+                "driving licence",
+                // French / Français
+                "permis de conduire",
+            ],
             distance: 50,
         },
     ),
@@ -4343,7 +5012,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Norway",
         "Norway DL",
         ContextEntry {
-            keywords: &["forerkort", "norwegian driving", "driving licence"],
+            keywords: &[
+                "forerkort",
+                "norwegian driving",
+                "driving licence",
+                // French / Français
+                "permis de conduire",
+            ],
             distance: 50,
         },
     ),
@@ -4368,7 +5043,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Czech Republic",
         "Czech DL",
         ContextEntry {
-            keywords: &["ridicsky prukaz", "czech driving", "driving licence"],
+            keywords: &[
+                "ridicsky prukaz",
+                "czech driving",
+                "driving licence",
+                // French / Français
+                "permis de conduire",
+            ],
             distance: 50,
         },
     ),
@@ -4406,7 +5087,15 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Hungary",
         "Hungary Tax Number",
         ContextEntry {
-            keywords: &["adoazonosito", "tax number", "hungarian tax", "ado szam"],
+            keywords: &[
+                "adoazonosito",
+                "tax number",
+                "hungarian tax",
+                "ado szam",
+                // French / Français
+                "numéro d'impôt",
+                "numéro fiscal",
+            ],
             distance: 50,
         },
     ),
@@ -4465,7 +5154,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Romania",
         "Romania DL",
         ContextEntry {
-            keywords: &["permis de conducere", "romanian driving", "driving licence"],
+            keywords: &[
+                "permis de conducere",
+                "romanian driving",
+                "driving licence",
+                // French / Français
+                "permis de conduire",
+            ],
             distance: 50,
         },
     ),
@@ -4479,6 +5174,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "arithmos forologikou mitroou",
                 "greek tax",
                 "tax number",
+                // French / Français
+                "numéro d'impôt",
+                "numéro fiscal",
             ],
             distance: 50,
         },
@@ -4504,6 +5202,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "greek id",
                 "deltio taftotitas",
                 "identity card",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -4520,7 +5221,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Greece",
         "Greece DL",
         ContextEntry {
-            keywords: &["adeia odigisis", "greek driving", "driving licence"],
+            keywords: &[
+                "adeia odigisis",
+                "greek driving",
+                "driving licence",
+                // French / Français
+                "permis de conduire",
+            ],
             distance: 50,
         },
     ),
@@ -4550,7 +5257,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Croatia",
         "Croatia ID Card",
         ContextEntry {
-            keywords: &["osobna iskaznica", "croatian id", "identity card"],
+            keywords: &[
+                "osobna iskaznica",
+                "croatian id",
+                "identity card",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
+            ],
             distance: 50,
         },
     ),
@@ -4558,7 +5272,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Croatia",
         "Croatia DL",
         ContextEntry {
-            keywords: &["vozacka dozvola", "croatian driving", "driving licence"],
+            keywords: &[
+                "vozacka dozvola",
+                "croatian driving",
+                "driving licence",
+                // French / Français
+                "permis de conduire",
+            ],
             distance: 50,
         },
     ),
@@ -4593,7 +5313,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Bulgaria",
         "Bulgaria ID Card",
         ContextEntry {
-            keywords: &["lichna karta", "bulgarian id", "identity card"],
+            keywords: &[
+                "lichna karta",
+                "bulgarian id",
+                "identity card",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
+            ],
             distance: 50,
         },
     ),
@@ -4626,7 +5353,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Slovakia",
         "Slovakia DL",
         ContextEntry {
-            keywords: &["vodicsky preukaz", "slovak driving", "driving licence"],
+            keywords: &[
+                "vodicsky preukaz",
+                "slovak driving",
+                "driving licence",
+                // French / Français
+                "permis de conduire",
+            ],
             distance: 50,
         },
     ),
@@ -4655,6 +5388,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "vairuotojo pazymejimas",
                 "lithuanian driving",
                 "driving licence",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -4680,7 +5415,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Latvia",
         "Latvia DL",
         ContextEntry {
-            keywords: &["vaditaja aplieciba", "latvian driving", "driving licence"],
+            keywords: &[
+                "vaditaja aplieciba",
+                "latvian driving",
+                "driving licence",
+                // French / Français
+                "permis de conduire",
+            ],
             distance: 50,
         },
     ),
@@ -4710,7 +5451,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Estonia",
         "Estonia DL",
         ContextEntry {
-            keywords: &["juhiluba", "estonian driving", "driving licence"],
+            keywords: &[
+                "juhiluba",
+                "estonian driving",
+                "driving licence",
+                // French / Français
+                "permis de conduire",
+            ],
             distance: 50,
         },
     ),
@@ -4732,7 +5479,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Slovenia",
         "Slovenia Tax Number",
         ContextEntry {
-            keywords: &["davcna stevilka", "slovenian tax", "tax number"],
+            keywords: &[
+                "davcna stevilka",
+                "slovenian tax",
+                "tax number",
+                // French / Français
+                "numéro d'impôt",
+                "numéro fiscal",
+            ],
             distance: 50,
         },
     ),
@@ -4752,6 +5506,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "voznisko dovoljenje",
                 "slovenian driving",
                 "driving licence",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -4795,7 +5551,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Malta",
         "Malta ID Card",
         ContextEntry {
-            keywords: &["maltese id", "identity card", "karta tal-identita"],
+            keywords: &[
+                "maltese id",
+                "identity card",
+                "karta tal-identita",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
+            ],
             distance: 50,
         },
     ),
@@ -4811,7 +5574,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Malta",
         "Malta TIN",
         ContextEntry {
-            keywords: &["maltese tax", "tin", "tax identification"],
+            keywords: &[
+                "maltese tax",
+                "tin",
+                "tax identification",
+                // French / Français
+                "identification fiscale",
+            ],
             distance: 50,
         },
     ),
@@ -4820,7 +5589,14 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Cyprus",
         "Cyprus ID Card",
         ContextEntry {
-            keywords: &["cypriot id", "identity card", "taftotita"],
+            keywords: &[
+                "cypriot id",
+                "identity card",
+                "taftotita",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
+            ],
             distance: 50,
         },
     ),
@@ -4836,7 +5612,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Europe - Cyprus",
         "Cyprus TIN",
         ContextEntry {
-            keywords: &["cypriot tax", "tin", "tax identification"],
+            keywords: &[
+                "cypriot tax",
+                "tin",
+                "tax identification",
+                // French / Français
+                "identification fiscale",
+            ],
             distance: 50,
         },
     ),
@@ -4929,6 +5711,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "passport number",
                 "passport no",
                 "travel document",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -4943,6 +5728,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "indian dl",
                 "driving license india",
                 "rto",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -4986,6 +5773,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "shenfenzheng",
                 "id card number",
                 "citizen id",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -4999,6 +5789,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "china passport",
                 "passport number",
                 "huzhao",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5013,6 +5806,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "identity card",
                 "hk id card",
                 "hong kong identity",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -5041,6 +5837,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "identity number",
                 "taiwan national",
                 "roc id",
+                // French / Français
+                "carte nationale d'identité",
+                "identité nationale",
+                "numéro d'identité",
             ],
             distance: 50,
         },
@@ -5069,6 +5869,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "japan passport",
                 "passport number",
                 "ryoken",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5083,6 +5886,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "unten menkyo",
                 "japan licence",
                 "japanese dl",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -5111,6 +5916,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "insurer number",
                 "hokensho",
                 "medical insurance",
+                // French / Français
+                "assurance maladie",
+                "assurance santé",
             ],
             distance: 50,
         },
@@ -5153,6 +5961,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "korea passport",
                 "passport number",
                 "yeogwon",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5167,6 +5978,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "korean dl",
                 "unjon myonho",
                 "korea licence",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -5182,6 +5995,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "identity card",
                 "singapore id",
                 "ic number",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -5196,6 +6012,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "foreign id",
                 "work permit",
                 "employment pass",
+                // French / Français
+                "permis de travail",
             ],
             distance: 50,
         },
@@ -5209,6 +6027,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "passport number",
                 "sg passport",
                 "travel document",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5223,6 +6044,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "singapore dl",
                 "singapore licence",
                 "traffic police",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -5252,6 +6075,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "medicare card",
                 "health insurance",
                 "bulk billing",
+                // French / Français
+                "assurance maladie",
+                "assurance santé",
             ],
             distance: 50,
         },
@@ -5265,6 +6091,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "australia passport",
                 "passport number",
                 "travel document",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5365,6 +6194,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "tax number",
                 "ird number",
                 "nz tax",
+                // French / Français
+                "numéro d'impôt",
+                "numéro fiscal",
             ],
             distance: 50,
         },
@@ -5378,6 +6210,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "nz passport",
                 "passport number",
                 "aotearoa passport",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5406,6 +6241,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "nz licence",
                 "nzta",
                 "waka kotahi",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -5421,6 +6258,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "philid",
                 "psn",
                 "philippine identification",
+                // French / Français
+                "carte nationale d'identité",
+                "identité nationale",
             ],
             distance: 50,
         },
@@ -5435,6 +6275,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "bir",
                 "bureau of internal revenue",
                 "taxpayer",
+                // French / Français
+                "contribuable",
+                "identification fiscale",
             ],
             distance: 50,
         },
@@ -5462,6 +6305,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "pin",
                 "philhealth number",
                 "medical insurance",
+                // French / Français
+                "assurance maladie",
+                "assurance santé",
             ],
             distance: 50,
         },
@@ -5475,6 +6321,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "philippines passport",
                 "passport number",
                 "dfa passport",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5504,6 +6353,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "bat prachakon",
                 "citizen id",
                 "identity card",
+                // French / Français
+                "carte d'identité",
+                "carte nationale d'identité",
+                "identité nationale",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -5517,6 +6371,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "thailand passport",
                 "passport number",
                 "nangsue doen thang",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5531,6 +6388,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "thai dl",
                 "bai kap khi",
                 "land transport",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -5545,6 +6404,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "revenue department",
                 "tin thailand",
                 "vat number",
+                // French / Français
+                "identifiant fiscal",
+                "numéro d'impôt",
+                "numéro fiscal",
             ],
             distance: 50,
         },
@@ -5560,6 +6423,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "identity card",
                 "kad pengenalan",
                 "nric malaysia",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -5573,6 +6439,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "malaysia passport",
                 "passport number",
                 "pasport",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5588,6 +6457,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "ktp",
                 "identity card",
                 "kartu tanda penduduk",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -5602,6 +6474,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "tax id",
                 "taxpayer number",
                 "pajak",
+                // French / Français
+                "identifiant fiscal",
+                "numéro fiscal",
             ],
             distance: 50,
         },
@@ -5615,6 +6490,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "indonesia passport",
                 "passport number",
                 "paspor",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5630,6 +6508,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "citizen id",
                 "can cuoc cong dan",
                 "identity card",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -5643,6 +6524,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "vietnam passport",
                 "passport number",
                 "ho chieu",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5651,7 +6535,17 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Asia-Pacific - Vietnam",
         "Vietnam Tax Code",
         ContextEntry {
-            keywords: &["tax code", "ma so thue", "mst", "tax id", "tax number"],
+            keywords: &[
+                "tax code",
+                "ma so thue",
+                "mst",
+                "tax id",
+                "tax number",
+                // French / Français
+                "identifiant fiscal",
+                "numéro d'impôt",
+                "numéro fiscal",
+            ],
             distance: 50,
         },
     ),
@@ -5666,6 +6560,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "nadra",
                 "national identity card",
                 "identity card",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -5692,6 +6589,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "pakistan passport",
                 "passport number",
                 "travel document",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5707,6 +6607,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "voter id",
                 "national identity",
                 "smart card bangladesh",
+                // French / Français
+                "carte nationale d'identité",
+                "identité nationale",
             ],
             distance: 50,
         },
@@ -5720,6 +6623,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "bangladesh passport",
                 "passport number",
                 "e-passport",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5734,6 +6640,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "nbr",
                 "national board of revenue",
                 "taxpayer",
+                // French / Français
+                "contribuable",
+                "identification fiscale",
             ],
             distance: 50,
         },
@@ -5749,6 +6658,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "identity card",
                 "sri lanka id",
                 "jatika handunumpat",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -5763,6 +6675,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "identity card",
                 "sri lanka id",
                 "new nic",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -5776,6 +6691,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "sri lanka passport",
                 "passport number",
                 "travel document",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5833,6 +6751,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "habilitacao",
                 "driving licence",
                 "carteira nacional",
+                // French / Français
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -5860,6 +6780,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "brazilian passport",
                 "brazil passport",
                 "passport number",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5902,6 +6825,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "argentinian passport",
                 "argentina passport",
                 "passport number",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5931,6 +6857,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dian",
                 "contribuyente",
                 "tax id",
+                // French / Français
+                "identifiant fiscal",
+                "numéro fiscal",
             ],
             distance: 50,
         },
@@ -5957,6 +6886,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "colombian passport",
                 "colombia passport",
                 "passport number",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -5985,6 +6917,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "chilean passport",
                 "chile passport",
                 "passport number",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6014,6 +6949,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "sunat",
                 "contribuyente",
                 "tax id",
+                // French / Français
+                "identifiant fiscal",
+                "numéro fiscal",
             ],
             distance: 50,
         },
@@ -6041,6 +6979,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "peruvian passport",
                 "peru passport",
                 "passport number",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6077,6 +7018,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "venezuelan passport",
                 "venezuela passport",
                 "passport number",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6106,6 +7050,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "sri",
                 "contribuyente",
                 "tax id",
+                // French / Français
+                "identifiant fiscal",
+                "numéro fiscal",
             ],
             distance: 50,
         },
@@ -6119,6 +7066,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "ecuadorian passport",
                 "ecuador passport",
                 "passport number",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6148,6 +7098,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "dgi",
                 "contribuyente",
                 "tax id",
+                // French / Français
+                "identifiant fiscal",
+                "numéro fiscal",
             ],
             distance: 50,
         },
@@ -6161,6 +7114,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "uruguayan passport",
                 "uruguay passport",
                 "passport number",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6203,6 +7159,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "paraguayan passport",
                 "paraguay passport",
                 "passport number",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6245,6 +7204,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "costa rican passport",
                 "costa rica passport",
                 "passport number",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6260,6 +7222,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "saudi id",
                 "huwiyya",
                 "ministry of interior",
+                // French / Français
+                "carte nationale d'identité",
+                "identité nationale",
             ],
             distance: 50,
         },
@@ -6273,6 +7238,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "saudi arabia passport",
                 "jawaz safar",
                 "passport number",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6288,6 +7256,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "uae id",
                 "identity card",
                 "federal authority",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -6315,6 +7286,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "emirati passport",
                 "passport number",
                 "passport",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6330,6 +7304,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "identity number",
                 "israeli id",
                 "zehut",
+                // French / Français
+                "numéro d'identité",
             ],
             distance: 50,
         },
@@ -6343,6 +7319,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "israel passport",
                 "darkon",
                 "passport number",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6358,6 +7337,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "resident permit",
                 "moi qatar",
                 "identity card",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -6371,6 +7353,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "qatari passport",
                 "passport number",
                 "jawaz",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6386,6 +7371,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "kuwait id",
                 "civil information",
                 "identity card",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -6399,6 +7387,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "kuwait passport",
                 "passport number",
                 "passport",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6414,6 +7405,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "bahrain id",
                 "personal number",
                 "identity card",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -6427,6 +7421,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "bahrain passport",
                 "passport number",
                 "passport",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6442,6 +7439,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "jordanian id",
                 "civil status",
                 "identity card",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -6455,6 +7455,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "jordan passport",
                 "passport number",
                 "passport",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6470,6 +7473,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "identity card",
                 "hawiyya",
                 "interior ministry",
+                // French / Français
+                "carte d'identité",
+                "carte nationale d'identité",
+                "identité nationale",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -6483,6 +7491,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "lebanon passport",
                 "passport number",
                 "general security",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6498,6 +7509,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "iraqi id",
                 "civil status",
                 "identity card",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -6511,6 +7525,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "iraq passport",
                 "passport number",
                 "passport",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6539,6 +7556,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "iran passport",
                 "passport number",
                 "gozarnameh",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6554,6 +7574,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "identity number",
                 "id number",
                 "home affairs",
+                // French / Français
+                "numéro d'identité",
             ],
             distance: 50,
         },
@@ -6567,6 +7589,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "sa passport",
                 "passport number",
                 "home affairs",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6581,6 +7606,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "south african dl",
                 "licence number",
                 "traffic department",
+                // French / Français
+                "no de permis",
+                "numéro de permis",
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -6596,6 +7625,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "nimc",
                 "national identity",
                 "identity number",
+                // French / Français
+                "numéro d'identité",
             ],
             distance: 50,
         },
@@ -6624,6 +7655,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "firs",
                 "tax id",
                 "joint tax board",
+                // French / Français
+                "identifiant fiscal",
+                "numéro fiscal",
             ],
             distance: 50,
         },
@@ -6652,6 +7686,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "frsc",
                 "licence number",
                 "ndl",
+                // French / Français
+                "no de permis",
+                "numéro de permis",
+                "permis de conduire",
             ],
             distance: 50,
         },
@@ -6665,6 +7703,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "nigeria passport",
                 "passport number",
                 "immigration",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6680,6 +7721,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "identity card",
                 "huduma namba",
                 "maisha namba",
+                // French / Français
+                "carte d'identité",
+                "carte nationale d'identité",
+                "identité nationale",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -6701,6 +7747,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "national hospital insurance",
                 "health insurance",
                 "nhif number",
+                // French / Français
+                "assurance maladie",
+                "assurance santé",
             ],
             distance: 50,
         },
@@ -6714,6 +7763,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "kenya passport",
                 "passport number",
                 "immigration",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6729,6 +7781,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "egyptian id",
                 "identity card",
                 "civil registry",
+                // French / Français
+                "carte d'identité",
+                "carte nationale d'identité",
+                "identité nationale",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -6743,6 +7800,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "maslahat al-darayeb",
                 "tax number",
                 "eta",
+                // French / Français
+                "identifiant fiscal",
+                "numéro d'impôt",
+                "numéro fiscal",
             ],
             distance: 50,
         },
@@ -6756,6 +7817,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "egypt passport",
                 "passport number",
                 "jawaz safar",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6771,6 +7835,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "national identification",
                 "identity card",
                 "ghana id",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -6779,7 +7846,18 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Africa - Ghana",
         "Ghana TIN",
         ContextEntry {
-            keywords: &["tin", "tax identification", "gra", "taxpayer", "tax number"],
+            keywords: &[
+                "tin",
+                "tax identification",
+                "gra",
+                "taxpayer",
+                "tax number",
+                // French / Français
+                "contribuable",
+                "identification fiscale",
+                "numéro d'impôt",
+                "numéro fiscal",
+            ],
             distance: 50,
         },
     ),
@@ -6793,6 +7871,11 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "health insurance",
                 "nhia",
                 "health card",
+                // French / Français
+                "assurance maladie",
+                "assurance santé",
+                "carte d'assurance maladie",
+                "carte santé",
             ],
             distance: 50,
         },
@@ -6806,6 +7889,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "ghana passport",
                 "passport number",
                 "immigration",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6821,6 +7907,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "ethiopian id",
                 "identity number",
                 "fayda id",
+                // French / Français
+                "carte nationale d'identité",
+                "identité nationale",
+                "numéro d'identité",
             ],
             distance: 50,
         },
@@ -6835,6 +7925,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "erca",
                 "ministry of revenue",
                 "tax number",
+                // French / Français
+                "identification fiscale",
+                "numéro d'impôt",
+                "numéro fiscal",
             ],
             distance: 50,
         },
@@ -6848,6 +7942,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "ethiopia passport",
                 "passport number",
                 "immigration",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6863,6 +7960,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "tanzanian id",
                 "nin",
                 "national identification",
+                // French / Français
+                "carte nationale d'identité",
+                "identité nationale",
             ],
             distance: 50,
         },
@@ -6877,6 +7977,10 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "tra",
                 "tanzania revenue",
                 "tax number",
+                // French / Français
+                "identification fiscale",
+                "numéro d'impôt",
+                "numéro fiscal",
             ],
             distance: 50,
         },
@@ -6890,6 +7994,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "tanzania passport",
                 "passport number",
                 "immigration",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6913,7 +8020,15 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Africa - Morocco",
         "Morocco Tax ID",
         ContextEntry {
-            keywords: &["identifiant fiscal", "if", "dgi", "tax id", "impots"],
+            keywords: &[
+                "identifiant fiscal",
+                "if",
+                "dgi",
+                "tax id",
+                "impots",
+                // French / Français
+                "numéro fiscal",
+            ],
             distance: 50,
         },
     ),
@@ -6926,6 +8041,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "morocco passport",
                 "passeport",
                 "passport number",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6941,6 +8059,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "carte identite",
                 "tunisian id",
                 "identity card",
+                // French / Français
+                "carte d'identité",
+                "pièce d'identité",
             ],
             distance: 50,
         },
@@ -6954,6 +8075,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "tunisia passport",
                 "passeport",
                 "passport number",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
@@ -6969,6 +8093,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "nira",
                 "national id",
                 "ugandan id",
+                // French / Français
+                "carte nationale d'identité",
+                "identité nationale",
             ],
             distance: 50,
         },
@@ -6982,6 +8109,9 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "uganda passport",
                 "passport number",
                 "immigration",
+                // French / Français
+                "no de passeport",
+                "numéro de passeport",
             ],
             distance: 50,
         },
