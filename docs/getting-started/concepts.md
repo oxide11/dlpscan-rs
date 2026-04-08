@@ -168,7 +168,7 @@ text has the correct internal structure.
 
 | Pattern | Validation | What it catches |
 |---|---|---|
-| Credit Cards | Luhn checksum (mod 10) | Random 16-digit numbers |
+| Credit Cards | Luhn checksum + BIN lookup (374k issuers) | Random 16-digit numbers; enriches with issuer/country |
 | SSN | Area code not 000/666/900+, group/serial not all-zero | Invalid SSN prefixes |
 | SWIFT/BIC | ISO 3166 country code at positions 5-6, 400-word English word filter | DECEMBER, SECURITY, PLATFORM |
 | CUSIP | Modified Luhn check digit (alphanumeric) | Random 9-character strings |
@@ -176,6 +176,33 @@ text has the correct internal structure.
 | Australia TFN | Weighted checksum (mod 11) | Random 8-9 digit numbers |
 
 Adding a new validator is a one-line addition to `validation::validate_match()`.
+
+### BIN Lookup (credit card enrichment)
+
+When the `bin-data` feature is enabled, credit card matches are enriched
+with **Bank Identification Number** metadata from a database of 374,788
+known card prefixes.
+
+The first 6 digits of any credit card identify the issuing bank:
+
+```
+4532015112830366
+^^^^^^
+453201 = Visa, issued in US, Credit card
+```
+
+After Luhn validation passes, the scanner looks up the BIN and adds:
+
+| Metadata field | Example | Description |
+|---|---|---|
+| `bin_brand` | `"Visa"` | Card network brand |
+| `bin_card_type` | `"Credit"` | Credit, Debit, or Charge Card |
+| `bin_country` | `"US"` | ISO 3166-1 alpha-2 country code |
+
+Known BINs receive a +0.05 confidence boost. Unknown BINs (not in the
+database) are still accepted — they could be newly issued prefixes.
+
+Enable with `cargo build --features bin-data` (adds ~3MB to the binary).
 
 ---
 

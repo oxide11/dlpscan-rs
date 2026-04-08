@@ -443,6 +443,7 @@ mod tests {
             confidence,
             span: (0, 14),
             context_required: false,
+            metadata: std::collections::HashMap::new(),
         }
     }
 

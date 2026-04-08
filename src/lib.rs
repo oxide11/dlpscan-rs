@@ -7,6 +7,7 @@ pub mod allowlist;
 pub mod api;
 pub mod audit;
 pub mod batch;
+pub mod bin_lookup;
 pub mod cache;
 pub mod compliance;
 pub mod config;

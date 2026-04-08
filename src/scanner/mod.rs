@@ -378,7 +378,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     matched_text
                 };
 
-                local_matches.push(Match::new(
+                let mut m = Match::new(
                     original_text.to_string(),
                     pat.category.to_string(),
                     pat.sub_category.to_string(),
@@ -386,7 +386,22 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     confidence,
                     (orig_start, orig_end),
                     ctx_required,
-                ));
+                );
+
+                // BIN enrichment for credit card matches
+                if pat.category == "Credit Card Numbers" {
+                    if let Some((brand, card_type, country)) =
+                        crate::validation::get_bin_info(matched_text)
+                    {
+                        m.metadata.insert("bin_brand".into(), brand);
+                        m.metadata.insert("bin_card_type".into(), card_type);
+                        m.metadata.insert("bin_country".into(), country);
+                        // Known BIN: small confidence boost
+                        m.confidence = (m.confidence + 0.05).min(1.0);
+                    }
+                }
+
+                local_matches.push(m);
             }
 
             local_matches

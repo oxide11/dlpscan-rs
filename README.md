@@ -4,7 +4,7 @@ High-performance DLP scanner written in Rust. Detects, redacts, and protects
 sensitive data with exceptional throughput.
 
 **560 patterns** across **126 categories** — full parity with the Python version.
-**18,000+ lines** of Rust across 37 modules. **352 tests** passing.
+**19,000+ lines** of Rust across 38 modules. **353 tests** passing.
 
 ## Performance
 
@@ -42,6 +42,8 @@ cargo run --release --bin benchmark
 | `data-formats` | No | Parquet, SQLite extraction via `parquet` + `arrow` + `rusqlite` |
 | `msg` | No | Outlook MSG extraction via `cfb` |
 | `barcode` | No | QR code and barcode decoding via `rxing` + `image` |
+| `bin-data` | No | BIN database (374k card prefixes) for issuer/country enrichment |
+| `tui` | No | Interactive TUI menu and live dashboard |
 | `async-support` | No | Async HTTP server and webhooks via `tokio` + `reqwest` |
 | `python` | No | Python bindings via `pyo3` |
 | `full` | No | All optional features |
@@ -157,6 +159,33 @@ block_unreadable = true  # also blocks .exe, .dll, .gpg, .kdbx, etc.
 
 Crypto certificates are blocked by default. See the [Security](#file-type-controls-1)
 section for details on symlink resolution and double-extension protection.
+
+### BIN lookup (credit card enrichment)
+
+With the `bin-data` feature, credit card findings are enriched with
+issuing bank metadata from a database of 374,788 Bank Identification
+Numbers:
+
+```bash
+cargo build --release --features bin-data
+```
+
+```json
+{
+  "category": "Credit Card Numbers",
+  "sub_category": "Visa",
+  "confidence": 0.95,
+  "metadata": {
+    "bin_brand": "Visa",
+    "bin_card_type": "Credit",
+    "bin_country": "US"
+  }
+}
+```
+
+Known BINs receive a +0.05 confidence boost. The lookup runs only on
+numbers that already passed regex + Luhn validation (O(log n) binary
+search, effectively free).
 
 ### Entropy-based secret detection
 
@@ -414,6 +443,8 @@ dlpscan is hardened for enterprise deployment in regulated environments
 - **Structural validators** -- SWIFT/BIC (ISO 3166 country code + 400-word
   false-positive filter), CUSIP/SEDOL (check digit), Australia TFN (weighted
   checksum), SSN (area code rules), Luhn (min 12 digits, same-digit rejection)
+- **BIN database** -- 374k card prefixes validate issuing bank, card type,
+  and country; enriches findings with metadata (feature: `bin-data`)
 - **Context gating** -- low-specificity patterns (Account Balance, Ticker
   Symbol, CUSIP, SEDOL, Teller ID) require nearby keywords to fire
 - **Corrupted file recovery** -- corrupted ZIP/DOCX falls back to raw byte
@@ -452,7 +483,7 @@ See [docs/enterprise/security.md](docs/enterprise/security.md) for full details.
 | [docs/getting-started/configuration.md](docs/getting-started/configuration.md) | Full configuration reference (config file, env vars, CLI, policies) |
 | [docs/getting-started/installation.md](docs/getting-started/installation.md) | Build from source, Docker, feature flags |
 | [docs/PATTERNS.md](docs/PATTERNS.md) | All 560 patterns with regex, specificity, and context flags |
-| [docs/KEYWORDS.md](docs/KEYWORDS.md) | All 560+ context keywords with proximity distances |
+| [docs/KEYWORDS.md](docs/KEYWORDS.md) | All 3,100+ context keywords (English + French) with proximity distances |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Performance analysis and optimization journey |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Version history |
 | [docs/api-reference.md](docs/api-reference.md) | Comprehensive API documentation |

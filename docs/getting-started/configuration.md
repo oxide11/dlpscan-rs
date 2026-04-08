@@ -235,6 +235,7 @@ dlpscan's capabilities depend on which features are compiled:
 | `data-formats` | No | Parquet, SQLite extraction |
 | `msg` | No | Outlook MSG extraction |
 | `barcode` | No | QR code and barcode decoding from images |
+| `bin-data` | No | BIN database (374k card prefixes) for issuer/country enrichment |
 | `tui` | No | Interactive TUI menu and live dashboard |
 | `async-support` | No | HTTP API server with async runtime |
 | `tls` | No | HTTPS support for API server |

@@ -143,6 +143,7 @@ mod tests {
             confidence: 0.9,
             span: (0, 4),
             context_required: false,
+            metadata: std::collections::HashMap::new(),
         }
     }
 

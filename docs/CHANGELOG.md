@@ -6,6 +6,16 @@ All notable changes to dlpscan will be documented in this file.
 
 ### New Features
 
+#### BIN Lookup for Credit Card Enrichment (feature: `bin-data`)
+- 374,788 Bank Identification Numbers embedded as compact binary (2.9MB)
+- O(log n) binary search lookup after regex + Luhn validation
+- Enriches credit card findings with issuer brand, card type, and country
+- Known BINs receive +0.05 confidence boost
+- Match.metadata extended with bin_brand, bin_card_type, bin_country
+- Coverage: Visa 99k, MasterCard 98k, Amex 20k, Discover 15k, JCB 9.5k,
+  UnionPay 14k, Diners 36k across 200+ countries
+- Zero overhead when feature disabled (stubs return None)
+
 #### French/French-Canadian Bilingual Keywords
 - 609 French keywords added across all major pattern categories
 - Coverage: credit cards, banking, contact, identity/PII, Canada SIN,

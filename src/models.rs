@@ -19,6 +19,9 @@ pub struct Match {
     pub span: (usize, usize),
     /// Whether this pattern requires context to be reliable.
     pub context_required: bool,
+    /// Optional metadata for enriched findings (e.g., BIN issuer, country).
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub metadata: std::collections::HashMap<String, String>,
 }
 
 impl Match {
@@ -40,7 +43,14 @@ impl Match {
             confidence,
             span,
             context_required,
+            metadata: std::collections::HashMap::new(),
         }
+    }
+
+    /// Add a metadata key-value pair.
+    pub fn with_metadata(mut self, key: &str, value: &str) -> Self {
+        self.metadata.insert(key.to_string(), value.to_string());
+        self
     }
 
     /// Return a redacted version of the matched text.
