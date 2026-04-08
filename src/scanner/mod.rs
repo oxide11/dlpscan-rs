@@ -80,6 +80,22 @@ impl Default for ScanConfig {
     }
 }
 
+impl std::fmt::Debug for ScanConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScanConfig")
+            .field("categories", &self.categories)
+            .field("require_context", &self.require_context)
+            .field("max_matches", &self.max_matches)
+            .field("deduplicate", &self.deduplicate)
+            .field("min_confidence", &self.min_confidence)
+            .field("baseline_only", &self.baseline_only)
+            .field("entropy_scan", &self.entropy_scan)
+            .field("edm", &self.edm.is_some())
+            .field("lsh", &self.lsh.is_some())
+            .finish()
+    }
+}
+
 /// Compiled regex cache: one Regex per pattern, compiled once at startup.
 struct CompiledPattern {
     regex: Regex,

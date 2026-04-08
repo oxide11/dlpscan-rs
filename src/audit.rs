@@ -24,6 +24,10 @@ pub const VALID_EVENT_TYPES: &[&str] = &[
     "REDACT",
     "REJECT",
     "FLAG",
+    "EDM_REGISTER",
+    "EDM_SCAN",
+    "LSH_REGISTER",
+    "LSH_QUERY",
 ];
 
 // ---------------------------------------------------------------------------

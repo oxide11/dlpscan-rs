@@ -298,7 +298,11 @@ impl ExactDataMatcher {
     }
 
     /// Save matcher state to JSON file.
+    /// Rejects symlink paths to prevent symlink race attacks.
     pub fn save(&self, path: &str) -> Result<(), String> {
+        if std::path::Path::new(path).is_symlink() {
+            return Err(format!("Refusing to write EDM state to symlink: {path}"));
+        }
         use base64::Engine;
         let data = serde_json::json!({
             "salt": base64::engine::general_purpose::STANDARD.encode(&self.salt),
@@ -334,9 +338,19 @@ impl ExactDataMatcher {
         Ok(())
     }
 
+    /// Maximum state file size (100 MB).
+    const MAX_STATE_FILE_SIZE: u64 = 100 * 1024 * 1024;
+
     /// Load matcher state from JSON file.
     pub fn load(path: &str) -> Result<Self, String> {
         use base64::Engine;
+        let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+        if meta.len() > Self::MAX_STATE_FILE_SIZE {
+            return Err(format!(
+                "EDM state file too large: {} bytes (max {})",
+                meta.len(), Self::MAX_STATE_FILE_SIZE
+            ));
+        }
         let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
         let data: serde_json::Value = serde_json::from_str(&content).map_err(|e| e.to_string())?;
 

@@ -151,10 +151,12 @@ pub struct AppState {
     pub custom_patterns: RwLock<Vec<PatternResponse>>,
     pub start_time: Instant,
     pub is_shutting_down: std::sync::atomic::AtomicBool,
-    /// Server-side API key hash-to-role mapping. If populated, roles are derived
-    /// from the authenticated key, not the client-supplied X-Role header.
-    /// Wrapped in RwLock to support runtime key rotation.
+    /// Server-side API key hash-to-role mapping.
     pub api_key_roles: RwLock<HashMap<[u8; 32], crate::rbac::Role>>,
+    /// Shared EDM engine for exact data matching (optional).
+    pub edm: RwLock<Option<std::sync::Arc<crate::edm::ExactDataMatcher>>>,
+    /// Shared LSH vault for document similarity (optional).
+    pub lsh: RwLock<Option<std::sync::Arc<crate::lsh::DocumentVault>>>,
 }
 
 /// Rotate the API key at runtime without restart.
@@ -555,6 +557,38 @@ fn build_guard(req: &ScanRequest) -> Result<InputGuard, String> {
     Ok(guard)
 }
 
+/// Load EDM state from DLPSCAN_EDM_STATE env var path if set.
+#[cfg(feature = "async-support")]
+fn load_edm_from_env() -> Option<std::sync::Arc<crate::edm::ExactDataMatcher>> {
+    let path = std::env::var("DLPSCAN_EDM_STATE").ok()?;
+    match crate::edm::ExactDataMatcher::load(&path) {
+        Ok(edm) => {
+            tracing::info!("Loaded EDM state from {path} ({} hashes)", edm.total_hashes());
+            Some(std::sync::Arc::new(edm))
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load EDM state from {path}: {e}");
+            None
+        }
+    }
+}
+
+/// Load LSH state from DLPSCAN_LSH_STATE env var path if set.
+#[cfg(feature = "async-support")]
+fn load_lsh_from_env() -> Option<std::sync::Arc<crate::lsh::DocumentVault>> {
+    let path = std::env::var("DLPSCAN_LSH_STATE").ok()?;
+    match crate::lsh::DocumentVault::load(&path) {
+        Ok(vault) => {
+            tracing::info!("Loaded LSH vault from {path} ({} documents)", vault.document_count());
+            Some(std::sync::Arc::new(vault))
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load LSH vault from {path}: {e}");
+            None
+        }
+    }
+}
+
 fn scan_result_to_response(result: &ScanResult) -> ScanResponse {
     ScanResponse {
         is_clean: result.is_clean,
@@ -628,6 +662,8 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
         start_time: Instant::now(),
         is_shutting_down: std::sync::atomic::AtomicBool::new(false),
         api_key_roles: RwLock::new(api_key_roles),
+        edm: RwLock::new(load_edm_from_env()),
+        lsh: RwLock::new(load_lsh_from_env()),
     });
 
     // Background task: evict expired vaults every 60 seconds
@@ -848,6 +884,11 @@ fn check_rbac(
         ("POST", "/v1/obfuscate") => Some(crate::rbac::Permission::Scan),
         ("GET", "/v1/patterns") => Some(crate::rbac::Permission::ManagePatterns),
         ("GET", "/metrics") => Some(crate::rbac::Permission::ViewStatus),
+        ("POST", "/v1/edm/register") => Some(crate::rbac::Permission::AdminAction),
+        ("GET", "/v1/edm/categories") => Some(crate::rbac::Permission::ViewStatus),
+        ("POST", "/v1/lsh/register") => Some(crate::rbac::Permission::AdminAction),
+        ("POST", "/v1/lsh/query") => Some(crate::rbac::Permission::Scan),
+        ("GET", "/v1/lsh/documents") => Some(crate::rbac::Permission::ViewStatus),
         _ => None,
     };
     if let Some(perm) = required_perm {
@@ -1045,6 +1086,124 @@ fn hyper_route_request(
                     (StatusCode::OK, r#"{"detail":"API key rotated"}"#.to_string())
                 }
                 Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+            }
+        }
+        // EDM: register values
+        ("POST", "/v1/edm/register") => {
+            if !crate::rbac::role_has_permission(role, crate::rbac::Permission::AdminAction) {
+                return (StatusCode::FORBIDDEN, r#"{"detail":"Admin role required"}"#.to_string());
+            }
+            #[derive(Deserialize)]
+            struct EdmRegisterReq { category: String, values: Vec<String> }
+            match serde_json::from_str::<EdmRegisterReq>(body) {
+                Ok(req) => {
+                    let refs: Vec<&str> = req.values.iter().map(|s| s.as_str()).collect();
+                    // Create or update the shared EDM engine
+                    let mut edm_guard = match state.edm.write() {
+                        Ok(g) => g,
+                        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, r#"{"detail":"EDM lock error"}"#.to_string()),
+                    };
+                    let edm = edm_guard.get_or_insert_with(|| {
+                        std::sync::Arc::new(crate::edm::ExactDataMatcher::new(None, None))
+                    });
+                    // Arc::make_mut clones if needed for shared ownership
+                    let edm_mut = std::sync::Arc::make_mut(edm);
+                    let count = edm_mut.register_values(&req.category, &refs);
+                    (StatusCode::OK, serde_json::json!({
+                        "category": req.category,
+                        "registered": req.values.len(),
+                        "total_hashes": count,
+                    }).to_string())
+                }
+                Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+            }
+        }
+        // EDM: list categories
+        ("GET", "/v1/edm/categories") => {
+            let edm_guard = state.edm.read().unwrap_or_else(|e| e.into_inner());
+            match edm_guard.as_ref() {
+                Some(edm) => {
+                    let cats = edm.categories();
+                    (StatusCode::OK, serde_json::json!({
+                        "categories": cats,
+                        "total_hashes": edm.total_hashes(),
+                    }).to_string())
+                }
+                None => (StatusCode::OK, r#"{"categories":[],"total_hashes":0}"#.to_string()),
+            }
+        }
+        // LSH: register document
+        ("POST", "/v1/lsh/register") => {
+            if !crate::rbac::role_has_permission(role, crate::rbac::Permission::AdminAction) {
+                return (StatusCode::FORBIDDEN, r#"{"detail":"Admin role required"}"#.to_string());
+            }
+            #[derive(Deserialize)]
+            struct LshRegisterReq {
+                doc_id: String,
+                text: String,
+                #[serde(default = "default_sensitivity")]
+                sensitivity: String,
+            }
+            fn default_sensitivity() -> String { "sensitive".to_string() }
+            match serde_json::from_str::<LshRegisterReq>(body) {
+                Ok(req) => {
+                    let mut lsh_guard = match state.lsh.write() {
+                        Ok(g) => g,
+                        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, r#"{"detail":"LSH lock error"}"#.to_string()),
+                    };
+                    let vault = lsh_guard.get_or_insert_with(|| {
+                        std::sync::Arc::new(crate::lsh::DocumentVault::default_vault())
+                    });
+                    let vault_mut = std::sync::Arc::make_mut(vault);
+                    vault_mut.register(&req.doc_id, &req.text, &req.sensitivity, None);
+                    (StatusCode::OK, serde_json::json!({
+                        "doc_id": req.doc_id,
+                        "document_count": vault_mut.document_count(),
+                    }).to_string())
+                }
+                Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+            }
+        }
+        // LSH: query similar documents
+        ("POST", "/v1/lsh/query") => {
+            #[derive(Deserialize)]
+            struct LshQueryReq {
+                text: String,
+                #[serde(default = "default_threshold")]
+                threshold: f64,
+            }
+            fn default_threshold() -> f64 { 0.8 }
+            match serde_json::from_str::<LshQueryReq>(body) {
+                Ok(req) => {
+                    let lsh_guard = state.lsh.read().unwrap_or_else(|e| e.into_inner());
+                    match lsh_guard.as_ref() {
+                        Some(vault) => {
+                            let matches = vault.query(&req.text, Some(req.threshold));
+                            let results: Vec<serde_json::Value> = matches.iter().map(|m| {
+                                serde_json::json!({
+                                    "doc_id": m.doc_id,
+                                    "similarity": (m.similarity * 10000.0).round() / 10000.0,
+                                    "sensitivity": m.sensitivity,
+                                })
+                            }).collect();
+                            (StatusCode::OK, serde_json::json!({"matches": results}).to_string())
+                        }
+                        None => (StatusCode::OK, r#"{"matches":[]}"#.to_string()),
+                    }
+                }
+                Err(_) => (StatusCode::UNPROCESSABLE_ENTITY, r#"{"detail":"Invalid request body"}"#.to_string()),
+            }
+        }
+        // LSH: list documents
+        ("GET", "/v1/lsh/documents") => {
+            let lsh_guard = state.lsh.read().unwrap_or_else(|e| e.into_inner());
+            match lsh_guard.as_ref() {
+                Some(vault) => {
+                    (StatusCode::OK, serde_json::json!({
+                        "document_count": vault.document_count(),
+                    }).to_string())
+                }
+                None => (StatusCode::OK, r#"{"document_count":0}"#.to_string()),
             }
         }
         _ => (StatusCode::NOT_FOUND, r#"{"detail":"Not found"}"#.to_string()),
