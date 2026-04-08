@@ -18,7 +18,7 @@ use dlpscan::pipeline::{self, Pipeline};
 use dlpscan::scanner;
 
 #[derive(Parser)]
-#[command(name = "dlpscan", version = "2.0.0")]
+#[command(name = "dlpscan", version = "2.1.0")]
 #[command(about = "High-performance DLP scanner — detect, redact, and protect sensitive data")]
 struct Cli {
     #[command(subcommand)]
@@ -95,6 +95,51 @@ enum Commands {
     Categories,
     /// List available presets
     Presets,
+    /// Interactive setup wizard — create or update .dlpscanrc config
+    Init,
+    /// Show or modify configuration
+    Config {
+        #[command(subcommand)]
+        action: Option<ConfigAction>,
+    },
+    /// Test a pattern against sample text
+    TestPattern {
+        /// Regex pattern to test
+        pattern: Option<String>,
+
+        /// Sample text to test against (reads from stdin if omitted)
+        #[arg(long)]
+        text: Option<String>,
+    },
+    /// Show scanner info: version, patterns, features, config
+    Info,
+}
+
+#[derive(Subcommand, Clone)]
+enum ConfigAction {
+    /// Show current configuration
+    Show,
+    /// Set a configuration value
+    Set {
+        /// Key (e.g., min_confidence, require_context, blocked_extensions)
+        key: String,
+        /// Value
+        value: String,
+    },
+    /// Reset configuration to defaults
+    Reset,
+    /// Show blocked file extensions
+    Blocked,
+    /// Add a blocked extension
+    Block {
+        /// Extension to block (e.g., "p8")
+        ext: String,
+    },
+    /// Remove a blocked extension
+    Unblock {
+        /// Extension to unblock
+        ext: String,
+    },
 }
 
 #[derive(Clone, ValueEnum)]
@@ -400,5 +445,395 @@ fn main() {
             println!("  healthcare    Medical/insurance data");
             println!("  contact-info  Email, phone, addresses");
         }
+
+        // ---------------------------------------------------------------
+        // dlpscan init — Interactive setup wizard
+        // ---------------------------------------------------------------
+        Commands::Init => {
+            run_init_wizard();
+        }
+
+        // ---------------------------------------------------------------
+        // dlpscan config — Show/set configuration
+        // ---------------------------------------------------------------
+        Commands::Config { action } => {
+            let config_path = find_or_default_config();
+            match action {
+                Some(ConfigAction::Show) | None => {
+                    show_config(&config_path);
+                }
+                Some(ConfigAction::Set { key, value }) => {
+                    set_config_value(&config_path, &key, &value);
+                }
+                Some(ConfigAction::Reset) => {
+                    reset_config(&config_path);
+                }
+                Some(ConfigAction::Blocked) => {
+                    let config = load_config(&config_path);
+                    println!("Blocked extensions ({}):", config.blocked_extensions.len());
+                    for ext in &config.blocked_extensions {
+                        println!("  .{ext}");
+                    }
+                    println!("\nBlock unreadable: {}", config.block_unreadable);
+                }
+                Some(ConfigAction::Block { ext }) => {
+                    let mut config = load_config(&config_path);
+                    let ext = ext.trim_start_matches('.').to_lowercase();
+                    if !config.blocked_extensions.contains(&ext) {
+                        config.blocked_extensions.push(ext.clone());
+                        save_config(&config_path, &config);
+                        println!("Blocked .{ext}");
+                    } else {
+                        println!(".{ext} is already blocked");
+                    }
+                }
+                Some(ConfigAction::Unblock { ext }) => {
+                    let mut config = load_config(&config_path);
+                    let ext = ext.trim_start_matches('.').to_lowercase();
+                    let before = config.blocked_extensions.len();
+                    config.blocked_extensions.retain(|e| e != &ext);
+                    if config.blocked_extensions.len() < before {
+                        save_config(&config_path, &config);
+                        println!("Unblocked .{ext}");
+                    } else {
+                        println!(".{ext} was not blocked");
+                    }
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // dlpscan test-pattern — Test a regex pattern against text
+        // ---------------------------------------------------------------
+        Commands::TestPattern { pattern, text } => {
+            run_test_pattern(pattern, text);
+        }
+
+        // ---------------------------------------------------------------
+        // dlpscan info — Show scanner info
+        // ---------------------------------------------------------------
+        Commands::Info => {
+            println!("dlpscan v{}", env!("CARGO_PKG_VERSION"));
+            println!();
+            println!("Patterns:    {} across {} categories",
+                dlpscan::patterns::PATTERNS.len(),
+                dlpscan::patterns::categories().len()
+            );
+            println!("Features:    {}", built_features().join(", "));
+            println!();
+            let config_path = find_or_default_config();
+            if std::path::Path::new(&config_path).exists() {
+                println!("Config:      {config_path}");
+                let config = load_config(&config_path);
+                println!("  min_confidence:    {:.2}", config.min_confidence);
+                println!("  require_context:   {}", config.require_context);
+                println!("  block_unreadable:  {}", config.block_unreadable);
+                println!("  blocked_extensions: {} types", config.blocked_extensions.len());
+            } else {
+                println!("Config:      (none — run `dlpscan init` to create)");
+            }
+            println!();
+            let exts = dlpscan::extractors::supported_extensions();
+            println!("Supported formats: {} file types", exts.len());
+        }
     }
+}
+
+// ===========================================================================
+// Interactive setup wizard
+// ===========================================================================
+
+fn run_init_wizard() {
+    println!("dlpscan setup wizard");
+    println!("====================");
+    println!();
+
+    // 1. Choose config location
+    let config_path = prompt(
+        "Config file path",
+        ".dlpscanrc",
+    );
+
+    if std::path::Path::new(&config_path).exists() {
+        let overwrite = prompt("Config already exists. Overwrite? (y/n)", "n");
+        if overwrite.to_lowercase() != "y" {
+            println!("Aborted.");
+            return;
+        }
+    }
+
+    // 2. Minimum confidence
+    let min_conf = prompt("Minimum confidence threshold (0.0-1.0)", "0.5");
+    let min_confidence: f64 = min_conf.parse().unwrap_or(0.5);
+
+    // 3. Require context
+    let req_ctx = prompt("Require context keywords for all matches? (y/n)", "n");
+    let require_context = req_ctx.to_lowercase() == "y";
+
+    // 4. Block unreadable
+    let block_unread = prompt(
+        "Block unreadable files (executables, encrypted, media)? (y/n)",
+        "n",
+    );
+    let block_unreadable = block_unread.to_lowercase() == "y";
+
+    // 5. Presets
+    println!();
+    println!("Available presets:");
+    println!("  1. pci-dss       Credit card & banking data");
+    println!("  2. pii           Personal identifiable information");
+    println!("  3. credentials   API keys, tokens, secrets");
+    println!("  4. healthcare    Medical/insurance data");
+    println!("  5. financial     All financial data");
+    println!("  6. contact-info  Email, phone, addresses");
+    println!("  7. all           All of the above");
+    let preset_choice = prompt(
+        "Select presets (comma-separated numbers, e.g., 1,2,3)",
+        "7",
+    );
+    let categories = parse_preset_choices(&preset_choice);
+
+    // 6. Output format
+    let format = prompt("Default output format (text/json/csv)", "text");
+
+    // Build config
+    let config = dlpscan::config::Config {
+        min_confidence,
+        require_context,
+        deduplicate: true,
+        max_matches: 50_000,
+        format,
+        categories: if categories.is_empty() {
+            None
+        } else {
+            Some(categories)
+        },
+        allowlist: vec![],
+        ignore_patterns: vec![],
+        ignore_paths: vec![],
+        context_backend: "regex".to_string(),
+        blocked_extensions: dlpscan::extractors::DEFAULT_BLOCKED_EXTENSIONS
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        block_unreadable,
+    };
+
+    save_config(&config_path, &config);
+
+    println!();
+    println!("Configuration saved to {config_path}");
+    println!();
+    println!("Next steps:");
+    println!("  dlpscan scan <file>              Scan a file");
+    println!("  dlpscan scan-dir <directory>     Scan a directory");
+    println!("  dlpscan config show              View configuration");
+    println!("  dlpscan config set <key> <value> Modify a setting");
+    println!("  dlpscan test-pattern             Test a regex pattern");
+    println!("  dlpscan info                     Show scanner info");
+}
+
+fn prompt(label: &str, default: &str) -> String {
+    use std::io::{self, Write};
+    print!("{label} [{default}]: ");
+    io::stdout().flush().unwrap();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    let input = input.trim();
+    if input.is_empty() {
+        default.to_string()
+    } else {
+        input.to_string()
+    }
+}
+
+fn parse_preset_choices(input: &str) -> Vec<String> {
+    let mut categories = Vec::new();
+    for part in input.split(',') {
+        match part.trim() {
+            "1" => categories.push("pci-dss".into()),
+            "2" => categories.push("pii".into()),
+            "3" => categories.push("credentials".into()),
+            "4" => categories.push("healthcare".into()),
+            "5" => categories.push("financial".into()),
+            "6" => categories.push("contact-info".into()),
+            "7" | "all" => return vec![], // None = all categories
+            _ => {}
+        }
+    }
+    categories
+}
+
+// ===========================================================================
+// Config management
+// ===========================================================================
+
+fn find_or_default_config() -> String {
+    for name in &[".dlpscanrc", "dlpscan.json"] {
+        if std::path::Path::new(name).exists() {
+            return name.to_string();
+        }
+    }
+    ".dlpscanrc".to_string()
+}
+
+fn load_config(path: &str) -> dlpscan::config::Config {
+    if let Ok(content) = std::fs::read_to_string(path) {
+        serde_json::from_str(&content).unwrap_or_default()
+    } else {
+        dlpscan::config::Config::default()
+    }
+}
+
+fn save_config(path: &str, config: &dlpscan::config::Config) {
+    let json = serde_json::to_string_pretty(config).unwrap_or_default();
+    if let Err(e) = std::fs::write(path, json) {
+        eprintln!("Error writing config: {e}");
+        process::exit(1);
+    }
+}
+
+fn show_config(path: &str) {
+    let config = load_config(path);
+    println!("Config: {path}");
+    println!("{}", serde_json::to_string_pretty(&config).unwrap_or_default());
+}
+
+fn set_config_value(path: &str, key: &str, value: &str) {
+    let mut config = load_config(path);
+    match key {
+        "min_confidence" => {
+            config.min_confidence = value.parse().unwrap_or_else(|_| {
+                eprintln!("Invalid float: {value}");
+                process::exit(1);
+            });
+        }
+        "require_context" => {
+            config.require_context = value == "true" || value == "1";
+        }
+        "deduplicate" => {
+            config.deduplicate = value == "true" || value == "1";
+        }
+        "max_matches" => {
+            config.max_matches = value.parse().unwrap_or(50_000);
+        }
+        "format" => {
+            config.format = value.to_string();
+        }
+        "block_unreadable" => {
+            config.block_unreadable = value == "true" || value == "1";
+        }
+        "context_backend" => {
+            config.context_backend = value.to_string();
+        }
+        _ => {
+            eprintln!("Unknown config key: {key}");
+            eprintln!("Valid keys: min_confidence, require_context, deduplicate, max_matches, format, block_unreadable, context_backend");
+            process::exit(1);
+        }
+    }
+    save_config(path, &config);
+    println!("Set {key} = {value}");
+}
+
+fn reset_config(path: &str) {
+    let config = dlpscan::config::Config::default();
+    save_config(path, &config);
+    println!("Config reset to defaults: {path}");
+}
+
+// ===========================================================================
+// Test pattern
+// ===========================================================================
+
+fn run_test_pattern(pattern: Option<String>, text: Option<String>) {
+    let pattern = pattern.unwrap_or_else(|| {
+        prompt("Regex pattern", r"\b\d{3}-\d{2}-\d{4}\b")
+    });
+
+    // Validate regex
+    let re = match regex::Regex::new(&pattern) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Invalid regex: {e}");
+            process::exit(1);
+        }
+    };
+
+    let text = text.unwrap_or_else(|| {
+        prompt(
+            "Sample text",
+            "SSN: 123-45-6789, card: 4532015112830366",
+        )
+    });
+
+    println!();
+    println!("Pattern: {pattern}");
+    println!("Text:    {text}");
+    println!();
+
+    let matches: Vec<_> = re.find_iter(&text).collect();
+    if matches.is_empty() {
+        println!("No matches found.");
+    } else {
+        println!("Matches ({}):", matches.len());
+        for m in &matches {
+            println!(
+                "  [{}-{}] \"{}\"",
+                m.start(),
+                m.end(),
+                m.as_str()
+            );
+        }
+    }
+
+    // Also run through the full scanner for comparison
+    println!();
+    println!("--- Full scanner results ---");
+    match scanner::scan_text(&text) {
+        Ok(results) => {
+            if results.is_empty() {
+                println!("No DLP findings.");
+            } else {
+                for m in &results {
+                    println!(
+                        "  [{:.0}%] {} / {} — \"{}\"{}",
+                        m.confidence * 100.0,
+                        m.category,
+                        m.sub_category,
+                        m.redacted_text(),
+                        if m.has_context { " [context]" } else { "" }
+                    );
+                }
+            }
+        }
+        Err(e) => eprintln!("Scanner error: {e}"),
+    }
+}
+
+// ===========================================================================
+// Helpers
+// ===========================================================================
+
+fn built_features() -> Vec<&'static str> {
+    let mut features = vec!["core"];
+    #[cfg(feature = "metrics")]
+    features.push("metrics");
+    #[cfg(feature = "pdf")]
+    features.push("pdf");
+    #[cfg(feature = "office")]
+    features.push("office");
+    #[cfg(feature = "archives")]
+    features.push("archives");
+    #[cfg(feature = "data-formats")]
+    features.push("data-formats");
+    #[cfg(feature = "msg")]
+    features.push("msg");
+    #[cfg(feature = "barcode")]
+    features.push("barcode");
+    #[cfg(feature = "async-support")]
+    features.push("async-support");
+    #[cfg(feature = "tls")]
+    features.push("tls");
+    features
 }
