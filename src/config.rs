@@ -44,6 +44,10 @@ pub struct Config {
     /// (GPG, KeePass, VeraCrypt). Default: false.
     #[serde(default)]
     pub block_unreadable: bool,
+    /// Enable inline entropy analysis to detect high-entropy tokens
+    /// (random API keys, secrets without known prefixes). Default: false.
+    #[serde(default)]
+    pub entropy_scan: bool,
 }
 
 fn default_true() -> bool {
@@ -80,6 +84,7 @@ impl Default for Config {
             context_backend: "regex".to_string(),
             blocked_extensions: default_blocked_extensions(),
             block_unreadable: false,
+            entropy_scan: false,
         }
     }
 }

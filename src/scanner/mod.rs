@@ -40,6 +40,9 @@ pub struct ScanConfig {
     pub min_confidence: f64,
     /// Only run baseline (always-run) patterns — skip context-gated patterns entirely.
     pub baseline_only: bool,
+    /// Enable inline entropy analysis to detect high-entropy secrets
+    /// that don't match any regex pattern (e.g., random API keys).
+    pub entropy_scan: bool,
 }
 
 impl Default for ScanConfig {
@@ -51,6 +54,7 @@ impl Default for ScanConfig {
             deduplicate: true,
             min_confidence: 0.0,
             baseline_only: false,
+            entropy_scan: false,
         }
     }
 }
@@ -409,7 +413,162 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
         deduplicate_overlapping(&mut matches);
     }
 
+    // Entropy-based secret detection (optional)
+    if config.entropy_scan && matches.len() < config.max_matches {
+        let entropy_matches = scan_high_entropy_tokens(text, &normalized, &offset_map, config);
+        for em in entropy_matches {
+            if matches.len() >= config.max_matches {
+                break;
+            }
+            // Skip if already covered by a regex match at the same span
+            let dominated = matches.iter().any(|m| {
+                m.span.0 <= em.span.0 && m.span.1 >= em.span.1
+            });
+            if !dominated {
+                matches.push(em);
+            }
+        }
+    }
+
     Ok(matches)
+}
+
+// ---------------------------------------------------------------------------
+// Inline entropy-based secret detection
+// ---------------------------------------------------------------------------
+
+/// Minimum token length to consider for entropy analysis.
+const ENTROPY_MIN_TOKEN_LEN: usize = 16;
+
+/// Maximum token length (longer tokens are likely not secrets).
+const ENTROPY_MAX_TOKEN_LEN: usize = 256;
+
+/// Shannon entropy threshold for flagging a token as a potential secret.
+/// Base64/hex-encoded random data typically has entropy >= 4.5 bits/char.
+const ENTROPY_THRESHOLD: f64 = 4.5;
+
+/// Scan for high-entropy tokens that may be secrets not caught by regex patterns.
+///
+/// Tokenizes the text by whitespace and common delimiters, computes Shannon
+/// entropy of each token, and reports those exceeding the threshold as
+/// potential secrets.
+fn scan_high_entropy_tokens(
+    original_text: &str,
+    normalized: &str,
+    offset_map: &[usize],
+    config: &ScanConfig,
+) -> Vec<Match> {
+    let mut results = Vec::new();
+
+    // Tokenize by whitespace and common delimiters
+    let delimiters = |c: char| -> bool {
+        c.is_whitespace() || c == ',' || c == ';' || c == '\'' || c == '"'
+            || c == '(' || c == ')' || c == '[' || c == ']'
+            || c == '{' || c == '}'
+    };
+
+    let mut pos = 0;
+    for token in normalized.split(delimiters) {
+        // Track position in normalized text
+        let norm_start = match normalized[pos..].find(token) {
+            Some(offset) => pos + offset,
+            None => {
+                pos += 1;
+                continue;
+            }
+        };
+        let norm_end = norm_start + token.len();
+        pos = norm_end;
+
+        // Filter by length
+        if token.len() < ENTROPY_MIN_TOKEN_LEN || token.len() > ENTROPY_MAX_TOKEN_LEN {
+            continue;
+        }
+
+        // Skip tokens that are all digits (likely IDs, not secrets)
+        if token.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '.') {
+            continue;
+        }
+
+        // Skip tokens that are common words (all lowercase alpha, no mixed case/digits)
+        if token.chars().all(|c| c.is_ascii_lowercase()) {
+            continue;
+        }
+
+        // Compute Shannon entropy per character
+        let entropy = char_entropy(token);
+        if entropy < ENTROPY_THRESHOLD {
+            continue;
+        }
+
+        // Check minimum confidence
+        let confidence = entropy_to_confidence(entropy);
+        if confidence < config.min_confidence {
+            continue;
+        }
+
+        // Map back to original text position
+        let (orig_start, orig_end) = if !offset_map.is_empty() {
+            let os = if norm_start < offset_map.len() {
+                offset_map[norm_start]
+            } else {
+                continue;
+            };
+            let oe = if norm_end > 0 && norm_end <= offset_map.len() {
+                offset_map[norm_end - 1] + 1
+            } else {
+                original_text.len()
+            };
+            (os, oe)
+        } else {
+            (norm_start, norm_end)
+        };
+
+        let matched_text = if orig_start < original_text.len() && orig_end <= original_text.len()
+            && original_text.is_char_boundary(orig_start) && original_text.is_char_boundary(orig_end)
+        {
+            &original_text[orig_start..orig_end]
+        } else {
+            token
+        };
+
+        results.push(Match::new(
+            matched_text.to_string(),
+            "High Entropy".to_string(),
+            "Potential Secret".to_string(),
+            false,
+            confidence,
+            (orig_start, orig_end),
+            false,
+        ));
+    }
+
+    results
+}
+
+/// Compute Shannon entropy per character of a string (bits per char).
+fn char_entropy(s: &str) -> f64 {
+    if s.is_empty() {
+        return 0.0;
+    }
+    let mut freq = std::collections::HashMap::new();
+    for c in s.chars() {
+        *freq.entry(c).or_insert(0u64) += 1;
+    }
+    let len = s.chars().count() as f64;
+    let mut entropy = 0.0;
+    for &count in freq.values() {
+        let p = count as f64 / len;
+        entropy -= p * p.log2();
+    }
+    entropy
+}
+
+/// Convert entropy score to a confidence value (0.0-1.0).
+fn entropy_to_confidence(entropy: f64) -> f64 {
+    // Map entropy 4.5-6.0 to confidence 0.40-0.90
+    let clamped = entropy.clamp(4.5, 6.0);
+    0.40 + (clamped - 4.5) / (6.0 - 4.5) * 0.50
 }
 
 #[cfg(test)]
@@ -450,5 +609,68 @@ mod tests {
         let result =
             scan_text_with_config("Email: test@example.com SSN: 123-45-6789", &config).unwrap();
         assert!(result.iter().all(|m| m.category == "Contact Information"));
+    }
+
+    #[test]
+    fn test_char_entropy_uniform() {
+        // "aaaa" has zero entropy
+        assert!(char_entropy("aaaaaaaaaaaaaaaa") < 0.01);
+    }
+
+    #[test]
+    fn test_char_entropy_high() {
+        // Random-looking hex string should have high entropy
+        assert!(char_entropy("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6") > 3.5);
+    }
+
+    #[test]
+    fn test_entropy_to_confidence_range() {
+        assert!(entropy_to_confidence(4.5) >= 0.39);
+        assert!(entropy_to_confidence(6.0) >= 0.89);
+        assert!(entropy_to_confidence(3.0) >= 0.39); // clamped
+    }
+
+    #[test]
+    fn test_entropy_scan_detects_random_secret() {
+        let config = ScanConfig {
+            entropy_scan: true,
+            min_confidence: 0.0,
+            ..Default::default()
+        };
+        // This looks like a random API key — high entropy, no regex match
+        let text = "auth_token=xK9mPqR3vL7nW2jF8hYcT5bA0dGiEuOs";
+        let result = scan_text_with_config(text, &config).unwrap();
+        assert!(
+            result.iter().any(|m| m.category == "High Entropy"),
+            "Entropy scan should detect random-looking token: {:?}",
+            result.iter().map(|m| (&m.category, &m.sub_category)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_entropy_scan_ignores_normal_text() {
+        let config = ScanConfig {
+            entropy_scan: true,
+            min_confidence: 0.0,
+            ..Default::default()
+        };
+        let text = "The quick brown fox jumps over the lazy dog near the river";
+        let result = scan_text_with_config(text, &config).unwrap();
+        assert!(
+            !result.iter().any(|m| m.category == "High Entropy"),
+            "Normal English text should NOT trigger entropy detection"
+        );
+    }
+
+    #[test]
+    fn test_entropy_scan_off_by_default() {
+        let config = ScanConfig::default();
+        assert!(!config.entropy_scan, "Entropy scan should be off by default");
+        let text = "secret=xK9mPqR3vL7nW2jF8hYcT5bA0dGiEuOs";
+        let result = scan_text_with_config(text, &config).unwrap();
+        assert!(
+            !result.iter().any(|m| m.category == "High Entropy"),
+            "Entropy should not fire when disabled"
+        );
     }
 }
