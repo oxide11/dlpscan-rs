@@ -113,6 +113,16 @@ enum Commands {
     },
     /// Show scanner info: version, patterns, features, config
     Info,
+    /// Exact Data Match — register and scan for known sensitive values
+    Edm {
+        #[command(subcommand)]
+        action: EdmAction,
+    },
+    /// Document Similarity — register and query for similar documents
+    Lsh {
+        #[command(subcommand)]
+        action: LshAction,
+    },
     /// Interactive TUI menu (requires tui feature)
     #[cfg(feature = "tui")]
     Tui,
@@ -145,6 +155,71 @@ enum ConfigAction {
     Unblock {
         /// Extension to unblock
         ext: String,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+enum EdmAction {
+    /// Register sensitive values for exact matching
+    Register {
+        /// Category name (e.g., "ssn", "account_numbers")
+        category: String,
+        /// Values to register (or --file to load from file)
+        values: Vec<String>,
+        /// Load values from file (one per line)
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// EDM state file path
+        #[arg(long, default_value = ".dlpscan-edm.json")]
+        state: String,
+    },
+    /// Scan text or file against registered EDM values
+    Scan {
+        /// Text to scan (reads from stdin if omitted)
+        text: Option<String>,
+        /// EDM state file path
+        #[arg(long, default_value = ".dlpscan-edm.json")]
+        state: String,
+    },
+    /// List registered categories and hash counts
+    List {
+        /// EDM state file path
+        #[arg(long, default_value = ".dlpscan-edm.json")]
+        state: String,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+enum LshAction {
+    /// Register a document for similarity matching
+    Register {
+        /// Unique document identifier
+        doc_id: String,
+        /// File to register
+        file: PathBuf,
+        /// Sensitivity level (e.g., "confidential", "sensitive")
+        #[arg(long, default_value = "sensitive")]
+        sensitivity: String,
+        /// LSH state file path
+        #[arg(long, default_value = ".dlpscan-lsh.json")]
+        state: String,
+    },
+    /// Query for documents similar to input
+    Query {
+        /// File to check for similarity
+        file: PathBuf,
+        /// Similarity threshold (0.0-1.0)
+        #[arg(long, default_value = "0.8")]
+        threshold: f64,
+        /// LSH state file path
+        #[arg(long, default_value = ".dlpscan-lsh.json")]
+        state: String,
+    },
+    /// List registered documents
+    List {
+        /// LSH state file path
+        #[arg(long, default_value = ".dlpscan-lsh.json")]
+        state: String,
     },
 }
 
@@ -513,6 +588,165 @@ fn main() {
         // ---------------------------------------------------------------
         Commands::TestPattern { pattern, text } => {
             run_test_pattern(pattern, text);
+        }
+
+        // ---------------------------------------------------------------
+        // dlpscan edm — Exact Data Match
+        // ---------------------------------------------------------------
+        Commands::Edm { action } => {
+            match action {
+                EdmAction::Register { category, values, file, state } => {
+                    let mut edm = if std::path::Path::new(&state).exists() {
+                        dlpscan::edm::ExactDataMatcher::load(&state).unwrap_or_else(|_| {
+                            dlpscan::edm::ExactDataMatcher::new(None, None)
+                        })
+                    } else {
+                        dlpscan::edm::ExactDataMatcher::new(None, None)
+                    };
+
+                    let mut all_values = values;
+                    if let Some(file_path) = file {
+                        match std::fs::read_to_string(&file_path) {
+                            Ok(content) => {
+                                all_values.extend(
+                                    content.lines()
+                                        .map(|l| l.trim().to_string())
+                                        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("Error reading file: {e}");
+                                process::exit(1);
+                            }
+                        }
+                    }
+
+                    let refs: Vec<&str> = all_values.iter().map(|s| s.as_str()).collect();
+                    let count = edm.register_values(&category, &refs);
+                    edm.save(&state).unwrap_or_else(|e| {
+                        eprintln!("Error saving EDM state: {e}");
+                        process::exit(1);
+                    });
+                    println!("Registered {} values in category '{}' ({} total hashes)",
+                        all_values.len(), category, count);
+                    println!("State saved to {state}");
+                }
+                EdmAction::Scan { text, state } => {
+                    if !std::path::Path::new(&state).exists() {
+                        eprintln!("No EDM state file found at {state}");
+                        eprintln!("Run `dlpscan edm register` first");
+                        process::exit(1);
+                    }
+                    let edm = dlpscan::edm::ExactDataMatcher::load(&state).unwrap_or_else(|e| {
+                        eprintln!("Error loading EDM state: {e}");
+                        process::exit(1);
+                    });
+
+                    let text = text.unwrap_or_else(|| {
+                        let mut buf = String::new();
+                        io::stdin().read_to_string(&mut buf).unwrap_or_default();
+                        buf
+                    });
+
+                    let matches = edm.scan(&text, None);
+                    if matches.is_empty() {
+                        println!("No EDM matches found.");
+                    } else {
+                        println!("{} EDM matches found:", matches.len());
+                        for m in &matches {
+                            println!("  [{}] \"{}\" at {}..{}",
+                                m.category,
+                                m.matched_text,
+                                m.span.0, m.span.1);
+                        }
+                    }
+                }
+                EdmAction::List { state } => {
+                    if !std::path::Path::new(&state).exists() {
+                        println!("No EDM state file found. Run `dlpscan edm register` first.");
+                        return;
+                    }
+                    let edm = dlpscan::edm::ExactDataMatcher::load(&state).unwrap_or_else(|e| {
+                        eprintln!("Error loading EDM state: {e}");
+                        process::exit(1);
+                    });
+                    let cats = edm.categories();
+                    println!("EDM categories ({}):", cats.len());
+                    for cat in cats {
+                        println!("  {cat}");
+                    }
+                    println!("Total hashes: {}", edm.total_hashes());
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // dlpscan lsh — Document Similarity
+        // ---------------------------------------------------------------
+        Commands::Lsh { action } => {
+            match action {
+                LshAction::Register { doc_id, file, sensitivity, state } => {
+                    let vault = if std::path::Path::new(&state).exists() {
+                        dlpscan::lsh::DocumentVault::load(&state).unwrap_or_else(|_| {
+                            dlpscan::lsh::DocumentVault::default_vault()
+                        })
+                    } else {
+                        dlpscan::lsh::DocumentVault::default_vault()
+                    };
+
+                    let text = std::fs::read_to_string(&file).unwrap_or_else(|e| {
+                        eprintln!("Error reading file: {e}");
+                        process::exit(1);
+                    });
+
+                    vault.register(&doc_id, &text, &sensitivity, None);
+                    vault.save(&state).unwrap_or_else(|e| {
+                        eprintln!("Error saving LSH state: {e}");
+                        process::exit(1);
+                    });
+                    println!("Registered document '{}' ({} bytes, sensitivity: {})",
+                        doc_id, text.len(), sensitivity);
+                    println!("Vault: {} documents, saved to {state}", vault.document_count());
+                }
+                LshAction::Query { file, threshold, state } => {
+                    if !std::path::Path::new(&state).exists() {
+                        eprintln!("No LSH state file found at {state}");
+                        eprintln!("Run `dlpscan lsh register` first");
+                        process::exit(1);
+                    }
+                    let vault = dlpscan::lsh::DocumentVault::load(&state).unwrap_or_else(|e| {
+                        eprintln!("Error loading LSH state: {e}");
+                        process::exit(1);
+                    });
+
+                    let text = std::fs::read_to_string(&file).unwrap_or_else(|e| {
+                        eprintln!("Error reading file: {e}");
+                        process::exit(1);
+                    });
+
+                    let matches = vault.query(&text, Some(threshold));
+                    if matches.is_empty() {
+                        println!("No similar documents found (threshold: {:.0}%).", threshold * 100.0);
+                    } else {
+                        println!("{} similar documents found:", matches.len());
+                        for m in &matches {
+                            println!("  [{:.0}%] {} (sensitivity: {})",
+                                m.similarity * 100.0, m.doc_id, m.sensitivity);
+                        }
+                    }
+                }
+                LshAction::List { state } => {
+                    if !std::path::Path::new(&state).exists() {
+                        println!("No LSH state file found. Run `dlpscan lsh register` first.");
+                        return;
+                    }
+                    let vault = dlpscan::lsh::DocumentVault::load(&state).unwrap_or_else(|e| {
+                        eprintln!("Error loading LSH state: {e}");
+                        process::exit(1);
+                    });
+                    println!("LSH vault: {} documents registered", vault.document_count());
+                }
+            }
         }
 
         // ---------------------------------------------------------------

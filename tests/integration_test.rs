@@ -4,6 +4,7 @@
 //! pattern matching, context checking, and confidence scoring.
 
 use dlpscan::{scan_text, ScanConfig};
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Core scanner integration tests
@@ -561,4 +562,119 @@ fn test_rbac_admin_action_restricted() {
     assert!(!role_has_permission(Role::Analyst, Permission::AdminAction));
     assert!(!role_has_permission(Role::Operator, Permission::AdminAction));
     assert!(!role_has_permission(Role::Viewer, Permission::AdminAction));
+}
+
+// ---------------------------------------------------------------------------
+// EDM (Exact Data Match) integration tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_edm_register_and_scan() {
+    let mut edm = dlpscan::edm::ExactDataMatcher::new(None, None);
+    edm.register_values("ssn", &["123-45-6789", "987-65-4321"]);
+    edm.register_values("email", &["secret@internal.corp"]);
+
+    let text = "Customer SSN is 123-45-6789 and email secret@internal.corp here.";
+    let matches = edm.scan(text, None);
+    assert!(
+        matches.iter().any(|m| m.category == "ssn"),
+        "EDM should find registered SSN: {:?}",
+        matches.iter().map(|m| (&m.category, &m.matched_text)).collect::<Vec<_>>()
+    );
+    assert!(
+        matches.iter().any(|m| m.category == "email"),
+        "EDM should find registered email: {:?}",
+        matches.iter().map(|m| (&m.category, &m.matched_text)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_edm_wired_into_scanner() {
+    // Register a known sensitive email. EDM match won't be dominated
+    // by regex because EDM category is different ("EDM: emails").
+    let mut edm = dlpscan::edm::ExactDataMatcher::new(None, None);
+    edm.register_values("watchlist", &["target@hostile.net"]);
+
+    let config = ScanConfig {
+        edm: Some(Arc::new(edm)),
+        min_confidence: 0.0,
+        ..Default::default()
+    };
+    let text = "Contact target@hostile.net about the deal.";
+    let matches = dlpscan::scanner::scan_text_with_config(text, &config).unwrap();
+    // Both regex (Email Address) and EDM (watchlist) should fire
+    assert!(
+        matches.iter().any(|m| m.category.contains("EDM")),
+        "Scanner with EDM should find EDM match alongside regex: {:?}",
+        matches.iter().map(|m| (&m.category, &m.sub_category, m.confidence)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_edm_save_and_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("edm-state.json");
+    let path_str = path.to_str().unwrap();
+
+    let mut edm = dlpscan::edm::ExactDataMatcher::new(None, None);
+    edm.register_values("test", &["secret-value-123"]);
+    edm.save(path_str).unwrap();
+
+    let loaded = dlpscan::edm::ExactDataMatcher::load(path_str).unwrap();
+    assert!(loaded.check_value("secret-value-123", Some("test")));
+    assert!(!loaded.check_value("other-value", Some("test")));
+}
+
+// ---------------------------------------------------------------------------
+// LSH (Document Similarity) integration tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_lsh_register_and_query() {
+    let vault = dlpscan::lsh::DocumentVault::default_vault();
+    let doc = "This is a confidential financial report containing sensitive revenue projections and strategic acquisition targets for Q4 2026.";
+    vault.register("fin-report-q4", doc, "confidential", None);
+
+    // Query with very similar text
+    let query = "This is a confidential financial report containing sensitive revenue projections and strategic acquisition targets for Q4 2026.";
+    let matches = vault.query(query, Some(0.5));
+    assert!(
+        !matches.is_empty(),
+        "LSH should find similar document"
+    );
+    assert_eq!(matches[0].doc_id, "fin-report-q4");
+    assert!(matches[0].similarity > 0.5);
+}
+
+#[test]
+fn test_lsh_wired_into_scanner() {
+    let vault = dlpscan::lsh::DocumentVault::default_vault();
+    let doc = "Quarterly earnings report with projected revenue of fifty million dollars and operating margin improvements across all business segments in the enterprise division.";
+    vault.register("earnings-q4", doc, "restricted", None);
+
+    let config = ScanConfig {
+        lsh: Some(Arc::new(vault)),
+        ..Default::default()
+    };
+    // Scan the same document — should match
+    let matches = dlpscan::scanner::scan_text_with_config(doc, &config).unwrap();
+    assert!(
+        matches.iter().any(|m| m.category == "Document Similarity"),
+        "Scanner with LSH should find similar document: {:?}",
+        matches.iter().map(|m| (&m.category, &m.sub_category)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_lsh_save_and_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("lsh-state.json");
+    let path_str = path.to_str().unwrap();
+
+    let vault = dlpscan::lsh::DocumentVault::default_vault();
+    vault.register("doc1", "This is a test document with enough words to create meaningful shingles for the locality sensitive hashing algorithm to work correctly.", "sensitive", None);
+    vault.save(path_str).unwrap();
+
+    let loaded = dlpscan::lsh::DocumentVault::load(path_str).unwrap();
+    assert_eq!(loaded.document_count(), 1);
 }

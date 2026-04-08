@@ -7,6 +7,7 @@ use once_cell::sync::Lazy;
 use rayon::prelude::*;
 use regex::Regex;
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::context;
@@ -26,7 +27,6 @@ pub const MAX_SCAN_SECONDS: u64 = 120;
 pub const MAX_INPUT_SIZE: usize = 10 * 1024 * 1024;
 
 /// Scanner configuration.
-#[derive(Debug, Clone)]
 pub struct ScanConfig {
     /// Categories to scan (None = all).
     pub categories: Option<HashSet<String>>,
@@ -42,6 +42,10 @@ pub struct ScanConfig {
     pub baseline_only: bool,
     /// Entropy scan mode for detecting high-entropy secrets.
     pub entropy_scan: EntropyMode,
+    /// Optional EDM (Exact Data Match) engine for known-value detection.
+    pub edm: Option<Arc<crate::edm::ExactDataMatcher>>,
+    /// Optional LSH (Locality-Sensitive Hashing) vault for document similarity.
+    pub lsh: Option<Arc<crate::lsh::DocumentVault>>,
 }
 
 /// Entropy scanning mode.
@@ -70,6 +74,8 @@ impl Default for ScanConfig {
             min_confidence: 0.0,
             baseline_only: false,
             entropy_scan: EntropyMode::Off,
+            edm: None,
+            lsh: None,
         }
     }
 }
@@ -441,6 +447,52 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
             });
             if !dominated {
                 matches.push(em);
+            }
+        }
+    }
+
+    // EDM (Exact Data Match) — scan for known registered values
+    // EDM matches are NEVER dominated by regex matches because they represent
+    // confirmed known sensitive values, not pattern guesses.
+    if let Some(ref edm) = config.edm {
+        if matches.len() < config.max_matches {
+            let edm_matches = edm.scan(text, config.categories.as_ref());
+            for em in edm_matches {
+                if matches.len() >= config.max_matches {
+                    break;
+                }
+                {
+                    matches.push(Match::new(
+                        em.matched_text,
+                        format!("EDM: {}", em.category),
+                        "Exact Data Match".to_string(),
+                        true,  // always has context (it's an exact match)
+                        em.confidence,
+                        em.span,
+                        false,
+                    ));
+                }
+            }
+        }
+    }
+
+    // LSH (Locality-Sensitive Hashing) — check for similar documents
+    if let Some(ref lsh) = config.lsh {
+        if matches.len() < config.max_matches {
+            let sim_matches = lsh.query(text, None);
+            for sm in sim_matches {
+                if matches.len() >= config.max_matches {
+                    break;
+                }
+                matches.push(Match::new(
+                    format!("Similar to: {}", sm.doc_id),
+                    "Document Similarity".to_string(),
+                    sm.sensitivity.clone(),
+                    true,
+                    sm.similarity.clamp(0.0, 1.0),
+                    (0, text.len().min(100)), // span is the whole text
+                    false,
+                ));
             }
         }
     }
