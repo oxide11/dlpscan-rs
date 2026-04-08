@@ -802,40 +802,43 @@ fn build_hyper_response(
         .unwrap_or_else(|_| hyper::Response::new(http_body_util::Full::new(bytes::Bytes::from("{}"))))
 }
 
-/// Route an HTTP request to the appropriate handler.
+/// Check authentication. Returns the expected hash (for health endpoint auth check)
+/// and an error response if auth fails.
 #[cfg(feature = "async-support")]
-fn hyper_route_request(
-    method: &str,
+fn check_auth(
     path: &str,
-    body: &str,
     api_key_header: Option<&str>,
     state: &AppState,
-    client_ip: &str,
-) -> (hyper::StatusCode, String) {
-    use hyper::StatusCode;
-
-    // Auth check (exempt health probes only; metrics requires auth)
+) -> (Option<[u8; 32]>, Option<(hyper::StatusCode, String)>) {
     let auth_exempt = path == "/health" || path == "/health/live"
         || path == "/health/ready";
-    // Single atomic read to avoid TOCTOU race during key rotation
     let expected_hash = state.api_key_hash.read().ok().and_then(|g| *g);
     if expected_hash.is_some() && !auth_exempt {
         if let Some(ref hash) = expected_hash {
             match api_key_header {
                 Some(provided) if verify_api_key_hash(hash, provided) => {}
-                _ => return (StatusCode::UNAUTHORIZED, r#"{"detail":"Invalid or missing API key"}"#.to_string()),
+                _ => return (expected_hash, Some((hyper::StatusCode::UNAUTHORIZED, r#"{"detail":"Invalid or missing API key"}"#.to_string()))),
             }
         }
     }
+    (expected_hash, None)
+}
 
-    // RBAC (resolve role from hashed key)
-    let role = {
-        let resolved = api_key_header.and_then(|key| {
+/// Resolve RBAC role and check permission for the endpoint.
+#[cfg(feature = "async-support")]
+fn check_rbac(
+    method: &str,
+    path: &str,
+    api_key_header: Option<&str>,
+    state: &AppState,
+) -> Result<crate::rbac::Role, (hyper::StatusCode, String)> {
+    let role = api_key_header
+        .and_then(|key| {
             let h = hash_api_key(key);
             state.api_key_roles.read().ok().and_then(|roles| roles.get(&h).copied())
-        });
-        resolved.unwrap_or(crate::rbac::Role::Operator)
-    };
+        })
+        .unwrap_or(crate::rbac::Role::Operator);
+
     let required_perm = match (method, path) {
         ("POST", "/v1/scan") => Some(crate::rbac::Permission::Scan),
         ("POST", "/v1/batch/scan") => Some(crate::rbac::Permission::BatchScan),
@@ -849,35 +852,77 @@ fn hyper_route_request(
     };
     if let Some(perm) = required_perm {
         if !crate::rbac::role_has_permission(role, perm) {
-            return (StatusCode::FORBIDDEN, r#"{"detail":"Insufficient permissions"}"#.to_string());
+            return Err((hyper::StatusCode::FORBIDDEN, r#"{"detail":"Insufficient permissions"}"#.to_string()));
         }
     }
+    Ok(role)
+}
 
-    // Rate limiting (per API key when available, otherwise per IP)
-    if !auth_exempt {
-        let rate_key = api_key_header
-            .map(|k| format!("key:{:x}", md5_like_hash(k)))
-            .unwrap_or_else(|| format!("ip:{client_ip}"));
-        if let Ok(mut rl) = state.rate_limiter.write() {
-            if !rl.check_client(&rate_key) {
-                tracing::warn!(client_ip = %client_ip, rate_key = %rate_key, path = %path, "Rate limit exceeded");
-                // Log to audit trail
-                if let Ok(event) = crate::audit::AuditEvent::new("REJECT") {
-                    let event = event
-                        .with_action("rate_limit")
-                        .with_source_ip(client_ip)
-                        .with_outcome("rejected")
-                        .with_metadata("reason", serde_json::json!("rate_limit_exceeded"))
-                        .with_metadata("path", serde_json::json!(path));
-                    crate::audit::audit_event(&event);
-                }
-                return (StatusCode::TOO_MANY_REQUESTS, r#"{"detail":"Rate limit exceeded"}"#.to_string());
+/// Check rate limit. Returns error response if rate limited.
+#[cfg(feature = "async-support")]
+fn check_rate_limit(
+    path: &str,
+    api_key_header: Option<&str>,
+    state: &AppState,
+    client_ip: &str,
+) -> Option<(hyper::StatusCode, String)> {
+    let auth_exempt = path == "/health" || path == "/health/live"
+        || path == "/health/ready";
+    if auth_exempt {
+        return None;
+    }
+    let rate_key = api_key_header
+        .map(|k| format!("key:{:x}", md5_like_hash(k)))
+        .unwrap_or_else(|| format!("ip:{client_ip}"));
+    if let Ok(mut rl) = state.rate_limiter.write() {
+        if !rl.check_client(&rate_key) {
+            tracing::warn!(client_ip = %client_ip, rate_key = %rate_key, path = %path, "Rate limit exceeded");
+            if let Ok(event) = crate::audit::AuditEvent::new("REJECT") {
+                let event = event
+                    .with_action("rate_limit")
+                    .with_source_ip(client_ip)
+                    .with_outcome("rejected")
+                    .with_metadata("reason", serde_json::json!("rate_limit_exceeded"))
+                    .with_metadata("path", serde_json::json!(path));
+                crate::audit::audit_event(&event);
             }
-            rl.cleanup();
+            return Some((hyper::StatusCode::TOO_MANY_REQUESTS, r#"{"detail":"Rate limit exceeded"}"#.to_string()));
         }
+        rl.cleanup();
+    }
+    None
+}
+
+/// Route an HTTP request to the appropriate handler.
+#[cfg(feature = "async-support")]
+fn hyper_route_request(
+    method: &str,
+    path: &str,
+    body: &str,
+    api_key_header: Option<&str>,
+    state: &AppState,
+    client_ip: &str,
+) -> (hyper::StatusCode, String) {
+    use hyper::StatusCode;
+
+    // 1. Auth
+    let (expected_hash, auth_err) = check_auth(path, api_key_header, state);
+    if let Some(err) = auth_err {
+        return err;
     }
 
-    // Route dispatch
+    // 2. RBAC
+    let role = match check_rbac(method, path, api_key_header, state) {
+        Ok(r) => r,
+        Err(err) => return err,
+    };
+
+    // 3. Rate limiting
+    if let Some(err) = check_rate_limit(path, api_key_header, state, client_ip) {
+        return err;
+    }
+
+    // 4. Route dispatch
     match (method, path) {
         ("GET", "/health") => {
             // Authenticated users get full health details; unauthenticated get minimal.

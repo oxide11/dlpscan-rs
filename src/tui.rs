@@ -736,20 +736,11 @@ pub mod app {
     }
 }
 
-// Helpers shared between TUI and CLI
+// Re-export shared config helpers
 pub fn find_config() -> String {
-    for name in &[".dlpscanrc", "dlpscan.json"] {
-        if std::path::Path::new(name).exists() {
-            return name.to_string();
-        }
-    }
-    ".dlpscanrc".to_string()
+    crate::config::find_config_path()
 }
 
 pub fn load_config_tui(path: &str) -> crate::config::Config {
-    if let Ok(content) = std::fs::read_to_string(path) {
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        crate::config::Config::default()
-    }
+    crate::config::load_config_json(path)
 }

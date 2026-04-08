@@ -697,25 +697,15 @@ fn parse_preset_choices(input: &str) -> Vec<String> {
 // ===========================================================================
 
 fn find_or_default_config() -> String {
-    for name in &[".dlpscanrc", "dlpscan.json"] {
-        if std::path::Path::new(name).exists() {
-            return name.to_string();
-        }
-    }
-    ".dlpscanrc".to_string()
+    dlpscan::config::find_config_path()
 }
 
 fn load_config(path: &str) -> dlpscan::config::Config {
-    if let Ok(content) = std::fs::read_to_string(path) {
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        dlpscan::config::Config::default()
-    }
+    dlpscan::config::load_config_json(path)
 }
 
 fn save_config(path: &str, config: &dlpscan::config::Config) {
-    let json = serde_json::to_string_pretty(config).unwrap_or_default();
-    if let Err(e) = std::fs::write(path, json) {
+    if let Err(e) = dlpscan::config::save_config_json(path, config) {
         eprintln!("Error writing config: {e}");
         process::exit(1);
     }

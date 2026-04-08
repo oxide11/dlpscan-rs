@@ -14,7 +14,7 @@ use crate::models::{is_context_required, pattern_specificity, Match, PatternDef}
 use crate::normalize;
 use crate::patterns::PATTERNS;
 use crate::scoring::{compute_confidence, deduplicate_overlapping};
-use crate::validation::{is_luhn_valid, validate_text_input};
+use crate::validation::validate_text_input;
 
 /// Maximum number of matches returned per scan.
 pub const MAX_MATCHES: usize = 50_000;
@@ -279,43 +279,8 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 let norm_end = mat.end();
                 let matched_text = mat.as_str();
 
-                // Luhn validation for credit card patterns
-                if pat.category == "Credit Card Numbers" && !is_luhn_valid(matched_text) {
-                    continue;
-                }
-
-                // SSN structural validation — reject invalid area codes
-                if pat.sub_category == "USA SSN"
-                    && !crate::validation::is_valid_ssn(matched_text)
-                {
-                    continue;
-                }
-
-                // SWIFT/BIC validation — country code + false-positive word filter
-                if pat.sub_category == "SWIFT/BIC"
-                    && !crate::validation::is_valid_swift(matched_text)
-                {
-                    continue;
-                }
-
-                // CUSIP check-digit validation
-                if pat.sub_category == "CUSIP"
-                    && !crate::validation::is_valid_cusip(matched_text)
-                {
-                    continue;
-                }
-
-                // SEDOL check-digit validation
-                if pat.sub_category == "SEDOL"
-                    && !crate::validation::is_valid_sedol(matched_text)
-                {
-                    continue;
-                }
-
-                // Australia TFN weighted checksum
-                if pat.sub_category == "Australia TFN"
-                    && !crate::validation::is_valid_australia_tfn(matched_text)
-                {
+                // Structural validation (Luhn, SWIFT, CUSIP, SEDOL, TFN, SSN)
+                if !crate::validation::validate_match(pat.category, pat.sub_category, matched_text) {
                     continue;
                 }
 
@@ -418,32 +383,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 }
                 for mat in cp.regex.find_iter(&alt_norm) {
                     let matched_text = mat.as_str();
-                    if cp.def.category == "Credit Card Numbers" && !is_luhn_valid(matched_text) {
-                        continue;
-                    }
-                    if cp.def.sub_category == "USA SSN"
-                        && !crate::validation::is_valid_ssn(matched_text)
-                    {
-                        continue;
-                    }
-                    if cp.def.sub_category == "SWIFT/BIC"
-                        && !crate::validation::is_valid_swift(matched_text)
-                    {
-                        continue;
-                    }
-                    if cp.def.sub_category == "CUSIP"
-                        && !crate::validation::is_valid_cusip(matched_text)
-                    {
-                        continue;
-                    }
-                    if cp.def.sub_category == "SEDOL"
-                        && !crate::validation::is_valid_sedol(matched_text)
-                    {
-                        continue;
-                    }
-                    if cp.def.sub_category == "Australia TFN"
-                        && !crate::validation::is_valid_australia_tfn(matched_text)
-                    {
+                    if !crate::validation::validate_match(cp.def.category, cp.def.sub_category, matched_text) {
                         continue;
                     }
                     let confidence = compute_confidence(cp.def.sub_category, false, false);
