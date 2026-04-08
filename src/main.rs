@@ -645,7 +645,7 @@ fn run_init_wizard() {
             .map(|s| s.to_string())
             .collect(),
         block_unreadable,
-        entropy_scan: false,
+        entropy_scan: "off".to_string(),
     };
 
     save_config(&config_path, &config);
