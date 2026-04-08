@@ -205,7 +205,11 @@ impl DocumentVault {
     }
 
     /// Save vault to JSON file.
+    /// Rejects symlink paths to prevent symlink race attacks.
     pub fn save(&self, path: &str) -> Result<(), String> {
+        if std::path::Path::new(path).is_symlink() {
+            return Err(format!("Refusing to write LSH vault to symlink: {path}"));
+        }
         let docs = self.documents.lock().unwrap_or_else(|e| e.into_inner());
         let entries: Vec<serde_json::Value> = docs
             .values()

@@ -59,6 +59,21 @@ pub struct PipelineResult {
 }
 
 impl PipelineResult {
+    /// Create an error result with no matches.
+    pub fn error_result(file_path: String, format: &str, error: String, elapsed_secs: f64, file_size: u64) -> Self {
+        Self {
+            file_path,
+            matches: vec![],
+            format_detected: format.to_string(),
+            duration_ms: elapsed_secs * 1000.0,
+            error: Some(error),
+            file_size_bytes: file_size,
+            extracted_text_length: 0,
+            file_entropy: None,
+            entropy_classification: None,
+        }
+    }
+
     pub fn success(&self) -> bool {
         self.error.is_none()
     }
