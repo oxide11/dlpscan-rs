@@ -113,6 +113,12 @@ enum Commands {
     },
     /// Show scanner info: version, patterns, features, config
     Info,
+    /// Interactive TUI menu (requires tui feature)
+    #[cfg(feature = "tui")]
+    Tui,
+    /// Live statistics dashboard (requires tui feature)
+    #[cfg(feature = "tui")]
+    Top,
 }
 
 #[derive(Subcommand, Clone)]
@@ -507,6 +513,28 @@ fn main() {
         // ---------------------------------------------------------------
         Commands::TestPattern { pattern, text } => {
             run_test_pattern(pattern, text);
+        }
+
+        // ---------------------------------------------------------------
+        // dlpscan tui — Interactive TUI menu
+        // ---------------------------------------------------------------
+        #[cfg(feature = "tui")]
+        Commands::Tui => {
+            if let Err(e) = dlpscan::tui::app::run_menu() {
+                eprintln!("TUI error: {e}");
+                process::exit(1);
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // dlpscan top — Live statistics dashboard
+        // ---------------------------------------------------------------
+        #[cfg(feature = "tui")]
+        Commands::Top => {
+            if let Err(e) = dlpscan::tui::app::run_live_stats() {
+                eprintln!("TUI error: {e}");
+                process::exit(1);
+            }
         }
 
         // ---------------------------------------------------------------
