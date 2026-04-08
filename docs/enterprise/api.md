@@ -187,6 +187,77 @@ Rotate the API key at runtime. Requires **Admin** role.
 The old key is immediately invalidated. The rotation event is logged
 to the audit trail.
 
+### `POST /v1/edm/register`
+
+Register sensitive values for exact data matching. Requires **Admin** role.
+
+**Request:**
+```json
+{
+  "category": "ssn",
+  "values": ["123-45-6789", "987-65-4321"]
+}
+```
+
+**Response:**
+```json
+{"category": "ssn", "registered": 2, "total_hashes": 2}
+```
+
+### `GET /v1/edm/categories`
+
+List registered EDM categories and hash counts. Requires **ViewStatus**.
+
+### `POST /v1/lsh/register`
+
+Register a document for similarity matching. Requires **Admin** role.
+
+**Request:**
+```json
+{
+  "doc_id": "earnings-q4",
+  "text": "Quarterly earnings report...",
+  "sensitivity": "confidential"
+}
+```
+
+### `POST /v1/lsh/query`
+
+Query for similar documents. Requires **Scan** permission.
+
+**Request:**
+```json
+{
+  "text": "This quarterly report contains...",
+  "threshold": 0.8
+}
+```
+
+**Response:**
+```json
+{
+  "matches": [
+    {"doc_id": "earnings-q4", "similarity": 0.92, "sensitivity": "confidential"}
+  ]
+}
+```
+
+### `GET /v1/lsh/documents`
+
+List registered document count. Requires **ViewStatus**.
+
+## EDM and LSH State
+
+Load pre-registered EDM/LSH state at server startup via environment
+variables:
+
+```bash
+export DLPSCAN_EDM_STATE=.dlpscan-edm.json
+export DLPSCAN_LSH_STATE=.dlpscan-lsh.json
+```
+
+State files use 0o600 permissions on Unix and reject symlinks on write.
+
 ## Rate Limiting
 
 Rate limits are tracked per API key (when provided) or per source IP.

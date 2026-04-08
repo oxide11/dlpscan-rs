@@ -58,6 +58,9 @@ All notable changes to dlpscan will be documented in this file.
   when central directory is damaged (format: "zip-recovered")
 - Pipeline binary fallback: when both extract_text and read_to_string fail,
   extracts printable ASCII strings from raw bytes (format: "binary-strings")
+- Filename context: filenames like "sin.txt" or "ssn_report.csv" now
+  provide context keywords that boost detection confidence for patterns
+  in the file content (prepended as context preamble before scanning)
 - Extension mismatch handled: magic byte detection overrides extension for
   unknown types; known extensions always trusted (prevents polyglot attacks)
 - Zip bomb protection verified: nested ZIPs and high-compression-ratio archives
@@ -66,7 +69,7 @@ All notable changes to dlpscan will be documented in this file.
   MAX_MATCHES cap, no OOM, no Rayon panic
 
 ### Testing
-- 339 tests (290 unit + 12 evasion + 37 integration), up from 127
+- 347 tests (290 unit + 12 evasion + 45 integration), up from 127
 - New evasion test suite: extension mismatch, corrupted headers, offset map
   stress, zip bombs, extractor fallback (12 attack vectors)
 - New unit tests across 12 modules covering all hardening and new features

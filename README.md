@@ -4,7 +4,7 @@ High-performance DLP scanner written in Rust. Detects, redacts, and protects
 sensitive data with exceptional throughput.
 
 **560 patterns** across **126 categories** — full parity with the Python version.
-**17,000+ lines** of Rust across 37 modules. **339 tests** passing.
+**18,000+ lines** of Rust across 37 modules. **347 tests** passing.
 
 ## Performance
 
@@ -302,21 +302,29 @@ Full reference:
 ```
 Input text
   │
+  ├── Filename context (pipeline: prepend filename words as keywords)
+  │
   ├── normalize (ASCII fast-path, or NFKC + homoglyph + zero-width)
   │
   ├── Aho-Corasick keyword pre-scan (single O(n) pass)
   │   └── Builds ContextHitIndex: (category, sub_category) → positions
   │
   ├── Pattern prefilter
-  │   ├── 108 always-run patterns (specificity ≥ 0.85 or critical)
-  │   └── 452 context-gated patterns (only run if keywords present)
+  │   ├── 107 always-run patterns (specificity ≥ 0.85 or critical)
+  │   └── 453 context-gated patterns (only run if keywords present)
   │
   ├── Parallel regex matching (Rayon par_iter over active patterns)
-  │   ├── Luhn validation (credit cards)
+  │   ├── Structural validation (Luhn, SWIFT, CUSIP, SEDOL, TFN, SSN)
   │   ├── Context proximity check (AC hit index lookup)
   │   └── Confidence scoring (base + context boost)
   │
   ├── Deduplication (overlapping span resolution)
+  │
+  ├── Entropy scan (optional: gated, assignment, or all mode)
+  │
+  ├── EDM scan (optional: exact match against registered values)
+  │
+  ├── LSH query (optional: document similarity check)
   │
   └── Action: Flag | Redact | Obfuscate | Tokenize | Reject
 ```
