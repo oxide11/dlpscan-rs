@@ -1,58 +1,70 @@
 # Installation
 
-## Basic Install
+## Build from Source
 
 ```bash
-pip install dlpscan
+git clone https://github.com/oxide11/dlpscan-rs.git
+cd dlpscan-rs
+cargo build --release
 ```
 
-## Optional Dependencies
+The binary is at `target/release/dlpscan`.
 
-dlpscan supports several optional dependency groups:
+### With all features
 
 ```bash
-# PDF scanning
-pip install dlpscan[pdf]
-
-# Office document scanning (DOCX, XLSX, PPTX)
-pip install dlpscan[office]
-
-# Email file scanning (.msg)
-pip install dlpscan[email]
-
-# All document formats
-pip install dlpscan[all-formats]
-
-# REST API server
-pip install dlpscan[api]
-
-# Development tools
-pip install dlpscan[dev]
+cargo build --release --features full
 ```
 
-## From Source
+### With specific features
 
 ```bash
-git clone https://github.com/oxide11/dlpscan.git
-cd dlpscan
-pip install -e ".[dev]"
+# QR code scanning + interactive TUI
+cargo build --release --features "barcode,tui"
+
+# API server with TLS
+cargo build --release --features "async-support,tls"
+```
+
+## As a Library
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+dlpscan = { path = "../dlpscan-rs" }
+# or from a registry:
+# dlpscan = "2.1"
 ```
 
 ## Docker
 
 ```bash
-docker pull ghcr.io/oxide11/dlpscan:latest
+docker build -t dlpscan .
 docker run -v ./data:/data dlpscan scan /data
 ```
 
+See [Docker deployment](../deployment/docker.md) for production images.
+
 ## Verify Installation
 
-```python
-import dlpscan
-print(dlpscan.__version__)
+```bash
+dlpscan info
+```
+
+Expected output:
+
+```
+dlpscan v2.1.0
+
+Patterns:    560 across 126 categories
+Features:    core, metrics
+
+Supported formats: 59 file types
 ```
 
 ## System Requirements
 
-- Python 3.8 or later
-- No native dependencies — pure Python
+- Rust 1.75 or later (build only)
+- Linux, macOS, or Windows
+- No runtime dependencies — single static binary

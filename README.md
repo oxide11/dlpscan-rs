@@ -407,18 +407,20 @@ See [docs/enterprise/security.md](docs/enterprise/security.md) for full details.
 
 | Document | Description |
 |---|---|
+| [docs/getting-started/concepts.md](docs/getting-started/concepts.md) | Core concepts: specificity, context keywords, validators, actions |
+| [docs/getting-started/quickstart.md](docs/getting-started/quickstart.md) | Quick start guide with CLI and Rust API examples |
+| [docs/getting-started/configuration.md](docs/getting-started/configuration.md) | Full configuration reference (config file, env vars, CLI, policies) |
+| [docs/getting-started/installation.md](docs/getting-started/installation.md) | Build from source, Docker, feature flags |
 | [docs/PATTERNS.md](docs/PATTERNS.md) | All 560 patterns with regex, specificity, and context flags |
 | [docs/KEYWORDS.md](docs/KEYWORDS.md) | All 560+ context keywords with proximity distances |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Performance analysis and optimization journey |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Version history |
 | [docs/api-reference.md](docs/api-reference.md) | Comprehensive API documentation |
-| [docs/advanced_techniques.md](docs/advanced_techniques.md) | Advanced usage patterns |
 | [docs/evasion_techniques.md](docs/evasion_techniques.md) | Known evasion attacks |
 | [docs/evasion_defenses.md](docs/evasion_defenses.md) | Countermeasures implemented |
 | [docs/baselines/](docs/baselines/) | Control baselines (PCI, PII, PHI, secrets, financial, confidential) |
-| [docs/getting-started/](docs/getting-started/) | Installation, quickstart, configuration |
 | [docs/deployment/](docs/deployment/) | Docker, CI/CD, pre-commit hooks |
-| [docs/enterprise/](docs/enterprise/) | API server, audit, compliance, SIEM, RBAC |
+| [docs/enterprise/](docs/enterprise/) | API server, audit, compliance, SIEM, RBAC, security hardening |
 
 ## License
 
