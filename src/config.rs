@@ -44,6 +44,11 @@ pub struct Config {
     /// (GPG, KeePass, VeraCrypt). Default: false.
     #[serde(default)]
     pub block_unreadable: bool,
+    /// Entropy scan mode for high-entropy secret detection.
+    /// Values: "off" (default), "gated" (context keywords required),
+    /// "assignment" (assignment pattern required), "all" (flag everything).
+    #[serde(default)]
+    pub entropy_scan: String,
 }
 
 fn default_true() -> bool {
@@ -80,6 +85,7 @@ impl Default for Config {
             context_backend: "regex".to_string(),
             blocked_extensions: default_blocked_extensions(),
             block_unreadable: false,
+            entropy_scan: "off".to_string(),
         }
     }
 }
@@ -299,6 +305,16 @@ pub fn merge_configs(file: &Config, overrides: &HashMap<String, serde_json::Valu
     }
 
     merged
+}
+
+/// Parse an entropy_scan config string to an EntropyMode.
+pub fn parse_entropy_mode(s: &str) -> crate::scanner::EntropyMode {
+    match s.to_lowercase().as_str() {
+        "gated" | "context" => crate::scanner::EntropyMode::Gated,
+        "assignment" | "assign" => crate::scanner::EntropyMode::Assignment,
+        "all" | "true" | "1" => crate::scanner::EntropyMode::All,
+        _ => crate::scanner::EntropyMode::Off,
+    }
 }
 
 // ---------------------------------------------------------------------------

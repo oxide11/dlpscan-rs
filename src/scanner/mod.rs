@@ -7,6 +7,7 @@ use once_cell::sync::Lazy;
 use rayon::prelude::*;
 use regex::Regex;
 use std::collections::HashSet;
+use std::sync::Arc;
 use std::time::Instant;
 
 use crate::context;
@@ -26,7 +27,6 @@ pub const MAX_SCAN_SECONDS: u64 = 120;
 pub const MAX_INPUT_SIZE: usize = 10 * 1024 * 1024;
 
 /// Scanner configuration.
-#[derive(Debug, Clone)]
 pub struct ScanConfig {
     /// Categories to scan (None = all).
     pub categories: Option<HashSet<String>>,
@@ -40,6 +40,28 @@ pub struct ScanConfig {
     pub min_confidence: f64,
     /// Only run baseline (always-run) patterns — skip context-gated patterns entirely.
     pub baseline_only: bool,
+    /// Entropy scan mode for detecting high-entropy secrets.
+    pub entropy_scan: EntropyMode,
+    /// Optional EDM (Exact Data Match) engine for known-value detection.
+    pub edm: Option<Arc<crate::edm::ExactDataMatcher>>,
+    /// Optional LSH (Locality-Sensitive Hashing) vault for document similarity.
+    pub lsh: Option<Arc<crate::lsh::DocumentVault>>,
+}
+
+/// Entropy scanning mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EntropyMode {
+    /// Disabled (default).
+    #[default]
+    Off,
+    /// Only flag high-entropy tokens near context keywords
+    /// (secret, key, token, password, auth, credential, etc.).
+    Gated,
+    /// Only flag high-entropy tokens in assignment patterns
+    /// (key=VALUE, "token": "VALUE", export SECRET=VALUE).
+    Assignment,
+    /// Flag all high-entropy tokens regardless of context.
+    All,
 }
 
 impl Default for ScanConfig {
@@ -51,6 +73,9 @@ impl Default for ScanConfig {
             deduplicate: true,
             min_confidence: 0.0,
             baseline_only: false,
+            entropy_scan: EntropyMode::Off,
+            edm: None,
+            lsh: None,
         }
     }
 }
@@ -409,7 +434,256 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
         deduplicate_overlapping(&mut matches);
     }
 
+    // Entropy-based secret detection (optional)
+    if config.entropy_scan != EntropyMode::Off && matches.len() < config.max_matches {
+        let entropy_matches = scan_high_entropy_tokens(text, &normalized, &offset_map, config);
+        for em in entropy_matches {
+            if matches.len() >= config.max_matches {
+                break;
+            }
+            // Skip if already covered by a regex match at the same span
+            let dominated = matches.iter().any(|m| {
+                m.span.0 <= em.span.0 && m.span.1 >= em.span.1
+            });
+            if !dominated {
+                matches.push(em);
+            }
+        }
+    }
+
+    // EDM (Exact Data Match) — scan for known registered values
+    // EDM matches are NEVER dominated by regex matches because they represent
+    // confirmed known sensitive values, not pattern guesses.
+    if let Some(ref edm) = config.edm {
+        if matches.len() < config.max_matches {
+            let edm_matches = edm.scan(text, config.categories.as_ref());
+            for em in edm_matches {
+                if matches.len() >= config.max_matches {
+                    break;
+                }
+                {
+                    matches.push(Match::new(
+                        em.matched_text,
+                        format!("EDM: {}", em.category),
+                        "Exact Data Match".to_string(),
+                        true,  // always has context (it's an exact match)
+                        em.confidence,
+                        em.span,
+                        false,
+                    ));
+                }
+            }
+        }
+    }
+
+    // LSH (Locality-Sensitive Hashing) — check for similar documents
+    if let Some(ref lsh) = config.lsh {
+        if matches.len() < config.max_matches {
+            let sim_matches = lsh.query(text, None);
+            for sm in sim_matches {
+                if matches.len() >= config.max_matches {
+                    break;
+                }
+                matches.push(Match::new(
+                    format!("Similar to: {}", sm.doc_id),
+                    "Document Similarity".to_string(),
+                    sm.sensitivity.clone(),
+                    true,
+                    sm.similarity.clamp(0.0, 1.0),
+                    (0, text.len().min(100)), // span is the whole text
+                    false,
+                ));
+            }
+        }
+    }
+
     Ok(matches)
+}
+
+// ---------------------------------------------------------------------------
+// Inline entropy-based secret detection
+// ---------------------------------------------------------------------------
+
+/// Minimum token length to consider for entropy analysis.
+const ENTROPY_MIN_TOKEN_LEN: usize = 16;
+
+/// Maximum token length (longer tokens are likely not secrets).
+const ENTROPY_MAX_TOKEN_LEN: usize = 256;
+
+/// Shannon entropy threshold for flagging a token as a potential secret.
+/// Base64/hex-encoded random data typically has entropy >= 4.5 bits/char.
+const ENTROPY_THRESHOLD: f64 = 4.5;
+
+/// Context keywords that indicate a high-entropy token is likely a secret.
+const ENTROPY_CONTEXT_KEYWORDS: &[&str] = &[
+    "secret", "key", "token", "password", "passwd", "pwd",
+    "auth", "credential", "api_key", "apikey", "api-key",
+    "access_key", "secret_key", "private_key", "signing_key",
+    "encryption_key", "bearer", "authorization",
+    "connection_string", "conn_str", "database_url",
+    "aws_secret", "github_token", "slack_token",
+];
+
+/// Assignment patterns that precede a value (key=VALUE, "key": "VALUE", etc.).
+/// Matches if the text before a token looks like an assignment.
+/// Handles: KEY=, "key":, export KEY=, let key =, const KEY:, var key =
+static ASSIGNMENT_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r#"[A-Za-z_][A-Za-z0-9_]*\s*[:=]\s*["']?\s*$"#
+    ).expect("assignment regex must compile")
+});
+
+/// Scan for high-entropy tokens using the configured gating mode.
+fn scan_high_entropy_tokens(
+    original_text: &str,
+    normalized: &str,
+    offset_map: &[usize],
+    config: &ScanConfig,
+) -> Vec<Match> {
+    let mut results = Vec::new();
+    let normalized_lower = normalized.to_lowercase();
+
+    // Tokenize by whitespace and common delimiters
+    let delimiters = |c: char| -> bool {
+        c.is_whitespace() || c == ',' || c == ';' || c == '\'' || c == '"'
+            || c == '(' || c == ')' || c == '[' || c == ']'
+            || c == '{' || c == '}' || c == '=' || c == ':'
+    };
+
+    let mut pos = 0;
+    for token in normalized.split(delimiters) {
+        if token.is_empty() {
+            continue;
+        }
+
+        // Track position in normalized text
+        let norm_start = match normalized[pos..].find(token) {
+            Some(offset) => pos + offset,
+            None => {
+                pos += 1;
+                continue;
+            }
+        };
+        let norm_end = norm_start + token.len();
+        pos = norm_end;
+
+        // Filter by length
+        if token.len() < ENTROPY_MIN_TOKEN_LEN || token.len() > ENTROPY_MAX_TOKEN_LEN {
+            continue;
+        }
+
+        // Skip tokens that are all digits (likely IDs, not secrets)
+        if token.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '.') {
+            continue;
+        }
+
+        // Skip tokens that are common words (all lowercase alpha, no mixed case/digits)
+        if token.chars().all(|c| c.is_ascii_lowercase()) {
+            continue;
+        }
+
+        // Compute Shannon entropy per character
+        let entropy = char_entropy(token);
+        if entropy < ENTROPY_THRESHOLD {
+            continue;
+        }
+
+        // Apply gating based on mode
+        let (has_context, sub_category) = match config.entropy_scan {
+            EntropyMode::Gated => {
+                // Check if any context keyword appears within 80 chars
+                let search_start = norm_start.saturating_sub(80);
+                let search_end = (norm_end + 80).min(normalized_lower.len());
+                let context_window = &normalized_lower[search_start..search_end];
+                let found = ENTROPY_CONTEXT_KEYWORDS.iter().any(|kw| context_window.contains(kw));
+                if !found {
+                    continue;
+                }
+                (true, "Potential Secret (Context)")
+            }
+            EntropyMode::Assignment => {
+                // Check if preceded by an assignment pattern (key=, "key":, export KEY=)
+                let prefix_start = norm_start.saturating_sub(60);
+                let prefix = &normalized[prefix_start..norm_start];
+                if !ASSIGNMENT_RE.is_match(prefix) {
+                    continue;
+                }
+                (true, "Potential Secret (Assignment)")
+            }
+            EntropyMode::All => {
+                (false, "Potential Secret")
+            }
+            EntropyMode::Off => unreachable!(),
+        };
+
+        // Check minimum confidence
+        let confidence = entropy_to_confidence(entropy);
+        if confidence < config.min_confidence {
+            continue;
+        }
+
+        // Map back to original text position
+        let (orig_start, orig_end) = if !offset_map.is_empty() {
+            let os = if norm_start < offset_map.len() {
+                offset_map[norm_start]
+            } else {
+                continue;
+            };
+            let oe = if norm_end > 0 && norm_end <= offset_map.len() {
+                offset_map[norm_end - 1] + 1
+            } else {
+                original_text.len()
+            };
+            (os, oe)
+        } else {
+            (norm_start, norm_end)
+        };
+
+        let matched_text = if orig_start < original_text.len() && orig_end <= original_text.len()
+            && original_text.is_char_boundary(orig_start) && original_text.is_char_boundary(orig_end)
+        {
+            &original_text[orig_start..orig_end]
+        } else {
+            token
+        };
+
+        results.push(Match::new(
+            matched_text.to_string(),
+            "High Entropy".to_string(),
+            sub_category.to_string(),
+            has_context,
+            confidence,
+            (orig_start, orig_end),
+            false,
+        ));
+    }
+
+    results
+}
+
+/// Compute Shannon entropy per character of a string (bits per char).
+fn char_entropy(s: &str) -> f64 {
+    if s.is_empty() {
+        return 0.0;
+    }
+    let mut freq = std::collections::HashMap::new();
+    for c in s.chars() {
+        *freq.entry(c).or_insert(0u64) += 1;
+    }
+    let len = s.chars().count() as f64;
+    let mut entropy = 0.0;
+    for &count in freq.values() {
+        let p = count as f64 / len;
+        entropy -= p * p.log2();
+    }
+    entropy
+}
+
+/// Convert entropy score to a confidence value (0.0-1.0).
+fn entropy_to_confidence(entropy: f64) -> f64 {
+    // Map entropy 4.5-6.0 to confidence 0.40-0.90
+    let clamped = entropy.clamp(4.5, 6.0);
+    0.40 + (clamped - 4.5) / (6.0 - 4.5) * 0.50
 }
 
 #[cfg(test)]
@@ -450,5 +724,118 @@ mod tests {
         let result =
             scan_text_with_config("Email: test@example.com SSN: 123-45-6789", &config).unwrap();
         assert!(result.iter().all(|m| m.category == "Contact Information"));
+    }
+
+    #[test]
+    fn test_char_entropy_uniform() {
+        // "aaaa" has zero entropy
+        assert!(char_entropy("aaaaaaaaaaaaaaaa") < 0.01);
+    }
+
+    #[test]
+    fn test_char_entropy_high() {
+        // Random-looking hex string should have high entropy
+        assert!(char_entropy("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6") > 3.5);
+    }
+
+    #[test]
+    fn test_entropy_to_confidence_range() {
+        assert!(entropy_to_confidence(4.5) >= 0.39);
+        assert!(entropy_to_confidence(6.0) >= 0.89);
+        assert!(entropy_to_confidence(3.0) >= 0.39); // clamped
+    }
+
+    #[test]
+    fn test_entropy_all_detects_random_secret() {
+        let config = ScanConfig {
+            entropy_scan: EntropyMode::All,
+            min_confidence: 0.0,
+            ..Default::default()
+        };
+        // This random string doesn't match any regex pattern
+        let text = "value is xK9mPqR3vL7nW2jF8hYcT5bA0dGiEuOs here";
+        let result = scan_text_with_config(text, &config).unwrap();
+        assert!(
+            result.iter().any(|m| m.category == "High Entropy"),
+            "Entropy All mode should detect random-looking token: {:?}",
+            result.iter().map(|m| (&m.category, &m.sub_category)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_entropy_gated_requires_keyword() {
+        // With keyword "secret" nearby — should fire
+        let config = ScanConfig {
+            entropy_scan: EntropyMode::Gated,
+            min_confidence: 0.0,
+            ..Default::default()
+        };
+        let text = "my secret key is xK9mPqR3vL7nW2jF8hYcT5bA0dGiEuOs here";
+        let result = scan_text_with_config(text, &config).unwrap();
+        assert!(
+            result.iter().any(|m| m.category == "High Entropy"),
+            "Gated entropy should fire when 'secret' keyword is nearby"
+        );
+
+        // Without keyword — should NOT fire
+        let text_no_ctx = "the value is xK9mPqR3vL7nW2jF8hYcT5bA0dGiEuOs stored here";
+        let result2 = scan_text_with_config(text_no_ctx, &config).unwrap();
+        assert!(
+            !result2.iter().any(|m| m.category == "High Entropy"),
+            "Gated entropy should NOT fire without context keyword"
+        );
+    }
+
+    #[test]
+    fn test_entropy_assignment_requires_pattern() {
+        let config = ScanConfig {
+            entropy_scan: EntropyMode::Assignment,
+            min_confidence: 0.0,
+            ..Default::default()
+        };
+        // With assignment pattern — should fire (token after = is high entropy)
+        let text = "CUSTOM_KEY=xK9mPqR3vL7nW2jF8hYcT5bA0dGiEuOs end";
+        let result = scan_text_with_config(text, &config).unwrap();
+        assert!(
+            result.iter().any(|m| m.category == "High Entropy"
+                && m.sub_category.contains("Assignment")),
+            "Assignment mode should fire on KEY=VALUE pattern: {:?}",
+            result.iter().map(|m| (&m.category, &m.sub_category)).collect::<Vec<_>>()
+        );
+
+        // Without assignment — should NOT fire
+        let text_no_assign = "random text xK9mPqR3vL7nW2jF8hYcT5bA0dGiEuOs embedded";
+        let result2 = scan_text_with_config(text_no_assign, &config).unwrap();
+        assert!(
+            !result2.iter().any(|m| m.category == "High Entropy"),
+            "Assignment mode should NOT fire without assignment pattern"
+        );
+    }
+
+    #[test]
+    fn test_entropy_ignores_normal_text() {
+        let config = ScanConfig {
+            entropy_scan: EntropyMode::All,
+            min_confidence: 0.0,
+            ..Default::default()
+        };
+        let text = "The quick brown fox jumps over the lazy dog near the river";
+        let result = scan_text_with_config(text, &config).unwrap();
+        assert!(
+            !result.iter().any(|m| m.category == "High Entropy"),
+            "Normal English text should NOT trigger entropy detection"
+        );
+    }
+
+    #[test]
+    fn test_entropy_off_by_default() {
+        let config = ScanConfig::default();
+        assert_eq!(config.entropy_scan, EntropyMode::Off);
+        let text = "secret=xK9mPqR3vL7nW2jF8hYcT5bA0dGiEuOs";
+        let result = scan_text_with_config(text, &config).unwrap();
+        assert!(
+            !result.iter().any(|m| m.category == "High Entropy"),
+            "Entropy should not fire when disabled"
+        );
     }
 }

@@ -269,6 +269,61 @@ latency-sensitive applications.
 
 ---
 
+## Entropy Analysis
+
+dlpscan includes two levels of entropy analysis:
+
+### Inline entropy (high-entropy secret detection)
+
+Detects secrets that don't match any regex pattern — random API keys,
+custom tokens, encoded credentials. The scanner tokenizes text and
+computes Shannon entropy per character. Tokens above 4.5 bits/char are
+flagged as potential secrets.
+
+Three gating modes control when entropy findings are reported:
+
+| Mode | Config Value | What triggers | Precision |
+|---|---|---|---|
+| **Off** | `"off"` | Nothing (default) | N/A |
+| **Gated** | `"gated"` | High-entropy token near keywords (`secret`, `key`, `token`, `password`, `auth`, `credential`) | High |
+| **Assignment** | `"assignment"` | High-entropy token after `KEY=`, `"key":`, `export VAR=` | Highest |
+| **All** | `"all"` | Any high-entropy token | Lower (more false positives) |
+
+```json
+{ "entropy_scan": "gated" }
+```
+
+**Recommended:** Start with `"gated"` for production. Use `"assignment"`
+for scanning config files and `.env` files. Use `"all"` for discovery
+and audit.
+
+Confidence is mapped from entropy: 4.5 bits/char = 0.40, 6.0 bits/char
+= 0.90. Apply `min_confidence` to filter further.
+
+### File-level entropy
+
+When the pipeline scans files, it computes Shannon entropy of the raw
+bytes (first 8KB sample). This classifies files independently of text
+extraction:
+
+| Classification | Entropy | Meaning |
+|---|---|---|
+| `normal` | < 6.0 bits/byte | Regular text, source code, config |
+| `moderately_random` | 6.0 - 7.5 | Binary data, some randomness |
+| `suspicious_for_format` | Above format threshold | Higher entropy than expected for file type |
+| `compressed_or_encrypted` | 7.5 - 7.9 | Likely compressed or encrypted |
+| `likely_encrypted` | >= 7.9 | Almost certainly encrypted content |
+
+File-level entropy is always computed (no opt-in needed) and reported in
+`PipelineResult.file_entropy` and `PipelineResult.entropy_classification`.
+
+Use cases:
+- Flag files that look encrypted even with innocent extensions
+- Detect steganography or data hiding in unexpected formats
+- Verify that "text" files aren't actually encrypted containers
+
+---
+
 ## Allowlists
 
 **Allowlists** suppress known false positives by exact text match,

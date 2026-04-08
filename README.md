@@ -4,7 +4,7 @@ High-performance DLP scanner written in Rust. Detects, redacts, and protects
 sensitive data with exceptional throughput.
 
 **560 patterns** across **126 categories** — full parity with the Python version.
-**17,000+ lines** of Rust across 37 modules. **331 tests** passing.
+**17,000+ lines** of Rust across 37 modules. **339 tests** passing.
 
 ## Performance
 
@@ -157,6 +157,29 @@ block_unreadable = true  # also blocks .exe, .dll, .gpg, .kdbx, etc.
 
 Crypto certificates are blocked by default. See the [Security](#file-type-controls-1)
 section for details on symlink resolution and double-extension protection.
+
+### Entropy-based secret detection
+
+Detect high-entropy secrets that don't match any regex pattern (random API
+keys, custom tokens, encoded credentials):
+
+```toml
+# .dlpscanrc
+entropy_scan = "gated"        # only near keywords like "secret", "key", "token"
+# entropy_scan = "assignment" # only in KEY=VALUE patterns
+# entropy_scan = "all"        # flag all high-entropy tokens
+```
+
+The pipeline also reports file-level entropy for detecting encrypted or
+compressed content:
+
+```json
+{
+  "file_path": "data.bin",
+  "file_entropy": 7.92,
+  "entropy_classification": "likely_encrypted"
+}
+```
 
 ### Baseline-only mode
 
@@ -383,6 +406,11 @@ dlpscan is hardened for enterprise deployment in regulated environments
   Symbol, CUSIP, SEDOL, Teller ID) require nearby keywords to fire
 - **Corrupted file recovery** -- corrupted ZIP/DOCX falls back to raw byte
   scanning; binary files with unknown extensions get printable string extraction
+- **Entropy analysis** -- detects high-entropy secrets that evade regex
+  patterns (random API keys, custom tokens) with three gating modes:
+  context-gated, assignment-gated, or ungated
+- **File-level entropy** -- pipeline classifies files as normal, compressed,
+  or encrypted based on Shannon entropy (7.9+ bits/byte = likely encrypted)
 - **Token vault TTL** -- vaults expire after 1 hour with panic-safe background
   eviction; detokenize rejects expired vaults
 - **Tenant-isolated caching** -- `key_with_namespace()` prevents cross-tenant

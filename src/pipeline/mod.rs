@@ -48,6 +48,14 @@ pub struct PipelineResult {
     pub error: Option<String>,
     pub file_size_bytes: u64,
     pub extracted_text_length: usize,
+    /// File-level Shannon entropy (0.0-8.0 bits/byte). High values
+    /// indicate encrypted or compressed content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_entropy: Option<f64>,
+    /// Entropy classification: "normal", "suspicious_for_format",
+    /// "compressed_or_encrypted", "likely_encrypted".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entropy_classification: Option<String>,
 }
 
 impl PipelineResult {
@@ -161,6 +169,8 @@ impl Pipeline {
                     error: Some(format!("Blocked file type in path: {}", ext.to_lowercase())),
                     file_size_bytes: 0,
                     extracted_text_length: 0,
+                    file_entropy: None,
+                    entropy_classification: None,
                 };
             }
             if self.block_unreadable {
@@ -174,6 +184,8 @@ impl Pipeline {
                             error: Some(format!("Unreadable/encrypted file type: .{}", ext.to_lowercase())),
                             file_size_bytes: 0,
                             extracted_text_length: 0,
+                            file_entropy: None,
+                            entropy_classification: None,
                         };
                     }
                 }
@@ -192,6 +204,8 @@ impl Pipeline {
                     error: Some(format!("Cannot read file: {e}")),
                     file_size_bytes: 0,
                     extracted_text_length: 0,
+                    file_entropy: None,
+                    entropy_classification: None,
                 };
             }
         };
@@ -209,6 +223,8 @@ impl Pipeline {
                 )),
                 file_size_bytes: metadata.len(),
                 extracted_text_length: 0,
+                file_entropy: None,
+                entropy_classification: None,
             };
         }
 
@@ -237,6 +253,8 @@ impl Pipeline {
                                         error: Some("Binary file with no extractable text".into()),
                                         file_size_bytes: metadata.len(),
                                         extracted_text_length: 0,
+                                        file_entropy: None,
+                                        entropy_classification: None,
                                     };
                                 }
                                 (text, "binary-strings".into())
@@ -250,6 +268,8 @@ impl Pipeline {
                                     error: Some("Cannot read binary file".into()),
                                     file_size_bytes: metadata.len(),
                                     extracted_text_length: 0,
+                                    file_entropy: None,
+                                    entropy_classification: None,
                                 };
                             }
                         }
@@ -279,6 +299,8 @@ impl Pipeline {
                     error: Some(format!("Scan error: {e}")),
                     file_size_bytes: metadata.len(),
                     extracted_text_length: text_len,
+                    file_entropy: None,
+                    entropy_classification: None,
                 };
             }
         };
@@ -288,6 +310,15 @@ impl Pipeline {
             matches.retain(|m| !allowlist.is_suppressed(m));
         }
 
+        // File-level entropy analysis (detect encrypted/compressed content)
+        let (file_entropy, entropy_classification) = {
+            let analyzer = crate::entropy::EntropyAnalyzer::default();
+            match analyzer.analyze_file(&resolved.display().to_string()) {
+                Ok(result) => (Some(result.entropy), Some(result.classification)),
+                Err(_) => (None, None),
+            }
+        };
+
         PipelineResult {
             file_path,
             matches,
@@ -296,6 +327,8 @@ impl Pipeline {
             error: None,
             file_size_bytes: metadata.len(),
             extracted_text_length: text_len,
+            file_entropy,
+            entropy_classification,
         }
     }
 

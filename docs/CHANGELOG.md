@@ -12,6 +12,16 @@ All notable changes to dlpscan will be documented in this file.
 - Decoded text scanned for all 560 patterns
 - Image size pre-check (20 MB), barcode count limit (100), text cap (4 KB/barcode)
 
+#### Entropy-Based Secret Detection
+- Inline entropy analysis detects high-entropy tokens that evade all regex
+  patterns (random API keys, custom tokens, encoded credentials)
+- Three gating modes: `gated` (context keywords required), `assignment`
+  (KEY=VALUE pattern required), `all` (flag everything)
+- File-level entropy classification: pipeline reports `file_entropy` and
+  `entropy_classification` for every file scanned (normal, compressed,
+  encrypted)
+- Config: `entropy_scan: "off" | "gated" | "assignment" | "all"`
+
 #### New File Format Support
 - `.cab` — Microsoft Cabinet archive extraction (MSCF header validation,
   printable string extraction with 10 MB output cap)
@@ -56,7 +66,7 @@ All notable changes to dlpscan will be documented in this file.
   MAX_MATCHES cap, no OOM, no Rayon panic
 
 ### Testing
-- 331 tests (282 unit + 12 evasion + 37 integration), up from 127
+- 339 tests (290 unit + 12 evasion + 37 integration), up from 127
 - New evasion test suite: extension mismatch, corrupted headers, offset map
   stress, zip bombs, extractor fallback (12 attack vectors)
 - New unit tests across 12 modules covering all hardening and new features

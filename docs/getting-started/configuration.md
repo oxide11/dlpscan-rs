@@ -50,7 +50,8 @@ dlpscan looks for configuration in this order:
     "p8", "ppk", "jks", "keystore", "bks",
     "smime", "gpg", "pgp", "asc", "sst", "stl", "spc", "pvk"
   ],
-  "block_unreadable": false
+  "block_unreadable": false,
+  "entropy_scan": "off"
 }
 ```
 
@@ -70,6 +71,7 @@ dlpscan looks for configuration in this order:
 | `context_backend` | string | `"regex"` | Context matching engine (usually leave as default) |
 | `blocked_extensions` | list | *(crypto certs)* | File extensions to block in pipeline scans |
 | `block_unreadable` | bool | `false` | Also block executables, encrypted containers, and media files |
+| `entropy_scan` | string | `"off"` | Entropy-based secret detection: `"off"`, `"gated"`, `"assignment"`, or `"all"`. See [Concepts: Entropy](concepts.md#entropy-analysis) |
 
 ---
 
@@ -259,7 +261,8 @@ Find everything, tune later:
 {
   "min_confidence": 0.0,
   "require_context": false,
-  "block_unreadable": false
+  "block_unreadable": false,
+  "entropy_scan": "all"
 }
 ```
 
@@ -272,7 +275,8 @@ Balanced detection with minimal noise:
   "min_confidence": 0.5,
   "require_context": false,
   "deduplicate": true,
-  "block_unreadable": true
+  "block_unreadable": true,
+  "entropy_scan": "gated"
 }
 ```
 
@@ -284,7 +288,8 @@ Maximum precision, only high-confidence findings:
 {
   "min_confidence": 0.8,
   "require_context": true,
-  "block_unreadable": true
+  "block_unreadable": true,
+  "entropy_scan": "assignment"
 }
 ```
 

@@ -310,6 +310,35 @@ the scanner falls back to raw byte scanning:
 This ensures an attacker cannot evade detection by corrupting a file's
 metadata while leaving the sensitive payload intact.
 
+### Entropy-Based Secret Detection
+
+The scanner includes inline entropy analysis that detects high-entropy
+tokens not caught by any regex pattern. Three gating modes:
+
+| Mode | Trigger | Precision | Best for |
+|---|---|---|---|
+| `gated` | High-entropy + keyword nearby | High | Production APIs, log scanning |
+| `assignment` | High-entropy + `KEY=VALUE` pattern | Highest | Config files, `.env` scanning |
+| `all` | Any high-entropy token | Lower | Discovery, audit, pentesting |
+
+Context keywords for gated mode: `secret`, `key`, `token`, `password`,
+`passwd`, `pwd`, `auth`, `credential`, `api_key`, `apikey`,
+`access_key`, `secret_key`, `private_key`, `bearer`, `authorization`,
+`connection_string`, `database_url`.
+
+### File-Level Entropy Classification
+
+Every file scanned by the pipeline receives Shannon entropy analysis
+(first 8KB). Results are reported in `PipelineResult`:
+
+| Classification | Entropy (bits/byte) | Action |
+|---|---|---|
+| `normal` | < 6.0 | Scan normally |
+| `moderately_random` | 6.0 - 7.5 | Scan, note in report |
+| `suspicious_for_format` | Above format threshold | Flag for review |
+| `compressed_or_encrypted` | 7.5 - 7.9 | Flag, may need decryption |
+| `likely_encrypted` | >= 7.9 | Flag as encrypted, consider blocking |
+
 ## File Type Controls
 
 ### Blocked Extensions
