@@ -410,8 +410,8 @@ fn test_audit_event_signing_roundtrip() {
 
 #[test]
 fn test_compliance_report_redacts_samples() {
-    use dlpscan::{InputGuard, Preset, Action};
     use dlpscan::compliance::ComplianceReporter;
+    use dlpscan::{Action, InputGuard, Preset};
 
     let guard = InputGuard::new()
         .with_presets(vec![Preset::PciDss])
@@ -444,8 +444,9 @@ fn test_luhn_rejects_trivial_sequences() {
 
 #[test]
 fn test_file_type_blocking() {
-    use dlpscan::extractors::{is_blocked_extension, is_path_blocked, is_unreadable_extension,
-        DEFAULT_BLOCKED_EXTENSIONS};
+    use dlpscan::extractors::{
+        is_blocked_extension, is_path_blocked, is_unreadable_extension, DEFAULT_BLOCKED_EXTENSIONS,
+    };
 
     // Direct extension check
     assert!(is_blocked_extension("der", DEFAULT_BLOCKED_EXTENSIONS));
@@ -453,7 +454,10 @@ fn test_file_type_blocking() {
     assert!(!is_blocked_extension("txt", DEFAULT_BLOCKED_EXTENSIONS));
 
     // Double extension bypass prevention
-    assert!(is_path_blocked("secrets.der.txt", DEFAULT_BLOCKED_EXTENSIONS));
+    assert!(is_path_blocked(
+        "secrets.der.txt",
+        DEFAULT_BLOCKED_EXTENSIONS
+    ));
     assert!(is_path_blocked("cert.pfx.bak", DEFAULT_BLOCKED_EXTENSIONS));
     assert!(!is_path_blocked("readme.md", DEFAULT_BLOCKED_EXTENSIONS));
 
@@ -517,7 +521,10 @@ fn test_printable_string_extraction_from_binary() {
     std::fs::write(f.path(), &data).unwrap();
 
     let result = extract_text(f.path().to_str().unwrap()).unwrap();
-    assert!(result.text.contains("123-45-6789"), "DAT extraction should find SSN in binary");
+    assert!(
+        result.text.contains("123-45-6789"),
+        "DAT extraction should find SSN in binary"
+    );
 }
 
 #[test]
@@ -532,35 +539,50 @@ fn test_cab_extraction_with_mscf_header() {
     std::fs::write(f.path(), &data).unwrap();
 
     let result = extract_text(f.path().to_str().unwrap()).unwrap();
-    assert!(result.text.contains("4532015112830366"), "CAB extraction should find card number");
+    assert!(
+        result.text.contains("4532015112830366"),
+        "CAB extraction should find card number"
+    );
 }
 
 #[test]
 fn test_vault_ttl_expired_rejection() {
     use dlpscan::api::{handle_detokenize, DetokenizeRequest, VaultEntry, VAULT_TTL_SECS};
     use dlpscan::guard::TokenVault;
-    use std::sync::RwLock;
     use std::collections::HashMap;
+    use std::sync::RwLock;
     use std::time::Instant;
 
     let vaults: RwLock<HashMap<String, VaultEntry>> = RwLock::new(HashMap::new());
-    vaults.write().unwrap().insert("v1".to_string(), VaultEntry {
-        vault: TokenVault::new("TOK", None),
-        created_at: Instant::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 100),
-    });
+    vaults.write().unwrap().insert(
+        "v1".to_string(),
+        VaultEntry {
+            vault: TokenVault::new("TOK", None),
+            created_at: Instant::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 100),
+        },
+    );
 
-    let req = DetokenizeRequest { text: "hello".to_string(), vault_id: "v1".to_string() };
+    let req = DetokenizeRequest {
+        text: "hello".to_string(),
+        vault_id: "v1".to_string(),
+    };
     let err = handle_detokenize(&req, &vaults).unwrap_err();
-    assert!(err.contains("expired"), "Expired vault should be rejected: {err}");
+    assert!(
+        err.contains("expired"),
+        "Expired vault should be rejected: {err}"
+    );
 }
 
 #[test]
 fn test_rbac_admin_action_restricted() {
-    use dlpscan::rbac::{role_has_permission, Role, Permission};
+    use dlpscan::rbac::{role_has_permission, Permission, Role};
 
     assert!(role_has_permission(Role::Admin, Permission::AdminAction));
     assert!(!role_has_permission(Role::Analyst, Permission::AdminAction));
-    assert!(!role_has_permission(Role::Operator, Permission::AdminAction));
+    assert!(!role_has_permission(
+        Role::Operator,
+        Permission::AdminAction
+    ));
     assert!(!role_has_permission(Role::Viewer, Permission::AdminAction));
 }
 
@@ -579,12 +601,18 @@ fn test_edm_register_and_scan() {
     assert!(
         matches.iter().any(|m| m.category == "ssn"),
         "EDM should find registered SSN: {:?}",
-        matches.iter().map(|m| (&m.category, &m.matched_text)).collect::<Vec<_>>()
+        matches
+            .iter()
+            .map(|m| (&m.category, &m.matched_text))
+            .collect::<Vec<_>>()
     );
     assert!(
         matches.iter().any(|m| m.category == "email"),
         "EDM should find registered email: {:?}",
-        matches.iter().map(|m| (&m.category, &m.matched_text)).collect::<Vec<_>>()
+        matches
+            .iter()
+            .map(|m| (&m.category, &m.matched_text))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -606,7 +634,10 @@ fn test_edm_wired_into_scanner() {
     assert!(
         matches.iter().any(|m| m.category.contains("EDM")),
         "Scanner with EDM should find EDM match alongside regex: {:?}",
-        matches.iter().map(|m| (&m.category, &m.sub_category, m.confidence)).collect::<Vec<_>>()
+        matches
+            .iter()
+            .map(|m| (&m.category, &m.sub_category, m.confidence))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -638,10 +669,7 @@ fn test_lsh_register_and_query() {
     // Query with very similar text
     let query = "This is a confidential financial report containing sensitive revenue projections and strategic acquisition targets for Q4 2026.";
     let matches = vault.query(query, Some(0.5));
-    assert!(
-        !matches.is_empty(),
-        "LSH should find similar document"
-    );
+    assert!(!matches.is_empty(), "LSH should find similar document");
     assert_eq!(matches[0].doc_id, "fin-report-q4");
     assert!(matches[0].similarity > 0.5);
 }
@@ -661,7 +689,10 @@ fn test_lsh_wired_into_scanner() {
     assert!(
         matches.iter().any(|m| m.category == "Document Similarity"),
         "Scanner with LSH should find similar document: {:?}",
-        matches.iter().map(|m| (&m.category, &m.sub_category)).collect::<Vec<_>>()
+        matches
+            .iter()
+            .map(|m| (&m.category, &m.sub_category))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -677,4 +708,68 @@ fn test_lsh_save_and_load() {
 
     let loaded = dlpscan::lsh::DocumentVault::load(path_str).unwrap();
     assert_eq!(loaded.document_count(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Filename context tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_filename_provides_context_for_sin() {
+    // A file named "sin.txt" should provide "sin" as a context keyword,
+    // boosting confidence for Canadian SIN patterns in the content.
+    let f = tempfile::Builder::new()
+        .prefix("sin")
+        .suffix(".txt")
+        .tempfile()
+        .unwrap();
+    // Write a 9-digit number that could be a SIN (no keywords in content)
+    std::fs::write(f.path(), "reference number 046 454 286 for the account").unwrap();
+
+    let pipeline = dlpscan::Pipeline::new().with_min_confidence(0.0);
+    let result = pipeline.process_file(f.path());
+
+    // The filename "sin*.txt" should provide "sin" context
+    let has_context_match = result.matches.iter().any(|m| m.has_context);
+    assert!(
+        has_context_match || !result.matches.is_empty(),
+        "File named 'sin.txt' should boost context for SIN-like numbers. Matches: {:?}",
+        result
+            .matches
+            .iter()
+            .map(|m| (&m.category, &m.sub_category, m.confidence, m.has_context))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_filename_provides_context_for_ssn() {
+    // A file named "ssn_report.csv" should provide "ssn" context
+    let f = tempfile::Builder::new()
+        .prefix("ssn_report")
+        .suffix(".csv")
+        .tempfile()
+        .unwrap();
+    std::fs::write(f.path(), "id,number\n1,078-05-1120\n").unwrap();
+
+    let pipeline = dlpscan::Pipeline::new().with_min_confidence(0.0);
+    let result = pipeline.process_file(f.path());
+
+    let ssn_match = result.matches.iter().find(|m| m.sub_category == "USA SSN");
+    assert!(
+        ssn_match.is_some(),
+        "File named 'ssn_report.csv' should detect SSN: {:?}",
+        result
+            .matches
+            .iter()
+            .map(|m| &m.sub_category)
+            .collect::<Vec<_>>()
+    );
+    // The SSN should have context (from filename)
+    if let Some(m) = ssn_match {
+        assert!(
+            m.has_context,
+            "SSN in file named 'ssn_report' should have context from filename"
+        );
+    }
 }

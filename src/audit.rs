@@ -149,8 +149,7 @@ impl AuditEvent {
         self.signature = None;
         let canonical = serde_json::to_string(&self)
             .map_err(|e| format!("Failed to serialize event for signing: {e}"))?;
-        let mut mac = <Hmac<Sha256>>::new_from_slice(key)
-            .expect("HMAC can accept any key length");
+        let mut mac = <Hmac<Sha256>>::new_from_slice(key).expect("HMAC can accept any key length");
         mac.update(canonical.as_bytes());
         let result = mac.finalize().into_bytes();
         self.signature = Some(hex::encode(result));
@@ -875,7 +874,8 @@ mod tests {
     #[test]
     fn test_sign_and_verify() {
         let key = b"test-signing-key-32bytes!!!!!!!!";
-        let event = AuditEvent::new("SCAN").unwrap()
+        let event = AuditEvent::new("SCAN")
+            .unwrap()
             .with_action("scan")
             .with_outcome("success");
         let signed = event.sign(key).expect("signing should succeed");
@@ -886,17 +886,18 @@ mod tests {
     #[test]
     fn test_verify_fails_wrong_key() {
         let key = b"correct-key-for-signing-1234567";
-        let event = AuditEvent::new("SCAN").unwrap()
-            .sign(key).unwrap();
+        let event = AuditEvent::new("SCAN").unwrap().sign(key).unwrap();
         assert!(!event.verify(b"wrong-key-for-verification!!!!!"));
     }
 
     #[test]
     fn test_verify_fails_tampered_event() {
         let key = b"tamper-detection-key-1234567890";
-        let mut event = AuditEvent::new("REDACT").unwrap()
+        let mut event = AuditEvent::new("REDACT")
+            .unwrap()
             .with_finding_count(5)
-            .sign(key).unwrap();
+            .sign(key)
+            .unwrap();
         // Tamper with the event
         event.finding_count = 0;
         assert!(!event.verify(key));
@@ -910,7 +911,8 @@ mod tests {
 
     #[test]
     fn test_new_audit_fields() {
-        let event = AuditEvent::new("SCAN").unwrap()
+        let event = AuditEvent::new("SCAN")
+            .unwrap()
             .with_source_ip("192.168.1.1")
             .with_request_id("req-12345")
             .with_outcome("success");
@@ -957,9 +959,7 @@ mod tests {
     fn test_rotating_handler_creates_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("audit.jsonl");
-        let handler = RotatingFileAuditHandler::new(
-            path.to_str().unwrap(), 1024 * 1024, 5,
-        );
+        let handler = RotatingFileAuditHandler::new(path.to_str().unwrap(), 1024 * 1024, 5);
         let event = AuditEvent::new("SCAN").unwrap();
         handler.handle(&event);
         assert!(path.exists());

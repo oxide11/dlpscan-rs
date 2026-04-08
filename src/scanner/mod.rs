@@ -321,7 +321,8 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 let matched_text = mat.as_str();
 
                 // Structural validation (Luhn, SWIFT, CUSIP, SEDOL, TFN, SSN)
-                if !crate::validation::validate_match(pat.category, pat.sub_category, matched_text) {
+                if !crate::validation::validate_match(pat.category, pat.sub_category, matched_text)
+                {
                     continue;
                 }
 
@@ -424,7 +425,11 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 }
                 for mat in cp.regex.find_iter(&alt_norm) {
                     let matched_text = mat.as_str();
-                    if !crate::validation::validate_match(cp.def.category, cp.def.sub_category, matched_text) {
+                    if !crate::validation::validate_match(
+                        cp.def.category,
+                        cp.def.sub_category,
+                        matched_text,
+                    ) {
                         continue;
                     }
                     let confidence = compute_confidence(cp.def.sub_category, false, false);
@@ -458,9 +463,9 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 break;
             }
             // Skip if already covered by a regex match at the same span
-            let dominated = matches.iter().any(|m| {
-                m.span.0 <= em.span.0 && m.span.1 >= em.span.1
-            });
+            let dominated = matches
+                .iter()
+                .any(|m| m.span.0 <= em.span.0 && m.span.1 >= em.span.1);
             if !dominated {
                 matches.push(em);
             }
@@ -482,7 +487,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                         em.matched_text,
                         format!("EDM: {}", em.category),
                         "Exact Data Match".to_string(),
-                        true,  // always has context (it's an exact match)
+                        true, // always has context (it's an exact match)
                         em.confidence,
                         em.span,
                         false,
@@ -532,21 +537,38 @@ const ENTROPY_THRESHOLD: f64 = 4.5;
 
 /// Context keywords that indicate a high-entropy token is likely a secret.
 const ENTROPY_CONTEXT_KEYWORDS: &[&str] = &[
-    "secret", "key", "token", "password", "passwd", "pwd",
-    "auth", "credential", "api_key", "apikey", "api-key",
-    "access_key", "secret_key", "private_key", "signing_key",
-    "encryption_key", "bearer", "authorization",
-    "connection_string", "conn_str", "database_url",
-    "aws_secret", "github_token", "slack_token",
+    "secret",
+    "key",
+    "token",
+    "password",
+    "passwd",
+    "pwd",
+    "auth",
+    "credential",
+    "api_key",
+    "apikey",
+    "api-key",
+    "access_key",
+    "secret_key",
+    "private_key",
+    "signing_key",
+    "encryption_key",
+    "bearer",
+    "authorization",
+    "connection_string",
+    "conn_str",
+    "database_url",
+    "aws_secret",
+    "github_token",
+    "slack_token",
 ];
 
 /// Assignment patterns that precede a value (key=VALUE, "key": "VALUE", etc.).
 /// Matches if the text before a token looks like an assignment.
 /// Handles: KEY=, "key":, export KEY=, let key =, const KEY:, var key =
 static ASSIGNMENT_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r#"[A-Za-z_][A-Za-z0-9_]*\s*[:=]\s*["']?\s*$"#
-    ).expect("assignment regex must compile")
+    Regex::new(r#"[A-Za-z_][A-Za-z0-9_]*\s*[:=]\s*["']?\s*$"#)
+        .expect("assignment regex must compile")
 });
 
 /// Scan for high-entropy tokens using the configured gating mode.
@@ -561,9 +583,19 @@ fn scan_high_entropy_tokens(
 
     // Tokenize by whitespace and common delimiters
     let delimiters = |c: char| -> bool {
-        c.is_whitespace() || c == ',' || c == ';' || c == '\'' || c == '"'
-            || c == '(' || c == ')' || c == '[' || c == ']'
-            || c == '{' || c == '}' || c == '=' || c == ':'
+        c.is_whitespace()
+            || c == ','
+            || c == ';'
+            || c == '\''
+            || c == '"'
+            || c == '('
+            || c == ')'
+            || c == '['
+            || c == ']'
+            || c == '{'
+            || c == '}'
+            || c == '='
+            || c == ':'
     };
 
     let mut pos = 0;
@@ -589,7 +621,10 @@ fn scan_high_entropy_tokens(
         }
 
         // Skip tokens that are all digits (likely IDs, not secrets)
-        if token.chars().all(|c| c.is_ascii_digit() || c == '-' || c == '.') {
+        if token
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '-' || c == '.')
+        {
             continue;
         }
 
@@ -611,7 +646,9 @@ fn scan_high_entropy_tokens(
                 let search_start = norm_start.saturating_sub(80);
                 let search_end = (norm_end + 80).min(normalized_lower.len());
                 let context_window = &normalized_lower[search_start..search_end];
-                let found = ENTROPY_CONTEXT_KEYWORDS.iter().any(|kw| context_window.contains(kw));
+                let found = ENTROPY_CONTEXT_KEYWORDS
+                    .iter()
+                    .any(|kw| context_window.contains(kw));
                 if !found {
                     continue;
                 }
@@ -626,9 +663,7 @@ fn scan_high_entropy_tokens(
                 }
                 (true, "Potential Secret (Assignment)")
             }
-            EntropyMode::All => {
-                (false, "Potential Secret")
-            }
+            EntropyMode::All => (false, "Potential Secret"),
             EntropyMode::Off => unreachable!(),
         };
 
@@ -655,8 +690,10 @@ fn scan_high_entropy_tokens(
             (norm_start, norm_end)
         };
 
-        let matched_text = if orig_start < original_text.len() && orig_end <= original_text.len()
-            && original_text.is_char_boundary(orig_start) && original_text.is_char_boundary(orig_end)
+        let matched_text = if orig_start < original_text.len()
+            && orig_end <= original_text.len()
+            && original_text.is_char_boundary(orig_start)
+            && original_text.is_char_boundary(orig_end)
         {
             &original_text[orig_start..orig_end]
         } else {
@@ -774,7 +811,10 @@ mod tests {
         assert!(
             result.iter().any(|m| m.category == "High Entropy"),
             "Entropy All mode should detect random-looking token: {:?}",
-            result.iter().map(|m| (&m.category, &m.sub_category)).collect::<Vec<_>>()
+            result
+                .iter()
+                .map(|m| (&m.category, &m.sub_category))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -813,10 +853,14 @@ mod tests {
         let text = "CUSTOM_KEY=xK9mPqR3vL7nW2jF8hYcT5bA0dGiEuOs end";
         let result = scan_text_with_config(text, &config).unwrap();
         assert!(
-            result.iter().any(|m| m.category == "High Entropy"
-                && m.sub_category.contains("Assignment")),
+            result
+                .iter()
+                .any(|m| m.category == "High Entropy" && m.sub_category.contains("Assignment")),
             "Assignment mode should fire on KEY=VALUE pattern: {:?}",
-            result.iter().map(|m| (&m.category, &m.sub_category)).collect::<Vec<_>>()
+            result
+                .iter()
+                .map(|m| (&m.category, &m.sub_category))
+                .collect::<Vec<_>>()
         );
 
         // Without assignment — should NOT fire

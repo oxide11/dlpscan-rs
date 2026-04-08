@@ -593,161 +593,188 @@ fn main() {
         // ---------------------------------------------------------------
         // dlpscan edm — Exact Data Match
         // ---------------------------------------------------------------
-        Commands::Edm { action } => {
-            match action {
-                EdmAction::Register { category, values, file, state } => {
-                    let mut edm = if std::path::Path::new(&state).exists() {
-                        dlpscan::edm::ExactDataMatcher::load(&state).unwrap_or_else(|_| {
-                            dlpscan::edm::ExactDataMatcher::new(None, None)
-                        })
-                    } else {
-                        dlpscan::edm::ExactDataMatcher::new(None, None)
-                    };
+        Commands::Edm { action } => match action {
+            EdmAction::Register {
+                category,
+                values,
+                file,
+                state,
+            } => {
+                let mut edm = if std::path::Path::new(&state).exists() {
+                    dlpscan::edm::ExactDataMatcher::load(&state)
+                        .unwrap_or_else(|_| dlpscan::edm::ExactDataMatcher::new(None, None))
+                } else {
+                    dlpscan::edm::ExactDataMatcher::new(None, None)
+                };
 
-                    let mut all_values = values;
-                    if let Some(file_path) = file {
-                        match std::fs::read_to_string(&file_path) {
-                            Ok(content) => {
-                                all_values.extend(
-                                    content.lines()
-                                        .map(|l| l.trim().to_string())
-                                        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-                                );
-                            }
-                            Err(e) => {
-                                eprintln!("Error reading file: {e}");
-                                process::exit(1);
-                            }
+                let mut all_values = values;
+                if let Some(file_path) = file {
+                    match std::fs::read_to_string(&file_path) {
+                        Ok(content) => {
+                            all_values.extend(
+                                content
+                                    .lines()
+                                    .map(|l| l.trim().to_string())
+                                    .filter(|l| !l.is_empty() && !l.starts_with('#')),
+                            );
                         }
-                    }
-
-                    let refs: Vec<&str> = all_values.iter().map(|s| s.as_str()).collect();
-                    let count = edm.register_values(&category, &refs);
-                    edm.save(&state).unwrap_or_else(|e| {
-                        eprintln!("Error saving EDM state: {e}");
-                        process::exit(1);
-                    });
-                    println!("Registered {} values in category '{}' ({} total hashes)",
-                        all_values.len(), category, count);
-                    println!("State saved to {state}");
-                }
-                EdmAction::Scan { text, state } => {
-                    if !std::path::Path::new(&state).exists() {
-                        eprintln!("No EDM state file found at {state}");
-                        eprintln!("Run `dlpscan edm register` first");
-                        process::exit(1);
-                    }
-                    let edm = dlpscan::edm::ExactDataMatcher::load(&state).unwrap_or_else(|e| {
-                        eprintln!("Error loading EDM state: {e}");
-                        process::exit(1);
-                    });
-
-                    let text = text.unwrap_or_else(|| {
-                        let mut buf = String::new();
-                        io::stdin().read_to_string(&mut buf).unwrap_or_default();
-                        buf
-                    });
-
-                    let matches = edm.scan(&text, None);
-                    if matches.is_empty() {
-                        println!("No EDM matches found.");
-                    } else {
-                        println!("{} EDM matches found:", matches.len());
-                        for m in &matches {
-                            println!("  [{}] \"{}\" at {}..{}",
-                                m.category,
-                                m.matched_text,
-                                m.span.0, m.span.1);
+                        Err(e) => {
+                            eprintln!("Error reading file: {e}");
+                            process::exit(1);
                         }
                     }
                 }
-                EdmAction::List { state } => {
-                    if !std::path::Path::new(&state).exists() {
-                        println!("No EDM state file found. Run `dlpscan edm register` first.");
-                        return;
+
+                let refs: Vec<&str> = all_values.iter().map(|s| s.as_str()).collect();
+                let count = edm.register_values(&category, &refs);
+                edm.save(&state).unwrap_or_else(|e| {
+                    eprintln!("Error saving EDM state: {e}");
+                    process::exit(1);
+                });
+                println!(
+                    "Registered {} values in category '{}' ({} total hashes)",
+                    all_values.len(),
+                    category,
+                    count
+                );
+                println!("State saved to {state}");
+            }
+            EdmAction::Scan { text, state } => {
+                if !std::path::Path::new(&state).exists() {
+                    eprintln!("No EDM state file found at {state}");
+                    eprintln!("Run `dlpscan edm register` first");
+                    process::exit(1);
+                }
+                let edm = dlpscan::edm::ExactDataMatcher::load(&state).unwrap_or_else(|e| {
+                    eprintln!("Error loading EDM state: {e}");
+                    process::exit(1);
+                });
+
+                let text = text.unwrap_or_else(|| {
+                    let mut buf = String::new();
+                    io::stdin().read_to_string(&mut buf).unwrap_or_default();
+                    buf
+                });
+
+                let matches = edm.scan(&text, None);
+                if matches.is_empty() {
+                    println!("No EDM matches found.");
+                } else {
+                    println!("{} EDM matches found:", matches.len());
+                    for m in &matches {
+                        println!(
+                            "  [{}] \"{}\" at {}..{}",
+                            m.category, m.matched_text, m.span.0, m.span.1
+                        );
                     }
-                    let edm = dlpscan::edm::ExactDataMatcher::load(&state).unwrap_or_else(|e| {
-                        eprintln!("Error loading EDM state: {e}");
-                        process::exit(1);
-                    });
-                    let cats = edm.categories();
-                    println!("EDM categories ({}):", cats.len());
-                    for cat in cats {
-                        println!("  {cat}");
-                    }
-                    println!("Total hashes: {}", edm.total_hashes());
                 }
             }
-        }
+            EdmAction::List { state } => {
+                if !std::path::Path::new(&state).exists() {
+                    println!("No EDM state file found. Run `dlpscan edm register` first.");
+                    return;
+                }
+                let edm = dlpscan::edm::ExactDataMatcher::load(&state).unwrap_or_else(|e| {
+                    eprintln!("Error loading EDM state: {e}");
+                    process::exit(1);
+                });
+                let cats = edm.categories();
+                println!("EDM categories ({}):", cats.len());
+                for cat in cats {
+                    println!("  {cat}");
+                }
+                println!("Total hashes: {}", edm.total_hashes());
+            }
+        },
 
         // ---------------------------------------------------------------
         // dlpscan lsh — Document Similarity
         // ---------------------------------------------------------------
-        Commands::Lsh { action } => {
-            match action {
-                LshAction::Register { doc_id, file, sensitivity, state } => {
-                    let vault = if std::path::Path::new(&state).exists() {
-                        dlpscan::lsh::DocumentVault::load(&state).unwrap_or_else(|_| {
-                            dlpscan::lsh::DocumentVault::default_vault()
-                        })
-                    } else {
-                        dlpscan::lsh::DocumentVault::default_vault()
-                    };
+        Commands::Lsh { action } => match action {
+            LshAction::Register {
+                doc_id,
+                file,
+                sensitivity,
+                state,
+            } => {
+                let vault = if std::path::Path::new(&state).exists() {
+                    dlpscan::lsh::DocumentVault::load(&state)
+                        .unwrap_or_else(|_| dlpscan::lsh::DocumentVault::default_vault())
+                } else {
+                    dlpscan::lsh::DocumentVault::default_vault()
+                };
 
-                    let text = std::fs::read_to_string(&file).unwrap_or_else(|e| {
-                        eprintln!("Error reading file: {e}");
-                        process::exit(1);
-                    });
+                let text = std::fs::read_to_string(&file).unwrap_or_else(|e| {
+                    eprintln!("Error reading file: {e}");
+                    process::exit(1);
+                });
 
-                    vault.register(&doc_id, &text, &sensitivity, None);
-                    vault.save(&state).unwrap_or_else(|e| {
-                        eprintln!("Error saving LSH state: {e}");
-                        process::exit(1);
-                    });
-                    println!("Registered document '{}' ({} bytes, sensitivity: {})",
-                        doc_id, text.len(), sensitivity);
-                    println!("Vault: {} documents, saved to {state}", vault.document_count());
+                vault.register(&doc_id, &text, &sensitivity, None);
+                vault.save(&state).unwrap_or_else(|e| {
+                    eprintln!("Error saving LSH state: {e}");
+                    process::exit(1);
+                });
+                println!(
+                    "Registered document '{}' ({} bytes, sensitivity: {})",
+                    doc_id,
+                    text.len(),
+                    sensitivity
+                );
+                println!(
+                    "Vault: {} documents, saved to {state}",
+                    vault.document_count()
+                );
+            }
+            LshAction::Query {
+                file,
+                threshold,
+                state,
+            } => {
+                if !std::path::Path::new(&state).exists() {
+                    eprintln!("No LSH state file found at {state}");
+                    eprintln!("Run `dlpscan lsh register` first");
+                    process::exit(1);
                 }
-                LshAction::Query { file, threshold, state } => {
-                    if !std::path::Path::new(&state).exists() {
-                        eprintln!("No LSH state file found at {state}");
-                        eprintln!("Run `dlpscan lsh register` first");
-                        process::exit(1);
-                    }
-                    let vault = dlpscan::lsh::DocumentVault::load(&state).unwrap_or_else(|e| {
-                        eprintln!("Error loading LSH state: {e}");
-                        process::exit(1);
-                    });
+                let vault = dlpscan::lsh::DocumentVault::load(&state).unwrap_or_else(|e| {
+                    eprintln!("Error loading LSH state: {e}");
+                    process::exit(1);
+                });
 
-                    let text = std::fs::read_to_string(&file).unwrap_or_else(|e| {
-                        eprintln!("Error reading file: {e}");
-                        process::exit(1);
-                    });
+                let text = std::fs::read_to_string(&file).unwrap_or_else(|e| {
+                    eprintln!("Error reading file: {e}");
+                    process::exit(1);
+                });
 
-                    let matches = vault.query(&text, Some(threshold));
-                    if matches.is_empty() {
-                        println!("No similar documents found (threshold: {:.0}%).", threshold * 100.0);
-                    } else {
-                        println!("{} similar documents found:", matches.len());
-                        for m in &matches {
-                            println!("  [{:.0}%] {} (sensitivity: {})",
-                                m.similarity * 100.0, m.doc_id, m.sensitivity);
-                        }
+                let matches = vault.query(&text, Some(threshold));
+                if matches.is_empty() {
+                    println!(
+                        "No similar documents found (threshold: {:.0}%).",
+                        threshold * 100.0
+                    );
+                } else {
+                    println!("{} similar documents found:", matches.len());
+                    for m in &matches {
+                        println!(
+                            "  [{:.0}%] {} (sensitivity: {})",
+                            m.similarity * 100.0,
+                            m.doc_id,
+                            m.sensitivity
+                        );
                     }
-                }
-                LshAction::List { state } => {
-                    if !std::path::Path::new(&state).exists() {
-                        println!("No LSH state file found. Run `dlpscan lsh register` first.");
-                        return;
-                    }
-                    let vault = dlpscan::lsh::DocumentVault::load(&state).unwrap_or_else(|e| {
-                        eprintln!("Error loading LSH state: {e}");
-                        process::exit(1);
-                    });
-                    println!("LSH vault: {} documents registered", vault.document_count());
                 }
             }
-        }
+            LshAction::List { state } => {
+                if !std::path::Path::new(&state).exists() {
+                    println!("No LSH state file found. Run `dlpscan lsh register` first.");
+                    return;
+                }
+                let vault = dlpscan::lsh::DocumentVault::load(&state).unwrap_or_else(|e| {
+                    eprintln!("Error loading LSH state: {e}");
+                    process::exit(1);
+                });
+                println!("LSH vault: {} documents registered", vault.document_count());
+            }
+        },
 
         // ---------------------------------------------------------------
         // dlpscan tui — Interactive TUI menu
@@ -777,7 +804,8 @@ fn main() {
         Commands::Info => {
             println!("dlpscan v{}", env!("CARGO_PKG_VERSION"));
             println!();
-            println!("Patterns:    {} across {} categories",
+            println!(
+                "Patterns:    {} across {} categories",
                 dlpscan::patterns::PATTERNS.len(),
                 dlpscan::patterns::categories().len()
             );
@@ -790,7 +818,10 @@ fn main() {
                 println!("  min_confidence:    {:.2}", config.min_confidence);
                 println!("  require_context:   {}", config.require_context);
                 println!("  block_unreadable:  {}", config.block_unreadable);
-                println!("  blocked_extensions: {} types", config.blocked_extensions.len());
+                println!(
+                    "  blocked_extensions: {} types",
+                    config.blocked_extensions.len()
+                );
             } else {
                 println!("Config:      (none — run `dlpscan init` to create)");
             }
@@ -811,10 +842,7 @@ fn run_init_wizard() {
     println!();
 
     // 1. Choose config location
-    let config_path = prompt(
-        "Config file path",
-        ".dlpscanrc",
-    );
+    let config_path = prompt("Config file path", ".dlpscanrc");
 
     if std::path::Path::new(&config_path).exists() {
         let overwrite = prompt("Config already exists. Overwrite? (y/n)", "n");
@@ -849,10 +877,7 @@ fn run_init_wizard() {
     println!("  5. financial     All financial data");
     println!("  6. contact-info  Email, phone, addresses");
     println!("  7. all           All of the above");
-    let preset_choice = prompt(
-        "Select presets (comma-separated numbers, e.g., 1,2,3)",
-        "7",
-    );
+    let preset_choice = prompt("Select presets (comma-separated numbers, e.g., 1,2,3)", "7");
     let categories = parse_preset_choices(&preset_choice);
 
     // 6. Output format
@@ -949,7 +974,10 @@ fn save_config(path: &str, config: &dlpscan::config::Config) {
 fn show_config(path: &str) {
     let config = load_config(path);
     println!("Config: {path}");
-    println!("{}", serde_json::to_string_pretty(&config).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&config).unwrap_or_default()
+    );
 }
 
 fn set_config_value(path: &str, key: &str, value: &str) {
@@ -1000,9 +1028,7 @@ fn reset_config(path: &str) {
 // ===========================================================================
 
 fn run_test_pattern(pattern: Option<String>, text: Option<String>) {
-    let pattern = pattern.unwrap_or_else(|| {
-        prompt("Regex pattern", r"\b\d{3}-\d{2}-\d{4}\b")
-    });
+    let pattern = pattern.unwrap_or_else(|| prompt("Regex pattern", r"\b\d{3}-\d{2}-\d{4}\b"));
 
     // Validate regex
     let re = match regex::Regex::new(&pattern) {
@@ -1013,12 +1039,8 @@ fn run_test_pattern(pattern: Option<String>, text: Option<String>) {
         }
     };
 
-    let text = text.unwrap_or_else(|| {
-        prompt(
-            "Sample text",
-            "SSN: 123-45-6789, card: 4532015112830366",
-        )
-    });
+    let text =
+        text.unwrap_or_else(|| prompt("Sample text", "SSN: 123-45-6789, card: 4532015112830366"));
 
     println!();
     println!("Pattern: {pattern}");
@@ -1031,12 +1053,7 @@ fn run_test_pattern(pattern: Option<String>, text: Option<String>) {
     } else {
         println!("Matches ({}):", matches.len());
         for m in &matches {
-            println!(
-                "  [{}-{}] \"{}\"",
-                m.start(),
-                m.end(),
-                m.as_str()
-            );
+            println!("  [{}-{}] \"{}\"", m.start(), m.end(), m.as_str());
         }
     }
 

@@ -19,6 +19,10 @@ Input text
   |     +-- Leet-speak decoding
   |     +-- NFKC normalization
   |
+  +-- 1b. Filename context (pipeline only)
+  |     +-- Filename words prepended as context keywords
+  |     +-- "sin.txt" adds "sin", "ssn_report.csv" adds "ssn report csv"
+  |
   +-- 2. Context keyword scan (Aho-Corasick, single O(n) pass)
   |     +-- Builds a map of which categories have keywords nearby
   |
@@ -131,6 +135,27 @@ are completely suppressed unless a keyword appears nearby.
 Context-required patterns: Account Balance, CUSIP, SEDOL, Ticker Symbol,
 Teller ID, Australia TFN, US Bank Account Number, Check Number, Card
 Expiry, Date of Birth, Gender Marker, and others.
+
+### Filename as context
+
+When scanning files through the pipeline, the **filename** is
+automatically used as a context source. The filename is split into words
+and prepended to the text before the keyword scan runs.
+
+This means:
+- `sin.txt` containing `046 454 286` → "sin" keyword boosts SIN detection
+- `ssn_report.csv` → "ssn" keyword boosts SSN detection
+- `credit-cards.xlsx` → "credit cards" boosts credit card detection
+- `patient_records.docx` → "patient" boosts healthcare detection
+
+Filename context works identically to in-text keywords — it provides
+the same +0.20 confidence boost and satisfies context-required patterns.
+Match spans are adjusted so they refer to positions in the file content,
+not the prepended filename.
+
+This feature only applies to pipeline file scanning (`dlpscan scan`,
+`dlpscan scan-dir`, `Pipeline.process_file()`). It does not apply to
+inline text scanning via `scan_text()` or `InputGuard.scan()`.
 
 ---
 

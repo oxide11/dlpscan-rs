@@ -60,7 +60,13 @@ pub struct PipelineResult {
 
 impl PipelineResult {
     /// Create an error result with no matches.
-    pub fn error_result(file_path: String, format: &str, error: String, elapsed_secs: f64, file_size: u64) -> Self {
+    pub fn error_result(
+        file_path: String,
+        format: &str,
+        error: String,
+        elapsed_secs: f64,
+        file_size: u64,
+    ) -> Self {
         Self {
             file_path,
             matches: vec![],
@@ -173,9 +179,13 @@ impl Pipeline {
         // Check blocked extensions on RESOLVED path (checks ALL extensions, not just last)
         {
             let resolved_str = resolved.display().to_string();
-            let blocked_refs: Vec<&str> = self.blocked_extensions.iter().map(|s| s.as_str()).collect();
+            let blocked_refs: Vec<&str> =
+                self.blocked_extensions.iter().map(|s| s.as_str()).collect();
             if crate::extractors::is_path_blocked(&resolved_str, &blocked_refs) {
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("unknown");
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("unknown");
                 return PipelineResult {
                     file_path,
                     matches: vec![],
@@ -196,7 +206,10 @@ impl Pipeline {
                             matches: vec![],
                             format_detected: "blocked".into(),
                             duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                            error: Some(format!("Unreadable/encrypted file type: .{}", ext.to_lowercase())),
+                            error: Some(format!(
+                                "Unreadable/encrypted file type: .{}",
+                                ext.to_lowercase()
+                            )),
                             file_size_bytes: 0,
                             extracted_text_length: 0,
                             file_entropy: None,
@@ -258,7 +271,8 @@ impl Pipeline {
                         // or corrupted extensions.
                         match fs::read(path) {
                             Ok(bytes) if bytes.len() <= self.max_file_size => {
-                                let text = crate::extractors::extract_printable_strings_public(&bytes, 12);
+                                let text =
+                                    crate::extractors::extract_printable_strings_public(&bytes, 12);
                                 if text.is_empty() {
                                     return PipelineResult {
                                         file_path,
@@ -295,6 +309,24 @@ impl Pipeline {
 
         let text_len = text.len();
 
+        // Prepend filename as context for keyword matching.
+        // This ensures that filenames like "sin.txt", "ssn_report.csv", or
+        // "credit-cards.xlsx" provide context keywords to the scanner.
+        let filename_context = {
+            let name = resolved.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            // Extract words from filename (split on non-alphanumeric)
+            let words: Vec<&str> = name
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .collect();
+            words.join(" ")
+        };
+        let text_with_context = if !filename_context.is_empty() {
+            format!("{filename_context}\n{text}")
+        } else {
+            text
+        };
+
         let config = ScanConfig {
             categories: self.categories.clone(),
             require_context: self.require_context,
@@ -303,7 +335,13 @@ impl Pipeline {
             ..Default::default()
         };
 
-        let mut matches = match scanner::scan_text_with_config(&text, &config) {
+        // Scan with filename context prepended
+        let context_offset = if !filename_context.is_empty() {
+            filename_context.len() + 1 // +1 for the \n separator
+        } else {
+            0
+        };
+        let mut matches = match scanner::scan_text_with_config(&text_with_context, &config) {
             Ok(m) => m,
             Err(e) => {
                 return PipelineResult {
@@ -319,6 +357,15 @@ impl Pipeline {
                 };
             }
         };
+
+        // Filter out matches from the filename preamble and adjust spans
+        if context_offset > 0 {
+            matches.retain(|m| m.span.1 > context_offset);
+            for m in &mut matches {
+                m.span.0 = m.span.0.saturating_sub(context_offset);
+                m.span.1 = m.span.1.saturating_sub(context_offset);
+            }
+        }
 
         // Apply allowlist
         if let Some(ref allowlist) = self.allowlist {

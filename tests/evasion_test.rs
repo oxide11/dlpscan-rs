@@ -19,10 +19,7 @@ fn test_extension_mismatch_html_as_docx() {
         Email: secret@example.com
     </body></html>"#;
 
-    let f = tempfile::Builder::new()
-        .suffix(".docx")
-        .tempfile()
-        .unwrap();
+    let f = tempfile::Builder::new().suffix(".docx").tempfile().unwrap();
     std::fs::write(f.path(), html.as_bytes()).unwrap();
 
     let result = dlpscan::extractors::extract_text(f.path().to_str().unwrap());
@@ -52,8 +49,9 @@ fn test_extension_mismatch_html_as_docx() {
             // Now test via scanner to ensure detection works on fallback
             let matches = dlpscan::scan_text(&raw).unwrap();
             assert!(
-                matches.iter().any(|m| m.sub_category == "Visa"
-                    || m.sub_category == "Email Address"),
+                matches
+                    .iter()
+                    .any(|m| m.sub_category == "Visa" || m.sub_category == "Email Address"),
                 "Scanner must detect sensitive data in HTML-as-DOCX fallback"
             );
         }
@@ -65,10 +63,7 @@ fn test_extension_mismatch_html_as_docx() {
 fn test_extension_mismatch_html_as_pdf() {
     let html = "<html><body>SSN: 078-05-1120 and card 4532015112830366</body></html>";
 
-    let f = tempfile::Builder::new()
-        .suffix(".pdf")
-        .tempfile()
-        .unwrap();
+    let f = tempfile::Builder::new().suffix(".pdf").tempfile().unwrap();
     std::fs::write(f.path(), html.as_bytes()).unwrap();
 
     let result = dlpscan::extractors::extract_text(f.path().to_str().unwrap());
@@ -96,17 +91,17 @@ fn test_polyglot_zip_header_with_text_payload() {
     data.extend_from_slice(b"\x00\x00\x00\x00"); // fake header
     data.extend_from_slice(b"SSN: 123-45-6789 credit card 4532015112830366");
 
-    let f = tempfile::Builder::new()
-        .suffix(".txt")
-        .tempfile()
-        .unwrap();
+    let f = tempfile::Builder::new().suffix(".txt").tempfile().unwrap();
     std::fs::write(f.path(), &data).unwrap();
 
     // Extension says .txt (plain text), but magic bytes say ZIP.
     // get_extractor checks extension first, so .txt -> extract_plain_text.
     let result = dlpscan::extractors::extract_text(f.path().to_str().unwrap());
     // Since it's .txt, it should be treated as text regardless of magic bytes
-    assert!(result.is_ok(), "Plain text extraction should succeed for .txt");
+    assert!(
+        result.is_ok(),
+        "Plain text extraction should succeed for .txt"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -127,10 +122,7 @@ fn test_polyglot_zip_header_with_text_payload() {
 fn test_corrupted_docx_fail_behavior() {
     // Create a minimal valid ZIP with STORED (uncompressed) content
     // so the payload survives corruption
-    let f = tempfile::Builder::new()
-        .suffix(".docx")
-        .tempfile()
-        .unwrap();
+    let f = tempfile::Builder::new().suffix(".docx").tempfile().unwrap();
     {
         let file = std::fs::File::create(f.path()).unwrap();
         let mut zip = zip::ZipWriter::new(file);
@@ -189,10 +181,7 @@ fn test_corrupted_docx_fail_behavior() {
 /// Tests that a corrupted ZIP doesn't panic and attempts recovery.
 #[test]
 fn test_corrupted_zip_no_panic() {
-    let f = tempfile::Builder::new()
-        .suffix(".docx")
-        .tempfile()
-        .unwrap();
+    let f = tempfile::Builder::new().suffix(".docx").tempfile().unwrap();
     // Write garbage with ZIP magic bytes + embedded text
     let mut data = b"PK\x03\x04".to_vec();
     data.extend_from_slice(&[0xFF; 200]);
@@ -206,7 +195,8 @@ fn test_corrupted_zip_no_panic() {
             // Recovery succeeded — verify it found the embedded text
             assert!(
                 r.text.contains("123-45-6789"),
-                "ZIP recovery should find embedded SSN: {}", &r.text[..r.text.len().min(200)]
+                "ZIP recovery should find embedded SSN: {}",
+                &r.text[..r.text.len().min(200)]
             );
         }
         Err(_) => {
@@ -279,10 +269,7 @@ fn test_zero_width_dense_evasion() {
 #[test]
 fn test_nested_zip_depth_limit() {
     // Create a 3-level nested ZIP: inner.txt -> level1.zip -> level2.zip
-    let f = tempfile::Builder::new()
-        .suffix(".zip")
-        .tempfile()
-        .unwrap();
+    let f = tempfile::Builder::new().suffix(".zip").tempfile().unwrap();
     {
         // Level 0: create innermost ZIP containing sensitive text
         let mut inner_buf = Vec::new();
@@ -327,10 +314,7 @@ fn test_nested_zip_depth_limit() {
 /// Tests decompression size limits.
 #[test]
 fn test_zip_bomb_protection() {
-    let f = tempfile::Builder::new()
-        .suffix(".zip")
-        .tempfile()
-        .unwrap();
+    let f = tempfile::Builder::new().suffix(".zip").tempfile().unwrap();
     {
         let file = std::fs::File::create(f.path()).unwrap();
         let mut zip = zip::ZipWriter::new(file);
@@ -375,18 +359,14 @@ fn test_zip_bomb_protection() {
 #[test]
 fn test_corrupted_docx_renamed_txt() {
     // Create a valid DOCX with sensitive data
-    let docx_f = tempfile::Builder::new()
-        .suffix(".docx")
-        .tempfile()
-        .unwrap();
+    let docx_f = tempfile::Builder::new().suffix(".docx").tempfile().unwrap();
     {
         let file = std::fs::File::create(docx_f.path()).unwrap();
         let mut zip = zip::ZipWriter::new(file);
         let options = zip::write::SimpleFileOptions::default();
         zip.start_file("word/document.xml", options).unwrap();
-        zip.write_all(
-            b"<w:t>email: secret@example.com card: 4532015112830366</w:t>"
-        ).unwrap();
+        zip.write_all(b"<w:t>email: secret@example.com card: 4532015112830366</w:t>")
+            .unwrap();
         zip.finish().unwrap();
     }
 
@@ -399,15 +379,15 @@ fn test_corrupted_docx_renamed_txt() {
     }
 
     // Save as .txt
-    let txt_f = tempfile::Builder::new()
-        .suffix(".txt")
-        .tempfile()
-        .unwrap();
+    let txt_f = tempfile::Builder::new().suffix(".txt").tempfile().unwrap();
     std::fs::write(txt_f.path(), &data).unwrap();
 
     // As .txt, the scanner should read it as plain text
     let result = dlpscan::extractors::extract_text(txt_f.path().to_str().unwrap());
-    assert!(result.is_ok(), "Corrupted DOCX as .txt should extract as plain text");
+    assert!(
+        result.is_ok(),
+        "Corrupted DOCX as .txt should extract as plain text"
+    );
 
     let text = result.unwrap().text;
     // The XML payload is still in the raw bytes
@@ -423,11 +403,13 @@ fn test_corrupted_docx_renamed_txt() {
 #[test]
 fn test_unknown_extension_binary_with_payload() {
     let mut data = vec![0u8; 100];
-    data.extend_from_slice(b"CONFIDENTIAL: SSN 078-05-1120 card 4532015112830366 API_KEY=sk_live_abc123def456");
+    data.extend_from_slice(
+        b"CONFIDENTIAL: SSN 078-05-1120 card 4532015112830366 API_KEY=sk_live_abc123def456",
+    );
     data.extend_from_slice(&vec![0xFF; 100]);
 
     let f = tempfile::Builder::new()
-        .suffix(".xyz")  // Unknown extension
+        .suffix(".xyz") // Unknown extension
         .tempfile()
         .unwrap();
     std::fs::write(f.path(), &data).unwrap();
@@ -449,10 +431,7 @@ fn test_unknown_extension_binary_with_payload() {
 /// Corrupted ZIP with STORED entries should recover data via raw byte scan.
 #[test]
 fn test_corrupted_zip_raw_byte_recovery() {
-    let f = tempfile::Builder::new()
-        .suffix(".docx")
-        .tempfile()
-        .unwrap();
+    let f = tempfile::Builder::new().suffix(".docx").tempfile().unwrap();
     {
         let file = std::fs::File::create(f.path()).unwrap();
         let mut zip = zip::ZipWriter::new(file);
@@ -481,7 +460,8 @@ fn test_corrupted_zip_raw_byte_recovery() {
             assert!(
                 r.text.contains("4532015112830366"),
                 "Corrupted ZIP recovery should find card number: format={}, text_len={}",
-                r.format, r.text.len()
+                r.format,
+                r.text.len()
             );
             assert!(
                 r.format == "zip-recovered",

@@ -183,7 +183,10 @@ mod tests {
         // Only Admin can perform AdminAction
         assert!(role_has_permission(Role::Admin, Permission::AdminAction));
         assert!(!role_has_permission(Role::Analyst, Permission::AdminAction));
-        assert!(!role_has_permission(Role::Operator, Permission::AdminAction));
+        assert!(!role_has_permission(
+            Role::Operator,
+            Permission::AdminAction
+        ));
         assert!(!role_has_permission(Role::Viewer, Permission::AdminAction));
     }
 }

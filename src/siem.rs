@@ -602,10 +602,16 @@ mod tests {
         impl SIEMAdapter for RetryAdapter {
             fn send(&self, _event: &HashMap<String, serde_json::Value>) -> Result<(), String> {
                 let n = self.attempts.fetch_add(1, Ordering::SeqCst);
-                if n < 2 { Err("transient error".to_string()) } else { Ok(()) }
+                if n < 2 {
+                    Err("transient error".to_string())
+                } else {
+                    Ok(())
+                }
             }
         }
-        let adapter = RetryAdapter { attempts: AtomicUsize::new(0) };
+        let adapter = RetryAdapter {
+            attempts: AtomicUsize::new(0),
+        };
         let event = HashMap::new();
         assert!(send_with_retry(&adapter, &event).is_ok());
     }
