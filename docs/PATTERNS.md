@@ -8,8 +8,7 @@ Each pattern includes:
 - **Specificity** -- base confidence score (0.0-1.0); higher means fewer false positives
 - **Context Required** -- if Yes, the pattern is suppressed unless a context keyword appears nearby
 
-> See [KEYWORDS.md](KEYWORDS.md) for the context keywords that boost or gate
-> each pattern.
+> See [KEYWORDS.md](KEYWORDS.md) for the context keywords that boost or gate each pattern.
 
 ### Specificity scale
 
@@ -119,7 +118,7 @@ Each pattern includes:
 | Australia DL WA | `\b\d{7}\b` | 0.40 | No |
 | Australia Medicare | `\b[2-6]\d{3}[\s]?\d{5}[\s]?\d[\s]?\d?\b` | 0.40 | No |
 | Australia Passport | `\b[A-Z]{1,2}\d{7}\b` | 0.40 | No |
-| Australia TFN | `\b\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{2,3}\b` | 0.40 | No |
+| Australia TFN | `\b\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{2,3}\b` | 0.40 | Yes |
 
 ## Asia-Pacific - Bangladesh (3 patterns)
 
@@ -267,7 +266,7 @@ Each pattern includes:
 | ABA Routing Number | `\b(?:0[1-9]\|[12]\d\|3[0-2]\|6[1-9]\|7[0-2])\d{7}\b` | 0.55 | No |
 | Canada Transit Number | `\b\d{5}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}\b` | 0.40 | No |
 | IBAN Generic | `\b[A-Z]{2}\d{2}[\s]?[\dA-Z]{4}(?:[\s]?[\dA-Z]{4}){2,7}(?:[\s]?[\dA-Z]{1,4})?\b` | 0.90 | No |
-| SWIFT/BIC | `\b[A-Z]{4}[A-Z]{2}[A-Z2-9][A-NP-Z0-9](?:[A-Z\d]{3})?\b` | 0.85 | No |
+| SWIFT/BIC | `\b[A-Z]{4}[A-Z]{2}[A-Z2-9][A-NP-Z0-9](?:[A-Z\d]{3})?\b` | 0.65 | No |
 | US Bank Account Number | `\b\d{8,17}\b` | 0.20 | Yes |
 
 ## Biometric Identifiers (2 patterns)
@@ -368,10 +367,10 @@ Each pattern includes:
 
 | Pattern Name | Regex | Specificity | Context Required |
 |---|---|---:|:---:|
-| Account Balance | `(?:^\|[\s\(\[{,;])[\$\x{20ac}\x{00a3}\x{00a5}]\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d{2})?\b` | 0.50 | No |
-| Balance with Currency Code | `\b(?:USD\|EUR\|GBP\|JPY\|CAD\|AUD\|CHF)\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d{2})?\b` | 0.55 | No |
+| Account Balance | `(?:^\|[\s\(\[{,;])[\$\x{20ac}\x{00a3}\x{00a5}]\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d{2})?\b` | 0.50 | Yes |
+| Balance with Currency Code | `\b(?:USD\|EUR\|GBP\|JPY\|CAD\|AUD\|CHF)\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d{2})?\b` | 0.55 | Yes |
 | DTI Ratio | `\b\d{1,2}\.\d{1,2}%\b` | 0.45 | Yes |
-| Income Amount | `(?:^\|[\s\(\[{,;])[\$\x{20ac}\x{00a3}\x{00a5}]\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d{2})?\b` | 0.40 | No |
+| Income Amount | `(?:^\|[\s\(\[{,;])[\$\x{20ac}\x{00a3}\x{00a5}]\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d{2})?\b` | 0.40 | Yes |
 
 ## Data Classification Labels (8 patterns)
 
@@ -717,7 +716,7 @@ Each pattern includes:
 | UK DL | `\b[A-Z]{5}\d{6}[A-Z0-9]{5}\b` | 0.40 | No |
 | UK NIN | `\b[A-CEGHJ-PR-TW-Z]{2}\d{6}[A-D]\b` | 0.40 | No |
 | UK Passport | `\b\d{9}\b` | 0.40 | No |
-| UK Phone Number | `(?:\+44[-.\s]?\|0)(?:\d[-.\s]?){9,10}\b` | 0.40 | No |
+| UK Phone Number | `(?:\+44[-.\s]?\|0)(?:1\d\|20\|3\d\|5\d\|7[0-9]\|8[0-9])(?:[-.\s]?\d){7,8}\b` | 0.40 | No |
 | UK Sort Code | `\b\d{2}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{2}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{2}\b` | 0.40 | No |
 | UK UTR | `\b\d{5}\s?\d{5}\b` | 0.40 | No |
 
@@ -761,7 +760,7 @@ Each pattern includes:
 | Pattern Name | Regex | Specificity | Context Required |
 |---|---|---:|:---:|
 | Internal Account Ref | `\b[A-Z]{2,4}\d{8,14}\b` | 0.50 | No |
-| Teller ID | `\b[A-Z]{1,3}\d{4,8}\b` | 0.35 | No |
+| Teller ID | `\b[A-Z]{1,3}\d{4,8}\b` | 0.35 | Yes |
 
 ## Latin America - Argentina (3 patterns)
 
@@ -1160,12 +1159,12 @@ Each pattern includes:
 
 | Pattern Name | Regex | Specificity | Context Required |
 |---|---|---:|:---:|
-| CUSIP | `\b[0-9A-Z]{6}[0-9A-Z]{2}\d\b` | 0.70 | No |
+| CUSIP | `\b[0-9A-Z]{6}[0-9A-Z]{2}\d\b` | 0.50 | Yes |
 | FIGI | `\bBBG[A-Z0-9]{9}\b` | 0.90 | No |
 | ISIN | `\b[A-Z]{2}[0-9A-Z]{9}\d\b` | 0.75 | No |
 | LEI | `\b[A-Z0-9]{4}00[A-Z0-9]{12}\d{2}\b` | 0.80 | No |
-| SEDOL | `\b[0-9BCDFGHJKLMNPQRSTVWXYZ]{6}\d\b` | 0.70 | No |
-| Ticker Symbol | `(?:^\|[\s\(\[{,;])\$[A-Z]{1,5}\b` | 0.80 | No |
+| SEDOL | `\b[0-9BCDFGHJKLMNPQRSTVWXYZ]{6}\d\b` | 0.50 | Yes |
+| Ticker Symbol | `(?:^\|[\s\(\[{,;])\$[A-Z]{1,5}\b` | 0.60 | Yes |
 
 ## Social Media Identifiers (2 patterns)
 
