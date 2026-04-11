@@ -851,3 +851,112 @@ fn test_french_password_context() {
         "French password context should enable gated entropy or other detection"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Multilingual keyword context tests (Spanish, German, Italian, Portuguese)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_spanish_credit_card_context() {
+    // "tarjeta de crédito" = credit card in Spanish
+    let text = "tarjeta de crédito 4532015112830366";
+    let matches = scan_text(text).unwrap();
+    let visa = matches.iter().find(|m| m.sub_category == "Visa");
+    assert!(visa.is_some(), "Spanish CC context should detect Visa");
+    assert!(
+        visa.unwrap().has_context,
+        "Visa should have context from Spanish keyword"
+    );
+}
+
+#[test]
+fn test_german_credit_card_context() {
+    // "Kreditkarte" = credit card in German
+    let text = "Kreditkarte 4532015112830366";
+    let matches = scan_text(text).unwrap();
+    let visa = matches.iter().find(|m| m.sub_category == "Visa");
+    assert!(visa.is_some(), "German CC context should detect Visa");
+    assert!(
+        visa.unwrap().has_context,
+        "Visa should have context from German keyword"
+    );
+}
+
+#[test]
+fn test_italian_credit_card_context() {
+    // "carta di credito" = credit card in Italian
+    let text = "carta di credito 4532015112830366";
+    let matches = scan_text(text).unwrap();
+    let visa = matches.iter().find(|m| m.sub_category == "Visa");
+    assert!(visa.is_some(), "Italian CC context should detect Visa");
+    assert!(
+        visa.unwrap().has_context,
+        "Visa should have context from Italian keyword"
+    );
+}
+
+#[test]
+fn test_portuguese_credit_card_context() {
+    // "cartão de crédito" = credit card in Portuguese
+    let text = "cartão de crédito 4532015112830366";
+    let matches = scan_text(text).unwrap();
+    let visa = matches.iter().find(|m| m.sub_category == "Visa");
+    assert!(visa.is_some(), "Portuguese CC context should detect Visa");
+    assert!(
+        visa.unwrap().has_context,
+        "Visa should have context from Portuguese keyword"
+    );
+}
+
+#[test]
+fn test_german_password_context() {
+    // "Passwort" = password in German
+    let text = "Passwort xK9mPqR3vL7nW2jF8hYcT5bA0dGiEuOs";
+    let config = ScanConfig {
+        entropy_scan: dlpscan::scanner::EntropyMode::Gated,
+        min_confidence: 0.0,
+        ..Default::default()
+    };
+    let matches = dlpscan::scanner::scan_text_with_config(text, &config).unwrap();
+    assert!(
+        matches.iter().any(|m| m.category == "High Entropy"),
+        "German 'Passwort' should gate entropy detection: {:?}",
+        matches
+            .iter()
+            .map(|m| (&m.category, &m.sub_category))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_spanish_email_context() {
+    // "correo electrónico" = email in Spanish
+    let text = "correo electrónico test@example.com";
+    let matches = scan_text(text).unwrap();
+    let email = matches.iter().find(|m| m.sub_category == "Email Address");
+    assert!(email.is_some(), "Spanish email context should detect email");
+    assert!(
+        email.unwrap().has_context,
+        "Email should have context from Spanish keyword"
+    );
+}
+
+#[test]
+fn test_italian_password_context() {
+    // "password" is the same in Italian, but test "credenziali"
+    let text = "senha xK9mPqR3vL7nW2jF8hYcT5bA0dGiEuOs";
+    let config = ScanConfig {
+        entropy_scan: dlpscan::scanner::EntropyMode::Gated,
+        min_confidence: 0.0,
+        ..Default::default()
+    };
+    let matches = dlpscan::scanner::scan_text_with_config(text, &config).unwrap();
+    assert!(
+        matches.iter().any(|m| m.category == "High Entropy"),
+        "Portuguese 'senha' should gate entropy detection: {:?}",
+        matches
+            .iter()
+            .map(|m| (&m.category, &m.sub_category))
+            .collect::<Vec<_>>()
+    );
+}

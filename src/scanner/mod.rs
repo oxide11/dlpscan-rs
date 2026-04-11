@@ -576,6 +576,34 @@ const ENTROPY_CONTEXT_KEYWORDS: &[&str] = &[
     "aws_secret",
     "github_token",
     "slack_token",
+    // French
+    "mot de passe",
+    "clé privée",
+    "clé api",
+    "jeton",
+    "identifiant",
+    "chaîne de connexion",
+    // Spanish
+    "contraseña",
+    "contrasena",
+    "clave privada",
+    "clave api",
+    "credencial",
+    // German
+    "passwort",
+    "kennwort",
+    "zugangsdaten",
+    "anmeldedaten",
+    "privater schlüssel",
+    "api-schlüssel",
+    // Italian
+    "credenziali",
+    "chiave privata",
+    "chiave api",
+    // Portuguese
+    "senha",
+    "chave privada",
+    "chave api",
 ];
 
 /// Assignment patterns that precede a value (key=VALUE, "key": "VALUE", etc.).
