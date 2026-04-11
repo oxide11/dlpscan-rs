@@ -10,10 +10,11 @@
 </p>
 
 **561 patterns** across **126 categories**. **72 checksum validators** for
-national IDs, financial identifiers, and crypto addresses. **510+ tests**
-passing across the lib, integration, evasion, and detection-quality harnesses,
-with an enforced labeled-corpus regression suite (**80/80 recall, 0 false
-positives**).
+national IDs, financial identifiers, and crypto addresses. **5,000+ context
+keywords** across English, French, Spanish, German, Italian, and Portuguese.
+**510+ tests** passing across the lib, integration, evasion, and
+detection-quality harnesses, with an enforced labeled-corpus regression suite
+(**80/80 recall, 0 false positives**).
 
 ### Highlights
 
@@ -24,6 +25,8 @@ positives**).
 - **Structural validation**: every always-run pattern is either checksum-validated
   (Luhn, mod-97, Verhoeff, Base58Check, Bech32 polymod, ISO 3779, etc.) or
   context-gated with keyword proximity checks.
+- **Multilingual context**: 5,000+ keywords across 6 languages for accurate
+  context-gating in multi-language documents.
 - **20+ file formats**: PDF, DOCX, XLSX, archives (ZIP/RAR/7z), Parquet, SQLite,
   email (EML/MBOX/MSG), QR codes and barcodes — all enabled by default.
 
@@ -310,16 +313,17 @@ let matches = scan_text_with_config("Card: 4532015112830366", &config)?;
 siphon detects sensitive data using a two-layer system:
 
 1. **560 regex patterns** match data formats (credit cards, SSNs, IBANs, API keys, etc.)
-2. **3,100+ context keywords** (English + French) confirm detections via Aho-Corasick proximity matching
+2. **5,000+ context keywords** (English, French, Spanish, German, Italian, Portuguese) confirm detections via Aho-Corasick proximity matching
 
 Each pattern has a **specificity score** (0.0-1.0) indicating base confidence.
 When a context keyword appears within the configured distance of a match,
 confidence is boosted by +0.20. Some low-specificity patterns are **context-required** --
 they are suppressed entirely without a nearby keyword.
 
-Keywords include both English and French/French-Canadian translations for
-bilingual document scanning (e.g., `credit card` / `carte de crédit`,
-`social insurance number` / `numéro d'assurance sociale`).
+Keywords include translations in 6 languages for multilingual document
+scanning: English, French/French-Canadian, Spanish, German, Italian,
+and Portuguese (e.g., `credit card` / `carte de crédit` / `tarjeta de
+crédito` / `Kreditkarte` / `carta di credito` / `cartão de crédito`).
 
 | Category | Patterns | Examples |
 |---|---:|---|
@@ -548,7 +552,7 @@ See [docs/enterprise/security.md](docs/enterprise/security.md) for full details.
 | [docs/getting-started/configuration.md](docs/getting-started/configuration.md) | Full configuration reference (config file, env vars, CLI, policies) |
 | [docs/getting-started/installation.md](docs/getting-started/installation.md) | Build from source, Docker, feature flags |
 | [docs/PATTERNS.md](docs/PATTERNS.md) | All 560 patterns with regex, specificity, and context flags |
-| [docs/KEYWORDS.md](docs/KEYWORDS.md) | All 3,100+ context keywords (English + French) with proximity distances |
+| [docs/KEYWORDS.md](docs/KEYWORDS.md) | All 5,000+ context keywords (6 languages) with proximity distances |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Performance analysis and optimization journey |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Version history |
 | [docs/api-reference.md](docs/api-reference.md) | Comprehensive API documentation |

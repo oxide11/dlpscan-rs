@@ -16,14 +16,27 @@ All notable changes to dlpscan will be documented in this file.
   UnionPay 14k, Diners 36k across 200+ countries
 - Zero overhead when feature disabled (stubs return None)
 
-#### French/French-Canadian Bilingual Keywords
-- 609 French keywords added across all major pattern categories
+#### Multilingual Keywords (6 Languages)
+- 2,461 multilingual keywords added across all major pattern categories
+- Languages: English (base), French/French-Canadian (609), Spanish (463),
+  German (437), Italian (472), Portuguese (480)
+- Total keywords: 5,000+ (up from 2,500 English-only)
 - Coverage: credit cards, banking, contact, identity/PII, Canada SIN,
   healthcare, classification, legal, secrets, financial, employee, regulatory
-- Examples: `carte de crédit`, `numéro d'assurance sociale`, `courriel`,
-  `date de naissance`, `confidentiel`, `mot de passe`, `permis de conduire`
+- French: `carte de crédit`, `numéro d'assurance sociale`, `courriel`,
+  `confidentiel`, `mot de passe`
+- Spanish: `tarjeta de crédito`, `contraseña`, `correo electrónico`,
+  `número de cuenta`, `confidencial`
+- German: `Kreditkarte`, `Passwort`, `Kontonummer`, `vertraulich`,
+  `Geburtsdatum`, `Führerschein`
+- Italian: `carta di credito`, `credenziali`, `numero di conto`,
+  `riservato`, `data di nascita`
+- Portuguese: `cartão de crédito`, `senha`, `número da conta`,
+  `confidencial`, `data de nascimento`
+- Entropy context keywords also multilingual: `contraseña`, `Passwort`,
+  `senha`, `mot de passe`, `credenziali`
 - Zero performance impact (Aho-Corasick O(n) scan absorbs additional keywords)
-- Total keywords: 3,100+ (English + French)
+- Total keywords: 5,000+ (6 languages)
 
 #### Filename as Context
 - Filenames like "sin.txt" or "ssn_report.csv" now provide context
@@ -93,7 +106,7 @@ All notable changes to dlpscan will be documented in this file.
   MAX_MATCHES cap, no OOM, no Rayon panic
 
 ### Testing
-- 352 tests (290 unit + 12 evasion + 50 integration), up from 127
+- 360 tests (291 unit + 12 evasion + 57 integration), up from 127
 - New evasion test suite: extension mismatch, corrupted headers, offset map
   stress, zip bombs, extractor fallback (12 attack vectors)
 - New unit tests across 12 modules covering all hardening and new features
