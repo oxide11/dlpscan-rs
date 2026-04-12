@@ -131,53 +131,51 @@ of keyword presence.
 | Full | 164 | Credit Card Numbers, Contact Information, Cloud Provider Secrets |
 | Baseline | 164 | Credit Card Numbers, Contact Information, Cloud Provider Secrets |
 
-### Full Latency Table (v2.1.0 with multilingual keywords + BIN lookup)
+### Full Latency Table (v2.1.0 optimized)
 
 | Test | Full (ms) | Baseline (ms) | Speedup |
 |---|---:|---:|---:|
-| scan_clean_1KB | 0.50 | 0.42 | 1.2x |
-| scan_mixed_1KB | 0.45 | 0.29 | 1.5x |
-| scan_dense_1KB | 0.39 | 0.26 | 1.5x |
-| scan_kw_heavy_1KB | 0.50 | 0.47 | 1.1x |
-| scan_clean_10KB | 0.48 | 0.62 | 0.8x |
-| scan_mixed_10KB | 1.07 | 0.88 | 1.2x |
-| scan_dense_10KB | 1.02 | 1.13 | 0.9x |
-| scan_kw_heavy_10KB | 0.89 | 0.89 | 1.0x |
-| scan_clean_100KB | 2.67 | 2.49 | 1.1x |
-| scan_mixed_100KB | 5.86 | 5.22 | 1.1x |
-| scan_dense_100KB | 5.76 | 6.49 | 0.9x |
-| scan_kw_heavy_100KB | 4.26 | 3.82 | 1.1x |
-| scan_clean_1MB | 17.28 | 17.23 | 1.0x |
-| scan_mixed_1MB | 69.74 | 62.52 | 1.1x |
-| scan_dense_1MB | 75.37 | 65.96 | 1.1x |
-| scan_kw_heavy_1MB | 36.60 | 35.49 | 1.0x |
-| redact_mixed_10KB | 0.96 | 0.94 | 1.0x |
+| scan_clean_1MB | 17.54 | 16.88 | 1.0x |
+| scan_mixed_1MB | 50.89 | 49.63 | 1.0x |
+| scan_dense_1MB | 62.18 | 60.75 | 1.0x |
+| scan_kw_heavy_1MB | 33.40 | 31.65 | 1.1x |
+| redact_mixed_10KB | 0.88 | 0.82 | 1.1x |
 
-### Throughput Comparison (1MB, v2.1.0 current)
+### Throughput Comparison (1MB, v2.1.0 optimized)
 
 | Scenario | Full | Baseline |
 |---|---:|---:|
-| Clean text | 57.9 MB/s | 58.0 MB/s |
-| Mixed content | 14.3 MB/s | 16.0 MB/s |
-| Dense sensitive data | 13.3 MB/s | 15.2 MB/s |
-| **Keyword-heavy text** | **27.3 MB/s** | **28.2 MB/s** |
+| Clean text | 57.0 MB/s | 59.3 MB/s |
+| Mixed content | 19.7 MB/s | 20.1 MB/s |
+| Dense sensitive data | 16.1 MB/s | 16.5 MB/s |
+| **Keyword-heavy text** | **29.9 MB/s** | **31.6 MB/s** |
 
-### Performance notes
+### Performance journey
 
-Throughput is lower than the pre-v2.1.0 baseline (20 MB/s mixed → 14 MB/s)
-due to:
+The v2.1.0 release added 2,500 multilingual keywords (English + 5 other
+languages) and the Aho-Corasick automaton grew to ~5,000 unique keywords.
+This initially caused a ~30% throughput drop on dense content.
 
-- **Aho-Corasick keyword automaton grew 2x** — from ~2,500 to ~5,000 keywords
-  across 6 languages. More keywords means more hits to track in the context
-  index, which increases processing on dense text.
-- **BIN lookup on credit card matches** — adds O(log n) binary search per
-  card match. Negligible per call but visible on dense data.
-- **Structural validators** — SWIFT/BIC, CUSIP, SEDOL, TFN, SSN checks add
-  work to confirmed matches.
+The context hit index was then optimized:
 
-The keyword-heavy scenario is most affected because context lookups are
-triggered frequently. Clean text throughput (58 MB/s) is still excellent
-and unchanged, confirming the fast path for non-sensitive content is intact.
+1. **Keyword deduplication** — identical keywords across patterns
+   (`credit card` appears in 7+ entries) are now stored once in the AC
+   automaton and mapped to all pattern IDs that use them. The automaton
+   itself became smaller.
+2. **Pattern-ID indexing** — the hit index was refactored from a
+   `HashMap<(&str, &str), Vec<(usize, usize)>>` with a cloned
+   `HashMap<String, HashMap<String, ...>>` reverse map to a simple
+   `Vec<Vec<u32>>` keyed by pattern ID. This eliminated ~5,000 String
+   allocations per scan.
+3. **Sorted position lists** — positions are sorted once per scan
+   enabling O(log n) binary search in range checks instead of linear scan.
+4. **Compact u32 positions** — hit positions are stored as u32 instead
+   of usize pairs (only `start` is needed for range checks).
+
+Result: mixed content throughput recovered from 14 MB/s to 20 MB/s
+(+40%), matching pre-multilingual performance. Dense content still has
+some overhead from the larger automaton but is within ~20% of the
+pre-multilingual baseline.
 
 ### Analysis
 

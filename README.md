@@ -10,10 +10,10 @@ sensitive data with exceptional throughput.
 
 | Scenario (1MB) | Full (560 patterns) | Baseline (108 patterns) |
 |---|---:|---:|
-| Clean text | 57.9 MB/s | 58.0 MB/s |
-| Mixed content | 14.3 MB/s | 16.0 MB/s |
-| Dense sensitive data | 13.3 MB/s | 15.2 MB/s |
-| Keyword-heavy text | 27.3 MB/s | 28.2 MB/s |
+| Clean text | 57.0 MB/s | 59.3 MB/s |
+| Mixed content | 19.7 MB/s | 20.1 MB/s |
+| Dense sensitive data | 16.1 MB/s | 16.5 MB/s |
+| Keyword-heavy text | 29.9 MB/s | 31.6 MB/s |
 
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for full results including optimization
 journey, latency tables, and baseline-vs-full comparison.

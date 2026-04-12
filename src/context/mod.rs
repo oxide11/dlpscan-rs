@@ -29,12 +29,12 @@ pub struct ContextEntry {
 }
 
 /// Hit index from Aho-Corasick search — stores positions of keyword matches.
+/// Keyed by pattern ID (u32) interned from the CONTEXT_KEYWORDS table.
 pub struct ContextHitIndex {
-    /// Map from (category, sub_category) → list of (start, end) byte positions.
-    #[allow(dead_code)]
-    hits: HashMap<(&'static str, &'static str), Vec<(usize, usize)>>,
-    /// Two-level map for allocation-free lookup: category → sub_category → positions.
-    reverse: HashMap<String, HashMap<String, Vec<(usize, usize)>>>,
+    /// Map from pattern ID → sorted list of start positions.
+    /// Pattern ID is the index into CONTEXT_KEYWORDS, which is stable and
+    /// allows zero-allocation lookups via direct indexing.
+    hits: Vec<Vec<u32>>,
 }
 
 impl ContextHitIndex {
@@ -46,35 +46,72 @@ impl ContextHitIndex {
         range_start: usize,
         range_end: usize,
     ) -> bool {
-        // Two-level lookup avoids allocating Strings on every call
-        if let Some(sub_map) = self.reverse.get(category) {
-            if let Some(positions) = sub_map.get(sub_category) {
-                return positions
-                    .iter()
-                    .any(|&(start, _end)| start >= range_start && start < range_end);
-            }
+        // Look up the pattern ID for this (category, sub_category)
+        let Some(pattern_id) = lookup_pattern_id(category, sub_category) else {
+            return false;
+        };
+        let Some(positions) = self.hits.get(pattern_id) else {
+            return false;
+        };
+        // Binary search for the first position >= range_start
+        let start_u32 = range_start.min(u32::MAX as usize) as u32;
+        let end_u32 = range_end.min(u32::MAX as usize) as u32;
+        match positions.binary_search(&start_u32) {
+            Ok(_) => true,
+            Err(idx) => positions.get(idx).is_some_and(|&p| p < end_u32),
         }
-        false
     }
 }
 
-type AcMatcherInner = Option<(AhoCorasick, Vec<(&'static str, &'static str)>)>;
+/// Look up the index of a (category, sub_category) pair in CONTEXT_KEYWORDS.
+/// Uses a lazy-initialized HashMap for O(1) lookup.
+fn lookup_pattern_id(category: &str, sub_category: &str) -> Option<usize> {
+    static LOOKUP: Lazy<HashMap<(&'static str, &'static str), usize>> = Lazy::new(|| {
+        CONTEXT_KEYWORDS
+            .iter()
+            .enumerate()
+            .map(|(i, &(cat, sub, _))| ((cat, sub), i))
+            .collect()
+    });
+    LOOKUP.get(&(category, sub_category)).copied().or_else(|| {
+        // Fallback: linear scan with owned string comparison (rare path)
+        CONTEXT_KEYWORDS
+            .iter()
+            .position(|&(cat, sub, _)| cat == category && sub == sub_category)
+    })
+}
+
+/// Deduplicated AC matcher: stores unique keywords once, maps each to the
+/// set of pattern IDs it belongs to.
+type AcMatcherInner = Option<(AhoCorasick, Vec<Vec<u32>>)>;
 
 /// Global Aho-Corasick matcher built from all context keywords.
+/// Deduplicates identical keywords across patterns to shrink the automaton
+/// and map each unique keyword to all pattern IDs it serves.
 static AC_MATCHER: Lazy<AcMatcherInner> = Lazy::new(|| {
     let keywords = CONTEXT_KEYWORDS;
     if keywords.is_empty() {
         return None;
     }
 
-    let mut patterns: Vec<String> = Vec::new();
-    let mut pattern_keys: Vec<(&'static str, &'static str)> = Vec::new();
-
-    for &(category, sub_category, entry) in keywords {
+    // Deduplicate keywords: map each lowercase keyword to the list of
+    // pattern IDs (indices into CONTEXT_KEYWORDS) that use it.
+    let mut kw_to_pids: HashMap<String, Vec<u32>> = HashMap::new();
+    for (pattern_id, &(_cat, _sub, entry)) in keywords.iter().enumerate() {
         for &kw in entry.keywords {
-            patterns.push(kw.to_lowercase());
-            pattern_keys.push((category, sub_category));
+            let kw_lower = kw.to_lowercase();
+            kw_to_pids
+                .entry(kw_lower)
+                .or_default()
+                .push(pattern_id as u32);
         }
+    }
+
+    let mut patterns: Vec<String> = Vec::with_capacity(kw_to_pids.len());
+    let mut pattern_to_pids: Vec<Vec<u32>> = Vec::with_capacity(kw_to_pids.len());
+    for (kw, pids) in kw_to_pids {
+        patterns.push(kw);
+        pattern_to_pids.push(pids);
     }
 
     let ac = AhoCorasickBuilder::new()
@@ -83,31 +120,36 @@ static AC_MATCHER: Lazy<AcMatcherInner> = Lazy::new(|| {
         .build(&patterns)
         .ok()?;
 
-    Some((ac, pattern_keys))
+    Some((ac, pattern_to_pids))
 });
 
 /// Search text for all context keywords using Aho-Corasick.
+/// Returns a ContextHitIndex with per-pattern-ID sorted position lists.
 pub fn build_hit_index(text: &str) -> Option<ContextHitIndex> {
-    let (ac, pattern_keys) = AC_MATCHER.as_ref().as_ref()?;
+    let (ac, pattern_to_pids) = AC_MATCHER.as_ref().as_ref()?;
 
-    let mut hits: HashMap<(&'static str, &'static str), Vec<(usize, usize)>> = HashMap::new();
+    // Pre-allocate per-pattern-ID vectors (one per CONTEXT_KEYWORDS entry)
+    let mut hits: Vec<Vec<u32>> = vec![Vec::new(); CONTEXT_KEYWORDS.len()];
 
-    // AC is built with ascii_case_insensitive(true), no need to lowercase
     for mat in ac.find_iter(text) {
-        let key = pattern_keys[mat.pattern().as_usize()];
-        hits.entry(key).or_default().push((mat.start(), mat.end()));
+        let ac_pattern_idx = mat.pattern().as_usize();
+        let start = mat.start().min(u32::MAX as usize) as u32;
+        // Each AC pattern maps to 1+ pattern IDs (because of keyword dedup)
+        if let Some(pids) = pattern_to_pids.get(ac_pattern_idx) {
+            for &pid in pids {
+                hits[pid as usize].push(start);
+            }
+        }
     }
 
-    // Build two-level reverse lookup for allocation-free lookups
-    let mut reverse: HashMap<String, HashMap<String, Vec<(usize, usize)>>> = HashMap::new();
-    for (&(cat, sub), positions) in &hits {
-        reverse
-            .entry(cat.to_string())
-            .or_default()
-            .insert(sub.to_string(), positions.clone());
+    // Sort each pattern's positions so binary_search works in has_hit_in_range
+    for positions in &mut hits {
+        if positions.len() > 1 {
+            positions.sort_unstable();
+        }
     }
 
-    Some(ContextHitIndex { hits, reverse })
+    Some(ContextHitIndex { hits })
 }
 
 /// Get context distance for a category.
