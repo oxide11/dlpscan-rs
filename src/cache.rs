@@ -206,6 +206,7 @@ mod tests {
             redacted_text: None,
             categories_found: HashSet::new(),
             scan_truncated: false,
+            classification_level: None,
         }
     }
 

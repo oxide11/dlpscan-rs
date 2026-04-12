@@ -3,12 +3,12 @@
 High-performance DLP scanner written in Rust. Detects, redacts, and protects
 sensitive data with exceptional throughput.
 
-**560 patterns** across **126 categories** — full parity with the Python version.
+**566 patterns** across **127 categories** — full parity with the Python version plus Traffic Light Protocol (TLP 2.0) markings.
 **19,000+ lines** of Rust across 38 modules. **360 tests** passing (365 with `bin-data`).
 
 ## Performance
 
-| Scenario (1MB) | Full (560 patterns) | Baseline (108 patterns) |
+| Scenario (1MB) | Full (566 patterns) | Baseline (108 patterns) |
 |---|---:|---:|
 | Clean text | 57.0 MB/s | 59.3 MB/s |
 | Mixed content | 19.7 MB/s | 20.1 MB/s |
@@ -277,7 +277,7 @@ crédito` / `Kreditkarte` / `carta di credito` / `cartão de crédito`).
 | Geolocation & Postal | 8 | GPS coordinates, geohash, ZIP+4, UK postcode |
 
 Full reference:
-- **[docs/PATTERNS.md](docs/PATTERNS.md)** -- All 560 patterns with regex, specificity scores, and context-required flags
+- **[docs/PATTERNS.md](docs/PATTERNS.md)** -- All 566 patterns with regex, specificity scores, and context-required flags
 - **[docs/KEYWORDS.md](docs/KEYWORDS.md)** -- All 3,100+ context keywords (English + French) with proximity distances
 
 ## Modules
@@ -407,6 +407,27 @@ cargo clippy
 dlpscan is hardened for enterprise deployment in regulated environments
 (PCI-DSS, HIPAA, SOC 2, GDPR).
 
+### Classification and TLP enforcement
+
+- **Traffic Light Protocol (FIRST.org TLP 2.0) detection** --
+  `TLP:RED`, `TLP:AMBER+STRICT`, `TLP:AMBER`, `TLP:GREEN`, `TLP:CLEAR`,
+  `TLP:WHITE` are all recognized as always-run patterns
+- **Default block policy** -- `InputGuard::new()` blocks any input
+  labeled Confidential or above (covers `TLP:AMBER`, `TLP:AMBER+STRICT`,
+  Corporate Confidential, Privileged and Confidential, MNPI, and all
+  Secret / Top Secret markings). Blocked inputs return
+  `DlpError::ClassificationPolicyViolation` regardless of the
+  configured action, so a document cannot be silently tokenized and
+  leaked as "clean" output
+- **Preset-proof enforcement** -- the guard force-includes all
+  classification categories when blocking is active, even when the
+  caller only asked for PciDss/Pii/etc. A narrow preset cannot be
+  used to bypass the policy
+- **Configurable threshold** -- `with_block_classification(level)` to
+  raise or lower; `without_classification_blocking()` to disable
+- See [docs/enterprise/classification.md](docs/enterprise/classification.md)
+  for the full severity ladder and label inventory
+
 ### API security
 
 - **API key hashed at rest** -- SHA-256 hash stored in memory, never plaintext
@@ -489,7 +510,8 @@ See [docs/enterprise/security.md](docs/enterprise/security.md) for full details.
 | [docs/getting-started/quickstart.md](docs/getting-started/quickstart.md) | Quick start guide with CLI and Rust API examples |
 | [docs/getting-started/configuration.md](docs/getting-started/configuration.md) | Full configuration reference (config file, env vars, CLI, policies) |
 | [docs/getting-started/installation.md](docs/getting-started/installation.md) | Build from source, Docker, feature flags |
-| [docs/PATTERNS.md](docs/PATTERNS.md) | All 560 patterns with regex, specificity, and context flags |
+| [docs/PATTERNS.md](docs/PATTERNS.md) | All 566 patterns with regex, specificity, and context flags |
+| [docs/enterprise/classification.md](docs/enterprise/classification.md) | Classification / TLP labels and the default blocking policy |
 | [docs/KEYWORDS.md](docs/KEYWORDS.md) | All 5,000+ context keywords (6 languages) with proximity distances |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Performance analysis and optimization journey |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Version history |

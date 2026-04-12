@@ -1128,6 +1128,63 @@ pub static PATTERNS: &[PatternDef] = &[
         specificity: 0.40,
         context_required: false,
     },
+    // ---- Traffic Light Protocol (FIRST.org TLP 2.0) ----
+    // TLP markings carry strict sharing rules — a document labeled
+    // TLP:AMBER cannot be shared outside the recipient organization.
+    // Patterns match both the canonical "TLP:RED" form and the
+    // colon-less "TLP RED" variant some tools emit.
+    PatternDef {
+        category: "Traffic Light Protocol",
+        sub_category: "TLP:RED",
+        regex: r"\bTLP[:\s]+RED\b",
+        case_insensitive: false,
+        specificity: 0.95,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Traffic Light Protocol",
+        sub_category: "TLP:AMBER+STRICT",
+        regex: r"\bTLP[:\s]+AMBER\+STRICT\b",
+        case_insensitive: false,
+        specificity: 0.95,
+        context_required: false,
+    },
+    PatternDef {
+        // Matches "TLP:AMBER" and "TLP:AMBER+STRICT" — the scanner's
+        // overlap-dedup keeps the longer "TLP:AMBER+STRICT" match
+        // when both variants hit the same span, so we don't need a
+        // negative lookahead (not supported by `regex` crate anyway).
+        category: "Traffic Light Protocol",
+        sub_category: "TLP:AMBER",
+        regex: r"\bTLP[:\s]+AMBER\b",
+        case_insensitive: false,
+        specificity: 0.95,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Traffic Light Protocol",
+        sub_category: "TLP:GREEN",
+        regex: r"\bTLP[:\s]+GREEN\b",
+        case_insensitive: false,
+        specificity: 0.95,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Traffic Light Protocol",
+        sub_category: "TLP:CLEAR",
+        regex: r"\bTLP[:\s]+CLEAR\b",
+        case_insensitive: false,
+        specificity: 0.95,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Traffic Light Protocol",
+        sub_category: "TLP:WHITE",
+        regex: r"\bTLP[:\s]+WHITE\b",
+        case_insensitive: false,
+        specificity: 0.95,
+        context_required: false,
+    },
     PatternDef {
         category: "Financial Regulatory Labels",
         sub_category: "MNPI",
@@ -4517,7 +4574,10 @@ mod tests {
 
     #[test]
     fn test_pattern_count() {
-        assert_eq!(PATTERNS.len(), 560);
+        // 560 original + 6 Traffic Light Protocol patterns
+        // (TLP:RED, TLP:AMBER, TLP:AMBER+STRICT, TLP:GREEN,
+        // TLP:CLEAR, TLP:WHITE).
+        assert_eq!(PATTERNS.len(), 566);
     }
 
     #[test]

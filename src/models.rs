@@ -229,6 +229,12 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
         "URL with Credentials" => 0.90,
         "URL with Token Parameter" => 0.75,
 
+        // Traffic Light Protocol (FIRST.org TLP 2.0) — high
+        // specificity; these markings are explicit and unambiguous.
+        "TLP:RED" | "TLP:AMBER+STRICT" | "TLP:AMBER" | "TLP:GREEN" | "TLP:CLEAR" | "TLP:WHITE" => {
+            0.95
+        }
+
         _ => DEFAULT_SPECIFICITY,
     }
 }

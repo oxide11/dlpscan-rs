@@ -835,6 +835,7 @@ mod tests {
                 s
             },
             scan_truncated: false,
+            classification_level: None,
         };
 
         let event = event_from_scan(
@@ -865,6 +866,7 @@ mod tests {
             redacted_text: None,
             categories_found: HashSet::new(),
             scan_truncated: false,
+            classification_level: None,
         };
 
         let event = event_from_scan(&scan_result, "unknown_action", None, None, None);
@@ -936,6 +938,7 @@ mod tests {
             categories_found: std::collections::HashSet::new(),
             redacted_text: None,
             scan_truncated: false,
+            classification_level: None,
         };
         let event = event_from_scan(&clean, "flag", None, None, None);
         assert_eq!(event.outcome.as_deref(), Some("success"));
@@ -947,6 +950,7 @@ mod tests {
             categories_found: std::collections::HashSet::new(),
             redacted_text: None,
             scan_truncated: false,
+            classification_level: None,
         };
         let event = event_from_scan(&dirty, "REJECT", None, None, None);
         assert_eq!(event.outcome.as_deref(), Some("rejected"));

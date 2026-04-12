@@ -1,7 +1,7 @@
 # PATTERNS.md
 
 Complete inventory of all patterns in dlpscan.
-**557 patterns** across **126 categories**.
+**566 patterns** across **127 categories**.
 
 Each pattern includes:
 - **Regex** -- the detection pattern
@@ -1183,6 +1183,24 @@ Each pattern includes:
 | Restricted Supervisory | `\b[Rr]estricted\s+[Ss]upervisory\s+[Ii]nformation\b` | 0.40 | No |
 | Supervisory Confidential | `\b[Ss]upervisory\s+[Cc]onfidential\b` | 0.40 | No |
 | Supervisory Controlled | `\b[Ss]upervisory\s+[Cc]ontrolled\s+[Ii]nformation\b` | 0.40 | No |
+
+## Traffic Light Protocol (6 patterns)
+
+FIRST.org TLP 2.0 sharing-control markings. TLP markings are
+**always-run** patterns (never gated behind context keywords) because
+they carry binding sharing rules that must be enforced whenever present.
+
+See [Classification Blocking](enterprise/classification.md) for the
+default policy (blocks TLP:AMBER and above).
+
+| Pattern Name | Regex | Specificity | Context Required |
+|---|---|---:|:---:|
+| TLP:RED | `\bTLP[:\s]+RED\b` | 0.95 | No |
+| TLP:AMBER+STRICT | `\bTLP[:\s]+AMBER\+STRICT\b` | 0.95 | No |
+| TLP:AMBER | `\bTLP[:\s]+AMBER\b` | 0.95 | No |
+| TLP:GREEN | `\bTLP[:\s]+GREEN\b` | 0.95 | No |
+| TLP:CLEAR | `\bTLP[:\s]+CLEAR\b` | 0.95 | No |
+| TLP:WHITE | `\bTLP[:\s]+WHITE\b` | 0.95 | No |
 
 ## URLs with Credentials (2 patterns)
 

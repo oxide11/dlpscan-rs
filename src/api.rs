@@ -319,8 +319,48 @@ impl ApiConfig {
 /// Process a scan request.
 pub fn handle_scan(req: &ScanRequest) -> Result<ScanResponse, String> {
     let guard = build_guard(req)?;
-    let result = guard.scan(&req.text).map_err(|e| format!("{e}"))?;
+    let result = guard.scan(&req.text).map_err(format_dlp_error)?;
     Ok(scan_result_to_response(&result))
+}
+
+/// Format a [`DlpError`] with a stable, sentinel-prefixed string so
+/// that the HTTP route layer can map the classification-policy
+/// violation to a distinct status code without needing every handler
+/// to return a typed error.
+///
+/// Sentinels:
+/// - `CLASSIFICATION_POLICY_VIOLATION: ...` → HTTP 422
+/// - `SENSITIVE_DATA_DETECTED: ...` → HTTP 422 (Reject mode)
+/// - (anything else) → HTTP 400
+#[cfg(feature = "async-support")]
+fn format_dlp_error(err: crate::errors::DlpError) -> String {
+    use crate::errors::DlpError;
+    match err {
+        DlpError::ClassificationPolicyViolation { .. } => {
+            format!("CLASSIFICATION_POLICY_VIOLATION: {err}")
+        }
+        DlpError::SensitiveDataDetected { .. } => {
+            format!("SENSITIVE_DATA_DETECTED: {err}")
+        }
+        other => format!("{other}"),
+    }
+}
+
+#[cfg(not(feature = "async-support"))]
+fn format_dlp_error(err: crate::errors::DlpError) -> String {
+    format!("{err}")
+}
+
+/// Map a formatted [`format_dlp_error`] string to an HTTP status code.
+#[cfg(feature = "async-support")]
+fn http_status_for_scan_error(err: &str) -> hyper::StatusCode {
+    if err.starts_with("CLASSIFICATION_POLICY_VIOLATION")
+        || err.starts_with("SENSITIVE_DATA_DETECTED")
+    {
+        hyper::StatusCode::UNPROCESSABLE_ENTITY
+    } else {
+        hyper::StatusCode::BAD_REQUEST
+    }
 }
 
 /// Process a batch scan request.
@@ -370,7 +410,7 @@ pub fn handle_tokenize(
         require_context: false,
     };
     let guard = build_guard(&scan_req)?;
-    let result = guard.scan(&req.text).map_err(|e| format!("{e}"))?;
+    let result = guard.scan(&req.text).map_err(format_dlp_error)?;
 
     // Create a vault and tokenize all findings
     let vault_id = generate_id();
@@ -444,7 +484,7 @@ pub fn handle_obfuscate(req: &ScanRequest) -> Result<ScanResponse, String> {
     let mut obf_req = req.clone();
     obf_req.action = "obfuscate".to_string();
     let guard = build_guard(&obf_req)?;
-    let result = guard.scan(&obf_req.text).map_err(|e| format!("{e}"))?;
+    let result = guard.scan(&obf_req.text).map_err(format_dlp_error)?;
     Ok(scan_result_to_response(&result))
 }
 
@@ -1125,11 +1165,31 @@ fn hyper_route_request(
                     serde_json::to_string(&resp).unwrap_or_default(),
                 ),
                 Err(e) => {
-                    tracing::warn!("Scan error: {}", e);
-                    (
-                        StatusCode::BAD_REQUEST,
-                        r#"{"detail":"Scan failed"}"#.to_string(),
-                    )
+                    let status = http_status_for_scan_error(&e);
+                    if status == StatusCode::UNPROCESSABLE_ENTITY {
+                        tracing::info!("Scan rejected by policy: {}", e);
+                        // Strip sentinel prefix for the client-facing message.
+                        let detail = e
+                            .strip_prefix("CLASSIFICATION_POLICY_VIOLATION: ")
+                            .or_else(|| e.strip_prefix("SENSITIVE_DATA_DETECTED: "))
+                            .unwrap_or(&e);
+                        let body = serde_json::json!({
+                            "detail": detail,
+                            "code": if e.starts_with("CLASSIFICATION_POLICY_VIOLATION") {
+                                "classification_policy_violation"
+                            } else {
+                                "sensitive_data_detected"
+                            },
+                        })
+                        .to_string();
+                        (status, body)
+                    } else {
+                        tracing::warn!("Scan error: {}", e);
+                        (
+                            StatusCode::BAD_REQUEST,
+                            r#"{"detail":"Scan failed"}"#.to_string(),
+                        )
+                    }
                 }
             },
             Err(_) => (

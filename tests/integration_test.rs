@@ -960,3 +960,159 @@ fn test_italian_password_context() {
             .collect::<Vec<_>>()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Classification / Traffic Light Protocol policy tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_detects_tlp_red() {
+    let matches = scan_text("This report is TLP:RED - do not forward.").unwrap();
+    let hit = matches
+        .iter()
+        .find(|m| m.category == "Traffic Light Protocol" && m.sub_category == "TLP:RED");
+    assert!(hit.is_some(), "TLP:RED should be detected: {matches:?}");
+}
+
+#[test]
+fn test_detects_tlp_amber_strict_prefers_longer_match() {
+    // Overlap dedup should prefer "TLP:AMBER+STRICT" over the
+    // shorter "TLP:AMBER" sub-match.
+    let matches = scan_text("Marking: TLP:AMBER+STRICT applies.").unwrap();
+    let strict = matches
+        .iter()
+        .find(|m| m.sub_category == "TLP:AMBER+STRICT");
+    assert!(
+        strict.is_some(),
+        "TLP:AMBER+STRICT should be detected: {matches:?}"
+    );
+    let plain_amber = matches
+        .iter()
+        .filter(|m| m.sub_category == "TLP:AMBER")
+        .count();
+    assert_eq!(
+        plain_amber, 0,
+        "plain TLP:AMBER should not also appear when +STRICT matched"
+    );
+}
+
+#[test]
+fn test_detects_tlp_green_and_clear() {
+    let green = scan_text("Share internally. TLP:GREEN").unwrap();
+    assert!(green.iter().any(|m| m.sub_category == "TLP:GREEN"));
+
+    let clear = scan_text("Public advisory - TLP:CLEAR").unwrap();
+    assert!(clear.iter().any(|m| m.sub_category == "TLP:CLEAR"));
+}
+
+#[test]
+fn test_classification_blocks_tlp_amber_by_default() {
+    use dlpscan::errors::DlpError;
+    use dlpscan::guard::InputGuard;
+
+    let guard = InputGuard::new(); // default blocks Confidential+ / TLP:AMBER+
+    let err = guard
+        .scan("Marking: TLP:AMBER - restricted distribution.")
+        .unwrap_err();
+    match err {
+        DlpError::ClassificationPolicyViolation {
+            level, threshold, ..
+        } => {
+            use dlpscan::classification::ClassificationLevel;
+            assert_eq!(level, ClassificationLevel::Confidential);
+            assert_eq!(threshold, ClassificationLevel::Confidential);
+        }
+        other => panic!("expected ClassificationPolicyViolation, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_classification_blocks_confidential_corporate_marking() {
+    use dlpscan::errors::DlpError;
+    use dlpscan::guard::InputGuard;
+
+    let guard = InputGuard::new();
+    let err = guard
+        .scan("Subject: Strictly Confidential - Q4 board materials")
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        DlpError::ClassificationPolicyViolation { .. }
+    ));
+}
+
+#[test]
+fn test_classification_blocks_top_secret() {
+    use dlpscan::classification::ClassificationLevel;
+    use dlpscan::errors::DlpError;
+    use dlpscan::guard::InputGuard;
+
+    let guard = InputGuard::new();
+    let err = guard.scan("Header: TOP SECRET material").unwrap_err();
+    match err {
+        DlpError::ClassificationPolicyViolation { level, .. } => {
+            assert_eq!(level, ClassificationLevel::TopSecret);
+        }
+        other => panic!("expected ClassificationPolicyViolation, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_classification_does_not_block_tlp_green() {
+    use dlpscan::guard::InputGuard;
+
+    let guard = InputGuard::new();
+    // TLP:GREEN maps to Internal, below the Confidential threshold.
+    let result = guard.scan("Weekly status. TLP:GREEN").unwrap();
+    assert!(result.findings.iter().any(|m| m.sub_category == "TLP:GREEN"));
+    assert_eq!(
+        result.classification_level,
+        Some(dlpscan::classification::ClassificationLevel::Internal)
+    );
+}
+
+#[test]
+fn test_classification_threshold_can_be_raised() {
+    use dlpscan::classification::ClassificationLevel;
+    use dlpscan::guard::InputGuard;
+
+    // Raising the threshold to Secret should let Confidential pass.
+    let guard = InputGuard::new().with_block_classification(ClassificationLevel::Secret);
+    let result = guard
+        .scan("Marking: TLP:AMBER - allowed through with higher threshold")
+        .unwrap();
+    assert!(result
+        .findings
+        .iter()
+        .any(|m| m.sub_category == "TLP:AMBER"));
+    assert_eq!(
+        result.classification_level,
+        Some(ClassificationLevel::Confidential)
+    );
+}
+
+#[test]
+fn test_classification_blocking_can_be_disabled() {
+    use dlpscan::guard::InputGuard;
+
+    let guard = InputGuard::new().without_classification_blocking();
+    let result = guard.scan("TLP:RED - sensitive intel report").unwrap();
+    assert!(result.findings.iter().any(|m| m.sub_category == "TLP:RED"));
+}
+
+#[test]
+fn test_classification_blocks_even_when_preset_omits_category() {
+    use dlpscan::errors::DlpError;
+    use dlpscan::guard::{InputGuard, Preset};
+
+    // PciDss preset does NOT include classification categories, but
+    // the guard should force-include them when block policy is active.
+    let guard = InputGuard::new().with_presets(vec![Preset::PciDss]);
+    let err = guard
+        .scan("Intelligence report. TLP:RED. Card: 4532015112830366")
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        DlpError::ClassificationPolicyViolation { .. }
+    ));
+}

@@ -9,6 +9,7 @@ pub mod audit;
 pub mod batch;
 pub mod bin_lookup;
 pub mod cache;
+pub mod classification;
 pub mod compliance;
 pub mod config;
 pub mod context;
