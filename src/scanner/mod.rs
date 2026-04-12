@@ -162,9 +162,24 @@ impl ScanConfig {
 }
 
 /// Compiled regex cache: one Regex per pattern, compiled once at startup.
+///
+/// Caches per-pattern metadata that would otherwise require O(n) string
+/// comparisons in the hot scan loop. On dense content we can produce
+/// 30k+ matches; precomputing these flags pays for itself quickly.
 struct CompiledPattern {
     regex: Regex,
     def: &'static PatternDef,
+    /// Precomputed: true when the pattern should always run (specificity
+    /// >= threshold or listed in CRITICAL_ALWAYS_RUN).
+    always_run: bool,
+    /// Precomputed: true when the pattern requires context to be reported.
+    ctx_required: bool,
+    /// Precomputed specificity (identical to models::pattern_specificity
+    /// but avoids per-match string matching).
+    specificity: f64,
+    /// Precomputed: true for Credit Card Numbers category (used for BIN
+    /// enrichment gate).
+    is_credit_card: bool,
 }
 
 static COMPILED: Lazy<Vec<CompiledPattern>> = Lazy::new(|| {
@@ -179,9 +194,16 @@ static COMPILED: Lazy<Vec<CompiledPattern>> = Lazy::new(|| {
 
         match Regex::new(&regex_str) {
             Ok(re) => {
+                let specificity = pattern_specificity(pat.sub_category);
+                let always_run = specificity >= SPECIFICITY_THRESHOLD
+                    || CRITICAL_ALWAYS_RUN.contains(pat.sub_category);
                 compiled.push(CompiledPattern {
                     regex: re,
                     def: pat,
+                    always_run,
+                    ctx_required: is_context_required(pat.sub_category),
+                    specificity,
+                    is_credit_card: pat.category == "Credit Card Numbers",
                 });
             }
             Err(e) => {
@@ -298,6 +320,11 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 });
 
 /// Returns true if a pattern should always run (never context-gated).
+///
+/// This is a dynamic fallback used by tests and external callers; the
+/// scanner itself reads the precomputed `CompiledPattern::always_run`
+/// field to avoid string matching on every match.
+#[allow(dead_code)]
 fn is_always_run(sub_category: &str) -> bool {
     let spec = pattern_specificity(sub_category);
     spec >= SPECIFICITY_THRESHOLD || CRITICAL_ALWAYS_RUN.contains(sub_category)
@@ -332,7 +359,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     let active_gated: HashSet<(&str, &str)> = if let Some(ref index) = hit_index {
         compiled
             .iter()
-            .filter(|cp| !is_always_run(cp.def.sub_category))
+            .filter(|cp| !cp.always_run)
             .filter(|cp| {
                 index.has_hit_in_range(cp.def.category, cp.def.sub_category, 0, normalized.len())
             })
@@ -356,11 +383,11 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
             }
             // Baseline-only mode: only run always-run patterns
             if config.baseline_only {
-                return is_always_run(cp.def.sub_category);
+                return cp.always_run;
             }
             // AC prefilter: skip context-gated patterns whose keywords aren't present
             if prefilter_active
-                && !is_always_run(cp.def.sub_category)
+                && !cp.always_run
                 && !active_gated.contains(&(cp.def.category, cp.def.sub_category))
             {
                 return false;
@@ -401,7 +428,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     hit_index.as_ref(),
                 );
 
-                let ctx_required = is_context_required(pat.sub_category);
+                let ctx_required = cp.ctx_required;
 
                 if ctx_required && !has_context {
                     continue;
@@ -410,7 +437,19 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     continue;
                 }
 
-                let confidence = compute_confidence(pat.sub_category, has_context, ctx_required);
+                // Inline confidence: avoid string-matching pattern_specificity(sub_category)
+                // on every match (34k+ matches on dense 1MB content).
+                let confidence = {
+                    let base = cp.specificity;
+                    let raw = if has_context {
+                        (base + 0.20).min(1.0)
+                    } else if ctx_required {
+                        base * 0.3
+                    } else {
+                        base
+                    };
+                    (raw * 100.0).round() / 100.0
+                };
                 if confidence < config.min_confidence {
                     continue;
                 }
@@ -454,7 +493,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 );
 
                 // BIN enrichment for credit card matches
-                if pat.category == "Credit Card Numbers" {
+                if cp.is_credit_card {
                     if let Some((brand, card_type, country, issuer)) =
                         crate::validation::get_bin_info(matched_text)
                     {

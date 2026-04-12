@@ -129,12 +129,21 @@ static BIN_TABLE: once_cell::sync::Lazy<(Vec<BinEntry>, Vec<String>)> =
 /// The input can be a full card number or just the 6-digit prefix.
 #[cfg(feature = "bin-data")]
 pub fn lookup(card_number: &str) -> Option<BinInfo> {
-    let digits: String = card_number.chars().filter(|c| c.is_ascii_digit()).collect();
-    if digits.len() < 6 {
+    // Allocation-free extraction of the first 6 digits.
+    let mut bin: u32 = 0;
+    let mut seen = 0u8;
+    for &b in card_number.as_bytes() {
+        if b.is_ascii_digit() {
+            bin = bin * 10 + u32::from(b - b'0');
+            seen += 1;
+            if seen == 6 {
+                break;
+            }
+        }
+    }
+    if seen < 6 {
         return None;
     }
-    let bin_str = &digits[..6];
-    let bin: u32 = bin_str.parse().ok()?;
 
     let (table, strings) = &*BIN_TABLE;
     let idx = table.binary_search_by_key(&bin, |entry| entry.0).ok()?;

@@ -150,6 +150,51 @@ of keyword presence.
 | Dense sensitive data | 16.1 MB/s | 16.5 MB/s |
 | **Keyword-heavy text** | **29.9 MB/s** | **31.6 MB/s** |
 
+### Hot-path optimizations (April 2026)
+
+Profiling revealed that on dense content the scan pipeline was producing
+30k+ matches per MB and spending most of its time on **per-match
+overhead** rather than regex dispatch. A CPU profile of dense 1MB scans
+showed roughly:
+
+- ~3 ms — Aho-Corasick context hit index build
+- ~7 ms — raw parallel regex sweep over always-run patterns
+- ~50 ms — per-match processing (validation, context check,
+  Match/metadata allocation, BIN enrichment, dedup)
+
+Three targeted changes eliminated most of the per-match string work:
+
+1. **Precomputed pattern metadata** — `CompiledPattern` now caches
+   `always_run`, `ctx_required`, `specificity`, and `is_credit_card`
+   flags once at startup. The hot scan loop no longer re-derives these
+   via string matching for every match.
+2. **Inlined confidence calculation** — `compute_confidence(sub_category, ...)`
+   (which internally did another `pattern_specificity` string-match
+   lookup) is now inlined in the hot loop using the cached `specificity`
+   field.
+3. **Allocation-free Luhn + BIN lookup** — `is_luhn_valid` and
+   `bin_lookup::lookup` no longer allocate a per-call `Vec<u32>` /
+   `String` to extract digits. They walk the input byte slice into a
+   fixed 32-byte stack buffer. On dense content with 5k+ credit card
+   matches this removes ~10k allocations per scan.
+
+### Throughput Comparison (1MB, post-optimization)
+
+| Scenario | Before | After | Δ |
+|---|---:|---:|---:|
+| Clean text | 57.0 MB/s | **60.1 MB/s** | +5% |
+| Mixed content | 19.7 MB/s | **23.9 MB/s** | +21% |
+| Dense sensitive data | 16.1 MB/s | **17.3 MB/s** | +7% |
+| Keyword-heavy text | 29.9 MB/s | **30.2 MB/s** | +1% |
+
+Mixed content (the most realistic enterprise workload) gained the most
+(+21%) because it has a moderate match count where per-match overhead
+dominates. Dense content improved only modestly because it is
+fundamentally allocation-bound — scanning 1MB produces 30k+ heap-owned
+`Match` structs, each requiring at minimum a `String` for
+`text`/`category`/`sub_category`. Further gains require an API change
+to store labels as `&'static str` / `Cow<'static, str>` on `Match`.
+
 ### Performance journey
 
 The v2.1.0 release added 2,500 multilingual keywords (English + 5 other
