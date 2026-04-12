@@ -9,6 +9,7 @@
 //! depend on this crate for detection logic.
 
 pub mod bin_lookup;
+pub mod classification;
 pub mod context;
 pub mod edm;
 pub mod errors;

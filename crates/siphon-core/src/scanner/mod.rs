@@ -328,6 +328,16 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         // URLs with credentials
         "URL with Password",
         "URL with Token",
+        // Traffic Light Protocol (FIRST.org TLP 2.0) — always run
+        // because a TLP marking at any level carries binding
+        // sharing rules that must be enforced regardless of
+        // surrounding keywords.
+        "TLP:RED",
+        "TLP:AMBER+STRICT",
+        "TLP:AMBER",
+        "TLP:GREEN",
+        "TLP:CLEAR",
+        "TLP:WHITE",
     ]
     .into_iter()
     .collect()

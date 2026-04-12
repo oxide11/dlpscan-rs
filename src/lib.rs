@@ -5,6 +5,7 @@
 
 // Re-export siphon-core modules so existing `crate::models`, `crate::scanner`, etc.
 // references in this crate keep compiling unchanged.
+pub use siphon_core::classification;
 pub use siphon_core::context;
 pub use siphon_core::edm;
 pub use siphon_core::errors;
