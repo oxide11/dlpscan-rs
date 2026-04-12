@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/oxide11/siphon-rs/blob/main/docs/siphonrc.schema.json",
+  "title": "siphon configuration",
+  "description": "Schema for .siphonrc and siphon.json configuration files.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "min_confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 0.0,
+      "description": "Ignore findings below this confidence threshold (0.0-1.0)."
+    },
+    "require_context": {
+      "type": "boolean",
+      "default": false,
+      "description": "Only report findings that have a context keyword nearby."
+    },
+    "deduplicate": {
+      "type": "boolean",
+      "default": true,
+      "description": "Remove overlapping findings, keeping the highest confidence one."
+    },
+    "max_matches": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000,
+      "default": 50000,
+      "description": "Maximum findings per scan (prevents memory exhaustion)."
+    },
+    "format": {
+      "type": "string",
+      "enum": ["text", "json", "csv", "sarif"],
+      "default": "text",
+      "description": "Default output format."
+    },
+    "categories": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        }
+      ],
+      "default": null,
+      "description": "Scan only these categories (null = all). See `siphon categories`."
+    },
+    "allowlist": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Exact text values to suppress (e.g., test credit card numbers)."
+    },
+    "ignore_patterns": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Regex patterns for text to ignore."
+    },
+    "ignore_paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "File path globs to skip in directory scans."
+    },
+    "context_backend": {
+      "type": "string",
+      "enum": ["regex", "aho-corasick"],
+      "default": "regex",
+      "description": "Context matching engine (usually leave as default)."
+    },
+    "blocked_extensions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9]+$",
+        "maxLength": 32
+      },
+      "uniqueItems": true,
+      "description": "File extensions to block in pipeline scans. Default includes crypto certs (der, p12, pfx, p7m, p8, ppk, jks, gpg, pgp, asc, etc.)."
+    },
+    "block_unreadable": {
+      "type": "boolean",
+      "default": false,
+      "description": "Also block executables, encrypted containers, and media files (.exe, .dll, .gpg, .kdbx, etc.)."
+    },
+    "entropy_scan": {
+      "type": "string",
+      "enum": ["off", "gated", "assignment", "all"],
+      "default": "off",
+      "description": "Entropy-based secret detection mode. 'gated' (recommended for production) requires context keywords; 'assignment' requires KEY=VALUE pattern; 'all' flags every high-entropy token."
+    }
+  },
+  "examples": [
+    {
+      "description": "Production configuration with low false positives",
+      "min_confidence": 0.5,
+      "require_context": false,
+      "deduplicate": true,
+      "block_unreadable": true,
+      "entropy_scan": "gated"
+    },
+    {
+      "description": "High-security configuration (critical only)",
+      "min_confidence": 0.8,
+      "require_context": true,
+      "block_unreadable": true,
+      "entropy_scan": "assignment"
+    },
+    {
+      "description": "Development / discovery (find everything)",
+      "min_confidence": 0.0,
+      "require_context": false,
+      "block_unreadable": false,
+      "entropy_scan": "all"
+    }
+  ]
+}

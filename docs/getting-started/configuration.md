@@ -1,6 +1,6 @@
 # Configuration
 
-dlpscan can be configured via config files, environment variables, CLI
+siphon can be configured via config files, environment variables, CLI
 flags, or the interactive setup wizard.
 
 ---
@@ -10,7 +10,7 @@ flags, or the interactive setup wizard.
 The fastest way to create a config file:
 
 ```bash
-dlpscan init
+siphon init
 ```
 
 This launches an interactive wizard that guides you through:
@@ -20,18 +20,45 @@ This launches an interactive wizard that guides you through:
 - Preset selection
 - Output format
 
-The wizard saves a `.dlpscanrc` JSON file in the current directory.
+The wizard saves a `.siphonrc` JSON file in the current directory.
 
 ---
 
 ## Config File Reference
 
-dlpscan looks for configuration in this order:
-1. `.dlpscanrc` (JSON)
-2. `dlpscan.json` (JSON)
-3. `pyproject.toml` under `[tool.dlpscan]` (TOML)
+siphon looks for configuration in this order:
+1. `.siphonrc` (JSON)
+2. `siphon.json` (JSON)
+3. `pyproject.toml` under `[tool.siphon]` (TOML)
 
-### Full `.dlpscanrc` example
+### JSON Schema (editor validation)
+
+A JSON Schema is available at [`docs/siphonrc.schema.json`](../siphonrc.schema.json).
+Modern editors (VS Code, Neovim, IntelliJ) will auto-complete and
+validate fields when you add a schema reference:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/oxide11/siphon-rs/main/docs/siphonrc.schema.json",
+  "min_confidence": 0.5,
+  "entropy_scan": "gated"
+}
+```
+
+For VS Code, you can also add a global association in `settings.json`:
+
+```json
+{
+  "json.schemas": [
+    {
+      "fileMatch": [".siphonrc", "siphon.json"],
+      "url": "https://raw.githubusercontent.com/oxide11/siphon-rs/main/docs/siphonrc.schema.json"
+    }
+  ]
+}
+```
+
+### Full `.siphonrc` example
 
 ```json
 {
@@ -64,7 +91,7 @@ dlpscan looks for configuration in this order:
 | `deduplicate` | bool | `true` | Remove overlapping findings, keeping the highest-confidence one |
 | `max_matches` | int | `50000` | Maximum findings per scan (prevents memory exhaustion) |
 | `format` | string | `"text"` | Default output format: `text`, `json`, `csv`, `sarif` |
-| `categories` | list/null | `null` | Scan only these categories (null = all). See `dlpscan categories` |
+| `categories` | list/null | `null` | Scan only these categories (null = all). See `siphon categories` |
 | `allowlist` | list | `[]` | Exact text values to suppress (e.g., test credit card numbers) |
 | `ignore_patterns` | list | `[]` | Regex patterns for text to ignore |
 | `ignore_paths` | list | `[]` | File path globs to skip in directory scans |
@@ -80,31 +107,31 @@ dlpscan looks for configuration in this order:
 ### View current config
 
 ```bash
-dlpscan config show
+siphon config show
 ```
 
 ### Set individual values
 
 ```bash
-dlpscan config set min_confidence 0.5
-dlpscan config set require_context true
-dlpscan config set block_unreadable true
-dlpscan config set format json
-dlpscan config set max_matches 10000
+siphon config set min_confidence 0.5
+siphon config set require_context true
+siphon config set block_unreadable true
+siphon config set format json
+siphon config set max_matches 10000
 ```
 
 ### Reset to defaults
 
 ```bash
-dlpscan config reset
+siphon config reset
 ```
 
 ### Manage blocked file extensions
 
 ```bash
-dlpscan config blocked          # List blocked extensions
-dlpscan config block enc        # Block .enc files
-dlpscan config unblock asc      # Unblock .asc files
+siphon config blocked          # List blocked extensions
+siphon config block enc        # Block .enc files
+siphon config unblock asc      # Unblock .asc files
 ```
 
 ---
@@ -165,7 +192,7 @@ Configuration is resolved in this order (highest priority first):
 
 1. **CLI flags** (`--min-confidence`, `--require-context`, `--format`)
 2. **Environment variables** (`DLPSCAN_MIN_CONFIDENCE`, etc.)
-3. **Config file** (`.dlpscanrc`, `dlpscan.json`, or `pyproject.toml`)
+3. **Config file** (`.siphonrc`, `siphon.json`, or `pyproject.toml`)
 4. **Built-in defaults**
 
 ---
@@ -213,7 +240,7 @@ with the same priority, definition order is preserved.
 Load and use policies:
 
 ```rust
-use dlpscan::policy::{load_policy, PolicyEngine};
+use siphon::policy::{load_policy, PolicyEngine};
 
 let policy = load_policy("policies/pci-production.toml")?;
 let engine = PolicyEngine::new(policy);
@@ -224,7 +251,7 @@ let result = engine.scan("Card: 4532015112830366")?;
 
 ## Feature Flags
 
-dlpscan's capabilities depend on which features are compiled:
+siphon's capabilities depend on which features are compiled:
 
 | Feature | Default | Description |
 |---|---|---|
