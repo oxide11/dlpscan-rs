@@ -99,9 +99,28 @@ Scan text for sensitive data.
   "finding_count": 1,
   "categories_found": ["Credit Card Numbers"],
   "redacted_text": "My card is XXXX-XXXX-XXXX-XXXX",
-  "findings": [...]
+  "findings": [
+    {
+      "text": "411**********111",
+      "category": "Credit Card Numbers",
+      "sub_category": "Visa",
+      "confidence": 0.95,
+      "has_context": true,
+      "span": [11, 30],
+      "metadata": {
+        "bin_brand": "Visa",
+        "bin_card_type": "Credit",
+        "bin_country": "US",
+        "bin_issuer": "JPMORGAN CHASE BANK, N.A."
+      }
+    }
+  ]
 }
 ```
+
+Findings for Credit Card Numbers include enriched BIN metadata when the
+`bin-data` feature is compiled in. See [BIN Enrichment](#bin-enrichment)
+below for details.
 
 ### `POST /v1/batch/scan`
 
@@ -246,6 +265,49 @@ Query for similar documents. Requires **Scan** permission.
 
 List registered document count. Requires **ViewStatus**.
 
+## BIN Enrichment
+
+When dlpscan is compiled with the `bin-data` feature, credit card findings
+are automatically enriched with metadata from a database of 374,788 Bank
+Identification Numbers (the first 6 digits of a card identify the issuing
+bank).
+
+### Enriched metadata fields
+
+| Field | Description | Example |
+|---|---|---|
+| `bin_brand` | Card network brand | `"Visa"`, `"MasterCard"`, `"American Express"` |
+| `bin_card_type` | Card classification | `"Credit"`, `"Debit"`, `"Charge Card"` |
+| `bin_country` | ISO 3166-1 alpha-2 country code | `"US"`, `"GB"`, `"DE"`, `"JP"` |
+| `bin_issuer` | Name of the issuing bank | `"JPMORGAN CHASE BANK, N.A."` |
+
+Known BINs receive a +0.05 confidence boost. Unknown BINs are still
+accepted (they may be newly issued prefixes not yet in the database).
+
+### Use cases for compliance
+
+- **Country-of-issuance tracking** — determine which regulations apply
+  (GDPR for EU, PCI-DSS, regional banking rules)
+- **Sanctions screening** — flag cards from high-risk jurisdictions
+- **Fraud indicators** — mismatched country between customer location
+  and card issuer
+- **Issuer risk assessment** — identify cards from distressed financial
+  institutions
+- **Audit enrichment** — compliance reports include the issuing bank
+  name directly, no manual lookup needed
+
+### Enabling BIN enrichment
+
+```bash
+cargo build --release --features bin-data
+# or use the "full" feature bundle:
+cargo build --release --features full
+```
+
+The `bin-data` feature embeds the 4.1 MB BIN database into the binary
+at compile time. Without the feature, the `metadata` field on Credit
+Card findings is simply empty (no runtime errors).
+
 ## EDM and LSH State
 
 Load pre-registered EDM/LSH state at server startup via environment
@@ -257,6 +319,29 @@ export DLPSCAN_LSH_STATE=.dlpscan-lsh.json
 ```
 
 State files use 0o600 permissions on Unix and reject symlinks on write.
+
+### Backup and Restore
+
+Both EDM and LSH state files can be exported to a portable backup and
+imported on another host. Export/import validate the file format (magic,
+schema) before writing, so a corrupt or unrelated JSON file will be
+rejected rather than silently overwriting state.
+
+```bash
+# Export the current state to a shareable backup file
+dlpscan edm export edm-backup-2026-04.json --state .dlpscan-edm.json
+dlpscan lsh export lsh-backup-2026-04.json --state .dlpscan-lsh.json
+
+# Import a backup on another host (refuses to overwrite an existing
+# state file unless --force is passed)
+dlpscan edm import edm-backup-2026-04.json --state .dlpscan-edm.json --force
+dlpscan lsh import lsh-backup-2026-04.json --state .dlpscan-lsh.json --force
+```
+
+Exported files preserve the HMAC salt (for EDM) and MinHash signatures
+(for LSH) so matching behavior is identical on the destination host.
+Backups respect the same 100 MB state file size limit enforced at load
+time.
 
 ## Rate Limiting
 

@@ -187,6 +187,25 @@ enum EdmAction {
         #[arg(long, default_value = ".siphon-edm.json")]
         state: String,
     },
+    /// Export EDM state to a backup file (validates and re-serializes)
+    Export {
+        /// Destination file path for the exported backup
+        output: PathBuf,
+        /// EDM state file path to export from
+        #[arg(long, default_value = ".dlpscan-edm.json")]
+        state: String,
+    },
+    /// Import EDM state from a backup file (validates before writing)
+    Import {
+        /// Source backup file to import from
+        input: PathBuf,
+        /// EDM state file path to write to
+        #[arg(long, default_value = ".dlpscan-edm.json")]
+        state: String,
+        /// Overwrite existing state file if present
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -220,6 +239,25 @@ enum LshAction {
         /// LSH state file path
         #[arg(long, default_value = ".siphon-lsh.json")]
         state: String,
+    },
+    /// Export LSH vault to a backup file (validates and re-serializes)
+    Export {
+        /// Destination file path for the exported backup
+        output: PathBuf,
+        /// LSH state file path to export from
+        #[arg(long, default_value = ".dlpscan-lsh.json")]
+        state: String,
+    },
+    /// Import LSH vault from a backup file (validates before writing)
+    Import {
+        /// Source backup file to import from
+        input: PathBuf,
+        /// LSH state file path to write to
+        #[arg(long, default_value = ".dlpscan-lsh.json")]
+        state: String,
+        /// Overwrite existing state file if present
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -685,6 +723,58 @@ fn main() {
                 }
                 println!("Total hashes: {}", edm.total_hashes());
             }
+            EdmAction::Export { output, state } => {
+                if !std::path::Path::new(&state).exists() {
+                    eprintln!("No EDM state file found at {state}");
+                    eprintln!("Run `dlpscan edm register` first");
+                    process::exit(1);
+                }
+                let edm = siphon::edm::ExactDataMatcher::load(&state).unwrap_or_else(|e| {
+                    eprintln!("Error loading EDM state: {e}");
+                    process::exit(1);
+                });
+                let out_str = output.to_string_lossy().to_string();
+                edm.save(&out_str).unwrap_or_else(|e| {
+                    eprintln!("Error writing EDM backup: {e}");
+                    process::exit(1);
+                });
+                println!(
+                    "Exported EDM state ({} categories, {} hashes) to {}",
+                    edm.categories().len(),
+                    edm.total_hashes(),
+                    out_str
+                );
+            }
+            EdmAction::Import {
+                input,
+                state,
+                force,
+            } => {
+                if !input.exists() {
+                    eprintln!("Source backup not found: {}", input.display());
+                    process::exit(1);
+                }
+                if std::path::Path::new(&state).exists() && !force {
+                    eprintln!("Destination state file already exists: {state}");
+                    eprintln!("Use --force to overwrite");
+                    process::exit(1);
+                }
+                let in_str = input.to_string_lossy().to_string();
+                let edm = siphon::edm::ExactDataMatcher::load(&in_str).unwrap_or_else(|e| {
+                    eprintln!("Error loading EDM backup: {e}");
+                    process::exit(1);
+                });
+                edm.save(&state).unwrap_or_else(|e| {
+                    eprintln!("Error writing EDM state: {e}");
+                    process::exit(1);
+                });
+                println!(
+                    "Imported EDM state ({} categories, {} hashes) into {}",
+                    edm.categories().len(),
+                    edm.total_hashes(),
+                    state
+                );
+            }
         },
 
         // ---------------------------------------------------------------
@@ -773,6 +863,56 @@ fn main() {
                     process::exit(1);
                 });
                 println!("LSH vault: {} documents registered", vault.document_count());
+            }
+            LshAction::Export { output, state } => {
+                if !std::path::Path::new(&state).exists() {
+                    eprintln!("No LSH state file found at {state}");
+                    eprintln!("Run `dlpscan lsh register` first");
+                    process::exit(1);
+                }
+                let vault = siphon::lsh::DocumentVault::load(&state).unwrap_or_else(|e| {
+                    eprintln!("Error loading LSH state: {e}");
+                    process::exit(1);
+                });
+                let out_str = output.to_string_lossy().to_string();
+                vault.save(&out_str).unwrap_or_else(|e| {
+                    eprintln!("Error writing LSH backup: {e}");
+                    process::exit(1);
+                });
+                println!(
+                    "Exported LSH vault ({} documents) to {}",
+                    vault.document_count(),
+                    out_str
+                );
+            }
+            LshAction::Import {
+                input,
+                state,
+                force,
+            } => {
+                if !input.exists() {
+                    eprintln!("Source backup not found: {}", input.display());
+                    process::exit(1);
+                }
+                if std::path::Path::new(&state).exists() && !force {
+                    eprintln!("Destination state file already exists: {state}");
+                    eprintln!("Use --force to overwrite");
+                    process::exit(1);
+                }
+                let in_str = input.to_string_lossy().to_string();
+                let vault = siphon::lsh::DocumentVault::load(&in_str).unwrap_or_else(|e| {
+                    eprintln!("Error loading LSH backup: {e}");
+                    process::exit(1);
+                });
+                vault.save(&state).unwrap_or_else(|e| {
+                    eprintln!("Error writing LSH state: {e}");
+                    process::exit(1);
+                });
+                println!(
+                    "Imported LSH vault ({} documents) into {}",
+                    vault.document_count(),
+                    state
+                );
             }
         },
 

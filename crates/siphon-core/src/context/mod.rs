@@ -38,6 +38,22 @@ pub struct ContextHitIndex {
 }
 
 impl ContextHitIndex {
+    /// Iterate all (category, sub_category) pairs that have at least one
+    /// hit. Used by the scanner to build the active_gated set for the
+    /// AC prefilter — only patterns whose keywords appeared at least once
+    /// in the document need to run.
+    pub fn hit_keys(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+        self.hits
+            .iter()
+            .enumerate()
+            .filter(|(_, positions)| !positions.is_empty())
+            .filter_map(|(pid, _)| {
+                CONTEXT_KEYWORDS
+                    .get(pid)
+                    .map(|&(cat, sub, _)| (cat, sub))
+            })
+    }
+
     /// Check if any keyword for (category, sub_category) was found in the given byte range.
     pub fn has_hit_in_range(
         &self,
@@ -115,7 +131,7 @@ static AC_MATCHER: Lazy<AcMatcherInner> = Lazy::new(|| {
     }
 
     let ac = AhoCorasickBuilder::new()
-        .match_kind(MatchKind::LeftmostFirst)
+        .match_kind(MatchKind::LeftmostLongest)
         .ascii_case_insensitive(true)
         .build(&patterns)
         .ok()?;
