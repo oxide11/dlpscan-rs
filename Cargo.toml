@@ -5,6 +5,11 @@ edition = "2021"
 description = "High-performance DLP scanner — detect, redact, and protect sensitive data"
 license = "MIT"
 rust-version = "1.75"
+homepage = "https://github.com/oxide11/dlpscan-rs"
+repository = "https://github.com/oxide11/dlpscan-rs"
+readme = "README.md"
+keywords = ["dlp", "security", "compliance", "pii", "redaction"]
+categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]
 # Core matching
@@ -96,6 +101,9 @@ rustls-pemfile = { version = "2", optional = true }
 # YAML config
 serde_yaml = { version = "0.9", optional = true }
 
+# Redis (for distributed rate limiting)
+redis = { version = "0.27", optional = true, default-features = false }
+
 [features]
 default = ["metrics"]
 metrics = ["dep:prometheus"]
@@ -111,7 +119,8 @@ async-support = ["dep:tokio", "dep:reqwest", "dep:hyper", "dep:hyper-util", "dep
 tls = ["async-support", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile"]
 yaml-config = ["dep:serde_yaml"]
 python = ["dep:pyo3"]
-full = ["pdf", "office", "archives", "data-formats", "msg", "barcode", "bin-data", "tui", "async-support", "metrics", "tls", "yaml-config"]
+redis-rate-limit = ["dep:redis"]
+full = ["pdf", "office", "archives", "data-formats", "msg", "barcode", "bin-data", "tui", "async-support", "metrics", "tls", "yaml-config", "redis-rate-limit"]
 
 [dev-dependencies]
 criterion = "0.5"
@@ -126,3 +135,53 @@ lto = true
 strip = true
 opt-level = 3
 codegen-units = 1
+
+# ---------------------------------------------------------------------------
+# Linux packaging metadata (cargo-deb / cargo-generate-rpm)
+#
+# To build:
+#   cargo install cargo-deb cargo-generate-rpm
+#   cargo deb --features bin-data,metrics
+#   cargo generate-rpm --features bin-data,metrics
+#
+# Or use the helper script: ./packaging/build-packages.sh
+# ---------------------------------------------------------------------------
+
+[package.metadata.deb]
+maintainer = "dlpscan maintainers"
+copyright = "2024-2026 dlpscan contributors"
+license-file = ["LICENSE", "0"]
+extended-description = """\
+dlpscan is a high-performance Data Loss Prevention scanner that detects,
+redacts, tokenizes, and protects sensitive data including credit card
+numbers, SSNs, API keys, and 560+ other patterns across structured and
+unstructured documents. Includes built-in REST API server, RBAC, audit
+logging, and EDM/LSH for known-value matching."""
+section = "utils"
+priority = "optional"
+depends = "$auto, libc6 (>= 2.17)"
+assets = [
+    ["target/release/dlpscan", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/dlpscan/README.md", "644"],
+    ["LICENSE", "usr/share/doc/dlpscan/LICENSE", "644"],
+    ["docs/getting-started/", "usr/share/doc/dlpscan/getting-started/", "644"],
+    ["docs/enterprise/", "usr/share/doc/dlpscan/enterprise/", "644"],
+    ["packaging/dlpscan.service", "lib/systemd/system/dlpscan.service", "644"],
+    ["packaging/dlpscan.env.example", "etc/dlpscan/dlpscan.env.example", "644"],
+]
+conf-files = ["/etc/dlpscan/dlpscan.env.example"]
+
+[package.metadata.generate-rpm]
+license = "MIT"
+summary = "High-performance DLP scanner with REST API"
+assets = [
+    { source = "target/release/dlpscan", dest = "/usr/bin/dlpscan", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/dlpscan/README.md", mode = "644", doc = true },
+    { source = "LICENSE", dest = "/usr/share/doc/dlpscan/LICENSE", mode = "644", doc = true },
+    { source = "packaging/dlpscan.service", dest = "/lib/systemd/system/dlpscan.service", mode = "644" },
+    { source = "packaging/dlpscan.env.example", dest = "/etc/dlpscan/dlpscan.env.example", mode = "644", config = true },
+]
+auto-req = "no"
+
+[package.metadata.generate-rpm.requires]
+glibc = ">= 2.17"

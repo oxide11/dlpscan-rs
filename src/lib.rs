@@ -28,6 +28,8 @@ pub mod plugins;
 pub mod policy;
 pub mod profiles;
 pub mod rbac;
+#[cfg(feature = "redis-rate-limit")]
+pub mod redis_rate_limit;
 pub mod scanner;
 pub mod scoring;
 pub mod siem;
