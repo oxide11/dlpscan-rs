@@ -1,0 +1,57 @@
+[Unit]
+Description=dlpscan - High-performance DLP scanner REST API
+Documentation=https://github.com/oxide11/dlpscan-rs
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/dlpscan serve
+Restart=on-failure
+RestartSec=5s
+
+# Run as a dedicated unprivileged user. The .deb / .rpm post-install
+# script creates the dlpscan user.
+User=dlpscan
+Group=dlpscan
+
+# Pull configuration from /etc/dlpscan/dlpscan.env if present.
+EnvironmentFile=-/etc/dlpscan/dlpscan.env
+
+# Default state and audit log directories.
+StateDirectory=dlpscan
+LogsDirectory=dlpscan
+ConfigurationDirectory=dlpscan
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dlpscan /var/log/dlpscan
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @debug @cpu-emulation @obsolete
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0027
+
+# Resource limits
+LimitNOFILE=65536
+TasksMax=4096
+
+[Install]
+WantedBy=multi-user.target
