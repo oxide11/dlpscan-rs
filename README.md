@@ -4,16 +4,16 @@ High-performance DLP scanner written in Rust. Detects, redacts, and protects
 sensitive data with exceptional throughput.
 
 **560 patterns** across **126 categories** — full parity with the Python version.
-**19,000+ lines** of Rust across 38 modules. **360 tests** passing.
+**19,000+ lines** of Rust across 38 modules. **360 tests** passing (365 with `bin-data`).
 
 ## Performance
 
 | Scenario (1MB) | Full (560 patterns) | Baseline (108 patterns) |
 |---|---:|---:|
-| Clean text | 66.8 MB/s | 66.4 MB/s |
-| Mixed content | 20.4 MB/s | 20.8 MB/s |
-| Dense sensitive data | 20.9 MB/s | 21.5 MB/s |
-| Keyword-heavy text | 34.4 MB/s | 38.9 MB/s |
+| Clean text | 57.9 MB/s | 58.0 MB/s |
+| Mixed content | 14.3 MB/s | 16.0 MB/s |
+| Dense sensitive data | 13.3 MB/s | 15.2 MB/s |
+| Keyword-heavy text | 27.3 MB/s | 28.2 MB/s |
 
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for full results including optimization
 journey, latency tables, and baseline-vs-full comparison.
@@ -178,7 +178,8 @@ cargo build --release --features bin-data
   "metadata": {
     "bin_brand": "Visa",
     "bin_card_type": "Credit",
-    "bin_country": "US"
+    "bin_country": "US",
+    "bin_issuer": "JPMORGAN CHASE BANK, N.A."
   }
 }
 ```
@@ -224,20 +225,25 @@ let guard = InputGuard::new()
 ### Low-level scanner API
 
 ```rust
-use dlpscan::scanner::{scan_text, scan_text_with_config, ScanConfig};
+use dlpscan::scanner::{scan_text, scan_text_with_config, ScanConfig, EntropyMode};
 
 // Scan with defaults
 let matches = scan_text("SSN: 123-45-6789")?;
 
-// Scan with custom config
+// Builder API (fluent)
+let config = ScanConfig::new()
+    .with_categories(["Credit Card Numbers"])
+    .with_min_confidence(0.5)
+    .with_require_context(true)
+    .with_entropy_scan(EntropyMode::Gated);
+let matches = scan_text_with_config("Card: 4532015112830366", &config)?;
+
+// Struct literal (alternative)
 let config = ScanConfig {
-    categories: Some(["Credit Card Numbers".to_string()].into()),
     min_confidence: 0.5,
     require_context: true,
-    baseline_only: false,
     ..Default::default()
 };
-let matches = scan_text_with_config("Card: 4532015112830366", &config)?;
 ```
 
 ## Patterns and Keywords

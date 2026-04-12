@@ -31,6 +31,33 @@ dlpscan looks for configuration in this order:
 2. `dlpscan.json` (JSON)
 3. `pyproject.toml` under `[tool.dlpscan]` (TOML)
 
+### JSON Schema (editor validation)
+
+A JSON Schema is available at [`docs/dlpscanrc.schema.json`](../dlpscanrc.schema.json).
+Modern editors (VS Code, Neovim, IntelliJ) will auto-complete and
+validate fields when you add a schema reference:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/oxide11/dlpscan-rs/main/docs/dlpscanrc.schema.json",
+  "min_confidence": 0.5,
+  "entropy_scan": "gated"
+}
+```
+
+For VS Code, you can also add a global association in `settings.json`:
+
+```json
+{
+  "json.schemas": [
+    {
+      "fileMatch": [".dlpscanrc", "dlpscan.json"],
+      "url": "https://raw.githubusercontent.com/oxide11/dlpscan-rs/main/docs/dlpscanrc.schema.json"
+    }
+  ]
+}
+```
+
 ### Full `.dlpscanrc` example
 
 ```json

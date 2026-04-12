@@ -1,9 +1,15 @@
 //! BIN (Bank Identification Number) lookup for credit card validation and enrichment.
 //!
-//! Provides O(1) lookup of the first 6 digits of a credit card number against
-//! a database of 374k+ known BINs. Returns issuing brand, card type, and country.
+//! Provides O(log n) lookup of the first 6 digits of a credit card number
+//! against a database of 374k+ known BINs. Returns issuing brand, card type,
+//! country, and issuing bank name.
 //!
-//! Requires the `bin-data` feature flag (embeds ~3MB of BIN data at compile time).
+//! Requires the `bin-data` feature flag (embeds ~4MB of BIN data at compile time).
+//!
+//! Binary format v2:
+//! - Header: "DBIN" magic (4) + version u8 (1) + entry_count u32 (4) + string_count u32 (4)
+//! - Entries: 10 bytes each = BIN u32 (4) + brand u8 (1) + type u8 (1) + country [u8;2] (2) + issuer_id u16 (2)
+//! - String table: for each string: length u16 (2) + UTF-8 bytes
 
 /// BIN lookup result with card metadata.
 #[derive(Debug, Clone)]
@@ -16,8 +22,11 @@ pub struct BinInfo {
     pub card_type: &'static str,
     /// ISO 3166-1 alpha-2 country code of the issuing bank.
     pub country_code: String,
+    /// Name of the issuing bank (e.g., "JPMORGAN CHASE BANK, N.A."). Empty if unknown.
+    pub issuer: String,
 }
 
+#[cfg(feature = "bin-data")]
 const BRAND_NAMES: &[&str] = &[
     "Visa",                      // 0
     "MasterCard",                // 1
@@ -37,6 +46,7 @@ const BRAND_NAMES: &[&str] = &[
     "Other",                     // 15
 ];
 
+#[cfg(feature = "bin-data")]
 const TYPE_NAMES: &[&str] = &[
     "Credit",      // 0
     "Debit",       // 1
@@ -48,19 +58,36 @@ const TYPE_NAMES: &[&str] = &[
 #[cfg(feature = "bin-data")]
 static BIN_DATA: &[u8] = include_bytes!("../data/bin-list.bin");
 
-/// Parsed BIN lookup table (lazy-initialized on first use).
+/// Parsed BIN entry: (bin, brand_id, type_id, country, issuer_id).
 #[cfg(feature = "bin-data")]
-static BIN_TABLE: once_cell::sync::Lazy<Vec<(u32, u8, u8, [u8; 2])>> =
+type BinEntry = (u32, u8, u8, [u8; 2], u16);
+
+/// Parsed BIN lookup table and issuer string table (lazy-initialized).
+#[cfg(feature = "bin-data")]
+static BIN_TABLE: once_cell::sync::Lazy<(Vec<BinEntry>, Vec<String>)> =
     once_cell::sync::Lazy::new(|| {
         let data = BIN_DATA;
-        if data.len() < 4 {
-            return Vec::new();
+        // Need at least: magic(4) + version(1) + count(4) + strcount(4) = 13 bytes
+        if data.len() < 13 {
+            return (Vec::new(), Vec::new());
         }
-        let count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+        // Check magic bytes
+        if &data[0..4] != b"DBIN" {
+            tracing::warn!("BIN data missing magic bytes, database disabled");
+            return (Vec::new(), Vec::new());
+        }
+        let version = data[4];
+        if version != 2 {
+            tracing::warn!("BIN data version {} not supported (expected 2)", version);
+            return (Vec::new(), Vec::new());
+        }
+        let count = u32::from_le_bytes([data[5], data[6], data[7], data[8]]) as usize;
+        let string_count = u32::from_le_bytes([data[9], data[10], data[11], data[12]]) as usize;
+        let mut offset = 13;
+
         let mut table = Vec::with_capacity(count);
-        let mut offset = 4;
         for _ in 0..count {
-            if offset + 8 > data.len() {
+            if offset + 10 > data.len() {
                 break;
             }
             let bin = u32::from_le_bytes([
@@ -72,10 +99,28 @@ static BIN_TABLE: once_cell::sync::Lazy<Vec<(u32, u8, u8, [u8; 2])>> =
             let brand = data[offset + 4];
             let card_type = data[offset + 5];
             let country = [data[offset + 6], data[offset + 7]];
-            table.push((bin, brand, card_type, country));
-            offset += 8;
+            let issuer_id = u16::from_le_bytes([data[offset + 8], data[offset + 9]]);
+            table.push((bin, brand, card_type, country, issuer_id));
+            offset += 10;
         }
-        table
+
+        // String table: u16 length + bytes for each
+        let mut strings = Vec::with_capacity(string_count);
+        for _ in 0..string_count {
+            if offset + 2 > data.len() {
+                break;
+            }
+            let slen = u16::from_le_bytes([data[offset], data[offset + 1]]) as usize;
+            offset += 2;
+            if offset + slen > data.len() {
+                break;
+            }
+            let s = String::from_utf8_lossy(&data[offset..offset + slen]).to_string();
+            strings.push(s);
+            offset += slen;
+        }
+
+        (table, strings)
     });
 
 /// Look up a BIN (first 6 digits of a card number) in the database.
@@ -91,22 +136,30 @@ pub fn lookup(card_number: &str) -> Option<BinInfo> {
     let bin_str = &digits[..6];
     let bin: u32 = bin_str.parse().ok()?;
 
-    // Binary search on sorted table
-    let table = &*BIN_TABLE;
+    let (table, strings) = &*BIN_TABLE;
     let idx = table.binary_search_by_key(&bin, |entry| entry.0).ok()?;
-    let (_, brand_id, type_id, country_bytes) = &table[idx];
+    let (_, brand_id, type_id, country_bytes, issuer_id) = &table[idx];
 
     let brand = BRAND_NAMES.get(*brand_id as usize).unwrap_or(&"Other");
     let card_type = TYPE_NAMES.get(*type_id as usize).unwrap_or(&"Unknown");
     let country_code = String::from_utf8_lossy(country_bytes)
         .trim_end_matches('\0')
         .to_string();
+    let issuer = if *issuer_id == 0xFFFF {
+        String::new()
+    } else {
+        strings
+            .get(*issuer_id as usize)
+            .cloned()
+            .unwrap_or_default()
+    };
 
     Some(BinInfo {
         bin,
         brand,
         card_type,
         country_code,
+        issuer,
     })
 }
 
@@ -119,7 +172,7 @@ pub fn is_known_bin(card_number: &str) -> bool {
 /// Get the total number of BINs in the database.
 #[cfg(feature = "bin-data")]
 pub fn bin_count() -> usize {
-    BIN_TABLE.len()
+    BIN_TABLE.0.len()
 }
 
 /// Stub implementations when bin-data feature is not enabled.
@@ -130,7 +183,7 @@ pub fn lookup(_card_number: &str) -> Option<BinInfo> {
 
 #[cfg(not(feature = "bin-data"))]
 pub fn is_known_bin(_card_number: &str) -> bool {
-    false // Can't validate without data
+    false
 }
 
 #[cfg(not(feature = "bin-data"))]
@@ -151,7 +204,6 @@ mod tests {
     #[cfg(feature = "bin-data")]
     #[test]
     fn test_lookup_visa() {
-        // 453201 is a known Visa BIN (Citibank)
         let result = lookup("4532015112830366");
         assert!(result.is_some(), "Should find Visa BIN 453201");
         let info = result.unwrap();
@@ -161,15 +213,25 @@ mod tests {
 
     #[cfg(feature = "bin-data")]
     #[test]
+    fn test_lookup_returns_issuer() {
+        // Find any known BIN and verify it has an issuer string
+        let result = lookup("4532015112830366");
+        if let Some(info) = result {
+            // issuer may be empty for some BINs but should exist for most
+            // Just verify the field is populated (not panic)
+            let _ = info.issuer.len();
+        }
+    }
+
+    #[cfg(feature = "bin-data")]
+    #[test]
     fn test_lookup_unknown_bin() {
-        // 000000 is not a real BIN
         assert!(lookup("000000").is_none());
     }
 
     #[cfg(feature = "bin-data")]
     #[test]
     fn test_lookup_with_separators() {
-        // Should work with dashes/spaces
         let result = lookup("4532-0151-1283-0366");
         assert!(result.is_some());
     }

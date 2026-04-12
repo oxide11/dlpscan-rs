@@ -279,13 +279,14 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
 }
 
 /// Get BIN metadata for a credit card number (if bin-data feature is enabled).
-/// Returns (brand, card_type, country_code) or None.
-pub fn get_bin_info(card_number: &str) -> Option<(String, String, String)> {
+/// Returns (brand, card_type, country_code, issuer) or None.
+pub fn get_bin_info(card_number: &str) -> Option<(String, String, String, String)> {
     let info = crate::bin_lookup::lookup(card_number)?;
     Some((
         info.brand.to_string(),
         info.card_type.to_string(),
         info.country_code,
+        info.issuer,
     ))
 }
 
