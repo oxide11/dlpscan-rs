@@ -851,3 +851,26 @@ fn test_french_password_context() {
         "French password context should enable gated entropy or other detection"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn test_pipeline_rejects_character_device() {
+    // Regression: prior to the is_file() gate, pointing the pipeline at
+    // /dev/zero would hang indefinitely — metadata.len() reports 0 so
+    // the max_file_size check passes, then read_to_string drains the
+    // device forever. The guard now rejects non-regular files up front.
+    let pipeline = dlpscan::Pipeline::new();
+    let result = pipeline.process_file(std::path::Path::new("/dev/zero"));
+    assert!(
+        result.matches.is_empty(),
+        "character device should yield no matches"
+    );
+    assert!(
+        result
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("Not a regular file")),
+        "expected Not-a-regular-file error, got: {:?}",
+        result.error
+    );
+}

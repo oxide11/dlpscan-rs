@@ -1090,40 +1090,71 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     (current, offsets)
 }
 
+/// Maximum input size (bytes) for which alternative decodings are
+/// generated. Above this threshold the second-pass evasion defense is
+/// skipped entirely — the cost of producing five full copies of the
+/// input outweighs the marginal detection benefit on large documents,
+/// and it opens a clear memory-amplification vector for adversarial
+/// payloads.
+pub const MAX_ALTERNATIVE_DECODING_INPUT: usize = 16 * 1024;
+
+/// Hard cap on the total number of bytes across all alternative
+/// decodings for a single call. Even with the per-input gate above, a
+/// well-formed payload under the limit can still multiply into several
+/// full-size copies; this budget stops accumulation once we hit it.
+pub const MAX_ALTERNATIVE_DECODING_TOTAL: usize = 64 * 1024;
+
 /// Extended normalization: tries additional decodings (base32/64, ROT13, reversal).
 ///
 /// Called by the scanner as a second pass when standard normalization didn't
 /// produce matches. Each variant is returned for separate scanning.
+///
+/// Hardening: skip entirely for inputs larger than
+/// [`MAX_ALTERNATIVE_DECODING_INPUT`] and stop accumulating once the
+/// combined size of the produced alternatives exceeds
+/// [`MAX_ALTERNATIVE_DECODING_TOTAL`]. Both limits are generous enough
+/// to cover the short-document case the second pass is designed for
+/// (a few KB) while refusing to multiply an attacker-controlled blob
+/// into N full copies in memory.
 pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
+    if text.len() > MAX_ALTERNATIVE_DECODING_INPUT {
+        return Vec::new();
+    }
+
     let mut alternatives = Vec::new();
+    let mut total_bytes: usize = 0;
+
+    // Helper: push if distinct from input AND within the output budget.
+    let push_if_room = |alt: String, alternatives: &mut Vec<String>, total: &mut usize| {
+        if alt.is_empty() || alt == text {
+            return;
+        }
+        if *total + alt.len() > MAX_ALTERNATIVE_DECODING_TOTAL {
+            return;
+        }
+        *total += alt.len();
+        alternatives.push(alt);
+    };
 
     // Try base32/base64 decode
     let (decoded, _) = try_decode_base_encoding(text, &[]);
-    if decoded != text {
-        alternatives.push(decoded);
-    }
+    push_if_room(decoded, &mut alternatives, &mut total_bytes);
 
     // Try ROT13
     let (rot, _) = apply_rot13(text, &[]);
-    if rot != text {
-        alternatives.push(rot);
-    }
+    push_if_room(rot, &mut alternatives, &mut total_bytes);
 
     // Try full reversal
     let reversed: String = text.chars().rev().collect();
-    if reversed != text {
-        alternatives.push(reversed);
-    }
+    push_if_room(reversed, &mut alternatives, &mut total_bytes);
 
     // Try leetspeak decode (only useful for alpha-based patterns like email)
     let leet_decoded = normalize_leet(text);
-    if leet_decoded != text {
-        alternatives.push(leet_decoded);
-    }
+    push_if_room(leet_decoded, &mut alternatives, &mut total_bytes);
 
     // Try morse code decode
     if let Some(decoded) = decode_morse(text) {
-        alternatives.push(decoded);
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
     }
 
     alternatives
@@ -1556,6 +1587,34 @@ mod tests {
         // "123" in morse: .---- ..--- ...--
         let alts = generate_alternative_decodings(".---- ..--- ...--");
         assert!(alts.iter().any(|a| a == "123"));
+    }
+
+    #[test]
+    fn test_alternative_decodings_rejects_oversize_input() {
+        // Regression: the alternative-decodings pass used to allocate N
+        // full copies of the input unconditionally. For an oversized
+        // adversarial blob that multiplies peak memory by 5x. The
+        // hardening cap skips the pass entirely above MAX_ALTERNATIVE_
+        // DECODING_INPUT.
+        let oversized = "a".repeat(MAX_ALTERNATIVE_DECODING_INPUT + 1);
+        let alts = generate_alternative_decodings(&oversized);
+        assert!(alts.is_empty());
+    }
+
+    #[test]
+    fn test_alternative_decodings_total_budget_is_enforced() {
+        // Even for inputs under the per-input cap, the combined size of
+        // the produced alternatives is bounded. Use an input that is
+        // large enough to make 5 copies blow the total budget but small
+        // enough to pass the per-input gate.
+        let in_size = MAX_ALTERNATIVE_DECODING_INPUT; // right at the gate
+        let input = "A".repeat(in_size);
+        let alts = generate_alternative_decodings(&input);
+        let total: usize = alts.iter().map(|a| a.len()).sum();
+        assert!(
+            total <= MAX_ALTERNATIVE_DECODING_TOTAL,
+            "total bytes {total} exceeded budget"
+        );
     }
 
     #[test]
