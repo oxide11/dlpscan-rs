@@ -135,6 +135,7 @@ fn normalize_value(value: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Hash-based exact data matcher.
+#[derive(Clone)]
 pub struct ExactDataMatcher {
     salt: Vec<u8>,
     hashes: HashMap<String, HashSet<String>>, // category → set of hex digests

@@ -472,15 +472,30 @@ fn handle_health_full(state: &AppState, active: usize) -> HealthResponse {
     }
 }
 
-/// Quick hash for rate-limit key derivation (not cryptographic, just for bucketing).
+/// Derive a short, stable bucket identifier for an API key, used as a
+/// map key in rate limiting and as a user field in audit events.
+///
+/// This must use the SAME hash function as auth and RBAC (hash_api_key)
+/// so that (a) there is a single canonical identity for a given key
+/// across every code path and (b) rate-limit buckets cannot collide
+/// with each other via a weaker hash. The previous implementation used
+/// a custom FNV-1a (`md5_like_hash`) here while auth and RBAC used
+/// SHA-256 via `hash_api_key`, creating two distinct identities for the
+/// same key — a latent source of bucket collisions and an auditing
+/// mismatch between auth and rate-limit events.
+///
+/// The returned string is the first 8 bytes (16 hex chars) of the
+/// SHA-256 of the key, which gives 2^64 distinct buckets — far more
+/// than enough to be collision-free for any realistic tenant count.
 #[cfg(feature = "async-support")]
-fn md5_like_hash(input: &str) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in input.bytes() {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x100000001b3);
+fn api_key_bucket(key: &str) -> String {
+    let h = hash_api_key(key);
+    let mut s = String::with_capacity(16);
+    for b in &h[..8] {
+        use std::fmt::Write;
+        let _ = write!(s, "{b:02x}");
     }
-    h
+    s
 }
 
 /// Generate a simple random ID (hex string).
@@ -601,7 +616,10 @@ fn scan_result_to_response(result: &ScanResult) -> ScanResponse {
             .findings
             .iter()
             .map(|m| FindingResponse {
-                text: m.redacted_text(),
+                // Always fully masked on the external API surface. Use
+                // Match::masked_text() (not redacted_text()) so no portion
+                // of the matched value leaks through the response body.
+                text: m.masked_text(),
                 category: m.category.clone(),
                 sub_category: m.sub_category.clone(),
                 confidence: m.confidence,
@@ -625,10 +643,11 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
     use bytes::Bytes;
     use http_body_util::{BodyExt, Full};
     use hyper::body::Incoming;
-    use hyper::server::conn::auto::Builder as HttpBuilder;
     use hyper::service::service_fn;
     use hyper::{Request, Response, StatusCode};
     use hyper_util::rt::TokioIo;
+    use hyper_util::server::conn::auto::Builder as HttpBuilder;
+    use std::sync::Arc;
     use tokio::net::TcpListener;
 
     let addr = format!("{}:{}", config.host, config.port);
@@ -802,11 +821,13 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
                     }
                 });
 
-                let conn = HttpBuilder::new(hyper_util::rt::TokioExecutor::new())
-                    .serve_connection_with_upgrades(io, svc);
-                let conn = graceful.watch(conn);
-
+                let watcher = graceful.watcher();
                 tokio::spawn(async move {
+                    // Create the builder inside the task so it owns it for
+                    // the duration of the connection future.
+                    let builder = HttpBuilder::new(hyper_util::rt::TokioExecutor::new());
+                    let conn = builder.serve_connection_with_upgrades(io, svc);
+                    let conn = watcher.watch(conn);
                     if let Err(e) = conn.await {
                         tracing::debug!("Connection error: {}", e);
                     }
@@ -815,7 +836,8 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
             _ = &mut shutdown => {
                 tracing::info!("Shutdown signal received, draining connections...");
                 state.is_shutting_down.store(true, Ordering::SeqCst);
-                tokio::pin!(let shutdown_future = graceful.shutdown());
+                let shutdown_future = graceful.shutdown();
+                tokio::pin!(shutdown_future);
                 tokio::select! {
                     _ = &mut shutdown_future => {
                         tracing::info!("All connections drained, shutting down");
@@ -942,7 +964,7 @@ fn check_rate_limit(
         return None;
     }
     let rate_key = api_key_header
-        .map(|k| format!("key:{:x}", md5_like_hash(k)))
+        .map(|k| format!("key:{}", api_key_bucket(k)))
         .unwrap_or_else(|| format!("ip:{client_ip}"));
     if let Ok(mut rl) = state.rate_limiter.write() {
         if !rl.check_client(&rate_key) {
@@ -1224,7 +1246,7 @@ fn hyper_route_request(
                             .with_outcome("success")
                             .with_user(
                                 &api_key_header
-                                    .map(|k| format!("key:{:x}", md5_like_hash(k)))
+                                    .map(|k| format!("key:{}", api_key_bucket(k)))
                                     .unwrap_or_else(|| "admin".to_string()),
                             );
                         crate::audit::audit_event(&event);
@@ -1341,13 +1363,15 @@ fn hyper_route_request(
                     let vault = lsh_guard.get_or_insert_with(|| {
                         std::sync::Arc::new(crate::lsh::DocumentVault::default_vault())
                     });
-                    let vault_mut = std::sync::Arc::make_mut(vault);
-                    vault_mut.register(&req.doc_id, &req.text, &req.sensitivity, None);
+                    // DocumentVault::register takes &self (interior mutability
+                    // via Mutex), so we can call it directly on the Arc deref
+                    // without needing Arc::make_mut.
+                    vault.register(&req.doc_id, &req.text, &req.sensitivity, None);
                     (
                         StatusCode::OK,
                         serde_json::json!({
                             "doc_id": req.doc_id,
-                            "document_count": vault_mut.document_count(),
+                            "document_count": vault.document_count(),
                         })
                         .to_string(),
                     )
@@ -1489,6 +1513,32 @@ mod tests {
         assert!(!verify_api_key_hash(&hash, ""));
         assert!(!verify_api_key_hash(&hash, "wrong"));
         assert!(!verify_api_key_hash(&hash, "correct-ke")); // prefix
+    }
+
+    #[cfg(feature = "async-support")]
+    #[test]
+    fn test_api_key_bucket_matches_hash_api_key() {
+        // Regression: rate-limit bucketing and audit user IDs used to go
+        // through a custom FNV-1a (md5_like_hash) while auth/RBAC used
+        // SHA-256 via hash_api_key. That meant the "identity" of a key
+        // differed across code paths, allowing bucket collisions and
+        // mismatched audit entries. api_key_bucket must now be derived
+        // directly from hash_api_key so every code path sees the same
+        // canonical key identity.
+        let k = "api-key-42";
+        let full = hash_api_key(k);
+        let bucket = api_key_bucket(k);
+        // Bucket is 16 hex chars = first 8 bytes of the SHA-256.
+        assert_eq!(bucket.len(), 16);
+        let expected: String = full[..8].iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(bucket, expected);
+    }
+
+    #[cfg(feature = "async-support")]
+    #[test]
+    fn test_api_key_bucket_deterministic_and_distinct() {
+        assert_eq!(api_key_bucket("same"), api_key_bucket("same"));
+        assert_ne!(api_key_bucket("alpha"), api_key_bucket("beta"));
     }
 
     #[test]
