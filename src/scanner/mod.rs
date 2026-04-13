@@ -437,20 +437,45 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
         .collect();
 
     // Second pass: try alternative decodings (base32/64, ROT13, reversal)
-    // Only if primary scan found few/no matches and text is short enough
+    // Only if primary scan found few/no matches and text is short enough.
+    //
+    // Perf + precision: restrict the second pass to the always-run
+    // (high-specificity or curated-critical) pattern set. The previous
+    // implementation iterated every compiled pattern (~560) against every
+    // alternative, which is quadratic on a path that only matters for
+    // short clean-looking documents. Lower-specificity patterns
+    // (names, generic IDs, insurance numbers, ...) produce mostly
+    // false positives when run against alt-decoded text anyway — a
+    // ROT13 or base64-decoded English paragraph is noise, so a
+    // "matches" hit from a weak pattern is almost certainly spurious.
+    // Keeping the pass restricted to high-specificity patterns both
+    // cuts the work and improves precision.
+    //
+    // We also pre-filter by config.categories once outside the
+    // alt-loop instead of rechecking per-pattern per-alt.
     if matches.len() < 3 && text.len() < 4096 && start.elapsed().as_secs() < MAX_SCAN_SECONDS / 2 {
         let alternatives = normalize::generate_alternative_decodings(&normalized);
+        let alt_patterns: Vec<&CompiledPattern> = compiled
+            .iter()
+            .filter(|cp| is_always_run(cp.def.sub_category))
+            .filter(|cp| match &config.categories {
+                Some(cats) => cats.contains(cp.def.category),
+                None => true,
+            })
+            .collect();
+
         for alt_text in &alternatives {
             if alt_text.is_empty() {
                 continue;
             }
             let (alt_norm, _) = normalize::normalize_text(alt_text);
-            for cp in compiled.iter() {
-                if let Some(ref cats) = config.categories {
-                    if !cats.contains(cp.def.category) {
-                        continue;
-                    }
-                }
+            // Skip if re-normalizing the alt produced the same text we
+            // already scanned in the primary pass — no new information.
+            if alt_norm == normalized {
+                continue;
+            }
+
+            for cp in &alt_patterns {
                 for mat in cp.regex.find_iter(&alt_norm) {
                     let matched_text = mat.as_str();
                     if !crate::validation::validate_match(
