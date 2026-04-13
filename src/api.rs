@@ -885,7 +885,30 @@ fn check_auth(
     state: &AppState,
 ) -> (Option<[u8; 32]>, Option<(hyper::StatusCode, String)>) {
     let auth_exempt = path == "/health" || path == "/health/live" || path == "/health/ready";
-    let expected_hash = state.api_key_hash.read().ok().and_then(|g| *g);
+
+    // Read the configured API key hash. The previous implementation
+    // collapsed a poisoned lock to None via `.ok()`, which silently
+    // bypassed authentication — a poisoned RwLock meant requests
+    // looked identical to "no auth configured" and were allowed
+    // through. Fail closed instead: on lock poisoning return
+    // 503 Service Unavailable and refuse the request entirely.
+    let expected_hash = match state.api_key_hash.read() {
+        Ok(guard) => *guard,
+        Err(_) => {
+            tracing::error!(
+                path = %path,
+                "API key hash lock poisoned — refusing request to fail closed"
+            );
+            return (
+                None,
+                Some((
+                    hyper::StatusCode::SERVICE_UNAVAILABLE,
+                    r#"{"detail":"Service in degraded state"}"#.to_string(),
+                )),
+            );
+        }
+    };
+
     if expected_hash.is_some() && !auth_exempt {
         if let Some(ref hash) = expected_hash {
             match api_key_header {
@@ -1539,6 +1562,75 @@ mod tests {
     fn test_api_key_bucket_deterministic_and_distinct() {
         assert_eq!(api_key_bucket("same"), api_key_bucket("same"));
         assert_ne!(api_key_bucket("alpha"), api_key_bucket("beta"));
+    }
+
+    #[cfg(feature = "async-support")]
+    fn make_test_app_state(api_key: Option<&str>) -> AppState {
+        AppState {
+            api_key_hash: RwLock::new(api_key.map(hash_api_key)),
+            rate_limiter: RwLock::new(RateLimiter::new(10_000, 60)),
+            vaults: RwLock::new(HashMap::new()),
+            custom_patterns: RwLock::new(Vec::new()),
+            start_time: Instant::now(),
+            is_shutting_down: std::sync::atomic::AtomicBool::new(false),
+            api_key_roles: RwLock::new(HashMap::new()),
+            edm: RwLock::new(None),
+            lsh: RwLock::new(None),
+        }
+    }
+
+    #[cfg(feature = "async-support")]
+    fn poison_rwlock<T>(lock: &RwLock<T>) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = lock.write().unwrap();
+            panic!("intentional poison for test");
+        }));
+    }
+
+    #[cfg(feature = "async-support")]
+    #[test]
+    fn test_check_auth_fails_closed_on_poisoned_lock() {
+        // Regression: the old implementation collapsed a poisoned
+        // api_key_hash lock to None via .ok(), which made it look like
+        // "no auth configured" and silently allowed every request
+        // through. After the fix a poisoned lock must return
+        // 503 Service Unavailable and reject the request.
+        let state = make_test_app_state(Some("some-secret-key"));
+        poison_rwlock(&state.api_key_hash);
+        let (hash, err) = check_auth("/v1/scan", Some("some-secret-key"), &state);
+        assert!(hash.is_none(), "poisoned lock should not surface a hash");
+        let (status, _body) = err.expect("poisoned lock must produce an error response");
+        assert_eq!(status, hyper::StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[cfg(feature = "async-support")]
+    #[test]
+    fn test_check_auth_allows_when_no_key_configured() {
+        // Sanity: with no API key configured the function must return
+        // (None, None) — requests pass through untouched. This catches
+        // any regression that lumps "no auth configured" into the new
+        // fail-closed path.
+        let state = make_test_app_state(None);
+        let (hash, err) = check_auth("/v1/scan", None, &state);
+        assert!(hash.is_none());
+        assert!(err.is_none());
+    }
+
+    #[cfg(feature = "async-support")]
+    #[test]
+    fn test_check_auth_rejects_bad_key() {
+        let state = make_test_app_state(Some("correct-key"));
+        let (_, err) = check_auth("/v1/scan", Some("wrong-key"), &state);
+        let (status, _body) = err.expect("bad key must produce an error");
+        assert_eq!(status, hyper::StatusCode::UNAUTHORIZED);
+    }
+
+    #[cfg(feature = "async-support")]
+    #[test]
+    fn test_check_auth_accepts_good_key() {
+        let state = make_test_app_state(Some("correct-key"));
+        let (_, err) = check_auth("/v1/scan", Some("correct-key"), &state);
+        assert!(err.is_none());
     }
 
     #[test]
