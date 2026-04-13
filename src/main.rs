@@ -921,17 +921,37 @@ fn run_init_wizard() {
     println!("  dlpscan info                     Show scanner info");
 }
 
+/// Maximum length of a single interactive-prompt response. Interactive
+/// CLI flows don't need more than a few thousand characters for any
+/// setting, and capping guards against an operator accidentally piping
+/// a multi-megabyte file (or an attacker feeding stdin a long blob)
+/// into a setup wizard expecting a word.
+const PROMPT_MAX_LEN: usize = 4096;
+
 fn prompt(label: &str, default: &str) -> String {
-    use std::io::{self, Write};
+    use std::io::{self, BufRead, Write};
     print!("{label} [{default}]: ");
-    io::stdout().flush().unwrap();
+    // A broken stdout (e.g. the operator backgrounded the process) is
+    // not a reason to crash — swallow the flush error and keep going.
+    let _ = io::stdout().flush();
+
+    // Bound the read so a malicious or accidental long line cannot
+    // grow `input` without limit. `.take()` gives us a one-shot upper
+    // bound on the number of bytes pulled from stdin for this prompt.
+    let stdin = io::stdin();
+    let mut limited = stdin.lock().take(PROMPT_MAX_LEN as u64);
     let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    let input = input.trim();
-    if input.is_empty() {
+    if limited.read_line(&mut input).is_err() {
+        // Broken pipe / EOF / encoding error: fall back to the default
+        // rather than panicking and killing an interactive session.
+        return default.to_string();
+    }
+
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
         default.to_string()
     } else {
-        input.to_string()
+        trimmed.to_string()
     }
 }
 
