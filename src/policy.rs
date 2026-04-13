@@ -195,9 +195,15 @@ impl PolicyEngine {
             return result;
         }
 
-        // Sort rules by priority descending (stable sort preserves insertion order for ties)
-        let mut sorted_rules: Vec<&PolicyRule> = self.policy.rules.iter().collect();
-        sorted_rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        // Sort rules by priority descending. Rust's Vec::sort_by is
+        // stable, but we also add an explicit tiebreaker on the rule's
+        // original position so the ordering is (a) defensible if the
+        // sort is ever changed to sort_unstable_by and (b) immediately
+        // obvious on review that equal-priority rules are applied in
+        // insertion order.
+        let mut sorted_rules: Vec<(usize, &PolicyRule)> =
+            self.policy.rules.iter().enumerate().collect();
+        sorted_rules.sort_by(|a, b| b.1.priority.cmp(&a.1.priority).then(a.0.cmp(&b.0)));
 
         let mut redact_findings: Vec<&Match> = Vec::new();
         let default_action = parse_action(&self.policy.scan.action);
@@ -205,7 +211,7 @@ impl PolicyEngine {
         for finding in &result.findings {
             let mut matched_action = default_action;
 
-            for rule in &sorted_rules {
+            for (_, rule) in &sorted_rules {
                 if rule_matches(rule, finding) {
                     matched_action = parse_action(&rule.action);
                     break;
@@ -546,6 +552,45 @@ min_confidence = 0.8
         rules.sort_by(|a, b| b.priority.cmp(&a.priority));
         assert_eq!(rules[0].name, "high");
         assert_eq!(rules[1].name, "low");
+    }
+
+    #[test]
+    fn test_equal_priority_rules_resolve_in_insertion_order() {
+        // Regression: rules with identical priority must be applied in
+        // the order they were declared, and the ordering must hold
+        // regardless of sort algorithm stability. apply_policy uses
+        // sort_by(priority desc).then(original_index asc); verify the
+        // same composite comparator here.
+        let rules = vec![
+            PolicyRule {
+                name: "first".to_string(),
+                match_categories: vec!["Cards".to_string()],
+                match_sub_categories: None,
+                action: "redact".to_string(),
+                min_confidence: 0.0,
+                priority: 5,
+            },
+            PolicyRule {
+                name: "second".to_string(),
+                match_categories: vec!["Cards".to_string()],
+                match_sub_categories: None,
+                action: "reject".to_string(),
+                min_confidence: 0.0,
+                priority: 5,
+            },
+            PolicyRule {
+                name: "third".to_string(),
+                match_categories: vec!["Cards".to_string()],
+                match_sub_categories: None,
+                action: "flag".to_string(),
+                min_confidence: 0.0,
+                priority: 5,
+            },
+        ];
+        let mut sorted: Vec<(usize, &PolicyRule)> = rules.iter().enumerate().collect();
+        sorted.sort_by(|a, b| b.1.priority.cmp(&a.1.priority).then(a.0.cmp(&b.0)));
+        let order: Vec<&str> = sorted.iter().map(|(_, r)| r.name.as_str()).collect();
+        assert_eq!(order, vec!["first", "second", "third"]);
     }
 
     #[test]
