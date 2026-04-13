@@ -95,5 +95,51 @@ fn bench_alt_decodings_path(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_scan_text, bench_normalize, bench_alt_decodings_path);
+/// Benchmark the context hit-index / has_hit_in_range hot path.
+///
+/// Inputs are constructed with many context keywords alongside
+/// sensitive values so that `build_hit_index` produces a sizeable
+/// `hits` map and `has_hit_in_range` gets called ~560 times per scan
+/// (once per compiled pattern during the active_gated filter).
+/// Any changes to the per-scan `reverse`-map construction or the
+/// per-call lookup path show up here.
+fn context_heavy_text(copies: usize) -> String {
+    // Mix of keywords and sensitive values that forces both the AC
+    // prefilter (lots of keyword matches) and the regex scan path
+    // (several PII sub_categories fire).
+    let block = "Patient John Smith date of birth 01/15/1980. \
+                 SSN 123-45-6789, medical record MRN 789456, \
+                 insurance policy POL123456789, \
+                 email contact@example.com, phone +14155551234. \
+                 Prescriber DEA AB1234567, diagnosis ICD-10 E11.9. \
+                 Credit card 4532-0151-1283-0366 expires 12/28. \
+                 Employee id EMP0042, department code HR. ";
+    block.repeat(copies)
+}
+
+fn bench_context_hit_index(c: &mut Criterion) {
+    let mut group = c.benchmark_group("context_index");
+
+    for copies in [1, 5, 20] {
+        let text = context_heavy_text(copies);
+        let label = format!("{}x block ({} B)", copies, text.len());
+        group.bench_with_input(
+            BenchmarkId::new("scan_context_heavy", &label),
+            &text,
+            |b, text| {
+                b.iter(|| scanner::scan_text(black_box(text)));
+            },
+        );
+    }
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_scan_text,
+    bench_normalize,
+    bench_alt_decodings_path,
+    bench_context_hit_index
+);
 criterion_main!(benches);

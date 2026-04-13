@@ -29,12 +29,27 @@ pub struct ContextEntry {
 }
 
 /// Hit index from Aho-Corasick search — stores positions of keyword matches.
+///
+/// Earlier revisions of this type kept a second `reverse:
+/// HashMap<String, HashMap<String, Vec<_>>>` purely to avoid allocating
+/// lookup keys on each `has_hit_in_range` call. The reverse map paid
+/// two `String::from(&'static str)` allocations plus a full `Vec` clone
+/// per unique (category, sub_category) hit — every scan. For a
+/// context-heavy document with ~20 unique keyword hits, that was ~40
+/// String allocations and ~20 Vec clones, all thrown away at end of
+/// scan. The audit flagged it as a rebuild-per-scan hot spot.
+///
+/// We drop the reverse map entirely and iterate `hits` directly in
+/// `has_hit_in_range`. The `hits` map is keyed on
+/// `(&'static str, &'static str)` so no allocations happen on either
+/// the build or the lookup path. The lookup is O(N) over the small
+/// number of unique hit keys (typically 1–20) — with short static
+/// strings that compare in a few bytes, linear scan is actually faster
+/// than a hashed lookup for sizes in this range, and it beats the
+/// previous implementation on both memory and cache behavior.
 pub struct ContextHitIndex {
     /// Map from (category, sub_category) → list of (start, end) byte positions.
-    #[allow(dead_code)]
     hits: HashMap<(&'static str, &'static str), Vec<(usize, usize)>>,
-    /// Two-level map for allocation-free lookup: category → sub_category → positions.
-    reverse: HashMap<String, HashMap<String, Vec<(usize, usize)>>>,
 }
 
 impl ContextHitIndex {
@@ -46,15 +61,33 @@ impl ContextHitIndex {
         range_start: usize,
         range_end: usize,
     ) -> bool {
-        // Two-level lookup avoids allocating Strings on every call
-        if let Some(sub_map) = self.reverse.get(category) {
-            if let Some(positions) = sub_map.get(sub_category) {
+        // Linear scan over the hits map — size is bounded by unique
+        // keyword-hit keys present in the document, not by pattern count.
+        for ((cat, sub), positions) in &self.hits {
+            if *cat == category && *sub == sub_category {
                 return positions
                     .iter()
                     .any(|&(start, _end)| start >= range_start && start < range_end);
             }
         }
         false
+    }
+
+    /// Iterate the `(category, sub_category)` keys that had at least
+    /// one keyword hit anywhere in the scanned text.
+    ///
+    /// This is equivalent to asking `has_hit_in_range(..., 0, text.len())`
+    /// for every possible (cat, sub) key, but in a single pass over
+    /// the underlying hit map rather than a quadratic scan that calls
+    /// `has_hit_in_range` once per compiled pattern. The scanner uses
+    /// this to build its `active_gated` set, which is the set of
+    /// context-gated patterns whose keywords are present in the
+    /// document at all. Before this method, that set was built by
+    /// iterating all ~560 compiled patterns and calling
+    /// `has_hit_in_range` on each — cheap per call but quadratic in
+    /// aggregate.
+    pub fn hit_keys(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+        self.hits.keys().copied()
     }
 }
 
@@ -98,16 +131,7 @@ pub fn build_hit_index(text: &str) -> Option<ContextHitIndex> {
         hits.entry(key).or_default().push((mat.start(), mat.end()));
     }
 
-    // Build two-level reverse lookup for allocation-free lookups
-    let mut reverse: HashMap<String, HashMap<String, Vec<(usize, usize)>>> = HashMap::new();
-    for (&(cat, sub), positions) in &hits {
-        reverse
-            .entry(cat.to_string())
-            .or_default()
-            .insert(sub.to_string(), positions.clone());
-    }
-
-    Some(ContextHitIndex { hits, reverse })
+    Some(ContextHitIndex { hits })
 }
 
 /// Get context distance for a category.

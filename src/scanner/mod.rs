@@ -264,14 +264,21 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
 
     // Build set of context-gated (category, sub_category) pairs whose keywords
     // were found somewhere in the text. Patterns not in this set get skipped.
+    //
+    // Perf: previously this walked every compiled pattern (~560) and
+    // called has_hit_in_range(cat, sub, 0, text.len()) on each. For a
+    // context-heavy scan that was 560 lookups per document just to
+    // build this set. has_hit_in_range with a full-text range is
+    // exactly equivalent to "is this (cat, sub) present in the hit
+    // index at all", so we iterate the hit index's keys directly.
+    // The resulting set is a superset of the old one — any (cat, sub)
+    // key present in the hit index but not in a compiled pattern is
+    // harmless because active_gated is only used as a membership
+    // filter downstream.
     let active_gated: HashSet<(&str, &str)> = if let Some(ref index) = hit_index {
-        compiled
-            .iter()
-            .filter(|cp| !is_always_run(cp.def.sub_category))
-            .filter(|cp| {
-                index.has_hit_in_range(cp.def.category, cp.def.sub_category, 0, normalized.len())
-            })
-            .map(|cp| (cp.def.category, cp.def.sub_category))
+        index
+            .hit_keys()
+            .filter(|(_cat, sub)| !is_always_run(sub))
             .collect()
     } else {
         HashSet::new()
