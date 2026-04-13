@@ -30,10 +30,12 @@ pub mod profiles;
 pub mod rbac;
 pub mod scanner;
 pub mod scoring;
+#[cfg(feature = "siem")]
 pub mod siem;
 pub mod streaming;
 pub mod tui;
 pub mod validation;
+#[cfg(feature = "webhooks")]
 pub mod webhooks;
 
 // Re-exports for ergonomic API
@@ -57,4 +59,5 @@ pub use lsh::DocumentVault;
 pub use metrics::{MetricsCollector, ScanMetrics};
 pub use policy::{Policy, PolicyEngine};
 pub use profiles::{MaskingProfile, ProfileRegistry};
+#[cfg(feature = "webhooks")]
 pub use webhooks::WebhookNotifier;

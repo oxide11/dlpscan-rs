@@ -97,7 +97,7 @@ rustls-pemfile = { version = "2", optional = true }
 serde_yaml = { version = "0.9", optional = true }
 
 [features]
-default = ["metrics"]
+default = ["metrics", "siem", "webhooks"]
 metrics = ["dep:prometheus"]
 pdf = ["dep:pdf-extract"]
 office = ["dep:calamine", "dep:quick-xml"]
@@ -107,11 +107,19 @@ msg = ["dep:cfb"]
 barcode = ["dep:rxing", "dep:image"]
 bin-data = []
 tui = ["dep:ratatui", "dep:crossterm"]
+# SIEM forwarders (Splunk HEC, Elasticsearch, Syslog, Datadog, generic
+# webhook). Ships its own synchronous HTTP client, so there are no
+# extra runtime deps — gating the feature just excludes the ~628 LoC
+# module from minimal builds and trims the public API surface.
+siem = []
+# Webhook notifier for scan findings. Same story as siem: self-
+# contained, no extra deps, ~455 LoC excluded when disabled.
+webhooks = []
 async-support = ["dep:tokio", "dep:reqwest", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:bytes"]
 tls = ["async-support", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile"]
 yaml-config = ["dep:serde_yaml"]
 python = ["dep:pyo3"]
-full = ["pdf", "office", "archives", "data-formats", "msg", "barcode", "bin-data", "tui", "async-support", "metrics", "tls", "yaml-config"]
+full = ["pdf", "office", "archives", "data-formats", "msg", "barcode", "bin-data", "tui", "async-support", "metrics", "tls", "yaml-config", "siem", "webhooks"]
 
 [dev-dependencies]
 criterion = "0.5"
