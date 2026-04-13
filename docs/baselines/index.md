@@ -5,6 +5,12 @@ by compliance and security control objective. Each baseline maps to a
 specific data protection domain and identifies the exact patterns and
 keywords required to meet that control.
 
+> **Evaluating another DLP solution against these baselines?** Start with
+> [ABOUT-BASELINES.md](ABOUT-BASELINES.md) for a tool-agnostic explanation
+> of each baseline, then use
+> [BASELINE-CONFIGURATION-REFERENCE.md](BASELINE-CONFIGURATION-REFERENCE.md)
+> as a portable reference of every regex pattern and keyword list.
+
 Use these baselines to:
 
 - **Configure scanning presets** aligned to your compliance requirements
