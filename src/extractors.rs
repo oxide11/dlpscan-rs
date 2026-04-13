@@ -21,6 +21,26 @@ const MAX_EXTRACT_ENTRY_SIZE: u64 = 100 * 1024 * 1024;
 /// Maximum number of files to extract from archives.
 const MAX_EXTRACT_FILE_COUNT: usize = 10_000;
 
+/// Maximum allowed compression ratio for a single archive entry
+/// (uncompressed / compressed). Entries above this ratio are treated as
+/// likely zip bombs and skipped. 100:1 accommodates text-heavy legit
+/// content (docx/xlsx XML, source dumps, log files) while rejecting the
+/// adversarial 10,000:1 and above patterns that burn CPU and RAM even
+/// inside per-entry and total-size caps.
+const MAX_ZIP_COMPRESSION_RATIO: u64 = 100;
+
+/// Check whether a ZIP entry's declared size vs. its compressed size
+/// exceeds the configured bomb threshold. Returns true if the entry
+/// should be skipped. Entries with a compressed_size of 0 (e.g. stored
+/// directory headers) are treated as safe since there is nothing to
+/// expand.
+fn zip_entry_is_bomb(uncompressed: u64, compressed: u64) -> bool {
+    if compressed == 0 {
+        return false;
+    }
+    uncompressed / compressed > MAX_ZIP_COMPRESSION_RATIO
+}
+
 /// Sanitize an archive entry name to prevent path traversal attacks.
 /// Returns None if the path is unsafe (contains `..`, absolute paths, etc).
 #[allow(dead_code)]
@@ -621,6 +641,21 @@ fn extract_zip_archive(
         if let Ok(mut file) = archive.by_name(&xml_path) {
             // Skip entries larger than the per-entry limit
             if file.size() > MAX_EXTRACT_ENTRY_SIZE {
+                continue;
+            }
+            // Zip-bomb defense: reject entries whose uncompressed size
+            // is more than MAX_ZIP_COMPRESSION_RATIO × the compressed
+            // size. Per-entry and total-size caps still limit memory,
+            // but without this check a 10,000:1 ratio file can burn
+            // CPU during streaming up to those caps.
+            if zip_entry_is_bomb(file.size(), file.compressed_size()) {
+                tracing::warn!(
+                    entry = %xml_path,
+                    uncompressed = file.size(),
+                    compressed = file.compressed_size(),
+                    ratio_cap = MAX_ZIP_COMPRESSION_RATIO,
+                    "ZIP entry exceeds compression ratio cap — skipping"
+                );
                 continue;
             }
             // Check total budget before reading
@@ -1613,6 +1648,18 @@ fn extract_opendocument(file_path: &str) -> Result<ExtractionResult, String> {
             if file.size() > MAX_EXTRACT_ENTRY_SIZE {
                 continue;
             }
+            // Zip-bomb defense: reject entries whose compression ratio
+            // exceeds MAX_ZIP_COMPRESSION_RATIO.
+            if zip_entry_is_bomb(file.size(), file.compressed_size()) {
+                tracing::warn!(
+                    entry = %xml_name,
+                    uncompressed = file.size(),
+                    compressed = file.compressed_size(),
+                    ratio_cap = MAX_ZIP_COMPRESSION_RATIO,
+                    "ODT entry exceeds compression ratio cap — skipping"
+                );
+                continue;
+            }
             use std::io::Read;
             let mut xml_content = String::new();
             if file.read_to_string(&mut xml_content).is_ok() {
@@ -2340,6 +2387,24 @@ mod tests {
         assert!(text.contains("Hello"));
         assert!(text.contains("World"));
         assert!(!text.contains("<"));
+    }
+
+    #[test]
+    fn test_zip_entry_is_bomb() {
+        // Normal text XML: 10:1 ratio, safe
+        assert!(!zip_entry_is_bomb(10_000, 1_000));
+        // Exactly at the cap (100:1), safe
+        assert!(!zip_entry_is_bomb(100_000, 1_000));
+        // Just over the cap (>100:1), bomb
+        assert!(zip_entry_is_bomb(101_000, 1_000));
+        // Classic zip bomb (10,000:1), bomb
+        assert!(zip_entry_is_bomb(10_000_000, 1_000));
+        // Extreme 1,000,000:1, bomb
+        assert!(zip_entry_is_bomb(1_000_000_000, 1_000));
+        // Directory / stored header (compressed_size == 0): safe, nothing
+        // to expand
+        assert!(!zip_entry_is_bomb(0, 0));
+        assert!(!zip_entry_is_bomb(42, 0));
     }
 
     #[test]
