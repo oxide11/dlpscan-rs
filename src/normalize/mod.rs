@@ -1125,7 +1125,7 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     let mut total_bytes: usize = 0;
 
     // Helper: push if distinct from input AND within the output budget.
-    let mut push_if_room = |alt: String, alternatives: &mut Vec<String>, total: &mut usize| {
+    let push_if_room = |alt: String, alternatives: &mut Vec<String>, total: &mut usize| {
         if alt.is_empty() || alt == text {
             return;
         }
