@@ -1,0 +1,8 @@
+Travel document request
+
+Traveler name: Carol Singh
+US passport number: 123456789
+Date of issue: 2021-04-12
+Date of expiry: 2031-04-11
+
+Visa class: B1/B2

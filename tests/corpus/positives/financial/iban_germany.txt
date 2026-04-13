@@ -1,0 +1,8 @@
+SEPA direct debit mandate
+
+Debtor name: Hans Mueller
+Debtor IBAN: DE89 3704 0044 0532 0130 00
+Debtor BIC: COBADEFFXXX
+Creditor: Beispiel GmbH
+
+Mandate reference: MANDATE-2024-0042

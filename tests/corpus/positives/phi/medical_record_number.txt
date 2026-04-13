@@ -1,0 +1,8 @@
+Electronic health record excerpt
+
+Patient MRN: 7894561
+Chart number: 7894561
+Department: Cardiology
+Attending: Dr. Patel
+
+Chief complaint: chest pain on exertion.

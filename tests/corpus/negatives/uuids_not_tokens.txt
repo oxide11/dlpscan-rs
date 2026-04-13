@@ -1,0 +1,9 @@
+Event bus message audit
+
+Message IDs (UUIDs, not secrets):
+  550e8400-e29b-41d4-a716-446655440000
+  7b2a1e3c-9f4d-4b8a-a5c1-1e2f3d4e5f6a
+  a1b2c3d4-e5f6-4789-abcd-ef0123456789
+
+These are v4 UUIDs used for idempotency keys. They are NOT authentication
+tokens and should not be flagged as session IDs or secrets.
