@@ -55,6 +55,11 @@ impl Match {
 
     /// Return a redacted version of the matched text.
     /// Shows first 3 and last 3 characters for matches longer than 8 chars.
+    ///
+    /// NOTE: This retains partial plaintext and is intended for operator-
+    /// facing contexts (CLI output, audit logs with access controls). Do
+    /// NOT use this for API responses or any external surface where even
+    /// partial disclosure would be a leak — use [`Self::masked_text`] there.
     pub fn redacted_text(&self) -> String {
         if self.text.len() <= 8 {
             "*".repeat(self.text.len())
@@ -72,6 +77,14 @@ impl Match {
             let middle_len = self.text.chars().count().saturating_sub(6);
             format!("{}{}{}", first, "*".repeat(middle_len), last)
         }
+    }
+
+    /// Return a fully-masked version of the matched text, preserving length
+    /// in characters but revealing no plaintext. Use this on any external
+    /// surface (HTTP API responses, webhook payloads, SIEM forwards) where
+    /// the caller must not see any portion of the matched value.
+    pub fn masked_text(&self) -> String {
+        "*".repeat(self.text.chars().count())
     }
 
     /// Convert to a JSON-serializable map.

@@ -601,7 +601,10 @@ fn scan_result_to_response(result: &ScanResult) -> ScanResponse {
             .findings
             .iter()
             .map(|m| FindingResponse {
-                text: m.redacted_text(),
+                // Always fully masked on the external API surface. Use
+                // Match::masked_text() (not redacted_text()) so no portion
+                // of the matched value leaks through the response body.
+                text: m.masked_text(),
                 category: m.category.clone(),
                 sub_category: m.sub_category.clone(),
                 confidence: m.confidence,
