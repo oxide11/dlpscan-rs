@@ -472,15 +472,30 @@ fn handle_health_full(state: &AppState, active: usize) -> HealthResponse {
     }
 }
 
-/// Quick hash for rate-limit key derivation (not cryptographic, just for bucketing).
+/// Derive a short, stable bucket identifier for an API key, used as a
+/// map key in rate limiting and as a user field in audit events.
+///
+/// This must use the SAME hash function as auth and RBAC (hash_api_key)
+/// so that (a) there is a single canonical identity for a given key
+/// across every code path and (b) rate-limit buckets cannot collide
+/// with each other via a weaker hash. The previous implementation used
+/// a custom FNV-1a (`md5_like_hash`) here while auth and RBAC used
+/// SHA-256 via `hash_api_key`, creating two distinct identities for the
+/// same key — a latent source of bucket collisions and an auditing
+/// mismatch between auth and rate-limit events.
+///
+/// The returned string is the first 8 bytes (16 hex chars) of the
+/// SHA-256 of the key, which gives 2^64 distinct buckets — far more
+/// than enough to be collision-free for any realistic tenant count.
 #[cfg(feature = "async-support")]
-fn md5_like_hash(input: &str) -> u64 {
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in input.bytes() {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x100000001b3);
+fn api_key_bucket(key: &str) -> String {
+    let h = hash_api_key(key);
+    let mut s = String::with_capacity(16);
+    for b in &h[..8] {
+        use std::fmt::Write;
+        let _ = write!(s, "{b:02x}");
     }
-    h
+    s
 }
 
 /// Generate a simple random ID (hex string).
@@ -949,7 +964,7 @@ fn check_rate_limit(
         return None;
     }
     let rate_key = api_key_header
-        .map(|k| format!("key:{:x}", md5_like_hash(k)))
+        .map(|k| format!("key:{}", api_key_bucket(k)))
         .unwrap_or_else(|| format!("ip:{client_ip}"));
     if let Ok(mut rl) = state.rate_limiter.write() {
         if !rl.check_client(&rate_key) {
@@ -1231,7 +1246,7 @@ fn hyper_route_request(
                             .with_outcome("success")
                             .with_user(
                                 &api_key_header
-                                    .map(|k| format!("key:{:x}", md5_like_hash(k)))
+                                    .map(|k| format!("key:{}", api_key_bucket(k)))
                                     .unwrap_or_else(|| "admin".to_string()),
                             );
                         crate::audit::audit_event(&event);
@@ -1498,6 +1513,32 @@ mod tests {
         assert!(!verify_api_key_hash(&hash, ""));
         assert!(!verify_api_key_hash(&hash, "wrong"));
         assert!(!verify_api_key_hash(&hash, "correct-ke")); // prefix
+    }
+
+    #[cfg(feature = "async-support")]
+    #[test]
+    fn test_api_key_bucket_matches_hash_api_key() {
+        // Regression: rate-limit bucketing and audit user IDs used to go
+        // through a custom FNV-1a (md5_like_hash) while auth/RBAC used
+        // SHA-256 via hash_api_key. That meant the "identity" of a key
+        // differed across code paths, allowing bucket collisions and
+        // mismatched audit entries. api_key_bucket must now be derived
+        // directly from hash_api_key so every code path sees the same
+        // canonical key identity.
+        let k = "api-key-42";
+        let full = hash_api_key(k);
+        let bucket = api_key_bucket(k);
+        // Bucket is 16 hex chars = first 8 bytes of the SHA-256.
+        assert_eq!(bucket.len(), 16);
+        let expected: String = full[..8].iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(bucket, expected);
+    }
+
+    #[cfg(feature = "async-support")]
+    #[test]
+    fn test_api_key_bucket_deterministic_and_distinct() {
+        assert_eq!(api_key_bucket("same"), api_key_bucket("same"));
+        assert_ne!(api_key_bucket("alpha"), api_key_bucket("beta"));
     }
 
     #[test]
