@@ -631,6 +631,19 @@ static ASSIGNMENT_RE: Lazy<Regex> = Lazy::new(|| {
         .expect("assignment regex must compile")
 });
 
+/// Runs of characters that are NOT entropy-scan delimiters.
+///
+/// Used by `scan_high_entropy_tokens` to walk the input in one
+/// `find_iter` pass and get each token's byte span directly, instead
+/// of the previous `split(delimiters) + normalized[pos..].find(token)`
+/// pattern which re-searched the shrinking text window on every
+/// iteration. `\s` matches Unicode whitespace (same as the previous
+/// char-based closure), and the explicit character class covers the
+/// same literal delimiters the old code listed.
+static ENTROPY_TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"[^\s,;'"()\[\]{}=:]+"#).expect("entropy token regex must compile")
+});
+
 /// Scan for high-entropy tokens using the configured gating mode.
 fn scan_high_entropy_tokens(
     original_text: &str,
@@ -641,39 +654,20 @@ fn scan_high_entropy_tokens(
     let mut results = Vec::new();
     let normalized_lower = normalized.to_lowercase();
 
-    // Tokenize by whitespace and common delimiters
-    let delimiters = |c: char| -> bool {
-        c.is_whitespace()
-            || c == ','
-            || c == ';'
-            || c == '\''
-            || c == '"'
-            || c == '('
-            || c == ')'
-            || c == '['
-            || c == ']'
-            || c == '{'
-            || c == '}'
-            || c == '='
-            || c == ':'
-    };
-
-    let mut pos = 0;
-    for token in normalized.split(delimiters) {
-        if token.is_empty() {
-            continue;
-        }
-
-        // Track position in normalized text
-        let norm_start = match normalized[pos..].find(token) {
-            Some(offset) => pos + offset,
-            None => {
-                pos += 1;
-                continue;
-            }
-        };
-        let norm_end = norm_start + token.len();
-        pos = norm_end;
+    // Walk non-delimiter runs in a single regex pass. The previous
+    // implementation tokenized via `split(delimiters)` and then
+    // re-searched `normalized[pos..]` for each token's position via
+    // `.find(token)`. For most inputs that `.find` succeeds at offset
+    // 0 (the split iterator already left the cursor there) but on
+    // inputs with repeated delimiters it burned extra work per token
+    // and had a pathological case called out in the perf audit. The
+    // regex engine already has a Boyer-Moore-style literal prefilter
+    // for delimiter scanning, and `find_iter` yields the (start, end)
+    // byte span directly so we never need to recompute positions.
+    for mat in ENTROPY_TOKEN_RE.find_iter(normalized) {
+        let norm_start = mat.start();
+        let norm_end = mat.end();
+        let token = mat.as_str();
 
         // Filter by length
         if token.len() < ENTROPY_MIN_TOKEN_LEN || token.len() > ENTROPY_MAX_TOKEN_LEN {
@@ -775,10 +769,40 @@ fn scan_high_entropy_tokens(
 }
 
 /// Compute Shannon entropy per character of a string (bits per char).
+///
+/// Fast path: ASCII tokens use a fixed-size `[u32; 128]` stack
+/// histogram, which is what practically every entropy candidate
+/// actually is — API keys, session tokens, access secrets, JWTs,
+/// bearer tokens, etc. all come from ASCII-only alphabets. This
+/// replaces a `HashMap<char, u64>` which was heap-allocated per
+/// token in the entropy scan loop; on a typical config-file-
+/// shaped document the loop runs dozens of times per scan, so
+/// the allocations add up.
+///
+/// Non-ASCII tokens fall back to the previous `HashMap` path so
+/// arbitrary Unicode content is still handled correctly.
 fn char_entropy(s: &str) -> f64 {
     if s.is_empty() {
         return 0.0;
     }
+
+    if s.is_ascii() {
+        let mut freq = [0u32; 128];
+        for &b in s.as_bytes() {
+            freq[b as usize] += 1;
+        }
+        let len = s.len() as f64;
+        let mut entropy = 0.0;
+        for &count in &freq {
+            if count > 0 {
+                let p = count as f64 / len;
+                entropy -= p * p.log2();
+            }
+        }
+        return entropy;
+    }
+
+    // Non-ASCII fallback: heap-allocated HashMap keyed by `char`.
     let mut freq = std::collections::HashMap::new();
     for c in s.chars() {
         *freq.entry(c).or_insert(0u64) += 1;

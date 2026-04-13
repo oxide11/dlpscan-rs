@@ -135,11 +135,55 @@ fn bench_context_hit_index(c: &mut Criterion) {
     group.finish();
 }
 
+/// Benchmark the entropy-gated scan path specifically.
+///
+/// The input is a block of text where every line looks like a
+/// configuration file pairing identifier-shaped keys with
+/// high-entropy values. Running with `EntropyMode::Gated` forces the
+/// scanner through `scan_high_entropy_tokens`, which tokenizes by
+/// delimiters, re-finds each token's byte position, and computes
+/// Shannon entropy per character. Any changes to the token-walk
+/// loop or the per-character histogram (`char_entropy`) show up here.
+fn entropy_heavy_text(copies: usize) -> String {
+    let block = "api_key=xK9mPqR3vL7nW2jF8hYcT5bA0dGiEuOs\n\
+                 db_password=aJ3kLp9QrWxZnC2mBvFeTdHyUiOoPlRk\n\
+                 session_token=9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0\n\
+                 github_token=ghp_abcDEFghiJKLmnoPQRstuVWXyz0123456789\n\
+                 aws_secret=AKIAabcdef1234567890ABCDEF0987654321xyZZ\n\
+                 auth_header=Bearer Qm9iYWxpY2VfQm9iYWxpY2VfQm9iYWxpY2U=\n";
+    block.repeat(copies)
+}
+
+fn bench_entropy_gated(c: &mut Criterion) {
+    use dlpscan::scanner::{scan_text_with_config, EntropyMode, ScanConfig};
+    let mut group = c.benchmark_group("entropy_gated");
+
+    for copies in [1, 5, 20] {
+        let text = entropy_heavy_text(copies);
+        let label = format!("{}x block ({} B)", copies, text.len());
+        group.bench_with_input(
+            BenchmarkId::new("scan_entropy_heavy", &label),
+            &text,
+            |b, text| {
+                let config = ScanConfig {
+                    entropy_scan: EntropyMode::Gated,
+                    min_confidence: 0.0,
+                    ..Default::default()
+                };
+                b.iter(|| scan_text_with_config(black_box(text), &config));
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_scan_text,
     bench_normalize,
     bench_alt_decodings_path,
-    bench_context_hit_index
+    bench_context_hit_index,
+    bench_entropy_gated
 );
 criterion_main!(benches);
