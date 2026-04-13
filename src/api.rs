@@ -625,10 +625,11 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
     use bytes::Bytes;
     use http_body_util::{BodyExt, Full};
     use hyper::body::Incoming;
-    use hyper::server::conn::auto::Builder as HttpBuilder;
     use hyper::service::service_fn;
     use hyper::{Request, Response, StatusCode};
     use hyper_util::rt::TokioIo;
+    use hyper_util::server::conn::auto::Builder as HttpBuilder;
+    use std::sync::Arc;
     use tokio::net::TcpListener;
 
     let addr = format!("{}:{}", config.host, config.port);
@@ -802,11 +803,13 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
                     }
                 });
 
-                let conn = HttpBuilder::new(hyper_util::rt::TokioExecutor::new())
-                    .serve_connection_with_upgrades(io, svc);
-                let conn = graceful.watch(conn);
-
+                let watcher = graceful.watcher();
                 tokio::spawn(async move {
+                    // Create the builder inside the task so it owns it for
+                    // the duration of the connection future.
+                    let builder = HttpBuilder::new(hyper_util::rt::TokioExecutor::new());
+                    let conn = builder.serve_connection_with_upgrades(io, svc);
+                    let conn = watcher.watch(conn);
                     if let Err(e) = conn.await {
                         tracing::debug!("Connection error: {}", e);
                     }
@@ -815,7 +818,8 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
             _ = &mut shutdown => {
                 tracing::info!("Shutdown signal received, draining connections...");
                 state.is_shutting_down.store(true, Ordering::SeqCst);
-                tokio::pin!(let shutdown_future = graceful.shutdown());
+                let shutdown_future = graceful.shutdown();
+                tokio::pin!(shutdown_future);
                 tokio::select! {
                     _ = &mut shutdown_future => {
                         tracing::info!("All connections drained, shutting down");
@@ -1341,13 +1345,15 @@ fn hyper_route_request(
                     let vault = lsh_guard.get_or_insert_with(|| {
                         std::sync::Arc::new(crate::lsh::DocumentVault::default_vault())
                     });
-                    let vault_mut = std::sync::Arc::make_mut(vault);
-                    vault_mut.register(&req.doc_id, &req.text, &req.sensitivity, None);
+                    // DocumentVault::register takes &self (interior mutability
+                    // via Mutex), so we can call it directly on the Arc deref
+                    // without needing Arc::make_mut.
+                    vault.register(&req.doc_id, &req.text, &req.sensitivity, None);
                     (
                         StatusCode::OK,
                         serde_json::json!({
                             "doc_id": req.doc_id,
-                            "document_count": vault_mut.document_count(),
+                            "document_count": vault.document_count(),
                         })
                         .to_string(),
                     )
