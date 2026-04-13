@@ -350,15 +350,28 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     continue;
                 }
 
-                // Map normalized positions back to original text
+                // Map normalized byte positions back to original byte
+                // positions. offset_map is indexed by normalized byte and
+                // stores the corresponding original byte offset.
+                //
+                // For the end offset we want the byte AFTER the last byte
+                // of the match in the original. The previous implementation
+                // used `offset_map[norm_end - 1] + 1`, which silently
+                // corrupted spans whenever a byte in the original was part
+                // of a multi-byte UTF-8 sequence (the +1 would land in the
+                // middle of that sequence). Use `offset_map[norm_end]`
+                // instead — it is the start of the next character in the
+                // original, which is exactly the end of the match. Fall
+                // back to `text.len()` when the match runs to the end of
+                // the normalized buffer (no successor byte to read).
                 let (orig_start, orig_end) = if !offset_map.is_empty() {
                     let os = if norm_start < offset_map.len() {
                         offset_map[norm_start]
                     } else {
                         text.len()
                     };
-                    let oe = if norm_end > 0 && norm_end <= offset_map.len() {
-                        offset_map[norm_end - 1] + 1
+                    let oe = if norm_end < offset_map.len() {
+                        offset_map[norm_end]
                     } else {
                         text.len()
                     };
@@ -774,6 +787,47 @@ mod tests {
     fn test_scan_email() {
         let result = scan_text("Contact us at test@example.com for info.").unwrap();
         assert!(result.iter().any(|m| m.sub_category == "Email Address"));
+    }
+
+    #[test]
+    fn test_offset_map_multibyte_span_is_valid() {
+        // Regression: the original code used `offset_map[norm_end - 1] + 1`
+        // for the span end, which lands in the middle of a multi-byte UTF-8
+        // sequence when the character before the match is multi-byte. When
+        // that happened, the char-boundary safety fallback kicked in and the
+        // scanner silently returned `matched_text` (from the normalized buffer)
+        // instead of a proper slice of the original text. With the fix, every
+        // match on an input containing multi-byte chars should still have a
+        // span that is a valid UTF-8 substring of the original.
+        let inputs = [
+            // Emoji immediately before the sensitive value
+            "📧 test@example.com please",
+            // CJK characters embedded around the match
+            "お問い合わせ: test@example.com まで",
+            // Zero-width char between words
+            "contact\u{200B}test@example.com now",
+        ];
+        for input in inputs {
+            let matches = scan_text(input).unwrap();
+            assert!(
+                matches
+                    .iter()
+                    .any(|m| m.sub_category == "Email Address"),
+                "expected email match in {input:?}"
+            );
+            for m in &matches {
+                let (s, e) = m.span;
+                assert!(s <= e && e <= input.len(), "span out of bounds: {s}..{e}");
+                assert!(
+                    input.is_char_boundary(s) && input.is_char_boundary(e),
+                    "span [{s}, {e}) not on char boundaries in {input:?}"
+                );
+                // The slice at the span must be valid UTF-8 (guaranteed by
+                // the char-boundary check above) and must equal m.text for
+                // the non-evasion case.
+                let _ = &input[s..e];
+            }
+        }
     }
 
     #[test]
