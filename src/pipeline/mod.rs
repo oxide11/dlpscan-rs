@@ -238,6 +238,26 @@ impl Pipeline {
             }
         };
 
+        // Hardening: refuse anything that is not a regular file.
+        // Character devices (/dev/zero, /dev/urandom), block devices,
+        // FIFOs, and sockets will happily report metadata.len() == 0
+        // and then stream forever when read, defeating the size cap
+        // below. fs::metadata follows symlinks, so a symlink pointing
+        // at /dev/zero is also caught here.
+        if !metadata.file_type().is_file() {
+            return PipelineResult {
+                file_path,
+                matches: vec![],
+                format_detected: "unknown".into(),
+                duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+                error: Some("Not a regular file".into()),
+                file_size_bytes: 0,
+                extracted_text_length: 0,
+                file_entropy: None,
+                entropy_classification: None,
+            };
+        }
+
         if metadata.len() as usize > self.max_file_size {
             return PipelineResult {
                 file_path,
