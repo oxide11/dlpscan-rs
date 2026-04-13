@@ -209,13 +209,22 @@ impl AuditEvent {
 // Timestamp helper
 // ---------------------------------------------------------------------------
 
-/// Return the current UTC time formatted as ISO 8601 (`2024-01-15T12:00:00Z`).
+/// Return the current UTC time formatted as ISO 8601 with millisecond
+/// precision (`2024-01-15T12:00:00.123Z`).
+///
+/// Millisecond precision matters under load: with only second-resolution
+/// timestamps, audit events emitted in the same second become
+/// impossible to order correctly during forensic reconstruction, and
+/// deduplication by (timestamp, action) becomes lossy. RFC 3339 /
+/// ISO 8601 explicitly allows a fractional-seconds component, so this
+/// format is still wire-compatible with SIEM consumers.
 fn iso8601_now() -> String {
     let dur = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
 
     let total_secs = dur.as_secs();
+    let millis = dur.subsec_millis();
     // Algorithm: convert Unix epoch seconds to calendar date/time.
     let secs_per_day: u64 = 86400;
     let days = total_secs / secs_per_day;
@@ -228,7 +237,9 @@ fn iso8601_now() -> String {
     // Days since 1970-01-01 to calendar date (Gregorian).
     let (year, month, day) = days_to_ymd(days);
 
-    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
+    format!(
+        "{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}.{millis:03}Z"
+    )
 }
 
 /// Convert days since 1970-01-01 to (year, month, day).
@@ -682,14 +693,42 @@ mod tests {
     #[test]
     fn test_timestamp_format() {
         let event = AuditEvent::new("SCAN").unwrap();
-        // Should match ISO 8601 pattern: YYYY-MM-DDTHH:MM:SSZ
+        // Should match ISO 8601 with millisecond precision:
+        // YYYY-MM-DDTHH:MM:SS.mmmZ  (24 chars)
         assert!(event.timestamp.ends_with('Z'));
-        assert_eq!(event.timestamp.len(), 20);
+        assert_eq!(event.timestamp.len(), 24);
         assert_eq!(&event.timestamp[4..5], "-");
         assert_eq!(&event.timestamp[7..8], "-");
         assert_eq!(&event.timestamp[10..11], "T");
         assert_eq!(&event.timestamp[13..14], ":");
         assert_eq!(&event.timestamp[16..17], ":");
+        assert_eq!(&event.timestamp[19..20], ".");
+        // Fractional part must be exactly 3 digits.
+        let frac = &event.timestamp[20..23];
+        assert!(
+            frac.chars().all(|c| c.is_ascii_digit()),
+            "fractional seconds not digits: {frac:?}"
+        );
+    }
+
+    #[test]
+    fn test_timestamps_distinguish_within_same_second() {
+        // Regression: second-only resolution made events emitted in quick
+        // succession indistinguishable, which broke audit ordering and
+        // dedup. With millisecond precision, two events separated by a
+        // sleep longer than 1 ms must have different timestamps.
+        let a = AuditEvent::new("SCAN").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let b = AuditEvent::new("SCAN").unwrap();
+        assert_ne!(
+            a.timestamp, b.timestamp,
+            "ms-precision timestamps should differ after a 5ms sleep \
+             (a = {}, b = {})",
+            a.timestamp, b.timestamp
+        );
+        // Both should share the same Y/M/D prefix unless we unluckily
+        // crossed a midnight boundary (overwhelmingly unlikely).
+        assert_eq!(&a.timestamp[..10], &b.timestamp[..10]);
     }
 
     #[test]
