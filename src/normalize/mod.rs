@@ -643,9 +643,19 @@ fn decode_hex_spaced(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) 
                         pairs.push((i, (h << 4) | l));
                     }
                     i += 2;
-                    // Skip optional space separator
+                    // Require a mandatory space between consecutive pairs.
+                    // The whole point of hex-spaced encoding is that pairs
+                    // are separated by whitespace; without this guard the
+                    // loop greedily consumes a display-formatted number
+                    // like "4242 4242 4242 4242" as 8 back-to-back pairs
+                    // (treating each group of 4 digits as two 2-char
+                    // pairs), producing "BBBBBBBB" and destroying the
+                    // card number before the credit-card regex ever sees
+                    // it. End of input is also a valid run terminator.
                     if i < bytes.len() && bytes[i] == b' ' {
                         i += 1;
+                    } else {
+                        break;
                     }
                 } else {
                     break;
@@ -1534,6 +1544,40 @@ mod tests {
         // still removes the space between digits
         let (result, _) = normalize_text("31 32");
         assert_eq!(result, "3132");
+    }
+
+    #[test]
+    fn test_hex_spaced_does_not_eat_display_formatted_card_number() {
+        // Regression: decode_hex_spaced used to allow an OPTIONAL space
+        // between consecutive hex pairs, which meant it greedily
+        // consumed a display-formatted card number like
+        // "4242 4242 4242 4242" as back-to-back 2-char pairs and
+        // rewrote it as "BBBBBBBB" (8 × 0x42). With the space between
+        // pairs now mandatory, the decoder runs out of contiguous
+        // pair-space-pair-space runs and falls through. The
+        // collapse_padding stage then does what it should — strip the
+        // spaces between the digit groups — and the credit-card regex
+        // sees an intact 16-digit PAN.
+        let (result, _) = normalize_text("4242 4242 4242 4242");
+        assert_eq!(result, "4242424242424242");
+
+        // 15-digit Amex display format.
+        let (result, _) = normalize_text("3782 822463 10005");
+        assert_eq!(result, "378282246310005");
+    }
+
+    #[test]
+    fn test_hex_spaced_still_defeats_real_evasion() {
+        // Counter-test: legitimate hex-spaced evasion (bytes separated
+        // by mandatory single spaces, at least 3 pairs, all decoding
+        // to printable ASCII) must still be decoded. "Hello" is
+        // 48 65 6c 6c 6f in hex.
+        let (result, _) = normalize_text("48 65 6c 6c 6f");
+        assert_eq!(result, "Hello");
+
+        // And the existing SSN evasion regression should still fire.
+        let (result, _) = normalize_text("31 32 33 2D 34 35 2D 36 37 38 39");
+        assert_eq!(result, "123-45-6789");
     }
 
     #[test]
