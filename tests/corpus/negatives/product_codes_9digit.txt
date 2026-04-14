@@ -1,0 +1,10 @@
+Inventory reconciliation report Q4
+
+Product SKUs to reorder (9-digit catalog IDs):
+
+  sku: 123456789   widget, blue
+  sku: 987654321   widget, red
+  sku: 555443322   widget, green
+
+None of these are social security numbers — they are internal catalog identifiers.
+Order quantity target: 500 units each.

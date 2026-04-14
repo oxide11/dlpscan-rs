@@ -1,0 +1,7 @@
+Payment request
+
+Please send payment to the bitcoin wallet below:
+bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq
+
+Amount: 0.025 BTC
+Invoice reference: INV-2024-1142

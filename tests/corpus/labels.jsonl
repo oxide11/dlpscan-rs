@@ -1,0 +1,22 @@
+{"path":"positives/pii/ssn_with_context.txt","expected":[{"sub_category":"USA SSN","text":"078-05-1120"}]}
+{"path":"positives/pii/ssn_bare.txt","expected":[{"sub_category":"USA SSN","text":"078-05-1120"}]}
+{"path":"positives/pii/sin_canada.txt","expected":[{"sub_category":"Canada SIN","text":"046 454 286"}]}
+{"path":"positives/pii/email_and_phone.txt","expected":[{"sub_category":"Email Address","text":"bob.jones@example.com"},{"sub_category":"E.164 Phone Number","text":"+14155551234"},{"sub_category":"E.164 Phone Number","text":"+442079460958"}]}
+{"path":"positives/pii/passport_us.txt","expected":[{"sub_category":"USA Passport","text":"123456789"}]}
+{"path":"positives/pci/visa_with_expiry.txt","expected":[{"sub_category":"Visa","text":"4242 4242 4242 4242"}]}
+{"path":"positives/pci/mastercard_with_context.txt","expected":[{"sub_category":"MasterCard","text":"5555-5555-5555-4444"}]}
+{"path":"positives/pci/multi_card_invoice.txt","expected":[{"sub_category":"Visa","text":"4242424242424242"},{"sub_category":"Amex","text":"378282246310005"},{"sub_category":"Discover","text":"6011111111111117"}]}
+{"path":"positives/phi/dea_and_diagnosis.txt","expected":[{"sub_category":"DEA Number","text":"AB1234567"},{"sub_category":"ICD-10 Code","text":"E11.9"}]}
+{"path":"positives/phi/medical_record_number.txt","expected":[{"sub_category":"Medical Record Number","text":"7894561"}]}
+{"path":"positives/phi/npi_provider.txt","expected":[{"sub_category":"US NPI","text":"1234567893"}]}
+{"path":"positives/credentials/aws_access_key.txt","expected":[{"sub_category":"AWS Access Key","text":"AKIAIOSFODNN7EXAMPLE"}]}
+{"path":"positives/credentials/github_token.txt","expected":[{"sub_category":"GitHub Token (Classic)","text":"ghp_abcdefghijklmnopqrstuvwxyzABCDEF0123"}]}
+{"path":"positives/credentials/jwt_bearer.txt","expected":[{"sub_category":"JWT Token","text":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDAwMDAwMDB9.abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJK"}]}
+{"path":"positives/financial/iban_germany.txt","expected":[{"sub_category":"Germany IBAN","text":"DE89 3704 0044 0532 0130 00"}]}
+{"path":"positives/financial/aba_routing_us.txt","expected":[{"sub_category":"ABA Routing Number","text":"011000015"}]}
+{"path":"positives/financial/bitcoin_address.txt","expected":[{"sub_category":"Bitcoin Address (Bech32)","text":"bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"}]}
+{"path":"negatives/product_codes_9digit.txt","forbidden":["USA SSN","USA Passport","US NPI"]}
+{"path":"negatives/invoice_numbers_luhn_fail.txt","forbidden":["Visa","MasterCard","Amex","Discover","JCB","Diners Club","UnionPay","PAN"]}
+{"path":"negatives/english_prose_clean.txt","forbidden":["USA SSN","Email Address","E.164 Phone Number","Visa","MasterCard","Amex","Discover","USA Passport","Bearer Token","JWT Token"]}
+{"path":"negatives/uuids_not_tokens.txt","forbidden":["Session ID","Bearer Token","JWT Token","CSRF Token","Refresh Token"]}
+{"path":"negatives/dates_not_ssn.txt","forbidden":["USA SSN"]}

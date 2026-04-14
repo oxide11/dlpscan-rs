@@ -1,0 +1,11 @@
+Sprint retrospective notes
+
+Sprint windows for Q1:
+  Sprint 11: 01-15-2024 to 01-28-2024
+  Sprint 12: 01-29-2024 to 02-11-2024
+  Sprint 13: 02-12-2024 to 02-25-2024
+
+Order confirmation references: 05-16-7890, 11-22-3344
+
+These are dates and confirmation ids, not social security numbers. They
+must not be flagged as SSN.

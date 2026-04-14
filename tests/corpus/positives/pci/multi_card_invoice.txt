@@ -1,0 +1,7 @@
+Refund processing queue
+
+Customer 1: Visa ending 4242424242424242, refund $50
+Customer 2: Amex 378282246310005, refund $125
+Customer 3: Discover 6011111111111117, refund $18
+
+All refunds must be processed within 7 business days.

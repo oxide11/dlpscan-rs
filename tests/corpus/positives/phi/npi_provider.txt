@@ -1,0 +1,6 @@
+Provider credentialing file
+
+Provider name: Dr. Omar Hassan
+National Provider Identifier NPI: 1234567893
+Specialty: Internal Medicine
+License status: active

@@ -1,0 +1,9 @@
+Charge authorization request
+
+Card brand: MasterCard
+Card number: 5555-5555-5555-4444
+Expiration: 04/30
+Merchant: ACME Corp
+Amount: USD 49.00
+
+Please confirm the authorization before capture.

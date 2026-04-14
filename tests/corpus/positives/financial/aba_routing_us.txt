@@ -1,0 +1,7 @@
+US wire transfer instructions
+
+Beneficiary: ACME Corp
+Bank: First National Bank
+ABA routing number: 011000015
+Account number: 0123456789
+Amount: USD 4,500.00

@@ -1,0 +1,8 @@
+Employee onboarding form
+
+Name: Alice Smith
+Date of birth: 1980-03-15
+Social security number: 078-05-1120
+Mailing address: 742 Evergreen Terrace, Springfield, OR 97477
+
+Please verify the SSN matches the form W-9 on file.

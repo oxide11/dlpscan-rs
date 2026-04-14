@@ -1,0 +1,9 @@
+Clinical note
+
+Patient: Jane Doe
+Date of visit: 2024-02-18
+Prescriber DEA: AB1234567
+Diagnosis code ICD-10: E11.9 (Type 2 diabetes mellitus without complications)
+Medication: metformin 500 mg twice daily
+
+Follow-up scheduled in 3 months.

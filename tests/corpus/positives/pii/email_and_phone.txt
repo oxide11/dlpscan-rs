@@ -1,0 +1,8 @@
+Customer contact record
+
+Name: Bob Jones
+Email: bob.jones@example.com
+Phone: +14155551234
+Alternate contact: +442079460958
+
+Please reach out via phone during business hours.

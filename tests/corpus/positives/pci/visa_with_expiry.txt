@@ -1,0 +1,10 @@
+Order confirmation #88412
+
+Thanks for your purchase!
+
+Payment method: Visa
+Card number: 4242 4242 4242 4242
+Expiration: 12/28
+Cardholder name: Alice Smith
+
+Order total: USD 124.95
