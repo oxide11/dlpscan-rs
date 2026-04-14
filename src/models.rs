@@ -273,5 +273,12 @@ pub fn is_context_required(sub_category: &str) -> bool {
             | "CUSIP"
             | "SEDOL"
             | "Australia TFN"
+            // HIPAA #8 — MRN is a bare 6-10 digit regex that would
+            // match essentially every order number, account ref,
+            // ZIP+4, and phone-minus-area-code in any document.
+            // Only safe to fire when an MRN-context keyword is within
+            // 50 characters (see `Medical Record Number` in
+            // context/keywords.rs).
+            | "Medical Record Number"
     )
 }

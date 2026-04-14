@@ -1512,6 +1512,26 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
             distance: 50,
         },
     ),
+    (
+        "Medical Identifiers",
+        "Medical Record Number",
+        ContextEntry {
+            keywords: &[
+                "mrn",
+                "medical record",
+                "patient id",
+                "patient number",
+                "chart number",
+                "medical id",
+                "health record",
+                // French / Français
+                "dossier médical",
+                "numéro de dossier",
+                "identifiant patient",
+            ],
+            distance: 50,
+        },
+    ),
     // Insurance Identifiers
     (
         "Insurance Identifiers",
