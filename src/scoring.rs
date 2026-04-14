@@ -23,8 +23,19 @@ pub fn compute_confidence(sub_category: &str, has_context: bool, context_require
 }
 
 /// Remove overlapping matches, keeping the highest-confidence one.
-/// When two matches overlap in byte span, keep the one with higher confidence.
-/// If tied, prefer the longer match.
+///
+/// Tiebreakers, in order:
+///   1. Higher confidence wins.
+///   2. If confidence is tied (e.g. both patterns hit 1.0 after a
+///      context boost), prefer the pattern with higher base
+///      specificity. This is what keeps `JWT Token` (0.95) from being
+///      silently swallowed by a nested `Bearer Token` (0.80) match
+///      when the JWT sits inside an `Authorization: Bearer …` header:
+///      both match the same span with context, both clamp to 1.0
+///      confidence, and without the specificity tiebreaker the
+///      longer Bearer span would win even though the JWT is the
+///      more informative finding.
+///   3. If specificity is also tied, prefer the longer match.
 pub fn deduplicate_overlapping(matches: &mut Vec<Match>) {
     if matches.is_empty() {
         return;
@@ -44,14 +55,20 @@ pub fn deduplicate_overlapping(matches: &mut Vec<Match>) {
     for m in matches.drain(..) {
         if let Some(prev) = result.last_mut() {
             if m.span.0 < prev.span.1 {
-                // Overlapping — keep higher confidence, or longer if tied
+                // Overlapping — apply the three-step tiebreaker.
                 if m.confidence > prev.confidence {
                     *prev = m;
                 } else if (m.confidence - prev.confidence).abs() < f64::EPSILON {
-                    let m_len = m.span.1 - m.span.0;
-                    let prev_len = prev.span.1 - prev.span.0;
-                    if m_len > prev_len {
+                    let m_spec = pattern_specificity(&m.sub_category);
+                    let prev_spec = pattern_specificity(&prev.sub_category);
+                    if m_spec > prev_spec {
                         *prev = m;
+                    } else if (m_spec - prev_spec).abs() < f64::EPSILON {
+                        let m_len = m.span.1 - m.span.0;
+                        let prev_len = prev.span.1 - prev.span.0;
+                        if m_len > prev_len {
+                            *prev = m;
+                        }
                     }
                 }
                 continue;
@@ -136,5 +153,85 @@ mod tests {
         deduplicate_overlapping(&mut matches);
         assert_eq!(matches.len(), 1);
         assert!((matches[0].confidence - 0.9).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_dedup_specificity_tiebreaker_jwt_beats_bearer() {
+        // Regression: when a JWT sits inside an Authorization: Bearer
+        // header, both patterns fire, both end up at confidence 1.0
+        // after the context boost, and both span the same tail. The
+        // old tiebreaker preferred the LONGER match, which meant the
+        // bigger Bearer Token span (which includes the `Bearer ` prefix)
+        // always won over the nested JWT Token — silently dropping
+        // the more informative finding. Dedup now prefers higher
+        // pattern specificity on confidence ties: JWT Token's base
+        // specificity of 0.95 beats Bearer Token's 0.80, so JWT
+        // survives and Bearer is dropped.
+        //
+        // We use the real sub_category names here (not placeholders)
+        // so the test also pins the base specificity values the
+        // tiebreaker depends on.
+        let bearer_len = "Bearer <jwt>".len();
+        let jwt_len = "<jwt>".len();
+        assert!(bearer_len > jwt_len, "bearer must be the longer span");
+
+        let mut matches = vec![
+            // Bearer: starts earlier (92), longer (including prefix),
+            // same confidence after context boost.
+            Match::new(
+                "Bearer <jwt>".into(),
+                "Generic Secrets".into(),
+                "Bearer Token".into(),
+                true, // has_context
+                1.0,
+                (92, 92 + bearer_len),
+                false,
+            ),
+            // JWT: starts 7 bytes later (after "Bearer "), shorter
+            // span, same confidence.
+            Match::new(
+                "<jwt>".into(),
+                "Generic Secrets".into(),
+                "JWT Token".into(),
+                true, // has_context
+                1.0,
+                (99, 92 + bearer_len),
+                false,
+            ),
+        ];
+        deduplicate_overlapping(&mut matches);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].sub_category, "JWT Token");
+    }
+
+    #[test]
+    fn test_dedup_specificity_tied_falls_through_to_length() {
+        // Counter-test for the length-tiebreaker fallback: if
+        // confidence AND specificity are both tied, the longer match
+        // should still win. Use the same sub_category name so
+        // specificity is identical.
+        let mut matches = vec![
+            Match::new(
+                "short".into(),
+                "Generic Secrets".into(),
+                "Bearer Token".into(),
+                false,
+                0.8,
+                (0, 5),
+                false,
+            ),
+            Match::new(
+                "longer match".into(),
+                "Generic Secrets".into(),
+                "Bearer Token".into(),
+                false,
+                0.8,
+                (3, 15),
+                false,
+            ),
+        ];
+        deduplicate_overlapping(&mut matches);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].text, "longer match");
     }
 }
