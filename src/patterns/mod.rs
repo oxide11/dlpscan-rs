@@ -776,6 +776,29 @@ pub static PATTERNS: &[PatternDef] = &[
         specificity: 0.65,
         context_required: false,
     },
+    // Medical Record Number (HIPAA 18 identifier #8).
+    //
+    // The regex is deliberately broad — any 6–10 digit run — because
+    // real-world MRN formats vary wildly across EHR systems (Epic,
+    // Cerner, Meditech, homegrown systems) with no standard length
+    // or checksum. Precision relies entirely on context gating:
+    // this pattern is in the `is_context_required` list in models.rs
+    // and will not fire unless one of the registered MRN keywords
+    // (`mrn`, `medical record`, `patient id`, etc.) is within the
+    // 50-character proximity window defined in context/keywords.rs.
+    //
+    // Without context gating this pattern would match essentially
+    // every 6–10 digit sequence in any document — order numbers,
+    // account refs, phone numbers minus area codes, ZIP+4s, etc. —
+    // so the context gate is the only thing keeping it usable.
+    PatternDef {
+        category: "Medical Identifiers",
+        sub_category: "Medical Record Number",
+        regex: r"\b\d{6,10}\b",
+        case_insensitive: false,
+        specificity: 0.20,
+        context_required: true,
+    },
     PatternDef {
         category: "Insurance Identifiers",
         sub_category: "Insurance Policy Number",
@@ -4541,7 +4564,12 @@ mod tests {
 
     #[test]
     fn test_pattern_count() {
-        assert_eq!(PATTERNS.len(), 560);
+        // 561 = 560 base patterns + Medical Record Number (HIPAA #8),
+        // added when the detection-quality harness surfaced a
+        // docs/implementation drift where MRN was described in
+        // docs/baselines/phi-patterns.md but missing from the
+        // scanner.
+        assert_eq!(PATTERNS.len(), 561);
     }
 
     #[test]

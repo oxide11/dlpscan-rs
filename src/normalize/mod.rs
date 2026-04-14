@@ -1154,9 +1154,31 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     let (rot, _) = apply_rot13(text, &[]);
     push_if_room(rot, &mut alternatives, &mut total_bytes);
 
-    // Try full reversal
-    let reversed: String = text.chars().rev().collect();
-    push_if_room(reversed, &mut alternatives, &mut total_bytes);
+    // NOTE: a reverse-text transformation used to live here, based
+    // on the assumption that an adversary might write their data
+    // backwards to evade detection. In practice that's not a
+    // realistic evasion technique — real adversaries use encoding,
+    // homoglyphs, zero-width injection, or splitting across
+    // boundaries, not string reversal. The reversed transformation
+    // was producing concrete false positives against high-specificity
+    // patterns whose regexes happened to match natural-text reversed
+    // fragments: the detection-quality harness caught two of these
+    //
+    //   * `Geohash` matched the reversed substring of French
+    //     "serveur" ("ruevres"), silently firing as a positive in
+    //     an unrelated doc.
+    //   * `Bitcoin Cash Address` matched the reversal of a legitimate
+    //     bech32 address (`qdm5fwzztg95er9wndyl346l5yvkfx7rrrs0raq1cb`),
+    //     and because its specificity was higher than the broken
+    //     Bitcoin Bech32 entry in `pattern_specificity`, it won dedup
+    //     and dropped the real Bech32 detection on the floor.
+    //
+    // Both cases were symptoms of the same underlying architectural
+    // mismatch: the "signal" from a reversed-text match is zero (no
+    // real attacker is writing SSNs backwards) but the "noise" is
+    // continuous, because natural text has many substrings whose
+    // reversal incidentally matches a detection regex. Removing the
+    // reverse transformation closes the whole class of bug.
 
     // Try leetspeak decode (only useful for alpha-based patterns like email)
     let leet_decoded = normalize_leet(text);
@@ -1604,9 +1626,20 @@ mod tests {
     }
 
     #[test]
-    fn test_reversed_text() {
+    fn test_reversed_text_is_not_generated() {
+        // Reverse-text alt-decoding was removed because it produced
+        // false positives against high-specificity regexes whose
+        // patterns happened to match natural-text reversed fragments
+        // (Geohash / "ruevres", Bitcoin Cash Address / reversed
+        // bech32). The transformation has no real-world evasion
+        // value — no adversary is writing their data backwards —
+        // so we now assert the alt-decodings pass does NOT produce
+        // a reversed copy of its input.
         let alts = generate_alternative_decodings("9876-54-321");
-        assert!(alts.iter().any(|a| a == "123-45-6789"));
+        assert!(
+            alts.iter().all(|a| a != "123-45-6789"),
+            "reverse-text alt-decoding should have been removed"
+        );
     }
 
     #[test]
