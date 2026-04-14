@@ -1,7 +1,7 @@
 Accounts payable batch
 
 Invoice A: 1234567812345678
-Invoice B: 1111222233334444
+Invoice B: 1234567890123456
 Invoice C: 9999888877776666
 
 These are sequential invoice numbers printed by the billing system. None are

@@ -274,6 +274,24 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         "CUSIP" => is_valid_cusip(matched_text),
         "SEDOL" => is_valid_sedol(matched_text),
         "Australia TFN" => is_valid_australia_tfn(matched_text),
+        // PAN lives under the "Primary Account Numbers" category, NOT
+        // "Credit Card Numbers", so the early-return above doesn't catch
+        // it. The PAN regex is `\b\d{4}[sep?]\d{4}[sep?]\d{4}[sep?]\d{1,7}\b`
+        // which fires on any 16-19 digit sequence (with or without
+        // common group separators) — including invoice numbers,
+        // sequential test data, and SKU runs. Without a Luhn check
+        // the sub_category produces a false positive on every such
+        // sequence, and PAN is in CRITICAL_ALWAYS_RUN so it executes
+        // on every scan regardless of context. Apply Luhn here so
+        // PAN matches the precision floor of the brand-specific
+        // sub_categories above.
+        //
+        // `Masked PAN` is deliberately not Luhn-checked: only 8 of
+        // its 16 characters are digits (the middle 8 are X/x/*),
+        // which is below the Luhn function's 12-digit minimum, so
+        // adding it here would silently drop every legitimate
+        // masked-PAN match.
+        "PAN" => is_luhn_valid(matched_text),
         _ => true, // No validator — accept
     }
 }
@@ -341,6 +359,51 @@ mod tests {
     #[test]
     fn test_luhn_invalid() {
         assert!(!is_luhn_valid("1234567890123456"));
+    }
+
+    #[test]
+    fn test_validate_match_pan_luhn_gates_invoice_numbers() {
+        // Regression: the PAN sub_category lives under the
+        // "Primary Account Numbers" category, so the early-return
+        // Luhn check at the top of validate_match (which is keyed on
+        // the "Credit Card Numbers" category) does not fire for it.
+        // Without an explicit case in the per-sub_category match
+        // arm, every Luhn-failing 16-digit invoice number was
+        // accepted as a PAN. The detection-quality harness surfaced
+        // three such false positives on the negatives corpus.
+        //
+        // After the fix, validate_match must reject Luhn-failing
+        // sequences and accept Luhn-valid PANs.
+        let cat = "Primary Account Numbers";
+        // Three invoice-shaped numbers that fail Luhn — must be rejected.
+        // Note: 1111222233334444 is *not* in this set despite looking
+        // similar; it happens to be Luhn-valid by coincidence (sum 60).
+        // We use 1234567890123456 instead, which is the canonical
+        // Luhn-failing 16-digit example used elsewhere in this file.
+        assert!(!validate_match(cat, "PAN", "1234567812345678"));
+        assert!(!validate_match(cat, "PAN", "1234567890123456"));
+        assert!(!validate_match(cat, "PAN", "9999888877776666"));
+        // Sanity: 1111222233334444 IS Luhn-valid — the validator
+        // must accept it. This pins the gotcha so a future
+        // contributor doesn't "fix" the corpus by reverting to it.
+        assert!(validate_match(cat, "PAN", "1111222233334444"));
+        // Stripe's documented Luhn-valid test PAN — must be accepted.
+        assert!(validate_match(cat, "PAN", "4242424242424242"));
+        // A real-shape Luhn-valid 16-digit number — must be accepted.
+        assert!(validate_match(cat, "PAN", "4532015112830366"));
+    }
+
+    #[test]
+    fn test_validate_match_masked_pan_not_luhn_checked() {
+        // Masked PAN deliberately bypasses Luhn — only 8 of its
+        // characters are digits, which is below is_luhn_valid's
+        // 12-digit floor. If we ever extend the validator to cover
+        // Masked PAN we must also relax the digit-count gate or add
+        // a separate masked-card validator. This test pins the
+        // current behaviour so that change is intentional.
+        let cat = "Primary Account Numbers";
+        assert!(validate_match(cat, "Masked PAN", "4242XXXXXXXX1234"));
+        assert!(validate_match(cat, "Masked PAN", "4242********1234"));
     }
 
     #[test]
