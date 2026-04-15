@@ -711,6 +711,236 @@ pub fn is_valid_us_phone(phone: &str) -> bool {
     true
 }
 
+// ---------------------------------------------------------------------------
+// Network identifier filters (Phase 1b of the always-run precision pass).
+//
+// Every pattern in this section has a very loose regex (dotted-quad, hex
+// groups, six hex octets) that fires on structures common in technical
+// prose — log files, kernel traces, network configs, map data. None of
+// them have a "checksum" in the usual sense; the discipline is structural
+// filtering: reject addresses that are obviously not sensitive (private
+// ranges, loopback, documentation, multicast, null sentinels) while
+// keeping real public addresses.
+//
+// Why structural filtering instead of context gating: context-gating IP
+// addresses would destroy recall on log dumps, which are the PRIMARY
+// real-world use case for detecting leaked IPs. Log lines don't usually
+// have "IP address:" before the value — they just have the value. A
+// pattern that only fires near a keyword would miss almost every real
+// leak.
+// ---------------------------------------------------------------------------
+
+/// Validate an IPv4 address. Parses the four octets, rejects any
+/// non-routable / documentation / reserved range, and rejects sentinel
+/// addresses that are never sensitive (all-zero, broadcast, null).
+///
+/// Ranges rejected (RFC 1918, RFC 3927, RFC 5735, RFC 5737, RFC 2544):
+///   * `0.0.0.0/8`              — "this network", boot-time placeholders
+///   * `10.0.0.0/8`             — RFC 1918 private
+///   * `100.64.0.0/10`          — RFC 6598 carrier-grade NAT
+///   * `127.0.0.0/8`            — loopback
+///   * `169.254.0.0/16`         — link-local
+///   * `172.16.0.0/12`          — RFC 1918 private
+///   * `192.0.0.0/24`           — IETF protocol assignments
+///   * `192.0.2.0/24`           — RFC 5737 TEST-NET-1 (docs)
+///   * `192.168.0.0/16`         — RFC 1918 private
+///   * `198.18.0.0/15`          — RFC 2544 benchmark
+///   * `198.51.100.0/24`        — RFC 5737 TEST-NET-2 (docs)
+///   * `203.0.113.0/24`         — RFC 5737 TEST-NET-3 (docs)
+///   * `224.0.0.0/4`            — multicast
+///   * `240.0.0.0/4`            — reserved (class E)
+///   * `255.255.255.255`        — limited broadcast
+///
+/// Everything else (real public IPv4 space) passes.
+pub fn is_valid_ipv4(addr: &str) -> bool {
+    let parts: Vec<&str> = addr.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    let mut octets = [0u8; 4];
+    for (i, part) in parts.iter().enumerate() {
+        match part.parse::<u16>() {
+            Ok(n) if n <= 255 => octets[i] = n as u8,
+            _ => return false,
+        }
+    }
+    let (a, b, c, _d) = (octets[0], octets[1], octets[2], octets[3]);
+    // Block reserved / non-routable ranges.
+    if a == 0 {
+        return false; // "this network"
+    }
+    if a == 10 {
+        return false; // RFC 1918 private
+    }
+    if a == 100 && (64..=127).contains(&b) {
+        return false; // carrier-grade NAT
+    }
+    if a == 127 {
+        return false; // loopback
+    }
+    if a == 169 && b == 254 {
+        return false; // link-local
+    }
+    if a == 172 && (16..=31).contains(&b) {
+        return false; // RFC 1918 private
+    }
+    if a == 192 && b == 0 && c == 0 {
+        return false; // IETF protocol assignments
+    }
+    if a == 192 && b == 0 && c == 2 {
+        return false; // TEST-NET-1
+    }
+    if a == 192 && b == 168 {
+        return false; // RFC 1918 private
+    }
+    if a == 198 && (b == 18 || b == 19) {
+        return false; // benchmark
+    }
+    if a == 198 && b == 51 && c == 100 {
+        return false; // TEST-NET-2
+    }
+    if a == 203 && b == 0 && c == 113 {
+        return false; // TEST-NET-3
+    }
+    if a >= 224 {
+        return false; // multicast + reserved class E + 255.255.255.255
+    }
+    true
+}
+
+/// Validate an IPv6 address. Accepts both full-form (8 hextets) and
+/// compressed (`::`) forms; rejects reserved / documentation ranges and
+/// sentinel addresses.
+///
+/// Ranges rejected:
+///   * `::1`                    — loopback
+///   * `::`                     — unspecified (all-zero)
+///   * `fe80::/10`              — link-local
+///   * `fc00::/7`               — unique local (ULA, RFC 4193)
+///   * `ff00::/8`               — multicast
+///   * `2001:db8::/32`          — RFC 3849 documentation
+///   * `64:ff9b::/96`           — well-known NAT64 prefix
+///
+/// The filter operates on the first hextet(s), so we don't need full
+/// 128-bit parsing — just enough to check the leading prefix.
+pub fn is_valid_ipv6(addr: &str) -> bool {
+    // Strip any IPv6 zone identifier (`fe80::1%eth0`).
+    let addr = addr.split('%').next().unwrap_or(addr);
+    let lower = addr.to_ascii_lowercase();
+    // Sentinel literal forms first.
+    if lower == "::" || lower == "::1" || lower == "0:0:0:0:0:0:0:0" || lower == "0:0:0:0:0:0:0:1" {
+        return false;
+    }
+    // Parse the first hextet (everything before the first `:`).
+    // For `::xxxx` the first hextet is empty (leading `::`); we'll
+    // handle that by checking the leading-`::` case separately.
+    let first_hextet: u16 = if lower.starts_with("::") {
+        0
+    } else {
+        let first = lower.split(':').next().unwrap_or("");
+        match u16::from_str_radix(first, 16) {
+            Ok(v) => v,
+            Err(_) => return false,
+        }
+    };
+    // fe80::/10 — link-local. First 10 bits are 1111 1110 10 = 0xfe80..0xfebf.
+    if (0xfe80..=0xfebf).contains(&first_hextet) {
+        return false;
+    }
+    // fc00::/7 — unique local. First 7 bits are 1111 110 = 0xfc00..0xfdff.
+    if (0xfc00..=0xfdff).contains(&first_hextet) {
+        return false;
+    }
+    // ff00::/8 — multicast.
+    if (0xff00..=0xffff).contains(&first_hextet) {
+        return false;
+    }
+    // 2001:db8::/32 — documentation. Need the first TWO hextets.
+    if first_hextet == 0x2001 {
+        let parts: Vec<&str> = lower.split(':').collect();
+        if parts.len() >= 2 {
+            if let Ok(second) = u16::from_str_radix(parts[1], 16) {
+                if second == 0x0db8 || second == 0xdb8 {
+                    return false;
+                }
+            }
+        }
+    }
+    // 64:ff9b::/96 — NAT64.
+    if first_hextet == 0x0064 {
+        let parts: Vec<&str> = lower.split(':').collect();
+        if parts.len() >= 2 {
+            if let Ok(second) = u16::from_str_radix(parts[1], 16) {
+                if second == 0xff9b {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// Validate a MAC address. Rejects obvious sentinels:
+///   * `00:00:00:00:00:00` — null address
+///   * `ff:ff:ff:ff:ff:ff` — broadcast
+///
+/// Keeps the structural check light — the regex already enforces the
+/// six-octet hex shape. We just filter the two never-sensitive values.
+pub fn is_valid_mac_address(mac: &str) -> bool {
+    // Normalize: strip the six separators, lowercase.
+    let hex: String = mac
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+    if hex.len() != 12 {
+        return false;
+    }
+    if hex == "000000000000" || hex == "ffffffffffff" {
+        return false;
+    }
+    true
+}
+
+/// Validate a GPS coordinate pair. The regex matches any comma-separated
+/// float pair that looks like lat,lon; this validator enforces the
+/// real-world bounds:
+///
+///   * latitude must be in `-90.0 ..= 90.0`
+///   * longitude must be in `-180.0 ..= 180.0`
+///   * reject the `(0, 0)` null island sentinel
+///
+/// That rejects floating-point tables, scientific data, and version
+/// strings that happen to match the regex shape without being real
+/// coordinates.
+pub fn is_valid_gps_coordinates(coords: &str) -> bool {
+    // Split on `,` allowing optional whitespace.
+    let parts: Vec<&str> = coords.splitn(2, ',').collect();
+    if parts.len() != 2 {
+        return false;
+    }
+    let lat: f64 = match parts[0].trim().parse() {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let lon: f64 = match parts[1].trim().parse() {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    if !(-90.0..=90.0).contains(&lat) {
+        return false;
+    }
+    if !(-180.0..=180.0).contains(&lon) {
+        return false;
+    }
+    // Null Island — (0, 0) in the Gulf of Guinea. Not a real reported
+    // location; almost always a placeholder or an error.
+    if lat == 0.0 && lon == 0.0 {
+        return false;
+    }
+    true
+}
+
 /// Validate a Dutch Burgerservicenummer (BSN) using the
 /// eleven-test. BSN is 8 or 9 digits; 8-digit BSNs are treated
 /// as 9-digit with a leading zero.
@@ -2175,6 +2405,16 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         "E.164 Phone Number" => is_valid_e164_phone(matched_text),
         "US Phone Number" => is_valid_us_phone(matched_text),
         "UK Phone Number" => is_plausible_phone(matched_text),
+        // Network identifiers — structural filtering for non-routable
+        // / reserved / documentation / sentinel ranges. The regex is
+        // kept always-run so log-file scanning still catches leaked
+        // public IPs, and the validator rejects the ranges that are
+        // never sensitive. See the network-filters section in
+        // validation.rs for the full RFC range list.
+        "IPv4 Address" => is_valid_ipv4(matched_text),
+        "IPv6 Address" => is_valid_ipv6(matched_text),
+        "MAC Address" => is_valid_mac_address(matched_text),
+        "GPS Coordinates" => is_valid_gps_coordinates(matched_text),
         // Germany Steuer-ID — 11 digits with an ISO 7064 MOD 11,10
         // check. Without this, `\b\d{11}\b` fires on every 11-digit
         // invoice number, timestamp, or phone sequence in a
@@ -3344,6 +3584,137 @@ mod tests {
         // Wrong length.
         assert!(!is_valid_us_phone("415555267"));
         assert!(!is_valid_us_phone("41555526710"));
+    }
+
+    #[test]
+    fn test_ipv4_valid() {
+        // Real public IPv4 addresses (examples only — these are
+        // not necessarily in use).
+        assert!(is_valid_ipv4("8.8.8.8")); // Google DNS
+        assert!(is_valid_ipv4("1.1.1.1")); // Cloudflare DNS
+        assert!(is_valid_ipv4("93.184.216.34")); // example.com (historical)
+        assert!(is_valid_ipv4("142.250.80.46")); // google.com
+        assert!(is_valid_ipv4("199.232.12.67")); // arbitrary public
+    }
+
+    #[test]
+    fn test_ipv4_invalid() {
+        // Private ranges (RFC 1918).
+        assert!(!is_valid_ipv4("10.0.0.1"));
+        assert!(!is_valid_ipv4("10.255.255.255"));
+        assert!(!is_valid_ipv4("172.16.0.1"));
+        assert!(!is_valid_ipv4("172.31.255.255"));
+        assert!(!is_valid_ipv4("192.168.1.1"));
+        assert!(!is_valid_ipv4("192.168.100.200"));
+        // Loopback.
+        assert!(!is_valid_ipv4("127.0.0.1"));
+        assert!(!is_valid_ipv4("127.255.255.254"));
+        // Link-local.
+        assert!(!is_valid_ipv4("169.254.1.1"));
+        // This-network.
+        assert!(!is_valid_ipv4("0.0.0.0"));
+        assert!(!is_valid_ipv4("0.1.2.3"));
+        // Documentation / TEST-NET ranges.
+        assert!(!is_valid_ipv4("192.0.2.1"));
+        assert!(!is_valid_ipv4("198.51.100.42"));
+        assert!(!is_valid_ipv4("203.0.113.7"));
+        // Carrier-grade NAT.
+        assert!(!is_valid_ipv4("100.64.0.1"));
+        assert!(!is_valid_ipv4("100.127.255.254"));
+        // Multicast / reserved / broadcast.
+        assert!(!is_valid_ipv4("224.0.0.1"));
+        assert!(!is_valid_ipv4("239.255.255.250"));
+        assert!(!is_valid_ipv4("240.0.0.1"));
+        assert!(!is_valid_ipv4("255.255.255.255"));
+        // Benchmark range.
+        assert!(!is_valid_ipv4("198.18.0.1"));
+        // Not an IP at all.
+        assert!(!is_valid_ipv4("not.an.ip.address"));
+        assert!(!is_valid_ipv4("1.2.3"));
+        assert!(!is_valid_ipv4("1.2.3.4.5"));
+        assert!(!is_valid_ipv4("256.1.1.1"));
+    }
+
+    #[test]
+    fn test_ipv6_valid() {
+        // Real public IPv6 addresses (examples).
+        assert!(is_valid_ipv6("2606:4700:4700::1111")); // Cloudflare DNS
+        assert!(is_valid_ipv6("2001:4860:4860::8888")); // Google DNS
+        assert!(is_valid_ipv6(
+            "2a00:1450:4009:80f:0000:0000:0000:200e"
+        ));
+    }
+
+    #[test]
+    fn test_ipv6_invalid() {
+        // Loopback and unspecified.
+        assert!(!is_valid_ipv6("::"));
+        assert!(!is_valid_ipv6("::1"));
+        assert!(!is_valid_ipv6("0:0:0:0:0:0:0:0"));
+        assert!(!is_valid_ipv6("0:0:0:0:0:0:0:1"));
+        // Link-local (fe80::/10).
+        assert!(!is_valid_ipv6("fe80::1"));
+        assert!(!is_valid_ipv6("fe80::abcd:1234"));
+        // Unique local (fc00::/7).
+        assert!(!is_valid_ipv6("fc00::1"));
+        assert!(!is_valid_ipv6("fd12:3456:789a::1"));
+        // Multicast.
+        assert!(!is_valid_ipv6("ff02::1"));
+        assert!(!is_valid_ipv6("ff00::abcd"));
+        // Documentation (2001:db8::/32).
+        assert!(!is_valid_ipv6("2001:db8::1"));
+        assert!(!is_valid_ipv6("2001:db8:85a3::8a2e:370:7334"));
+        // NAT64.
+        assert!(!is_valid_ipv6("64:ff9b::1"));
+    }
+
+    #[test]
+    fn test_mac_address_valid() {
+        // Real MAC-shaped strings (not necessarily in use).
+        assert!(is_valid_mac_address("3c:5a:b4:01:23:45"));
+        assert!(is_valid_mac_address("00-1B-44-11-3A-B7"));
+        assert!(is_valid_mac_address("AA:BB:CC:DD:EE:01"));
+    }
+
+    #[test]
+    fn test_mac_address_invalid() {
+        // All-zero (null address).
+        assert!(!is_valid_mac_address("00:00:00:00:00:00"));
+        assert!(!is_valid_mac_address("00-00-00-00-00-00"));
+        // Broadcast.
+        assert!(!is_valid_mac_address("ff:ff:ff:ff:ff:ff"));
+        assert!(!is_valid_mac_address("FF:FF:FF:FF:FF:FF"));
+        // Wrong length.
+        assert!(!is_valid_mac_address("11:22:33:44:55"));
+        // Non-hex characters.
+        assert!(!is_valid_mac_address("gg:gg:gg:gg:gg:gg"));
+    }
+
+    #[test]
+    fn test_gps_coordinates_valid() {
+        // Real-world cities.
+        assert!(is_valid_gps_coordinates("37.7749,-122.4194")); // SF
+        assert!(is_valid_gps_coordinates("40.7128,-74.0060")); // NYC
+        assert!(is_valid_gps_coordinates("51.5074, -0.1278")); // London (spaced)
+        assert!(is_valid_gps_coordinates("-33.8688,151.2093")); // Sydney
+        assert!(is_valid_gps_coordinates("35.6762,139.6503")); // Tokyo
+    }
+
+    #[test]
+    fn test_gps_coordinates_invalid() {
+        // Null island sentinel.
+        assert!(!is_valid_gps_coordinates("0.0000,0.0000"));
+        assert!(!is_valid_gps_coordinates("0.000,0.000"));
+        // Out-of-range latitude.
+        assert!(!is_valid_gps_coordinates("91.0000,0.0000"));
+        assert!(!is_valid_gps_coordinates("-90.5000,0.0000"));
+        assert!(!is_valid_gps_coordinates("123.4567,89.0123"));
+        // Out-of-range longitude.
+        assert!(!is_valid_gps_coordinates("0.0000,181.0000"));
+        assert!(!is_valid_gps_coordinates("0.0000,-181.0000"));
+        // Wrong shape.
+        assert!(!is_valid_gps_coordinates("37.7749"));
+        assert!(!is_valid_gps_coordinates("foo,bar"));
     }
 
     #[test]

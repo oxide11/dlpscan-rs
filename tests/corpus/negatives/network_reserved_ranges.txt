@@ -1,0 +1,35 @@
+Network addresses from non-routable, reserved, and documentation
+ranges. Every address below matches its pattern's regex but falls
+in a range that should never be reported as a sensitive
+external identifier. The validator rejects all of them; the
+scanner should report zero findings.
+
+Each line is prefixed with a short word so the pre-existing
+collapse_padding normalizer (which strips whitespace between
+adjacent non-alphabetic characters) doesn't merge two addresses
+into one digit blob. See the note in the
+test_offset_map_stress_50k_matches comment for the broader bug.
+
+private 10.0.0.5
+private 172.16.42.1
+private 192.168.1.100
+loopback 127.0.0.1
+linklocal 169.254.100.2
+docrange 192.0.2.42
+docrange 198.51.100.7
+docrange 203.0.113.99
+multicast 224.0.0.251
+broadcast 255.255.255.255
+reserved 0.0.0.0
+cgnat 100.64.0.1
+
+ipv6 loopback ::1
+ipv6 linklocal fe80::1
+ipv6 ula fc00::1
+ipv6 docrange 2001:db8::1
+ipv6 multicast ff02::1
+
+mac null 00:00:00:00:00:00
+mac broadcast ff:ff:ff:ff:ff:ff
+
+gps nullisland 0.0000, 0.0000
