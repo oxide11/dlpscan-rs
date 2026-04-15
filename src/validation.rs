@@ -459,6 +459,258 @@ pub fn is_plausible_phone(phone: &str) -> bool {
     true
 }
 
+/// ITU-T E.164 country calling codes with per-country national-
+/// significant-number length bounds.
+///
+/// Each entry is `(country_code, min_nsn, max_nsn)`. The country
+/// code is a 1-, 2-, or 3-digit prefix. `min_nsn` and `max_nsn`
+/// are the inclusive bounds on the number of digits AFTER the
+/// country code. Bounds are taken from the ITU-T E.164 national
+/// numbering plans reference and are deliberately conservative:
+/// when a country allows a wide range of NSN lengths we store the
+/// full range (e.g. Australia 5..=15, which is technically loose
+/// but prevents false negatives on every Australian dial form).
+/// For countries with strict fixed lengths (NANP exactly 10,
+/// France exactly 9) we store tight bounds.
+///
+/// Note on NANP (country code "1"): this single entry covers the
+/// US, Canada, and the Caribbean territories that share the code.
+/// Per-NPA validation (reject service codes, N11, etc.) is handled
+/// separately by `is_valid_nanp_npa` so that a `+1...` number
+/// passes only if BOTH the length check and the NPA check succeed.
+///
+/// Refresh: the ITU publishes updates to this table through
+/// E.164 Annex A/B. New country codes appear every few years; the
+/// most recent additions (2023-2024 timeframe) are included
+/// below. A yearly review against the current E.164 annexes is a
+/// reasonable maintenance cadence.
+static E164_COUNTRY_CODES: &[(&str, u8, u8)] = &[
+    // 1-digit
+    ("1", 10, 10),    // NANP (US/CA/Caribbean) — exactly 10
+    ("7", 10, 10),    // Russia, Kazakhstan
+    // 2-digit
+    ("20", 9, 10),    ("27", 9, 9),     ("30", 10, 10),   ("31", 9, 9),
+    ("32", 8, 9),     ("33", 9, 9),     ("34", 9, 9),     ("36", 8, 9),
+    ("39", 9, 11),    ("40", 9, 9),     ("41", 9, 9),     ("43", 10, 13),
+    ("44", 9, 10),    ("45", 8, 8),     ("46", 7, 13),    ("47", 8, 8),
+    ("48", 9, 9),     ("49", 7, 13),    ("51", 9, 11),    ("52", 10, 11),
+    ("53", 6, 8),     ("54", 10, 11),   ("55", 10, 11),   ("56", 9, 9),
+    ("57", 10, 10),   ("58", 10, 10),   ("60", 7, 10),    ("61", 5, 15),
+    ("62", 7, 12),    ("63", 8, 10),    ("64", 3, 10),    ("65", 8, 8),
+    ("66", 8, 9),     ("81", 9, 10),    ("82", 9, 11),    ("84", 9, 10),
+    ("86", 5, 13),    ("90", 10, 10),   ("91", 10, 10),   ("92", 9, 10),
+    ("93", 9, 9),     ("94", 9, 9),     ("95", 8, 10),    ("98", 10, 10),
+    // 3-digit: Africa
+    ("211", 9, 9),    ("212", 9, 9),    ("213", 9, 9),    ("216", 8, 8),
+    ("218", 9, 10),   ("220", 7, 7),    ("221", 9, 9),    ("222", 8, 8),
+    ("223", 8, 8),    ("224", 9, 9),    ("225", 10, 10),  ("226", 8, 8),
+    ("227", 8, 8),    ("228", 8, 8),    ("229", 8, 8),    ("230", 7, 8),
+    ("231", 7, 8),    ("232", 8, 8),    ("233", 9, 9),    ("234", 8, 10),
+    ("235", 8, 8),    ("236", 8, 8),    ("237", 9, 9),    ("238", 7, 7),
+    ("239", 7, 7),    ("240", 9, 9),    ("241", 7, 8),    ("242", 9, 9),
+    ("243", 9, 9),    ("244", 9, 9),    ("245", 7, 7),    ("246", 7, 7),
+    ("247", 4, 4),    ("248", 7, 7),    ("249", 9, 9),    ("250", 9, 9),
+    ("251", 9, 9),    ("252", 7, 9),    ("253", 8, 8),    ("254", 9, 10),
+    ("255", 9, 9),    ("256", 9, 9),    ("257", 8, 8),    ("258", 9, 9),
+    ("260", 9, 9),    ("261", 9, 10),   ("262", 9, 9),    ("263", 9, 10),
+    ("264", 8, 9),    ("265", 9, 9),    ("266", 8, 8),    ("267", 7, 8),
+    ("268", 8, 8),    ("269", 7, 7),    ("290", 4, 4),    ("291", 7, 7),
+    ("297", 7, 7),    ("298", 6, 6),    ("299", 6, 6),
+    // 3-digit: Europe
+    ("350", 8, 8),    ("351", 9, 11),   ("352", 8, 11),   ("353", 7, 11),
+    ("354", 7, 9),    ("355", 8, 9),    ("356", 8, 8),    ("357", 8, 11),
+    ("358", 5, 12),   ("359", 8, 9),    ("370", 8, 8),    ("371", 8, 8),
+    ("372", 7, 10),   ("373", 8, 8),    ("374", 8, 8),    ("375", 9, 10),
+    ("376", 6, 9),    ("377", 8, 9),    ("378", 6, 10),   ("379", 6, 10),
+    ("380", 9, 9),    ("381", 8, 10),   ("382", 8, 8),    ("383", 8, 9),
+    ("385", 8, 12),   ("386", 8, 8),    ("387", 8, 8),    ("389", 8, 8),
+    ("420", 9, 9),    ("421", 9, 9),    ("423", 7, 13),
+    // 3-digit: Latin America + Caribbean non-NANP
+    ("500", 5, 5),    ("501", 7, 7),    ("502", 8, 8),    ("503", 8, 11),
+    ("504", 8, 8),    ("505", 8, 8),    ("506", 8, 8),    ("507", 7, 8),
+    ("508", 6, 6),    ("509", 8, 9),    ("590", 9, 9),    ("591", 8, 9),
+    ("592", 7, 7),    ("593", 8, 9),    ("594", 9, 9),    ("595", 9, 9),
+    ("596", 9, 9),    ("597", 6, 7),    ("598", 7, 8),    ("599", 7, 8),
+    // 3-digit: Oceania + Asia (670-692)
+    ("670", 7, 8),    ("672", 5, 6),    ("673", 7, 7),    ("674", 7, 7),
+    ("675", 7, 8),    ("676", 5, 7),    ("677", 5, 7),    ("678", 5, 7),
+    ("679", 7, 7),    ("680", 7, 7),    ("681", 6, 6),    ("682", 5, 5),
+    ("683", 4, 4),    ("685", 5, 7),    ("686", 5, 8),    ("687", 6, 6),
+    ("688", 5, 6),    ("689", 6, 6),    ("690", 4, 4),    ("691", 7, 7),
+    ("692", 7, 7),
+    // 3-digit: East Asia + South Asia
+    ("850", 8, 13),   ("852", 4, 9),    ("853", 7, 8),    ("855", 8, 9),
+    ("856", 8, 10),   ("880", 6, 10),   ("886", 8, 9),
+    // 3-digit: Middle East + Central Asia
+    ("960", 7, 7),    ("961", 7, 8),    ("962", 8, 9),    ("963", 8, 9),
+    ("964", 9, 10),   ("965", 7, 8),    ("966", 8, 9),    ("967", 6, 9),
+    ("968", 7, 8),    ("970", 8, 9),    ("971", 8, 9),    ("972", 8, 9),
+    ("973", 8, 8),    ("974", 7, 8),    ("975", 7, 8),    ("976", 7, 8),
+    ("977", 9, 10),   ("992", 9, 9),    ("993", 8, 8),    ("994", 8, 9),
+    ("995", 9, 9),    ("996", 9, 9),    ("998", 9, 9),
+    // Special services (non-geographic)
+    ("800", 8, 8),    // Universal International Freephone
+    ("808", 8, 8),    // Shared-cost
+    ("870", 9, 9),    // Inmarsat
+    ("878", 12, 12),  // UPT
+    ("881", 8, 12),   // GMSS (satellite)
+    ("882", 5, 13),   // International networks
+    ("883", 9, 15),   // International networks
+    ("888", 11, 11),  // ITU-T reserved
+];
+
+/// Validate that a 3-digit NANP area code (NPA) is a structurally
+/// plausible subscriber prefix. Rules:
+///
+///   * First digit MUST be 2-9 (0 and 1 are trunk prefixes and
+///     can never appear as the first digit of an NPA).
+///   * Second and third digits must be ASCII digits.
+///   * Must not be an N11 service code (211, 311, 411, 511, 611,
+///     711, 811, 911) — those are reserved for dial-able services
+///     and never appear as subscriber area codes.
+///
+/// This is a structural check rather than a lookup against the
+/// complete NANPA assignment table. The structural rule catches
+/// `000`, `1XX`, and `X11` reliably (which covers the blind-test
+/// cases like `+10000000000` and `+1911...`) and has zero refresh
+/// burden. A hardcoded 370-entry set would need yearly updates
+/// and would produce false NEGATIVES for any newly-assigned NPA
+/// until the data was refreshed, which is a worse failure mode
+/// for a DLP scanner than "accepts some plausible-looking
+/// unassigned NPAs". Note that all-three-same NPAs like `888`
+/// (toll-free), `777`, `222`, and `333` are deliberately NOT
+/// rejected here — `888` is a real toll-free assignment and some
+/// of the others are used for non-geographic services. The
+/// obvious-bogus `+19999999999` pattern gets caught by the
+/// `is_plausible_phone` all-same-digit sentinel, not by the NPA.
+pub fn is_valid_nanp_npa(npa: &str) -> bool {
+    let bytes = npa.as_bytes();
+    if bytes.len() != 3 {
+        return false;
+    }
+    if !(b'2'..=b'9').contains(&bytes[0]) {
+        return false;
+    }
+    if !bytes[1].is_ascii_digit() || !bytes[2].is_ascii_digit() {
+        return false;
+    }
+    // N11 service codes.
+    if bytes[1] == b'1' && bytes[2] == b'1' {
+        return false;
+    }
+    true
+}
+
+/// Validate an E.164 phone number: must start with `+`, must have
+/// a recognised country code, and the national-significant-number
+/// length must fall within the country-specific bounds published
+/// in E.164 Annex A/B. For NANP (`+1...`), additionally validates
+/// the 3-digit NPA (area code) via `is_valid_nanp_npa`.
+///
+/// Accepts formatted input — spaces, dashes, dots, parentheses —
+/// because the regex captures may include them.
+///
+/// Rejects:
+///   * Missing `+` prefix.
+///   * Unrecognised country codes.
+///   * NSN length outside the country's published range.
+///   * `+1` numbers with obviously-bogus NPAs (000-class, N11,
+///     all-same-digit).
+///   * Inputs that also fail `is_plausible_phone` (all-same-
+///     digit / near-all-same-digit sentinels).
+pub fn is_valid_e164_phone(phone: &str) -> bool {
+    // E.164 literally requires the `+` prefix.
+    if !phone.contains('+') {
+        return false;
+    }
+    // Still apply the plausibility gate — catches all-same-digit
+    // and near-all-same sentinels that the country-code check
+    // would otherwise let through (`+15555555555` has a valid
+    // length but is noise).
+    if !is_plausible_phone(phone) {
+        return false;
+    }
+    // Extract the ASCII digits.
+    let digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() < 7 || digits.len() > 15 {
+        return false;
+    }
+    // Country code may be 1, 2, or 3 digits — try longest first so
+    // `"1441..."` (Bermuda via NANP) matches `"1"` not `"144"` if
+    // `"144"` is in the table by coincidence.
+    for cc_len in [3usize, 2, 1] {
+        if digits.len() < cc_len {
+            continue;
+        }
+        let cc = &digits[..cc_len];
+        let nsn = &digits[cc_len..];
+        if let Some(&(_, min, max)) = E164_COUNTRY_CODES.iter().find(|(c, _, _)| *c == cc) {
+            if nsn.len() < min as usize || nsn.len() > max as usize {
+                // Length doesn't fit this CC's bounds. Try a
+                // longer CC (on the first iteration there isn't
+                // one, but in general this handles overlapping
+                // prefixes by falling through to the shorter
+                // alternative — e.g. a hypothetical 3-digit CC
+                // that also starts with a valid 2-digit CC.)
+                continue;
+            }
+            // NANP: delegate to is_valid_us_phone so the
+            // exchange-code check (digits 4-6 of NSN must start
+            // 2-9, and cannot be N11) also runs. That's the gate
+            // that catches `+19990000000` — NPA 999 passes the
+            // structural NPA check, but exchange 000 has first
+            // digit 0 and fails.
+            if cc == "1" {
+                return is_valid_us_phone(nsn);
+            }
+            return true;
+        }
+    }
+    false
+}
+
+/// Validate a US Phone Number (NANP format without requiring an
+/// explicit `+1` prefix). Accepts:
+///
+///   * 10 raw digits → validated as a NANP NPA + exchange + subscriber.
+///   * 11 digits starting with `1` → strip the leading `1` and
+///     validate the remaining 10 as NANP.
+///   * Any formatting (dashes, dots, spaces, parentheses).
+///
+/// Rejects anything else, including:
+///   * Numbers where the NPA fails `is_valid_nanp_npa`.
+///   * Numbers where the exchange code (digits 4-6, "NXX") has an
+///     invalid first digit — NANP exchange codes also require the
+///     first digit to be 2-9.
+///   * All-same / near-all-same digit sentinels
+///     (via `is_plausible_phone`).
+pub fn is_valid_us_phone(phone: &str) -> bool {
+    if !is_plausible_phone(phone) {
+        return false;
+    }
+    let mut digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() == 11 && digits.starts_with('1') {
+        digits.remove(0);
+    }
+    if digits.len() != 10 {
+        return false;
+    }
+    // NPA: positions 0-2.
+    if !is_valid_nanp_npa(&digits[..3]) {
+        return false;
+    }
+    // Exchange code (NXX): positions 3-5. First digit must be 2-9.
+    let exchange = digits.as_bytes();
+    if !(b'2'..=b'9').contains(&exchange[3]) {
+        return false;
+    }
+    // Exchange cannot be N11 either.
+    if exchange[4] == b'1' && exchange[5] == b'1' {
+        return false;
+    }
+    true
+}
+
 /// Validate a German Tax ID (Steuer-Identifikationsnummer) using
 /// the ISO 7064 MOD 11,10 check digit. The Steuer-ID is an 11-digit
 /// number assigned by the Bundeszentralamt für Steuern; positions
@@ -682,16 +934,23 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // FPs where a 2-letter-then-10-alphanum string was being
         // labeled as a security identifier with no structural check.
         "ISIN" => is_valid_isin(matched_text),
-        // Phone structural gate — rejects all-same-digit and
-        // near-all-same-digit numbers that the permissive phone
-        // regexes would otherwise accept. The gate is conservative
-        // (no country-specific numbering plan validation) but it
-        // closes the `+10000000000` / `+19999999999` class of
-        // obvious test-data false positives surfaced by the blind
-        // harness.
-        "E.164 Phone Number" | "US Phone Number" | "UK Phone Number" => {
-            is_plausible_phone(matched_text)
-        }
+        // Phone validation is country-code-aware:
+        //
+        //   * E.164 Phone Number → full ITU country-code table +
+        //     per-country NSN length bounds + (for +1) NANP area
+        //     code validation.
+        //   * US Phone Number → NANP NPA + exchange-code check,
+        //     with an optional `1` country-code prefix.
+        //   * UK Phone Number → structural sanity gate (the regex
+        //     itself encodes most of the UK numbering plan;
+        //     is_plausible_phone rules out the obvious-garbage
+        //     cases that slip through).
+        //
+        // Each branch also applies is_plausible_phone internally
+        // as a first-line garbage filter.
+        "E.164 Phone Number" => is_valid_e164_phone(matched_text),
+        "US Phone Number" => is_valid_us_phone(matched_text),
+        "UK Phone Number" => is_plausible_phone(matched_text),
         // Germany Steuer-ID — 11 digits with an ISO 7064 MOD 11,10
         // check. Without this, `\b\d{11}\b` fires on every 11-digit
         // invoice number, timestamp, or phone sequence in a
@@ -970,6 +1229,121 @@ mod tests {
         assert!(!is_valid_quebec_hc("TRE8907153"));
         // Wrong shape: lowercase letters.
         assert!(!is_valid_quebec_hc("trem89071532"));
+    }
+
+    #[test]
+    fn test_nanp_npa_valid() {
+        // Geographic NPAs — first digit 2-9, not N11, not triple.
+        assert!(is_valid_nanp_npa("212")); // NYC
+        assert!(is_valid_nanp_npa("415")); // SF
+        assert!(is_valid_nanp_npa("310")); // LA
+        assert!(is_valid_nanp_npa("416")); // Toronto
+        assert!(is_valid_nanp_npa("441")); // Bermuda
+        // Non-geographic but assigned.
+        assert!(is_valid_nanp_npa("800")); // toll-free
+        assert!(is_valid_nanp_npa("888")); // toll-free
+        assert!(is_valid_nanp_npa("900")); // premium-rate
+    }
+
+    #[test]
+    fn test_nanp_npa_invalid() {
+        // First digit 0 or 1 — never valid.
+        assert!(!is_valid_nanp_npa("012"));
+        assert!(!is_valid_nanp_npa("100"));
+        assert!(!is_valid_nanp_npa("199"));
+        // N11 service codes.
+        assert!(!is_valid_nanp_npa("211"));
+        assert!(!is_valid_nanp_npa("311"));
+        assert!(!is_valid_nanp_npa("411"));
+        assert!(!is_valid_nanp_npa("511"));
+        assert!(!is_valid_nanp_npa("611"));
+        assert!(!is_valid_nanp_npa("711"));
+        assert!(!is_valid_nanp_npa("811"));
+        assert!(!is_valid_nanp_npa("911"));
+        // Wrong length.
+        assert!(!is_valid_nanp_npa("41"));
+        assert!(!is_valid_nanp_npa("4155"));
+        // Non-digit.
+        assert!(!is_valid_nanp_npa("4A5"));
+    }
+
+    #[test]
+    fn test_e164_phone_valid() {
+        // NANP: +1 + 10 digits, valid NPA.
+        assert!(is_valid_e164_phone("+14155552671"));
+        assert!(is_valid_e164_phone("+12125551234"));
+        assert!(is_valid_e164_phone("+14165551234")); // Toronto
+        // UK: +44 + 9-10 digits.
+        assert!(is_valid_e164_phone("+442079460007"));  // Landline: 10
+        assert!(is_valid_e164_phone("+447912345678"));  // Mobile: 10
+        // Germany: +49 + 7-13.
+        assert!(is_valid_e164_phone("+4930901820"));
+        // France: +33 + exactly 9.
+        assert!(is_valid_e164_phone("+33142685300"));
+        // Japan: +81 + 9-10.
+        assert!(is_valid_e164_phone("+81312345678"));
+        // Australia: wide length range allowed.
+        assert!(is_valid_e164_phone("+61293744000"));
+        // 3-digit country code: Ireland.
+        assert!(is_valid_e164_phone("+35314123456"));
+        // With formatting — regex can leave dashes/spaces.
+        assert!(is_valid_e164_phone("+1 (415) 555-2671"));
+    }
+
+    #[test]
+    fn test_e164_phone_invalid() {
+        // Missing +.
+        assert!(!is_valid_e164_phone("14155552671"));
+        // Unknown country code — neither 999, 99, nor 9 are in
+        // the E.164 table, so every fallback prefix fails.
+        assert!(!is_valid_e164_phone("+99912345678"));
+        // All-same-digit sentinels.
+        assert!(!is_valid_e164_phone("+10000000000"));
+        assert!(!is_valid_e164_phone("+19999999999"));
+        // +1 with an invalid NPA.
+        assert!(!is_valid_e164_phone("+11111111111")); // NPA 111
+        assert!(!is_valid_e164_phone("+19110000000")); // NPA 911 (N11)
+        assert!(!is_valid_e164_phone("+19990000000")); // NPA 999 (triple)
+        // +44 with too-short NSN (UK min 9).
+        assert!(!is_valid_e164_phone("+441234567"));
+        // +33 with NSN length 7 (France requires exactly 9).
+        assert!(!is_valid_e164_phone("+331234567"));
+        // +1 with too-short NSN (NANP requires exactly 10).
+        assert!(!is_valid_e164_phone("+1415555267"));
+        // Total too short.
+        assert!(!is_valid_e164_phone("+123456"));
+        // Total too long.
+        assert!(!is_valid_e164_phone("+1234567890123456"));
+    }
+
+    #[test]
+    fn test_us_phone_valid() {
+        // Bare 10-digit NANP.
+        assert!(is_valid_us_phone("4155552671"));
+        assert!(is_valid_us_phone("(415) 555-2671"));
+        assert!(is_valid_us_phone("415-555-2671"));
+        assert!(is_valid_us_phone("415.555.2671"));
+        // 11-digit with leading 1.
+        assert!(is_valid_us_phone("14155552671"));
+        assert!(is_valid_us_phone("1-415-555-2671"));
+    }
+
+    #[test]
+    fn test_us_phone_invalid() {
+        // Invalid NPA.
+        assert!(!is_valid_us_phone("0155552671"));  // NPA 015
+        assert!(!is_valid_us_phone("9115552671"));  // NPA 911 (N11)
+        // Invalid exchange code (first digit 0 or 1).
+        assert!(!is_valid_us_phone("4150555267"));  // exchange 055
+        assert!(!is_valid_us_phone("4151555267"));  // exchange 155
+        // N11 exchange.
+        assert!(!is_valid_us_phone("4152115555")); // exchange 211
+        // All-same garbage.
+        assert!(!is_valid_us_phone("0000000000"));
+        assert!(!is_valid_us_phone("9999999999"));
+        // Wrong length.
+        assert!(!is_valid_us_phone("415555267"));
+        assert!(!is_valid_us_phone("41555526710"));
     }
 
     #[test]
