@@ -1,0 +1,12 @@
+Strings that look like VINs but fail the ISO 3779 check digit
+
+Each candidate is 17 characters from the VIN-restricted alphabet
+(no I, O, Q) but does not satisfy the position-8 weighted mod-11
+checksum. The scanner should report zero VIN findings.
+
+bumped check digit: 1HGCM82643A004352
+bumped non-check digit: 1HGCM82633B004352
+bumped check digit: 5GZCZ43D23S812715
+random alphanumeric: ABCDEFGHJKLMNPRST
+all-same sentinel: AAAAAAAAAAAAAAAAA
+all-same sentinel: 00000000000000000
