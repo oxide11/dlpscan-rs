@@ -145,8 +145,15 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         // US core
         "USA SSN",
         "USA ITIN",
-        "USA EIN",
-        "USA Passport",
+        // USA EIN and USA Passport are deliberately removed from
+        // always-run. Both use a bare `\d{N}` regex with no
+        // structural check (EIN: 9 digits with optional separator;
+        // Passport: 9 digits). They fire on every 9-digit sequence
+        // in any document if always-run, and the blind harness
+        // surfaces them as FPs repeatedly. Context gating via
+        // is_context_required + the AC prefilter is the correct
+        // discipline: the pattern runs whenever an EIN or passport
+        // keyword is present in the text.
         "USA Passport Card",
         "USA Routing Number",
         "US Phone Number",
@@ -158,7 +165,11 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         // UK
         "UK NIN",
         "British NHS",
-        "UK Passport",
+        // UK Passport deliberately removed from always-run — the
+        // regex is bare `\b\d{9}\b` with no published check digit.
+        // Context-gated via is_context_required. Keeping it
+        // always-run would make it fire on every 9-digit sequence
+        // in any document.
         // Europe
         "France NIR",
         "Germany Tax ID",

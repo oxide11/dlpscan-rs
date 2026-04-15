@@ -711,6 +711,240 @@ pub fn is_valid_us_phone(phone: &str) -> bool {
     true
 }
 
+/// Validate a Dutch Burgerservicenummer (BSN) using the
+/// eleven-test. BSN is 8 or 9 digits; 8-digit BSNs are treated
+/// as 9-digit with a leading zero.
+///
+/// Algorithm: multiply each digit by a weight. Weights from left
+/// to right are `[9, 8, 7, 6, 5, 4, 3, 2, -1]` (the last weight
+/// is minus one, not two). The sum must be non-negative and
+/// divisible by 11. A BSN of all zeros is valid by the
+/// arithmetic but is explicitly rejected as a sentinel.
+pub fn is_valid_netherlands_bsn(bsn: &str) -> bool {
+    let mut digits: Vec<i32> = bsn
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10).map(|d| d as i32))
+        .collect();
+    // Pad 8-digit form with a leading zero.
+    if digits.len() == 8 {
+        digits.insert(0, 0);
+    }
+    if digits.len() != 9 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == 0) {
+        return false;
+    }
+    let weights: [i32; 9] = [9, 8, 7, 6, 5, 4, 3, 2, -1];
+    let sum: i32 = digits.iter().zip(weights.iter()).map(|(d, w)| d * w).sum();
+    sum >= 0 && sum % 11 == 0
+}
+
+/// Validate a Brazilian CPF (Cadastro de Pessoas Físicas) using
+/// its two mod-11 check digits. CPF is 11 digits total:
+///
+///   * positions 0-8: the 9-digit ID payload;
+///   * position 9: first check digit — compute
+///     `sum = Σ d[i] * (10 - i)` for i in 0..9, then
+///     `check1 = (sum * 10) % 11`, with 10 mapped to 0;
+///   * position 10: second check digit — compute
+///     `sum = Σ d[i] * (11 - i)` for i in 0..10 (now including
+///     the first check), then `check2 = (sum * 10) % 11`, same
+///     10 → 0 mapping.
+///
+/// Also rejects the all-same-digit sentinels: Brazilian tax
+/// authorities publish that 00000000000 through 99999999999
+/// (repeating) coincidentally satisfy the checksum arithmetic
+/// and must be rejected explicitly.
+pub fn is_valid_brazil_cpf(cpf: &str) -> bool {
+    let digits: Vec<u32> = cpf
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 11 {
+        return false;
+    }
+    // Brazilian RFB explicitly declares all-same-digit CPFs
+    // invalid even though they satisfy the checksum formulas.
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    // First check digit.
+    let sum1: u32 = digits[..9]
+        .iter()
+        .enumerate()
+        .map(|(i, &d)| d * (10 - i as u32))
+        .sum();
+    let check1 = {
+        let r = (sum1 * 10) % 11;
+        if r == 10 { 0 } else { r }
+    };
+    if digits[9] != check1 {
+        return false;
+    }
+    // Second check digit, using the first 10 digits (including
+    // the first check).
+    let sum2: u32 = digits[..10]
+        .iter()
+        .enumerate()
+        .map(|(i, &d)| d * (11 - i as u32))
+        .sum();
+    let check2 = {
+        let r = (sum2 * 10) % 11;
+        if r == 10 { 0 } else { r }
+    };
+    digits[10] == check2
+}
+
+/// Validate an ABA/Fedwire routing transit number (9 digits)
+/// using the weighted mod-10 check. Formula from the ABA spec:
+/// multiply each digit by its weight from `[3, 7, 1, 3, 7, 1, 3,
+/// 7, 1]` and require the sum to be divisible by 10.
+///
+/// Also verifies the first-two-digit Federal Reserve district
+/// prefix is one of the published ranges (00-12 FR districts,
+/// 21-32 thrift mirror, 61-72 electronic funds transfer, 80
+/// shared-network special). Sequences that fail either check
+/// are rejected outright.
+pub fn is_valid_aba_routing(routing: &str) -> bool {
+    let digits: Vec<u32> = routing
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 9 {
+        return false;
+    }
+    // Reject trivial all-same sequences.
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    // Federal Reserve district prefix check.
+    let prefix = digits[0] * 10 + digits[1];
+    let valid_prefix = (0..=12).contains(&prefix)
+        || (21..=32).contains(&prefix)
+        || (61..=72).contains(&prefix)
+        || prefix == 80;
+    if !valid_prefix {
+        return false;
+    }
+    // ABA weighted mod-10.
+    let weights = [3u32, 7, 1, 3, 7, 1, 3, 7, 1];
+    let sum: u32 = digits
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    sum % 10 == 0
+}
+
+/// Validate a Belgian Rijksregisternummer / Numéro national (NRN).
+/// The NRN is 11 digits laid out as:
+///
+///   * positions 0-5: date of birth YYMMDD (with the day field
+///     encoding gender: serial for male, serial+500 for female).
+///   * positions 6-8: daily serial (001..997).
+///   * positions 9-10: mod-97 check digit.
+///
+/// Checksum: treat the first 9 digits as an integer N. The check
+/// must equal `97 - (N mod 97)` for cardholders born before 2000,
+/// or `97 - ((2000000000 + N) mod 97)` for cardholders born 2000
+/// or later (the "2" prefix disambiguates the two generations).
+/// A number is valid if either form matches.
+pub fn is_valid_belgium_nrn(nrn: &str) -> bool {
+    let digits: Vec<u32> = nrn
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 11 {
+        return false;
+    }
+    // Reject trivial sentinels.
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    // Structural DOB gate. Month after stripping gender offset
+    // must be in 1..=12; day in 1..=31.
+    let month = digits[2] * 10 + digits[3];
+    if !(1..=12).contains(&month) {
+        return false;
+    }
+    let day = digits[4] * 10 + digits[5];
+    // Day field is raw day of month 1..=31 (NRN doesn't offset
+    // day for gender — gender lives in the serial).
+    if !(1..=31).contains(&day) {
+        return false;
+    }
+    // Build the first 9 digits as a u64.
+    let first9: u64 = digits[..9].iter().fold(0u64, |acc, &d| acc * 10 + d as u64);
+    let expected_check = digits[9] * 10 + digits[10];
+    // Pre-2000 form.
+    let check_pre = 97 - (first9 % 97);
+    // Post-2000 form: prepend "2" to the 9-digit payload.
+    let check_post = 97 - ((2_000_000_000u64 + first9) % 97);
+    expected_check as u64 == check_pre || expected_check as u64 == check_post
+}
+
+/// Validate a Polish PESEL (Powszechny Elektroniczny System
+/// Ewidencji Ludności) national ID number. PESEL is 11 digits:
+///
+///   * positions 0-5: date of birth encoded as YYMMDD, with the
+///     month field offset by {0, +20, +40, +60, +80} to indicate
+///     century (19xx, 20xx, 21xx, 22xx, 18xx respectively);
+///   * positions 6-9: serial number + gender (last of these 4
+///     is even=female, odd=male);
+///   * position 10: weighted-sum check digit.
+///
+/// Checksum: `sum = Σ digits[i] * weights[i]` for i in 0..10 with
+/// `weights = [1, 3, 7, 9, 1, 3, 7, 9, 1, 3]`, then
+/// `check = (10 - sum % 10) % 10`. Valid iff `digits[10] == check`.
+///
+/// Also applies a loose structural gate on the month field: the
+/// month after stripping the century offset must be in 1..=12,
+/// which rejects all-zero / all-same numbers that would otherwise
+/// coincidentally satisfy the checksum.
+pub fn is_valid_poland_pesel(pesel: &str) -> bool {
+    let digits: Vec<u32> = pesel
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 11 {
+        return false;
+    }
+    // Reject all-same-digit sentinels (e.g., 00000000000).
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    // Month gate. The raw MM field is digits[2..4]; strip the
+    // century offset by reducing modulo 20 (valid month-encoded
+    // ranges are 01..12, 21..32, 41..52, 61..72, 81..92; all
+    // reduce to 01..12 after mod-20 except invalid encodings
+    // like 13..19, 33..39, etc.).
+    let raw_month = digits[2] * 10 + digits[3];
+    let stripped = raw_month % 20;
+    if !(1..=12).contains(&stripped) {
+        return false;
+    }
+    // Day gate. Digits[4..6].
+    let day = digits[4] * 10 + digits[5];
+    if !(1..=31).contains(&day) {
+        return false;
+    }
+    // Weighted checksum.
+    let weights = [1u32, 3, 7, 9, 1, 3, 7, 9, 1, 3];
+    let sum: u32 = digits[..10]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let check = (10 - sum % 10) % 10;
+    digits[10] == check
+}
+
 /// Validate a German Tax ID (Steuer-Identifikationsnummer) using
 /// the ISO 7064 MOD 11,10 check digit. The Steuer-ID is an 11-digit
 /// number assigned by the Bundeszentralamt für Steuern; positions
@@ -738,6 +972,34 @@ pub fn is_valid_germany_tax_id(tax_id: &str) -> bool {
     }
     // Reject all-same-digit sentinels — Luhn-style garbage gate.
     if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    // Digit-frequency structural check. The official
+    // Bundeszentralamt für Steuern spec says positions 0-9 use
+    // exactly 9 distinct digits (one digit from 0-9 never appears,
+    // one digit appears 2-3 times, the rest appear once each).
+    // We implement a weaker rule that still catches the
+    // coincidence class that got through the MOD 11,10 check
+    // alone: require at least 7 distinct digits AND no single
+    // digit appearing more than 3 times. Values like
+    // `10000000000` (2 distinct, digit 0 appears 9 times) and
+    // `12121212120` (2 distinct, both appear 5 times) get
+    // rejected here; every real Steuer-ID has 8-9 distinct digits
+    // and no digit appearing more than 3 times, so real numbers
+    // still pass.
+    //
+    // The loose rule is deliberate: the spec had a minor revision
+    // in 2016 and the exact "8 or 9 distinct" range is not
+    // uniformly applied to all issued IDs. "At least 7" is
+    // strictly looser than every variant of the spec and avoids
+    // introducing false negatives on legitimate numbers.
+    let mut digit_counts = [0u8; 10];
+    for &d in &digits[..10] {
+        digit_counts[d as usize] += 1;
+    }
+    let distinct = digit_counts.iter().filter(|&&c| c > 0).count();
+    let max_count = digit_counts.iter().copied().max().unwrap_or(0);
+    if distinct < 7 || max_count > 3 {
         return false;
     }
     let mut product: u32 = 10;
@@ -957,6 +1219,34 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // document and Germany Tax ID is in CRITICAL_ALWAYS_RUN so
         // the AC prefilter can't save us.
         "Germany Tax ID" => is_valid_germany_tax_id(matched_text),
+        // Polish PESEL — 11 digits with a weighted mod-10
+        // checksum + structural DOB gate. Without this, the bare
+        // `\b\d{11}\b` regex matches every 11-digit sequence and
+        // — because PESEL is in CRITICAL_ALWAYS_RUN and the blind
+        // harness exposed it after Germany Tax ID was tightened —
+        // it was inheriting all of Germany Tax ID's old FP class.
+        "Poland PESEL" => is_valid_poland_pesel(matched_text),
+        // Belgian Rijksregisternummer — 11 digits with a mod-97
+        // check and DOB structural gate. Previously unvalidated;
+        // the bare regex matched any 11-digit sequence.
+        "Belgium NRN" => is_valid_belgium_nrn(matched_text),
+        // ABA / Fedwire routing transit number — 9 digits with a
+        // weighted mod-10 checksum AND a valid Federal Reserve
+        // district prefix. Both the "ABA Routing Number" and
+        // "USA Routing Number" sub_categories share the same
+        // underlying concept — they're duplicate coverage
+        // patterns from different taxonomies — so both go through
+        // the same validator.
+        "ABA Routing Number" | "USA Routing Number" => is_valid_aba_routing(matched_text),
+        // Brazilian CPF — 11 digits with two mod-11 check digits
+        // and an explicit all-same-digit rejection (the Brazilian
+        // RFB publishes that all-repeating CPFs coincidentally
+        // satisfy the checksum arithmetic and must be rejected).
+        "Brazil CPF" => is_valid_brazil_cpf(matched_text),
+        // Dutch BSN — 9-digit "eleven-test" (weights 9..2, -1;
+        // sum mod 11 == 0). The bare `\b\d{9}\b` regex was
+        // firing on every 9-digit sequence before the validator.
+        "Netherlands BSN" => is_valid_netherlands_bsn(matched_text),
         // Chilean RUT/RUN — 8-9 chars with a mod-11 check digit
         // (can be 0-9 or K). Similar story: always-run, no context
         // gate, bare digit regex — the checksum is the only real
@@ -1112,6 +1402,159 @@ mod tests {
     }
 
     #[test]
+    fn test_netherlands_bsn_valid() {
+        // Hand-verified eleven-test values.
+        // 111222333: 1*9+1*8+1*7+2*6+2*5+2*4+3*3+3*2+3*-1
+        //          = 9+8+7+12+10+8+9+6-3 = 66, 66 % 11 == 0 ✓
+        assert!(is_valid_netherlands_bsn("111222333"));
+        // 123456782: 1*9+2*8+3*7+4*6+5*5+6*4+7*3+8*2+2*-1
+        //          = 9+16+21+24+25+24+21+16-2 = 154, 154 % 11 == 0 ✓
+        assert!(is_valid_netherlands_bsn("123456782"));
+    }
+
+    #[test]
+    fn test_netherlands_bsn_invalid() {
+        // Bumped last digit.
+        assert!(!is_valid_netherlands_bsn("111222334"));
+        assert!(!is_valid_netherlands_bsn("123456783"));
+        // Sentinel all-zeros.
+        assert!(!is_valid_netherlands_bsn("000000000"));
+        // The blind-test FP residue — `441234567` is the digit
+        // substring of `+441234567` (a too-short UK phone) that
+        // the Netherlands BSN regex was firing on.
+        assert!(!is_valid_netherlands_bsn("441234567"));
+        // Wrong length (too long).
+        assert!(!is_valid_netherlands_bsn("1234567890"));
+        // 8-digit form that gets zero-padded but still fails.
+        // Padded: "012345678" → sum 104 % 11 = 5, not divisible.
+        assert!(!is_valid_netherlands_bsn("12345678"));
+    }
+
+    #[test]
+    fn test_brazil_cpf_valid() {
+        // Hand-verified against both mod-11 check digits.
+        //   52998224725: first check 2 (sum 295*10%11), second
+        //                check 5 (sum 347*10%11)
+        //   11144477735: first check 3, second check 5
+        assert!(is_valid_brazil_cpf("52998224725"));
+        assert!(is_valid_brazil_cpf("529.982.247-25"));
+        assert!(is_valid_brazil_cpf("11144477735"));
+    }
+
+    #[test]
+    fn test_brazil_cpf_invalid() {
+        // Bumped second check digit.
+        assert!(!is_valid_brazil_cpf("52998224724"));
+        assert!(!is_valid_brazil_cpf("11144477734"));
+        // All-same sentinels — RFB explicitly rejects these
+        // even though the checksum arithmetic passes for them.
+        assert!(!is_valid_brazil_cpf("00000000000"));
+        assert!(!is_valid_brazil_cpf("11111111111"));
+        assert!(!is_valid_brazil_cpf("99999999999"));
+        // The blind-test FP residue.
+        assert!(!is_valid_brazil_cpf("10000000000"));
+        assert!(!is_valid_brazil_cpf("15551234567"));
+        // Wrong length.
+        assert!(!is_valid_brazil_cpf("5299822472"));
+        assert!(!is_valid_brazil_cpf("529982247250"));
+    }
+
+    #[test]
+    fn test_aba_routing_valid() {
+        // Well-known real ABA routing numbers (hand-verified
+        // weighted mod-10). All also satisfy the district prefix
+        // gate.
+        assert!(is_valid_aba_routing("021000021")); // JPMorgan Chase NY
+        assert!(is_valid_aba_routing("026009593")); // Bank of America
+        assert!(is_valid_aba_routing("121000248")); // Wells Fargo SF
+        assert!(is_valid_aba_routing("111000025")); // Federal Reserve Dallas
+    }
+
+    #[test]
+    fn test_aba_routing_invalid() {
+        // Bumped check digit.
+        assert!(!is_valid_aba_routing("021000022"));
+        assert!(!is_valid_aba_routing("026009594"));
+        // Invalid prefix (first two digits out of the published
+        // Federal Reserve / thrift / EFT ranges).
+        assert!(!is_valid_aba_routing("441234567")); // prefix 44 not allocated
+        assert!(!is_valid_aba_routing("991234567")); // prefix 99 not allocated
+        assert!(!is_valid_aba_routing("501234567")); // prefix 50 not allocated
+        // All-same sentinel.
+        assert!(!is_valid_aba_routing("000000000"));
+        assert!(!is_valid_aba_routing("111111111"));
+        // Wrong length.
+        assert!(!is_valid_aba_routing("02100002"));
+        assert!(!is_valid_aba_routing("0210000210"));
+    }
+
+    #[test]
+    fn test_belgium_nrn_valid() {
+        // Hand-verified Belgian NRN test values.
+        // 85.07.30-033.28: DOB 1985-07-30, serial 033, check 28.
+        // first9 = 850730033
+        // 850730033 % 97 = ?  850730033 / 97 = 8770412.70...
+        // 97 * 8770412 = 850729964
+        // 850730033 - 850729964 = 69 → 97 - 69 = 28 ✓
+        assert!(is_valid_belgium_nrn("85073003328"));
+        assert!(is_valid_belgium_nrn("85.07.30-033.28"));
+    }
+
+    #[test]
+    fn test_belgium_nrn_invalid() {
+        // Bumped check digit.
+        assert!(!is_valid_belgium_nrn("85073003329"));
+        // Invalid month.
+        assert!(!is_valid_belgium_nrn("85133003328"));
+        // Invalid day.
+        assert!(!is_valid_belgium_nrn("85073203328"));
+        // All-same sentinels.
+        assert!(!is_valid_belgium_nrn("00000000000"));
+        assert!(!is_valid_belgium_nrn("11111111111"));
+        // The blind-test FP class that slipped past Germany
+        // Tax ID and then PESEL.
+        assert!(!is_valid_belgium_nrn("10000000000"));
+        assert!(!is_valid_belgium_nrn("19999999999"));
+        assert!(!is_valid_belgium_nrn("15551234567"));
+        // Wrong length.
+        assert!(!is_valid_belgium_nrn("8507300332"));
+        assert!(!is_valid_belgium_nrn("850730033280"));
+    }
+
+    #[test]
+    fn test_poland_pesel_valid() {
+        // Hand-verified PESEL test values:
+        //   44051401458: DOB 1944-05-14 male, sum=102→check 8 ✓
+        //   02070803628: DOB 1902-07-08 female, sum=132→check 8 ✓
+        assert!(is_valid_poland_pesel("44051401458"));
+        assert!(is_valid_poland_pesel("02070803628"));
+    }
+
+    #[test]
+    fn test_poland_pesel_invalid() {
+        // Bumped check digit.
+        assert!(!is_valid_poland_pesel("44051401457"));
+        assert!(!is_valid_poland_pesel("02070803629"));
+        // All-same sentinels.
+        assert!(!is_valid_poland_pesel("00000000000"));
+        assert!(!is_valid_poland_pesel("11111111111"));
+        // Invalid month (13 → 13 % 20 = 13, not in 1..=12).
+        assert!(!is_valid_poland_pesel("44131401458"));
+        // Invalid day (32).
+        assert!(!is_valid_poland_pesel("44053201458"));
+        // Wrong length.
+        assert!(!is_valid_poland_pesel("4405140145"));
+        assert!(!is_valid_poland_pesel("440514014580"));
+        // These MUST pass the old bare-regex `\b\d{11}\b` but
+        // fail the new validator — they're the FP residue
+        // exposed when Germany Tax ID was fixed and PESEL took
+        // over the always-run 11-digit-digit match:
+        assert!(!is_valid_poland_pesel("10000000000"));
+        assert!(!is_valid_poland_pesel("19999999999"));
+        assert!(!is_valid_poland_pesel("15551234567"));
+    }
+
+    #[test]
     fn test_germany_tax_id_valid() {
         // 47036892816 — hand-verified ISO 7064 MOD 11,10 trace,
         // check digit computes to 6 exactly.
@@ -1131,6 +1574,20 @@ mod tests {
         // All-same sentinels.
         assert!(!is_valid_germany_tax_id("11111111111"));
         assert!(!is_valid_germany_tax_id("00000000000"));
+        // Digit-frequency sentinels. `10000000000` satisfies MOD
+        // 11,10 by coincidence (check digit 0, first 10 = "1" +
+        // nine "0"s → product 1 → check 0). Without the
+        // digit-frequency gate it passes the checksum path; with
+        // the gate it's rejected because only 2 distinct digits
+        // appear in positions 0-9, below the 7-distinct floor.
+        assert!(!is_valid_germany_tax_id("10000000000"));
+        // Another MOD-11,10 coincidence: "19999999999" = "1"
+        // followed by ten "9"s. Digit '9' appears 10 times,
+        // violating both the distinct-count and max-count rules.
+        assert!(!is_valid_germany_tax_id("19999999999"));
+        // Near-valid but too repetitive: 4 distinct digits, one
+        // appearing 4 times. Fails max_count > 3.
+        assert!(!is_valid_germany_tax_id("11112345678"));
         // Wrong length.
         assert!(!is_valid_germany_tax_id("1234567890"));
         assert!(!is_valid_germany_tax_id("123456789012"));
