@@ -214,8 +214,19 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "GPS Coordinates",
         "PAN",
         "VIN",
+        // IMEI has a Luhn check digit and a dedicated validator in
+        // validation::validate_match, so it's safe to always-run: any
+        // 15-digit sequence that isn't a real IMEI gets dropped at the
+        // validator.
         "IMEI",
-        "IMEISV",
+        // IMEISV is deliberately NOT in this list any more. Its last
+        // 2 digits are a Software Version (not a checksum), so the
+        // pattern has no structural discipline beyond "16 digits" —
+        // every 16-digit invoice number, Luhn-failing credit card, or
+        // serial sequence would fire it. We now require an IMEISV
+        // keyword to be in range (see `is_context_required` in
+        // src/models.rs), which means CRITICAL_ALWAYS_RUN membership
+        // would defeat the gate and reintroduce the blind-test FPs.
         "MEID",
         // Financial
         "ABA Routing Number",

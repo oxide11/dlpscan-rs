@@ -228,6 +228,237 @@ pub fn is_valid_australia_tfn(tfn: &str) -> bool {
     sum % 11 == 0
 }
 
+/// Valid IBAN lengths by ISO 13616 country code. Rejects anything
+/// outside this table so `XX99...` with a fake country code can't
+/// pass validation even when the mod-97 check happens to equal 1.
+static IBAN_LENGTHS: &[(&str, usize)] = &[
+    ("AD", 24), ("AE", 23), ("AL", 28), ("AT", 20), ("AZ", 28),
+    ("BA", 20), ("BE", 16), ("BG", 22), ("BH", 22), ("BR", 29),
+    ("BY", 28), ("CH", 21), ("CR", 22), ("CY", 28), ("CZ", 24),
+    ("DE", 22), ("DK", 18), ("DO", 28), ("EE", 20), ("EG", 29),
+    ("ES", 24), ("FI", 18), ("FO", 18), ("FR", 27), ("GB", 22),
+    ("GE", 22), ("GI", 23), ("GL", 18), ("GR", 27), ("GT", 28),
+    ("HR", 21), ("HU", 28), ("IE", 22), ("IL", 23), ("IQ", 23),
+    ("IS", 26), ("IT", 27), ("JO", 30), ("KW", 30), ("KZ", 20),
+    ("LB", 28), ("LC", 32), ("LI", 21), ("LT", 20), ("LU", 20),
+    ("LV", 21), ("LY", 25), ("MC", 27), ("MD", 24), ("ME", 22),
+    ("MK", 19), ("MR", 27), ("MT", 31), ("MU", 30), ("NL", 18),
+    ("NO", 15), ("PK", 24), ("PL", 28), ("PS", 29), ("PT", 25),
+    ("QA", 29), ("RO", 24), ("RS", 22), ("SA", 24), ("SC", 31),
+    ("SD", 18), ("SE", 24), ("SI", 19), ("SK", 24), ("SM", 27),
+    ("ST", 25), ("SV", 28), ("TL", 23), ("TN", 24), ("TR", 26),
+    ("UA", 29), ("VA", 22), ("VG", 24), ("XK", 20),
+];
+
+/// Validate an IBAN (International Bank Account Number) using the
+/// ISO 13616 mod-97 check. IBANs are written as
+/// `CC KK BBAN` where CC is the country code, KK is the 2-digit
+/// check, and BBAN is the country-specific basic account number.
+///
+/// Algorithm:
+///   1. Strip spaces.
+///   2. Reject lengths that don't match the per-country ISO table.
+///   3. Move the first 4 characters to the end.
+///   4. Replace each letter with a 2-digit number (A=10, B=11, ..., Z=35).
+///   5. Compute the resulting big integer mod 97; valid iff result == 1.
+///
+/// Returns `true` if the IBAN is structurally valid.
+pub fn is_valid_iban(iban: &str) -> bool {
+    // Strip spaces and non-ASCII. IBANs are uppercase ASCII only.
+    let compact: String = iban
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let bytes = compact.as_bytes();
+    if bytes.len() < 15 || bytes.len() > 34 {
+        return false;
+    }
+    // First two chars must be ASCII letters; next two must be digits.
+    if !bytes[0].is_ascii_alphabetic()
+        || !bytes[1].is_ascii_alphabetic()
+        || !bytes[2].is_ascii_digit()
+        || !bytes[3].is_ascii_digit()
+    {
+        return false;
+    }
+    // Country-specific length gate. Reject unknown country codes
+    // outright — "XX99..." is not a real IBAN no matter what the
+    // check digit computes to.
+    let country = &compact[..2];
+    let expected_len = match IBAN_LENGTHS.iter().find(|(cc, _)| *cc == country) {
+        Some((_, len)) => *len,
+        None => return false,
+    };
+    if compact.len() != expected_len {
+        return false;
+    }
+    // The remaining characters must be ASCII alphanumeric.
+    for &b in &bytes[4..] {
+        if !b.is_ascii_alphanumeric() {
+            return false;
+        }
+    }
+    // Rearrange: move first 4 chars to the end, then convert letters
+    // to digits (A=10..Z=35).
+    let rearranged: String = compact[4..]
+        .chars()
+        .chain(compact[..4].chars())
+        .collect();
+    let mut numeric = String::with_capacity(rearranged.len() * 2);
+    for c in rearranged.chars() {
+        if let Some(d) = c.to_digit(10) {
+            numeric.push_str(&d.to_string());
+        } else if c.is_ascii_uppercase() {
+            numeric.push_str(&(c as u32 - 'A' as u32 + 10).to_string());
+        } else {
+            return false;
+        }
+    }
+    // Mod 97 via running remainder — avoids big-integer math.
+    // We process digits left-to-right; at each step,
+    //   remainder = (remainder * 10 + next_digit) mod 97
+    let mut remainder: u32 = 0;
+    for c in numeric.chars() {
+        let d = c.to_digit(10).unwrap_or(0);
+        remainder = (remainder * 10 + d) % 97;
+    }
+    remainder == 1
+}
+
+/// Validate a Canadian Social Insurance Number using the Luhn check.
+/// SINs are 9 digits (often formatted `123-456-789`) and use the
+/// standard Luhn algorithm. Also rejects the all-zeros sentinel
+/// which Luhn accepts but which is never a real SIN.
+pub fn is_valid_canada_sin(sin: &str) -> bool {
+    let digits: Vec<u32> = sin
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 9 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == 0) {
+        return false;
+    }
+    // Standard Luhn on 9 digits.
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(idx, &d)| {
+            if idx % 2 == 1 {
+                let doubled = d * 2;
+                if doubled > 9 { doubled - 9 } else { doubled }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum % 10 == 0
+}
+
+/// Validate an ISIN (International Securities Identification Number)
+/// check digit. ISINs are 12 characters: 2 letters (country code) +
+/// 9 alphanumeric + 1 digit. The check digit is computed by the
+/// Luhn algorithm applied to the numeric expansion of the first 11
+/// characters (letters A=10..Z=35 expand to 2 digits each).
+pub fn is_valid_isin(isin: &str) -> bool {
+    let chars: Vec<char> = isin.chars().collect();
+    if chars.len() != 12 {
+        return false;
+    }
+    // First two must be letters; last must be a digit.
+    if !chars[0].is_ascii_alphabetic() || !chars[1].is_ascii_alphabetic() {
+        return false;
+    }
+    if !chars[11].is_ascii_digit() {
+        return false;
+    }
+    // Expand first 11 chars to their numeric representation.
+    let mut digits = Vec::with_capacity(22);
+    for &c in &chars[..11] {
+        if let Some(d) = c.to_digit(10) {
+            digits.push(d);
+        } else if c.is_ascii_uppercase() {
+            let v = c as u32 - 'A' as u32 + 10;
+            digits.push(v / 10);
+            digits.push(v % 10);
+        } else {
+            return false;
+        }
+    }
+    // Luhn on the expanded digits, with the check digit at chars[11].
+    // Standard Luhn processes from right to left doubling every
+    // other digit starting with the rightmost (the check digit).
+    // We append the check digit and compute a 0 remainder.
+    digits.push(chars[11].to_digit(10).unwrap());
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(idx, &d)| {
+            if idx % 2 == 1 {
+                let doubled = d * 2;
+                if doubled > 9 { doubled - 9 } else { doubled }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum % 10 == 0
+}
+
+/// Structural sanity check for a phone number. Extracts the digits
+/// from a matched phone string and rejects implausible variants:
+///
+///   * Fewer than 8 or more than 15 digits total.
+///   * All digits the same (e.g. `+10000000000`, `+19999999999`) —
+///     test-data noise, never a real phone.
+///
+/// This is intentionally conservative: it's a "reject garbage that
+/// the regex let through" gate, not a "this is a valid number in
+/// country X" gate. Real numbering-plan validation would need a
+/// country-by-country table that we don't ship.
+pub fn is_plausible_phone(phone: &str) -> bool {
+    let digits: Vec<u32> = phone
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    // E.164 is technically 7-15 digits, but 7-digit international
+    // numbers are an edge case that doesn't justify the FP volume
+    // that the loose minimum lets through. 8 is a safer floor.
+    if digits.len() < 8 || digits.len() > 15 {
+        return false;
+    }
+    // All-same-digit sentinels: 000..., 111..., ..., 999...
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    // Reject runs of the same digit long enough to dominate the
+    // number — e.g. +10000000000 has a leading 1 plus ten zeros,
+    // which the all-same check misses but is still obvious noise.
+    // Count the longest same-digit run; if it's >= digits.len() - 1,
+    // treat the number as non-plausible.
+    let mut longest_run = 1usize;
+    let mut current_run = 1usize;
+    for pair in digits.windows(2) {
+        if pair[0] == pair[1] {
+            current_run += 1;
+            if current_run > longest_run {
+                longest_run = current_run;
+            }
+        } else {
+            current_run = 1;
+        }
+    }
+    if longest_run >= digits.len().saturating_sub(1) {
+        return false;
+    }
+    true
+}
+
 /// Validate a US Social Security Number for structural correctness.
 /// Rejects invalid area numbers (000, 666, 900-999) and group/serial all-zeros.
 pub fn is_valid_ssn(ssn: &str) -> bool {
@@ -274,6 +505,32 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         "CUSIP" => is_valid_cusip(matched_text),
         "SEDOL" => is_valid_sedol(matched_text),
         "Australia TFN" => is_valid_australia_tfn(matched_text),
+        // IBAN — ISO 13616 mod-97 check. Before wiring this, every
+        // structurally IBAN-shaped string (country code + 2 digits +
+        // 11-30 alphanumeric) was accepted regardless of whether the
+        // check digits were consistent. Real IBANs now pass, forged
+        // check digits no longer fire.
+        "IBAN Generic" => is_valid_iban(matched_text),
+        // Canadian SIN — 9 digits, standard Luhn. Without this, every
+        // 9-digit sequence near a SIN keyword was flagged as a SIN,
+        // including obvious sentinels like 000-000-000.
+        "Canada SIN" => is_valid_canada_sin(matched_text),
+        // ISIN — modified Luhn on the alphanumeric expansion of
+        // positions 1-11 against the digit check at position 12.
+        // This closes a nasty category of RAMQ / random-alphanum
+        // FPs where a 2-letter-then-10-alphanum string was being
+        // labeled as a security identifier with no structural check.
+        "ISIN" => is_valid_isin(matched_text),
+        // Phone structural gate — rejects all-same-digit and
+        // near-all-same-digit numbers that the permissive phone
+        // regexes would otherwise accept. The gate is conservative
+        // (no country-specific numbering plan validation) but it
+        // closes the `+10000000000` / `+19999999999` class of
+        // obvious test-data false positives surfaced by the blind
+        // harness.
+        "E.164 Phone Number" | "US Phone Number" | "UK Phone Number" => {
+            is_plausible_phone(matched_text)
+        }
         // PAN lives under the "Primary Account Numbers" category, NOT
         // "Credit Card Numbers", so the early-return above doesn't catch
         // it. The PAN regex is `\b\d{4}[sep?]\d{4}[sep?]\d{4}[sep?]\d{1,7}\b`
@@ -292,6 +549,25 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // adding it here would silently drop every legitimate
         // masked-PAN match.
         "PAN" => is_luhn_valid(matched_text),
+        // IMEI is a 15-digit device identifier with a Luhn check digit.
+        // Without this validator the pattern happily matches any 15-digit
+        // sequence, including Luhn-failing 15-digit credit card numbers
+        // (Amex) that were correctly rejected by the brand-specific
+        // pre-validator. Those rejections bubble up as IMEI hits because
+        // IMEI is next-most-specific at the same digit length, and the
+        // blind-test harness surfaced this as "100% credit card FP rate."
+        // Luhn-gating IMEI closes that door cleanly — real IMEIs still
+        // pass, forged/invoice-shaped 15-digit numbers don't.
+        //
+        // IMEISV (16 digits) intentionally has NO Luhn validator here.
+        // IMEISV replaces the IMEI check digit with a 2-digit Software
+        // Version field, so the 16-digit form has no built-in checksum.
+        // Instead, IMEISV is switched to context_required = true (see
+        // `is_context_required` in src/models.rs) so it only fires when
+        // an IMEISV keyword is within 50 characters. That gate is what
+        // stops 16-digit invoice numbers and Luhn-failing 16-digit card
+        // numbers from being reported as device identifiers.
+        "IMEI" => is_luhn_valid(matched_text),
         _ => true, // No validator — accept
     }
 }
@@ -391,6 +667,140 @@ mod tests {
         assert!(validate_match(cat, "PAN", "4242424242424242"));
         // A real-shape Luhn-valid 16-digit number — must be accepted.
         assert!(validate_match(cat, "PAN", "4532015112830366"));
+    }
+
+    #[test]
+    fn test_plausible_phone_valid() {
+        // Real US number with country code.
+        assert!(is_plausible_phone("+14155552671"));
+        // Real UK number.
+        assert!(is_plausible_phone("+442079460007"));
+        // Without country code, just 10 digits.
+        assert!(is_plausible_phone("4155552671"));
+        // With formatting.
+        assert!(is_plausible_phone("+1 (415) 555-2671"));
+        // Minimum-length (8 digits).
+        assert!(is_plausible_phone("12345678"));
+    }
+
+    #[test]
+    fn test_plausible_phone_invalid() {
+        // All-same-digit sentinels.
+        assert!(!is_plausible_phone("+10000000000"));
+        assert!(!is_plausible_phone("+19999999999"));
+        assert!(!is_plausible_phone("0000000000"));
+        // Long run of the same digit with one outlier — the
+        // "+1 then ten zeros" shape the blind harness surfaced.
+        // digits.len() == 11, longest_run == 10 (of 0s), and
+        // 10 >= 11 - 1, so it's rejected.
+        assert!(!is_plausible_phone("+11111111119"));
+        // Too short.
+        assert!(!is_plausible_phone("1234567"));
+        assert!(!is_plausible_phone("+441234"));
+        // Too long.
+        assert!(!is_plausible_phone("1234567890123456"));
+    }
+
+    #[test]
+    fn test_iban_valid() {
+        // Canonical test IBANs from the ISO 13616 examples. Each of
+        // these passes the mod-97 check and matches its country's
+        // expected length.
+        assert!(is_valid_iban("DE89370400440532013000"));
+        assert!(is_valid_iban("GB82WEST12345698765432"));
+        assert!(is_valid_iban("FR1420041010050500013M02606"));
+        assert!(is_valid_iban("NL91ABNA0417164300"));
+        assert!(is_valid_iban("CH9300762011623852957"));
+        assert!(is_valid_iban("BE68539007547034"));
+        // Spaces are allowed — most real-world IBANs are written
+        // with 4-char groups.
+        assert!(is_valid_iban("DE89 3704 0044 0532 0130 00"));
+    }
+
+    #[test]
+    fn test_iban_invalid() {
+        // Bumped last digit → mod-97 fails.
+        assert!(!is_valid_iban("DE89370400440532013001"));
+        assert!(!is_valid_iban("GB82WEST12345698765433"));
+        assert!(!is_valid_iban("FR1420041010050500013M02607"));
+        // Unknown country code — XX is not in the ISO table.
+        assert!(!is_valid_iban("XX82WEST12345698765432"));
+        // Wrong length for country (DE is 22, this is 21).
+        assert!(!is_valid_iban("DE8937040044053201300"));
+        // Too short to be any IBAN.
+        assert!(!is_valid_iban("DE89"));
+        // Non-alphanumeric in the BBAN.
+        assert!(!is_valid_iban("DE89370400440532.13000"));
+    }
+
+    #[test]
+    fn test_canada_sin_valid() {
+        // 046-454-286 is a commonly-published Luhn-valid test SIN.
+        assert!(is_valid_canada_sin("046-454-286"));
+        assert!(is_valid_canada_sin("046454286"));
+    }
+
+    #[test]
+    fn test_canada_sin_invalid() {
+        // Bumped check digit.
+        assert!(!is_valid_canada_sin("046-454-287"));
+        // Sequential digits — sum = 47, fails Luhn.
+        assert!(!is_valid_canada_sin("123-456-789"));
+        // All-ones sequence — sum = 13, fails Luhn. (Don't use
+        // 111-111-118: that one happens to pass Luhn by coincidence,
+        // sum = 20.)
+        assert!(!is_valid_canada_sin("111-111-111"));
+        // Sentinel all-zeros — passes Luhn arithmetically but we
+        // reject it explicitly because no real SIN is all zeros.
+        assert!(!is_valid_canada_sin("000-000-000"));
+        // Wrong digit count.
+        assert!(!is_valid_canada_sin("12345678"));
+        assert!(!is_valid_canada_sin("1234567890"));
+    }
+
+    #[test]
+    fn test_isin_valid() {
+        // Published ISIN test values with correct Luhn check digits.
+        assert!(is_valid_isin("US0378331005")); // Apple
+        assert!(is_valid_isin("US5949181045")); // Microsoft
+        assert!(is_valid_isin("GB0002634946")); // BAE Systems
+        assert!(is_valid_isin("DE000BASF111")); // BASF
+    }
+
+    #[test]
+    fn test_isin_invalid() {
+        // Wrong check digit.
+        assert!(!is_valid_isin("US0378331006"));
+        // RAMQ-shaped "4 letters + 8 digits" — used to fire the ISIN
+        // pattern at runtime because the pattern had no checksum.
+        assert!(!is_valid_isin("ABCD12345678"));
+        assert!(!is_valid_isin("DUPO99123456"));
+        assert!(!is_valid_isin("TREF98765432"));
+        // Wrong length.
+        assert!(!is_valid_isin("US037833100"));
+        assert!(!is_valid_isin("US03783310055"));
+        // Final char not a digit.
+        assert!(!is_valid_isin("US037833100X"));
+    }
+
+    #[test]
+    fn test_validate_match_imei_luhn_gates_invoice_numbers() {
+        // Regression: before this change the IMEI sub_category had no
+        // validator registered, so any 15-digit sequence that also
+        // matched the IMEI regex was accepted. That included Luhn-
+        // failing Amex-shaped card numbers (also 15 digits), which
+        // showed up in the blind-test report as "100% credit card
+        // false positives." After the fix, validate_match must run
+        // Luhn on IMEI exactly like PAN.
+        let cat = "Device Identifiers";
+        // Amex test numbers bumped by 1 → Luhn-invalid → must reject.
+        assert!(!validate_match(cat, "IMEI", "378282246310006"));
+        assert!(!validate_match(cat, "IMEI", "371449635398432"));
+        // Invoice-shaped 15-digit numbers that happen to fail Luhn.
+        assert!(!validate_match(cat, "IMEI", "123456789012345"));
+        // Real-shape Luhn-valid IMEI — must accept.
+        // IMEI 490154203237518 is a common test value that passes Luhn.
+        assert!(validate_match(cat, "IMEI", "490154203237518"));
     }
 
     #[test]
