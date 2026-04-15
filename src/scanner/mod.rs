@@ -159,7 +159,9 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         // passport keyword is present in the text.
         "USA Routing Number",
         "US Phone Number",
-        "US MBI",
+        // US MBI removed: context-gated via is_context_required
+        // (no published checksum; rely on keyword proximity +
+        // tight structural regex).
         "US NPI",
         // Canada
         "Canada SIN",

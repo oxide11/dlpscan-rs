@@ -349,5 +349,13 @@ pub fn is_context_required(sub_category: &str) -> bool {
             | "Australia Passport"         // 1-2 letters + 7 digits
             | "Australia Medicare"         // 4-6 + 9 digits (loose shape)
             | "Saudi Arabia National ID"   // 1 or 2 + 9 digits
+            // US MBI (Medicare Beneficiary Identifier) has a very
+            // tight 11-character structural pattern (specific
+            // digit/letter positions, excluded-letter alphabet)
+            // but NO published check digit. The regex alone is
+            // disciplined enough to mostly avoid FPs on arbitrary
+            // text, but context gating adds a safety rail and
+            // matches the treatment of US Passport / EIN / etc.
+            | "US MBI"
     )
 }

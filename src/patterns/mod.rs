@@ -1522,7 +1522,9 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[1-9][A-CEGHJ-NP-RT-Y](?:[0-9]|[A-CEGHJ-NP-RT-Y])[0-9][-.\s/\\_\x{2013}\x{2014}\x{00a0}]?[A-CEGHJ-NP-RT-Y](?:[0-9]|[A-CEGHJ-NP-RT-Y])[0-9][-.\s/\\_\x{2013}\x{2014}\x{00a0}]?[A-CEGHJ-NP-RT-Y]{2}[0-9]{2}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // No published check digit for MBI; context-gate on the
+        // `Medicare` / `MBI` keyword set.
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",

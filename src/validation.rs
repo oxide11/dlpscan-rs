@@ -1561,6 +1561,352 @@ pub fn is_valid_mexico_curp(curp: &str) -> bool {
     last == check
 }
 
+// ---------------------------------------------------------------------------
+// Checksum batch 3: Sweden PIN, Argentina CUIL/CUIT, Singapore NRIC,
+// Singapore FIN, Hong Kong ID, US NPI, UAE Emirates ID, Denmark CPR
+// (structural only), Italy SSN (aliased to Codice Fiscale).
+// ---------------------------------------------------------------------------
+
+/// Validate a Swedish personnummer (Personal Identification
+/// Number) using the standard Luhn check. The 10-digit form is
+/// `YYMMDD-XXXC` where the last digit is the Luhn check computed
+/// over the 9 preceding digits.
+pub fn is_valid_sweden_pin(pin: &str) -> bool {
+    let digits: Vec<u32> = pin
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 10 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    // DOB structural gate on the first 6 digits (YYMMDD).
+    let month = digits[2] * 10 + digits[3];
+    let day = digits[4] * 10 + digits[5];
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return false;
+    }
+    // Standard Luhn over all 10 digits.
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(idx, &d)| {
+            if idx % 2 == 1 {
+                let doubled = d * 2;
+                if doubled > 9 { doubled - 9 } else { doubled }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum % 10 == 0
+}
+
+/// Validate a Danish CPR (Central Person Register) number. CPR is
+/// 10 digits laid out as `DDMMYY-XXXX`. Historically there was a
+/// modulus-11 weighted check, but since 2007 Denmark has been
+/// issuing CPRs that deliberately fail the mod-11 check because
+/// the old system ran out of available combinations. This
+/// validator therefore performs only the structural DOB gate
+/// (day 1-31, month 1-12) and rejects all-same-digit sentinels.
+/// A stricter mod-11 check would false-negative on every CPR
+/// issued to anyone born after the rollover.
+pub fn is_valid_denmark_cpr(cpr: &str) -> bool {
+    let digits: Vec<u32> = cpr
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 10 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let day = digits[0] * 10 + digits[1];
+    let month = digits[2] * 10 + digits[3];
+    if !(1..=31).contains(&day) || !(1..=12).contains(&month) {
+        return false;
+    }
+    true
+}
+
+/// Validate an Argentinian CUIL/CUIT (11 digits) using the
+/// published weighted mod-11 check. Algorithm:
+///
+///   * positions 0-1: type prefix (20/23/24/27 for personal
+///     male/female/etc, 30/33 for corporate);
+///   * positions 2-9: base;
+///   * position 10: check digit.
+///   * weights `[5, 4, 3, 2, 7, 6, 5, 4, 3, 2]` applied to
+///     positions 0-9;
+///   * `check = 11 - (sum mod 11)`; map 11 → 0; map 10 → invalid
+///     (AFIP reserves check=10 as not issued).
+pub fn is_valid_argentina_cuil(id: &str) -> bool {
+    let digits: Vec<u32> = id
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 11 {
+        return false;
+    }
+    // Type prefix gate (matches the regex alternation).
+    let prefix = digits[0] * 10 + digits[1];
+    let valid_prefix = matches!(prefix, 20 | 23 | 24 | 27 | 30 | 33);
+    if !valid_prefix {
+        return false;
+    }
+    let weights = [5u32, 4, 3, 2, 7, 6, 5, 4, 3, 2];
+    let sum: u32 = digits[..10]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let r = sum % 11;
+    let check = if r == 0 {
+        0
+    } else if r == 1 {
+        return false; // AFIP reserves check=10 (from r=1) as not issued
+    } else {
+        11 - r
+    };
+    digits[10] == check
+}
+
+/// Singapore NRIC / FIN shared check computation. Weights are
+/// `[2, 7, 6, 5, 4, 3, 2]` applied to the 7 digits. Sum is offset
+/// by a prefix-specific value, then reduced mod 11, then looked
+/// up in a prefix-specific character table.
+///
+/// Returns the expected check letter, or `None` if the prefix
+/// isn't recognised.
+fn singapore_id_check_letter(prefix: char, digits: &[u32; 7]) -> Option<char> {
+    let weights = [2u32, 7, 6, 5, 4, 3, 2];
+    let base_sum: u32 = digits.iter().zip(weights.iter()).map(|(&d, &w)| d * w).sum();
+    // Prefix-specific offset.
+    let (offset, table) = match prefix {
+        // NRIC: S = pre-2000 resident, T = 2000+ resident.
+        'S' => (0u32, ['J', 'Z', 'I', 'H', 'G', 'F', 'E', 'D', 'C', 'B', 'A']),
+        'T' => (4u32, ['J', 'Z', 'I', 'H', 'G', 'F', 'E', 'D', 'C', 'B', 'A']),
+        // FIN: F = pre-2000 foreign, G = 2000+ foreign, M =
+        // post-2022 foreign. F/G share a table; M uses its own.
+        'F' => (0u32, ['X', 'W', 'U', 'T', 'R', 'Q', 'P', 'N', 'J', 'L', 'K']),
+        'G' => (4u32, ['X', 'W', 'U', 'T', 'R', 'Q', 'P', 'N', 'J', 'L', 'K']),
+        'M' => (3u32, ['K', 'L', 'J', 'N', 'P', 'Q', 'R', 'T', 'U', 'W', 'X']),
+        _ => return None,
+    };
+    let idx = ((base_sum + offset) % 11) as usize;
+    Some(table[idx])
+}
+
+/// Validate a Singapore NRIC (National Registration Identity
+/// Card) — 9 characters: `S` or `T` + 7 digits + check letter.
+pub fn is_valid_singapore_nric(nric: &str) -> bool {
+    let chars: Vec<char> = nric.chars().collect();
+    if chars.len() != 9 {
+        return false;
+    }
+    let prefix = chars[0].to_ascii_uppercase();
+    if prefix != 'S' && prefix != 'T' {
+        return false;
+    }
+    let mut digits = [0u32; 7];
+    for (i, &c) in chars[1..8].iter().enumerate() {
+        digits[i] = match c.to_digit(10) {
+            Some(d) => d,
+            None => return false,
+        };
+    }
+    let expected = match singapore_id_check_letter(prefix, &digits) {
+        Some(c) => c,
+        None => return false,
+    };
+    chars[8].to_ascii_uppercase() == expected
+}
+
+/// Validate a Singapore FIN (Foreign Identification Number) — 9
+/// characters: `F`, `G`, or `M` + 7 digits + check letter.
+pub fn is_valid_singapore_fin(fin: &str) -> bool {
+    let chars: Vec<char> = fin.chars().collect();
+    if chars.len() != 9 {
+        return false;
+    }
+    let prefix = chars[0].to_ascii_uppercase();
+    if prefix != 'F' && prefix != 'G' && prefix != 'M' {
+        return false;
+    }
+    let mut digits = [0u32; 7];
+    for (i, &c) in chars[1..8].iter().enumerate() {
+        digits[i] = match c.to_digit(10) {
+            Some(d) => d,
+            None => return false,
+        };
+    }
+    let expected = match singapore_id_check_letter(prefix, &digits) {
+        Some(c) => c,
+        None => return false,
+    };
+    chars[8].to_ascii_uppercase() == expected
+}
+
+/// Validate a Hong Kong Identity Card number. The number is
+/// 1-2 letters + 6 digits + 1 check character (digit or `A` for
+/// 10). The checksum is a weighted sum over 8 positions with the
+/// following rules:
+///
+///   * 1-letter prefix: pad position 0 with a space (value 36),
+///     so positions 0-7 = [space, letter, d1, d2, d3, d4, d5, d6].
+///   * 2-letter prefix: positions 0-7 = [L1, L2, d1..d6].
+///   * Letter values: A=1, B=2, …, Z=26.
+///   * Weights: `[8, 7, 6, 5, 4, 3, 2, 1]` for positions 0-7,
+///     plus weight 1 for the check position.
+///   * Sum must be ≡ 0 mod 11. The check character 'A' contributes
+///     value 10 to the sum.
+pub fn is_valid_hong_kong_id(id: &str) -> bool {
+    // Strip common formatting characters (parentheses around the
+    // check digit, whitespace between letter and digits).
+    let compact: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    let chars: Vec<char> = compact.chars().collect();
+    // 1-letter form: 8 chars total (L + 6 digits + check).
+    // 2-letter form: 9 chars total (LL + 6 digits + check).
+    let (prefix_vals, digit_start) = match chars.len() {
+        8 => {
+            if !chars[0].is_ascii_uppercase() {
+                return false;
+            }
+            let v1 = 36u32; // pad
+            let v2 = chars[0] as u32 - 'A' as u32 + 1;
+            ([v1, v2], 1)
+        }
+        9 => {
+            if !chars[0].is_ascii_uppercase() || !chars[1].is_ascii_uppercase() {
+                return false;
+            }
+            let v1 = chars[0] as u32 - 'A' as u32 + 1;
+            let v2 = chars[1] as u32 - 'A' as u32 + 1;
+            ([v1, v2], 2)
+        }
+        _ => return false,
+    };
+    // 6 digits at positions [digit_start..digit_start+6], then
+    // the check character at position digit_start+6.
+    let mut digits = [0u32; 6];
+    for (i, &c) in chars[digit_start..digit_start + 6].iter().enumerate() {
+        digits[i] = match c.to_digit(10) {
+            Some(d) => d,
+            None => return false,
+        };
+    }
+    let check_char = chars[digit_start + 6].to_ascii_uppercase();
+    let check_val: u32 = if check_char == 'A' {
+        10
+    } else if let Some(d) = check_char.to_digit(10) {
+        d
+    } else {
+        return false;
+    };
+    // Weighted sum: 8 positions with weights [8,7,6,5,4,3,2,1],
+    // then the check position with weight 1. Total must be 0 mod 11.
+    let weights = [8u32, 7, 6, 5, 4, 3, 2, 1];
+    let values = [
+        prefix_vals[0],
+        prefix_vals[1],
+        digits[0],
+        digits[1],
+        digits[2],
+        digits[3],
+        digits[4],
+        digits[5],
+    ];
+    let sum: u32 = values.iter().zip(weights.iter()).map(|(&v, &w)| v * w).sum();
+    (sum + check_val) % 11 == 0
+}
+
+/// Validate a US National Provider Identifier (NPI). NPI is 10
+/// digits; the check digit is computed via standard Luhn with
+/// the prefix `80840` (the ISO 7812-1 health-industry issuer
+/// identifier) prepended. Equivalently, run Luhn over the 15-digit
+/// string `"80840" + NPI` and require the final checksum to be 0.
+pub fn is_valid_us_npi(npi: &str) -> bool {
+    let digits: Vec<u32> = npi
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 10 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    // Regex already enforces leading 1 or 2 (type code), but
+    // double-check.
+    if digits[0] != 1 && digits[0] != 2 {
+        return false;
+    }
+    // Prepend 80840 and run standard Luhn.
+    let mut full: Vec<u32> = vec![8, 0, 8, 4, 0];
+    full.extend_from_slice(&digits);
+    let sum: u32 = full
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(idx, &d)| {
+            if idx % 2 == 1 {
+                let doubled = d * 2;
+                if doubled > 9 { doubled - 9 } else { doubled }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum % 10 == 0
+}
+
+/// Validate a UAE Emirates ID (15 digits, fixed `784` prefix).
+/// The 15th digit is the Luhn check computed over all 15 digits,
+/// so a valid Emirates ID satisfies `sum % 10 == 0` under standard
+/// Luhn.
+pub fn is_valid_uae_emirates_id(id: &str) -> bool {
+    let digits: Vec<u32> = id
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 15 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    // Fixed `784` prefix (UAE ISO 3166-1 country code).
+    if digits[0] != 7 || digits[1] != 8 || digits[2] != 4 {
+        return false;
+    }
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(idx, &d)| {
+            if idx % 2 == 1 {
+                let doubled = d * 2;
+                if doubled > 9 { doubled - 9 } else { doubled }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum % 10 == 0
+}
+
 /// Validate a German Tax ID (Steuer-Identifikationsnummer) using
 /// the ISO 7064 MOD 11,10 check digit. The Steuer-ID is an 11-digit
 /// number assigned by the Bundeszentralamt für Steuern; positions
@@ -1911,6 +2257,37 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // digit. Validates the embedded DOB + gender structure
         // plus the checksum.
         "Mexico CURP" => is_valid_mexico_curp(matched_text),
+        // Swedish personnummer — 10 digits with standard Luhn
+        // on all 10 digits, plus DOB structural gate.
+        "Sweden PIN" => is_valid_sweden_pin(matched_text),
+        // Danish CPR — structural DOB only. Modern CPRs
+        // deliberately fail mod-11 (see is_valid_denmark_cpr
+        // docstring), so we can't checksum this one.
+        "Denmark CPR" => is_valid_denmark_cpr(matched_text),
+        // Argentinian CUIL/CUIT — weighted mod-11 with valid
+        // type-prefix gate (20/23/24/27 personal, 30/33 corporate).
+        "Argentina CUIL/CUIT" => is_valid_argentina_cuil(matched_text),
+        // Singapore NRIC — letter + 7 digits + check letter,
+        // checksum looks up in a prefix-specific letter table.
+        "Singapore NRIC" => is_valid_singapore_nric(matched_text),
+        // Singapore FIN — same algorithm as NRIC but with
+        // different prefix letters (F/G/M) and a different letter
+        // table for M.
+        "Singapore FIN" => is_valid_singapore_fin(matched_text),
+        // Hong Kong Identity Card — 1-2 letter prefix + 6 digits
+        // + check char, weighted sum over letter+digit values
+        // with space-padding for the 1-letter form.
+        "Hong Kong ID" => is_valid_hong_kong_id(matched_text),
+        // US NPI — 10-digit National Provider Identifier with
+        // Luhn check over the ISO-7812 prefix `80840` + NPI.
+        "US NPI" => is_valid_us_npi(matched_text),
+        // UAE Emirates ID — 15 digits with fixed `784` prefix
+        // and Luhn check on all 15.
+        "UAE Emirates ID" => is_valid_uae_emirates_id(matched_text),
+        // Italian "SSN" pattern shares the Codice Fiscale
+        // check-letter algorithm — it's a slightly looser regex
+        // variant of the same ID. Wire it to the same validator.
+        "Italy SSN" => is_valid_italy_codice_fiscale(matched_text),
         // Dutch BSN — 9-digit "eleven-test" (weights 9..2, -1;
         // sum mod 11 == 0). The bare `\b\d{9}\b` regex was
         // firing on every 9-digit sequence before the validator.
@@ -2096,6 +2473,219 @@ mod tests {
         // 8-digit form that gets zero-padded but still fails.
         // Padded: "012345678" → sum 104 % 11 = 5, not divisible.
         assert!(!is_valid_netherlands_bsn("12345678"));
+    }
+
+    #[test]
+    fn test_sweden_pin_valid() {
+        // 8112189876 — hand-verified. Luhn sum = 50, mod 10 = 0.
+        assert!(is_valid_sweden_pin("8112189876"));
+        // Hyphen form (regex allows separator).
+        assert!(is_valid_sweden_pin("811218-9876"));
+    }
+
+    #[test]
+    fn test_sweden_pin_invalid() {
+        // Bumped last digit.
+        assert!(!is_valid_sweden_pin("8112189877"));
+        // Invalid month (13).
+        assert!(!is_valid_sweden_pin("8113189876"));
+        // Invalid day (32).
+        assert!(!is_valid_sweden_pin("8112329876"));
+        // All-same sentinels.
+        assert!(!is_valid_sweden_pin("0000000000"));
+        assert!(!is_valid_sweden_pin("9999999999"));
+        // Wrong length.
+        assert!(!is_valid_sweden_pin("811218987"));
+        assert!(!is_valid_sweden_pin("81121898765"));
+    }
+
+    #[test]
+    fn test_denmark_cpr_valid() {
+        // Structural only — modern CPRs don't satisfy mod-11.
+        // 0705624995 = 07 May 1962, serial 4995.
+        assert!(is_valid_denmark_cpr("0705624995"));
+        // Dashed form.
+        assert!(is_valid_denmark_cpr("070562-4995"));
+        // Day 31, month 12.
+        assert!(is_valid_denmark_cpr("3112990001"));
+    }
+
+    #[test]
+    fn test_denmark_cpr_invalid() {
+        // Day 00.
+        assert!(!is_valid_denmark_cpr("0005624995"));
+        // Day 32.
+        assert!(!is_valid_denmark_cpr("3205624995"));
+        // Month 00.
+        assert!(!is_valid_denmark_cpr("0700624995"));
+        // Month 13.
+        assert!(!is_valid_denmark_cpr("0713624995"));
+        // All-same sentinels.
+        assert!(!is_valid_denmark_cpr("0000000000"));
+        // Wrong length.
+        assert!(!is_valid_denmark_cpr("070562499"));
+        assert!(!is_valid_denmark_cpr("07056249950"));
+    }
+
+    #[test]
+    fn test_argentina_cuil_valid() {
+        // 20123456786 — hand-verified. weights [5,4,3,2,7,6,5,4,3,2]
+        // sum = 148, mod 11 = 5, check = 6 ✓.
+        assert!(is_valid_argentina_cuil("20123456786"));
+        // Dashed form (CUIL is commonly written XX-XXXXXXXX-X).
+        assert!(is_valid_argentina_cuil("20-12345678-6"));
+        // 30500001735 — hand-verified. sum = 61, mod 11 = 6,
+        // check = 5 ✓.
+        assert!(is_valid_argentina_cuil("30500001735"));
+    }
+
+    #[test]
+    fn test_argentina_cuil_invalid() {
+        // Bumped check digit.
+        assert!(!is_valid_argentina_cuil("20123456787"));
+        assert!(!is_valid_argentina_cuil("30500001736"));
+        // Invalid type prefix (21 not in AFIP list).
+        assert!(!is_valid_argentina_cuil("21123456786"));
+        // All-same sentinels.
+        assert!(!is_valid_argentina_cuil("00000000000"));
+        assert!(!is_valid_argentina_cuil("11111111111"));
+        // Wrong length.
+        assert!(!is_valid_argentina_cuil("2012345678"));
+        assert!(!is_valid_argentina_cuil("201234567867"));
+    }
+
+    #[test]
+    fn test_singapore_nric_valid() {
+        // S0000001I — hand-verified. weights [2,7,6,5,4,3,2]
+        // sum = 2, S_TABLE[2] = 'I' ✓.
+        assert!(is_valid_singapore_nric("S0000001I"));
+        // S1234567D — hand-verified. sum = 106, mod 11 = 7,
+        // S_TABLE[7] = 'D' ✓.
+        assert!(is_valid_singapore_nric("S1234567D"));
+        // Lowercase also accepted.
+        assert!(is_valid_singapore_nric("s1234567d"));
+    }
+
+    #[test]
+    fn test_singapore_nric_invalid() {
+        // Bumped check letter.
+        assert!(!is_valid_singapore_nric("S0000001J"));
+        assert!(!is_valid_singapore_nric("S1234567E"));
+        // Wrong prefix (F is FIN, not NRIC).
+        assert!(!is_valid_singapore_nric("F1234567D"));
+        // Non-digit in the payload.
+        assert!(!is_valid_singapore_nric("S123456AD"));
+        // Wrong length.
+        assert!(!is_valid_singapore_nric("S123456D"));
+        assert!(!is_valid_singapore_nric("S12345678D"));
+    }
+
+    #[test]
+    fn test_singapore_fin_valid() {
+        // F1234567N — hand-verified. sum = 106, mod 11 = 7,
+        // F_TABLE[7] = 'N' ✓.
+        assert!(is_valid_singapore_fin("F1234567N"));
+        // G with offset +4: sum = 110, mod 11 = 0, F_TABLE[0] = 'X'.
+        assert!(is_valid_singapore_fin("G1234567X"));
+    }
+
+    #[test]
+    fn test_singapore_fin_invalid() {
+        // Bumped check letter.
+        assert!(!is_valid_singapore_fin("F1234567O"));
+        assert!(!is_valid_singapore_fin("G1234567Y"));
+        // Wrong prefix (S is NRIC, not FIN).
+        assert!(!is_valid_singapore_fin("S1234567N"));
+        // Wrong length.
+        assert!(!is_valid_singapore_fin("F123456N"));
+    }
+
+    #[test]
+    fn test_hong_kong_id_valid() {
+        // 1-letter form (8 chars: L + 6 digits + check).
+        // Z683322A — hand-verified. Padded space(36), Z=26,
+        // 6,8,3,3,2,2; weighted sum = 573; + 10 (A=10) = 583;
+        // 583 = 53*11 → mod 11 = 0 ✓.
+        assert!(is_valid_hong_kong_id("Z683322A"));
+        assert!(is_valid_hong_kong_id("Z683322(A)"));
+        // A1111113 — hand-verified. Padded space(36), A=1,
+        // 1,1,1,1,1,1; weighted sum = 316; + 3 = 319; 319 = 29*11
+        // → mod 11 = 0 ✓.
+        assert!(is_valid_hong_kong_id("A1111113"));
+        // 2-letter form (9 chars): AB123456A —
+        // values 1,2,1,2,3,4,5,6; weights 8..1; sum = 78;
+        // + 10 (A=10) = 88; 88 = 8*11 → mod 11 = 0 ✓.
+        assert!(is_valid_hong_kong_id("AB123456A"));
+        assert!(is_valid_hong_kong_id("AB123456(A)"));
+    }
+
+    #[test]
+    fn test_hong_kong_id_invalid() {
+        // Bumped check char on valid inputs.
+        assert!(!is_valid_hong_kong_id("Z6833220"));
+        assert!(!is_valid_hong_kong_id("A1111110"));
+        assert!(!is_valid_hong_kong_id("AB1234560"));
+        // Wrong length (no check, 7 chars).
+        assert!(!is_valid_hong_kong_id("A111111"));
+        // Lowercase prefix — rejected (spec is uppercase).
+        assert!(!is_valid_hong_kong_id("z683322a"));
+    }
+
+    #[test]
+    fn test_us_npi_valid() {
+        // 1234567893 — hand-verified. "80840" + "123456789" +
+        // check; Luhn on all 15 digits sums to 70, mod 10 = 0 ✓.
+        assert!(is_valid_us_npi("1234567893"));
+        // 1245319599 — hand-verified. Luhn sum = 80, mod 10 = 0 ✓.
+        assert!(is_valid_us_npi("1245319599"));
+    }
+
+    #[test]
+    fn test_us_npi_invalid() {
+        // Bumped check digit.
+        assert!(!is_valid_us_npi("1234567894"));
+        assert!(!is_valid_us_npi("1245319590"));
+        // Wrong type prefix (must be 1 or 2).
+        assert!(!is_valid_us_npi("3234567893"));
+        assert!(!is_valid_us_npi("0234567893"));
+        // All-same sentinels.
+        assert!(!is_valid_us_npi("1111111111"));
+        // Wrong length.
+        assert!(!is_valid_us_npi("123456789"));
+        assert!(!is_valid_us_npi("12345678934"));
+    }
+
+    #[test]
+    fn test_uae_emirates_id_valid() {
+        // 784197512345675 — hand-verified. 15 digits starting
+        // with 784, Luhn sum = 70, mod 10 = 0 ✓.
+        assert!(is_valid_uae_emirates_id("784197512345675"));
+        // Dashed form (regex allows separators).
+        assert!(is_valid_uae_emirates_id("784-1975-1234567-5"));
+    }
+
+    #[test]
+    fn test_uae_emirates_id_invalid() {
+        // Bumped check digit.
+        assert!(!is_valid_uae_emirates_id("784197512345674"));
+        // Wrong country prefix (UAE is fixed 784).
+        assert!(!is_valid_uae_emirates_id("785197512345675"));
+        assert!(!is_valid_uae_emirates_id("123197512345675"));
+        // All-same sentinels.
+        assert!(!is_valid_uae_emirates_id("000000000000000"));
+        // Wrong length.
+        assert!(!is_valid_uae_emirates_id("78419751234567"));
+        assert!(!is_valid_uae_emirates_id("7841975123456750"));
+    }
+
+    #[test]
+    fn test_italy_ssn_aliases_codice_fiscale() {
+        // Italy SSN regex is a slightly looser variant of the CF
+        // regex; the check-letter algorithm is the same. We wire
+        // Italy SSN to the CF validator, so any valid CF should
+        // also validate as Italy SSN.
+        assert!(is_valid_italy_codice_fiscale("MRTMTT25D09F205Z"));
+        assert!(is_valid_italy_codice_fiscale("BNCNRC65B01F205G"));
     }
 
     #[test]
