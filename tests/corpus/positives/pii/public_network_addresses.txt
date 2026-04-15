@@ -1,0 +1,11 @@
+Server log dump excerpt
+
+Connection log from the edge proxy:
+
+    [2024-11-02 14:22:01] inbound from 8.8.8.8 port 443
+    [2024-11-02 14:22:03] outbound to 93.184.216.34 port 443
+    [2024-11-02 14:22:05] IPv6 peer 2606:4700:4700::1111 established
+    [2024-11-02 14:22:09] device 3c:5a:b4:01:23:45 joined fabric
+    [2024-11-02 14:22:12] geo tag 37.7749,-122.4194 attached to session
+
+End of excerpt.

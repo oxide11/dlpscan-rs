@@ -16,6 +16,7 @@
 {"path":"positives/financial/iban_germany.txt","expected":[{"sub_category":"IBAN Generic","text":"DE89 3704 0044 0532 0130 00"}]}
 {"path":"positives/financial/aba_routing_us.txt","expected":[{"sub_category":"ABA Routing Number","text":"011000015"}]}
 {"path":"positives/financial/bitcoin_address.txt","expected":[{"sub_category":"Bitcoin Address (Bech32)","text":"bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"}]}
+{"path":"positives/pii/public_network_addresses.txt","expected":[{"sub_category":"IPv4 Address","text":"8.8.8.8"},{"sub_category":"IPv4 Address","text":"93.184.216.34"},{"sub_category":"IPv6 Address","text":"2606:4700:4700::1111"},{"sub_category":"MAC Address","text":"3c:5a:b4:01:23:45"},{"sub_category":"GPS Coordinates","text":"37.7749,-122.4194"}]}
 {"path":"negatives/product_codes_9digit.txt","forbidden":["USA SSN","USA Passport","US NPI"]}
 {"path":"negatives/invoice_numbers_luhn_fail.txt","forbidden":["Visa","MasterCard","Amex","Discover","JCB","Diners Club","UnionPay","PAN"]}
 {"path":"negatives/english_prose_clean.txt","forbidden":["USA SSN","Email Address","E.164 Phone Number","Visa","MasterCard","Amex","Discover","USA Passport","Bearer Token","JWT Token"]}
@@ -27,3 +28,4 @@
 {"path":"negatives/middle_east_checksum_invalid_ids.txt","forbidden":["UAE Emirates ID","Israel Teudat Zehut"]}
 {"path":"negatives/financial_checksum_invalid.txt","forbidden":["IBAN Generic","ISIN","ABA Routing Number","USA Routing Number","US NPI","Canada SIN"]}
 {"path":"negatives/phones_implausible.txt","forbidden":["E.164 Phone Number","US Phone Number","UK Phone Number"]}
+{"path":"negatives/network_reserved_ranges.txt","forbidden":["IPv4 Address","IPv6 Address","MAC Address","GPS Coordinates"]}
