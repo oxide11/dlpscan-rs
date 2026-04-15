@@ -110,8 +110,24 @@ static AC_MATCHER: Lazy<AcMatcherInner> = Lazy::new(|| {
         }
     }
 
+    // LeftmostLongest (not LeftmostFirst): when two keywords can start
+    // at the same position, prefer the longer one. With LeftmostFirst
+    // the AC matcher silently dropped longer keywords whose prefix was
+    // also registered earlier — e.g. the `"personal"` keyword (under
+    // `"Eyes Only"`) masked every hit on `"personalausweis"` (under
+    // `"Germany ID"`) because "Eyes Only" appears earlier in
+    // keywords.rs, so `"personal"` was added to the pattern table
+    // first and won the tiebreak at the match position. The AC only
+    // emits one hit per tiebreak, so the Germany ID hit never made
+    // it into the hit index, which in turn meant the Germany ID
+    // pattern was filtered out by the AC prefilter at
+    // scanner/mod.rs:303-309 — the pattern never ran and Germany IDs
+    // were silently undetected whenever they appeared next to their
+    // primary keyword. LeftmostLongest closes that whole class of
+    // bug: any keyword that is a strict prefix of another keyword no
+    // longer shadows it.
     let ac = AhoCorasickBuilder::new()
-        .match_kind(MatchKind::LeftmostFirst)
+        .match_kind(MatchKind::LeftmostLongest)
         .ascii_case_insensitive(true)
         .build(&patterns)
         .ok()?;

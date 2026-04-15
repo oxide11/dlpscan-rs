@@ -2242,7 +2242,16 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "Europe - United Kingdom",
         sub_category: "UK NIN",
-        regex: r"\b[A-CEGHJ-PR-TW-Z]{2}\d{6}[A-D]\b",
+        // UK National Insurance Numbers are canonically written as
+        // either the no-separator form `AB123456C` or the
+        // space-separated form `AB 12 34 56 C` (groups of 2 after
+        // the prefix pair). The previous regex accepted only the
+        // first form, so spaced NINs in real documents were missed
+        // — the blind harness reported 72% recall on this category
+        // and space-separation is the most likely gap. Accept
+        // optional whitespace / dashes / dots between each pair,
+        // same as the separator classes used elsewhere (SSN, etc.).
+        regex: r"\b[A-CEGHJ-PR-TW-Z]{2}[-.\s]?\d{2}[-.\s]?\d{2}[-.\s]?\d{2}[-.\s]?[A-D]\b",
         case_insensitive: false,
         specificity: 0.40,
         context_required: false,
@@ -2307,7 +2316,17 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "Europe - Germany",
         sub_category: "Germany ID",
-        regex: r"\b[CFGHJKLMNPRTVWXYZ0-9]{9}\b",
+        // German Personalausweis (new, post-2010): 9 alphanumeric
+        // characters from a restricted char set + 1 check digit,
+        // for a total of 10. The previous regex was `{9}`, which
+        // meant the trailing `\b` could never fire against a real
+        // 10-char ID (position 10 is a word char, no boundary
+        // mid-word) — the blind harness saw ~3.4% recall because
+        // the 10-char form never matched and only truncated /
+        // legacy 9-char samples slipped through. Accept both 9
+        // and 10 to cover legacy documents and modern ones without
+        // requiring a separate pattern.
+        regex: r"\b[CFGHJKLMNPRTVWXYZ0-9]{9,10}\b",
         case_insensitive: false,
         specificity: 0.40,
         context_required: false,

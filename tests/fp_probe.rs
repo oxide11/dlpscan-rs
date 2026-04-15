@@ -116,6 +116,44 @@ fn probe_invalid_phones() {
 }
 
 #[test]
+fn probe_recall_germany_id() {
+    eprintln!("\n=== Germany Personalausweis recall ===");
+    // Modern Personalausweis is 10 chars: 9 alphanumeric from a
+    // restricted set + 1 digit check. The old regex was `{9}`,
+    // which couldn't match the 10-char form at all (the trailing
+    // \b can't fire mid-word). After the fix, 10-char values
+    // should fire.
+    // German Personalausweis valid char set is
+    // [CFGHJKLMNPRTVWXYZ0-9] — note the exclusion of A, B, D, E, I,
+    // O, Q, S, U (to avoid homoglyph confusion between O/0, B/8, etc.).
+    // Every test value below must use only those chars or it can't
+    // possibly match a real German ID.
+    for s in [
+        "CFGHJKL123", // 10 chars, modern form
+        "T22000129",  // 9 chars (legacy / MRZ)
+        "LTJ07Y9N52", // 10 chars, all chars in the restricted set
+    ] {
+        probe(
+            "germany-id",
+            s,
+            "Personalausweis number on file: {} for customer record",
+        );
+    }
+}
+
+#[test]
+fn probe_recall_uk_nin() {
+    eprintln!("\n=== UK NIN recall (space-separated form) ===");
+    for s in [
+        "AB123456C",     // no-separator (was working)
+        "AB 12 34 56 C", // space-separated (was missing)
+        "AB-12-34-56-C", // dash-separated (also accept)
+    ] {
+        probe("uk-nin", s, "National Insurance Number: {}");
+    }
+}
+
+#[test]
 fn probe_invalid_ramq() {
     eprintln!("\n=== Quebec RAMQ (health card) ===");
     // RAMQ format: 4 letters + 8 digits, encoding DOB + gender.
@@ -128,4 +166,30 @@ fn probe_invalid_ramq() {
     ] {
         probe("ramq", s, "Quebec RAMQ health card: {}");
     }
+}
+
+#[test]
+fn probe_keyword_prefix_shadow_regression() {
+    // Regression pin for the AC MatchKind bug: the keyword "personal"
+    // (under "Eyes Only") is a prefix of "personalausweis" (under
+    // "Germany ID"). With MatchKind::LeftmostFirst, "personal" was
+    // added to the AC pattern table first (Eyes Only appears earlier
+    // in keywords.rs), so it shadowed every "personalausweis" hit and
+    // the Germany ID pattern was filtered out by the AC prefilter —
+    // Germany ID was silently undetectable whenever its primary
+    // keyword was adjacent. LeftmostLongest prefers the longer
+    // overlapping keyword at the same start position, which fixes the
+    // whole class of prefix-shadow bugs. This test runs a full scan
+    // against the exact scenario and asserts the Germany ID hit
+    // survives, so a regression to LeftmostFirst will fail loudly.
+    let text = "Personalausweis number on file: CFGHJKL123 for customer record";
+    let matches = dlpscan::scanner::scan_text(text).unwrap();
+    let has_germany_id = matches
+        .iter()
+        .any(|m| m.category == "Europe - Germany" && m.sub_category == "Germany ID");
+    assert!(
+        has_germany_id,
+        "Germany ID pattern must fire when `personalausweis` is in context — \
+         regression to LeftmostFirst shadowing suspected. Got: {matches:?}"
+    );
 }
