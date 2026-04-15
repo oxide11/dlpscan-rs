@@ -945,6 +945,283 @@ pub fn is_valid_poland_pesel(pesel: &str) -> bool {
     digits[10] == check
 }
 
+// ---------------------------------------------------------------------------
+// Checksum batch 1: India Aadhaar, Japan My Number, Italy Codice Fiscale,
+// Spain DNI/NIE, Israel Teudat Zehut.
+// ---------------------------------------------------------------------------
+
+/// Verhoeff algorithm multiplication table (Dihedral group D5).
+/// Indexed as `VERHOEFF_D[a][b]`. Used by India Aadhaar check.
+static VERHOEFF_D: [[u8; 10]; 10] = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
+    [2, 3, 4, 0, 1, 7, 8, 9, 5, 6],
+    [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
+    [4, 0, 1, 2, 3, 9, 5, 6, 7, 8],
+    [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+    [6, 5, 9, 8, 7, 1, 0, 4, 3, 2],
+    [7, 6, 5, 9, 8, 2, 1, 0, 4, 3],
+    [8, 7, 6, 5, 9, 3, 2, 1, 0, 4],
+    [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+];
+
+/// Verhoeff algorithm permutation table.
+/// Indexed as `VERHOEFF_P[i mod 8][digit]`.
+static VERHOEFF_P: [[u8; 10]; 8] = [
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+    [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
+    [5, 8, 0, 3, 7, 9, 6, 1, 4, 2],
+    [8, 9, 1, 6, 0, 4, 3, 5, 2, 7],
+    [9, 4, 5, 3, 1, 2, 6, 8, 7, 0],
+    [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+    [2, 7, 9, 3, 8, 0, 6, 4, 1, 5],
+    [7, 0, 4, 6, 9, 1, 3, 2, 5, 8],
+];
+
+/// Validate an Indian Aadhaar number (12 digits) using the Verhoeff
+/// algorithm. The Aadhaar is the Indian national biometric ID and
+/// uses Verhoeff — a dihedral-group D5 checksum — as its final
+/// digit, which is the same algorithm used by several European ID
+/// schemes and offers better error detection than simple weighted
+/// sums (catches all single-digit errors and almost all adjacent
+/// transposition errors).
+///
+/// Algorithm: iterate the digits from right to left, maintaining
+/// a running check `c`. At position `i` (starting at 0 for the
+/// rightmost), update `c = VERHOEFF_D[c][VERHOEFF_P[i mod 8][digit]]`.
+/// After all 12 digits, `c == 0` iff the number is valid.
+///
+/// Also rejects leading-zero and leading-one Aadhaar numbers (UIDAI
+/// reserves `0xxx` and `1xxx` prefixes) and all-same-digit sentinels.
+pub fn is_valid_india_aadhaar(aadhaar: &str) -> bool {
+    let digits: Vec<u8> = aadhaar
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10).map(|d| d as u8))
+        .collect();
+    if digits.len() != 12 {
+        return false;
+    }
+    // UIDAI spec: Aadhaar numbers never start with 0 or 1.
+    if digits[0] == 0 || digits[0] == 1 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let mut c: u8 = 0;
+    for (i, &d) in digits.iter().rev().enumerate() {
+        c = VERHOEFF_D[c as usize][VERHOEFF_P[i % 8][d as usize] as usize];
+    }
+    c == 0
+}
+
+/// Validate a Japanese My Number (個人番号, kojin bangou) — a
+/// 12-digit individual identifier issued by the Japanese national
+/// government. Uses a weighted mod-11 checksum where positions 0-10
+/// are weighted and position 11 is the check digit.
+///
+/// Algorithm per National Tax Agency spec:
+///   weights = [6, 5, 4, 3, 2, 7, 6, 5, 4, 3, 2]
+///   sum = Σ digits[i] * weights[i]   for i in 0..=10
+///   remainder = sum % 11
+///   check = if remainder <= 1 { 0 } else { 11 - remainder }
+///   valid iff digits[11] == check
+pub fn is_valid_japan_my_number(my_number: &str) -> bool {
+    let digits: Vec<u32> = my_number
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 12 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let weights = [6u32, 5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
+    let sum: u32 = digits[..11]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let remainder = sum % 11;
+    let check = if remainder <= 1 { 0 } else { 11 - remainder };
+    digits[11] == check
+}
+
+/// Odd-position value lookup for Italian Codice Fiscale control
+/// character. Positions are 1-indexed in the spec; we use 0-based
+/// positions, so the "odd" set is the set of 0-based positions
+/// `[0, 2, 4, 6, 8, 10, 12, 14]`.
+fn codice_fiscale_odd_value(c: char) -> Option<u32> {
+    match c {
+        '0' | 'A' => Some(1),
+        '1' | 'B' => Some(0),
+        '2' | 'C' => Some(5),
+        '3' | 'D' => Some(7),
+        '4' | 'E' => Some(9),
+        '5' | 'F' => Some(13),
+        '6' | 'G' => Some(15),
+        '7' | 'H' => Some(17),
+        '8' | 'I' => Some(19),
+        '9' | 'J' => Some(21),
+        'K' => Some(2),
+        'L' => Some(4),
+        'M' => Some(18),
+        'N' => Some(20),
+        'O' => Some(11),
+        'P' => Some(3),
+        'Q' => Some(6),
+        'R' => Some(8),
+        'S' => Some(12),
+        'T' => Some(14),
+        'U' => Some(16),
+        'V' => Some(10),
+        'W' => Some(22),
+        'X' => Some(25),
+        'Y' => Some(24),
+        'Z' => Some(23),
+        _ => None,
+    }
+}
+
+/// Even-position value lookup for Italian Codice Fiscale. For
+/// 0-based positions `[1, 3, 5, 7, 9, 11, 13]`. Digit values are
+/// their literal integer value; letter values are their ordinal
+/// in the alphabet starting from 0 (A=0, B=1, ..., Z=25).
+fn codice_fiscale_even_value(c: char) -> Option<u32> {
+    if let Some(d) = c.to_digit(10) {
+        return Some(d);
+    }
+    if c.is_ascii_uppercase() {
+        return Some(c as u32 - 'A' as u32);
+    }
+    None
+}
+
+/// Validate an Italian Codice Fiscale (16 characters: 6 letters
+/// encoding surname + first name, then DOB/gender encoded as 2
+/// digits + 1 letter + 2 digits, then birthplace as 1 letter +
+/// 3 digits, then 1 check letter). The 16th character is a check
+/// character computed from the first 15 via a table-driven
+/// weighted sum modulo 26.
+///
+/// Algorithm:
+///   sum = Σ (odd_value(c[i]) if i even (0-based) else even_value(c[i]))
+///   check_letter = (char) ('A' + (sum mod 26))
+///   valid iff c[15] == check_letter
+///
+/// Also accepts the `omocode` form where digits in some positions
+/// are substituted with letters — `codice_fiscale_odd_value` already
+/// handles the digit-letter substitutions that omocode uses.
+pub fn is_valid_italy_codice_fiscale(cf: &str) -> bool {
+    let chars: Vec<char> = cf.chars().collect();
+    if chars.len() != 16 {
+        return false;
+    }
+    if !chars.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+        return false;
+    }
+    let mut sum: u32 = 0;
+    for (i, &c) in chars[..15].iter().enumerate() {
+        let v = if i % 2 == 0 {
+            codice_fiscale_odd_value(c)
+        } else {
+            codice_fiscale_even_value(c)
+        };
+        match v {
+            Some(val) => sum += val,
+            None => return false,
+        }
+    }
+    let expected = char::from_u32('A' as u32 + (sum % 26)).unwrap_or('?');
+    chars[15] == expected
+}
+
+/// Spanish DNI check-letter lookup table. The letter is determined
+/// by `DNI_LETTERS[digit_part mod 23]`. Vowels and certain
+/// letters are excluded to avoid confusion with digits.
+static DNI_LETTERS: &[u8; 23] = b"TRWAGMYFPDXBNJZSQVHLCKE";
+
+/// Validate a Spanish DNI / NIE:
+///
+///   * DNI is 8 digits + 1 check letter.
+///   * NIE is `X`, `Y`, or `Z` + 7 digits + 1 check letter. The
+///     prefix letter contributes to the numeric value as
+///     `X = 0, Y = 1, Z = 2`.
+///
+/// Algorithm: compute the numeric payload, take modulo 23, and
+/// look up the check letter in `DNI_LETTERS`. The letter must
+/// match exactly.
+pub fn is_valid_spain_dni(dni: &str) -> bool {
+    // Strip any whitespace / hyphens the regex might have left.
+    let compact: String = dni
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    let bytes = compact.as_bytes();
+    if bytes.len() != 9 {
+        return false;
+    }
+    let check_char = bytes[8].to_ascii_uppercase();
+    if !(b'A'..=b'Z').contains(&check_char) {
+        return false;
+    }
+    // Determine whether this is a DNI or NIE and compute the
+    // numeric payload accordingly.
+    let (prefix_value, digit_start): (u64, usize) = match bytes[0].to_ascii_uppercase() {
+        b'X' => (0, 1),
+        b'Y' => (1, 1),
+        b'Z' => (2, 1),
+        b if b.is_ascii_digit() => (0, 0),
+        _ => return false,
+    };
+    // The digit portion is positions [digit_start..8]. For DNI this
+    // is 8 digits; for NIE it's 7 digits.
+    let digit_slice = &bytes[digit_start..8];
+    if !digit_slice.iter().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    let mut payload: u64 = prefix_value;
+    for &b in digit_slice {
+        payload = payload * 10 + (b - b'0') as u64;
+    }
+    let expected = DNI_LETTERS[(payload % 23) as usize];
+    check_char == expected
+}
+
+/// Validate an Israeli Teudat Zehut (national ID) using the
+/// weighted Luhn-like check. 9 digits total. The algorithm:
+///
+///   1. Multiply each digit by its position weight (weights
+///      alternate 1, 2, 1, 2, ... starting from position 0).
+///   2. If any product is >= 10, sum its two decimal digits
+///      (equivalently, subtract 9).
+///   3. Total must be divisible by 10.
+///
+/// Also rejects all-same-digit sentinels.
+pub fn is_valid_israel_teudat_zehut(id: &str) -> bool {
+    let digits: Vec<u32> = id
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 9 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let mut total: u32 = 0;
+    for (i, &d) in digits.iter().enumerate() {
+        let weight = if i % 2 == 0 { 1 } else { 2 };
+        let prod = d * weight;
+        total += if prod >= 10 { prod - 9 } else { prod };
+    }
+    total % 10 == 0
+}
+
 /// Validate a German Tax ID (Steuer-Identifikationsnummer) using
 /// the ISO 7064 MOD 11,10 check digit. The Steuer-ID is an 11-digit
 /// number assigned by the Bundeszentralamt für Steuern; positions
@@ -1243,6 +1520,34 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // RFB publishes that all-repeating CPFs coincidentally
         // satisfy the checksum arithmetic and must be rejected).
         "Brazil CPF" => is_valid_brazil_cpf(matched_text),
+        // India Aadhaar — 12 digits with Verhoeff dihedral-group
+        // checksum. Previously unvalidated; bare `\d{12}` matched
+        // any 12-digit sequence and the pattern was in
+        // CRITICAL_ALWAYS_RUN.
+        "India Aadhaar" => is_valid_india_aadhaar(matched_text),
+        // Japan My Number — 12 digits with a weighted mod-11
+        // check from the National Tax Agency. Same class of bug
+        // as Aadhaar — bare regex, no validator, always-run.
+        "Japan My Number" => is_valid_japan_my_number(matched_text),
+        // Italian Codice Fiscale — 16 alphanumeric characters
+        // with a table-driven check letter (mod-26 sum of
+        // position-weighted character values). Without the
+        // validator, the regex accepts any correctly-shaped
+        // 16-char string including obvious test data like
+        // `AAAAAA00A00A000A`.
+        "Italy Codice Fiscale" => is_valid_italy_codice_fiscale(matched_text),
+        // Spanish DNI and NIE — 8 digits + 1 letter (DNI) or
+        // X/Y/Z + 7 digits + 1 letter (NIE). Check letter is
+        // deterministic via `DNI_LETTERS[payload mod 23]`, so
+        // any bare-shape match can be verified in O(1) without
+        // data tables larger than the 23-letter alphabet itself.
+        "Spain DNI" => is_valid_spain_dni(matched_text),
+        // Israeli Teudat Zehut — 9 digits with weighted Luhn-like
+        // check. The bare `\b\d{9}\b` regex was — like many other
+        // 9-digit national ID patterns — false-positiving on
+        // every 9-digit sequence. The checksum is cheap to run
+        // and catches ~90% of random 9-digit noise.
+        "Israel Teudat Zehut" => is_valid_israel_teudat_zehut(matched_text),
         // Dutch BSN — 9-digit "eleven-test" (weights 9..2, -1;
         // sum mod 11 == 0). The bare `\b\d{9}\b` regex was
         // firing on every 9-digit sequence before the validator.
@@ -1428,6 +1733,136 @@ mod tests {
         // 8-digit form that gets zero-padded but still fails.
         // Padded: "012345678" → sum 104 % 11 = 5, not divisible.
         assert!(!is_valid_netherlands_bsn("12345678"));
+    }
+
+    #[test]
+    fn test_india_aadhaar_valid() {
+        // 999941057058 — public UIDAI test Aadhaar. Verhoeff
+        // final `c` computes to 0.
+        assert!(is_valid_india_aadhaar("999941057058"));
+        // Formatted with spaces — the regex leaves them in place.
+        assert!(is_valid_india_aadhaar("9999 4105 7058"));
+        // 999971658847 — second published test value.
+        assert!(is_valid_india_aadhaar("999971658847"));
+    }
+
+    #[test]
+    fn test_india_aadhaar_invalid() {
+        // Bumped check digit.
+        assert!(!is_valid_india_aadhaar("999941057059"));
+        assert!(!is_valid_india_aadhaar("999971658848"));
+        // UIDAI reserves 0xxx and 1xxx prefixes.
+        assert!(!is_valid_india_aadhaar("099941057058"));
+        assert!(!is_valid_india_aadhaar("199941057058"));
+        // All-same sentinels.
+        assert!(!is_valid_india_aadhaar("222222222222"));
+        assert!(!is_valid_india_aadhaar("999999999999"));
+        // Wrong length.
+        assert!(!is_valid_india_aadhaar("99994105705"));
+        assert!(!is_valid_india_aadhaar("9999410570580"));
+    }
+
+    #[test]
+    fn test_japan_my_number_valid() {
+        // 123456789018 — hand-verified: sum=212, rem=3, check=8.
+        assert!(is_valid_japan_my_number("123456789018"));
+        // 111222333446 — hand-verified: sum=104, rem=5, check=6.
+        assert!(is_valid_japan_my_number("111222333446"));
+    }
+
+    #[test]
+    fn test_japan_my_number_invalid() {
+        // Bumped check digit.
+        assert!(!is_valid_japan_my_number("123456789019"));
+        assert!(!is_valid_japan_my_number("111222333447"));
+        // All-same sentinels.
+        assert!(!is_valid_japan_my_number("000000000000"));
+        assert!(!is_valid_japan_my_number("111111111111"));
+        assert!(!is_valid_japan_my_number("999999999999"));
+        // Wrong length.
+        assert!(!is_valid_japan_my_number("12345678901"));
+        assert!(!is_valid_japan_my_number("1234567890123"));
+    }
+
+    #[test]
+    fn test_italy_codice_fiscale_valid() {
+        // MRTMTT25D09F205Z — hand-verified: sum=155, mod 26=25, 'Z'.
+        assert!(is_valid_italy_codice_fiscale("MRTMTT25D09F205Z"));
+        // BNCNRC65B01F205G — hand-verified: sum=84, mod 26=6, 'G'.
+        assert!(is_valid_italy_codice_fiscale("BNCNRC65B01F205G"));
+    }
+
+    #[test]
+    fn test_italy_codice_fiscale_invalid() {
+        // Bumped check letter.
+        assert!(!is_valid_italy_codice_fiscale("MRTMTT25D09F205Y"));
+        assert!(!is_valid_italy_codice_fiscale("BNCNRC65B01F205H"));
+        // Wrong shape: all-A is a classic test sentinel but has
+        // the wrong check letter (real sum won't be 0).
+        assert!(!is_valid_italy_codice_fiscale("AAAAAA00A00A000A"));
+        // Wrong length.
+        assert!(!is_valid_italy_codice_fiscale("MRTMTT25D09F205"));
+        assert!(!is_valid_italy_codice_fiscale("MRTMTT25D09F205ZZ"));
+        // Lowercase — CF is strictly uppercase.
+        assert!(!is_valid_italy_codice_fiscale("mrtmtt25d09f205z"));
+        // Contains non-alphanumeric.
+        assert!(!is_valid_italy_codice_fiscale("MRTMTT25D09F205!"));
+    }
+
+    #[test]
+    fn test_spain_dni_valid() {
+        // 12345678 mod 23 = 14 → DNI_LETTERS[14] = 'Z'.
+        assert!(is_valid_spain_dni("12345678Z"));
+        // 00000001 mod 23 = 1 → DNI_LETTERS[1] = 'R'.
+        assert!(is_valid_spain_dni("00000001R"));
+        // Lowercase check letter normalized to uppercase.
+        assert!(is_valid_spain_dni("12345678z"));
+        // NIE with X prefix: payload = 0_1234567 = 1234567,
+        // 1234567 mod 23 = 19 → DNI_LETTERS[19] = 'L'.
+        assert!(is_valid_spain_dni("X1234567L"));
+        // NIE with Y prefix: payload = 1_1234567 = 11234567,
+        // 11234567 mod 23 = ? 11234567/23 = 488459, 488459*23 =
+        // 11234557, remainder 10 → DNI_LETTERS[10] = 'X'.
+        assert!(is_valid_spain_dni("Y1234567X"));
+    }
+
+    #[test]
+    fn test_spain_dni_invalid() {
+        // Bumped check letter.
+        assert!(!is_valid_spain_dni("12345678A"));
+        assert!(!is_valid_spain_dni("12345678Y"));
+        // NIE with wrong letter.
+        assert!(!is_valid_spain_dni("X1234567K"));
+        assert!(!is_valid_spain_dni("Y1234567L"));
+        // Digit where a letter should be.
+        assert!(!is_valid_spain_dni("123456789"));
+        // Wrong length.
+        assert!(!is_valid_spain_dni("1234567Z"));
+        assert!(!is_valid_spain_dni("123456789Z"));
+        // Invalid prefix letter (NIE only accepts X, Y, Z).
+        assert!(!is_valid_spain_dni("A1234567L"));
+    }
+
+    #[test]
+    fn test_israel_teudat_zehut_valid() {
+        // 000000018 — weighted sum = 0+0+0+0+0+0+0+2+8 = 10; mod 10 = 0.
+        assert!(is_valid_israel_teudat_zehut("000000018"));
+        // 123456782 — hand-verified: sum = 40, mod 10 = 0.
+        assert!(is_valid_israel_teudat_zehut("123456782"));
+    }
+
+    #[test]
+    fn test_israel_teudat_zehut_invalid() {
+        // Bumped check digit.
+        assert!(!is_valid_israel_teudat_zehut("000000019"));
+        assert!(!is_valid_israel_teudat_zehut("123456789"));
+        assert!(!is_valid_israel_teudat_zehut("987654321"));
+        // All-same sentinels.
+        assert!(!is_valid_israel_teudat_zehut("000000000"));
+        assert!(!is_valid_israel_teudat_zehut("111111111"));
+        // Wrong length.
+        assert!(!is_valid_israel_teudat_zehut("12345678"));
+        assert!(!is_valid_israel_teudat_zehut("1234567890"));
     }
 
     #[test]
