@@ -1,0 +1,10 @@
+Financial identifiers with invalid checksums
+
+Every identifier below is structurally shaped like a real one
+but deliberately fails its check-digit algorithm.
+
+IBAN for wire transfer: DE89370400440532013001
+ISIN security identifier: US0378331006
+ABA Routing Number: 441234567
+US NPI provider identifier: 1234567894
+Canadian Social Insurance Number: 046-454-287
