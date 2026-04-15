@@ -212,15 +212,15 @@ fn main() {
         }
     }
 
-    // Pattern count info
+    // Pattern count info — classification uses the scanner's own
+    // `is_always_run` so this report can't drift out of sync with
+    // `CRITICAL_ALWAYS_RUN` the way the previous hand-copied list
+    // did. See the doc comment on `scanner::is_always_run`.
     eprintln!("\nPattern classification:");
     let compiled = dlpscan::patterns::PATTERNS;
     let always_run = compiled
         .iter()
-        .filter(|p| {
-            let spec = dlpscan::models::pattern_specificity(p.sub_category);
-            spec >= 0.85 || is_critical(p.sub_category)
-        })
+        .filter(|p| dlpscan::scanner::is_always_run(p.sub_category))
         .count();
     eprintln!("  Total patterns:     {}", compiled.len());
     eprintln!("  Always-run:         {} (baseline)", always_run);
@@ -228,79 +228,4 @@ fn main() {
         "  Context-gated:      {} (skipped in baseline mode)",
         compiled.len() - always_run
     );
-}
-
-fn is_critical(sub: &str) -> bool {
-    matches!(
-        sub,
-        "USA SSN"
-            | "USA ITIN"
-            | "USA EIN"
-            | "USA Passport"
-            | "USA Passport Card"
-            | "USA Routing Number"
-            | "US Phone Number"
-            | "US MBI"
-            | "US NPI"
-            | "Canada SIN"
-            | "Canada Passport"
-            | "UK NIN"
-            | "British NHS"
-            | "UK Passport"
-            | "France NIR"
-            | "Germany Tax ID"
-            | "Netherlands BSN"
-            | "Spain DNI"
-            | "Italy Codice Fiscale"
-            | "Italy SSN"
-            | "Sweden PIN"
-            | "Poland PESEL"
-            | "Belgium NRN"
-            | "Denmark CPR"
-            | "India Aadhaar"
-            | "India PAN"
-            | "China Resident ID"
-            | "Japan My Number"
-            | "South Korea RRN"
-            | "Singapore NRIC"
-            | "Singapore FIN"
-            | "Hong Kong ID"
-            | "Brazil CPF"
-            | "Brazil CNPJ"
-            | "Mexico CURP"
-            | "Argentina CUIL/CUIT"
-            | "Chile RUN/RUT"
-            | "Israel Teudat Zehut"
-            | "UAE Emirates ID"
-            | "Saudi Arabia National ID"
-            | "Bitcoin Address (Legacy)"
-            | "Bitcoin Address (Bech32)"
-            | "Ethereum Address"
-            | "Litecoin Address"
-            | "Bitcoin Cash Address"
-            | "Ripple Address"
-            | "E.164 Phone Number"
-            | "UK Phone Number"
-            | "IPv4 Address"
-            | "IPv6 Address"
-            | "MAC Address"
-            | "Bearer Token"
-            | "Generic API Key"
-            | "Generic Secret Assignment"
-            | "Slack Webhook"
-            | "GPS Coordinates"
-            | "PAN"
-            | "VIN"
-            | "IMEI"
-            | "IMEISV"
-            | "MEID"
-            | "ABA Routing Number"
-            | "CUSIP"
-            | "ISIN"
-            | "SEDOL"
-            | "LEI"
-            | "Ticker Symbol"
-            | "URL with Password"
-            | "URL with Token"
-    )
 }

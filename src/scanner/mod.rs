@@ -264,7 +264,23 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 });
 
 /// Returns true if a pattern should always run (never context-gated).
-fn is_always_run(sub_category: &str) -> bool {
+///
+/// A pattern is "always-run" if either:
+///   * its `pattern_specificity` is at or above `SPECIFICITY_THRESHOLD`
+///     (0.85), which means the regex is structurally tight enough that
+///     we trust it without context (JWTs, Bitcoin addresses, AWS keys,
+///     etc.), or
+///   * its sub_category is explicitly listed in `CRITICAL_ALWAYS_RUN`
+///     (national ID / passport patterns that need to fire even without
+///     a keyword match because users often write them with just a label).
+///
+/// Exposed as `pub` so external callers — most notably `src/bin/benchmark.rs`
+/// — can classify patterns identically to the scanner. Previously the
+/// benchmark hand-copied the CRITICAL_ALWAYS_RUN list into its own
+/// `is_critical()` function, which silently drifted as later commits
+/// added or removed entries from the authoritative list. Using this
+/// function directly prevents that drift class.
+pub fn is_always_run(sub_category: &str) -> bool {
     let spec = pattern_specificity(sub_category);
     spec >= SPECIFICITY_THRESHOLD || CRITICAL_ALWAYS_RUN.contains(sub_category)
 }
