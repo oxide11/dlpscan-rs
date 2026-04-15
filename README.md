@@ -41,7 +41,7 @@ cargo run --release --bin benchmark
 | `archives` | No | RAR and 7z archive extraction via `unrar` + `sevenz-rust` |
 | `data-formats` | No | Parquet, SQLite extraction via `parquet` + `arrow` + `rusqlite` |
 | `msg` | No | Outlook MSG extraction via `cfb` |
-| `barcode` | No | QR code and barcode decoding via `rxing` + `image` |
+| `barcode` | **Yes** | QR code and barcode decoding via `rxing` + `image` |
 | `bin-data` | No | BIN database (374k card prefixes) for issuer/country enrichment |
 | `tui` | No | Interactive TUI menu and live dashboard |
 | `async-support` | No | Async HTTP server and webhooks via `tokio` + `reqwest` |
@@ -107,13 +107,16 @@ println!("{}", result.redacted_text.unwrap()); // "card: 4758286118069724"
 
 ### QR code and barcode scanning
 
-With the `barcode` feature, image files are automatically decoded for
-embedded barcodes and QR codes. Any decoded text is scanned for sensitive
-data patterns -- catching credit cards, SSNs, API keys, or other data
-hidden in 2D codes.
+The `barcode` feature is **enabled by default**. Image files are
+automatically decoded for embedded barcodes and QR codes, and any
+decoded text is scanned for sensitive data patterns -- catching credit
+cards, SSNs, API keys, or other data hidden in 2D codes.
+
+To build without barcode support (for a smaller binary), disable
+default features:
 
 ```bash
-cargo build --release --features barcode
+cargo build --release --no-default-features --features "metrics,siem,webhooks"
 ```
 
 **Supported formats:**
@@ -129,7 +132,7 @@ cargo build --release --features barcode
 ```rust
 use dlpscan::extractors::extract_text;
 
-// Automatically decodes barcodes from images when barcode feature is enabled
+// Image files are auto-decoded for barcodes in the default build
 let result = extract_text("boarding-pass.png")?;
 // result.text contains decoded barcode content, scanned for patterns
 // result.metadata["barcode_count"] = "3"
@@ -141,7 +144,7 @@ let result = extract_text("boarding-pass.png")?;
 dlpscan boarding-pass.png
 
 # Scan a directory of scanned documents
-dlpscan --features barcode ./scanned-forms/
+dlpscan ./scanned-forms/
 ```
 
 **Safety limits:** 20 MB max image size, 100 barcodes per image,
