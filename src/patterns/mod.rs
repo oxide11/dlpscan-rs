@@ -4612,6 +4612,71 @@ mod tests {
         assert_eq!(cc.len(), 7);
     }
 
+    /// Auditing test: prints every mismatch between `PatternDef` fields
+    /// and the hardcoded `pattern_specificity` / `is_context_required`
+    /// maps in `models.rs`. This test is **expected to be noisy** while
+    /// the fields are dead data — a follow-up commit makes the fields
+    /// authoritative and turns this into a strict equality check.
+    ///
+    /// Run with `cargo test test_patterndef_field_audit -- --nocapture`
+    /// to see the full list.
+    #[test]
+    fn test_patterndef_field_audit() {
+        use crate::models::{is_context_required, pattern_specificity};
+
+        let mut spec_mismatches = Vec::new();
+        let mut ctx_mismatches = Vec::new();
+        let mut seen_subcats = std::collections::HashSet::new();
+
+        for pat in PATTERNS.iter() {
+            seen_subcats.insert(pat.sub_category);
+
+            let map_spec = pattern_specificity(pat.sub_category);
+            if (map_spec - pat.specificity).abs() >= f64::EPSILON {
+                spec_mismatches.push((pat.sub_category, pat.specificity, map_spec));
+            }
+
+            let map_ctx = is_context_required(pat.sub_category);
+            if map_ctx != pat.context_required {
+                ctx_mismatches.push((pat.sub_category, pat.context_required, map_ctx));
+            }
+        }
+
+        eprintln!();
+        eprintln!("=== PatternDef field audit ===");
+        eprintln!();
+        eprintln!("SPECIFICITY mismatches (PatternDef.specificity vs pattern_specificity):");
+        if spec_mismatches.is_empty() {
+            eprintln!("  (none)");
+        } else {
+            for (sub, field, map) in &spec_mismatches {
+                eprintln!(
+                    "  {:<40}  field={:.2}  map={:.2}  (delta {:+.2})",
+                    sub,
+                    field,
+                    map,
+                    field - map
+                );
+            }
+        }
+        eprintln!();
+        eprintln!("CONTEXT_REQUIRED mismatches (PatternDef.context_required vs is_context_required):");
+        if ctx_mismatches.is_empty() {
+            eprintln!("  (none)");
+        } else {
+            for (sub, field, map) in &ctx_mismatches {
+                eprintln!("  {:<40}  field={}  map={}", sub, field, map);
+            }
+        }
+        eprintln!();
+        eprintln!(
+            "Total: {} specificity mismatches, {} context-required mismatches",
+            spec_mismatches.len(),
+            ctx_mismatches.len()
+        );
+        eprintln!();
+    }
+
     #[test]
     fn test_all_regexes_compile() {
         use regex::RegexBuilder;
