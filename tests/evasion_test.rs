@@ -213,15 +213,29 @@ fn test_corrupted_zip_no_panic() {
 /// Tests offset_map memory, match truncation, and scan_truncated flag.
 #[test]
 fn test_offset_map_stress_50k_matches() {
-    // Generate text with many credit card numbers separated by zero-width spaces
+    // Generate text with many credit card numbers interleaved with
+    // alphabetic markers. The marker is deliberate: `collapse_padding`
+    // in src/normalize/mod.rs strips whitespace that sits between two
+    // non-alphabetic characters (to defeat `4242 4242 4242 4242`-style
+    // evasion), so a bare ZWSP + space between two 16-digit PANs
+    // normalizes to a single contiguous digit run and individual
+    // card matches are lost. Interleaving with `" card "` keeps a
+    // letter adjacent to each space, so collapse_padding leaves the
+    // spaces in place and each PAN keeps its word boundaries for
+    // the regex. The previous version of this test happened to pass
+    // only because the MICR Line pattern (then unvalidated) was
+    // matching substrings of the merged digit run — a false-positive
+    // masquerading as success. The MICR Line validator added in
+    // `fix(validation): secondary FP gates` closed that path and
+    // surfaced the real test bug; this is the fix.
     let card = "4532015112830366"; // Valid Visa (passes Luhn)
     let zwsp = "\u{200B}"; // Zero-width space
 
     let mut text = String::with_capacity(2_000_000);
     for i in 0..60_000 {
         if i > 0 {
+            text.push_str(" card ");
             text.push_str(zwsp);
-            text.push(' ');
         }
         text.push_str(card);
     }

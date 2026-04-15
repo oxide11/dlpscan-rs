@@ -459,6 +459,167 @@ pub fn is_plausible_phone(phone: &str) -> bool {
     true
 }
 
+/// Validate a German Tax ID (Steuer-Identifikationsnummer) using
+/// the ISO 7064 MOD 11,10 check digit. The Steuer-ID is an 11-digit
+/// number assigned by the Bundeszentralamt für Steuern; positions
+/// 1-10 carry the identifying payload and position 11 is the check
+/// digit. Without this validator, the pattern `\b\d{11}\b` matches
+/// every 11-digit invoice number, account reference, timestamp, or
+/// phone-number-adjacent sequence in a document.
+///
+/// ISO 7064 MOD 11,10 algorithm:
+///   product = 10
+///   for d in digits[0..10]:
+///       sum = (d + product) % 10
+///       if sum == 0 { sum = 10 }
+///       product = (sum * 2) % 11
+///   check = (11 - product) % 10
+///   valid iff digits[10] == check
+pub fn is_valid_germany_tax_id(tax_id: &str) -> bool {
+    let digits: Vec<u32> = tax_id
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 11 {
+        return false;
+    }
+    // Reject all-same-digit sentinels — Luhn-style garbage gate.
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let mut product: u32 = 10;
+    for &d in &digits[..10] {
+        let mut sum = (d + product) % 10;
+        if sum == 0 {
+            sum = 10;
+        }
+        product = (sum * 2) % 11;
+    }
+    let check = (11 - product) % 10;
+    digits[10] == check
+}
+
+/// Validate a Chilean RUT/RUN (Rol Único Tributario / Rol Único
+/// Nacional) check digit. The RUT is 7-8 digits of payload + 1
+/// check character (0-9 or K). The check is a weighted sum mod 11
+/// using weights [2, 3, 4, 5, 6, 7] cycling from the rightmost
+/// payload digit.
+///
+/// Algorithm:
+///   sum = Σ (digits[i] × weight[i % 6])
+///   remainder = 11 - (sum % 11)
+///   check = "0" if remainder == 11 else "K" if remainder == 10 else digit(remainder)
+pub fn is_valid_chile_rut(rut: &str) -> bool {
+    // Strip separators and find the check character.
+    let compact: String = rut
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    if compact.len() < 8 || compact.len() > 9 {
+        return false;
+    }
+    let bytes = compact.as_bytes();
+    let check_char = bytes[bytes.len() - 1].to_ascii_uppercase();
+    if !check_char.is_ascii_digit() && check_char != b'K' {
+        return false;
+    }
+    // Payload digits are the first n-1 chars — must all be digits.
+    let payload: &[u8] = &bytes[..bytes.len() - 1];
+    if !payload.iter().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    // Reject trivial sequences.
+    if payload.iter().all(|&b| b == payload[0]) {
+        return false;
+    }
+    // Weighted sum, weights cycle 2..=7 from the rightmost digit.
+    let mut sum: u32 = 0;
+    for (i, &b) in payload.iter().rev().enumerate() {
+        let d = (b - b'0') as u32;
+        let weight = 2 + (i % 6) as u32;
+        sum += d * weight;
+    }
+    let remainder = 11 - (sum % 11);
+    let expected: u8 = match remainder {
+        11 => b'0',
+        10 => b'K',
+        n => b'0' + n as u8,
+    };
+    check_char == expected
+}
+
+/// Validate a MICR (Magnetic Ink Character Recognition) line. Real
+/// MICR lines — the machine-readable strip at the bottom of a check
+/// — are delimited by MICR symbols that don't exist in ordinary
+/// text: `⑈` (U+2448 = on-us), `⑇` (U+2447 = dash), `⑆` (U+2446 =
+/// transit / routing), `⑉` (U+2449 = amount). The regex already
+/// matches the character pattern, but the control characters are
+/// optional in the regex — which means any 19-to-32-digit sequence
+/// with internal whitespace passes the shape check. IBANs, invoice
+/// ledgers, and log lines repeatedly false-positive on this.
+///
+/// Require at least one MICR control character to be present in
+/// the matched substring. That's the cheapest correct-by-spec gate:
+/// a real check MICR line has at least three delimiters (transit,
+/// account, amount); accepting one is still conservative but
+/// decisively rules out "long digit run" false positives.
+pub fn is_valid_micr_line(micr: &str) -> bool {
+    micr.chars()
+        .any(|c| matches!(c, '\u{2446}' | '\u{2447}' | '\u{2448}' | '\u{2449}'))
+}
+
+/// Validate a Quebec RAMQ health card number (a.k.a. "Quebec HC")
+/// using its embedded date-of-birth + gender encoding. RAMQ format
+/// is 4 letters (name initials) followed by 8 digits split as
+/// `YY MM DD NN`: 2-digit year, 2-digit month (gender-encoded),
+/// 2-digit day, and a 2-digit sequence number.
+///
+/// The MM field encodes gender by offsetting the month for female
+/// cardholders:
+///   * male:   01 .. 12
+///   * female: 51 .. 62
+///
+/// DD is the day of birth (01..31). YY is the 2-digit year, which
+/// we don't constrain beyond "must be numeric."
+///
+/// This is not a true mod-N checksum — RAMQ doesn't publish one —
+/// but it's a strong structural gate: the odds of a random
+/// 4-letter-+-8-digit string having a valid month-encoded gender
+/// AND a valid day of month are under 5%, which is enough to
+/// eliminate the bulk of FPs on this pattern.
+pub fn is_valid_quebec_hc(hc: &str) -> bool {
+    let compact: String = hc.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let bytes = compact.as_bytes();
+    if bytes.len() != 12 {
+        return false;
+    }
+    // First 4 must be uppercase letters.
+    if !bytes[..4].iter().all(|b| b.is_ascii_uppercase()) {
+        return false;
+    }
+    // Last 8 must be digits.
+    if !bytes[4..].iter().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    let digits: Vec<u32> = bytes[4..]
+        .iter()
+        .map(|&b| (b - b'0') as u32)
+        .collect();
+    let month = digits[2] * 10 + digits[3];
+    let day = digits[4] * 10 + digits[5];
+    // Month: 01..12 male, 51..62 female.
+    let month_ok = (1..=12).contains(&month) || (51..=62).contains(&month);
+    if !month_ok {
+        return false;
+    }
+    // Day: 01..31.
+    if !(1..=31).contains(&day) {
+        return false;
+    }
+    true
+}
+
 /// Validate a US Social Security Number for structural correctness.
 /// Rejects invalid area numbers (000, 666, 900-999) and group/serial all-zeros.
 pub fn is_valid_ssn(ssn: &str) -> bool {
@@ -531,6 +692,28 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         "E.164 Phone Number" | "US Phone Number" | "UK Phone Number" => {
             is_plausible_phone(matched_text)
         }
+        // Germany Steuer-ID — 11 digits with an ISO 7064 MOD 11,10
+        // check. Without this, `\b\d{11}\b` fires on every 11-digit
+        // invoice number, timestamp, or phone sequence in a
+        // document and Germany Tax ID is in CRITICAL_ALWAYS_RUN so
+        // the AC prefilter can't save us.
+        "Germany Tax ID" => is_valid_germany_tax_id(matched_text),
+        // Chilean RUT/RUN — 8-9 chars with a mod-11 check digit
+        // (can be 0-9 or K). Similar story: always-run, no context
+        // gate, bare digit regex — the checksum is the only real
+        // discipline the pattern has.
+        "Chile RUN/RUT" => is_valid_chile_rut(matched_text),
+        // MICR check line — require at least one MICR control char
+        // (U+2446..U+2449) to be present. Without that, the regex
+        // happily matches any 19-to-32-digit sequence with internal
+        // whitespace, which IBANs and long digit runs trip on
+        // constantly.
+        "MICR Line" => is_valid_micr_line(matched_text),
+        // Quebec RAMQ health card — structural month + day gate.
+        // Checks the embedded birth month (01..12 male, 51..62
+        // female) and day (01..31) encoding. Not a full checksum
+        // but enough to eliminate random 4-letter-8-digit strings.
+        "Quebec HC" => is_valid_quebec_hc(matched_text),
         // PAN lives under the "Primary Account Numbers" category, NOT
         // "Credit Card Numbers", so the early-return above doesn't catch
         // it. The PAN regex is `\b\d{4}[sep?]\d{4}[sep?]\d{4}[sep?]\d{1,7}\b`
@@ -667,6 +850,126 @@ mod tests {
         assert!(validate_match(cat, "PAN", "4242424242424242"));
         // A real-shape Luhn-valid 16-digit number — must be accepted.
         assert!(validate_match(cat, "PAN", "4532015112830366"));
+    }
+
+    #[test]
+    fn test_germany_tax_id_valid() {
+        // 47036892816 — hand-verified ISO 7064 MOD 11,10 trace,
+        // check digit computes to 6 exactly.
+        assert!(is_valid_germany_tax_id("47036892816"));
+        // 12345678903 — also hand-verified, check digit 3.
+        assert!(is_valid_germany_tax_id("12345678903"));
+    }
+
+    #[test]
+    fn test_germany_tax_id_invalid() {
+        // Bumped check digit on a known-valid input.
+        assert!(!is_valid_germany_tax_id("47036892817"));
+        assert!(!is_valid_germany_tax_id("12345678904"));
+        // Sequential shape that isn't a valid check digit.
+        assert!(!is_valid_germany_tax_id("12345678901"));
+        assert!(!is_valid_germany_tax_id("98765432101"));
+        // All-same sentinels.
+        assert!(!is_valid_germany_tax_id("11111111111"));
+        assert!(!is_valid_germany_tax_id("00000000000"));
+        // Wrong length.
+        assert!(!is_valid_germany_tax_id("1234567890"));
+        assert!(!is_valid_germany_tax_id("123456789012"));
+    }
+
+    #[test]
+    fn test_chile_rut_valid() {
+        // Hand-verified values (weights 2..=7 cycling from rightmost).
+        // 12345678-5: sum=138, 138%11=6, 11-6=5 ✓
+        assert!(is_valid_chile_rut("12345678-5"));
+        // Dotted form should also work.
+        assert!(is_valid_chile_rut("12.345.678-5"));
+        // 1234567-4: sum=106, 106%11=7, 11-7=4 ✓ (7-digit payload)
+        assert!(is_valid_chile_rut("1234567-4"));
+        // 1000019-K: sum=23, 23%11=1, 11-1=10 → K ✓ (exercises the
+        // K-verifier branch).
+        assert!(is_valid_chile_rut("1000019-K"));
+        // Mixed case K.
+        assert!(is_valid_chile_rut("1000019-k"));
+    }
+
+    #[test]
+    fn test_chile_rut_invalid() {
+        // Bumped verifier digit on a known-valid input.
+        assert!(!is_valid_chile_rut("12345678-6"));
+        assert!(!is_valid_chile_rut("1234567-5"));
+        // Wrong K vs digit mapping.
+        assert!(!is_valid_chile_rut("1000019-0"));
+        // Sentinel: all-same-digit payload rejected before checksum.
+        assert!(!is_valid_chile_rut("11111111-1"));
+        assert!(!is_valid_chile_rut("00000000-0"));
+        // Too short / too long.
+        assert!(!is_valid_chile_rut("1234-5"));
+        assert!(!is_valid_chile_rut("1234567890-1"));
+        // Non-alphanumeric only separators (should strip) — but if
+        // the resulting compact is still the wrong shape, reject.
+        assert!(!is_valid_chile_rut("abc"));
+    }
+
+    #[test]
+    fn test_micr_line_valid() {
+        // Real MICR strings include the U+2446..U+2449 control
+        // characters. Only one is required for the gate; real
+        // check MICR has at least three.
+        assert!(is_valid_micr_line("\u{2446}123456789\u{2446}\u{2448}1234567\u{2448}\u{2449}0000001000\u{2449}"));
+        // Minimal case: just the transit symbol around a routing
+        // number.
+        assert!(is_valid_micr_line("\u{2446}021000021\u{2446}"));
+    }
+
+    #[test]
+    fn test_micr_line_invalid() {
+        // Long digit run with no MICR symbols — this is exactly
+        // the "IBAN interior" / "invoice ledger" case that was
+        // false-positiving before the gate.
+        assert!(!is_valid_micr_line("89370400440532013000"));
+        assert!(!is_valid_micr_line("021000021 1234567 0000001000"));
+        // Empty / whitespace-only.
+        assert!(!is_valid_micr_line(""));
+    }
+
+    #[test]
+    fn test_quebec_hc_valid() {
+        // TREM 89 07 15 32 — Tremblay, 1989, July 15, seq 32 (male).
+        assert!(is_valid_quebec_hc("TREM89071532"));
+        // DUPO 90 55 12 04 — Dupont, 1990, female May (55=05+50),
+        // day 12, seq 04.
+        assert!(is_valid_quebec_hc("DUPO90551204"));
+        // NORD 72 52 31 11 — December 31 female (52=02+50 no wait
+        // 52=02+50=Feb-female, day 31 — Feb 31 is technically
+        // invalid but our gate doesn't check month-specific days).
+        //
+        // Actually let's use a truly valid one: NORD 72 12 25 11 —
+        // 1972, December 25, male.
+        assert!(is_valid_quebec_hc("NORD72122511"));
+    }
+
+    #[test]
+    fn test_quebec_hc_invalid() {
+        // Month 13 → invalid (not male 01-12, not female 51-62).
+        assert!(!is_valid_quebec_hc("TREM89131532"));
+        // Month 40 → invalid (in the dead zone 13-50).
+        assert!(!is_valid_quebec_hc("TREM89401532"));
+        // Day 32 → invalid.
+        assert!(!is_valid_quebec_hc("TREM89073232"));
+        // Day 00 → invalid.
+        assert!(!is_valid_quebec_hc("TREM89070032"));
+        // Random 4-letter-8-digit — the ISIN-shadow case. The
+        // literal "ABCD12345678": month = 34, rejected.
+        assert!(!is_valid_quebec_hc("ABCD12345678"));
+        // DUPO99123456 — year 99, month 12, day 34: day invalid.
+        assert!(!is_valid_quebec_hc("DUPO99123456"));
+        // TREF98765432 — year 98, month 76: rejected.
+        assert!(!is_valid_quebec_hc("TREF98765432"));
+        // Wrong shape: too few chars.
+        assert!(!is_valid_quebec_hc("TRE8907153"));
+        // Wrong shape: lowercase letters.
+        assert!(!is_valid_quebec_hc("trem89071532"));
     }
 
     #[test]
