@@ -1222,6 +1222,345 @@ pub fn is_valid_israel_teudat_zehut(id: &str) -> bool {
     total % 10 == 0
 }
 
+// ---------------------------------------------------------------------------
+// Checksum batch 2: British NHS, Brazil CNPJ, China Resident ID,
+// South Korea RRN, France NIR, Mexico CURP.
+// ---------------------------------------------------------------------------
+
+/// Validate a British NHS number (10 digits) using the NHS
+/// weighted mod-11 check. Algorithm per NHS Digital spec:
+///
+///   * multiply each of the first 9 digits by weights
+///     `[10, 9, 8, 7, 6, 5, 4, 3, 2]`;
+///   * sum the products and take mod 11;
+///   * check = 11 - remainder;
+///   * if check == 11, check = 0;
+///   * if check == 10, the NHS number is invalid (NHS Digital
+///     does not issue check=10 numbers).
+///
+/// Also rejects all-same-digit sentinels.
+pub fn is_valid_british_nhs(nhs: &str) -> bool {
+    let digits: Vec<u32> = nhs
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 10 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let weights = [10u32, 9, 8, 7, 6, 5, 4, 3, 2];
+    let sum: u32 = digits[..9]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let remainder = sum % 11;
+    let check = 11 - remainder;
+    let expected = if check == 11 {
+        0
+    } else if check == 10 {
+        return false; // NHS Digital reserves check=10, never issued
+    } else {
+        check
+    };
+    digits[9] == expected
+}
+
+/// Validate a Brazilian CNPJ (Cadastro Nacional da Pessoa
+/// Jurídica) using its two mod-11 check digits. CNPJ is the
+/// corporate tax ID, 14 digits total:
+///
+///   * positions 0-7: base (8 digits);
+///   * positions 8-11: branch suffix (usually `0001`);
+///   * position 12: first check digit;
+///   * position 13: second check digit.
+///
+/// Same dual-check structure as CPF, but with different weights.
+/// First check weights: `[5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]`.
+/// Second check weights: `[6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]`.
+/// For each: sum mod 11, if remainder < 2 → 0 else 11 - remainder.
+pub fn is_valid_brazil_cnpj(cnpj: &str) -> bool {
+    let digits: Vec<u32> = cnpj
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 14 {
+        return false;
+    }
+    // RFB explicitly declares all-same-digit CNPJs invalid
+    // (same reasoning as CPF — they satisfy the checksum
+    // arithmetic but are never issued).
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    // First check digit.
+    let weights1 = [5u32, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    let sum1: u32 = digits[..12]
+        .iter()
+        .zip(weights1.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let r1 = sum1 % 11;
+    let check1 = if r1 < 2 { 0 } else { 11 - r1 };
+    if digits[12] != check1 {
+        return false;
+    }
+    // Second check digit, using the first 13 digits (including
+    // the first check).
+    let weights2 = [6u32, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
+    let sum2: u32 = digits[..13]
+        .iter()
+        .zip(weights2.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let r2 = sum2 % 11;
+    let check2 = if r2 < 2 { 0 } else { 11 - r2 };
+    digits[13] == check2
+}
+
+/// Validate a Chinese Resident ID card number (18 characters:
+/// 17 digits + 1 check digit that can be `0-9` or `X` where X
+/// represents 10). The check is a weighted mod-11 per GB 11643.
+///
+///   weights = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2]
+///   sum = Σ d[i] * weights[i] for i in 0..17
+///   remainder = sum mod 11
+///   check_table = ['1','0','X','9','8','7','6','5','4','3','2']
+///   valid iff chars[17] == check_table[remainder]
+///
+/// Also performs a loose structural DOB gate on positions 6-13
+/// (YYYYMMDD), rejecting obvious garbage like year 0000.
+pub fn is_valid_china_resident_id(id: &str) -> bool {
+    // The last char can be `X` (upper or lower); everything else
+    // must be a digit.
+    let compact: String = id.chars().filter(|c| !c.is_whitespace()).collect();
+    let chars: Vec<char> = compact.chars().collect();
+    if chars.len() != 18 {
+        return false;
+    }
+    let mut digits = [0u32; 17];
+    for (i, &c) in chars[..17].iter().enumerate() {
+        digits[i] = match c.to_digit(10) {
+            Some(d) => d,
+            None => return false,
+        };
+    }
+    // Loose DOB gate.
+    let year = digits[6] * 1000 + digits[7] * 100 + digits[8] * 10 + digits[9];
+    let month = digits[10] * 10 + digits[11];
+    let day = digits[12] * 10 + digits[13];
+    if !(1800..=2099).contains(&year) {
+        return false;
+    }
+    if !(1..=12).contains(&month) {
+        return false;
+    }
+    if !(1..=31).contains(&day) {
+        return false;
+    }
+    // Weighted mod-11.
+    let weights: [u32; 17] = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
+    let sum: u32 = digits.iter().zip(weights.iter()).map(|(&d, &w)| d * w).sum();
+    let remainder = sum % 11;
+    let check_table = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2'];
+    let expected = check_table[remainder as usize];
+    let actual = chars[17].to_ascii_uppercase();
+    actual == expected
+}
+
+/// Validate a South Korean Resident Registration Number (RRN):
+/// 13 digits laid out as `YYMMDD-CGGGGGS`:
+///
+///   * positions 0-5: YYMMDD date of birth;
+///   * position 6: century + sex code (1-4 for 1800s/1900s/2000s
+///     + M/F, 5-8 for foreigners, 9-0 for pre-1800);
+///   * positions 7-11: region / order;
+///   * position 12: check digit.
+///
+/// Checksum: `weights = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5]`,
+/// applied to positions 0-11. `remainder = (11 - sum mod 11) mod 10`.
+/// Valid iff `digits[12] == remainder`.
+///
+/// Also enforces a structural gate: sex/century code in 1-8
+/// (9 and 0 are reserved for pre-1800 births but historically
+/// unused), month 01-12, day 01-31.
+pub fn is_valid_south_korea_rrn(rrn: &str) -> bool {
+    let digits: Vec<u32> = rrn
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 13 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    // Month and day gate.
+    let month = digits[2] * 10 + digits[3];
+    let day = digits[4] * 10 + digits[5];
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return false;
+    }
+    // Sex/century code. The regex already restricts to 1-8 but
+    // belt-and-suspenders here.
+    if digits[6] == 0 || digits[6] == 9 {
+        return false;
+    }
+    // Weighted mod-11, special tail mapping.
+    let weights = [2u32, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5];
+    let sum: u32 = digits[..12]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let check = (11 - sum % 11) % 10;
+    digits[12] == check
+}
+
+/// Validate a French INSEE / NIR (social security number) using
+/// the mod-97 check. NIR is 15 digits total: `S YY MM DD CCC NNN KK`
+/// where the final 2 digits are the check (KK) and the first 13
+/// form the payload used to compute it.
+///
+/// Check: `expected = 97 - (payload mod 97)`. Valid iff the last
+/// two digits of the input equal `expected`.
+///
+/// Corsica substitution: positions 5-6 (department) can be `2A`
+/// or `2B` in the printed form. Those map to `19` and `18`
+/// respectively for checksum purposes. We handle this if the
+/// input still contains the letters (the pattern regex allows
+/// them) by performing the substitution before computing the
+/// payload.
+pub fn is_valid_france_nir(nir: &str) -> bool {
+    // Strip spaces but keep letters for Corsica substitution.
+    let compact: String = nir
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    if compact.len() != 15 {
+        return false;
+    }
+    // Check that positions 0-4 and 7-14 are digits (the only
+    // positions where letters are allowed is 5-6 for 2A/2B).
+    let bytes = compact.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if i == 5 || i == 6 {
+            if !b.is_ascii_alphanumeric() {
+                return false;
+            }
+        } else if !b.is_ascii_digit() {
+            return false;
+        }
+    }
+    // Apply Corsica substitution: positions 5-6 if letters.
+    let corsica_sub_applied: String = if bytes[5] == b'2' && (bytes[6] == b'A' || bytes[6] == b'a')
+    {
+        format!("{}19{}", &compact[..5], &compact[7..])
+    } else if bytes[5] == b'2' && (bytes[6] == b'B' || bytes[6] == b'b') {
+        format!("{}18{}", &compact[..5], &compact[7..])
+    } else {
+        compact.clone()
+    };
+    // After substitution, all chars must be digits.
+    if !corsica_sub_applied.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    // Build the 13-digit payload and parse the 2-digit check.
+    let payload: u64 = corsica_sub_applied[..13].parse().unwrap_or(0);
+    let expected_check: u64 = corsica_sub_applied[13..15].parse().unwrap_or(u64::MAX);
+    let computed = 97 - (payload % 97);
+    computed == expected_check
+}
+
+/// Character-to-value lookup for Mexican CURP check digit.
+/// CURP digits and letters map to 0..36 where:
+///   '0'-'9' → 0-9
+///   'A'-'N' → 10-23
+///   'Ñ'     → 24 (but ASCII-only implementation treats this
+///                  as invalid since the regex excludes it)
+///   'O'-'Z' → 25-36
+fn curp_char_value(c: char) -> Option<u32> {
+    if let Some(d) = c.to_digit(10) {
+        return Some(d);
+    }
+    if c.is_ascii_uppercase() {
+        let ord = c as u32 - 'A' as u32;
+        // 'A'=0 → 10, 'B'=1 → 11, ... 'N'=13 → 23, 'O'=14 → 25
+        // (skip 24 for Ñ), 'Z'=25 → 36.
+        return Some(if ord < 14 { ord + 10 } else { ord + 11 });
+    }
+    None
+}
+
+/// Validate a Mexican CURP (Clave Única de Registro de Población)
+/// using its table-driven check digit. CURP is 18 characters:
+/// 4 letters + 6 digits (YYMMDD) + 1 letter (H/M gender) +
+/// 5 letters (state + consonants) + 1 alphanumeric homoclave +
+/// 1 digit check.
+///
+/// Checksum: multiply each of the first 17 characters by
+/// `(18 - position)` and sum. `check = (10 - (sum mod 10)) mod 10`.
+/// Valid iff digit[17] == check.
+///
+/// Also gates the embedded date: month 01-12, day 01-31, and
+/// the gender position must be H or M.
+pub fn is_valid_mexico_curp(curp: &str) -> bool {
+    let chars: Vec<char> = curp.chars().collect();
+    if chars.len() != 18 {
+        return false;
+    }
+    // Structural gates first.
+    if !chars[..4].iter().all(|c| c.is_ascii_uppercase()) {
+        return false;
+    }
+    let year = chars[4].to_digit(10);
+    let year2 = chars[5].to_digit(10);
+    let month1 = chars[6].to_digit(10);
+    let month2 = chars[7].to_digit(10);
+    let day1 = chars[8].to_digit(10);
+    let day2 = chars[9].to_digit(10);
+    if [year, year2, month1, month2, day1, day2]
+        .iter()
+        .any(|d| d.is_none())
+    {
+        return false;
+    }
+    let month = month1.unwrap() * 10 + month2.unwrap();
+    let day = day1.unwrap() * 10 + day2.unwrap();
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return false;
+    }
+    if chars[10] != 'H' && chars[10] != 'M' {
+        return false;
+    }
+    if !chars[11..16].iter().all(|c| c.is_ascii_uppercase()) {
+        return false;
+    }
+    if !chars[16].is_ascii_alphanumeric() {
+        return false;
+    }
+    let last = match chars[17].to_digit(10) {
+        Some(d) => d,
+        None => return false,
+    };
+    // Weighted sum.
+    let mut sum: u32 = 0;
+    for (i, &c) in chars[..17].iter().enumerate() {
+        let v = curp_char_value(c);
+        match v {
+            Some(val) => sum += val * (18 - i as u32),
+            None => return false,
+        }
+    }
+    let check = (10 - (sum % 10)) % 10;
+    last == check
+}
+
 /// Validate a German Tax ID (Steuer-Identifikationsnummer) using
 /// the ISO 7064 MOD 11,10 check digit. The Steuer-ID is an 11-digit
 /// number assigned by the Bundeszentralamt für Steuern; positions
@@ -1548,6 +1887,30 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // every 9-digit sequence. The checksum is cheap to run
         // and catches ~90% of random 9-digit noise.
         "Israel Teudat Zehut" => is_valid_israel_teudat_zehut(matched_text),
+        // British NHS number — 10 digits with weighted mod-11
+        // check. NHS Digital reserves check=10 as invalid so the
+        // validator also rejects that case.
+        "British NHS" => is_valid_british_nhs(matched_text),
+        // Brazilian CNPJ — 14 digits with two mod-11 check
+        // digits. Same structure as CPF but with different
+        // weights and a second pass that includes the first check.
+        "Brazil CNPJ" => is_valid_brazil_cnpj(matched_text),
+        // Chinese Resident ID (GB 11643) — 18 characters with
+        // weighted mod-11 check, where the check position can be
+        // `X` (representing 10). Also performs a DOB gate.
+        "China Resident ID" => is_valid_china_resident_id(matched_text),
+        // South Korean RRN — 13 digits with weighted mod-11 and
+        // DOB + sex-code structural gate.
+        "South Korea RRN" => is_valid_south_korea_rrn(matched_text),
+        // French NIR (INSEE social security number) — 15 digits
+        // with mod-97 check, with Corsica letter-for-digit
+        // substitution (2A → 19, 2B → 18) applied before the
+        // payload is computed.
+        "France NIR" => is_valid_france_nir(matched_text),
+        // Mexican CURP — 18 characters with a weighted check
+        // digit. Validates the embedded DOB + gender structure
+        // plus the checksum.
+        "Mexico CURP" => is_valid_mexico_curp(matched_text),
         // Dutch BSN — 9-digit "eleven-test" (weights 9..2, -1;
         // sum mod 11 == 0). The bare `\b\d{9}\b` regex was
         // firing on every 9-digit sequence before the validator.
@@ -1733,6 +2096,161 @@ mod tests {
         // 8-digit form that gets zero-padded but still fails.
         // Padded: "012345678" → sum 104 % 11 = 5, not divisible.
         assert!(!is_valid_netherlands_bsn("12345678"));
+    }
+
+    #[test]
+    fn test_british_nhs_valid() {
+        // 9434765919 — hand-verified. Weighted sum = 299, mod 11 = 2,
+        // check = 9 ✓.
+        assert!(is_valid_british_nhs("9434765919"));
+        // Same with space formatting (regex allows it).
+        assert!(is_valid_british_nhs("943 476 5919"));
+        // 1234567881 — hand-verified. Sum = 208, mod 11 = 10,
+        // check = 1 ✓.
+        assert!(is_valid_british_nhs("1234567881"));
+    }
+
+    #[test]
+    fn test_british_nhs_invalid() {
+        // Bumped check digit.
+        assert!(!is_valid_british_nhs("9434765910"));
+        assert!(!is_valid_british_nhs("1234567882"));
+        // All-same sentinels.
+        assert!(!is_valid_british_nhs("0000000000"));
+        assert!(!is_valid_british_nhs("9999999999"));
+        // Wrong length.
+        assert!(!is_valid_british_nhs("943476591"));
+        assert!(!is_valid_british_nhs("94347659190"));
+    }
+
+    #[test]
+    fn test_brazil_cnpj_valid() {
+        // 11222333000181 — hand-verified. First check sum = 102,
+        // mod 11 = 3, check1 = 8. Second check sum = 120, mod 11
+        // = 10, check2 = 1.
+        assert!(is_valid_brazil_cnpj("11222333000181"));
+        // Dotted form (regex allows separators).
+        assert!(is_valid_brazil_cnpj("11.222.333/0001-81"));
+        // 60746948000112 — hand-verified. First check 263 mod 11 =
+        // 10 → 1; second check 262 mod 11 = 9 → 2.
+        assert!(is_valid_brazil_cnpj("60746948000112"));
+    }
+
+    #[test]
+    fn test_brazil_cnpj_invalid() {
+        // Bumped second check digit.
+        assert!(!is_valid_brazil_cnpj("11222333000182"));
+        // Bumped first check digit.
+        assert!(!is_valid_brazil_cnpj("11222333000171"));
+        // All-same sentinels (explicit RFB rejection).
+        assert!(!is_valid_brazil_cnpj("00000000000000"));
+        assert!(!is_valid_brazil_cnpj("11111111111111"));
+        // Wrong length.
+        assert!(!is_valid_brazil_cnpj("1122233300018"));
+        assert!(!is_valid_brazil_cnpj("112223330001810"));
+    }
+
+    #[test]
+    fn test_china_resident_id_valid() {
+        // 110101199003078515 — hand-verified. Weighted sum = 238,
+        // mod 11 = 7, check table[7] = '5' ✓.
+        assert!(is_valid_china_resident_id("110101199003078515"));
+        // 11010519491231002X — hand-verified. Weighted sum = 167,
+        // mod 11 = 2, check table[2] = 'X' ✓.
+        assert!(is_valid_china_resident_id("11010519491231002X"));
+        // Lowercase x also accepted.
+        assert!(is_valid_china_resident_id("11010519491231002x"));
+    }
+
+    #[test]
+    fn test_china_resident_id_invalid() {
+        // Bumped check character.
+        assert!(!is_valid_china_resident_id("110101199003078516"));
+        // Wrong length.
+        assert!(!is_valid_china_resident_id("11010119900307851"));
+        assert!(!is_valid_china_resident_id("1101011990030785155"));
+        // Invalid DOB (month 13).
+        assert!(!is_valid_china_resident_id("110101199013078515"));
+        // Invalid DOB (day 32).
+        assert!(!is_valid_china_resident_id("110101199003328515"));
+        // Year 0000 (DOB gate).
+        assert!(!is_valid_china_resident_id("110101000001018515"));
+    }
+
+    #[test]
+    fn test_south_korea_rrn_valid() {
+        // 9001011234568 — hand-verified. Sum = 124, check =
+        // (11 - 3) % 10 = 8 ✓.
+        assert!(is_valid_south_korea_rrn("9001011234568"));
+        // Same with hyphen (regex allows it).
+        assert!(is_valid_south_korea_rrn("900101-1234568"));
+    }
+
+    #[test]
+    fn test_south_korea_rrn_invalid() {
+        // Bumped check digit.
+        assert!(!is_valid_south_korea_rrn("9001011234569"));
+        // Invalid month.
+        assert!(!is_valid_south_korea_rrn("9013011234568"));
+        // Invalid day.
+        assert!(!is_valid_south_korea_rrn("9001321234568"));
+        // Invalid sex code (0 or 9).
+        assert!(!is_valid_south_korea_rrn("9001010234568"));
+        assert!(!is_valid_south_korea_rrn("9001019234568"));
+        // All-same sentinels.
+        assert!(!is_valid_south_korea_rrn("0000000000000"));
+        // Wrong length.
+        assert!(!is_valid_south_korea_rrn("900101123456"));
+    }
+
+    #[test]
+    fn test_france_nir_valid() {
+        // 185127511418052 — hand-verified.
+        // payload 1851275114180 mod 97 = 45, check = 52.
+        assert!(is_valid_france_nir("185127511418052"));
+        // 285017511621819 — hand-verified.
+        // payload 2850175116218 mod 97 = 78, check = 19.
+        assert!(is_valid_france_nir("285017511621819"));
+    }
+
+    #[test]
+    fn test_france_nir_invalid() {
+        // Bumped check digit.
+        assert!(!is_valid_france_nir("185127511418053"));
+        assert!(!is_valid_france_nir("285017511621820"));
+        // Wrong length.
+        assert!(!is_valid_france_nir("18512751141805"));
+        assert!(!is_valid_france_nir("1851275114180522"));
+        // Non-digit at a position where only digits are allowed.
+        assert!(!is_valid_france_nir("18512751141805A"));
+    }
+
+    #[test]
+    fn test_mexico_curp_valid() {
+        // AABB850515HDFRRR09 — hand-verified. Sum = 1631,
+        // mod 10 = 1, check = (10 - 1) % 10 = 9 ✓.
+        assert!(is_valid_mexico_curp("AABB850515HDFRRR09"));
+        // HEGG560427MVZRRL04 — hand-verified. Sum = 2246,
+        // mod 10 = 6, check = 4 ✓.
+        assert!(is_valid_mexico_curp("HEGG560427MVZRRL04"));
+    }
+
+    #[test]
+    fn test_mexico_curp_invalid() {
+        // Bumped check digit.
+        assert!(!is_valid_mexico_curp("AABB850515HDFRRR08"));
+        assert!(!is_valid_mexico_curp("HEGG560427MVZRRL03"));
+        // Invalid DOB (month 13).
+        assert!(!is_valid_mexico_curp("AABB851315HDFRRR09"));
+        // Invalid DOB (day 32).
+        assert!(!is_valid_mexico_curp("AABB850532HDFRRR09"));
+        // Invalid gender (must be H or M).
+        assert!(!is_valid_mexico_curp("AABB850515XDFRRR09"));
+        // Wrong length.
+        assert!(!is_valid_mexico_curp("AABB850515HDFRRR0"));
+        assert!(!is_valid_mexico_curp("AABB850515HDFRRR099"));
+        // Lowercase letters.
+        assert!(!is_valid_mexico_curp("aabb850515hdfrrr09"));
     }
 
     #[test]
