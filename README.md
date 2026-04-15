@@ -3,17 +3,41 @@
 High-performance DLP scanner written in Rust. Detects, redacts, and protects
 sensitive data with exceptional throughput.
 
-**560 patterns** across **126 categories** — full parity with the Python version.
-**19,000+ lines** of Rust across 38 modules. **353 tests** passing.
+**561 patterns** across **126 categories** — full parity with the Python version.
+**458+ tests** passing across the lib, integration, evasion, and detection-quality
+harnesses, plus a labeled-corpus regression suite with enforced recall and
+false-positive gates.
 
 ## Performance
 
-| Scenario (1MB) | Full (560 patterns) | Baseline (108 patterns) |
+Throughput at 1 MB, median across 4 runs, default build (`cargo build --release`):
+
+| Scenario | Full (561 patterns) | Baseline (100 patterns) |
 |---|---:|---:|
-| Clean text | 66.8 MB/s | 66.4 MB/s |
-| Mixed content | 20.4 MB/s | 20.8 MB/s |
-| Dense sensitive data | 20.9 MB/s | 21.5 MB/s |
-| Keyword-heavy text | 34.4 MB/s | 38.9 MB/s |
+| Clean text | ~82 MB/s | ~83 MB/s |
+| Mixed content | ~22 MB/s | ~22 MB/s |
+| Dense sensitive data | ~15 MB/s | ~16 MB/s |
+| Keyword-heavy text | ~29 MB/s | ~30 MB/s |
+
+The Aho-Corasick context prefilter means full and baseline throughput are
+effectively identical at 10 KB and above: context-gated patterns whose
+keywords aren't present in the document are filtered out before their
+regex runs, so the extra patterns cost almost nothing on a keyword-free
+page. The `baseline_only` mode is only meaningfully faster on small (< 10 KB)
+documents where fixed AC-index build cost dominates.
+
+Dense-sensitive-data throughput (~15 MB/s) reflects the cost of running
+the checksum validators added across the `quality/checksums-batch-*`
+branches — every matched credit card runs Luhn, every IBAN runs mod-97,
+every national ID runs its algorithm-specific check. That cost is what
+took false positives on the blind-test corpus from ~95% to near-zero
+on the same pattern set.
+
+To reproduce these numbers locally:
+
+```bash
+cargo run --release --bin benchmark
+```
 
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for full results including optimization
 journey, latency tables, and baseline-vs-full comparison.
