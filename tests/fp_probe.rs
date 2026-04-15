@@ -169,6 +169,25 @@ fn probe_invalid_ramq() {
 }
 
 #[test]
+fn probe_recall_real_phones() {
+    // After the Tier 1 + Tier 2 phone validator lands, real-shape
+    // numbers in plausible formats must still match. This is the
+    // "don't regress recall" counterpart to probe_invalid_phones.
+    eprintln!("\n=== Real-shape phone numbers (must still match) ===");
+    for s in [
+        "+14155552671",   // US E.164
+        "+442079460007",  // UK E.164
+        "+33142685300",   // France E.164
+        "+4930901820",    // Germany E.164
+        "+81312345678",   // Japan E.164
+        "415-555-2671",   // Bare US (dashes)
+        "(415) 555-2671", // Bare US (parens)
+    ] {
+        probe("real-phone", s, "Reach me at {} anytime");
+    }
+}
+
+#[test]
 fn probe_keyword_prefix_shadow_regression() {
     // Regression pin for the AC MatchKind bug: the keyword "personal"
     // (under "Eyes Only") is a prefix of "personalausweis" (under
