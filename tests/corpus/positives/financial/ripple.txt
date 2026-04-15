@@ -1,0 +1,8 @@
+Ripple XRP remittance instructions
+
+Beneficiary wallet address (classic r-address format):
+rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh
+
+Destination tag: 12345
+Amount: 1500 XRP
+Reference: REM-2024-9912

@@ -1,0 +1,9 @@
+Payroll distribution note
+
+This week's crypto-denominated payroll will be sent to the
+following Litecoin address on Monday:
+
+LTC address: LVg2kJoFNg45Nbpy53h7Fe1wKyeXVRhMH9
+
+Amount: 5.0 LTC
+Tracking: PAY-2024-4412
