@@ -35,21 +35,44 @@ cargo run --release --bin benchmark
 
 | Feature | Default | Description |
 |---|---|---|
-| `metrics` | Yes | Prometheus metrics via `prometheus` crate |
-| `pdf` | No | PDF text extraction via `pdf-extract` |
-| `office` | No | DOCX/XLSX/ODS/ODT/PPTX extraction via `calamine` + `quick-xml` |
-| `archives` | No | RAR and 7z archive extraction via `unrar` + `sevenz-rust` |
-| `data-formats` | No | Parquet, SQLite extraction via `parquet` + `arrow` + `rusqlite` |
-| `msg` | No | Outlook MSG extraction via `cfb` |
+| `metrics` | **Yes** | Prometheus metrics via `prometheus` crate |
 | `barcode` | **Yes** | QR code and barcode decoding via `rxing` + `image` |
-| `bin-data` | No | BIN database (374k card prefixes) for issuer/country enrichment |
+| `pdf` | **Yes** | PDF text extraction via `pdf-extract` |
+| `office` | **Yes** | DOCX/XLSX/ODS/ODT/PPTX extraction via `calamine` + `quick-xml` |
+| `archives` | **Yes** | RAR and 7z archive extraction via `unrar` + `sevenz-rust` |
+| `msg` | **Yes** | Outlook MSG extraction via `cfb` |
+| `bin-data` | **Yes** | BIN database (374k card prefixes) for issuer/country enrichment |
+| `data-formats` | **Yes** | Parquet, SQLite extraction via `parquet` + `arrow` + `rusqlite` |
+| `siem` | No | SIEM forwarders (Splunk HEC, Elasticsearch, Syslog, Datadog) |
+| `webhooks` | No | Webhook notifier for scan findings |
 | `tui` | No | Interactive TUI menu and live dashboard |
 | `async-support` | No | Async HTTP server and webhooks via `tokio` + `reqwest` |
+| `tls` | No | Rustls-backed HTTPS server (implies `async-support`) |
+| `yaml-config` | No | YAML config file loading via `serde_yaml` |
 | `python` | No | Python bindings via `pyo3` |
 | `full` | No | All optional features |
 
+The default build includes everything needed for a capable out-of-the-box
+DLP scan: all common file formats (PDF, Office, archives, MSG, Parquet,
+SQLite, images with embedded barcodes/QR), credit card BIN enrichment, and
+Prometheus metrics. Egress integrations (SIEM forwarders, webhook
+notifiers) and runtime features (TUI, async server, TLS, Python bindings)
+are opt-in — they're only useful when you've decided which external
+system you're integrating with, so the defaults keep the library
+self-contained.
+
 ```bash
+# Default build — scanner + every common file format
+cargo build --release
+
+# Add SIEM / webhook egress
+cargo build --release --features "siem,webhooks"
+
+# Everything, including TUI and async server
 cargo build --release --features full
+
+# Minimal build — strip the heavy extractors for smaller binary
+cargo build --release --no-default-features --features metrics
 ```
 
 ## Quick Start

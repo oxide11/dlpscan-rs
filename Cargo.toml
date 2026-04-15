@@ -97,7 +97,16 @@ rustls-pemfile = { version = "2", optional = true }
 serde_yaml = { version = "0.9", optional = true }
 
 [features]
-default = ["metrics", "siem", "webhooks", "barcode"]
+default = [
+    "metrics",
+    "barcode",
+    "pdf",
+    "office",
+    "archives",
+    "msg",
+    "bin-data",
+    "data-formats",
+]
 metrics = ["dep:prometheus"]
 pdf = ["dep:pdf-extract"]
 office = ["dep:calamine", "dep:quick-xml"]
