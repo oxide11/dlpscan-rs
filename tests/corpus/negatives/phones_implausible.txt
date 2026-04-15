@@ -1,0 +1,21 @@
+Implausible phone numbers
+============================
+
+Every phone number below has valid structural shape (the regex
+matches) but is rejected by the plausibility / NANP / country-
+code validators as obvious test-data or bogus input.
+
+Call our support line at +10000000000 for help.
+    (E.164 shape; is_plausible_phone rejects all-zeros subscriber)
+
+International: +19999999999 (all-nines — is_plausible_phone rejects)
+
+North American format: +19990001234
+    (NPA 999 passes NPA structural check, but exchange 000 fails
+     the first-digit rule — exchanges must start 2..9)
+
+Call +15551234567 — the 555 exchange is fine but 123 is not
+(exchange code must start 2..9; NANP rejects "1" as exchange
+first digit).
+
+Too short for UK: +441234567 (UK minimum NSN is 9 digits)

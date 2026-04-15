@@ -418,11 +418,33 @@ fn detection_quality_baseline() {
     let report = run_harness();
     report.print_summary();
 
-    // First-generation gate: the harness must actually load the corpus
-    // and run the scanner. We don't yet fail on specific thresholds —
-    // this run captures the baseline numbers so subsequent PRs can
-    // compare. A follow-up branch will add recall and FP thresholds
-    // once we know what's achievable.
+    // Smoke check: the harness must actually load the corpus
+    // and run the scanner.
     assert!(report.positive_docs > 0, "no positive docs loaded");
     assert!(report.negative_docs > 0, "no negative docs loaded");
+
+    // Enforced gates. These are set to the current achievable
+    // numbers (100% recall, 0 FPs) as of the quality/corpus-negatives
+    // branch — not a loose floor. If a future PR causes either
+    // number to regress, this test fails loudly instead of hiding
+    // the regression in a printed-but-not-asserted baseline.
+    //
+    // Updating the gate: if a PR deliberately drops a positive
+    // label or adds a corpus negative that exposes a known gap,
+    // update the expected values here in the same commit and
+    // explain why in the PR message.
+    let total_tp: usize = report.recall_tp.values().sum();
+    let total_fn: usize = report.recall_fn_.values().sum();
+    let total_expected = total_tp + total_fn;
+    assert!(
+        total_fn == 0,
+        "recall regression: {total_fn} labeled findings were missed (see MISS lines above). \
+         Expected {total_expected}/{total_expected}, got {total_tp}/{total_expected}."
+    );
+    let total_fp: usize = report.fp.values().sum();
+    assert_eq!(
+        total_fp, 0,
+        "false-positive regression: {total_fp} forbidden matches fired on the negative corpus \
+         (see FP lines above)."
+    );
 }

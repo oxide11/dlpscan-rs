@@ -2,7 +2,7 @@
 {"path":"positives/pii/ssn_bare.txt","expected":[{"sub_category":"USA SSN","text":"078-05-1120"}]}
 {"path":"positives/pii/ssn_tax_form.txt","expected":[{"sub_category":"USA SSN","text":"123-45-6789"}]}
 {"path":"positives/pii/sin_canada.txt","expected":[{"sub_category":"Canada SIN","text":"046 454 286"}]}
-{"path":"positives/pii/email_and_phone.txt","expected":[{"sub_category":"Email Address","text":"bob.jones@example.com"},{"sub_category":"E.164 Phone Number","text":"+14155551234"},{"sub_category":"E.164 Phone Number","text":"+442079460958"}]}
+{"path":"positives/pii/email_and_phone.txt","expected":[{"sub_category":"Email Address","text":"bob.jones@example.com"},{"sub_category":"US Phone Number","text":"+14155551234"},{"sub_category":"UK Phone Number","text":"+442079460958"}]}
 {"path":"positives/pii/passport_us.txt","expected":[{"sub_category":"USA Passport","text":"123456789"}]}
 {"path":"positives/pci/visa_with_expiry.txt","expected":[{"sub_category":"Visa","text":"4242 4242 4242 4242"}]}
 {"path":"positives/pci/mastercard_with_context.txt","expected":[{"sub_category":"MasterCard","text":"5555-5555-5555-4444"}]}
@@ -21,3 +21,9 @@
 {"path":"negatives/english_prose_clean.txt","forbidden":["USA SSN","Email Address","E.164 Phone Number","Visa","MasterCard","Amex","Discover","USA Passport","Bearer Token","JWT Token"]}
 {"path":"negatives/uuids_not_tokens.txt","forbidden":["Session ID","Bearer Token","JWT Token","CSRF Token","Refresh Token"]}
 {"path":"negatives/dates_not_ssn.txt","forbidden":["USA SSN"]}
+{"path":"negatives/eu_checksum_invalid_ids.txt","forbidden":["Germany Tax ID","Poland PESEL","Belgium NRN","Netherlands BSN","British NHS","France NIR","Italy Codice Fiscale","Italy SSN","Spain DNI","Sweden PIN"]}
+{"path":"negatives/asia_checksum_invalid_ids.txt","forbidden":["India Aadhaar","Japan My Number","China Resident ID","South Korea RRN","Singapore NRIC","Singapore FIN","Hong Kong ID"]}
+{"path":"negatives/latam_checksum_invalid_ids.txt","forbidden":["Brazil CPF","Brazil CNPJ","Mexico CURP","Argentina CUIL/CUIT","Chile RUN/RUT"]}
+{"path":"negatives/middle_east_checksum_invalid_ids.txt","forbidden":["UAE Emirates ID","Israel Teudat Zehut"]}
+{"path":"negatives/financial_checksum_invalid.txt","forbidden":["IBAN Generic","ISIN","ABA Routing Number","USA Routing Number","US NPI","Canada SIN"]}
+{"path":"negatives/phones_implausible.txt","forbidden":["E.164 Phone Number","US Phone Number","UK Phone Number"]}

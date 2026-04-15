@@ -1,0 +1,7 @@
+Middle East national IDs with invalid checksums
+
+Every identifier below is structurally shaped like a real one
+but deliberately fails its check-digit algorithm.
+
+UAE Emirates ID: 784197512345674
+Israel Teudat Zehut: 000000019

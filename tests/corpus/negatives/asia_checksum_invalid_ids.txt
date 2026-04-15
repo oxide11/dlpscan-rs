@@ -1,0 +1,14 @@
+Asia-Pacific national IDs with invalid checksums
+
+Every identifier below is structurally shaped like a real one
+but deliberately fails its check-digit algorithm. Context
+keywords are present so the patterns still fire; the validator
+is the gate that keeps these out.
+
+India Aadhaar number: 999941057059
+Japan My Number (kojin bangou): 123456789019
+China Resident ID card: 110101199003078516
+South Korea RRN: 9001011234569
+Singapore NRIC: S1234567E
+Singapore FIN: F1234567O
+Hong Kong Identity Card: Z6833220

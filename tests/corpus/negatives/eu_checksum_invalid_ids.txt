@@ -1,0 +1,18 @@
+European national IDs with invalid checksums
+
+Every identifier below is structurally shaped like a real one
+(it passes the pattern regex) but deliberately fails its
+check-digit algorithm. Context keywords are present so
+context-gated patterns still fire their regex; only the
+validator should keep these out of the result set.
+
+Germany Steuer-ID (Steuer-Identifikationsnummer): 47036892817
+Poland PESEL number: 44051401457
+Belgium NRN / Rijksregisternummer: 85073003329
+Netherlands BSN: 121212123
+British NHS number: 9434765910
+France Social Security (NIR): 185127511418053
+Italian Codice Fiscale: MRTMTT25D09F205Y
+Spain DNI: 12345678A
+Swedish personnummer: 8112189877
+Germany Tax ID invoice stub: 12345678901
