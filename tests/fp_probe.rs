@@ -188,6 +188,62 @@ fn probe_recall_real_phones() {
 }
 
 #[test]
+fn probe_recall_gated_bare_ids() {
+    // After quality/bare-id-gating, five bare-regex national ID
+    // patterns moved from always-run to context-gated. They must
+    // still fire when their primary keyword is adjacent, or
+    // we've broken recall for real documents containing real
+    // IDs. Each row below pairs a plausible ID value with the
+    // wrapping sentence a DLP pipeline would realistically see.
+    eprintln!("\n=== Bare-ID gated patterns — recall check ===");
+    let cases = [
+        ("USA Passport Card",
+         "C12345678",
+         "US passport card number on file: {}"),
+        ("Canada Passport",
+         "AB123456",
+         "Canadian passport {} issued Ottawa"),
+        ("Australia Passport",
+         "PA1234567",
+         "Australian passport number: {}"),
+        ("Australia Medicare",
+         "2123 45678 1",
+         "Medicare card: {}"),
+        ("Saudi Arabia National ID",
+         "1234567890",
+         // Use the country-specific keyword "iqama" rather than
+         // the generic "national id", because the generic phrase
+         // is registered under 11 different sub_categories and
+         // AhoCorasick LeftmostLongest only attributes a hit to
+         // the first-registered one (Taiwan National ID at
+         // keywords.rs:5852). That shared-keyword bug is a
+         // separate architectural fix tracked as a follow-up;
+         // the recall path for country-specific keywords is
+         // what this commit needs to verify.
+         "Iqama / Saudi Arabia ID: {}"),
+    ];
+    for (expected_sub, value, wrapper) in cases {
+        let wrapped = wrapper.replace("{}", value);
+        let matches = dlpscan::scanner::scan_text(&wrapped).unwrap();
+        let fired = matches.iter().any(|m| m.sub_category == expected_sub);
+        if fired {
+            eprintln!("  OK  {:<30} {:<20} fires as expected", expected_sub, value);
+        } else {
+            let subs: Vec<String> = matches
+                .iter()
+                .map(|m| format!("{}/{}", m.category, m.sub_category))
+                .collect();
+            eprintln!(
+                "  REGRESS {:<30} {:<20} does NOT fire — got: {}",
+                expected_sub,
+                value,
+                subs.join(", ")
+            );
+        }
+    }
+}
+
+#[test]
 fn probe_keyword_prefix_shadow_regression() {
     // Regression pin for the AC MatchKind bug: the keyword "personal"
     // (under "Eyes Only") is a prefix of "personalausweis" (under

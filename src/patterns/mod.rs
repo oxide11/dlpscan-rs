@@ -1487,7 +1487,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\bC\d{8}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // Bare `C\d{8}` has no published check digit and matches
+        // any "C" + 8 digits string. Context-gate on the USA
+        // Passport Card keyword set in context/keywords.rs.
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1983,7 +1986,11 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]{2}\d{6}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // Canadian passport books are 2 letters + 6 digits with
+        // no published check digit. The shape is extremely common
+        // (any 2-letter state code + any 6-digit reference). Gate
+        // on the Canada Passport keyword set.
+        context_required: true,
     },
     PatternDef {
         category: "North America - Canada",
@@ -3559,7 +3566,12 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[2-6]\d{3}[\s]?\d{5}[\s]?\d[\s]?\d?\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // Australia Medicare has an internal mod-10 sanity check
+        // but the spec isn't published for third-party use, and
+        // the regex alone matches any 10/11-digit sequence with
+        // a 2-6 leading digit. Context-gate until a proper
+        // validator lands.
+        context_required: true,
     },
     PatternDef {
         category: "Asia-Pacific - Australia",
@@ -3567,7 +3579,11 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]{1,2}\d{7}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // 1-2 letters + 7 digits has no published check digit.
+        // The shape matches arbitrary alphanumeric-product codes,
+        // serial numbers, and short invoice references. Gate on
+        // the Australia Passport keyword set.
+        context_required: true,
     },
     PatternDef {
         category: "Asia-Pacific - Australia",
@@ -4159,7 +4175,11 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[12]\d{9}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // 10-digit with `1` or `2` leading — no public check
+        // digit. Matches any 10-digit sequence starting with 1
+        // or 2, which is most of them. Gate on the Saudi Arabia
+        // National ID keyword set.
+        context_required: true,
     },
     PatternDef {
         category: "Middle East - Saudi Arabia",

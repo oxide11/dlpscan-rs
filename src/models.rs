@@ -335,5 +335,19 @@ pub fn is_context_required(sub_category: &str) -> bool {
             // every 9-digit number matches. Context-gate on the
             // rich `UK Passport` keyword set in keywords.rs.
             | "UK Passport"
+            // Bare-regex national ID / passport patterns with no
+            // published check digit. Each one below is either a
+            // short letter-prefix + digit-suffix shape or a
+            // bare digit run, which means the regex alone has no
+            // structural discipline beyond "looks right-shaped."
+            // Every one of these was firing on arbitrary document
+            // content (invoice numbers, SKUs, product codes) when
+            // left always-run. Each has a rich keyword set in
+            // context/keywords.rs so context gating is effective.
+            | "USA Passport Card"          // C + 8 digits
+            | "Canada Passport"            // 2 letters + 6 digits
+            | "Australia Passport"         // 1-2 letters + 7 digits
+            | "Australia Medicare"         // 4-6 + 9 digits (loose shape)
+            | "Saudi Arabia National ID"   // 1 or 2 + 9 digits
     )
 }

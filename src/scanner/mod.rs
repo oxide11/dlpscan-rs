@@ -145,23 +145,26 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         // US core
         "USA SSN",
         "USA ITIN",
-        // USA EIN and USA Passport are deliberately removed from
-        // always-run. Both use a bare `\d{N}` regex with no
-        // structural check (EIN: 9 digits with optional separator;
-        // Passport: 9 digits). They fire on every 9-digit sequence
-        // in any document if always-run, and the blind harness
-        // surfaces them as FPs repeatedly. Context gating via
+        // USA EIN, USA Passport, and USA Passport Card are all
+        // removed from always-run. All three use a bare `\d{N}`
+        // or near-bare regex with no structural check:
+        //   * EIN:           \d{2}[sep?]\d{7}  (9 digits)
+        //   * Passport:      \d{9}
+        //   * Passport Card: C\d{8}
+        // Each fires on every matching digit sequence in any
+        // document when always-run, and the blind harness
+        // surfaced them as FPs repeatedly. Context gating via
         // is_context_required + the AC prefilter is the correct
-        // discipline: the pattern runs whenever an EIN or passport
-        // keyword is present in the text.
-        "USA Passport Card",
+        // discipline: the pattern runs whenever an EIN or
+        // passport keyword is present in the text.
         "USA Routing Number",
         "US Phone Number",
         "US MBI",
         "US NPI",
         // Canada
         "Canada SIN",
-        "Canada Passport",
+        // Canada Passport removed: bare `[A-Z]{2}\d{6}` with no
+        // check digit. Context-gated.
         // UK
         "UK NIN",
         "British NHS",
@@ -183,8 +186,10 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "Denmark CPR",
         // Asia-Pacific
         "Australia TFN",
-        "Australia Medicare",
-        "Australia Passport",
+        // Australia Medicare and Australia Passport removed:
+        // both loose regexes with no publicly-usable check
+        // digit. Context-gated via is_context_required in
+        // src/models.rs.
         "India Aadhaar",
         "India PAN",
         "China Resident ID",
@@ -202,7 +207,9 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         // Middle East
         "Israel Teudat Zehut",
         "UAE Emirates ID",
-        "Saudi Arabia National ID",
+        // Saudi Arabia National ID removed: bare `[12]\d{9}`
+        // matches any 10-digit sequence starting with 1 or 2.
+        // Context-gated via is_context_required.
         // Crypto
         "Bitcoin Address (Legacy)",
         "Bitcoin Address (Bech32)",
