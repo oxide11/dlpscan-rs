@@ -409,6 +409,56 @@ pub fn is_valid_isin(isin: &str) -> bool {
     sum % 10 == 0
 }
 
+/// Structural sanity check for a phone number. Extracts the digits
+/// from a matched phone string and rejects implausible variants:
+///
+///   * Fewer than 8 or more than 15 digits total.
+///   * All digits the same (e.g. `+10000000000`, `+19999999999`) —
+///     test-data noise, never a real phone.
+///
+/// This is intentionally conservative: it's a "reject garbage that
+/// the regex let through" gate, not a "this is a valid number in
+/// country X" gate. Real numbering-plan validation would need a
+/// country-by-country table that we don't ship.
+pub fn is_plausible_phone(phone: &str) -> bool {
+    let digits: Vec<u32> = phone
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    // E.164 is technically 7-15 digits, but 7-digit international
+    // numbers are an edge case that doesn't justify the FP volume
+    // that the loose minimum lets through. 8 is a safer floor.
+    if digits.len() < 8 || digits.len() > 15 {
+        return false;
+    }
+    // All-same-digit sentinels: 000..., 111..., ..., 999...
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    // Reject runs of the same digit long enough to dominate the
+    // number — e.g. +10000000000 has a leading 1 plus ten zeros,
+    // which the all-same check misses but is still obvious noise.
+    // Count the longest same-digit run; if it's >= digits.len() - 1,
+    // treat the number as non-plausible.
+    let mut longest_run = 1usize;
+    let mut current_run = 1usize;
+    for pair in digits.windows(2) {
+        if pair[0] == pair[1] {
+            current_run += 1;
+            if current_run > longest_run {
+                longest_run = current_run;
+            }
+        } else {
+            current_run = 1;
+        }
+    }
+    if longest_run >= digits.len().saturating_sub(1) {
+        return false;
+    }
+    true
+}
+
 /// Validate a US Social Security Number for structural correctness.
 /// Rejects invalid area numbers (000, 666, 900-999) and group/serial all-zeros.
 pub fn is_valid_ssn(ssn: &str) -> bool {
@@ -471,6 +521,16 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // FPs where a 2-letter-then-10-alphanum string was being
         // labeled as a security identifier with no structural check.
         "ISIN" => is_valid_isin(matched_text),
+        // Phone structural gate — rejects all-same-digit and
+        // near-all-same-digit numbers that the permissive phone
+        // regexes would otherwise accept. The gate is conservative
+        // (no country-specific numbering plan validation) but it
+        // closes the `+10000000000` / `+19999999999` class of
+        // obvious test-data false positives surfaced by the blind
+        // harness.
+        "E.164 Phone Number" | "US Phone Number" | "UK Phone Number" => {
+            is_plausible_phone(matched_text)
+        }
         // PAN lives under the "Primary Account Numbers" category, NOT
         // "Credit Card Numbers", so the early-return above doesn't catch
         // it. The PAN regex is `\b\d{4}[sep?]\d{4}[sep?]\d{4}[sep?]\d{1,7}\b`
@@ -607,6 +667,38 @@ mod tests {
         assert!(validate_match(cat, "PAN", "4242424242424242"));
         // A real-shape Luhn-valid 16-digit number — must be accepted.
         assert!(validate_match(cat, "PAN", "4532015112830366"));
+    }
+
+    #[test]
+    fn test_plausible_phone_valid() {
+        // Real US number with country code.
+        assert!(is_plausible_phone("+14155552671"));
+        // Real UK number.
+        assert!(is_plausible_phone("+442079460007"));
+        // Without country code, just 10 digits.
+        assert!(is_plausible_phone("4155552671"));
+        // With formatting.
+        assert!(is_plausible_phone("+1 (415) 555-2671"));
+        // Minimum-length (8 digits).
+        assert!(is_plausible_phone("12345678"));
+    }
+
+    #[test]
+    fn test_plausible_phone_invalid() {
+        // All-same-digit sentinels.
+        assert!(!is_plausible_phone("+10000000000"));
+        assert!(!is_plausible_phone("+19999999999"));
+        assert!(!is_plausible_phone("0000000000"));
+        // Long run of the same digit with one outlier — the
+        // "+1 then ten zeros" shape the blind harness surfaced.
+        // digits.len() == 11, longest_run == 10 (of 0s), and
+        // 10 >= 11 - 1, so it's rejected.
+        assert!(!is_plausible_phone("+11111111119"));
+        // Too short.
+        assert!(!is_plausible_phone("1234567"));
+        assert!(!is_plausible_phone("+441234"));
+        // Too long.
+        assert!(!is_plausible_phone("1234567890123456"));
     }
 
     #[test]

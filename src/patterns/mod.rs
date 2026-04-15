@@ -2282,7 +2282,16 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "Europe - United Kingdom",
         sub_category: "UK Phone Number",
-        regex: r"(?:\+44[-.\s]?|0)(?:1\d|20|3\d|5\d|7[0-9]|8[0-9])(?:[-.\s]?\d){7,8}\b",
+        // Leading `(?:^|[^\d])` prevents the regex engine from
+        // anchoring a match to the middle of a longer digit run.
+        // Before this, e.g. a 16-digit credit card number
+        // `5105105105105101` produced a UK-phone match on the
+        // substring `05105105101` because `0` is allowed as a
+        // leading alternative and the engine happily picked up
+        // the internal zero. `\b` doesn't help here because `\b`
+        // between two digit chars is never a word boundary;
+        // forbidding a preceding digit is what we actually want.
+        regex: r"(?:^|[^\d])(?:\+44[-.\s]?|0)(?:1\d|20|3\d|5\d|7[0-9]|8[0-9])(?:[-.\s]?\d){7,8}\b",
         case_insensitive: false,
         specificity: 0.40,
         context_required: false,
