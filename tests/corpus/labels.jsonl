@@ -13,6 +13,7 @@
 {"path":"positives/credentials/aws_access_key.txt","expected":[{"sub_category":"AWS Access Key","text":"AKIAIOSFODNN7EXAMPLE"}]}
 {"path":"positives/credentials/github_token.txt","expected":[{"sub_category":"GitHub Token (Classic)","text":"ghp_abcdefghijklmnopqrstuvwxyzABCDEF0123"}]}
 {"path":"positives/credentials/jwt_bearer.txt","expected":[{"sub_category":"JWT Token","text":"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0LXVzZXIiLCJpYXQiOjE3MDAwMDAwMDB9.abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJK"}]}
+{"path":"positives/credentials/generic_secrets.txt","expected":[{"sub_category":"Generic API Key","text":"7xqjL9kJm8nPvR2tE4fW6sY1bN3cVhAdQ"},{"sub_category":"Generic Secret Assignment","text":"MyP@ssw0rd1234XYZ"}]}
 {"path":"positives/financial/iban_germany.txt","expected":[{"sub_category":"IBAN Generic","text":"DE89 3704 0044 0532 0130 00"}]}
 {"path":"positives/financial/aba_routing_us.txt","expected":[{"sub_category":"ABA Routing Number","text":"011000015"}]}
 {"path":"positives/financial/bitcoin_address.txt","expected":[{"sub_category":"Bitcoin Address (Bech32)","text":"bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"}]}
@@ -27,3 +28,4 @@
 {"path":"negatives/middle_east_checksum_invalid_ids.txt","forbidden":["UAE Emirates ID","Israel Teudat Zehut"]}
 {"path":"negatives/financial_checksum_invalid.txt","forbidden":["IBAN Generic","ISIN","ABA Routing Number","USA Routing Number","US NPI","Canada SIN"]}
 {"path":"negatives/phones_implausible.txt","forbidden":["E.164 Phone Number","US Phone Number","UK Phone Number"]}
+{"path":"negatives/secret_placeholders.txt","forbidden":["Generic API Key","Generic Secret Assignment"]}
