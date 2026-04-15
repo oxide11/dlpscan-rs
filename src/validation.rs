@@ -292,6 +292,25 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // adding it here would silently drop every legitimate
         // masked-PAN match.
         "PAN" => is_luhn_valid(matched_text),
+        // IMEI is a 15-digit device identifier with a Luhn check digit.
+        // Without this validator the pattern happily matches any 15-digit
+        // sequence, including Luhn-failing 15-digit credit card numbers
+        // (Amex) that were correctly rejected by the brand-specific
+        // pre-validator. Those rejections bubble up as IMEI hits because
+        // IMEI is next-most-specific at the same digit length, and the
+        // blind-test harness surfaced this as "100% credit card FP rate."
+        // Luhn-gating IMEI closes that door cleanly — real IMEIs still
+        // pass, forged/invoice-shaped 15-digit numbers don't.
+        //
+        // IMEISV (16 digits) intentionally has NO Luhn validator here.
+        // IMEISV replaces the IMEI check digit with a 2-digit Software
+        // Version field, so the 16-digit form has no built-in checksum.
+        // Instead, IMEISV is switched to context_required = true (see
+        // `is_context_required` in src/models.rs) so it only fires when
+        // an IMEISV keyword is within 50 characters. That gate is what
+        // stops 16-digit invoice numbers and Luhn-failing 16-digit card
+        // numbers from being reported as device identifiers.
+        "IMEI" => is_luhn_valid(matched_text),
         _ => true, // No validator — accept
     }
 }
@@ -391,6 +410,26 @@ mod tests {
         assert!(validate_match(cat, "PAN", "4242424242424242"));
         // A real-shape Luhn-valid 16-digit number — must be accepted.
         assert!(validate_match(cat, "PAN", "4532015112830366"));
+    }
+
+    #[test]
+    fn test_validate_match_imei_luhn_gates_invoice_numbers() {
+        // Regression: before this change the IMEI sub_category had no
+        // validator registered, so any 15-digit sequence that also
+        // matched the IMEI regex was accepted. That included Luhn-
+        // failing Amex-shaped card numbers (also 15 digits), which
+        // showed up in the blind-test report as "100% credit card
+        // false positives." After the fix, validate_match must run
+        // Luhn on IMEI exactly like PAN.
+        let cat = "Device Identifiers";
+        // Amex test numbers bumped by 1 → Luhn-invalid → must reject.
+        assert!(!validate_match(cat, "IMEI", "378282246310006"));
+        assert!(!validate_match(cat, "IMEI", "371449635398432"));
+        // Invoice-shaped 15-digit numbers that happen to fail Luhn.
+        assert!(!validate_match(cat, "IMEI", "123456789012345"));
+        // Real-shape Luhn-valid IMEI — must accept.
+        // IMEI 490154203237518 is a common test value that passes Luhn.
+        assert!(validate_match(cat, "IMEI", "490154203237518"));
     }
 
     #[test]

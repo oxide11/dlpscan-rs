@@ -300,5 +300,14 @@ pub fn is_context_required(sub_category: &str) -> bool {
             // 50 characters (see `Medical Record Number` in
             // context/keywords.rs).
             | "Medical Record Number"
+            // IMEISV is a 16-digit device identifier whose last 2
+            // digits are a Software Version, NOT a checksum, so the
+            // pattern has no structural signal beyond "16 digits."
+            // That makes it indistinguishable from a Luhn-failing
+            // credit card, a 16-digit invoice number, or any other
+            // 16-digit sequence at the regex layer. Restrict it to
+            // fire only when an IMEISV keyword is in range (see
+            // `IMEISV` in context/keywords.rs).
+            | "IMEISV"
     )
 }

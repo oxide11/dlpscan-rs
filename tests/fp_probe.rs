@@ -16,13 +16,13 @@ fn probe(label: &str, sample: &str, wrapper: &str) {
         Ok(matches) => {
             let subs: Vec<String> = matches
                 .iter()
-                .map(|m| format!("{}/{}", m.category, m.sub_category))
+                .map(|m| format!("{}/{} [{}]", m.category, m.sub_category, m.text))
                 .collect();
             if matches.is_empty() {
-                eprintln!("  OK {:<28} {:<24} → (no match)", label, sample);
+                eprintln!("  OK {:<28} {:<28} → (no match)", label, sample);
             } else {
                 eprintln!(
-                    "  FP {:<28} {:<24} → {} hit(s): {}",
+                    "  FP {:<28} {:<28} → {} hit(s): {}",
                     label,
                     sample,
                     matches.len(),
