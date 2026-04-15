@@ -309,5 +309,31 @@ pub fn is_context_required(sub_category: &str) -> bool {
             // fire only when an IMEISV keyword is in range (see
             // `IMEISV` in context/keywords.rs).
             | "IMEISV"
+            // USA EIN is a 9-digit bare regex `\d{2}[sep?]\d{7}` that
+            // fires on any 9-digit sequence with an optional
+            // separator after the second digit. The blind harness
+            // showed EIN matching the digit substring of
+            // `+441234567`, and at specificity 0.40 without context
+            // gating it would match every 9-digit account number,
+            // invoice reference, or phone-minus-country-code in a
+            // document. IRS publishes a set of valid EIN prefixes
+            // (roughly 100 two-digit values) but we don't bundle
+            // that table — context gating on `ein` / `employer
+            // identification` / `federal tax id` keywords is enough
+            // to neutralise the FP class without bringing the data.
+            | "USA EIN"
+            // USA Passport is a bare `\b\d{9}\b` regex with no
+            // published check digit — US passport books use a
+            // 9-digit serial with no checksum. Every 9-digit
+            // sequence in a document would otherwise match. The
+            // keyword set under `USA Passport` in keywords.rs is
+            // rich (us passport, passport number, passport book,
+            // passport card, ...) so context gating is effective.
+            | "USA Passport"
+            // UK Passport is a bare `\b\d{9}\b` regex, same class
+            // of problem as USA Passport — no published checksum,
+            // every 9-digit number matches. Context-gate on the
+            // rich `UK Passport` keyword set in keywords.rs.
+            | "UK Passport"
     )
 }

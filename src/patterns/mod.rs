@@ -1461,7 +1461,13 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{2}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{7}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // `\b\d{2}[sep?]\d{7}\b` matches any 9-digit sequence with
+        // an optional separator after position 2. Without a context
+        // gate the pattern fires on every 9-digit phone, invoice,
+        // or account number. Keeping context_required in sync with
+        // the hardcoded `is_context_required` map so the PatternDef
+        // field audit test stays green.
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1469,7 +1475,11 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{9}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // US passport books are a bare 9-digit serial with no
+        // published check digit, so structurally the regex can't
+        // be tightened. Gate via keywords instead. See the
+        // matching entry in src/models.rs :: is_context_required.
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -2270,7 +2280,11 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{9}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // UK passport books are a bare 9-digit serial with no
+        // published check digit. Matches every 9-digit sequence
+        // if not context-gated. See the matching entry in
+        // src/models.rs :: is_context_required.
+        context_required: true,
     },
     PatternDef {
         category: "Europe - United Kingdom",
