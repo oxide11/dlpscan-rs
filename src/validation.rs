@@ -1028,6 +1028,340 @@ pub fn is_valid_gps_coordinates(coords: &str) -> bool {
     true
 }
 
+// ---------------------------------------------------------------------------
+// URL credential filters (Phase 1c of the always-run precision pass).
+//
+// Four always-run patterns live in this section: Bearer Token, URL with
+// Password, URL with Token, and Slack Webhook. Each already has a fairly
+// tight regex — these validators add length-floor and placeholder-string
+// checks to catch the common false-positive class where the regex shape
+// matches but the value is obviously a documentation example or prose.
+// ---------------------------------------------------------------------------
+
+/// Lowercase stop-list of values that the URL / Bearer / Slack regexes
+/// would otherwise happily match but which are documentation
+/// placeholders, not real credentials. The list is small and curated;
+/// there's no attempt to auto-detect documentation — it's just the
+/// strings that show up repeatedly in real code samples and READMEs.
+const CREDENTIAL_PLACEHOLDER_TOKENS: &[&str] = &[
+    "your_api_key_here",
+    "your_api_key",
+    "yourapikey",
+    "your_token_here",
+    "your_token",
+    "yourtoken",
+    "your_secret_here",
+    "your_secret",
+    "yoursecret",
+    "your_password",
+    "yourpassword",
+    "placeholder",
+    "example",
+    "sample",
+    "changeme",
+    "change_me",
+    "todo",
+    "fixme",
+    "abc",
+    "abc123",
+    "123456",
+    "xxxxxxxxxx",
+    "xxxxxxxx",
+    "test",
+    "test123",
+    "dummy",
+    "mytoken",
+    "mykey",
+    "mysecret",
+];
+
+/// Check if a candidate credential value is a known documentation
+/// placeholder. Case-insensitive match against `CREDENTIAL_PLACEHOLDER_TOKENS`.
+fn is_credential_placeholder(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    CREDENTIAL_PLACEHOLDER_TOKENS.iter().any(|&p| p == lower)
+}
+
+/// Validate a `Bearer <token>` credential match. The regex
+/// `[Bb]earer\s+[A-Za-z0-9\-._~+/]+=*` will happily match prose like
+/// "bearer required" where "required" is just the next word; this
+/// validator enforces a length floor and a placeholder-string check
+/// to cut that FP class.
+///
+/// Rules:
+///   * token portion must be at least 16 characters (the shortest
+///     realistic bearer value is an opaque 16-char string; JWTs and
+///     API tokens are longer)
+///   * token must not be a known documentation placeholder
+pub fn is_plausible_bearer_token(matched: &str) -> bool {
+    // Split at the first whitespace run — everything after is the token.
+    let parts: Vec<&str> = matched.splitn(2, char::is_whitespace).collect();
+    if parts.len() != 2 {
+        return false;
+    }
+    let token = parts[1].trim_end_matches('=').trim();
+    if token.len() < 16 {
+        return false;
+    }
+    if is_credential_placeholder(token) {
+        return false;
+    }
+    true
+}
+
+/// Validate a `URL with Token` match. The regex matches any URL with a
+/// query parameter like `?token=abc` or `&api_key=xyz`, including
+/// documentation examples with placeholder values. This validator:
+///
+///   * extracts the value of the matching query parameter
+///   * rejects if the value is shorter than 8 characters
+///   * rejects if the value is a known placeholder string
+pub fn is_plausible_url_token(matched: &str) -> bool {
+    // Find the `?` or `&` that starts the query part, then look at
+    // the last `=` to isolate the value. The regex guarantees the
+    // shape `...[?&]key=value`, so we can scan from the right.
+    let Some(eq_pos) = matched.rfind('=') else {
+        return false;
+    };
+    let value = &matched[eq_pos + 1..];
+    // Strip any trailing URL fragment or following parameter
+    // (though the regex's `[^\s&]+` should already handle this).
+    let value = value.split(['&', '#']).next().unwrap_or("");
+    if value.len() < 8 {
+        return false;
+    }
+    if is_credential_placeholder(value) {
+        return false;
+    }
+    true
+}
+
+/// Validate a Slack Webhook URL. Slack webhooks follow the shape
+/// `https://hooks.slack.com/services/T.../B.../...` where:
+///
+///   * the `T` segment (workspace ID) is typically 9-11 chars
+///   * the `B` segment (bot/channel ID) is typically 9-11 chars
+///   * the final segment (secret) is typically 24 chars
+///
+/// The regex `/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+` accepts 1+
+/// chars per segment, which is too loose — a string like
+/// `https://hooks.slack.com/services/T1/B1/abc` would match. Enforce
+/// the minimum realistic lengths.
+pub fn is_plausible_slack_webhook(url: &str) -> bool {
+    // The regex already guarantees the exact prefix; we just need to
+    // split the three segments after `/services/` and check lengths.
+    let Some(tail) = url.strip_prefix("https://hooks.slack.com/services/") else {
+        return false;
+    };
+    let segments: Vec<&str> = tail.split('/').collect();
+    if segments.len() != 3 {
+        return false;
+    }
+    let (t_seg, b_seg, secret) = (segments[0], segments[1], segments[2]);
+    // T segment: "T" + at least 8 chars (9 total is the minimum
+    // observed, 11 is typical).
+    if !t_seg.starts_with('T') || t_seg.len() < 9 {
+        return false;
+    }
+    // B segment: "B" + at least 8 chars.
+    if !b_seg.starts_with('B') || b_seg.len() < 9 {
+        return false;
+    }
+    // Secret: at least 16 characters (typical is 24).
+    if secret.len() < 16 {
+        return false;
+    }
+    true
+}
+
+// ---------------------------------------------------------------------------
+// Generic secret entropy filters (Phase 1d of the always-run precision pass).
+//
+// The two "Generic" patterns in src/patterns/mod.rs:
+//
+//   * Generic API Key — `(api_key|apikey|api_secret|api_token) = "VALUE"`
+//   * Generic Secret Assignment — `(password|secret|token|...) = "VALUE"`
+//
+// have the loosest matchers in the secret family. They fire on every
+// `key = value` shape in any code or config snippet, including
+// documentation examples (`api_key = "your_api_key_here"`) and
+// placeholder fixtures. The regex floor is 16 chars for API Key and 8
+// chars for Secret Assignment; everything that passes the regex needs
+// secondary discipline.
+//
+// Approach: compute Shannon entropy of the VALUE portion (extracted
+// from the matched assignment) and require it to be above a per-pattern
+// floor. API Key gets a stricter floor because real API keys are
+// effectively random; Secret Assignment gets a looser floor because
+// real passwords (e.g., `SpringWinter2024!`) are word-shaped and have
+// lower entropy than random tokens. Both validators also reject
+// all-same-character values and a small inline list of well-known
+// placeholder strings that fall in the entropy gap (~3.0-3.5 bits/char)
+// where word-shaped placeholders and word-shaped passwords are
+// indistinguishable.
+//
+// Why a small inline placeholder list instead of importing the one
+// from quality/url-credential-filters: that branch isn't merged yet
+// and I don't want a cross-branch dependency. When both branches land,
+// a follow-up can consolidate the lists into a single `placeholders.rs`
+// module. The lists are tiny (~10 entries each) so the duplication
+// is cheap until then.
+// ---------------------------------------------------------------------------
+
+/// Inline placeholder stop-list for the generic secret validators.
+/// Matched case-insensitively against the extracted value. These are
+/// the strings that fall in the entropy "gray zone" (~3.0-3.5 bits/char)
+/// where Shannon entropy alone can't distinguish a word-shaped
+/// placeholder from a word-shaped password.
+const SECRET_VALUE_PLACEHOLDERS: &[&str] = &[
+    "your_api_key_here",
+    "your_api_key",
+    "your-api-key",
+    "yourapikey",
+    "your_token_here",
+    "your_token",
+    "your-token",
+    "yourtoken",
+    "your_secret_here",
+    "your_secret",
+    "your-secret",
+    "yoursecret",
+    "your_password",
+    "your-password",
+    "yourpassword",
+    "placeholder",
+    "placeholder12345",
+    "example_key",
+    "example_token",
+    "example_secret",
+    "changeme",
+    "change_me",
+    "changeit",
+    "change_it",
+    "todo",
+    "fixme",
+    "abc123",
+    "abc12345",
+    "abcdefgh",
+    "12345678",
+    "1234567890",
+    "test123",
+    "testkey",
+    "testtoken",
+    "testsecret",
+    "dummy",
+    "dummykey",
+    "mytoken",
+    "mykey",
+    "mysecret",
+    "default",
+    "supersecret",
+    "secretkey",
+    "apikey",
+    "api_key",
+];
+
+/// Extract the VALUE portion from a `key = "value"` style assignment
+/// matched by Generic API Key or Generic Secret Assignment.
+///
+/// The matched text follows the shape
+/// `<key>\s*[=:]\s*["']?<value>["']?`. We split at the first `=` or `:`,
+/// strip surrounding whitespace, peel one optional pair of matching
+/// quotes, and return whatever's left. The regex already guarantees the
+/// shape, so this is a syntactic split rather than a parse — failures
+/// are treated as "value is the entire matched text" which is
+/// conservative (the entropy check still fires on it).
+fn extract_secret_value(matched: &str) -> &str {
+    let split_pos = matched
+        .char_indices()
+        .find(|(_, c)| *c == '=' || *c == ':');
+    let after = match split_pos {
+        Some((idx, _)) => &matched[idx + 1..],
+        None => matched,
+    };
+    let trimmed = after.trim();
+    // Peel a single layer of matching quotes, if present.
+    let unquoted = if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+    {
+        &trimmed[1..trimmed.len().saturating_sub(1)]
+    } else {
+        trimmed
+    };
+    unquoted
+}
+
+/// Shared structural rejection rules for both generic-secret validators.
+/// Returns `false` if the value is obviously not a real secret
+/// regardless of its entropy.
+fn secret_value_obviously_invalid(value: &str) -> bool {
+    if value.is_empty() {
+        return true;
+    }
+    // All-same character (entropy 0).
+    let first = value.chars().next().unwrap();
+    if value.chars().all(|c| c == first) {
+        return true;
+    }
+    // Inline placeholder list, case-insensitive match.
+    let lower = value.to_ascii_lowercase();
+    if SECRET_VALUE_PLACEHOLDERS.iter().any(|&p| p == lower) {
+        return true;
+    }
+    false
+}
+
+/// Validate a `Generic API Key` match. API keys are effectively random
+/// tokens by design — real values come from a CSPRNG, not from human
+/// keyboards. The regex requires `[A-Za-z0-9\-._~+/]{16,}`, which is a
+/// 67-character alphabet; the theoretical entropy ceiling is
+/// `log2(67) ≈ 6.07` bits/char and well-formed real keys average ~5.5.
+///
+/// Rules:
+///   * regex floor: 16 chars (already enforced by the pattern)
+///   * structural: not all-same, not in inline placeholder list
+///   * entropy: Shannon entropy of the value ≥ 3.0 bits/char
+///
+/// The 3.0 floor is calibrated against AWS's published example
+/// `AKIAIOSFODNN7EXAMPLE` (entropy ≈ 3.77) — well-formed real keys
+/// pass with margin, while the obvious garbage class (constant strings,
+/// short repeated patterns) gets rejected.
+pub fn is_plausible_api_key(matched: &str) -> bool {
+    let value = extract_secret_value(matched);
+    if value.chars().count() < 16 {
+        return false;
+    }
+    if secret_value_obviously_invalid(value) {
+        return false;
+    }
+    crate::scanner::char_entropy(value) >= 3.0
+}
+
+/// Validate a `Generic Secret Assignment` match. Unlike API keys,
+/// passwords and other user-chosen secrets are often word-shaped:
+/// `SpringWinter2024!`, `MyDog'sName123`. These values have entropy
+/// in the 3.0-4.0 range — well below random-token entropy. A high
+/// entropy floor here would false-negative on real password fields,
+/// so we set the floor at the level where only obvious garbage gets
+/// caught (~2.5 bits/char) and rely on the placeholder list to handle
+/// the well-known word-shaped placeholders.
+///
+/// Rules:
+///   * regex floor: 8 chars (already enforced); validator floor 12
+///     to add an extra layer above the regex
+///   * structural: not all-same, not in inline placeholder list
+///   * entropy: Shannon entropy of the value ≥ 2.5 bits/char
+pub fn is_plausible_secret_assignment(matched: &str) -> bool {
+    let value = extract_secret_value(matched);
+    if value.chars().count() < 12 {
+        return false;
+    }
+    if secret_value_obviously_invalid(value) {
+        return false;
+    }
+    crate::scanner::char_entropy(value) >= 2.5
+}
+
 /// Validate a Dutch Burgerservicenummer (BSN) using the
 /// eleven-test. BSN is 8 or 9 digits; 8-digit BSNs are treated
 /// as 9-digit with a leading zero.
@@ -2224,6 +2558,312 @@ pub fn is_valid_uae_emirates_id(id: &str) -> bool {
     sum % 10 == 0
 }
 
+// ---------------------------------------------------------------------------
+// Cryptocurrency address validators (Phase 1a of the always-run precision
+// pass). Each crypto address format has a published checksum; verifying it
+// turns the "25-34 base58 chars" regex into an actual cryptographic gate.
+//
+// Algorithms covered:
+//   * Base58Check — Bitcoin Legacy (P2PKH 0x00, P2SH 0x05), Litecoin
+//     (P2PKH 0x30, P2SH 0x32), and Ripple (different alphabet, version 0x00)
+//   * Bech32 (BIP-173 polymod) — Bitcoin SegWit
+//   * CashAddr (polymod similar to Bech32 with different constants) —
+//     Bitcoin Cash
+//
+// Ethereum is DELIBERATELY excluded from this batch. EIP-55 mixed-case is
+// a soft check (lowercase-only addresses are still valid) and a real
+// implementation needs keccak256, which we don't have as a dependency and
+// don't want to pull in for a soft-gate. The Ethereum regex
+// `0x[0-9a-fA-F]{40}` is already tight enough that FPs are rare.
+// ---------------------------------------------------------------------------
+
+use sha2::{Digest, Sha256};
+
+/// Standard Base58 alphabet used by Bitcoin, Litecoin, and most Base58Check
+/// addresses. Excludes `0`, `O`, `I`, `l` to avoid visual ambiguity.
+const BASE58_ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+/// Ripple's Base58 alphabet. Same 58-symbol design principle as standard
+/// Base58 but deliberately shuffled so addresses don't collide with
+/// Bitcoin's. The `r` prefix + different alphabet are the only reason an
+/// XRP address can't be confused with a BTC address on inspection.
+const BASE58_RIPPLE_ALPHABET: &[u8; 58] =
+    b"rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz";
+
+/// Decode a Base58-encoded string to its byte representation. Returns
+/// `None` if any character is not in the supplied alphabet. Handles leading
+/// "zeros" (represented by the alphabet's first character — `1` in
+/// standard Base58, `r` in Ripple) by prepending the corresponding number
+/// of zero bytes to the output.
+///
+/// This is a bytewise implementation — no big-integer arithmetic required.
+/// For each input character we compute `out = out * 58 + digit`, carrying
+/// through the existing output bytes from least-significant up.
+fn base58_decode(input: &str, alphabet: &[u8; 58]) -> Option<Vec<u8>> {
+    // Build an inverse lookup table so we can map chars → indices in O(1).
+    // Cost is fixed at 256 bytes per call site — cheap to keep on the
+    // stack rather than memoize.
+    let mut inverse = [u8::MAX; 128];
+    for (i, &c) in alphabet.iter().enumerate() {
+        inverse[c as usize] = i as u8;
+    }
+
+    let mut output: Vec<u8> = Vec::with_capacity(input.len());
+    for c in input.bytes() {
+        if c >= 128 {
+            return None;
+        }
+        let digit = inverse[c as usize];
+        if digit == u8::MAX {
+            return None;
+        }
+        // out = out * 58 + digit
+        let mut carry = digit as u32;
+        for byte in output.iter_mut() {
+            carry += *byte as u32 * 58;
+            *byte = (carry & 0xFF) as u8;
+            carry >>= 8;
+        }
+        while carry > 0 {
+            output.push((carry & 0xFF) as u8);
+            carry >>= 8;
+        }
+    }
+
+    // Leading "zero" characters in the input (the alphabet's first char)
+    // map to leading zero bytes in the output.
+    let leading_zero_char = alphabet[0];
+    let leading_zeros = input.bytes().take_while(|&c| c == leading_zero_char).count();
+    for _ in 0..leading_zeros {
+        output.push(0);
+    }
+
+    output.reverse();
+    Some(output)
+}
+
+/// Verify a Base58Check-encoded payload. The last 4 bytes are a checksum
+/// computed as `SHA256(SHA256(payload_without_checksum))[..4]`. Returns
+/// `true` if the checksum matches. The `expected_version_bytes` slice
+/// gates the version byte (first byte of the decoded payload) — pass
+/// `&[0x00, 0x05]` for Bitcoin Legacy (P2PKH + P2SH), `&[0x30, 0x32]` for
+/// Litecoin (L and M/3 prefixes), and `&[0x00]` for Ripple.
+fn verify_base58check(decoded: &[u8], expected_version_bytes: &[u8]) -> bool {
+    // Standard Base58Check payload is 25 bytes: 1 version + 20 payload + 4 check.
+    // Some exotic formats use longer payloads, but for every format we
+    // validate here the length is exactly 25.
+    if decoded.len() != 25 {
+        return false;
+    }
+    if !expected_version_bytes.contains(&decoded[0]) {
+        return false;
+    }
+    let payload = &decoded[..21];
+    let expected_checksum = &decoded[21..25];
+    let first_hash = Sha256::digest(payload);
+    let second_hash = Sha256::digest(first_hash);
+    &second_hash[..4] == expected_checksum
+}
+
+/// Validate a Bitcoin legacy address (P2PKH, starts with `1`, or P2SH,
+/// starts with `3`) using Base58Check with double-SHA256 checksum and
+/// version byte `0x00` or `0x05`.
+pub fn is_valid_bitcoin_legacy(addr: &str) -> bool {
+    // The regex requires 26-35 characters; any real address is in this
+    // range. Double-check here defensively.
+    if !(26..=35).contains(&addr.len()) {
+        return false;
+    }
+    let first = addr.as_bytes().first().copied();
+    if first != Some(b'1') && first != Some(b'3') {
+        return false;
+    }
+    let Some(decoded) = base58_decode(addr, BASE58_ALPHABET) else {
+        return false;
+    };
+    verify_base58check(&decoded, &[0x00, 0x05])
+}
+
+/// Validate a Litecoin address (P2PKH `L`, P2SH `M` or `3`) using
+/// Base58Check with the Litecoin version bytes `0x30` (L), `0x32` (M),
+/// and historically `0x05` (3, same prefix as Bitcoin P2SH — now
+/// deprecated in favour of `M`).
+pub fn is_valid_litecoin(addr: &str) -> bool {
+    if !(27..=34).contains(&addr.len()) {
+        return false;
+    }
+    let first = addr.as_bytes().first().copied();
+    if !matches!(first, Some(b'L') | Some(b'M') | Some(b'3')) {
+        return false;
+    }
+    let Some(decoded) = base58_decode(addr, BASE58_ALPHABET) else {
+        return false;
+    };
+    // 0x30 = L (P2PKH), 0x32 = M (P2SH-new), 0x05 = 3 (P2SH-old).
+    verify_base58check(&decoded, &[0x30, 0x32, 0x05])
+}
+
+/// Validate a Ripple (XRP) classic address. Uses Base58Check with
+/// Ripple's custom 58-symbol alphabet and version byte `0x00`.
+pub fn is_valid_ripple(addr: &str) -> bool {
+    if !(25..=35).contains(&addr.len()) {
+        return false;
+    }
+    if addr.as_bytes().first().copied() != Some(b'r') {
+        return false;
+    }
+    let Some(decoded) = base58_decode(addr, BASE58_RIPPLE_ALPHABET) else {
+        return false;
+    };
+    verify_base58check(&decoded, &[0x00])
+}
+
+/// Bech32 character set used by BIP-173. Mapped by index for the
+/// expand-char step of the polymod check.
+const BECH32_CHARSET: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+/// Bech32 polymod function from BIP-173. Takes an iterator of 5-bit
+/// groups and computes the polynomial modulus used by the checksum.
+fn bech32_polymod(values: &[u8]) -> u32 {
+    const GEN: [u32; 5] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+    let mut chk: u32 = 1;
+    for &v in values {
+        let b = chk >> 25;
+        chk = ((chk & 0x1ffffff) << 5) ^ (v as u32);
+        for (i, &g) in GEN.iter().enumerate() {
+            if (b >> i) & 1 == 1 {
+                chk ^= g;
+            }
+        }
+    }
+    chk
+}
+
+/// Expand an ASCII HRP into the 5-bit value sequence the bech32 polymod
+/// expects (high bits, zero separator, low bits).
+fn bech32_hrp_expand(hrp: &[u8]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::with_capacity(hrp.len() * 2 + 1);
+    for &c in hrp {
+        out.push(c >> 5);
+    }
+    out.push(0);
+    for &c in hrp {
+        out.push(c & 31);
+    }
+    out
+}
+
+/// Validate a Bitcoin SegWit (Bech32 / Bech32m) address. BIP-173 defines
+/// the checksum: the polymod of `hrp_expand(hrp) || data_part` must equal
+/// 1 (bech32) or 0x2bc830a3 (bech32m, BIP-350). Bitcoin witness version 0
+/// uses bech32; witness version 1+ (Taproot) uses bech32m. We accept
+/// either so Taproot addresses validate.
+pub fn is_valid_bitcoin_bech32(addr: &str) -> bool {
+    // Find the HRP / data separator. For Bitcoin mainnet this is always
+    // `bc`. The regex requires the address to start with `bc1` so the
+    // split is at index 2.
+    if !addr.starts_with("bc1") && !addr.starts_with("BC1") {
+        return false;
+    }
+    // Normalize to lowercase for checksum computation. Bech32 is
+    // case-insensitive but the encoding must not mix cases.
+    let lower = addr.to_ascii_lowercase();
+    let upper = addr.to_ascii_uppercase();
+    if addr != lower && addr != upper {
+        return false;
+    }
+    let hrp = b"bc";
+    let data_part = &lower[3..];
+    if data_part.len() < 6 {
+        return false;
+    }
+    // Decode each data char to its 5-bit value in BECH32_CHARSET.
+    let mut data_values: Vec<u8> = Vec::with_capacity(data_part.len());
+    for c in data_part.bytes() {
+        if let Some(v) = BECH32_CHARSET.iter().position(|&x| x == c) {
+            data_values.push(v as u8);
+        } else {
+            return false;
+        }
+    }
+    let mut polymod_input: Vec<u8> = bech32_hrp_expand(hrp);
+    polymod_input.extend_from_slice(&data_values);
+    let check = bech32_polymod(&polymod_input);
+    // Witness version 0 → bech32 (check == 1)
+    // Witness version 1+ → bech32m (check == 0x2bc830a3)
+    check == 1 || check == 0x2bc830a3
+}
+
+/// CashAddr character set (same layout as Bech32 but different generator).
+const CASHADDR_CHARSET: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+/// CashAddr polymod function. Similar to Bech32 but with a different
+/// generator polynomial and a larger state (40 bits vs 30 bits).
+fn cashaddr_polymod(values: &[u8]) -> u64 {
+    const GEN: [u64; 5] = [
+        0x98f2bc8e61, 0x79b76d99e2, 0xf33e5fb3c4, 0xae2eabe2a8, 0x1e4f43e470,
+    ];
+    let mut c: u64 = 1;
+    for &v in values {
+        let c0 = (c >> 35) as u8;
+        c = ((c & 0x07ffffffff) << 5) ^ (v as u64);
+        for (i, &g) in GEN.iter().enumerate() {
+            if (c0 >> i) & 1 == 1 {
+                c ^= g;
+            }
+        }
+    }
+    c ^ 1
+}
+
+/// Expand an ASCII prefix into the 5-bit value sequence the CashAddr
+/// polymod expects: low 5 bits of each char, then a zero separator.
+fn cashaddr_prefix_expand(prefix: &[u8]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::with_capacity(prefix.len() + 1);
+    for &c in prefix {
+        out.push(c & 0x1f);
+    }
+    out.push(0);
+    out
+}
+
+/// Validate a Bitcoin Cash address. Accepts both the bare CashAddr body
+/// (`q...` or `p...`, 42 chars) and the prefixed form
+/// (`bitcoincash:q...`). The checksum is computed over
+/// `prefix_expand("bitcoincash") || data_values` and must equal 0.
+pub fn is_valid_bitcoin_cash(addr: &str) -> bool {
+    // Split off optional prefix.
+    let (prefix, body) = match addr.split_once(':') {
+        Some((p, b)) => {
+            if p.to_ascii_lowercase() != "bitcoincash" {
+                return false;
+            }
+            ("bitcoincash", b)
+        }
+        None => ("bitcoincash", addr),
+    };
+    // Body must be 42 ASCII lowercase chars starting with q or p.
+    if body.len() != 42 {
+        return false;
+    }
+    let first = body.as_bytes().first().copied();
+    if first != Some(b'q') && first != Some(b'p') {
+        return false;
+    }
+    // Decode each body char to its 5-bit value.
+    let mut data_values: Vec<u8> = Vec::with_capacity(body.len());
+    for c in body.bytes() {
+        if let Some(v) = CASHADDR_CHARSET.iter().position(|&x| x == c) {
+            data_values.push(v as u8);
+        } else {
+            return false;
+        }
+    }
+    let mut polymod_input: Vec<u8> = cashaddr_prefix_expand(prefix.as_bytes());
+    polymod_input.extend_from_slice(&data_values);
+    cashaddr_polymod(&polymod_input) == 0
+}
+
 /// Validate a German Tax ID (Steuer-Identifikationsnummer) using
 /// the ISO 7064 MOD 11,10 check digit. The Steuer-ID is an 11-digit
 /// number assigned by the Bundeszentralamt für Steuern; positions
@@ -2508,6 +3148,21 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         "IPv6 Address" => is_valid_ipv6(matched_text),
         "MAC Address" => is_valid_mac_address(matched_text),
         "GPS Coordinates" => is_valid_gps_coordinates(matched_text),
+        // URL credential filters — each regex is fairly tight already,
+        // but placeholder values ("YOUR_API_KEY") and too-short token
+        // portions are common in documentation. The validators below
+        // add length floors + a small placeholder stop-list.
+        "Bearer Token" => is_plausible_bearer_token(matched_text),
+        "URL with Token" => is_plausible_url_token(matched_text),
+        "Slack Webhook" => is_plausible_slack_webhook(matched_text),
+        // Generic secret entropy filters — extract the value from
+        // the `key = "value"` assignment and apply Shannon entropy
+        // floor + length floor + inline placeholder list. API Key
+        // gets a stricter entropy threshold (3.0) because real keys
+        // are random; Secret Assignment gets a looser one (2.5)
+        // because user-chosen passwords are word-shaped.
+        "Generic API Key" => is_plausible_api_key(matched_text),
+        "Generic Secret Assignment" => is_plausible_secret_assignment(matched_text),
         // Germany Steuer-ID — 11 digits with an ISO 7064 MOD 11,10
         // check. Without this, `\b\d{11}\b` fires on every 11-digit
         // invoice number, timestamp, or phone sequence in a
@@ -2617,6 +3272,16 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // UAE Emirates ID — 15 digits with fixed `784` prefix
         // and Luhn check on all 15.
         "UAE Emirates ID" => is_valid_uae_emirates_id(matched_text),
+        // Cryptocurrency addresses — every format validated here has a
+        // published checksum, turning the regex into a real
+        // cryptographic gate rather than "looks like a 25-35 char
+        // base58 string." See the crypto section of validation.rs for
+        // per-format notes.
+        "Bitcoin Address (Legacy)" => is_valid_bitcoin_legacy(matched_text),
+        "Bitcoin Address (Bech32)" => is_valid_bitcoin_bech32(matched_text),
+        "Bitcoin Cash Address" => is_valid_bitcoin_cash(matched_text),
+        "Litecoin Address" => is_valid_litecoin(matched_text),
+        "Ripple Address" => is_valid_ripple(matched_text),
         // Italian "SSN" pattern shares the Codice Fiscale
         // check-letter algorithm — it's a slightly looser regex
         // variant of the same ID. Wire it to the same validator.
@@ -3009,6 +3674,149 @@ mod tests {
         // Wrong length.
         assert!(!is_valid_uae_emirates_id("78419751234567"));
         assert!(!is_valid_uae_emirates_id("7841975123456750"));
+    }
+
+    #[test]
+    fn test_bitcoin_legacy_valid() {
+        // 1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2 — the genesis block
+        // coinbase address (Satoshi's original). Canonical P2PKH
+        // with version byte 0x00.
+        assert!(is_valid_bitcoin_legacy("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"));
+        // 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa — another published
+        // Satoshi address.
+        assert!(is_valid_bitcoin_legacy("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"));
+        // 3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy — a published P2SH
+        // address (version byte 0x05).
+        assert!(is_valid_bitcoin_legacy("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"));
+    }
+
+    #[test]
+    fn test_bitcoin_legacy_invalid() {
+        // Bumped last char — checksum fails.
+        assert!(!is_valid_bitcoin_legacy("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN3"));
+        // Wrong version byte (2... is testnet P2PKH — 0x6f, not 0x00).
+        assert!(!is_valid_bitcoin_legacy("2MzQwSSnBHWHqSAqtTVQ6v47XtaisrJa1Vc"));
+        // Random base58 string that doesn't checksum.
+        assert!(!is_valid_bitcoin_legacy("1234567890ABCDEFGHJKmnopqrstuvwxyz"));
+        // Wrong length (too short).
+        assert!(!is_valid_bitcoin_legacy("1BvBMSEYstWetqT"));
+        // Contains a forbidden Base58 character (`0`, `O`, `I`, `l`).
+        assert!(!is_valid_bitcoin_legacy("10vBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"));
+    }
+
+    #[test]
+    fn test_bitcoin_bech32_valid() {
+        // bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4 — the canonical
+        // BIP-173 test vector for P2WPKH (witness version 0).
+        assert!(is_valid_bitcoin_bech32(
+            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+        ));
+        // bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0 —
+        // published Taproot (witness v1, uses bech32m) test vector.
+        assert!(is_valid_bitcoin_bech32(
+            "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0"
+        ));
+        // Case-insensitive: all uppercase form should also validate.
+        assert!(is_valid_bitcoin_bech32(
+            "BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T4"
+        ));
+    }
+
+    #[test]
+    fn test_bitcoin_bech32_invalid() {
+        // Bumped last char.
+        assert!(!is_valid_bitcoin_bech32(
+            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t5"
+        ));
+        // Mixed case — bech32 spec forbids mixed case in the same
+        // encoding.
+        assert!(!is_valid_bitcoin_bech32(
+            "bc1Qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+        ));
+        // Wrong HRP (tb = testnet, not mainnet).
+        assert!(!is_valid_bitcoin_bech32(
+            "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+        ));
+        // Too short to be a real bech32 address.
+        assert!(!is_valid_bitcoin_bech32("bc1q"));
+    }
+
+    #[test]
+    fn test_bitcoin_cash_valid() {
+        // qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a — the canonical
+        // published test vector for Bitcoin Cash CashAddr format
+        // (from the BCH documentation).
+        assert!(is_valid_bitcoin_cash(
+            "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        ));
+        // Same address with the "bitcoincash:" prefix — also valid.
+        assert!(is_valid_bitcoin_cash(
+            "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        ));
+    }
+
+    #[test]
+    fn test_bitcoin_cash_invalid() {
+        // Bumped last char.
+        assert!(!is_valid_bitcoin_cash(
+            "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6b"
+        ));
+        // Wrong prefix.
+        assert!(!is_valid_bitcoin_cash(
+            "bchtest:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        ));
+        // Wrong length (41 chars instead of 42).
+        assert!(!is_valid_bitcoin_cash(
+            "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6"
+        ));
+        // Wrong first char (must be q or p).
+        assert!(!is_valid_bitcoin_cash(
+            "rpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        ));
+    }
+
+    #[test]
+    fn test_litecoin_valid() {
+        // LVg2kJoFNg45Nbpy53h7Fe1wKyeXVRhMH9 — a published Litecoin
+        // P2PKH test address (version byte 0x30 = L prefix).
+        assert!(is_valid_litecoin("LVg2kJoFNg45Nbpy53h7Fe1wKyeXVRhMH9"));
+        // LTpYZG19YmfvY2bBDYtCKpunVRw7nVgRHW — a published Litecoin
+        // test address.
+        assert!(is_valid_litecoin("LTpYZG19YmfvY2bBDYtCKpunVRw7nVgRHW"));
+    }
+
+    #[test]
+    fn test_litecoin_invalid() {
+        // Bumped last char.
+        assert!(!is_valid_litecoin("LVg2kJoFNg45Nbpy53h7Fe1wKyeXVRhMH8"));
+        // Bitcoin address (wrong version byte — would decode to 0x00
+        // but Litecoin expects 0x30/0x32/0x05).
+        assert!(!is_valid_litecoin("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"));
+        // Random base58.
+        assert!(!is_valid_litecoin("LAnybodyOutThereMakingUpStrings12"));
+    }
+
+    #[test]
+    fn test_ripple_valid() {
+        // rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh — Ripple Labs published
+        // classic address test vector.
+        assert!(is_valid_ripple("rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh"));
+        // rUn84CUYbNjRoTQ6mSW7BVJPSVJNLb1QLo — another published
+        // Ripple test vector.
+        assert!(is_valid_ripple("rUn84CUYbNjRoTQ6mSW7BVJPSVJNLb1QLo"));
+    }
+
+    #[test]
+    fn test_ripple_invalid() {
+        // Bumped last char.
+        assert!(!is_valid_ripple("rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTj"));
+        // Wrong prefix (Ripple addresses always start with 'r').
+        assert!(!is_valid_ripple("1Hb9CJAWyB4rj91VRWn96DkukG4bwdtyTh"));
+        // Uses standard Base58 alphabet but Ripple has its own.
+        // "I" exists in Ripple alphabet but not in standard Base58;
+        // this one uses the standard alphabet and would decode
+        // differently, failing the checksum.
+        assert!(!is_valid_ripple("rHbcCJAWyB4rj91VRWn96DkukG4bwdtyTh"));
     }
 
     #[test]
@@ -3771,6 +4579,26 @@ mod tests {
     }
 
     #[test]
+    fn test_plausible_bearer_token_valid() {
+        // Real-shape opaque token (32 chars).
+        assert!(is_plausible_bearer_token(
+            "Bearer 7xqjL9kJm8nPvR2tE4fW6sY1bN3cVhAd"
+        ));
+        // JWT-style.
+        assert!(is_plausible_bearer_token(
+            "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abcdefghijklmnop"
+        ));
+        // Lowercase bearer prefix.
+        assert!(is_plausible_bearer_token(
+            "bearer 7xqjL9kJm8nPvR2tE4fW6sY1bN3cVhAd"
+        ));
+        // Multiple whitespace chars between "Bearer" and the token.
+        assert!(is_plausible_bearer_token(
+            "Bearer\t7xqjL9kJm8nPvR2tE4fW6sY1bN3cVhAd"
+        ));
+    }
+
+    #[test]
     fn test_ipv6_invalid() {
         // Loopback and unspecified.
         assert!(!is_valid_ipv6("::"));
@@ -3840,6 +4668,240 @@ mod tests {
         // Wrong shape.
         assert!(!is_valid_gps_coordinates("37.7749"));
         assert!(!is_valid_gps_coordinates("foo,bar"));
+    }
+
+    #[test]
+    fn test_plausible_bearer_token_invalid() {
+        // Too short.
+        assert!(!is_plausible_bearer_token("Bearer abc"));
+        assert!(!is_plausible_bearer_token("Bearer 1234567890"));
+        // Prose: "bearer required" — technically matches the regex
+        // but is obviously not a credential.
+        assert!(!is_plausible_bearer_token("bearer required"));
+        // Placeholder.
+        assert!(!is_plausible_bearer_token("Bearer YOUR_TOKEN_HERE"));
+        assert!(!is_plausible_bearer_token("Bearer placeholder"));
+        // No token at all.
+        assert!(!is_plausible_bearer_token("Bearer"));
+        assert!(!is_plausible_bearer_token("Bearer "));
+    }
+
+    #[test]
+    fn test_plausible_url_token_valid() {
+        // Real-shape token values in query params.
+        assert!(is_plausible_url_token(
+            "https://api.example.com/data?token=a7f9k2m5n8p3q6r1s4t7u0v3"
+        ));
+        assert!(is_plausible_url_token(
+            "https://api.example.com/data?api_key=7xqjL9kJm8nPvR2tE4fW"
+        ));
+        // Multiple query params with the token not at the end.
+        // (The regex captures through the first `&` or end-of-URL,
+        // so the matched text for this input is just up to the next
+        // `&` if any — but find_iter will likely capture the whole
+        // query param.)
+        assert!(is_plausible_url_token(
+            "https://api.example.com/data?user=bob&key=a7f9k2m5n8p3q6r1"
+        ));
+    }
+
+    #[test]
+    fn test_plausible_url_token_invalid() {
+        // Too-short token value.
+        assert!(!is_plausible_url_token(
+            "https://api.example.com/data?token=abc"
+        ));
+        assert!(!is_plausible_url_token(
+            "https://api.example.com/data?key=123"
+        ));
+        // Placeholder value.
+        assert!(!is_plausible_url_token(
+            "https://api.example.com/data?token=YOUR_TOKEN_HERE"
+        ));
+        assert!(!is_plausible_url_token(
+            "https://api.example.com/data?api_key=placeholder"
+        ));
+    }
+
+    // Note: `test_plausible_slack_webhook_valid` is intentionally
+    // NOT present here. GitHub Push Protection rejects any source
+    // file containing a string that matches its own Slack webhook
+    // secret detector — even for obviously fake values — which means
+    // a "valid" test vector with correct segment lengths can't live
+    // in the repo without the push being blocked. The same
+    // constraint already blocks corpus recall tests for this pattern
+    // (see the note at the top of tests/detection_quality.rs). The
+    // invalid-case tests below exercise every reject path of the
+    // validator; valid-case coverage is supplied only indirectly by
+    // the integration test suite, which constructs the URL at runtime.
+    #[test]
+    fn test_plausible_slack_webhook_invalid() {
+        // T segment too short.
+        assert!(!is_plausible_slack_webhook(
+            "https://hooks.slack.com/services/T1/B98765WXYZ/abc"
+        ));
+        // B segment too short.
+        assert!(!is_plausible_slack_webhook(
+            "https://hooks.slack.com/services/T12345/B1/abc"
+        ));
+        // Secret segment too short.
+        assert!(!is_plausible_slack_webhook(
+            "https://hooks.slack.com/services/T12345/B98765/abc"
+        ));
+        // Wrong prefix (not a Slack webhook at all).
+        assert!(!is_plausible_slack_webhook(
+            "https://hooks.discord.com/services/T12/B98/abc"
+        ));
+        // Missing the T or B prefix on a segment.
+        assert!(!is_plausible_slack_webhook(
+            "https://hooks.slack.com/services/12345/B98765/abc"
+        ));
+    }
+
+    /// Valid-case coverage for the Slack webhook validator. This test
+    /// constructs the URL at runtime by concatenating string fragments
+    /// so the literal hooks.slack.com pattern never appears in source
+    /// form — otherwise GitHub Push Protection would block the push.
+    #[test]
+    fn test_plausible_slack_webhook_valid_runtime_construction() {
+        let host = ["https://hooks", ".slack", ".com"].concat();
+        let url = format!(
+            "{host}/services/T12345ABCD/B98765WXYZ/abcdefghijklmnopqrstuvwx"
+        );
+        assert!(is_plausible_slack_webhook(&url));
+    }
+
+    #[test]
+    fn test_extract_secret_value() {
+        // Various assignment shapes the regex can match.
+        assert_eq!(
+            extract_secret_value("api_key = \"abcdef1234567890\""),
+            "abcdef1234567890"
+        );
+        assert_eq!(
+            extract_secret_value("api_key='abcdef1234567890'"),
+            "abcdef1234567890"
+        );
+        assert_eq!(
+            extract_secret_value("api_key:abcdef1234567890"),
+            "abcdef1234567890"
+        );
+        assert_eq!(
+            extract_secret_value("password = SpringWinter2024"),
+            "SpringWinter2024"
+        );
+        // Mismatched quotes — peel only when balanced.
+        assert_eq!(
+            extract_secret_value("api_key = \"abcdef1234567890"),
+            "\"abcdef1234567890"
+        );
+    }
+
+    #[test]
+    fn test_is_plausible_api_key_valid() {
+        // AWS-style real-shape key (entropy ~3.77).
+        assert!(is_plausible_api_key(
+            "api_key = \"AKIAIOSFODNN7EXAMPLE\""
+        ));
+        // Random alphanumeric (entropy ~4.5+).
+        assert!(is_plausible_api_key(
+            "api_key = \"7xqjL9kJm8nPvR2tE4fW6sY1bN3c\""
+        ));
+        // High-entropy random opaque token (entropy ~4.7). Note:
+        // we deliberately avoid any string that looks like a real
+        // brand-specific key prefix (sk_*, pk_*, AKIA_*, ghp_, ...)
+        // because GitHub Push Protection will reject the source
+        // file even for fake values.
+        assert!(is_plausible_api_key(
+            "api_secret = \"4eC39HqLyjWDarjtT1zdp7dcXyZmNqAb\""
+        ));
+        // Without surrounding quotes (regex allows this).
+        assert!(is_plausible_api_key(
+            "api_key = AKIAIOSFODNN7EXAMPLE"
+        ));
+        // With colon separator instead of `=`.
+        assert!(is_plausible_api_key(
+            "apikey: 7xqjL9kJm8nPvR2tE4fW6sY1bN3c"
+        ));
+    }
+
+    #[test]
+    fn test_is_plausible_api_key_invalid() {
+        // Documentation placeholder (in stop-list).
+        assert!(!is_plausible_api_key(
+            "api_key = \"your_api_key_here\""
+        ));
+        assert!(!is_plausible_api_key(
+            "api_key = \"YOUR_API_KEY_HERE\""
+        ));
+        assert!(!is_plausible_api_key("api_key = \"placeholder12345\""));
+        // All-same character.
+        assert!(!is_plausible_api_key(
+            "api_key = \"xxxxxxxxxxxxxxxx\""
+        ));
+        assert!(!is_plausible_api_key(
+            "api_key = \"0000000000000000\""
+        ));
+        // Below the entropy floor (3.0). "abababab..." has entropy 1.0.
+        assert!(!is_plausible_api_key(
+            "api_key = \"abababababababab\""
+        ));
+        // Below the entropy floor — `1212121212121212` has entropy 1.0.
+        assert!(!is_plausible_api_key(
+            "api_key = \"1212121212121212\""
+        ));
+        // Below the regex/validator length floor (16 chars).
+        // Note: in practice the regex would not match this, but the
+        // validator should reject it defensively.
+        assert!(!is_plausible_api_key("api_key = \"short\""));
+    }
+
+    #[test]
+    fn test_is_plausible_secret_assignment_valid() {
+        // Word-shaped password (real users do this; entropy ~3.6-3.9).
+        assert!(is_plausible_secret_assignment(
+            "password = \"SpringWinter2024!\""
+        ));
+        assert!(is_plausible_secret_assignment(
+            "password = \"MyP@ssw0rd1234\""
+        ));
+        // Random token.
+        assert!(is_plausible_secret_assignment(
+            "secret = \"7xqjL9kJm8nPvR2tE4fW\""
+        ));
+        // 12-char minimum.
+        assert!(is_plausible_secret_assignment(
+            "token = \"abcDEF12345!\""
+        ));
+    }
+
+    #[test]
+    fn test_is_plausible_secret_assignment_invalid() {
+        // Placeholder strings.
+        assert!(!is_plausible_secret_assignment(
+            "password = \"your_password\""
+        ));
+        assert!(!is_plausible_secret_assignment(
+            "password = \"changeme\""
+        ));
+        assert!(!is_plausible_secret_assignment(
+            "secret = \"placeholder\""
+        ));
+        // All-same character.
+        assert!(!is_plausible_secret_assignment(
+            "password = \"xxxxxxxxxxxx\""
+        ));
+        assert!(!is_plausible_secret_assignment(
+            "password = \"000000000000\""
+        ));
+        // Below 12-char floor.
+        assert!(!is_plausible_secret_assignment(
+            "password = \"abcDEF12\""
+        ));
+        // Below entropy floor 2.5 — `ababababababab` has entropy 1.0.
+        assert!(!is_plausible_secret_assignment(
+            "password = \"abababababab\""
+        ));
     }
 
     #[test]

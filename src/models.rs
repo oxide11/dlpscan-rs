@@ -259,8 +259,19 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
         "VIN" => 0.70,
 
         // URLs
-        "URL with Credentials" => 0.90,
-        "URL with Token Parameter" => 0.75,
+        // NB: these are the real sub_category names used by the
+        // PatternDef entries in src/patterns/mod.rs. Earlier the
+        // map had "URL with Credentials" and "URL with Token
+        // Parameter" which never matched any pattern and left both
+        // URL-credential patterns silently falling through to
+        // DEFAULT_SPECIFICITY = 0.40. That dropped their confidence
+        // below the email-address dedup tiebreaker and meant a
+        // perfectly-shaped credentialed URL was being dropped in
+        // favour of the embedded email — the detection-quality
+        // harness started reporting `URL with Password` recall 0/1
+        // on `quality/url-credential-filters` and this is the fix.
+        "URL with Password" => 0.90,
+        "URL with Token" => 0.75,
 
         _ => DEFAULT_SPECIFICITY,
     }
