@@ -1,0 +1,10 @@
+Base64-shaped strings that do not decode to sensitive data
+
+Each string below is a valid base64 token (matches the alphabet,
+correct length) but decodes to non-sensitive content or binary
+garbage. The scanner should not report SSN, credit card, or other
+sensitive-data findings from these tokens.
+
+encoded greeting: SGVsbG8gV29ybGQh
+encoded lorem: TG9yZW0gaXBzdW0gZG9sb3Igc2l0IGFtZXQ=
+binary blob (all A = all zeros): AAAAAAAAAAAAAAAA

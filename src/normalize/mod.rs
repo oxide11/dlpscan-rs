@@ -720,6 +720,147 @@ fn decode_hex_escapes(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>)
     (out, offsets)
 }
 
+// ---------------------------------------------------------------------------
+// Stage 4c: Token-level base64 decode
+// ---------------------------------------------------------------------------
+
+/// Check if a byte is in the standard base64 alphabet (A-Z, a-z, 0-9, +, /).
+fn is_base64_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'+' || b == b'/'
+}
+
+/// Try to decode a base64 token to bytes, handling both padded and unpadded
+/// forms. Returns `None` if the token isn't valid base64.
+fn try_base64_decode_bytes(token: &str) -> Option<Vec<u8>> {
+    use base64::{engine::general_purpose, Engine};
+    // Try standard decode (requires valid padding).
+    if let Ok(bytes) = general_purpose::STANDARD.decode(token) {
+        return Some(bytes);
+    }
+    // If the token lacks padding, add it and retry.
+    let padded = match token.len() % 4 {
+        2 => format!("{token}=="),
+        3 => format!("{token}="),
+        _ => return None, // len % 4 == 1 is structurally invalid base64
+    };
+    general_purpose::STANDARD.decode(&padded).ok()
+}
+
+/// Try to decode a base64 token to a printable UTF-8 string. Returns `None`
+/// if the token isn't valid base64, or if the decoded bytes aren't valid
+/// UTF-8, or if fewer than 50% of the decoded bytes are printable ASCII.
+///
+/// The 50% printable gate is the main defense against false decoding:
+/// English words that happen to be valid base64 alphabet
+/// (`INTERNATIONALIZATION`, `DOCUMENTATION`) decode to binary garbage,
+/// and the gate rejects them.
+fn try_base64_decode(token: &str) -> Option<String> {
+    let decoded_bytes = try_base64_decode_bytes(token)?;
+    let decoded_str = std::str::from_utf8(&decoded_bytes).ok()?;
+    // Gate: at least 50% of decoded bytes must be printable ASCII
+    // (0x20..=0x7E) or common whitespace.
+    let printable = decoded_str
+        .bytes()
+        .filter(|&b| (0x20..=0x7E).contains(&b) || b == b'\n' || b == b'\r' || b == b'\t')
+        .count();
+    if decoded_str.is_empty() || printable * 2 < decoded_str.len() {
+        return None;
+    }
+    // Gate: decoded result must be non-trivial (not just whitespace).
+    if decoded_str.trim().len() < 4 {
+        return None;
+    }
+    Some(decoded_str.to_string())
+}
+
+/// Scan the text for tokens that look like base64-encoded data, decode each
+/// one, and if the decoded result is valid printable UTF-8, replace the
+/// token inline. Maintains the offset map so match spans in the output
+/// point back to the start of the original base64 token.
+///
+/// Token detection: a maximal run of base64-alphabet characters (A-Za-z0-9+/)
+/// followed by optional `=` padding. The run must be at least 12 characters
+/// — shorter tokens have too little entropy for the UTF-8/printable gate to
+/// distinguish real encoded data from English words that happen to be
+/// base64-alphabet. 12 chars is the sweet spot: an encoded 9-byte value
+/// (like a short SSN `123-45-6789` without separators) is exactly 12 chars
+/// of base64, so we catch the smallest realistic evasion payload.
+fn decode_base64_tokens(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    let bytes = input.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut offsets: Vec<usize> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    let mut changed = false;
+
+    while i < bytes.len() {
+        if is_base64_char(bytes[i]) {
+            // Find the end of the base64-alphabet run.
+            let start = i;
+            while i < bytes.len() && is_base64_char(bytes[i]) {
+                i += 1;
+            }
+            // Include trailing `=` padding.
+            while i < bytes.len() && bytes[i] == b'=' {
+                i += 1;
+            }
+            let token = &input[start..i];
+
+            // Skip tokens that are part of a dot-delimited structure
+            // (JWTs, OAuth tokens, X.509 certs). These use base64 as
+            // their canonical wire format — decoding would corrupt the
+            // pattern match (e.g., JWT header `eyJhbGci...` → `{"alg":...}`
+            // which breaks the JWT regex). The heuristic: if the byte
+            // immediately before or after the token is `.`, it's likely
+            // a segment in a dot-delimited protocol element.
+            let prev_is_dot = start > 0 && bytes[start - 1] == b'.';
+            let next_is_dot = i < bytes.len() && bytes[i] == b'.';
+            if prev_is_dot || next_is_dot {
+                for j in start..i {
+                    out.push(bytes[j]);
+                    offsets.push(orig_offset(in_offsets, j));
+                }
+                continue;
+            }
+
+            // Only attempt decode on sufficiently long tokens.
+            if token.len() >= 12 {
+                if let Some(decoded) = try_base64_decode(token) {
+                    // Replace the token with the decoded text. All decoded
+                    // bytes inherit the offset of the first byte of the
+                    // source token — this means the match span in the
+                    // scanner's output will point to the START of the
+                    // base64 token in the original input, which is the
+                    // right behaviour for redaction (you'd redact the
+                    // whole encoded token).
+                    let token_orig = orig_offset(in_offsets, start);
+                    for b in decoded.bytes() {
+                        out.push(b);
+                        offsets.push(token_orig);
+                    }
+                    changed = true;
+                    continue;
+                }
+            }
+
+            // Token wasn't decoded — emit the original bytes unchanged.
+            for j in start..i {
+                out.push(bytes[j]);
+                offsets.push(orig_offset(in_offsets, j));
+            }
+        } else {
+            out.push(bytes[i]);
+            offsets.push(orig_offset(in_offsets, i));
+            i += 1;
+        }
+    }
+
+    if !changed {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    (String::from_utf8_lossy(&out).into_owned(), offsets)
+}
+
 /// Standard base32 alphabet (RFC 4648).
 const BASE32_ALPHA: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
@@ -1051,6 +1192,27 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     current = r.0;
     offsets = r.1;
 
+    // Stage 4c: Token-level base64 decode
+    //
+    // Find tokens that look like base64-encoded data (standard alphabet,
+    // ≥ 16 chars, optional `=` padding), decode each one, and if the
+    // decoded bytes are valid UTF-8 printable text, replace the token
+    // inline. This runs BEFORE collapse_padding so the decoded result
+    // gets the same whitespace/delimiter normalization as everything else.
+    //
+    // The primary scan then sees the decoded plaintext — every regex
+    // pattern (not just always-run) gets a chance to match the decoded
+    // content, and context keywords near the decoded value fire normally.
+    //
+    // This replaces the "decode entire text as base64" approach that
+    // Stage H used, which only ran on small/clean documents and skipped
+    // context checking entirely.
+    {
+        let r = decode_base64_tokens(&current, &offsets);
+        current = r.0;
+        offsets = r.1;
+    }
+
     // Stage 5: Collapse whitespace padding between non-alpha chars
     if current
         .as_bytes()
@@ -1256,6 +1418,32 @@ fn has_evasion_markers(text: &str) -> bool {
     if bytes.windows(2).any(|w| w[0] == b'\\' && w[1] == b'x') {
         return true;
     }
+    // Base64-encoded tokens: a run of ≥16 base64-alphabet characters
+    // (optionally followed by `=` padding). This is a cheap linear
+    // scan that gates the more expensive `decode_base64_tokens` stage.
+    {
+        let mut run_len = 0usize;
+        for &b in bytes {
+            if b.is_ascii_alphanumeric() || b == b'+' || b == b'/' {
+                run_len += 1;
+            } else if b == b'=' && run_len >= 12 {
+                // Trailing `=` after a 12+ char base64 run — likely
+                // padded base64. The actual decode threshold (16 chars
+                // including padding) is enforced in decode_base64_tokens;
+                // this gate just needs to be permissive enough to enter
+                // the normalization pipeline.
+                return true;
+            } else {
+                if run_len >= 12 {
+                    return true;
+                }
+                run_len = 0;
+            }
+        }
+        if run_len >= 12 {
+            return true;
+        }
+    }
     false
 }
 
@@ -1350,6 +1538,83 @@ mod tests {
     #[test]
     fn test_normalize_leet() {
         assert_eq!(normalize_leet("h3ll0"), "hello");
+    }
+
+    #[test]
+    fn test_base64_token_decode_ssn() {
+        // "123-45-6789" base64-encoded = "MTIzLTQ1LTY3ODk="
+        let input = "config ssn = MTIzLTQ1LTY3ODk= end";
+        let (result, _offsets) = normalize_text(input);
+        assert!(
+            result.contains("123-45-6789"),
+            "base64-encoded SSN should be decoded inline. Got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_base64_token_decode_credit_card() {
+        // "4532015112830366" base64-encoded = "NDUzMjAxNTExMjgzMDM2Ng=="
+        let input = "card NDUzMjAxNTExMjgzMDM2Ng== stored";
+        let (result, _) = normalize_text(input);
+        assert!(
+            result.contains("4532015112830366"),
+            "base64-encoded card should be decoded. Got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_base64_token_decode_unpadded() {
+        // "123-45-6789" without padding = "MTIzLTQ1LTY3ODk" (no trailing =)
+        let input = "data MTIzLTQ1LTY3ODk here";
+        let (result, _) = normalize_text(input);
+        assert!(
+            result.contains("123-45-6789"),
+            "unpadded base64 should also decode. Got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_base64_token_decode_preserves_non_base64() {
+        // Short tokens (< 16 chars) should not be decoded.
+        let input = "The word HELLO is not base64 decoded";
+        let (result, _) = normalize_text(input);
+        assert!(
+            result.contains("HELLO"),
+            "short token should be preserved. Got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_base64_token_decode_rejects_binary() {
+        // A 20-char base64-alphabet string that decodes to binary
+        // garbage (not valid UTF-8 or not printable).
+        // "AAAAAAAAAAAAAAAAAAAAAA==" decodes to 16 zero bytes → not printable
+        let input = "blob AAAAAAAAAAAAAAAAAAAAAA== end";
+        let (result, _) = normalize_text(input);
+        // The token should NOT be replaced with decoded content
+        // (decoded bytes are all-zero, fail the printable gate).
+        assert!(
+            !result.contains("\0"),
+            "binary decode should be rejected. Got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_base64_token_decode_offset_map() {
+        // Verify the offset map points decoded bytes back to the
+        // original token position.
+        let input = "prefix MTIzLTQ1LTY3ODk= suffix";
+        let (result, offsets) = normalize_text(input);
+        assert!(result.contains("123-45-6789"));
+        // The decoded SSN starts where "MTIz..." started in the original
+        let decoded_start = result.find("123-45-6789").unwrap();
+        let original_token_start = input.find("MTIz").unwrap();
+        if !offsets.is_empty() {
+            assert_eq!(
+                offsets[decoded_start], original_token_start,
+                "offset map should point decoded bytes to the original token start"
+            );
+        }
     }
 
     #[test]
