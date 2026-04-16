@@ -750,7 +750,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]{3}\d{9}\b",
         case_insensitive: false,
         specificity: 0.60,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Medical Identifiers",
@@ -805,7 +805,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]{2,4}\d{6,12}\b",
         case_insensitive: false,
         specificity: 0.50,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Insurance Identifiers",
@@ -813,7 +813,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]{1,3}\d{8,15}\b",
         case_insensitive: false,
         specificity: 0.45,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Authentication Tokens",
