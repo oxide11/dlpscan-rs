@@ -2224,6 +2224,312 @@ pub fn is_valid_uae_emirates_id(id: &str) -> bool {
     sum % 10 == 0
 }
 
+// ---------------------------------------------------------------------------
+// Cryptocurrency address validators (Phase 1a of the always-run precision
+// pass). Each crypto address format has a published checksum; verifying it
+// turns the "25-34 base58 chars" regex into an actual cryptographic gate.
+//
+// Algorithms covered:
+//   * Base58Check — Bitcoin Legacy (P2PKH 0x00, P2SH 0x05), Litecoin
+//     (P2PKH 0x30, P2SH 0x32), and Ripple (different alphabet, version 0x00)
+//   * Bech32 (BIP-173 polymod) — Bitcoin SegWit
+//   * CashAddr (polymod similar to Bech32 with different constants) —
+//     Bitcoin Cash
+//
+// Ethereum is DELIBERATELY excluded from this batch. EIP-55 mixed-case is
+// a soft check (lowercase-only addresses are still valid) and a real
+// implementation needs keccak256, which we don't have as a dependency and
+// don't want to pull in for a soft-gate. The Ethereum regex
+// `0x[0-9a-fA-F]{40}` is already tight enough that FPs are rare.
+// ---------------------------------------------------------------------------
+
+use sha2::{Digest, Sha256};
+
+/// Standard Base58 alphabet used by Bitcoin, Litecoin, and most Base58Check
+/// addresses. Excludes `0`, `O`, `I`, `l` to avoid visual ambiguity.
+const BASE58_ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+/// Ripple's Base58 alphabet. Same 58-symbol design principle as standard
+/// Base58 but deliberately shuffled so addresses don't collide with
+/// Bitcoin's. The `r` prefix + different alphabet are the only reason an
+/// XRP address can't be confused with a BTC address on inspection.
+const BASE58_RIPPLE_ALPHABET: &[u8; 58] =
+    b"rpshnaf39wBUDNEGHJKLM4PQRST7VWXYZ2bcdeCg65jkm8oFqi1tuvAxyz";
+
+/// Decode a Base58-encoded string to its byte representation. Returns
+/// `None` if any character is not in the supplied alphabet. Handles leading
+/// "zeros" (represented by the alphabet's first character — `1` in
+/// standard Base58, `r` in Ripple) by prepending the corresponding number
+/// of zero bytes to the output.
+///
+/// This is a bytewise implementation — no big-integer arithmetic required.
+/// For each input character we compute `out = out * 58 + digit`, carrying
+/// through the existing output bytes from least-significant up.
+fn base58_decode(input: &str, alphabet: &[u8; 58]) -> Option<Vec<u8>> {
+    // Build an inverse lookup table so we can map chars → indices in O(1).
+    // Cost is fixed at 256 bytes per call site — cheap to keep on the
+    // stack rather than memoize.
+    let mut inverse = [u8::MAX; 128];
+    for (i, &c) in alphabet.iter().enumerate() {
+        inverse[c as usize] = i as u8;
+    }
+
+    let mut output: Vec<u8> = Vec::with_capacity(input.len());
+    for c in input.bytes() {
+        if c >= 128 {
+            return None;
+        }
+        let digit = inverse[c as usize];
+        if digit == u8::MAX {
+            return None;
+        }
+        // out = out * 58 + digit
+        let mut carry = digit as u32;
+        for byte in output.iter_mut() {
+            carry += *byte as u32 * 58;
+            *byte = (carry & 0xFF) as u8;
+            carry >>= 8;
+        }
+        while carry > 0 {
+            output.push((carry & 0xFF) as u8);
+            carry >>= 8;
+        }
+    }
+
+    // Leading "zero" characters in the input (the alphabet's first char)
+    // map to leading zero bytes in the output.
+    let leading_zero_char = alphabet[0];
+    let leading_zeros = input.bytes().take_while(|&c| c == leading_zero_char).count();
+    for _ in 0..leading_zeros {
+        output.push(0);
+    }
+
+    output.reverse();
+    Some(output)
+}
+
+/// Verify a Base58Check-encoded payload. The last 4 bytes are a checksum
+/// computed as `SHA256(SHA256(payload_without_checksum))[..4]`. Returns
+/// `true` if the checksum matches. The `expected_version_bytes` slice
+/// gates the version byte (first byte of the decoded payload) — pass
+/// `&[0x00, 0x05]` for Bitcoin Legacy (P2PKH + P2SH), `&[0x30, 0x32]` for
+/// Litecoin (L and M/3 prefixes), and `&[0x00]` for Ripple.
+fn verify_base58check(decoded: &[u8], expected_version_bytes: &[u8]) -> bool {
+    // Standard Base58Check payload is 25 bytes: 1 version + 20 payload + 4 check.
+    // Some exotic formats use longer payloads, but for every format we
+    // validate here the length is exactly 25.
+    if decoded.len() != 25 {
+        return false;
+    }
+    if !expected_version_bytes.contains(&decoded[0]) {
+        return false;
+    }
+    let payload = &decoded[..21];
+    let expected_checksum = &decoded[21..25];
+    let first_hash = Sha256::digest(payload);
+    let second_hash = Sha256::digest(first_hash);
+    &second_hash[..4] == expected_checksum
+}
+
+/// Validate a Bitcoin legacy address (P2PKH, starts with `1`, or P2SH,
+/// starts with `3`) using Base58Check with double-SHA256 checksum and
+/// version byte `0x00` or `0x05`.
+pub fn is_valid_bitcoin_legacy(addr: &str) -> bool {
+    // The regex requires 26-35 characters; any real address is in this
+    // range. Double-check here defensively.
+    if !(26..=35).contains(&addr.len()) {
+        return false;
+    }
+    let first = addr.as_bytes().first().copied();
+    if first != Some(b'1') && first != Some(b'3') {
+        return false;
+    }
+    let Some(decoded) = base58_decode(addr, BASE58_ALPHABET) else {
+        return false;
+    };
+    verify_base58check(&decoded, &[0x00, 0x05])
+}
+
+/// Validate a Litecoin address (P2PKH `L`, P2SH `M` or `3`) using
+/// Base58Check with the Litecoin version bytes `0x30` (L), `0x32` (M),
+/// and historically `0x05` (3, same prefix as Bitcoin P2SH — now
+/// deprecated in favour of `M`).
+pub fn is_valid_litecoin(addr: &str) -> bool {
+    if !(27..=34).contains(&addr.len()) {
+        return false;
+    }
+    let first = addr.as_bytes().first().copied();
+    if !matches!(first, Some(b'L') | Some(b'M') | Some(b'3')) {
+        return false;
+    }
+    let Some(decoded) = base58_decode(addr, BASE58_ALPHABET) else {
+        return false;
+    };
+    // 0x30 = L (P2PKH), 0x32 = M (P2SH-new), 0x05 = 3 (P2SH-old).
+    verify_base58check(&decoded, &[0x30, 0x32, 0x05])
+}
+
+/// Validate a Ripple (XRP) classic address. Uses Base58Check with
+/// Ripple's custom 58-symbol alphabet and version byte `0x00`.
+pub fn is_valid_ripple(addr: &str) -> bool {
+    if !(25..=35).contains(&addr.len()) {
+        return false;
+    }
+    if addr.as_bytes().first().copied() != Some(b'r') {
+        return false;
+    }
+    let Some(decoded) = base58_decode(addr, BASE58_RIPPLE_ALPHABET) else {
+        return false;
+    };
+    verify_base58check(&decoded, &[0x00])
+}
+
+/// Bech32 character set used by BIP-173. Mapped by index for the
+/// expand-char step of the polymod check.
+const BECH32_CHARSET: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+/// Bech32 polymod function from BIP-173. Takes an iterator of 5-bit
+/// groups and computes the polynomial modulus used by the checksum.
+fn bech32_polymod(values: &[u8]) -> u32 {
+    const GEN: [u32; 5] = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+    let mut chk: u32 = 1;
+    for &v in values {
+        let b = chk >> 25;
+        chk = ((chk & 0x1ffffff) << 5) ^ (v as u32);
+        for (i, &g) in GEN.iter().enumerate() {
+            if (b >> i) & 1 == 1 {
+                chk ^= g;
+            }
+        }
+    }
+    chk
+}
+
+/// Expand an ASCII HRP into the 5-bit value sequence the bech32 polymod
+/// expects (high bits, zero separator, low bits).
+fn bech32_hrp_expand(hrp: &[u8]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::with_capacity(hrp.len() * 2 + 1);
+    for &c in hrp {
+        out.push(c >> 5);
+    }
+    out.push(0);
+    for &c in hrp {
+        out.push(c & 31);
+    }
+    out
+}
+
+/// Validate a Bitcoin SegWit (Bech32 / Bech32m) address. BIP-173 defines
+/// the checksum: the polymod of `hrp_expand(hrp) || data_part` must equal
+/// 1 (bech32) or 0x2bc830a3 (bech32m, BIP-350). Bitcoin witness version 0
+/// uses bech32; witness version 1+ (Taproot) uses bech32m. We accept
+/// either so Taproot addresses validate.
+pub fn is_valid_bitcoin_bech32(addr: &str) -> bool {
+    // Find the HRP / data separator. For Bitcoin mainnet this is always
+    // `bc`. The regex requires the address to start with `bc1` so the
+    // split is at index 2.
+    if !addr.starts_with("bc1") && !addr.starts_with("BC1") {
+        return false;
+    }
+    // Normalize to lowercase for checksum computation. Bech32 is
+    // case-insensitive but the encoding must not mix cases.
+    let lower = addr.to_ascii_lowercase();
+    let upper = addr.to_ascii_uppercase();
+    if addr != lower && addr != upper {
+        return false;
+    }
+    let hrp = b"bc";
+    let data_part = &lower[3..];
+    if data_part.len() < 6 {
+        return false;
+    }
+    // Decode each data char to its 5-bit value in BECH32_CHARSET.
+    let mut data_values: Vec<u8> = Vec::with_capacity(data_part.len());
+    for c in data_part.bytes() {
+        if let Some(v) = BECH32_CHARSET.iter().position(|&x| x == c) {
+            data_values.push(v as u8);
+        } else {
+            return false;
+        }
+    }
+    let mut polymod_input: Vec<u8> = bech32_hrp_expand(hrp);
+    polymod_input.extend_from_slice(&data_values);
+    let check = bech32_polymod(&polymod_input);
+    // Witness version 0 → bech32 (check == 1)
+    // Witness version 1+ → bech32m (check == 0x2bc830a3)
+    check == 1 || check == 0x2bc830a3
+}
+
+/// CashAddr character set (same layout as Bech32 but different generator).
+const CASHADDR_CHARSET: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+/// CashAddr polymod function. Similar to Bech32 but with a different
+/// generator polynomial and a larger state (40 bits vs 30 bits).
+fn cashaddr_polymod(values: &[u8]) -> u64 {
+    const GEN: [u64; 5] = [
+        0x98f2bc8e61, 0x79b76d99e2, 0xf33e5fb3c4, 0xae2eabe2a8, 0x1e4f43e470,
+    ];
+    let mut c: u64 = 1;
+    for &v in values {
+        let c0 = (c >> 35) as u8;
+        c = ((c & 0x07ffffffff) << 5) ^ (v as u64);
+        for (i, &g) in GEN.iter().enumerate() {
+            if (c0 >> i) & 1 == 1 {
+                c ^= g;
+            }
+        }
+    }
+    c ^ 1
+}
+
+/// Expand an ASCII prefix into the 5-bit value sequence the CashAddr
+/// polymod expects: low 5 bits of each char, then a zero separator.
+fn cashaddr_prefix_expand(prefix: &[u8]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::with_capacity(prefix.len() + 1);
+    for &c in prefix {
+        out.push(c & 0x1f);
+    }
+    out.push(0);
+    out
+}
+
+/// Validate a Bitcoin Cash address. Accepts both the bare CashAddr body
+/// (`q...` or `p...`, 42 chars) and the prefixed form
+/// (`bitcoincash:q...`). The checksum is computed over
+/// `prefix_expand("bitcoincash") || data_values` and must equal 0.
+pub fn is_valid_bitcoin_cash(addr: &str) -> bool {
+    // Split off optional prefix.
+    let (prefix, body) = match addr.split_once(':') {
+        Some((p, b)) => {
+            if p.to_ascii_lowercase() != "bitcoincash" {
+                return false;
+            }
+            ("bitcoincash", b)
+        }
+        None => ("bitcoincash", addr),
+    };
+    // Body must be 42 ASCII lowercase chars starting with q or p.
+    if body.len() != 42 {
+        return false;
+    }
+    let first = body.as_bytes().first().copied();
+    if first != Some(b'q') && first != Some(b'p') {
+        return false;
+    }
+    // Decode each body char to its 5-bit value.
+    let mut data_values: Vec<u8> = Vec::with_capacity(body.len());
+    for c in body.bytes() {
+        if let Some(v) = CASHADDR_CHARSET.iter().position(|&x| x == c) {
+            data_values.push(v as u8);
+        } else {
+            return false;
+        }
+    }
+    let mut polymod_input: Vec<u8> = cashaddr_prefix_expand(prefix.as_bytes());
+    polymod_input.extend_from_slice(&data_values);
+    cashaddr_polymod(&polymod_input) == 0
+}
+
 /// Validate a German Tax ID (Steuer-Identifikationsnummer) using
 /// the ISO 7064 MOD 11,10 check digit. The Steuer-ID is an 11-digit
 /// number assigned by the Bundeszentralamt für Steuern; positions
@@ -2617,6 +2923,16 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // UAE Emirates ID — 15 digits with fixed `784` prefix
         // and Luhn check on all 15.
         "UAE Emirates ID" => is_valid_uae_emirates_id(matched_text),
+        // Cryptocurrency addresses — every format validated here has a
+        // published checksum, turning the regex into a real
+        // cryptographic gate rather than "looks like a 25-35 char
+        // base58 string." See the crypto section of validation.rs for
+        // per-format notes.
+        "Bitcoin Address (Legacy)" => is_valid_bitcoin_legacy(matched_text),
+        "Bitcoin Address (Bech32)" => is_valid_bitcoin_bech32(matched_text),
+        "Bitcoin Cash Address" => is_valid_bitcoin_cash(matched_text),
+        "Litecoin Address" => is_valid_litecoin(matched_text),
+        "Ripple Address" => is_valid_ripple(matched_text),
         // Italian "SSN" pattern shares the Codice Fiscale
         // check-letter algorithm — it's a slightly looser regex
         // variant of the same ID. Wire it to the same validator.
@@ -3009,6 +3325,149 @@ mod tests {
         // Wrong length.
         assert!(!is_valid_uae_emirates_id("78419751234567"));
         assert!(!is_valid_uae_emirates_id("7841975123456750"));
+    }
+
+    #[test]
+    fn test_bitcoin_legacy_valid() {
+        // 1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2 — the genesis block
+        // coinbase address (Satoshi's original). Canonical P2PKH
+        // with version byte 0x00.
+        assert!(is_valid_bitcoin_legacy("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"));
+        // 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa — another published
+        // Satoshi address.
+        assert!(is_valid_bitcoin_legacy("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"));
+        // 3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy — a published P2SH
+        // address (version byte 0x05).
+        assert!(is_valid_bitcoin_legacy("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"));
+    }
+
+    #[test]
+    fn test_bitcoin_legacy_invalid() {
+        // Bumped last char — checksum fails.
+        assert!(!is_valid_bitcoin_legacy("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN3"));
+        // Wrong version byte (2... is testnet P2PKH — 0x6f, not 0x00).
+        assert!(!is_valid_bitcoin_legacy("2MzQwSSnBHWHqSAqtTVQ6v47XtaisrJa1Vc"));
+        // Random base58 string that doesn't checksum.
+        assert!(!is_valid_bitcoin_legacy("1234567890ABCDEFGHJKmnopqrstuvwxyz"));
+        // Wrong length (too short).
+        assert!(!is_valid_bitcoin_legacy("1BvBMSEYstWetqT"));
+        // Contains a forbidden Base58 character (`0`, `O`, `I`, `l`).
+        assert!(!is_valid_bitcoin_legacy("10vBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"));
+    }
+
+    #[test]
+    fn test_bitcoin_bech32_valid() {
+        // bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4 — the canonical
+        // BIP-173 test vector for P2WPKH (witness version 0).
+        assert!(is_valid_bitcoin_bech32(
+            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+        ));
+        // bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0 —
+        // published Taproot (witness v1, uses bech32m) test vector.
+        assert!(is_valid_bitcoin_bech32(
+            "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0"
+        ));
+        // Case-insensitive: all uppercase form should also validate.
+        assert!(is_valid_bitcoin_bech32(
+            "BC1QW508D6QEJXTDG4Y5R3ZARVARY0C5XW7KV8F3T4"
+        ));
+    }
+
+    #[test]
+    fn test_bitcoin_bech32_invalid() {
+        // Bumped last char.
+        assert!(!is_valid_bitcoin_bech32(
+            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t5"
+        ));
+        // Mixed case — bech32 spec forbids mixed case in the same
+        // encoding.
+        assert!(!is_valid_bitcoin_bech32(
+            "bc1Qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+        ));
+        // Wrong HRP (tb = testnet, not mainnet).
+        assert!(!is_valid_bitcoin_bech32(
+            "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+        ));
+        // Too short to be a real bech32 address.
+        assert!(!is_valid_bitcoin_bech32("bc1q"));
+    }
+
+    #[test]
+    fn test_bitcoin_cash_valid() {
+        // qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a — the canonical
+        // published test vector for Bitcoin Cash CashAddr format
+        // (from the BCH documentation).
+        assert!(is_valid_bitcoin_cash(
+            "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        ));
+        // Same address with the "bitcoincash:" prefix — also valid.
+        assert!(is_valid_bitcoin_cash(
+            "bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        ));
+    }
+
+    #[test]
+    fn test_bitcoin_cash_invalid() {
+        // Bumped last char.
+        assert!(!is_valid_bitcoin_cash(
+            "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6b"
+        ));
+        // Wrong prefix.
+        assert!(!is_valid_bitcoin_cash(
+            "bchtest:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        ));
+        // Wrong length (41 chars instead of 42).
+        assert!(!is_valid_bitcoin_cash(
+            "qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6"
+        ));
+        // Wrong first char (must be q or p).
+        assert!(!is_valid_bitcoin_cash(
+            "rpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a"
+        ));
+    }
+
+    #[test]
+    fn test_litecoin_valid() {
+        // LVg2kJoFNg45Nbpy53h7Fe1wKyeXVRhMH9 — a published Litecoin
+        // P2PKH test address (version byte 0x30 = L prefix).
+        assert!(is_valid_litecoin("LVg2kJoFNg45Nbpy53h7Fe1wKyeXVRhMH9"));
+        // LTpYZG19YmfvY2bBDYtCKpunVRw7nVgRHW — a published Litecoin
+        // test address.
+        assert!(is_valid_litecoin("LTpYZG19YmfvY2bBDYtCKpunVRw7nVgRHW"));
+    }
+
+    #[test]
+    fn test_litecoin_invalid() {
+        // Bumped last char.
+        assert!(!is_valid_litecoin("LVg2kJoFNg45Nbpy53h7Fe1wKyeXVRhMH8"));
+        // Bitcoin address (wrong version byte — would decode to 0x00
+        // but Litecoin expects 0x30/0x32/0x05).
+        assert!(!is_valid_litecoin("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"));
+        // Random base58.
+        assert!(!is_valid_litecoin("LAnybodyOutThereMakingUpStrings12"));
+    }
+
+    #[test]
+    fn test_ripple_valid() {
+        // rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh — Ripple Labs published
+        // classic address test vector.
+        assert!(is_valid_ripple("rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh"));
+        // rUn84CUYbNjRoTQ6mSW7BVJPSVJNLb1QLo — another published
+        // Ripple test vector.
+        assert!(is_valid_ripple("rUn84CUYbNjRoTQ6mSW7BVJPSVJNLb1QLo"));
+    }
+
+    #[test]
+    fn test_ripple_invalid() {
+        // Bumped last char.
+        assert!(!is_valid_ripple("rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTj"));
+        // Wrong prefix (Ripple addresses always start with 'r').
+        assert!(!is_valid_ripple("1Hb9CJAWyB4rj91VRWn96DkukG4bwdtyTh"));
+        // Uses standard Base58 alphabet but Ripple has its own.
+        // "I" exists in Ripple alphabet but not in standard Base58;
+        // this one uses the standard alphabet and would decode
+        // differently, failing the checksum.
+        assert!(!is_valid_ripple("rHbcCJAWyB4rj91VRWn96DkukG4bwdtyTh"));
     }
 
     #[test]

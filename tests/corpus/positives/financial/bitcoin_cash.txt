@@ -1,0 +1,8 @@
+Merchant payment
+
+Customer paid the invoice via Bitcoin Cash. Confirmation hash
+and receiving address below for reconciliation.
+
+Bitcoin Cash address: bitcoincash:qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6a
+
+Invoice reference: INV-BCH-2024-771

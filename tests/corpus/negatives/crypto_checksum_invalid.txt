@@ -1,0 +1,10 @@
+Cryptocurrency addresses with invalid checksums
+
+Every address below is structurally shaped like a real one (matches
+the pattern regex) but deliberately fails its published checksum.
+
+Bitcoin Legacy P2PKH address: 1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN3
+Bitcoin SegWit Bech32 address: bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t5
+Bitcoin Cash CashAddr: qpm2qsznhks23z7629mms6s4cwef74vcwvy22gdx6b
+Litecoin address: LVg2kJoFNg45Nbpy53h7Fe1wKyeXVRhMH8
+Ripple XRP classic address: rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTj

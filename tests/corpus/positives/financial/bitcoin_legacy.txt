@@ -1,0 +1,7 @@
+Escrow payment record
+
+Please forward the deposit to the Bitcoin address below:
+1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2
+
+Amount: 0.15 BTC
+Reference: ESCROW-2024-88341
