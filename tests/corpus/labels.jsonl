@@ -42,3 +42,5 @@
 {"path":"negatives/crypto_checksum_invalid.txt","forbidden":["Bitcoin Address (Legacy)","Bitcoin Address (Bech32)","Bitcoin Cash Address","Litecoin Address","Ripple Address"]}
 {"path":"negatives/url_credential_placeholders.txt","forbidden":["Bearer Token","URL with Token","Slack Webhook"]}
 {"path":"negatives/secret_placeholders.txt","forbidden":["Generic API Key","Generic Secret Assignment"]}
+{"path":"positives/credentials/base64_encoded_secrets.txt","expected":[{"sub_category":"USA SSN","text":"MTIzLTQ1LTY3ODk="},{"sub_category":"Visa","text":"NDUzMjAxNTExMjgzMDM2Ng=="}]}
+{"path":"negatives/base64_non_sensitive.txt","forbidden":["USA SSN","Visa","MasterCard","Amex","Discover","AWS Access Key"]}
