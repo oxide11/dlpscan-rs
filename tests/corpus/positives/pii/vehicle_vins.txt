@@ -1,0 +1,9 @@
+Vehicle records — fleet inventory excerpt
+
+Asset 4451: Honda Civic LX, model year 2003.
+    VIN: 1HGCM82633A004352
+    Last service: 2024-09-12
+
+Asset 4452: Pontiac Bonneville, model year 2003.
+    VIN: 5GZCZ43D13S812715
+    Last service: 2024-08-30

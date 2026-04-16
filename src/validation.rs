@@ -711,6 +711,93 @@ pub fn is_valid_us_phone(phone: &str) -> bool {
     true
 }
 
+/// Validate a Vehicle Identification Number (VIN) using the ISO 3779
+/// check digit algorithm.
+///
+/// VINs are 17 characters from the alphabet `[A-HJ-NPR-Z0-9]` (the
+/// letters I, O, and Q are excluded to avoid visual confusion with
+/// 1 and 0). Position 8 (0-indexed) is the check digit, which is
+/// either a single decimal digit or the letter `X` (representing 10).
+///
+/// Algorithm:
+///
+///   1. Transliterate each character to a numeric value:
+///        digits 0..9    → 0..9
+///        A=1 B=2 C=3 D=4 E=5 F=6 G=7 H=8
+///        J=1 K=2 L=3 M=4 N=5 P=7 R=9
+///        S=2 T=3 U=4 V=5 W=6 X=7 Y=8 Z=9
+///   2. Multiply each position by its weight:
+///        positions 0..16 → [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2]
+///      The 0 at position 8 means the check digit doesn't contribute
+///      to its own checksum.
+///   3. Take the sum mod 11. Result 10 maps to the letter `X`;
+///      0..9 map to the corresponding digit.
+///   4. The mapped value must equal the character at position 8.
+///
+/// Without this validator, the bare `\b[A-HJ-NPR-Z0-9]{17}\b` regex
+/// would fire on every 17-character alphanumeric string in the
+/// restricted alphabet, including UUIDs (when they happen to avoid
+/// I/O/Q), arbitrary serial numbers, and random tokens. The check
+/// digit is the only structural discipline a VIN actually has, and
+/// implementing it is ~30 lines.
+pub fn is_valid_vin(vin: &str) -> bool {
+    let bytes = vin.as_bytes();
+    if bytes.len() != 17 {
+        return false;
+    }
+    // Reject all-same-character sentinels.
+    if bytes.iter().all(|&b| b == bytes[0]) {
+        return false;
+    }
+    let mut sum: u32 = 0;
+    let weights: [u32; 17] = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2];
+    for (i, &b) in bytes.iter().enumerate() {
+        let value = match b {
+            b'0'..=b'9' => (b - b'0') as u32,
+            b'A' => 1,
+            b'B' => 2,
+            b'C' => 3,
+            b'D' => 4,
+            b'E' => 5,
+            b'F' => 6,
+            b'G' => 7,
+            b'H' => 8,
+            b'J' => 1,
+            b'K' => 2,
+            b'L' => 3,
+            b'M' => 4,
+            b'N' => 5,
+            b'P' => 7,
+            b'R' => 9,
+            b'S' => 2,
+            b'T' => 3,
+            b'U' => 4,
+            b'V' => 5,
+            b'W' => 6,
+            // X is special: in positions 0..7 and 9..16 it has the
+            // value 7 (per ISO 3779), but in position 8 it represents
+            // the check value 10. We handle position 8 below by
+            // skipping the weight entirely (weight is 0 anyway), so
+            // here we just return its general transliterated value.
+            b'X' => 7,
+            b'Y' => 8,
+            b'Z' => 9,
+            // Letters I, O, Q are explicitly excluded from VIN
+            // alphabet — reject as malformed.
+            _ => return false,
+        };
+        sum += value * weights[i];
+    }
+    let computed = sum % 11;
+    let expected_char = bytes[8];
+    let expected_value = match expected_char {
+        b'0'..=b'9' => (expected_char - b'0') as u32,
+        b'X' => 10,
+        _ => return false,
+    };
+    computed == expected_value
+}
+
 // ---------------------------------------------------------------------------
 // Network identifier filters (Phase 1b of the always-run precision pass).
 //
@@ -2405,6 +2492,12 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         "E.164 Phone Number" => is_valid_e164_phone(matched_text),
         "US Phone Number" => is_valid_us_phone(matched_text),
         "UK Phone Number" => is_plausible_phone(matched_text),
+        // Vehicle Identification Number — ISO 3779 transliteration
+        // + weighted mod-11 check digit at position 8. Closes the
+        // last "high-risk 16" pattern that has a published checksum
+        // (Ethereum's EIP-55 is deliberately deferred for lack of
+        // a keccak256 dependency).
+        "VIN" => is_valid_vin(matched_text),
         // Network identifiers — structural filtering for non-routable
         // / reserved / documentation / sentinel ranges. The regex is
         // kept always-run so log-file scanning still catches leaked
@@ -3584,6 +3677,38 @@ mod tests {
         // Wrong length.
         assert!(!is_valid_us_phone("415555267"));
         assert!(!is_valid_us_phone("41555526710"));
+    }
+
+    #[test]
+    fn test_vin_valid() {
+        // Hand-verified Honda Civic VIN. Position 8 = '3'.
+        // Weighted sum = 311; 311 mod 11 = 3.
+        assert!(is_valid_vin("1HGCM82633A004352"));
+        // Hand-verified Pontiac VIN. Position 8 = '1'.
+        // Weighted sum = 408; 408 mod 11 = 1.
+        assert!(is_valid_vin("5GZCZ43D13S812715"));
+    }
+
+    #[test]
+    fn test_vin_invalid() {
+        // Bumped check digit on a known-valid VIN.
+        // `1HGCM82633A004352` is valid → swap check from 3 to 4.
+        assert!(!is_valid_vin("1HGCM82643A004352"));
+        // Bumped a non-check digit (changes the sum, breaks the check).
+        assert!(!is_valid_vin("1HGCM82633B004352"));
+        // Contains a forbidden character (I, O, or Q).
+        assert!(!is_valid_vin("1HGCM82633A004352I"));
+        assert!(!is_valid_vin("1HGCM8I633A004352"));
+        assert!(!is_valid_vin("1HGCM8O633A004352"));
+        assert!(!is_valid_vin("1HGCM8Q633A004352"));
+        // Wrong length.
+        assert!(!is_valid_vin("1HGCM82633A00435")); // 16
+        assert!(!is_valid_vin("1HGCM82633A0043522")); // 18
+        // All-same sentinel.
+        assert!(!is_valid_vin("AAAAAAAAAAAAAAAAA"));
+        assert!(!is_valid_vin("00000000000000000"));
+        // Lowercase — VIN is uppercase only.
+        assert!(!is_valid_vin("1hgcm82633a004352"));
     }
 
     #[test]
