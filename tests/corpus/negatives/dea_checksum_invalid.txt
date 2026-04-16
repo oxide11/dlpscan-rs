@@ -1,0 +1,5 @@
+DEA-shaped strings that fail the weighted mod-10 checksum
+
+Prescriber DEA: AB1234567
+Alternate DEA: AP5836475
+Random letters+digits: XY9876543

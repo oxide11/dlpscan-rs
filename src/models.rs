@@ -368,5 +368,16 @@ pub fn is_context_required(sub_category: &str) -> bool {
             // text, but context gating adds a safety rail and
             // matches the treatment of US Passport / EIN / etc.
             | "US MBI"
+            // HIPAA insurance/health plan identifiers — all three use
+            // loose letter+digit regexes with no published checksum.
+            // `[A-Z]{3}\d{9}` (Health Plan ID), `[A-Z]{2,4}\d{6,12}`
+            // (Insurance Policy), `[A-Z]{1,3}\d{8,15}` (Insurance
+            // Claim) would each fire on serial numbers, SKUs, product
+            // codes, and order references. Context gating on their
+            // HIPAA-specific keyword sets (health plan, policy number,
+            // claim number, etc.) is the right discipline.
+            | "Health Plan ID"
+            | "Insurance Policy Number"
+            | "Insurance Claim Number"
     )
 }
