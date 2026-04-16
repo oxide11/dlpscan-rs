@@ -759,6 +759,188 @@ pub fn is_valid_dea_number(dea: &str) -> bool {
     (total % 10) == digits[6]
 }
 
+// ---------------------------------------------------------------------------
+// GDPR device/financial identifier validators (Phase 2b)
+// ---------------------------------------------------------------------------
+
+/// Validate an ICCID (Integrated Circuit Card Identifier / SIM card
+/// number) using standard Luhn. ICCID is 18-20 digits, always
+/// starting with `89` (the telecom major industry identifier).
+pub fn is_valid_iccid(iccid: &str) -> bool {
+    let digits: Vec<u32> = iccid
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if !(18..=20).contains(&digits.len()) {
+        return false;
+    }
+    if digits[0] != 8 || digits[1] != 9 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(idx, &d)| {
+            if idx % 2 == 1 {
+                let doubled = d * 2;
+                if doubled > 9 { doubled - 9 } else { doubled }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum % 10 == 0
+}
+
+/// Validate a Legal Entity Identifier (LEI) using mod-97 (ISO 17442).
+/// LEI is 20 characters: 4 alphanumeric (LOU prefix) + `00` (reserved)
+/// + 12 alphanumeric (entity ID) + 2 digit check. The check is
+/// computed identically to IBAN: convert letters to 2-digit numbers
+/// (A=10..Z=35), form the big number, and verify mod 97 == 1.
+pub fn is_valid_lei(lei: &str) -> bool {
+    let chars: Vec<char> = lei.chars().collect();
+    if chars.len() != 20 {
+        return false;
+    }
+    if !chars.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+        return false;
+    }
+    // Mod-97 check: convert the entire 20-char string to numeric
+    // (A=10..Z=35) and compute mod 97. Result must be 1.
+    let rearranged: String = chars[..20]
+        .iter()
+        .collect();
+    let mut numeric = String::with_capacity(40);
+    for c in rearranged.chars() {
+        if let Some(d) = c.to_digit(10) {
+            numeric.push_str(&d.to_string());
+        } else if c.is_ascii_uppercase() {
+            numeric.push_str(&(c as u32 - 'A' as u32 + 10).to_string());
+        } else {
+            return false;
+        }
+    }
+    let mut remainder: u32 = 0;
+    for c in numeric.chars() {
+        let d = c.to_digit(10).unwrap_or(0);
+        remainder = (remainder * 10 + d) % 97;
+    }
+    remainder == 1
+}
+
+/// Validate a FIGI (Financial Instrument Global Identifier) check
+/// digit. FIGI is 12 characters: `BBG` prefix + 8 alphanumeric + 1
+/// check digit. The check digit uses a modified Luhn where letters
+/// are converted to their ordinal (A=10..Z=35) and each 2-digit
+/// number contributes its individual digits to the Luhn sum.
+pub fn is_valid_figi(figi: &str) -> bool {
+    let chars: Vec<char> = figi.chars().collect();
+    if chars.len() != 12 {
+        return false;
+    }
+    if !chars[..3].iter().collect::<String>().eq("BBG") {
+        return false;
+    }
+    if !chars.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+        return false;
+    }
+    // Expand characters to digit sequences: digits stay, letters
+    // become 2-digit numbers (A=10..Z=35).
+    let mut expanded_digits: Vec<u32> = Vec::with_capacity(24);
+    for &c in &chars[..11] {
+        if let Some(d) = c.to_digit(10) {
+            expanded_digits.push(d);
+        } else if c.is_ascii_uppercase() {
+            let v = c as u32 - 'A' as u32 + 10;
+            expanded_digits.push(v / 10);
+            expanded_digits.push(v % 10);
+        }
+    }
+    // Append the check digit.
+    let check_char = chars[11];
+    let check_val = match check_char.to_digit(10) {
+        Some(d) => d,
+        None => return false,
+    };
+    expanded_digits.push(check_val);
+    // Standard Luhn on the expanded digit sequence.
+    let sum: u32 = expanded_digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(idx, &d)| {
+            if idx % 2 == 1 {
+                let doubled = d * 2;
+                if doubled > 9 { doubled - 9 } else { doubled }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum % 10 == 0
+}
+
+/// Validate an Australian Medicare card number using the published
+/// weighted mod-10 check digit algorithm. Medicare numbers are 10-11
+/// digits: the first digit is 2-6, positions 0-7 are the identifier,
+/// position 8 is the check digit, and positions 9-10 (if present)
+/// are the individual reference number (not checked).
+///
+/// Weights: `[1, 3, 7, 9, 1, 3, 7, 9]` applied to positions 0-7.
+/// `check = (sum mod 10)`. Valid iff `digits[8] == check`.
+pub fn is_valid_australia_medicare(medicare: &str) -> bool {
+    let digits: Vec<u32> = medicare
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if !(10..=11).contains(&digits.len()) {
+        return false;
+    }
+    if !(2..=6).contains(&digits[0]) {
+        return false;
+    }
+    let weights = [1u32, 3, 7, 9, 1, 3, 7, 9];
+    let sum: u32 = digits[..8]
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
+    let check = sum % 10;
+    digits[8] == check
+}
+
+/// Validate an Indian PAN (Permanent Account Number) structure.
+/// PAN is 10 characters: 5 letters + 4 digits + 1 letter. The 4th
+/// letter indicates entity type and must be one of a restricted set.
+/// No published check-digit algorithm exists, so this is a structural
+/// check only — not a full checksum validator.
+pub fn is_valid_india_pan(pan: &str) -> bool {
+    let chars: Vec<char> = pan.chars().collect();
+    if chars.len() != 10 {
+        return false;
+    }
+    if !chars[..5].iter().all(|c| c.is_ascii_uppercase()) {
+        return false;
+    }
+    if !chars[5..9].iter().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    if !chars[9].is_ascii_uppercase() {
+        return false;
+    }
+    // 4th character: entity type code.
+    // P=Person, C=Company, H=HUF, A=AOP, B=BOI, G=Government,
+    // J=AJP, L=Local Authority, F=Firm, T=Trust.
+    let entity = chars[3];
+    matches!(entity, 'P' | 'C' | 'H' | 'A' | 'B' | 'G' | 'J' | 'L' | 'F' | 'T')
+}
+
 /// Validate a Vehicle Identification Number (VIN) using the ISO 3779
 /// check digit algorithm.
 ///
@@ -3188,6 +3370,14 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // DEA registration number — weighted mod-10 check digit on
         // the 7-digit tail. HIPAA-critical pattern.
         "DEA Number" => is_valid_dea_number(matched_text),
+        // GDPR device/financial identifiers.
+        "ICCID" => is_valid_iccid(matched_text),
+        "LEI" => is_valid_lei(matched_text),
+        // FIGI: deferred — the check-digit algorithm needs verified
+        // documentation. The BBG prefix + alphanumeric shape is already
+        // fairly tight (specificity 0.90).
+        "Australia Medicare" => is_valid_australia_medicare(matched_text),
+        "India PAN" => is_valid_india_pan(matched_text),
         "VIN" => is_valid_vin(matched_text),
         // Network identifiers — structural filtering for non-routable
         // / reserved / documentation / sentinel ranges. The regex is
@@ -4568,6 +4758,65 @@ mod tests {
         assert!(!is_valid_dea_number("AB12345634"));
         // Lowercase prefix.
         assert!(!is_valid_dea_number("ab1234563"));
+    }
+
+    #[test]
+    fn test_iccid_valid() {
+        // Standard Luhn on 19-20 digit SIM card IDs starting with 89.
+        assert!(is_valid_iccid("8901410321111851072"));
+        assert!(is_valid_iccid("89014103211118510720"));
+    }
+
+    #[test]
+    fn test_iccid_invalid() {
+        assert!(!is_valid_iccid("8901410321111851071")); // bumped
+        assert!(!is_valid_iccid("1201410321111851072")); // wrong prefix
+        assert!(!is_valid_iccid("890141032111")); // too short
+    }
+
+    #[test]
+    fn test_lei_valid() {
+        // Published LEI: 7ZW8QJWVPR4P1J1KQY45 (Bloomberg).
+        assert!(is_valid_lei("7ZW8QJWVPR4P1J1KQY45"));
+    }
+
+    #[test]
+    fn test_lei_invalid() {
+        assert!(!is_valid_lei("7ZW8QJWVPR4P1J1KQY46")); // bumped check
+        assert!(!is_valid_lei("7ZW8QJWVPR4P1J1KQY4")); // too short
+        assert!(!is_valid_lei("7ZW8QJ1VPR4P1J1KQY45")); // changed middle (breaks mod-97)
+    }
+
+    #[test]
+    fn test_australia_medicare_valid() {
+        // 2123 45670 0 2 — hand-computed: weights [1,3,7,9,1,3,7,9]
+        // on [2,1,2,3,4,5,6,7] = 2+3+14+27+4+15+42+63 = 170,
+        // 170 mod 10 = 0 = digits[8]. ✓
+        assert!(is_valid_australia_medicare("21234567002"));
+        assert!(is_valid_australia_medicare("2123 45670 0 2"));
+    }
+
+    #[test]
+    fn test_australia_medicare_invalid() {
+        assert!(!is_valid_australia_medicare("21234567102")); // check 1 ≠ 0
+        assert!(!is_valid_australia_medicare("11234567002")); // first digit 1 (must be 2-6)
+        assert!(!is_valid_australia_medicare("212345670")); // too short (9 digits)
+    }
+
+    #[test]
+    fn test_india_pan_valid() {
+        assert!(is_valid_india_pan("ABCPA1234K")); // P = Person
+        assert!(is_valid_india_pan("XYZCB5678Z")); // C = Company
+        assert!(is_valid_india_pan("AAAHT9999Q")); // H = HUF, T = Trust (4th)
+    }
+
+    #[test]
+    fn test_india_pan_invalid() {
+        assert!(!is_valid_india_pan("ABCQA1234K")); // Q not a valid entity type
+        assert!(!is_valid_india_pan("ABCXA1234K")); // X not valid
+        assert!(!is_valid_india_pan("abcpa1234k")); // lowercase
+        assert!(!is_valid_india_pan("ABCPA123K")); // too short
+        assert!(!is_valid_india_pan("1BCPA1234K")); // digit in alpha position
     }
 
     #[test]

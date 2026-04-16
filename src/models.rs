@@ -379,5 +379,10 @@ pub fn is_context_required(sub_category: &str) -> bool {
             | "Health Plan ID"
             | "Insurance Policy Number"
             | "Insurance Claim Number"
+            // MEID: 14 hex chars with no check digit captured by the
+            // regex. The regex `[0-9A-F]{14}` (with optional seps)
+            // matches too many hex-shaped strings. Context-gate on
+            // the MEID keyword set.
+            | "MEID"
     )
 }
