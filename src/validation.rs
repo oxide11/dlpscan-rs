@@ -1174,6 +1174,194 @@ pub fn is_plausible_slack_webhook(url: &str) -> bool {
     true
 }
 
+// ---------------------------------------------------------------------------
+// Generic secret entropy filters (Phase 1d of the always-run precision pass).
+//
+// The two "Generic" patterns in src/patterns/mod.rs:
+//
+//   * Generic API Key — `(api_key|apikey|api_secret|api_token) = "VALUE"`
+//   * Generic Secret Assignment — `(password|secret|token|...) = "VALUE"`
+//
+// have the loosest matchers in the secret family. They fire on every
+// `key = value` shape in any code or config snippet, including
+// documentation examples (`api_key = "your_api_key_here"`) and
+// placeholder fixtures. The regex floor is 16 chars for API Key and 8
+// chars for Secret Assignment; everything that passes the regex needs
+// secondary discipline.
+//
+// Approach: compute Shannon entropy of the VALUE portion (extracted
+// from the matched assignment) and require it to be above a per-pattern
+// floor. API Key gets a stricter floor because real API keys are
+// effectively random; Secret Assignment gets a looser floor because
+// real passwords (e.g., `SpringWinter2024!`) are word-shaped and have
+// lower entropy than random tokens. Both validators also reject
+// all-same-character values and a small inline list of well-known
+// placeholder strings that fall in the entropy gap (~3.0-3.5 bits/char)
+// where word-shaped placeholders and word-shaped passwords are
+// indistinguishable.
+//
+// Why a small inline placeholder list instead of importing the one
+// from quality/url-credential-filters: that branch isn't merged yet
+// and I don't want a cross-branch dependency. When both branches land,
+// a follow-up can consolidate the lists into a single `placeholders.rs`
+// module. The lists are tiny (~10 entries each) so the duplication
+// is cheap until then.
+// ---------------------------------------------------------------------------
+
+/// Inline placeholder stop-list for the generic secret validators.
+/// Matched case-insensitively against the extracted value. These are
+/// the strings that fall in the entropy "gray zone" (~3.0-3.5 bits/char)
+/// where Shannon entropy alone can't distinguish a word-shaped
+/// placeholder from a word-shaped password.
+const SECRET_VALUE_PLACEHOLDERS: &[&str] = &[
+    "your_api_key_here",
+    "your_api_key",
+    "your-api-key",
+    "yourapikey",
+    "your_token_here",
+    "your_token",
+    "your-token",
+    "yourtoken",
+    "your_secret_here",
+    "your_secret",
+    "your-secret",
+    "yoursecret",
+    "your_password",
+    "your-password",
+    "yourpassword",
+    "placeholder",
+    "placeholder12345",
+    "example_key",
+    "example_token",
+    "example_secret",
+    "changeme",
+    "change_me",
+    "changeit",
+    "change_it",
+    "todo",
+    "fixme",
+    "abc123",
+    "abc12345",
+    "abcdefgh",
+    "12345678",
+    "1234567890",
+    "test123",
+    "testkey",
+    "testtoken",
+    "testsecret",
+    "dummy",
+    "dummykey",
+    "mytoken",
+    "mykey",
+    "mysecret",
+    "default",
+    "supersecret",
+    "secretkey",
+    "apikey",
+    "api_key",
+];
+
+/// Extract the VALUE portion from a `key = "value"` style assignment
+/// matched by Generic API Key or Generic Secret Assignment.
+///
+/// The matched text follows the shape
+/// `<key>\s*[=:]\s*["']?<value>["']?`. We split at the first `=` or `:`,
+/// strip surrounding whitespace, peel one optional pair of matching
+/// quotes, and return whatever's left. The regex already guarantees the
+/// shape, so this is a syntactic split rather than a parse — failures
+/// are treated as "value is the entire matched text" which is
+/// conservative (the entropy check still fires on it).
+fn extract_secret_value(matched: &str) -> &str {
+    let split_pos = matched
+        .char_indices()
+        .find(|(_, c)| *c == '=' || *c == ':');
+    let after = match split_pos {
+        Some((idx, _)) => &matched[idx + 1..],
+        None => matched,
+    };
+    let trimmed = after.trim();
+    // Peel a single layer of matching quotes, if present.
+    let unquoted = if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+    {
+        &trimmed[1..trimmed.len().saturating_sub(1)]
+    } else {
+        trimmed
+    };
+    unquoted
+}
+
+/// Shared structural rejection rules for both generic-secret validators.
+/// Returns `false` if the value is obviously not a real secret
+/// regardless of its entropy.
+fn secret_value_obviously_invalid(value: &str) -> bool {
+    if value.is_empty() {
+        return true;
+    }
+    // All-same character (entropy 0).
+    let first = value.chars().next().unwrap();
+    if value.chars().all(|c| c == first) {
+        return true;
+    }
+    // Inline placeholder list, case-insensitive match.
+    let lower = value.to_ascii_lowercase();
+    if SECRET_VALUE_PLACEHOLDERS.iter().any(|&p| p == lower) {
+        return true;
+    }
+    false
+}
+
+/// Validate a `Generic API Key` match. API keys are effectively random
+/// tokens by design — real values come from a CSPRNG, not from human
+/// keyboards. The regex requires `[A-Za-z0-9\-._~+/]{16,}`, which is a
+/// 67-character alphabet; the theoretical entropy ceiling is
+/// `log2(67) ≈ 6.07` bits/char and well-formed real keys average ~5.5.
+///
+/// Rules:
+///   * regex floor: 16 chars (already enforced by the pattern)
+///   * structural: not all-same, not in inline placeholder list
+///   * entropy: Shannon entropy of the value ≥ 3.0 bits/char
+///
+/// The 3.0 floor is calibrated against AWS's published example
+/// `AKIAIOSFODNN7EXAMPLE` (entropy ≈ 3.77) — well-formed real keys
+/// pass with margin, while the obvious garbage class (constant strings,
+/// short repeated patterns) gets rejected.
+pub fn is_plausible_api_key(matched: &str) -> bool {
+    let value = extract_secret_value(matched);
+    if value.chars().count() < 16 {
+        return false;
+    }
+    if secret_value_obviously_invalid(value) {
+        return false;
+    }
+    crate::scanner::char_entropy(value) >= 3.0
+}
+
+/// Validate a `Generic Secret Assignment` match. Unlike API keys,
+/// passwords and other user-chosen secrets are often word-shaped:
+/// `SpringWinter2024!`, `MyDog'sName123`. These values have entropy
+/// in the 3.0-4.0 range — well below random-token entropy. A high
+/// entropy floor here would false-negative on real password fields,
+/// so we set the floor at the level where only obvious garbage gets
+/// caught (~2.5 bits/char) and rely on the placeholder list to handle
+/// the well-known word-shaped placeholders.
+///
+/// Rules:
+///   * regex floor: 8 chars (already enforced); validator floor 12
+///     to add an extra layer above the regex
+///   * structural: not all-same, not in inline placeholder list
+///   * entropy: Shannon entropy of the value ≥ 2.5 bits/char
+pub fn is_plausible_secret_assignment(matched: &str) -> bool {
+    let value = extract_secret_value(matched);
+    if value.chars().count() < 12 {
+        return false;
+    }
+    if secret_value_obviously_invalid(value) {
+        return false;
+    }
+    crate::scanner::char_entropy(value) >= 2.5
+}
+
 /// Validate a Dutch Burgerservicenummer (BSN) using the
 /// eleven-test. BSN is 8 or 9 digits; 8-digit BSNs are treated
 /// as 9-digit with a leading zero.
@@ -2967,6 +3155,14 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         "Bearer Token" => is_plausible_bearer_token(matched_text),
         "URL with Token" => is_plausible_url_token(matched_text),
         "Slack Webhook" => is_plausible_slack_webhook(matched_text),
+        // Generic secret entropy filters — extract the value from
+        // the `key = "value"` assignment and apply Shannon entropy
+        // floor + length floor + inline placeholder list. API Key
+        // gets a stricter entropy threshold (3.0) because real keys
+        // are random; Secret Assignment gets a looser one (2.5)
+        // because user-chosen passwords are word-shaped.
+        "Generic API Key" => is_plausible_api_key(matched_text),
+        "Generic Secret Assignment" => is_plausible_secret_assignment(matched_text),
         // Germany Steuer-ID — 11 digits with an ISO 7064 MOD 11,10
         // check. Without this, `\b\d{11}\b` fires on every 11-digit
         // invoice number, timestamp, or phone sequence in a
@@ -4573,6 +4769,139 @@ mod tests {
             "{host}/services/T12345ABCD/B98765WXYZ/abcdefghijklmnopqrstuvwx"
         );
         assert!(is_plausible_slack_webhook(&url));
+    }
+
+    #[test]
+    fn test_extract_secret_value() {
+        // Various assignment shapes the regex can match.
+        assert_eq!(
+            extract_secret_value("api_key = \"abcdef1234567890\""),
+            "abcdef1234567890"
+        );
+        assert_eq!(
+            extract_secret_value("api_key='abcdef1234567890'"),
+            "abcdef1234567890"
+        );
+        assert_eq!(
+            extract_secret_value("api_key:abcdef1234567890"),
+            "abcdef1234567890"
+        );
+        assert_eq!(
+            extract_secret_value("password = SpringWinter2024"),
+            "SpringWinter2024"
+        );
+        // Mismatched quotes — peel only when balanced.
+        assert_eq!(
+            extract_secret_value("api_key = \"abcdef1234567890"),
+            "\"abcdef1234567890"
+        );
+    }
+
+    #[test]
+    fn test_is_plausible_api_key_valid() {
+        // AWS-style real-shape key (entropy ~3.77).
+        assert!(is_plausible_api_key(
+            "api_key = \"AKIAIOSFODNN7EXAMPLE\""
+        ));
+        // Random alphanumeric (entropy ~4.5+).
+        assert!(is_plausible_api_key(
+            "api_key = \"7xqjL9kJm8nPvR2tE4fW6sY1bN3c\""
+        ));
+        // High-entropy random opaque token (entropy ~4.7). Note:
+        // we deliberately avoid any string that looks like a real
+        // brand-specific key prefix (sk_*, pk_*, AKIA_*, ghp_, ...)
+        // because GitHub Push Protection will reject the source
+        // file even for fake values.
+        assert!(is_plausible_api_key(
+            "api_secret = \"4eC39HqLyjWDarjtT1zdp7dcXyZmNqAb\""
+        ));
+        // Without surrounding quotes (regex allows this).
+        assert!(is_plausible_api_key(
+            "api_key = AKIAIOSFODNN7EXAMPLE"
+        ));
+        // With colon separator instead of `=`.
+        assert!(is_plausible_api_key(
+            "apikey: 7xqjL9kJm8nPvR2tE4fW6sY1bN3c"
+        ));
+    }
+
+    #[test]
+    fn test_is_plausible_api_key_invalid() {
+        // Documentation placeholder (in stop-list).
+        assert!(!is_plausible_api_key(
+            "api_key = \"your_api_key_here\""
+        ));
+        assert!(!is_plausible_api_key(
+            "api_key = \"YOUR_API_KEY_HERE\""
+        ));
+        assert!(!is_plausible_api_key("api_key = \"placeholder12345\""));
+        // All-same character.
+        assert!(!is_plausible_api_key(
+            "api_key = \"xxxxxxxxxxxxxxxx\""
+        ));
+        assert!(!is_plausible_api_key(
+            "api_key = \"0000000000000000\""
+        ));
+        // Below the entropy floor (3.0). "abababab..." has entropy 1.0.
+        assert!(!is_plausible_api_key(
+            "api_key = \"abababababababab\""
+        ));
+        // Below the entropy floor — `1212121212121212` has entropy 1.0.
+        assert!(!is_plausible_api_key(
+            "api_key = \"1212121212121212\""
+        ));
+        // Below the regex/validator length floor (16 chars).
+        // Note: in practice the regex would not match this, but the
+        // validator should reject it defensively.
+        assert!(!is_plausible_api_key("api_key = \"short\""));
+    }
+
+    #[test]
+    fn test_is_plausible_secret_assignment_valid() {
+        // Word-shaped password (real users do this; entropy ~3.6-3.9).
+        assert!(is_plausible_secret_assignment(
+            "password = \"SpringWinter2024!\""
+        ));
+        assert!(is_plausible_secret_assignment(
+            "password = \"MyP@ssw0rd1234\""
+        ));
+        // Random token.
+        assert!(is_plausible_secret_assignment(
+            "secret = \"7xqjL9kJm8nPvR2tE4fW\""
+        ));
+        // 12-char minimum.
+        assert!(is_plausible_secret_assignment(
+            "token = \"abcDEF12345!\""
+        ));
+    }
+
+    #[test]
+    fn test_is_plausible_secret_assignment_invalid() {
+        // Placeholder strings.
+        assert!(!is_plausible_secret_assignment(
+            "password = \"your_password\""
+        ));
+        assert!(!is_plausible_secret_assignment(
+            "password = \"changeme\""
+        ));
+        assert!(!is_plausible_secret_assignment(
+            "secret = \"placeholder\""
+        ));
+        // All-same character.
+        assert!(!is_plausible_secret_assignment(
+            "password = \"xxxxxxxxxxxx\""
+        ));
+        assert!(!is_plausible_secret_assignment(
+            "password = \"000000000000\""
+        ));
+        // Below 12-char floor.
+        assert!(!is_plausible_secret_assignment(
+            "password = \"abcDEF12\""
+        ));
+        // Below entropy floor 2.5 — `ababababababab` has entropy 1.0.
+        assert!(!is_plausible_secret_assignment(
+            "password = \"abababababab\""
+        ));
     }
 
     #[test]

@@ -16,6 +16,7 @@
 {"path":"positives/credentials/bearer_token.txt","expected":[{"sub_category":"Bearer Token","text":"Bearer 7xqjL9kJm8nPvR2tE4fW6sY1bN3cVhAdQeZwUiOp"}]}
 {"path":"positives/credentials/url_with_password.txt","expected":[{"sub_category":"URL with Password","text":"https://dbadmin:7xqjL9kJm8nPvR2tE4fW@db-stage.example.com:5432/prod"}]}
 {"path":"positives/credentials/url_with_token.txt","expected":[{"sub_category":"URL with Token","text":"https://api.example.com/v2/sync?token=a7f9k2m5n8p3q6r1s4t7u0v3"}]}
+{"path":"positives/credentials/generic_secrets.txt","expected":[{"sub_category":"Generic API Key","text":"7xqjL9kJm8nPvR2tE4fW6sY1bN3cVhAdQ"},{"sub_category":"Generic Secret Assignment","text":"MyP@ssw0rd1234XYZ"}]}
 {"path":"positives/financial/iban_germany.txt","expected":[{"sub_category":"IBAN Generic","text":"DE89 3704 0044 0532 0130 00"}]}
 {"path":"positives/financial/aba_routing_us.txt","expected":[{"sub_category":"ABA Routing Number","text":"011000015"}]}
 {"path":"positives/financial/bitcoin_address.txt","expected":[{"sub_category":"Bitcoin Address (Bech32)","text":"bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"}]}
@@ -40,3 +41,4 @@
 {"path":"negatives/vin_lookalikes.txt","forbidden":["VIN"]}
 {"path":"negatives/crypto_checksum_invalid.txt","forbidden":["Bitcoin Address (Legacy)","Bitcoin Address (Bech32)","Bitcoin Cash Address","Litecoin Address","Ripple Address"]}
 {"path":"negatives/url_credential_placeholders.txt","forbidden":["Bearer Token","URL with Token","Slack Webhook"]}
+{"path":"negatives/secret_placeholders.txt","forbidden":["Generic API Key","Generic Secret Assignment"]}

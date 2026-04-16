@@ -828,7 +828,17 @@ fn scan_high_entropy_tokens(
 ///
 /// Non-ASCII tokens fall back to the previous `HashMap` path so
 /// arbitrary Unicode content is still handled correctly.
-fn char_entropy(s: &str) -> f64 {
+/// Compute the per-character Shannon entropy of a string in bits.
+///
+/// For uniform random alphanumeric strings this approaches `log2(64) ≈ 5.95`;
+/// natural English prose averages ~2.6; structured data like UUIDs/SHA hashes
+/// sit around 4.0; obvious placeholder strings (`xxxxxxxx`, `your_api_key`)
+/// fall in the 0.0-3.5 range.
+///
+/// Exposed as `pub` so the secret-value validators in `validation.rs` can
+/// reuse the same calculation that the high-entropy token scanner uses,
+/// keeping the entropy semantics identical between the two paths.
+pub fn char_entropy(s: &str) -> f64 {
     if s.is_empty() {
         return 0.0;
     }
