@@ -941,6 +941,151 @@ pub fn is_valid_india_pan(pan: &str) -> bool {
     matches!(entity, 'P' | 'C' | 'H' | 'A' | 'B' | 'G' | 'J' | 'L' | 'F' | 'T')
 }
 
+// ---------------------------------------------------------------------------
+// Remaining validators batch
+// ---------------------------------------------------------------------------
+
+/// Validate a South African ID number. 13 digits with a Luhn check
+/// digit and an embedded date of birth (YYMMDD) in positions 0-5.
+///
+/// Format: YYMMDD SSSS C A Z
+///   * YYMMDD = date of birth
+///   * SSSS = sequence (0000-4999 female, 5000-9999 male)
+///   * C = citizenship (0 = SA citizen, 1 = permanent resident)
+///   * A = deprecated (was race, now usually 8)
+///   * Z = Luhn check digit over all 13 digits
+pub fn is_valid_south_africa_id(id: &str) -> bool {
+    let digits: Vec<u32> = id
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 13 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    // DOB gate: month 01-12, day 01-31.
+    let month = digits[2] * 10 + digits[3];
+    let day = digits[4] * 10 + digits[5];
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return false;
+    }
+    // Citizenship: must be 0 or 1.
+    if digits[10] > 1 {
+        return false;
+    }
+    // Standard Luhn on all 13 digits.
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(idx, &d)| {
+            if idx % 2 == 1 {
+                let doubled = d * 2;
+                if doubled > 9 { doubled - 9 } else { doubled }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum % 10 == 0
+}
+
+/// Validate a MERS MIN (Mortgage Electronic Registration Systems
+/// Mortgage Identification Number). 18 digits with the last digit
+/// being a standard Luhn check.
+pub fn is_valid_mers_min(min: &str) -> bool {
+    let digits: Vec<u32> = min
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.len() != 18 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(idx, &d)| {
+            if idx % 2 == 1 {
+                let doubled = d * 2;
+                if doubled > 9 { doubled - 9 } else { doubled }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum % 10 == 0
+}
+
+/// Validate a Fedwire IMAD (Input Message Accountability Data)
+/// structure. Format: `YYYYMMDD` (8-digit date) + `SSSS` (4-letter
+/// source) + `RRRRRRRR` (8 alphanumeric reference) + `NNNNNN`
+/// (6-digit sequence). This validator checks the date portion for
+/// plausibility: year 1990-2099, month 01-12, day 01-31.
+pub fn is_valid_fedwire_imad(imad: &str) -> bool {
+    let chars: Vec<char> = imad.chars().collect();
+    if chars.len() != 26 {
+        return false;
+    }
+    // First 8 must be digits (date YYYYMMDD).
+    if !chars[..8].iter().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    let year: u32 = chars[..4].iter().collect::<String>().parse().unwrap_or(0);
+    let month: u32 = chars[4..6].iter().collect::<String>().parse().unwrap_or(0);
+    let day: u32 = chars[6..8].iter().collect::<String>().parse().unwrap_or(0);
+    if !(1990..=2099).contains(&year) {
+        return false;
+    }
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return false;
+    }
+    true
+}
+
+/// Validate a Universal Loan Identifier (ULI) using the CFPB's
+/// mod-97 check digit algorithm. ULI format:
+/// `[A-Z0-9]{4}00[A-Z0-9]{17,39}` — the first 4 chars are the
+/// LEI prefix, positions 4-5 are "00", and the remaining chars
+/// include the loan ID plus a 2-digit mod-97 check.
+///
+/// The check is computed identically to IBAN/LEI: convert letters
+/// to 2-digit numbers (A=10..Z=35), form the big integer, and
+/// verify mod 97 == 1.
+pub fn is_valid_uli(uli: &str) -> bool {
+    let chars: Vec<char> = uli.chars().collect();
+    if chars.len() < 23 || chars.len() > 45 {
+        return false;
+    }
+    if !chars.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+        return false;
+    }
+    // Mod-97 check over the entire identifier.
+    let mut numeric = String::with_capacity(chars.len() * 2);
+    for &c in &chars {
+        if let Some(d) = c.to_digit(10) {
+            numeric.push_str(&d.to_string());
+        } else if c.is_ascii_uppercase() {
+            numeric.push_str(&(c as u32 - 'A' as u32 + 10).to_string());
+        } else {
+            return false;
+        }
+    }
+    let mut remainder: u32 = 0;
+    for c in numeric.chars() {
+        let d = c.to_digit(10).unwrap_or(0);
+        remainder = (remainder * 10 + d) % 97;
+    }
+    remainder == 1
+}
+
 /// Validate a Vehicle Identification Number (VIN) using the ISO 3779
 /// check digit algorithm.
 ///
@@ -3378,6 +3523,11 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // fairly tight (specificity 0.90).
         "Australia Medicare" => is_valid_australia_medicare(matched_text),
         "India PAN" => is_valid_india_pan(matched_text),
+        // Remaining validators batch.
+        "South Africa ID" => is_valid_south_africa_id(matched_text),
+        "MERS MIN" => is_valid_mers_min(matched_text),
+        "Fedwire IMAD" => is_valid_fedwire_imad(matched_text),
+        "Universal Loan Identifier" => is_valid_uli(matched_text),
         "VIN" => is_valid_vin(matched_text),
         // Network identifiers — structural filtering for non-routable
         // / reserved / documentation / sentinel ranges. The regex is
@@ -4817,6 +4967,65 @@ mod tests {
         assert!(!is_valid_india_pan("abcpa1234k")); // lowercase
         assert!(!is_valid_india_pan("ABCPA123K")); // too short
         assert!(!is_valid_india_pan("1BCPA1234K")); // digit in alpha position
+    }
+
+    #[test]
+    fn test_south_africa_id_valid() {
+        // 8001015009087 — DOB 1980-01-01, male (5009), citizen (0),
+        // Luhn check digit 7. Hand-verified: Luhn sum over all 13
+        // digits should be divisible by 10.
+        assert!(is_valid_south_africa_id("8001015009087"));
+    }
+
+    #[test]
+    fn test_south_africa_id_invalid() {
+        assert!(!is_valid_south_africa_id("8001015009088")); // bumped check
+        assert!(!is_valid_south_africa_id("8013015009087")); // month 13
+        assert!(!is_valid_south_africa_id("8001325009087")); // day 32
+        assert!(!is_valid_south_africa_id("0000000000000")); // all-same
+        assert!(!is_valid_south_africa_id("800101500908")); // too short
+    }
+
+    #[test]
+    fn test_mers_min_valid() {
+        assert!(is_valid_mers_min("100000043000012003"));
+    }
+
+    #[test]
+    fn test_mers_min_invalid() {
+        assert!(!is_valid_mers_min("100000043000012004")); // bumped
+        assert!(!is_valid_mers_min("000000000000000000")); // all-same
+        assert!(!is_valid_mers_min("10000004300001200")); // 17 digits
+    }
+
+    #[test]
+    fn test_fedwire_imad_valid() {
+        // 20240315ABCD12345678000001 — date 2024-03-15, valid.
+        assert!(is_valid_fedwire_imad("20240315ABCD12345678000001"));
+    }
+
+    #[test]
+    fn test_fedwire_imad_invalid() {
+        // Invalid date: month 13.
+        assert!(!is_valid_fedwire_imad("20241315ABCD12345678000001"));
+        // Invalid date: day 32.
+        assert!(!is_valid_fedwire_imad("20240332ABCD12345678000001"));
+        // Year before 1990.
+        assert!(!is_valid_fedwire_imad("19890315ABCD12345678000001"));
+        // Wrong length.
+        assert!(!is_valid_fedwire_imad("20240315ABCD1234567800000"));
+    }
+
+    #[test]
+    fn test_uli_valid() {
+        assert!(is_valid_uli("7ZW8QJWVPR4P1J1KQY45A59"));
+    }
+
+    #[test]
+    fn test_uli_invalid() {
+        assert!(!is_valid_uli("7ZW8QJWVPR4P1J1KQY45A60")); // bumped check
+        assert!(!is_valid_uli("ABCDEFGHIJ1234567890")); // too short
+        assert!(!is_valid_uli("abcdefghij1234567890123")); // lowercase
     }
 
     #[test]
