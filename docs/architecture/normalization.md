@@ -85,6 +85,36 @@ Converts `\xHH` escape sequences to their byte values.
 
 **Defends against:** `\x31\x32\x33-45-6789` → `123-45-6789`
 
+### Stage 4c: Token-level encoded-data decode
+
+**Function:** `decode_encoded_tokens`
+
+Scans the text for tokens that look like encoded data, tries multiple
+codecs in priority order, and replaces the token inline with the
+decoded text if it passes the printable-UTF-8 gate. Runs up to **3
+iterations** to handle nested encoding (e.g., `base64(base64(text))`).
+
+**Supported codecs (in priority order):**
+
+| Codec | Alphabet | Min token length |
+|---|---|---|
+| Base64 standard | A-Za-z0-9+/ | 12 chars |
+| Base64URL | A-Za-z0-9_- | 12 chars |
+| Base32 | A-Z2-7 (tried first for all-uppercase tokens) | 12 chars |
+| Hex | 0-9a-fA-F (even length, optional 0x prefix) | 16 chars |
+
+**Defends against:** `api_key = MTIzLTQ1LTY3ODk=` → `api_key = 123-45-6789`
+
+**Safety gates:**
+- Decoded bytes must be valid UTF-8 with ≥ 50% printable ASCII
+- Decoded result must have ≥ 4 non-whitespace characters
+- Decoded result must have ≥ 3 distinct characters (rejects `BBBBBBBB`)
+- Tokens adjacent to `.` are skipped (protects JWT/OAuth segments)
+
+**Offset map:** All decoded bytes inherit the offset of the first byte
+of the source token. The match span in the scanner output points to the
+START of the encoded token in the original input.
+
 ### Stage 5: Collapse padding
 
 **Function:** `collapse_padding`

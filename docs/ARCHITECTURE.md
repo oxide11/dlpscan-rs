@@ -35,7 +35,9 @@ input bytes / file path
         │  reject empty, reject > 10 MB
         ▼
 [C] NORMALIZATION                 src/normalize/mod.rs :: normalize_text
-        │  10 stages, builds offset_map: normalized byte → original byte
+        │  10 stages + token-level encoded-data decode (base64,
+        │  base64url, base32, hex — nested up to 3 iterations)
+        │  builds offset_map: normalized byte → original byte
         ▼
 [D] CONTEXT HIT-INDEX BUILD       src/context/mod.rs :: build_hit_index
         │  Aho-Corasick sweep, deduplicated keywords, fan-out at match
@@ -58,9 +60,9 @@ input bytes / file path
         │
         ▼
 [H] ALT-DECODINGS SECOND PASS  [opt]
-        │  base32/base64, ROT13, leet-speak, morse
+        │  ROT13, leet-speak, morse (base64/base32 moved to stage C)
         │  only if matches.len() < 3 && text.len() < 4096
-        │  runs always-run patterns only
+        │  runs always-run patterns only; skips context-required patterns
         ▼
 [I] DEDUPLICATE OVERLAPPING       scoring.rs :: deduplicate_overlapping
         │  tiebreakers: confidence → specificity → length
