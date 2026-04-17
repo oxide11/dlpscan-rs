@@ -182,7 +182,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:0[1-9]|[12]\d|3[0-2]|6[1-9]|7[0-2])\d{13}\b",
         case_insensitive: false,
         specificity: 0.55,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Wire Transfer Data",
@@ -3400,7 +3400,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]{3}\d{7}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Asia-Pacific - India",

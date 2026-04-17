@@ -444,5 +444,8 @@ pub fn is_context_required(sub_category: &str) -> bool {
             | "CCPA/CPRA"
             | "SOX"
             | "NPI"
+            // Remaining patterns with no published checksum.
+            | "ACH Trace Number"  // 15 digits, prefix-validated by regex, no check digit
+            | "India Voter ID"    // 3 letters + 7 digits, no published check digit
     )
 }
