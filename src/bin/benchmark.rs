@@ -8,7 +8,7 @@ use std::time::Instant;
 const CLEAN_TEXT: &str = "The quick brown fox jumps over the lazy dog. No sensitive data here. ";
 
 const MIXED_TEXT: &str = "Contact john.doe@example.com for details. \
-    SSN: 123-45-6789. \
+    SSN: 425-71-3482. \
     Card: 4532-0151-1283-0366. \
     Phone: (555) 867-5309. \
     AWS key: AKIAIOSFODNN7EXAMPLE. \
@@ -16,11 +16,11 @@ const MIXED_TEXT: &str = "Contact john.doe@example.com for details. \
 
 const DENSE_TEXT: &str = "4532015112830366 \
     john@example.com \
-    123-45-6789 \
+    425-71-3482 \
     AKIAIOSFODNN7EXAMPLE \
     5425233430109903 \
     jane@test.org \
-    987-65-4321 ";
+    318-42-7156 ";
 
 // Text with many context keywords that trigger context-gated patterns to run,
 // but no actual sensitive data matching those patterns.

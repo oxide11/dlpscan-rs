@@ -1060,7 +1060,7 @@ fn run_test_pattern(pattern: Option<String>, text: Option<String>) {
     };
 
     let text =
-        text.unwrap_or_else(|| prompt("Sample text", "SSN: 123-45-6789, card: 4532015112830366"));
+        text.unwrap_or_else(|| prompt("Sample text", "SSN: 425-71-3482, card: 4532015112830366"));
 
     println!();
     println!("Pattern: {pattern}");

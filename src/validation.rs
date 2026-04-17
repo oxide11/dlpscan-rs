@@ -339,10 +339,12 @@ pub fn is_valid_canada_sin(sin: &str) -> bool {
     if digits.len() != 9 {
         return false;
     }
-    if digits.iter().all(|&d| d == 0) {
+    if digits.iter().all(|&d| d == digits[0]) {
         return false;
     }
-    // Standard Luhn on 9 digits.
+    if digits[0] == 0 || digits[0] == 8 {
+        return false;
+    }
     let sum: u32 = digits
         .iter()
         .rev()
@@ -454,7 +456,12 @@ pub fn is_plausible_phone(phone: &str) -> bool {
             current_run = 1;
         }
     }
-    if longest_run >= digits.len().saturating_sub(1) {
+    if longest_run >= digits.len() / 2 {
+        return false;
+    }
+    let ascending = digits.windows(2).all(|w| w[1] == w[0] + 1);
+    let descending = digits.windows(2).all(|w| w[0] == w[1] + 1);
+    if ascending || descending {
         return false;
     }
     true
@@ -705,8 +712,16 @@ pub fn is_valid_us_phone(phone: &str) -> bool {
     if !(b'2'..=b'9').contains(&exchange[3]) {
         return false;
     }
-    // Exchange cannot be N11 either.
     if exchange[4] == b'1' && exchange[5] == b'1' {
+        return false;
+    }
+    let subscriber = &digits[6..10];
+    if subscriber.chars().all(|c| c == subscriber.chars().next().unwrap()) {
+        return false;
+    }
+    let ex_digits = &digits[3..6];
+    let sub_digits = &digits[6..10];
+    if ex_digits == "555" && sub_digits >= "0100" && sub_digits <= "0199" {
         return false;
     }
     true
@@ -3430,7 +3445,9 @@ pub fn is_valid_quebec_hc(hc: &str) -> bool {
 }
 
 /// Validate a US Social Security Number for structural correctness.
-/// Rejects invalid area numbers (000, 666, 900-999) and group/serial all-zeros.
+/// Rejects invalid area numbers (000, 666, 900-999), group/serial all-zeros,
+/// all-same-digit sentinels, ascending/descending sequences, and known
+/// advertising/placeholder SSNs that SSA has invalidated.
 pub fn is_valid_ssn(ssn: &str) -> bool {
     let digits: Vec<u32> = ssn
         .chars()
@@ -3443,15 +3460,134 @@ pub fn is_valid_ssn(ssn: &str) -> bool {
     let area = digits[0] * 100 + digits[1] * 10 + digits[2];
     let group = digits[3] * 10 + digits[4];
     let serial = digits[5] * 1000 + digits[6] * 100 + digits[7] * 10 + digits[8];
-    // SSA rules: area cannot be 000, 666, or 900-999
     if area == 0 || area == 666 || area >= 900 {
         return false;
     }
-    // Group and serial cannot be all zeros
     if group == 0 || serial == 0 {
         return false;
     }
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let ascending = digits.windows(2).all(|w| w[1] == w[0] + 1);
+    let descending = digits.windows(2).all(|w| w[0] == w[1] + 1);
+    if ascending || descending {
+        return false;
+    }
+    // SSA-invalidated advertising SSN (Woolworth wallet, 1938).
+    if area == 78 && group == 5 && serial == 1120 {
+        return false;
+    }
     true
+}
+
+static VALID_TLDS: &[&str] = &[
+    "com", "org", "net", "edu", "gov", "mil", "int",
+    "info", "biz", "name", "pro", "aero", "coop", "museum",
+    "jobs", "travel", "cat", "mobi", "tel", "asia",
+    "io", "co", "ai", "dev", "app", "cloud", "tech", "online",
+    "store", "site", "xyz", "top", "icu", "vip", "club",
+    "shop", "work", "ltd", "group", "live", "me", "tv", "cc",
+    "us", "uk", "ca", "au", "de", "fr", "it", "es", "nl",
+    "be", "at", "ch", "se", "no", "dk", "fi", "ie", "pt",
+    "pl", "cz", "sk", "hu", "ro", "bg", "hr", "si", "lt",
+    "lv", "ee", "gr", "cy", "mt", "lu", "li", "is",
+    "ru", "ua", "by", "kz", "uz", "ge", "am", "az",
+    "cn", "jp", "kr", "in", "sg", "hk", "tw", "th", "my",
+    "id", "ph", "vn", "bd", "pk", "lk", "np",
+    "br", "mx", "ar", "cl", "co", "pe", "ve", "ec", "uy",
+    "za", "ng", "ke", "eg", "ma", "tn", "gh", "et",
+    "ae", "sa", "il", "tr", "qa", "kw", "bh", "om", "jo", "lb",
+    "nz", "au",
+    "eu", "ac", "ad", "ag", "al", "an", "ao", "aq",
+    "aw", "ax", "ba", "bb", "bf", "bi", "bj", "bm", "bn",
+    "bo", "bs", "bt", "bv", "bw", "bz", "cd", "cf", "cg",
+    "ci", "ck", "cm", "cr", "cu", "cv", "cw", "cx",
+    "dj", "dm", "do", "dz", "er", "fj", "fk", "fm",
+    "fo", "ga", "gd", "gf", "gg", "gi", "gl", "gm", "gn",
+    "gp", "gq", "gs", "gt", "gu", "gw", "gy", "hm", "hn",
+    "ht", "im", "iq", "ir", "je", "jm", "kg", "kh", "ki",
+    "km", "kn", "kp", "ky", "la", "lc", "lr", "ls", "ly",
+    "mc", "md", "mg", "mh", "mk", "ml", "mm", "mn", "mo",
+    "mp", "mq", "mr", "ms", "mu", "mv", "mw", "mz",
+    "na", "nc", "ne", "nf", "ni", "nr", "nu",
+    "pa", "pf", "pg", "pm", "pn", "pr", "ps", "pw", "py",
+    "re", "rs", "rw", "sb", "sc", "sd", "sh", "sj",
+    "sl", "sm", "sn", "so", "sr", "ss", "st", "sv", "sx",
+    "sy", "sz", "tc", "td", "tf", "tg", "tj", "tk", "tl",
+    "tm", "to", "tt", "tz", "ug", "um", "vc", "vi",
+    "vg", "vu", "wf", "ws", "ye", "yt", "zm", "zw",
+    "web", "blog", "page", "news", "health", "space", "design",
+    "money", "fund", "team", "world", "city", "email", "plus",
+    "digital", "media", "agency", "studio", "global", "network",
+    "systems", "solutions", "services", "company", "center",
+    "consulting", "engineering", "technology", "software",
+    "computer", "science", "academy", "university", "school",
+    "institute", "education", "foundation", "charity",
+    "church", "social", "community", "support", "help",
+    "legal", "law", "tax", "insurance", "finance", "bank",
+    "market", "trade", "exchange", "capital", "ventures",
+    "properties", "realty", "estate", "land", "house", "home",
+    "builders", "construction", "energy", "solar", "green",
+    "eco", "bio", "farm", "garden", "food", "kitchen",
+    "restaurant", "bar", "cafe", "pizza", "wine", "beer",
+    "hotel", "holiday", "voyage", "flights", "cruises",
+    "rent", "auto", "car", "bike", "taxi", "fit", "yoga",
+    "run", "play", "game", "games", "bet", "poker", "casino",
+    "lol", "wtf", "foo", "buzz", "zone", "life", "style",
+    "fashion", "beauty", "hair", "skin", "art", "photo",
+    "video", "film", "music", "band", "dance", "show",
+    "theater", "tickets", "events", "party", "dating",
+    "chat", "forum", "wiki", "guide", "tips", "how",
+    "review", "best", "one", "now", "today", "new",
+    "gg", "gl", "gd",
+];
+
+pub fn is_valid_email(email: &str) -> bool {
+    let at_pos = match email.find('@') {
+        Some(p) => p,
+        None => return false,
+    };
+    let local = &email[..at_pos];
+    let domain = &email[at_pos + 1..];
+    if local.is_empty() || local.len() > 64 {
+        return false;
+    }
+    if domain.is_empty() || domain.len() > 253 {
+        return false;
+    }
+    if local.starts_with('.') || local.ends_with('.') || local.contains("..") {
+        return false;
+    }
+    if domain.starts_with('.') || domain.starts_with('-') || domain.contains("..") {
+        return false;
+    }
+    let labels: Vec<&str> = domain.split('.').collect();
+    if labels.len() < 2 {
+        return false;
+    }
+    for label in &labels {
+        if label.is_empty() || label.len() > 63 {
+            return false;
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            return false;
+        }
+        if label.contains('_') {
+            return false;
+        }
+    }
+    let tld = labels.last().unwrap().to_ascii_lowercase();
+    if tld.len() < 2 {
+        return false;
+    }
+    if !tld.chars().all(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    if tld.len() == 2 {
+        return true;
+    }
+    VALID_TLDS.contains(&tld.as_str())
 }
 
 /// Run structural validation for a matched pattern.
@@ -3471,6 +3607,7 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
     // Per-pattern structural validators
     match sub_category {
         "USA SSN" => is_valid_ssn(matched_text),
+        "Email Address" | "EDU Email" => is_valid_email(matched_text),
         "SWIFT/BIC" => is_valid_swift(matched_text),
         "CUSIP" => is_valid_cusip(matched_text),
         "SEDOL" => is_valid_sedol(matched_text),
@@ -5457,7 +5594,7 @@ mod tests {
         // With formatting.
         assert!(is_plausible_phone("+1 (415) 555-2671"));
         // Minimum-length (8 digits).
-        assert!(is_plausible_phone("12345678"));
+        assert!(is_plausible_phone("41538726"));
     }
 
     #[test]
@@ -5512,9 +5649,14 @@ mod tests {
 
     #[test]
     fn test_canada_sin_valid() {
-        // 046-454-286 is a commonly-published Luhn-valid test SIN.
-        assert!(is_valid_canada_sin("046-454-286"));
-        assert!(is_valid_canada_sin("046454286"));
+        assert!(is_valid_canada_sin("246-100-002"));
+        assert!(is_valid_canada_sin("246100002"));
+    }
+
+    #[test]
+    fn test_canada_sin_rejects_invalid_prefix() {
+        assert!(!is_valid_canada_sin("046-454-286")); // leading 0
+        assert!(!is_valid_canada_sin("812-345-673")); // leading 8
     }
 
     #[test]
@@ -5629,9 +5771,17 @@ mod tests {
 
     #[test]
     fn test_ssn_valid() {
-        assert!(is_valid_ssn("123-45-6789"));
-        assert!(is_valid_ssn("123456789")); // no dashes
+        assert!(is_valid_ssn("219-09-9999"));
+        assert!(is_valid_ssn("425713482")); // no dashes
         assert!(is_valid_ssn("001-01-0001")); // minimum valid
+    }
+
+    #[test]
+    fn test_ssn_rejects_sequences_and_sentinels() {
+        assert!(!is_valid_ssn("123-45-6789")); // ascending
+        assert!(!is_valid_ssn("987-65-4321")); // descending
+        assert!(!is_valid_ssn("111-11-1111")); // all-same
+        assert!(!is_valid_ssn("078-05-1120")); // Woolworth advertising SSN
     }
 
     #[test]

@@ -1,7 +1,7 @@
-{"path":"positives/pii/ssn_with_context.txt","expected":[{"sub_category":"USA SSN","text":"078-05-1120"}]}
-{"path":"positives/pii/ssn_bare.txt","expected":[{"sub_category":"USA SSN","text":"078-05-1120"}]}
-{"path":"positives/pii/ssn_tax_form.txt","expected":[{"sub_category":"USA SSN","text":"123-45-6789"}]}
-{"path":"positives/pii/sin_canada.txt","expected":[{"sub_category":"Canada SIN","text":"046 454 286"}]}
+{"path":"positives/pii/ssn_with_context.txt","expected":[{"sub_category":"USA SSN","text":"219-09-9999"}]}
+{"path":"positives/pii/ssn_bare.txt","expected":[{"sub_category":"USA SSN","text":"219-09-9999"}]}
+{"path":"positives/pii/ssn_tax_form.txt","expected":[{"sub_category":"USA SSN","text":"425-71-3482"}]}
+{"path":"positives/pii/sin_canada.txt","expected":[{"sub_category":"Canada SIN","text":"246 100 002"}]}
 {"path":"positives/pii/email_and_phone.txt","expected":[{"sub_category":"Email Address","text":"bob.jones@example.com"},{"sub_category":"US Phone Number","text":"+14155551234"},{"sub_category":"UK Phone Number","text":"+442079460958"}]}
 {"path":"positives/pii/passport_us.txt","expected":[{"sub_category":"USA Passport","text":"123456789"}]}
 {"path":"positives/pci/visa_with_expiry.txt","expected":[{"sub_category":"Visa","text":"4242 4242 4242 4242"}]}
@@ -42,7 +42,7 @@
 {"path":"negatives/crypto_checksum_invalid.txt","forbidden":["Bitcoin Address (Legacy)","Bitcoin Address (Bech32)","Bitcoin Cash Address","Litecoin Address","Ripple Address"]}
 {"path":"negatives/url_credential_placeholders.txt","forbidden":["Bearer Token","URL with Token","Slack Webhook"]}
 {"path":"negatives/secret_placeholders.txt","forbidden":["Generic API Key","Generic Secret Assignment"]}
-{"path":"positives/credentials/base64_encoded_secrets.txt","expected":[{"sub_category":"USA SSN","text":"MTIzLTQ1LTY3ODk="},{"sub_category":"Visa","text":"NDUzMjAxNTExMjgzMDM2Ng=="}]}
+{"path":"positives/credentials/base64_encoded_secrets.txt","expected":[{"sub_category":"USA SSN","text":"NDI1LTcxLTM0ODI="},{"sub_category":"Visa","text":"NDUzMjAxNTExMjgzMDM2Ng=="}]}
 {"path":"negatives/base64_non_sensitive.txt","forbidden":["USA SSN","Visa","MasterCard","Amex","Discover","AWS Access Key"]}
 {"path":"negatives/dea_checksum_invalid.txt","forbidden":["DEA Number"]}
 {"path":"negatives/new_luhn_checksum_invalid.txt","forbidden":["South Africa ID","MERS MIN","IMEI","ICCID","UAE Emirates ID","Israel Teudat Zehut","Sweden PIN"]}
