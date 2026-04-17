@@ -802,24 +802,9 @@ fn main() {
         // siphon info — Show scanner info
         // ---------------------------------------------------------------
         Commands::Info => {
-            println!(r#"
-                    ___
-                .-'   `-.
-              /    ___    \
-    ~@      /   /     \   \      @~
-     \    /   /  (o o)  \   \    /
-      \  |   |    \_/    |   |  /
-~@_    \ |   |   .-'-.   |   | /    _@~
-    `-._\|    \ (     ) /    |/_.~'
-         \     '.`---'.'     /
- @~_      \   _/`-._.-'\   /      _~@
-     `-.   '-'  /  |  \  `-'   .-'
-        `-.   _/ __|__ \_   .-'
-           `-/  /     \  \-'
-            /  /       \  \
-           '~~'         '~~'
-"#);
-            println!("Polygon Siphon v{}", env!("CARGO_PKG_VERSION"));
+            println!();
+            println!("  Polygon Siphon v{}", env!("CARGO_PKG_VERSION"));
+            println!("  High-Performance DLP Scanner");
             println!();
             println!(
                 "Patterns:    {} across {} categories",
