@@ -180,6 +180,41 @@ for those patterns.
 
 ---
 
+## Add a new encoding codec
+
+The token-level decode stage (4c) supports multiple codecs via the
+`try_decode_any` function in `src/normalize/mod.rs`. To add a new
+encoding (e.g., Base85, Quoted-Printable):
+
+1. **Write a `try_decode_mycodec` function** with signature
+   `fn try_decode_mycodec(token: &str) -> Option<String>`:
+   - Check that the token matches your codec's alphabet
+   - Attempt decode
+   - Call `validate_decoded(&decoded_bytes)` to apply the shared
+     printable/UTF-8/distinct-character gate
+   - Return `Some(decoded_string)` on success, `None` on failure
+
+2. **Add it to `try_decode_any`** in the priority chain. Consider
+   where your codec sits relative to existing ones — if your
+   alphabet overlaps with base64 (most do), you may need a
+   heuristic to decide which codec to try first (see the base32
+   all-uppercase heuristic for an example).
+
+3. **Update `is_encoded_char`** if your codec uses characters not
+   already in the union alphabet (A-Za-z0-9+/_-). The token
+   scanner uses this function to find maximal runs of "possibly
+   encoded" characters.
+
+4. **Update `has_evasion_markers`** if your codec has a distinctive
+   marker (like `=` padding for base64, or `<~` delimiters for
+   Base85) that should trigger the normalization fast-path bypass.
+
+5. **Add unit tests** in the `#[cfg(test)]` section: at least one
+   valid decode + one invalid/garbage decode + one test showing your
+   codec doesn't interfere with higher-priority codecs.
+
+---
+
 ## Common debugging techniques
 
 **"Why isn't my pattern matching?"** — check in order:

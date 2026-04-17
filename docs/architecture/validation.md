@@ -31,21 +31,21 @@ through `is_luhn_valid` before the per-sub_category dispatch.
 
 ## Validator inventory
 
-As of the Phase 1 close-out, **57 validators** are wired. They fall
+As of the latest quality batches, **68 validators** are wired. They fall
 into these families:
 
 | Family | Algorithm | Patterns |
 |---|---|---|
-| **Luhn** | Standard Luhn mod-10 | Visa, MC, Amex, Discover, JCB, Diners Club, UnionPay, PAN, IMEI, Sweden PIN, US NPI, UAE Emirates ID |
-| **Weighted mod-11** | Weighted sum mod 11 | SSN (area check), CUSIP, SEDOL, Germany Tax ID (ISO 7064), Japan My Number, South Korea RRN, Argentina CUIL, Denmark CPR (DOB-only), British NHS, Chile RUN/RUT, VIN (ISO 3779) |
-| **Mod-97** | ISO 13616 or similar | IBAN Generic, Belgium NRN, France NIR |
+| **Luhn** | Standard Luhn mod-10 | Visa, MC, Amex, Discover, JCB, Diners Club, UnionPay, PAN, IMEI, Sweden PIN, US NPI, UAE Emirates ID, ICCID |
+| **Weighted mod-11** | Weighted sum mod 11 | SSN (area check), CUSIP, SEDOL, Germany Tax ID (ISO 7064), Japan My Number, South Korea RRN, Argentina CUIL, Denmark CPR (DOB-only), British NHS, Chile RUN/RUT, VIN (ISO 3779), DEA Number |
+| **Mod-97** | ISO 13616 or similar | IBAN Generic, Belgium NRN, France NIR, LEI |
 | **Dual mod-11** | Two-pass weighted | Brazil CPF, Brazil CNPJ |
 | **Verhoeff** | Dihedral D5 group | India Aadhaar |
 | **Table-driven** | Lookup table per position | Italy Codice Fiscale (CIN), Spain DNI (letter map), Mexico CURP |
 | **Letter-table** | Weighted sum → letter lookup | Singapore NRIC, Singapore FIN, Hong Kong ID |
 | **Base58Check** | Double-SHA256 tail | Bitcoin Legacy, Litecoin, Ripple |
 | **Polymod** | Polynomial checksum | Bitcoin Bech32 (BIP-173/350), Bitcoin Cash (CashAddr) |
-| **Structural filter** | Range/bounds/format check | IPv4 (RFC 1918+), IPv6 (loopback/ULA/multicast), MAC (null/broadcast), GPS (lat/lon bounds), SWIFT (country code + false-positive word list), MICR (control char required) |
+| **Structural filter** | Range/bounds/format check | IPv4 (RFC 1918+), IPv6 (loopback/ULA/multicast), MAC (null/broadcast), GPS (lat/lon bounds), SWIFT (country code + false-positive word list), MICR (control char required), India PAN (entity type), Australia Medicare (weighted mod-10) |
 | **Plausibility** | Length + entropy + placeholder list | Bearer Token, URL with Token, Slack Webhook, Generic API Key (Shannon entropy ≥ 3.0), Generic Secret Assignment (Shannon entropy ≥ 2.5) |
 | **Phone** | Country code + NANP NPA/exchange | E.164 (ITU table), US Phone (NANP), UK Phone (plausibility) |
 
@@ -107,8 +107,8 @@ recall regressions) and `total_fp == 0` (no precision regressions).
 Any commit that breaks either must either fix the bug or update the
 corpus to explain the change.
 
-Current baseline: **30/30 recall, 0 FPs** across 20 positive docs
-and 16 negative docs (after Phase 1 close-out).
+Current baseline: **41/41 recall, 0 FPs** across 31 positive docs
+and 19 negative docs.
 
 ## Pattern specificity map
 

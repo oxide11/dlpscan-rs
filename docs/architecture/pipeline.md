@@ -73,6 +73,7 @@ breakdown. The stages run in this order:
 | 3 | `strip_comments` | Empty `/**/` and `<!---->` used to break up keywords |
 | 4 | `decode_hex_spaced` | `48 65 6c 6c 6f` → `Hello` |
 | 4b | `decode_hex_escapes` | `\x48\x65` → `He` |
+| 4c | `decode_encoded_tokens` | Token-level base64/base64url/base32/hex decode (nested, max 3 iterations). Skips JWT dot-delimited segments. |
 | 5 | `collapse_padding` | Strip whitespace between non-alpha chars |
 | 6 | `normalize_delimiters` | `123--45` → `123-45` |
 | 7 | `strip_zero_width` | Remove ZWSP, ZWJ, etc. |
@@ -185,7 +186,7 @@ The `Vec<Vec<Match>>` from rayon gets flattened into a single
 
 ## Stage H: alt-decodings second pass
 
-**File:** `src/scanner/mod.rs` (lines ~494-541)
+**File:** `src/scanner/mod.rs` (lines ~494-560)
 
 **Only runs if:**
 - `matches.len() < 3` (primary pass found almost nothing)
@@ -194,26 +195,23 @@ The `Vec<Vec<Match>>` from rayon gets flattened into a single
 
 Generates alternative decodings of the normalized text
 (`src/normalize/mod.rs :: generate_alternative_decodings`):
-- base32 / base64 decode
 - ROT13
 - leet-speak (`h3ll0` → `hello`)
 - morse code
 
-For each alt, runs **only always-run patterns** (not the full 560).
-Lower-specificity patterns against alt-decoded text produce mostly
-noise, so the pass is restricted to high-confidence patterns.
+**Note:** base64/base32 decode used to live here but has been moved
+to the normalization pipeline (stage 4c) where it runs on ALL
+documents with full context checking and supports nested decode.
+
+For each alt, runs **only always-run patterns** (not the full 560),
+and **skips context-required patterns entirely** (the alt text has
+no context hit index, so keyword proximity can't be verified).
 
 Each alt match:
 - Goes through `validate_match` (checksums still apply)
 - Gets confidence × 0.9 (alt-decoded matches are less trustworthy)
 - Span is set to `(0, text.len())` — offset mapping through a decode
   step is not reliable
-
-**Important:** the alt-decodings pass does NOT go through the primary
-pass's context check. This is why patterns in `CRITICAL_ALWAYS_RUN`
-that have no structural validator need to be treated with care — they
-can fire through the alt path even when context would have stopped
-them in the primary path.
 
 ---
 

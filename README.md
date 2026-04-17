@@ -4,9 +4,22 @@ High-performance DLP scanner written in Rust. Detects, redacts, and protects
 sensitive data with exceptional throughput.
 
 **561 patterns** across **126 categories** — full parity with the Python version.
-**458+ tests** passing across the lib, integration, evasion, and detection-quality
-harnesses, plus a labeled-corpus regression suite with enforced recall and
-false-positive gates.
+**68 checksum validators** for national IDs, financial identifiers, and crypto
+addresses. **500+ tests** passing across the lib, integration, evasion, and
+detection-quality harnesses, with an enforced labeled-corpus regression suite
+(**41/41 recall, 0 false positives**).
+
+### Highlights
+
+- **Evasion defense**: 10-stage normalization pipeline defeats percent-encoding,
+  HTML entities, zero-width injection, homoglyphs, and NFKC-variant attacks.
+  Token-level **base64, base64url, base32, and hex decode** with nested-decode
+  support (up to 3 layers) catches obfuscated sensitive data inline.
+- **Structural validation**: every always-run pattern is either checksum-validated
+  (Luhn, mod-97, Verhoeff, Base58Check, Bech32 polymod, ISO 3779, etc.) or
+  context-gated with keyword proximity checks.
+- **20+ file formats**: PDF, DOCX, XLSX, archives (ZIP/RAR/7z), Parquet, SQLite,
+  email (EML/MBOX/MSG), QR codes and barcodes — all enabled by default.
 
 ## Performance
 
@@ -163,7 +176,7 @@ To build without barcode support (for a smaller binary), disable
 default features:
 
 ```bash
-cargo build --release --no-default-features --features "metrics,siem,webhooks"
+cargo build --release --no-default-features --features metrics
 ```
 
 **Supported formats:**
@@ -212,13 +225,9 @@ section for details on symlink resolution and double-extension protection.
 
 ### BIN lookup (credit card enrichment)
 
-With the `bin-data` feature, credit card findings are enriched with
-issuing bank metadata from a database of 374,788 Bank Identification
-Numbers:
-
-```bash
-cargo build --release --features bin-data
-```
+The `bin-data` feature is **enabled by default**. Credit card findings
+are enriched with issuing bank metadata from a database of 374,788 Bank
+Identification Numbers:
 
 ```json
 {
