@@ -45,3 +45,6 @@
 {"path":"positives/credentials/base64_encoded_secrets.txt","expected":[{"sub_category":"USA SSN","text":"MTIzLTQ1LTY3ODk="},{"sub_category":"Visa","text":"NDUzMjAxNTExMjgzMDM2Ng=="}]}
 {"path":"negatives/base64_non_sensitive.txt","forbidden":["USA SSN","Visa","MasterCard","Amex","Discover","AWS Access Key"]}
 {"path":"negatives/dea_checksum_invalid.txt","forbidden":["DEA Number"]}
+{"path":"negatives/new_luhn_checksum_invalid.txt","forbidden":["South Africa ID","MERS MIN","IMEI","ICCID","UAE Emirates ID","Israel Teudat Zehut","Sweden PIN"]}
+{"path":"negatives/new_modular_checksum_invalid.txt","forbidden":["CUSIP","SEDOL","ISIN","LEI","Japan My Number","Australia TFN","India Aadhaar","Germany Tax ID","Brazil CPF","Brazil CNPJ","Poland PESEL","Belgium NRN","France NIR","Netherlands BSN","Chile RUN/RUT","Argentina CUIL/CUIT","British NHS","South Korea RRN","China Resident ID","Hong Kong ID"]}
+{"path":"negatives/new_structural_invalid.txt","forbidden":["India PAN","Mexico CURP","Denmark CPR","Italy Codice Fiscale","Spain DNI","SWIFT/BIC","Fedwire IMAD","Universal Loan Identifier"]}

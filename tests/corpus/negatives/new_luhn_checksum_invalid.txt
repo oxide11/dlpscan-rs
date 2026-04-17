@@ -1,0 +1,37 @@
+Records department inventory — all reference numbers are synthetic
+and used for internal tracking only.
+
+South Africa identity documents on file:
+Document holder Alpha, ID 8501015800081 issued Pretoria.
+Document holder Bravo, ID 9203145600093 issued Cape Town.
+Document holder Charlie, ID 7712310800075 issued Johannesburg.
+
+MERS mortgage identification numbers:
+Loan reference one is 100034500120078901 for the Elm Street property.
+Loan reference two is 200045600230089012 for the Oak Avenue property.
+Loan reference three is 100000000000000001 for the Pine Road property.
+
+Device identifiers for returned equipment:
+Handset Alpha has IMEI 353456789012346 per carrier records.
+Handset Bravo has IMEI 861234567890124 per carrier records.
+Handset Charlie has IMEI 490154203237519 per carrier records.
+
+SIM card ICCID numbers from decommissioned fleet:
+SIM card lot one with ICCID 8901260012345678902 has been recycled.
+SIM card lot two with ICCID 8944110012345678903 has been recycled.
+SIM card lot three with ICCID 8933150012345678904 has been recycled.
+
+UAE Emirates ID numbers for compliance review:
+Applicant record Alpha, Emirates ID 784198012345672 pending.
+Applicant record Bravo, Emirates ID 784200112345683 pending.
+Applicant record Charlie, Emirates ID 784197512345694 pending.
+
+Israel identification:
+Teudat Zehut reference 012345671 for record Alpha.
+Teudat Zehut reference 036140582 for record Bravo.
+Teudat Zehut reference 987654322 for record Charlie.
+
+Sweden personal identity numbers:
+Personnummer 850101-1234 for record Alpha.
+Personnummer 920314-0068 for record Bravo.
+Personnummer 771231-9998 for record Charlie.
