@@ -1,4 +1,4 @@
-//! Evasion technique tests for dlpscan-rs.
+//! Evasion technique tests for siphon-rs.
 //!
 //! Tests resilience against malformed files, polyglots, resource exhaustion,
 //! and format-specific evasion vectors.
@@ -22,7 +22,7 @@ fn test_extension_mismatch_html_as_docx() {
     let f = tempfile::Builder::new().suffix(".docx").tempfile().unwrap();
     std::fs::write(f.path(), html.as_bytes()).unwrap();
 
-    let result = dlpscan::extractors::extract_text(f.path().to_str().unwrap());
+    let result = siphon::extractors::extract_text(f.path().to_str().unwrap());
     // The file has no PK magic bytes, so zip extraction should fail.
     // The pipeline should fall back to plain text extraction.
     // Either way, the sensitive data MUST be detected.
@@ -47,7 +47,7 @@ fn test_extension_mismatch_html_as_docx() {
             );
 
             // Now test via scanner to ensure detection works on fallback
-            let matches = dlpscan::scan_text(&raw).unwrap();
+            let matches = siphon::scan_text(&raw).unwrap();
             assert!(
                 matches
                     .iter()
@@ -66,7 +66,7 @@ fn test_extension_mismatch_html_as_pdf() {
     let f = tempfile::Builder::new().suffix(".pdf").tempfile().unwrap();
     std::fs::write(f.path(), html.as_bytes()).unwrap();
 
-    let result = dlpscan::extractors::extract_text(f.path().to_str().unwrap());
+    let result = siphon::extractors::extract_text(f.path().to_str().unwrap());
     // No %PDF magic bytes, so PDF extractor won't trigger.
     // Magic byte detection returns None, falls back to plain text.
     match result {
@@ -96,7 +96,7 @@ fn test_polyglot_zip_header_with_text_payload() {
 
     // Extension says .txt (plain text), but magic bytes say ZIP.
     // get_extractor checks extension first, so .txt -> extract_plain_text.
-    let result = dlpscan::extractors::extract_text(f.path().to_str().unwrap());
+    let result = siphon::extractors::extract_text(f.path().to_str().unwrap());
     // Since it's .txt, it should be treated as text regardless of magic bytes
     assert!(
         result.is_ok(),
@@ -136,7 +136,7 @@ fn test_corrupted_docx_fail_behavior() {
     }
 
     // First verify it works uncorrupted
-    let result = dlpscan::extractors::extract_text(f.path().to_str().unwrap());
+    let result = siphon::extractors::extract_text(f.path().to_str().unwrap());
     assert!(result.is_ok(), "Valid DOCX should extract successfully");
     let text = result.unwrap().text;
     assert!(
@@ -155,7 +155,7 @@ fn test_corrupted_docx_fail_behavior() {
     std::fs::write(f.path(), &data).unwrap();
 
     // Try extraction — should fail on ZIP parse
-    let result = dlpscan::extractors::extract_text(f.path().to_str().unwrap());
+    let result = siphon::extractors::extract_text(f.path().to_str().unwrap());
     match result {
         Ok(r) => {
             // If extraction still works, data should be present
@@ -189,7 +189,7 @@ fn test_corrupted_zip_no_panic() {
     std::fs::write(f.path(), &data).unwrap();
 
     // Must not panic — may succeed via raw byte recovery or fail gracefully
-    let result = dlpscan::extractors::extract_text(f.path().to_str().unwrap());
+    let result = siphon::extractors::extract_text(f.path().to_str().unwrap());
     match result {
         Ok(r) => {
             // Recovery succeeded — verify it found the embedded text
@@ -241,11 +241,11 @@ fn test_offset_map_stress_50k_matches() {
     }
 
     // This should not panic, not OOM, and should respect MAX_MATCHES
-    let config = dlpscan::ScanConfig {
+    let config = siphon::ScanConfig {
         max_matches: 1000, // Cap to prevent test from taking forever
         ..Default::default()
     };
-    let result = dlpscan::scanner::scan_text_with_config(&text, &config);
+    let result = siphon::scanner::scan_text_with_config(&text, &config);
     assert!(result.is_ok(), "Stress test must not panic");
     let matches = result.unwrap();
     assert!(
@@ -266,7 +266,7 @@ fn test_zero_width_dense_evasion() {
     let ssn_evaded = "4\u{200B}2\u{200B}5\u{200B}-\u{200B}7\u{200B}1\u{200B}-\u{200B}3\u{200B}4\u{200B}8\u{200B}2";
     let text = format!("The SSN on file is {ssn_evaded} in the record.");
 
-    let matches = dlpscan::scan_text(&text).unwrap();
+    let matches = siphon::scan_text(&text).unwrap();
     assert!(
         matches.iter().any(|m| m.sub_category == "USA SSN"),
         "Zero-width evasion should be normalized and SSN detected: {:?}",
@@ -314,7 +314,7 @@ fn test_nested_zip_depth_limit() {
     }
 
     // Extract — should handle gracefully without infinite recursion
-    let result = dlpscan::extractors::extract_text(f.path().to_str().unwrap());
+    let result = siphon::extractors::extract_text(f.path().to_str().unwrap());
     // We don't require recursive extraction, but it MUST NOT panic or hang
     assert!(
         result.is_ok(),
@@ -345,7 +345,7 @@ fn test_zip_bomb_protection() {
     }
 
     // Extract — must respect size limits and not OOM
-    let result = dlpscan::extractors::extract_text(f.path().to_str().unwrap());
+    let result = siphon::extractors::extract_text(f.path().to_str().unwrap());
     // It's OK if extraction fails (zip bomb detected) or succeeds with truncation.
     // It must NOT panic or exhaust memory.
     match result {
@@ -396,7 +396,7 @@ fn test_corrupted_docx_renamed_txt() {
     std::fs::write(txt_f.path(), &data).unwrap();
 
     // As .txt, the scanner should read it as plain text
-    let result = dlpscan::extractors::extract_text(txt_f.path().to_str().unwrap());
+    let result = siphon::extractors::extract_text(txt_f.path().to_str().unwrap());
     assert!(
         result.is_ok(),
         "Corrupted DOCX as .txt should extract as plain text"
@@ -430,7 +430,7 @@ fn test_unknown_extension_binary_with_payload() {
     // extract_text may fail for binary with unknown extension, BUT
     // the pipeline's binary fallback should use extract_printable_strings_public.
     // Test the public API directly:
-    let text = dlpscan::extractors::extract_printable_strings_public(&data, 12);
+    let text = siphon::extractors::extract_printable_strings_public(&data, 12);
     assert!(
         text.contains("4532015112830366"),
         "Printable string extraction should find card number in binary: {text}"
@@ -467,7 +467,7 @@ fn test_corrupted_zip_raw_byte_recovery() {
     std::fs::write(f.path(), &data).unwrap();
 
     // extract_text should now recover via raw byte fallback
-    let result = dlpscan::extractors::extract_text(f.path().to_str().unwrap());
+    let result = siphon::extractors::extract_text(f.path().to_str().unwrap());
     match result {
         Ok(r) => {
             assert!(

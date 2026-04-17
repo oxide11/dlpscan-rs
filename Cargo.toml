@@ -1,8 +1,8 @@
 [package]
-name = "dlpscan"
+name = "siphon"
 version = "2.1.0"
 edition = "2021"
-description = "High-performance DLP scanner — detect, redact, and protect sensitive data"
+description = "Polygon Siphon — high-performance DLP scanner to detect, redact, and protect sensitive data"
 license = "MIT"
 rust-version = "1.75"
 

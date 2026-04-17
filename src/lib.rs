@@ -1,7 +1,7 @@
-//! dlpscan — High-performance DLP scanner for detecting, redacting, and protecting sensitive data.
+//! Polygon Siphon — High-performance DLP scanner for detecting, redacting, and protecting sensitive data.
 //!
-//! This is a Rust port of the Python dlpscan library, designed for maximum throughput
-//! using RegexSet two-phase matching, zero-copy scanning, and rayon parallelism.
+//! Designed for maximum throughput using RegexSet two-phase matching, zero-copy
+//! scanning, and rayon parallelism.
 
 pub mod allowlist;
 pub mod api;

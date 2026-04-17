@@ -1141,58 +1141,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dlpscan"
-version = "2.1.0"
-dependencies = [
- "aho-corasick",
- "arrow",
- "base64",
- "bytes",
- "calamine",
- "cfb",
- "clap",
- "criterion",
- "crossterm",
- "hex",
- "hmac",
- "http-body-util",
- "hyper",
- "hyper-util",
- "image",
- "once_cell",
- "parquet",
- "pdf-extract",
- "prometheus",
- "pyo3",
- "quick-xml 0.37.5",
- "rand 0.8.5",
- "ratatui",
- "rayon",
- "regex",
- "reqwest",
- "rusqlite",
- "rustls",
- "rustls-pemfile",
- "rxing",
- "serde",
- "serde_json",
- "serde_yaml",
- "sevenz-rust",
- "sha2",
- "strsim",
- "tempfile",
- "tokio",
- "tokio-rustls",
- "toml",
- "tracing",
- "tracing-subscriber",
- "unicode-normalization",
- "unrar",
- "zeroize",
- "zip",
-]
-
-[[package]]
 name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3788,6 +3736,58 @@ name = "siphasher"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2aa850e253778c88a04c3d7323b043aeda9d3e30d5971937c1855769763678e"
+
+[[package]]
+name = "siphon"
+version = "2.1.0"
+dependencies = [
+ "aho-corasick",
+ "arrow",
+ "base64",
+ "bytes",
+ "calamine",
+ "cfb",
+ "clap",
+ "criterion",
+ "crossterm",
+ "hex",
+ "hmac",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "image",
+ "once_cell",
+ "parquet",
+ "pdf-extract",
+ "prometheus",
+ "pyo3",
+ "quick-xml 0.37.5",
+ "rand 0.8.5",
+ "ratatui",
+ "rayon",
+ "regex",
+ "reqwest",
+ "rusqlite",
+ "rustls",
+ "rustls-pemfile",
+ "rxing",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sevenz-rust",
+ "sha2",
+ "strsim",
+ "tempfile",
+ "tokio",
+ "tokio-rustls",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-normalization",
+ "unrar",
+ "zeroize",
+ "zip",
+]
 
 [[package]]
 name = "slab"

@@ -6,7 +6,7 @@ use std::time::Instant;
 fn main() {
     let text = "The quick brown fox jumps over the lazy dog. No sensitive data here. ".repeat(15);
 
-    let patterns = dlpscan::patterns::PATTERNS;
+    let patterns = siphon::patterns::PATTERNS;
     eprintln!("Total patterns: {}", patterns.len());
 
     // Build a RegexSet from all patterns

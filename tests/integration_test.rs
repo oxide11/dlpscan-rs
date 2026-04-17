@@ -3,7 +3,7 @@
 //! These test the full scanning pipeline end-to-end, including normalization,
 //! pattern matching, context checking, and confidence scoring.
 
-use dlpscan::{scan_text, ScanConfig};
+use siphon::{scan_text, ScanConfig};
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -88,7 +88,7 @@ fn test_category_filter() {
         categories: Some(["Contact Information".to_string()].into_iter().collect()),
         ..Default::default()
     };
-    let matches = dlpscan::scanner::scan_text_with_config(
+    let matches = siphon::scanner::scan_text_with_config(
         "Email: test@example.com SSN: 425-71-3482",
         &config,
     )
@@ -105,7 +105,7 @@ fn test_min_confidence_filter() {
         min_confidence: 0.9,
         ..Default::default()
     };
-    let matches = dlpscan::scanner::scan_text_with_config(
+    let matches = siphon::scanner::scan_text_with_config(
         "SSN: 425-71-3482 and email test@example.com",
         &config,
     )
@@ -187,7 +187,7 @@ fn test_evasion_fullwidth_digits() {
 
 #[test]
 fn test_guard_flag_mode() {
-    use dlpscan::{Action, InputGuard, Preset};
+    use siphon::{Action, InputGuard, Preset};
     // Use PciDss preset which includes credit card category
     let guard = InputGuard::new()
         .with_action(Action::Flag)
@@ -202,7 +202,7 @@ fn test_guard_flag_mode() {
 
 #[test]
 fn test_guard_redact_mode() {
-    use dlpscan::{Action, InputGuard, Preset};
+    use siphon::{Action, InputGuard, Preset};
     let guard = InputGuard::new()
         .with_action(Action::Redact)
         .with_presets(vec![Preset::PciDss]);
@@ -221,7 +221,7 @@ fn test_guard_redact_mode() {
 
 #[test]
 fn test_guard_reject_mode() {
-    use dlpscan::{Action, InputGuard, Preset};
+    use siphon::{Action, InputGuard, Preset};
     let guard = InputGuard::new()
         .with_action(Action::Reject)
         .with_presets(vec![Preset::PciDss]);
@@ -234,7 +234,7 @@ fn test_guard_reject_mode() {
 
 #[test]
 fn test_guard_clean_text_passes() {
-    use dlpscan::{Action, InputGuard, Preset};
+    use siphon::{Action, InputGuard, Preset};
     let guard = InputGuard::new()
         .with_action(Action::Reject)
         .with_presets(vec![Preset::PciDss]);
@@ -248,7 +248,7 @@ fn test_guard_clean_text_passes() {
 
 #[test]
 fn test_api_handle_scan() {
-    use dlpscan::api::{handle_health, handle_scan, ScanRequest};
+    use siphon::api::{handle_health, handle_scan, ScanRequest};
 
     let req = ScanRequest {
         text: "My email is test@example.com".to_string(),
@@ -269,7 +269,7 @@ fn test_api_handle_scan() {
 
 #[test]
 fn test_api_handle_batch_scan() {
-    use dlpscan::api::{handle_batch_scan, BatchScanRequest, ScanRequest};
+    use siphon::api::{handle_batch_scan, BatchScanRequest, ScanRequest};
 
     let req = BatchScanRequest {
         items: vec![
@@ -306,7 +306,7 @@ fn test_api_handle_batch_scan() {
 
 #[test]
 fn test_rbac_permission_matrix() {
-    use dlpscan::rbac::{role_has_permission, Permission, Role};
+    use siphon::rbac::{role_has_permission, Permission, Role};
 
     assert!(role_has_permission(Role::Admin, Permission::ManagePatterns));
     assert!(role_has_permission(Role::Admin, Permission::ExportVault));
@@ -326,7 +326,7 @@ fn test_rbac_permission_matrix() {
 #[test]
 fn test_compliance_report_generation() {
     let matches = scan_text("Card: 4532015112830366").unwrap();
-    let reporter = dlpscan::ComplianceReporter::new("Integration Test");
+    let reporter = siphon::ComplianceReporter::new("Integration Test");
     reporter.add_scan_result(&matches, "test-input");
     let report = reporter.generate();
     assert!(
@@ -347,7 +347,7 @@ fn test_compliance_report_generation() {
 
 #[test]
 fn test_tokenize_and_detokenize() {
-    use dlpscan::guard::TokenVault;
+    use siphon::guard::TokenVault;
 
     let mut vault = TokenVault::new("TEST", None);
     let token = vault.tokenize("425-71-3482", "SSN");
@@ -369,7 +369,7 @@ fn test_tokenize_and_detokenize() {
 
 #[test]
 fn test_streaming_scanner() {
-    let scanner = dlpscan::StreamScanner::new(4096, 200);
+    let scanner = siphon::StreamScanner::new(4096, 200);
     let mut all_matches =
         scanner.feed("Here is an SSN: 425-71-3482 embedded in a larger document.");
     all_matches.extend(scanner.flush());
@@ -389,7 +389,7 @@ fn test_streaming_scanner() {
 
 #[test]
 fn test_audit_event_signing_roundtrip() {
-    use dlpscan::audit::AuditEvent;
+    use siphon::audit::AuditEvent;
     let key = b"integration-test-signing-key!!!!";
     let event = AuditEvent::new("REDACT")
         .unwrap()
@@ -410,8 +410,8 @@ fn test_audit_event_signing_roundtrip() {
 
 #[test]
 fn test_compliance_report_redacts_samples() {
-    use dlpscan::compliance::ComplianceReporter;
-    use dlpscan::{Action, InputGuard, Preset};
+    use siphon::compliance::ComplianceReporter;
+    use siphon::{Action, InputGuard, Preset};
 
     let guard = InputGuard::new()
         .with_presets(vec![Preset::PciDss])
@@ -431,7 +431,7 @@ fn test_compliance_report_redacts_samples() {
 
 #[test]
 fn test_luhn_rejects_trivial_sequences() {
-    use dlpscan::validation::is_luhn_valid;
+    use siphon::validation::is_luhn_valid;
     // All zeros should fail despite passing Luhn checksum
     assert!(!is_luhn_valid("0000000000000000"));
     // All same digit should fail
@@ -444,7 +444,7 @@ fn test_luhn_rejects_trivial_sequences() {
 
 #[test]
 fn test_file_type_blocking() {
-    use dlpscan::extractors::{
+    use siphon::extractors::{
         is_blocked_extension, is_path_blocked, is_unreadable_extension, DEFAULT_BLOCKED_EXTENSIONS,
     };
 
@@ -492,7 +492,7 @@ fn test_evasion_cyrillic_yo() {
 
 #[test]
 fn test_ipv6_mapped_ipv4_ssrf() {
-    use dlpscan::http_util::is_private_ip;
+    use siphon::http_util::is_private_ip;
     use std::net::IpAddr;
 
     // ::ffff:127.0.0.1 must be blocked
@@ -510,7 +510,7 @@ fn test_ipv6_mapped_ipv4_ssrf() {
 
 #[test]
 fn test_printable_string_extraction_from_binary() {
-    use dlpscan::extractors::extract_text;
+    use siphon::extractors::extract_text;
 
     // Create a DAT file with sensitive data embedded in binary
     let mut data = vec![0u8; 50];
@@ -529,7 +529,7 @@ fn test_printable_string_extraction_from_binary() {
 
 #[test]
 fn test_cab_extraction_with_mscf_header() {
-    use dlpscan::extractors::extract_text;
+    use siphon::extractors::extract_text;
 
     let mut data = b"MSCF".to_vec();
     data.extend_from_slice(&vec![0u8; 20]);
@@ -547,8 +547,8 @@ fn test_cab_extraction_with_mscf_header() {
 
 #[test]
 fn test_vault_ttl_expired_rejection() {
-    use dlpscan::api::{handle_detokenize, DetokenizeRequest, VaultEntry, VAULT_TTL_SECS};
-    use dlpscan::guard::TokenVault;
+    use siphon::api::{handle_detokenize, DetokenizeRequest, VaultEntry, VAULT_TTL_SECS};
+    use siphon::guard::TokenVault;
     use std::collections::HashMap;
     use std::sync::RwLock;
     use std::time::Instant;
@@ -575,7 +575,7 @@ fn test_vault_ttl_expired_rejection() {
 
 #[test]
 fn test_rbac_admin_action_restricted() {
-    use dlpscan::rbac::{role_has_permission, Permission, Role};
+    use siphon::rbac::{role_has_permission, Permission, Role};
 
     assert!(role_has_permission(Role::Admin, Permission::AdminAction));
     assert!(!role_has_permission(Role::Analyst, Permission::AdminAction));
@@ -592,7 +592,7 @@ fn test_rbac_admin_action_restricted() {
 
 #[test]
 fn test_edm_register_and_scan() {
-    let mut edm = dlpscan::edm::ExactDataMatcher::new(None, None);
+    let mut edm = siphon::edm::ExactDataMatcher::new(None, None);
     edm.register_values("ssn", &["425-71-3482", "987-65-4321"]);
     edm.register_values("email", &["secret@internal.corp"]);
 
@@ -620,7 +620,7 @@ fn test_edm_register_and_scan() {
 fn test_edm_wired_into_scanner() {
     // Register a known sensitive email. EDM match won't be dominated
     // by regex because EDM category is different ("EDM: emails").
-    let mut edm = dlpscan::edm::ExactDataMatcher::new(None, None);
+    let mut edm = siphon::edm::ExactDataMatcher::new(None, None);
     edm.register_values("watchlist", &["target@hostile.net"]);
 
     let config = ScanConfig {
@@ -629,7 +629,7 @@ fn test_edm_wired_into_scanner() {
         ..Default::default()
     };
     let text = "Contact target@hostile.net about the deal.";
-    let matches = dlpscan::scanner::scan_text_with_config(text, &config).unwrap();
+    let matches = siphon::scanner::scan_text_with_config(text, &config).unwrap();
     // Both regex (Email Address) and EDM (watchlist) should fire
     assert!(
         matches.iter().any(|m| m.category.contains("EDM")),
@@ -647,11 +647,11 @@ fn test_edm_save_and_load() {
     let path = dir.path().join("edm-state.json");
     let path_str = path.to_str().unwrap();
 
-    let mut edm = dlpscan::edm::ExactDataMatcher::new(None, None);
+    let mut edm = siphon::edm::ExactDataMatcher::new(None, None);
     edm.register_values("test", &["secret-value-123"]);
     edm.save(path_str).unwrap();
 
-    let loaded = dlpscan::edm::ExactDataMatcher::load(path_str).unwrap();
+    let loaded = siphon::edm::ExactDataMatcher::load(path_str).unwrap();
     assert!(loaded.check_value("secret-value-123", Some("test")));
     assert!(!loaded.check_value("other-value", Some("test")));
 }
@@ -662,7 +662,7 @@ fn test_edm_save_and_load() {
 
 #[test]
 fn test_lsh_register_and_query() {
-    let vault = dlpscan::lsh::DocumentVault::default_vault();
+    let vault = siphon::lsh::DocumentVault::default_vault();
     let doc = "This is a confidential financial report containing sensitive revenue projections and strategic acquisition targets for Q4 2026.";
     vault.register("fin-report-q4", doc, "confidential", None);
 
@@ -676,7 +676,7 @@ fn test_lsh_register_and_query() {
 
 #[test]
 fn test_lsh_wired_into_scanner() {
-    let vault = dlpscan::lsh::DocumentVault::default_vault();
+    let vault = siphon::lsh::DocumentVault::default_vault();
     let doc = "Quarterly earnings report with projected revenue of fifty million dollars and operating margin improvements across all business segments in the enterprise division.";
     vault.register("earnings-q4", doc, "restricted", None);
 
@@ -685,7 +685,7 @@ fn test_lsh_wired_into_scanner() {
         ..Default::default()
     };
     // Scan the same document — should match
-    let matches = dlpscan::scanner::scan_text_with_config(doc, &config).unwrap();
+    let matches = siphon::scanner::scan_text_with_config(doc, &config).unwrap();
     assert!(
         matches.iter().any(|m| m.category == "Document Similarity"),
         "Scanner with LSH should find similar document: {:?}",
@@ -702,11 +702,11 @@ fn test_lsh_save_and_load() {
     let path = dir.path().join("lsh-state.json");
     let path_str = path.to_str().unwrap();
 
-    let vault = dlpscan::lsh::DocumentVault::default_vault();
+    let vault = siphon::lsh::DocumentVault::default_vault();
     vault.register("doc1", "This is a test document with enough words to create meaningful shingles for the locality sensitive hashing algorithm to work correctly.", "sensitive", None);
     vault.save(path_str).unwrap();
 
-    let loaded = dlpscan::lsh::DocumentVault::load(path_str).unwrap();
+    let loaded = siphon::lsh::DocumentVault::load(path_str).unwrap();
     assert_eq!(loaded.document_count(), 1);
 }
 
@@ -726,7 +726,7 @@ fn test_filename_provides_context_for_sin() {
     // Write a 9-digit number that could be a SIN (no keywords in content)
     std::fs::write(f.path(), "reference number 246 100 002 for the account").unwrap();
 
-    let pipeline = dlpscan::Pipeline::new().with_min_confidence(0.0);
+    let pipeline = siphon::Pipeline::new().with_min_confidence(0.0);
     let result = pipeline.process_file(f.path());
 
     // The filename "sin*.txt" should provide "sin" context
@@ -752,7 +752,7 @@ fn test_filename_provides_context_for_ssn() {
         .unwrap();
     std::fs::write(f.path(), "id,number\n1,219-09-9999\n").unwrap();
 
-    let pipeline = dlpscan::Pipeline::new().with_min_confidence(0.0);
+    let pipeline = siphon::Pipeline::new().with_min_confidence(0.0);
     let result = pipeline.process_file(f.path());
 
     let ssn_match = result.matches.iter().find(|m| m.sub_category == "USA SSN");
@@ -852,11 +852,11 @@ fn test_french_password_context() {
     // French-context coverage this test is meant to exercise.
     let text = "Le mot de passe pour contact@example.com est xK9mPqR3vL7nW2jF8hYcT5bA0dGiEuOs.";
     let config = ScanConfig {
-        entropy_scan: dlpscan::scanner::EntropyMode::Gated,
+        entropy_scan: siphon::scanner::EntropyMode::Gated,
         min_confidence: 0.0,
         ..Default::default()
     };
-    let matches = dlpscan::scanner::scan_text_with_config(text, &config).unwrap();
+    let matches = siphon::scanner::scan_text_with_config(text, &config).unwrap();
     // The primary path must find the email, proving French-language
     // surrounding text does not break the scanner.
     assert!(
@@ -876,7 +876,7 @@ fn test_pipeline_rejects_character_device() {
     // /dev/zero would hang indefinitely — metadata.len() reports 0 so
     // the max_file_size check passes, then read_to_string drains the
     // device forever. The guard now rejects non-regular files up front.
-    let pipeline = dlpscan::Pipeline::new();
+    let pipeline = siphon::Pipeline::new();
     let result = pipeline.process_file(std::path::Path::new("/dev/zero"));
     assert!(
         result.matches.is_empty(),

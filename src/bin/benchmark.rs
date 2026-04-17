@@ -1,8 +1,8 @@
-//! Benchmark binary for dlpscan-rs.
+//! Benchmark binary for siphon-rs.
 //!
 //! Compares full scan (560 patterns) vs baseline-only (~108 always-run patterns).
 
-use dlpscan::guard::{Action, InputGuard, Mode, Preset};
+use siphon::guard::{Action, InputGuard, Mode, Preset};
 use std::time::Instant;
 
 const CLEAN_TEXT: &str = "The quick brown fox jumps over the lazy dog. No sensitive data here. ";
@@ -97,7 +97,7 @@ fn main() {
 
     let mut rows: Vec<(BenchResult, BenchResult)> = Vec::new();
 
-    eprintln!("Rust dlpscan: Full (560 patterns) vs Baseline (~108 always-run patterns)");
+    eprintln!("Rust siphon: Full (560 patterns) vs Baseline (~108 always-run patterns)");
     eprintln!("{}", "=".repeat(76));
     eprintln!(
         "  {:35}  {:>10}  {:>10}  {:>8}",
@@ -217,10 +217,10 @@ fn main() {
     // `CRITICAL_ALWAYS_RUN` the way the previous hand-copied list
     // did. See the doc comment on `scanner::is_always_run`.
     eprintln!("\nPattern classification:");
-    let compiled = dlpscan::patterns::PATTERNS;
+    let compiled = siphon::patterns::PATTERNS;
     let always_run = compiled
         .iter()
-        .filter(|p| dlpscan::scanner::is_always_run(p.sub_category))
+        .filter(|p| siphon::scanner::is_always_run(p.sub_category))
         .count();
     eprintln!("  Total patterns:     {}", compiled.len());
     eprintln!("  Always-run:         {} (baseline)", always_run);

@@ -8,7 +8,7 @@
 //!
 //! Run with `cargo test --test fp_probe -- --nocapture`.
 
-use dlpscan::scanner::scan_text;
+use siphon::scanner::scan_text;
 
 fn probe(label: &str, sample: &str, wrapper: &str) {
     let wrapped = wrapper.replace("{}", sample);
@@ -224,7 +224,7 @@ fn probe_recall_gated_bare_ids() {
     ];
     for (expected_sub, value, wrapper) in cases {
         let wrapped = wrapper.replace("{}", value);
-        let matches = dlpscan::scanner::scan_text(&wrapped).unwrap();
+        let matches = siphon::scanner::scan_text(&wrapped).unwrap();
         let fired = matches.iter().any(|m| m.sub_category == expected_sub);
         if fired {
             eprintln!("  OK  {:<30} {:<20} fires as expected", expected_sub, value);
@@ -258,7 +258,7 @@ fn probe_keyword_prefix_shadow_regression() {
     // against the exact scenario and asserts the Germany ID hit
     // survives, so a regression to LeftmostFirst will fail loudly.
     let text = "Personalausweis number on file: CFGHJKL123 for customer record";
-    let matches = dlpscan::scanner::scan_text(text).unwrap();
+    let matches = siphon::scanner::scan_text(text).unwrap();
     let has_germany_id = matches
         .iter()
         .any(|m| m.category == "Europe - Germany" && m.sub_category == "Germany ID");

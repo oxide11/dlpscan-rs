@@ -1,7 +1,7 @@
 //! Benchmarks for the scanning engine.
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use dlpscan::scanner;
+use siphon::scanner;
 
 fn generate_text(size: usize) -> String {
     let base = "The quick brown fox jumps over the lazy dog. \
@@ -51,15 +51,15 @@ fn bench_normalize(c: &mut Criterion) {
     let text = generate_text(10_240);
 
     group.bench_function("normalize_text/10KB", |b| {
-        b.iter(|| dlpscan::normalize::normalize_text(black_box(&text)));
+        b.iter(|| siphon::normalize::normalize_text(black_box(&text)));
     });
 
     group.bench_function("strip_zero_width/10KB", |b| {
-        b.iter(|| dlpscan::normalize::strip_zero_width(black_box(&text)));
+        b.iter(|| siphon::normalize::strip_zero_width(black_box(&text)));
     });
 
     group.bench_function("normalize_leet/10KB", |b| {
-        b.iter(|| dlpscan::normalize::normalize_leet(black_box(&text)));
+        b.iter(|| siphon::normalize::normalize_leet(black_box(&text)));
     });
 
     group.finish();
@@ -155,7 +155,7 @@ fn entropy_heavy_text(copies: usize) -> String {
 }
 
 fn bench_entropy_gated(c: &mut Criterion) {
-    use dlpscan::scanner::{scan_text_with_config, EntropyMode, ScanConfig};
+    use siphon::scanner::{scan_text_with_config, EntropyMode, ScanConfig};
     let mut group = c.benchmark_group("entropy_gated");
 
     for copies in [1, 5, 20] {

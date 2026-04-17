@@ -1,11 +1,29 @@
+```
+                    ___
+                .-'   `-.
+              /    ___    \
+    ~@      /   /     \   \      @~
+     \    /   /  (o o)  \   \    /
+      \  |   |    \_/    |   |  /
+~@_    \ |   |   .-'-.   |   | /    _@~
+    `-._\|    \ (     ) /    |/_.~'
+         \     '.`---'.'     /
+ @~_      \   _/`-._.-'\   /      _~@
+     `-.   '-'  /  |  \  `-'   .-'
+        `-.   _/ __|__ \_   .-'
+           `-/  /     \  \-'
+            /  /       \  \
+           '~~'         '~~'
+```
+
 # Architecture
 
-This is the entry point for understanding how dlpscan-rs is put together.
+This is the entry point for understanding how Polygon Siphon is put together.
 For a deeper look at any specific layer, follow the links below — each
 deep-dive doc covers one concern in detail with file/line references back
 to the source.
 
-## What dlpscan-rs is
+## What Polygon Siphon is
 
 A library and CLI that takes a piece of text (or a file it can extract
 text from) and returns a list of `Match` objects describing every
