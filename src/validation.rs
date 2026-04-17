@@ -3430,7 +3430,9 @@ pub fn is_valid_quebec_hc(hc: &str) -> bool {
 }
 
 /// Validate a US Social Security Number for structural correctness.
-/// Rejects invalid area numbers (000, 666, 900-999) and group/serial all-zeros.
+/// Rejects invalid area numbers (000, 666, 900-999), group/serial all-zeros,
+/// all-same-digit sentinels, ascending/descending sequences, and known
+/// advertising/placeholder SSNs that SSA has invalidated.
 pub fn is_valid_ssn(ssn: &str) -> bool {
     let digits: Vec<u32> = ssn
         .chars()
@@ -3443,12 +3445,22 @@ pub fn is_valid_ssn(ssn: &str) -> bool {
     let area = digits[0] * 100 + digits[1] * 10 + digits[2];
     let group = digits[3] * 10 + digits[4];
     let serial = digits[5] * 1000 + digits[6] * 100 + digits[7] * 10 + digits[8];
-    // SSA rules: area cannot be 000, 666, or 900-999
     if area == 0 || area == 666 || area >= 900 {
         return false;
     }
-    // Group and serial cannot be all zeros
     if group == 0 || serial == 0 {
+        return false;
+    }
+    if digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let ascending = digits.windows(2).all(|w| w[1] == w[0] + 1);
+    let descending = digits.windows(2).all(|w| w[0] == w[1] + 1);
+    if ascending || descending {
+        return false;
+    }
+    // SSA-invalidated advertising SSN (Woolworth wallet, 1938).
+    if area == 78 && group == 5 && serial == 1120 {
         return false;
     }
     true
@@ -5629,9 +5641,17 @@ mod tests {
 
     #[test]
     fn test_ssn_valid() {
-        assert!(is_valid_ssn("123-45-6789"));
-        assert!(is_valid_ssn("123456789")); // no dashes
+        assert!(is_valid_ssn("219-09-9999"));
+        assert!(is_valid_ssn("425713482")); // no dashes
         assert!(is_valid_ssn("001-01-0001")); // minimum valid
+    }
+
+    #[test]
+    fn test_ssn_rejects_sequences_and_sentinels() {
+        assert!(!is_valid_ssn("123-45-6789")); // ascending
+        assert!(!is_valid_ssn("987-65-4321")); // descending
+        assert!(!is_valid_ssn("111-11-1111")); // all-same
+        assert!(!is_valid_ssn("078-05-1120")); // Woolworth advertising SSN
     }
 
     #[test]

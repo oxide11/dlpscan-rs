@@ -15,7 +15,7 @@ use std::io::Write;
 fn test_extension_mismatch_html_as_docx() {
     let html = r#"<html><body>
         Credit card: 4532015112830366
-        SSN: 123-45-6789
+        SSN: 425-71-3482
         Email: secret@example.com
     </body></html>"#;
 
@@ -31,7 +31,7 @@ fn test_extension_mismatch_html_as_docx() {
             // If extraction succeeded (e.g., via magic byte fallback to plain text),
             // verify the sensitive data was found
             assert!(
-                r.text.contains("4532015112830366") || r.text.contains("123-45-6789"),
+                r.text.contains("4532015112830366") || r.text.contains("425-71-3482"),
                 "HTML-as-DOCX: extracted text should contain sensitive data, got: {:?}",
                 &r.text[..r.text.len().min(200)]
             );
@@ -61,7 +61,7 @@ fn test_extension_mismatch_html_as_docx() {
 /// HTML file saved with .pdf extension — tests magic byte detection.
 #[test]
 fn test_extension_mismatch_html_as_pdf() {
-    let html = "<html><body>SSN: 078-05-1120 and card 4532015112830366</body></html>";
+    let html = "<html><body>SSN: 219-09-9999 and card 4532015112830366</body></html>";
 
     let f = tempfile::Builder::new().suffix(".pdf").tempfile().unwrap();
     std::fs::write(f.path(), html.as_bytes()).unwrap();
@@ -89,7 +89,7 @@ fn test_extension_mismatch_html_as_pdf() {
 fn test_polyglot_zip_header_with_text_payload() {
     let mut data = b"PK\x03\x04".to_vec(); // ZIP magic bytes
     data.extend_from_slice(b"\x00\x00\x00\x00"); // fake header
-    data.extend_from_slice(b"SSN: 123-45-6789 credit card 4532015112830366");
+    data.extend_from_slice(b"SSN: 425-71-3482 credit card 4532015112830366");
 
     let f = tempfile::Builder::new().suffix(".txt").tempfile().unwrap();
     std::fs::write(f.path(), &data).unwrap();
@@ -130,7 +130,7 @@ fn test_corrupted_docx_fail_behavior() {
             .compression_method(zip::CompressionMethod::Stored); // Uncompressed!
         zip.start_file("word/document.xml", options).unwrap();
         zip.write_all(
-            b"<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>Secret SSN 123-45-6789 and card 4532015112830366</w:t></w:r></w:p></w:body></w:document>"
+            b"<?xml version=\"1.0\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body><w:p><w:r><w:t>Secret SSN 425-71-3482 and card 4532015112830366</w:t></w:r></w:p></w:body></w:document>"
         ).unwrap();
         zip.finish().unwrap();
     }
@@ -140,7 +140,7 @@ fn test_corrupted_docx_fail_behavior() {
     assert!(result.is_ok(), "Valid DOCX should extract successfully");
     let text = result.unwrap().text;
     assert!(
-        text.contains("123-45-6789"),
+        text.contains("425-71-3482"),
         "Valid DOCX should contain SSN: {text}"
     );
 
@@ -159,7 +159,7 @@ fn test_corrupted_docx_fail_behavior() {
     match result {
         Ok(r) => {
             // If extraction still works, data should be present
-            if r.text.contains("123-45-6789") {
+            if r.text.contains("425-71-3482") {
                 eprintln!("GOOD: found data despite corruption");
             }
         }
@@ -169,7 +169,7 @@ fn test_corrupted_docx_fail_behavior() {
             let raw = std::fs::read(f.path()).unwrap();
             let raw_text = String::from_utf8_lossy(&raw);
             assert!(
-                raw_text.contains("123-45-6789"),
+                raw_text.contains("425-71-3482"),
                 "Raw bytes of STORED ZIP should still contain the SSN payload"
             );
             // This demonstrates the need for a raw-byte fallback scanner
@@ -185,7 +185,7 @@ fn test_corrupted_zip_no_panic() {
     // Write garbage with ZIP magic bytes + embedded text
     let mut data = b"PK\x03\x04".to_vec();
     data.extend_from_slice(&[0xFF; 200]);
-    data.extend_from_slice(b"hidden SSN 123-45-6789 here in the raw bytes of the file");
+    data.extend_from_slice(b"hidden SSN 425-71-3482 here in the raw bytes of the file");
     std::fs::write(f.path(), &data).unwrap();
 
     // Must not panic — may succeed via raw byte recovery or fail gracefully
@@ -194,7 +194,7 @@ fn test_corrupted_zip_no_panic() {
         Ok(r) => {
             // Recovery succeeded — verify it found the embedded text
             assert!(
-                r.text.contains("123-45-6789"),
+                r.text.contains("425-71-3482"),
                 "ZIP recovery should find embedded SSN: {}",
                 &r.text[..r.text.len().min(200)]
             );
@@ -263,9 +263,8 @@ fn test_offset_map_stress_50k_matches() {
 /// Tests normalization + offset mapping under pressure.
 #[test]
 fn test_zero_width_dense_evasion() {
-    // Insert zero-width chars between every digit of an SSN
-    let ssn_evaded = "1\u{200B}2\u{200B}3\u{200B}-\u{200B}4\u{200B}5\u{200B}-\u{200B}6\u{200B}7\u{200B}8\u{200B}9";
-    let text = format!("The secret number is {ssn_evaded} in the file.");
+    let ssn_evaded = "4\u{200B}2\u{200B}5\u{200B}-\u{200B}7\u{200B}1\u{200B}-\u{200B}3\u{200B}4\u{200B}8\u{200B}2";
+    let text = format!("The SSN on file is {ssn_evaded} in the record.");
 
     let matches = dlpscan::scan_text(&text).unwrap();
     assert!(
@@ -291,7 +290,7 @@ fn test_nested_zip_depth_limit() {
             let mut inner_zip = zip::ZipWriter::new(std::io::Cursor::new(&mut inner_buf));
             let options = zip::write::SimpleFileOptions::default();
             inner_zip.start_file("secret.txt", options).unwrap();
-            inner_zip.write_all(b"SSN: 123-45-6789").unwrap();
+            inner_zip.write_all(b"SSN: 425-71-3482").unwrap();
             inner_zip.finish().unwrap();
         }
 
@@ -418,7 +417,7 @@ fn test_corrupted_docx_renamed_txt() {
 fn test_unknown_extension_binary_with_payload() {
     let mut data = vec![0u8; 100];
     data.extend_from_slice(
-        b"CONFIDENTIAL: SSN 078-05-1120 card 4532015112830366 API_KEY=sk_live_abc123def456",
+        b"CONFIDENTIAL: SSN 219-09-9999 card 4532015112830366 API_KEY=sk_live_abc123def456",
     );
     data.extend_from_slice(&vec![0xFF; 100]);
 
@@ -437,7 +436,7 @@ fn test_unknown_extension_binary_with_payload() {
         "Printable string extraction should find card number in binary: {text}"
     );
     assert!(
-        text.contains("078-05-1120"),
+        text.contains("219-09-9999"),
         "Printable string extraction should find SSN in binary"
     );
 }

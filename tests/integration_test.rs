@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 #[test]
 fn test_detects_ssn() {
-    let matches = scan_text("My SSN is 123-45-6789").unwrap();
+    let matches = scan_text("My SSN is 425-71-3482").unwrap();
     assert!(
         matches.iter().any(|m| m.sub_category == "USA SSN"),
         "Expected SSN detection, got: {:?}",
@@ -89,7 +89,7 @@ fn test_category_filter() {
         ..Default::default()
     };
     let matches = dlpscan::scanner::scan_text_with_config(
-        "Email: test@example.com SSN: 123-45-6789",
+        "Email: test@example.com SSN: 425-71-3482",
         &config,
     )
     .unwrap();
@@ -106,7 +106,7 @@ fn test_min_confidence_filter() {
         ..Default::default()
     };
     let matches = dlpscan::scanner::scan_text_with_config(
-        "SSN: 123-45-6789 and email test@example.com",
+        "SSN: 425-71-3482 and email test@example.com",
         &config,
     )
     .unwrap();
@@ -122,7 +122,7 @@ fn test_min_confidence_filter() {
 
 #[test]
 fn test_evasion_percent_encoded_ssn() {
-    let matches = scan_text("SSN: %31%32%33-%34%35-%36%37%38%39").unwrap();
+    let matches = scan_text("SSN: %34%32%35-%37%31-%33%34%38%32").unwrap();
     assert!(
         matches.iter().any(|m| m.sub_category == "USA SSN"),
         "Should detect percent-encoded SSN"
@@ -131,7 +131,7 @@ fn test_evasion_percent_encoded_ssn() {
 
 #[test]
 fn test_evasion_html_entity_ssn() {
-    let matches = scan_text("SSN: &#49;&#50;&#51;-&#52;&#53;-&#54;&#55;&#56;&#57;").unwrap();
+    let matches = scan_text("SSN: &#52;&#50;&#53;-&#55;&#49;-&#51;&#52;&#56;&#50;").unwrap();
     assert!(
         matches.iter().any(|m| m.sub_category == "USA SSN"),
         "Should detect HTML-entity-encoded SSN"
@@ -162,7 +162,7 @@ fn test_evasion_excessive_delimiter() {
 #[test]
 fn test_evasion_zero_width_chars() {
     let matches =
-        scan_text("SSN: 1\u{200B}2\u{200B}3-4\u{200B}5-6\u{200B}7\u{200B}8\u{200B}9").unwrap();
+        scan_text("SSN: 4\u{200B}2\u{200B}5-7\u{200B}1-3\u{200B}4\u{200B}8\u{200B}2").unwrap();
     assert!(
         matches.iter().any(|m| m.sub_category == "USA SSN"),
         "Should detect SSN with zero-width characters"
@@ -172,7 +172,7 @@ fn test_evasion_zero_width_chars() {
 #[test]
 fn test_evasion_fullwidth_digits() {
     let matches = scan_text(
-        "SSN: \u{FF11}\u{FF12}\u{FF13}-\u{FF14}\u{FF15}-\u{FF16}\u{FF17}\u{FF18}\u{FF19}",
+        "SSN: \u{FF14}\u{FF12}\u{FF15}-\u{FF17}\u{FF11}-\u{FF13}\u{FF14}\u{FF18}\u{FF12}",
     )
     .unwrap();
     assert!(
@@ -274,7 +274,7 @@ fn test_api_handle_batch_scan() {
     let req = BatchScanRequest {
         items: vec![
             ScanRequest {
-                text: "SSN: 123-45-6789".to_string(),
+                text: "SSN: 425-71-3482".to_string(),
                 action: "flag".to_string(),
                 presets: vec![],
                 categories: vec![],
@@ -350,16 +350,16 @@ fn test_tokenize_and_detokenize() {
     use dlpscan::guard::TokenVault;
 
     let mut vault = TokenVault::new("TEST", None);
-    let token = vault.tokenize("123-45-6789", "SSN");
+    let token = vault.tokenize("425-71-3482", "SSN");
 
     assert!(token.starts_with("TEST_"));
-    assert_ne!(token, "123-45-6789");
+    assert_ne!(token, "425-71-3482");
 
     let original = vault.detokenize(&token);
-    assert_eq!(original, Some("123-45-6789"));
+    assert_eq!(original, Some("425-71-3482"));
 
     // Deterministic
-    let token2 = vault.tokenize("123-45-6789", "SSN");
+    let token2 = vault.tokenize("425-71-3482", "SSN");
     assert_eq!(token, token2);
 }
 
@@ -371,7 +371,7 @@ fn test_tokenize_and_detokenize() {
 fn test_streaming_scanner() {
     let scanner = dlpscan::StreamScanner::new(4096, 200);
     let mut all_matches =
-        scanner.feed("Here is an SSN: 123-45-6789 embedded in a larger document.");
+        scanner.feed("Here is an SSN: 425-71-3482 embedded in a larger document.");
     all_matches.extend(scanner.flush());
     assert!(
         all_matches.iter().any(|m| m.sub_category == "USA SSN"),
@@ -482,7 +482,7 @@ fn test_evasion_greek_epsilon() {
 #[test]
 fn test_evasion_cyrillic_yo() {
     // Cyrillic ё (U+0451) should normalize to 'e'
-    let text = "SSN: 123-45-6789 with \u{0451}vasion";
+    let text = "SSN: 425-71-3482 with \u{0451}vasion";
     let matches = scan_text(text).unwrap();
     assert!(
         matches.iter().any(|m| m.sub_category == "USA SSN"),
@@ -514,7 +514,7 @@ fn test_printable_string_extraction_from_binary() {
 
     // Create a DAT file with sensitive data embedded in binary
     let mut data = vec![0u8; 50];
-    data.extend_from_slice(b"SSN: 123-45-6789 embedded in binary data here");
+    data.extend_from_slice(b"SSN: 425-71-3482 embedded in binary data here");
     data.extend_from_slice(&vec![0xFF; 50]);
 
     let f = tempfile::Builder::new().suffix(".dat").tempfile().unwrap();
@@ -522,7 +522,7 @@ fn test_printable_string_extraction_from_binary() {
 
     let result = extract_text(f.path().to_str().unwrap()).unwrap();
     assert!(
-        result.text.contains("123-45-6789"),
+        result.text.contains("425-71-3482"),
         "DAT extraction should find SSN in binary"
     );
 }
@@ -593,10 +593,10 @@ fn test_rbac_admin_action_restricted() {
 #[test]
 fn test_edm_register_and_scan() {
     let mut edm = dlpscan::edm::ExactDataMatcher::new(None, None);
-    edm.register_values("ssn", &["123-45-6789", "987-65-4321"]);
+    edm.register_values("ssn", &["425-71-3482", "987-65-4321"]);
     edm.register_values("email", &["secret@internal.corp"]);
 
-    let text = "Customer SSN is 123-45-6789 and email secret@internal.corp here.";
+    let text = "Customer SSN is 425-71-3482 and email secret@internal.corp here.";
     let matches = edm.scan(text, None);
     assert!(
         matches.iter().any(|m| m.category == "ssn"),
@@ -750,7 +750,7 @@ fn test_filename_provides_context_for_ssn() {
         .suffix(".csv")
         .tempfile()
         .unwrap();
-    std::fs::write(f.path(), "id,number\n1,078-05-1120\n").unwrap();
+    std::fs::write(f.path(), "id,number\n1,219-09-9999\n").unwrap();
 
     let pipeline = dlpscan::Pipeline::new().with_min_confidence(0.0);
     let result = pipeline.process_file(f.path());

@@ -317,7 +317,9 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
 pub fn is_context_required(sub_category: &str) -> bool {
     matches!(
         sub_category,
-        "US Bank Account Number"
+        "USA SSN"
+            | "USA ITIN"
+            | "US Bank Account Number"
             | "ACH Batch Number"
             | "Check Number"
             | "Cashier Check Number"
