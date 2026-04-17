@@ -319,6 +319,8 @@ pub fn is_context_required(sub_category: &str) -> bool {
         sub_category,
         "USA SSN"
             | "USA ITIN"
+            | "Canada SIN"
+            | "Quebec HC"
             | "US Bank Account Number"
             | "ACH Batch Number"
             | "Check Number"

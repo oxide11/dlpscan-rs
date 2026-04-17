@@ -1,7 +1,7 @@
 {"path":"positives/pii/ssn_with_context.txt","expected":[{"sub_category":"USA SSN","text":"219-09-9999"}]}
 {"path":"positives/pii/ssn_bare.txt","expected":[{"sub_category":"USA SSN","text":"219-09-9999"}]}
 {"path":"positives/pii/ssn_tax_form.txt","expected":[{"sub_category":"USA SSN","text":"425-71-3482"}]}
-{"path":"positives/pii/sin_canada.txt","expected":[{"sub_category":"Canada SIN","text":"046 454 286"}]}
+{"path":"positives/pii/sin_canada.txt","expected":[{"sub_category":"Canada SIN","text":"246 100 002"}]}
 {"path":"positives/pii/email_and_phone.txt","expected":[{"sub_category":"Email Address","text":"bob.jones@example.com"},{"sub_category":"US Phone Number","text":"+14155551234"},{"sub_category":"UK Phone Number","text":"+442079460958"}]}
 {"path":"positives/pii/passport_us.txt","expected":[{"sub_category":"USA Passport","text":"123456789"}]}
 {"path":"positives/pci/visa_with_expiry.txt","expected":[{"sub_category":"Visa","text":"4242 4242 4242 4242"}]}

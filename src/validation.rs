@@ -339,10 +339,12 @@ pub fn is_valid_canada_sin(sin: &str) -> bool {
     if digits.len() != 9 {
         return false;
     }
-    if digits.iter().all(|&d| d == 0) {
+    if digits.iter().all(|&d| d == digits[0]) {
         return false;
     }
-    // Standard Luhn on 9 digits.
+    if digits[0] == 0 || digits[0] == 8 {
+        return false;
+    }
     let sum: u32 = digits
         .iter()
         .rev()
@@ -454,7 +456,12 @@ pub fn is_plausible_phone(phone: &str) -> bool {
             current_run = 1;
         }
     }
-    if longest_run >= digits.len().saturating_sub(1) {
+    if longest_run >= digits.len() / 2 {
+        return false;
+    }
+    let ascending = digits.windows(2).all(|w| w[1] == w[0] + 1);
+    let descending = digits.windows(2).all(|w| w[0] == w[1] + 1);
+    if ascending || descending {
         return false;
     }
     true
@@ -705,8 +712,16 @@ pub fn is_valid_us_phone(phone: &str) -> bool {
     if !(b'2'..=b'9').contains(&exchange[3]) {
         return false;
     }
-    // Exchange cannot be N11 either.
     if exchange[4] == b'1' && exchange[5] == b'1' {
+        return false;
+    }
+    let subscriber = &digits[6..10];
+    if subscriber.chars().all(|c| c == subscriber.chars().next().unwrap()) {
+        return false;
+    }
+    let ex_digits = &digits[3..6];
+    let sub_digits = &digits[6..10];
+    if ex_digits == "555" && sub_digits >= "0100" && sub_digits <= "0199" {
         return false;
     }
     true
@@ -5579,7 +5594,7 @@ mod tests {
         // With formatting.
         assert!(is_plausible_phone("+1 (415) 555-2671"));
         // Minimum-length (8 digits).
-        assert!(is_plausible_phone("12345678"));
+        assert!(is_plausible_phone("41538726"));
     }
 
     #[test]
@@ -5634,9 +5649,14 @@ mod tests {
 
     #[test]
     fn test_canada_sin_valid() {
-        // 046-454-286 is a commonly-published Luhn-valid test SIN.
-        assert!(is_valid_canada_sin("046-454-286"));
-        assert!(is_valid_canada_sin("046454286"));
+        assert!(is_valid_canada_sin("246-100-002"));
+        assert!(is_valid_canada_sin("246100002"));
+    }
+
+    #[test]
+    fn test_canada_sin_rejects_invalid_prefix() {
+        assert!(!is_valid_canada_sin("046-454-286")); // leading 0
+        assert!(!is_valid_canada_sin("812-345-673")); // leading 8
     }
 
     #[test]

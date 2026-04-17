@@ -89,8 +89,8 @@ fn probe_invalid_canada_sins() {
     eprintln!("\n=== Luhn-failing Canada SINs ===");
     // SIN is a 9-digit Luhn number.
     for s in [
-        "046-454-286", // valid test SIN (control — Luhn sum = 50)
-        "046-454-287", // bumped check digit → Luhn sum = 51
+        "246-100-002", // valid test SIN (control — starts with 2, passes Luhn)
+        "246-100-003", // bumped check digit
         "123-456-789", // sequential → Luhn sum = 47
         "111-111-111", // all ones → Luhn sum = 13 (NB: "111-111-118"
                        // happens to pass Luhn by coincidence, sum = 20)

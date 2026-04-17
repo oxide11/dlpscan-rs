@@ -724,7 +724,7 @@ fn test_filename_provides_context_for_sin() {
         .tempfile()
         .unwrap();
     // Write a 9-digit number that could be a SIN (no keywords in content)
-    std::fs::write(f.path(), "reference number 046 454 286 for the account").unwrap();
+    std::fs::write(f.path(), "reference number 246 100 002 for the account").unwrap();
 
     let pipeline = dlpscan::Pipeline::new().with_min_confidence(0.0);
     let result = pipeline.process_file(f.path());
@@ -794,7 +794,7 @@ fn test_french_credit_card_context() {
 #[test]
 fn test_french_sin_context() {
     // "numéro d'assurance sociale" should boost SIN detection
-    let text = "Son numéro d'assurance sociale est 046 454 286 selon le dossier.";
+    let text = "Son numéro d'assurance sociale est 246 100 002 selon le dossier.";
     let matches = scan_text(text).unwrap();
     let has_context_match = matches
         .iter()
