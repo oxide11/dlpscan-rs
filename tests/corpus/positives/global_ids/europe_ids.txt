@@ -1,0 +1,45 @@
+European identity document verification — compliance department records.
+
+Germany tax records:
+The applicant provided Steuerliche Identifikationsnummer 65929970489 for
+withholding purposes on the employment contract dated March 2024.
+
+Poland national ID:
+Employee PESEL number is 85073112348 as recorded in the HR system for
+social insurance contributions.
+
+Belgium national register:
+Resident listed under registre national number 85.07.31-123.05 for
+municipal tax assessment.
+
+France social security:
+The NIR on the declaration is 185073112345632 for social security
+contributions to URSSAF.
+
+Netherlands citizen services:
+The BSN recorded in the tax filing is 123456782 for income
+declaration.
+
+Italy fiscal code:
+The Codice Fiscale on the invoice is RSSMRA85M01H501Q for the
+vendor registration.
+
+Spain identity document:
+Customer DNI number is 87654321X as shown on the identity card
+presented during account opening.
+
+Sweden personal identity:
+The personnummer recorded is 811228-9874 for the insurance
+claim filed in December.
+
+Denmark personal identity:
+The CPR-nummer on the health card is 310785-1234 for the patient
+registration form.
+
+United Kingdom health service:
+Patient NHS number is 9434765005 as recorded on the referral letter
+from the general practitioner.
+
+SWIFT bank identifier:
+Correspondent bank SWIFT code DEUTDEFFXXX for the international
+wire transfer instructions.

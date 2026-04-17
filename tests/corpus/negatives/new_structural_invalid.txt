@@ -1,0 +1,31 @@
+Reference document for format validation testing. All identifiers
+below are synthetic and structurally malformed.
+
+India PAN card numbers with invalid entity type:
+Applicant Alpha submitted PAN card ABCXD1234E which was rejected.
+Applicant Bravo submitted PAN card 12345A6789 which was rejected.
+
+Mexico CURP codes with invalid state abbreviations:
+Record Alpha shows CURP GARC850101XDFRR09 which is not recognized.
+
+Denmark CPR numbers with impossible dates:
+Record Alpha has CPR-nummer 320785-1234 which has an invalid day.
+Record Bravo has CPR-nummer 001385-5678 which has an invalid month.
+
+Italy Codice Fiscale with wrong CIN character:
+Record Alpha has Codice Fiscale RSSMRA85M01H501A which fails CIN check.
+
+Spain DNI with wrong verification letter:
+Record Alpha has DNI 12345678A but the correct letter would be Z.
+
+SWIFT codes that are common programming hex constants:
+The hex value DEADBEEFXXX appears frequently in debug output.
+The hex value CAFEBABEXXX appears frequently in debug output.
+
+Fedwire IMAD references with impossible dates:
+Transfer Alpha had IMAD 20241301ABCD12345678000001 with month thirteen.
+Transfer Bravo had IMAD 19890315ABCD12345678000001 before the system existed.
+
+Universal Loan Identifiers with bad mod-97:
+Loan Alpha has ULI 7ZW8QJWVPR4P1J1KQY45A60 which fails verification.
+Loan Bravo has ULI 529900T8BM49AURSDO55A01 which fails verification.

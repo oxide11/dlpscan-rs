@@ -1,0 +1,41 @@
+Asia-Pacific identity document verification — KYC compliance records.
+
+India identity verification:
+Customer Aadhaar number is 2341 2341 2346 as submitted for the
+know-your-customer verification process.
+
+India tax registration:
+The PAN card number provided is ABCPD1234E for the income tax
+return filing.
+
+Japan tax records:
+Individual My Number is 123456789018 for tax withholding on the
+employment agreement.
+
+Singapore resident identity:
+The NRIC number is S1234567D as recorded on the work permit
+application form.
+
+Singapore foreign resident:
+The FIN number is G1234567X as shown on the employment pass
+for foreign worker registration.
+
+Hong Kong identity card:
+The HKID card number is A123456(1) as recorded on the
+residential lease agreement.
+
+South Korea resident:
+Resident Registration Number 900101-1234568 was provided for
+the financial account opening.
+
+China citizen identity:
+Resident identity card number 110101199001010015 on file for
+the bank account registration.
+
+Australia tax records:
+The Tax File Number provided is 123456782 for superannuation
+contributions.
+
+Australia health:
+Medicare card number 2123 45670 0 2 for the patient health
+insurance claim submission.

@@ -1,0 +1,17 @@
+Device and telecommunications identifiers — asset management records.
+
+IMEI device tracking:
+The returned handset has IMEI 353655050000110 as recorded
+in the mobile device management system.
+
+SIM card ICCID:
+The SIM card ICCID number is 8901260012345678909 from the
+carrier provisioning record.
+
+E.164 international phone:
+The customer international phone number is +33612345678
+registered for account recovery notifications.
+
+South Africa identity:
+South African identity document number 8001015009087 was
+provided for the employment eligibility check.

@@ -1,0 +1,29 @@
+Americas identity and financial document verification — compliance records.
+
+Brazil individual tax:
+The CPF number on file is 529.982.247-25 for the customer
+registration in the Receita Federal system.
+
+Brazil corporate tax:
+Company CNPJ number 11.222.333/0001-81 was provided for the
+vendor onboarding and invoice processing.
+
+Chile tax identification:
+The RUT number is 12345678-5 on the electronic invoice for
+the service agreement.
+
+Argentina social security:
+Employee CUIL number is 20-12345678-6 as recorded in the
+payroll system for social contributions.
+
+Mexico population registry:
+The CURP code is GARC850101HDFRRL05 on the birth certificate
+for the government services application.
+
+Israel identity document:
+Teudat Zehut number 036140580 was presented for the banking
+compliance verification.
+
+UAE resident identity:
+Emirates ID number 784198012345678 was provided for the visa
+application and residency permit.

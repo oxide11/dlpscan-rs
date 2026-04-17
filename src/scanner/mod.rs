@@ -209,6 +209,7 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         // Middle East
         "Israel Teudat Zehut",
         "UAE Emirates ID",
+        "South Africa ID",
         // Saudi Arabia National ID removed: bare `[12]\d{9}`
         // matches any 10-digit sequence starting with 1 or 2.
         // Context-gated via is_context_required.
@@ -254,7 +255,11 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "ISIN",
         "SEDOL",
         "LEI",
+        "Universal Loan Identifier",
+        "MERS MIN",
+        "Fedwire IMAD",
         "Ticker Symbol",
+        "ICCID",
         // URLs with credentials
         "URL with Password",
         "URL with Token",

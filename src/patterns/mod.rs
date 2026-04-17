@@ -259,7 +259,7 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "Securities Identifiers",
         sub_category: "LEI",
-        regex: r"\b[A-Z0-9]{4}00[A-Z0-9]{12}\d{2}\b",
+        regex: r"\b[A-Z0-9]{18}\d{2}\b",
         case_insensitive: false,
         specificity: 0.80,
         context_required: false,
@@ -291,7 +291,7 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "Loan and Mortgage Data",
         sub_category: "Universal Loan Identifier",
-        regex: r"\b[A-Z0-9]{4}00[A-Z0-9]{17,39}\b",
+        regex: r"\b[A-Z0-9]{23,45}\b",
         case_insensitive: false,
         specificity: 0.75,
         context_required: false,
