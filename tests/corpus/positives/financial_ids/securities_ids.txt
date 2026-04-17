@@ -1,0 +1,21 @@
+Securities and financial instrument identifiers — trade settlement records.
+
+CUSIP bond identifier:
+The US Treasury bond has CUSIP identifier 037833100 and is held
+in the custody account for settlement.
+
+SEDOL equity code:
+London Stock Exchange equity with SEDOL code 0263494 reported
+for the cross-border reconciliation.
+
+ISIN international security:
+The international security identification number ISIN US0378331005
+for the equity position on the portfolio statement.
+
+LEI legal entity:
+Counterparty Legal Entity Identifier LEI 7ZW8QJWVPR4P1J1KQY45
+registered with GLEIF for derivatives reporting.
+
+IBAN wire transfer:
+Payment instruction to IBAN DE89370400440532013000 for the
+quarterly vendor settlement.

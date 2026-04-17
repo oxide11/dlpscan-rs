@@ -1,0 +1,13 @@
+Loan and mortgage identifiers — servicing records.
+
+MERS mortgage ID:
+Mortgage Electronic Registration System MIN is 100000043000012003
+for the residential loan on the servicer transfer.
+
+Fedwire transfer reference:
+Fedwire IMAD reference 20240315ABCD12345678000001 for the
+closing funds wire on the real estate transaction.
+
+Universal Loan Identifier:
+The Universal Loan Identifier is 7ZW8QJWVPR4P1J1KQY45A59 on
+the HMDA reporting submission for the mortgage origination.
