@@ -384,5 +384,65 @@ pub fn is_context_required(sub_category: &str) -> bool {
             // matches too many hex-shaped strings. Context-gate on
             // the MEID keyword set.
             | "MEID"
+            // --- Context-gate sweep (47 patterns) ---
+            // All patterns below have specificity < 0.60, no
+            // published checksum validator, and a loose regex that
+            // fires on common text. Each has keywords registered in
+            // context/keywords.rs. Gating them ensures they only
+            // fire when their domain-specific keyword is nearby.
+            //
+            // Classification labels
+            | "Top Secret"
+            | "Secret Classification"
+            | "Confidential Classification"
+            | "FOUO"
+            | "CUI"
+            | "SBU"
+            | "LES"
+            | "NOFORN"
+            | "Restricted"
+            | "Highly Confidential"
+            | "Need to Know"
+            | "Eyes Only"
+            // Corporate classification
+            | "Internal Only"
+            | "Corporate Confidential"
+            | "Do Not Distribute"
+            | "Proprietary"
+            | "Draft Not for Circulation"
+            | "Embargoed"
+            // Legal privilege
+            | "Attorney-Client Privilege"
+            | "Privileged and Confidential"
+            | "Work Product"
+            | "Privileged Information"
+            | "Legal Privilege"
+            | "Litigation Hold"
+            | "Protected by Privilege"
+            // Supervisory / examination
+            | "Supervisory Controlled"
+            | "Supervisory Confidential"
+            | "CSI"
+            | "Non-Public Supervisory"
+            | "Restricted Supervisory"
+            | "Examination Findings"
+            // Financial regulation
+            | "MNPI"
+            | "Pre-Decisional"
+            | "Market Sensitive"
+            | "Information Barrier"
+            | "Inside Information"
+            | "Investment Restricted"
+            // Compliance labels
+            | "PII Label"
+            | "PHI Label"
+            | "HIPAA"
+            | "GDPR Personal Data"
+            | "PCI-DSS"
+            | "FERPA"
+            | "GLBA"
+            | "CCPA/CPRA"
+            | "SOX"
+            | "NPI"
     )
 }

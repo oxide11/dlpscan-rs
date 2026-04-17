@@ -917,7 +917,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Ss]upervisory\s+[Cc]ontrolled\s+[Ii]nformation\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Supervisory Information",
@@ -925,7 +925,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Ss]upervisory\s+[Cc]onfidential\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Supervisory Information",
@@ -933,7 +933,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:[Cc]onfidential\s+[Ss]upervisory\s+[Ii]nformation|CSI)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Supervisory Information",
@@ -941,7 +941,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Nn]on-?[Pp]ublic\s+[Ss]upervisory\s+[Ii]nformation\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Supervisory Information",
@@ -949,7 +949,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Rr]estricted\s+[Ss]upervisory\s+[Ii]nformation\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Supervisory Information",
@@ -957,7 +957,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:MRA|MRIA|[Mm]atter[s]?\s+[Rr]equiring\s+(?:[Ii]mmediate\s+)?[Aa]ttention)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privileged Information",
@@ -965,7 +965,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Aa]ttorney[-\s][Cc]lient\s+[Pp]rivileged?\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privileged Information",
@@ -973,7 +973,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Pp]rivileged\s+(?:and|&)\s+[Cc]onfidential\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privileged Information",
@@ -981,7 +981,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Ww]ork\s+[Pp]roduct(?:\s+[Dd]octrine)?\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privileged Information",
@@ -989,7 +989,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Pp]rivileged\s+[Ii]nformation\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privileged Information",
@@ -997,7 +997,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Ll]egal(?:ly)?\s+[Pp]rivileged\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privileged Information",
@@ -1005,7 +1005,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:[Ll]itigation|[Ll]egal)\s+[Hh]old\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privileged Information",
@@ -1013,7 +1013,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Pp]rotected\s+(?:by|under)\s+[Pp]rivilege\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Data Classification Labels",
@@ -1021,7 +1021,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:TOP\s+SECRET|TS//SCI|TS//SI)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Data Classification Labels",
@@ -1029,7 +1029,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:SECRET(?://NOFORN)?|CLASSIFIED\s+SECRET)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Data Classification Labels",
@@ -1037,7 +1037,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\bCLASSIFIED\s+CONFIDENTIAL\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Data Classification Labels",
@@ -1045,7 +1045,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:FOUO|[Ff]or\s+[Oo]fficial\s+[Uu]se\s+[Oo]nly)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Data Classification Labels",
@@ -1053,7 +1053,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:CUI|[Cc]ontrolled\s+[Uu]nclassified\s+[Ii]nformation)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Data Classification Labels",
@@ -1061,7 +1061,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:SBU|[Ss]ensitive\s+[Bb]ut\s+[Uu]nclassified)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Data Classification Labels",
@@ -1069,7 +1069,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:LES|[Ll]aw\s+[Ee]nforcement\s+[Ss]ensitive)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Data Classification Labels",
@@ -1077,7 +1077,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\bNOFORN\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Corporate Classification",
@@ -1085,7 +1085,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Ii]nternal\s+(?:[Uu]se\s+)?[Oo]nly\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Corporate Classification",
@@ -1093,7 +1093,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:RESTRICTED|[Rr]estricted\s+[Dd]ata|[Rr]estricted\s+[Ii]nformation)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Corporate Classification",
@@ -1101,7 +1101,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:[Cc]ompany\s+[Cc]onfidential|[Cc]orporate\s+[Cc]onfidential|[Ss]trictly\s+[Cc]onfidential)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Corporate Classification",
@@ -1109,7 +1109,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Hh]ighly\s+[Cc]onfidential\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Corporate Classification",
@@ -1117,7 +1117,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:[Nn]ot\s+[Ff]or\s+[Dd]istribution|[Dd]o\s+[Nn]ot\s+[Dd]istribute|[Nn]o\s+[Dd]istribution)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Corporate Classification",
@@ -1125,7 +1125,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Nn]eed\s+[Tt]o\s+[Kk]now(?:\s+[Bb]asis)?\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Corporate Classification",
@@ -1133,7 +1133,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Ee]yes\s+[Oo]nly\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Corporate Classification",
@@ -1141,7 +1141,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:[Pp]roprietary\s+(?:[Ii]nformation|[Dd]ata|[Mm]aterial)|[Tt]rade\s+[Ss]ecret)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Corporate Classification",
@@ -1149,7 +1149,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Ee]mbargoed?\s+(?:[Ii]nformation|[Dd]ata|[Uu]ntil|[Mm]aterial)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Financial Regulatory Labels",
@@ -1157,7 +1157,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:MNPI|[Mm]aterial\s+[Nn]on-?[Pp]ublic\s+[Ii]nformation)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Financial Regulatory Labels",
@@ -1165,7 +1165,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Ii]nside(?:r)?\s+[Ii]nformation\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Financial Regulatory Labels",
@@ -1173,7 +1173,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Pp]re-?[Dd]ecisional\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Financial Regulatory Labels",
@@ -1181,7 +1181,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Dd]raft\s*[-–—]\s*[Nn]ot\s+[Ff]or\s+[Cc]irculation\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Financial Regulatory Labels",
@@ -1189,7 +1189,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Mm]arket\s+[Ss]ensitive\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Financial Regulatory Labels",
@@ -1197,7 +1197,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:[Ii]nformation\s+[Bb]arrier|[Cc]hinese\s+[Ww]all)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Financial Regulatory Labels",
@@ -1205,7 +1205,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[Rr]estricted\s+[Ll]ist\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privacy Classification",
@@ -1213,7 +1213,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:PII|[Pp]ersonally\s+[Ii]dentifiable\s+[Ii]nformation)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privacy Classification",
@@ -1221,7 +1221,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:PHI|[Pp]rotected\s+[Hh]ealth\s+[Ii]nformation)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privacy Classification",
@@ -1229,7 +1229,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\bHIPAA\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privacy Classification",
@@ -1237,7 +1237,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:GDPR|[Pp]ersonal\s+[Dd]ata\s+(?:under|per|pursuant))\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privacy Classification",
@@ -1245,7 +1245,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:PCI[-\s]?DSS|[Cc]ardholder\s+[Dd]ata\s+[Ee]nvironment|CDE)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privacy Classification",
@@ -1253,7 +1253,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:FERPA|[Ff]amily\s+[Ee]ducational\s+[Rr]ights)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privacy Classification",
@@ -1261,7 +1261,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:GLBA|[Gg]ramm[-\s][Ll]each[-\s][Bb]liley)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privacy Classification",
@@ -1269,7 +1269,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:CCPA|CPRA|[Cc]alifornia\s+[Cc]onsumer\s+[Pp]rivacy)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privacy Classification",
@@ -1277,7 +1277,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:SOX|[Ss]arbanes[-\s][Oo]xley)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Privacy Classification",
@@ -1285,7 +1285,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:NPI|[Nn]on-?[Pp]ublic\s+[Pp]ersonal\s+[Ii]nformation)\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Cloud Provider Secrets",
