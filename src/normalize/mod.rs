@@ -1327,23 +1327,20 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     current = r.0;
     offsets = r.1;
 
-    // Stage 4c: Token-level base64 decode
+    // Stage 4c: Token-level encoded-data decode (base64, base32, hex)
     //
-    // Find tokens that look like base64-encoded data (standard alphabet,
-    // ≥ 16 chars, optional `=` padding), decode each one, and if the
-    // decoded bytes are valid UTF-8 printable text, replace the token
-    // inline. This runs BEFORE collapse_padding so the decoded result
-    // gets the same whitespace/delimiter normalization as everything else.
+    // Runs up to 3 iterations to handle nested encoding (e.g., base64
+    // of base64, or base64 of hex). Each iteration finds and decodes
+    // tokens; if nothing changed, the loop stops early. The 3-iteration
+    // cap prevents infinite loops on pathological input.
     //
-    // The primary scan then sees the decoded plaintext — every regex
-    // pattern (not just always-run) gets a chance to match the decoded
-    // content, and context keywords near the decoded value fire normally.
-    //
-    // This replaces the "decode entire text as base64" approach that
-    // Stage H used, which only ran on small/clean documents and skipped
-    // context checking entirely.
-    {
+    // This runs BEFORE collapse_padding so the decoded result gets the
+    // same whitespace/delimiter normalization as everything else.
+    for _decode_iteration in 0..3 {
         let r = decode_encoded_tokens(&current, &offsets);
+        if r.0 == current {
+            break; // No more decoding possible
+        }
         current = r.0;
         offsets = r.1;
     }
@@ -1443,9 +1440,12 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
         alternatives.push(alt);
     };
 
-    // Try base32/base64 decode
-    let (decoded, _) = try_decode_base_encoding(text, &[]);
-    push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    // NOTE: base64/base32 decode used to live here but has been moved
+    // to the normalization pipeline (stage 4c) where it runs on ALL
+    // documents with full context checking. The token-level approach
+    // there is strictly better: it handles individual tokens in mixed
+    // documents, runs against every regex (not just always-run), and
+    // supports nested decode up to 3 iterations.
 
     // Try ROT13
     let (rot, _) = apply_rot13(text, &[]);
@@ -1747,6 +1747,31 @@ mod tests {
                 "offset map should point decoded bytes to the original token start"
             );
         }
+    }
+
+    #[test]
+    fn test_nested_base64_decode() {
+        // "123-45-6789" → base64 → "MTIzLTQ1LTY3ODk=" → base64 →
+        // "TVRJekxUUTFMVFkzT0RrPQ=="
+        // The nested decode loop should unwrap both layers.
+        let input = "nested TVRJekxUUTFMVFkzT0RrPQ== end";
+        let (result, _) = normalize_text(input);
+        assert!(
+            result.contains("123-45-6789"),
+            "double-base64 should unwrap to plaintext. Got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_nested_decode_no_infinite_loop() {
+        // Verify the decode loop terminates cleanly when a token
+        // decodes to something that can't be further decoded (too
+        // short, not valid base64, etc.). No panic, no hang.
+        let input = "safe MTIzLTQ1LTY3ODk= done";
+        let (result, _) = normalize_text(input);
+        // Single-layer decode to "123-45-6789" — no further decoding
+        // possible since plaintext digits aren't valid encoded data.
+        assert!(result.contains("123-45-6789"));
     }
 
     #[test]
@@ -2090,19 +2115,15 @@ mod tests {
     }
 
     #[test]
-    fn test_base64_decode() {
-        // "123-45-6789" in base64
+    fn test_base64_decode_moved_to_normalization() {
+        // Base64/base32 decode used to live in generate_alternative_decodings
+        // but has been moved to the normalization pipeline (stage 4c).
+        // Verify the alt-decodings path no longer produces base64 output.
         let alts = generate_alternative_decodings("MTIzLTQ1LTY3ODk=");
-        assert!(alts.iter().any(|a| a == "123-45-6789"));
-    }
-
-    #[test]
-    fn test_base32_decode() {
-        // "123-45-6789" in base32
-        let alts = generate_alternative_decodings("GEZDGNA=");
-        // base32("123") = "GEZDG===" — test a simple case
-        let alts2 = generate_alternative_decodings("GEZDGNBVGY3TQOJQ");
-        assert!(!alts2.is_empty());
+        assert!(
+            !alts.iter().any(|a| a == "123-45-6789"),
+            "base64 decode should no longer be in alt-decodings"
+        );
     }
 
     #[test]

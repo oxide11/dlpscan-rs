@@ -530,6 +530,18 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
             }
 
             for cp in &alt_patterns {
+                // Context-required patterns must NOT fire through the
+                // alt path. The alt-decodings pass has no context hit
+                // index (it was built for the primary normalized text,
+                // not the alt text), so we can't verify keyword
+                // proximity. Previously this gap was the source of the
+                // IMEISV false-positive class — IMEISV was context-
+                // required but firing through alt because the check
+                // was missing entirely.
+                if is_context_required(cp.def.sub_category) {
+                    continue;
+                }
+
                 for mat in cp.regex.find_iter(&alt_norm) {
                     let matched_text = mat.as_str();
                     if !crate::validation::validate_match(
@@ -548,7 +560,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                         cp.def.category.to_string(),
                         cp.def.sub_category.to_string(),
                         false,
-                        confidence * 0.9, // slightly lower confidence for alternative decoding
+                        confidence * 0.9,
                         (0, text.len()),
                         false,
                     ));
