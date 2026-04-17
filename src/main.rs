@@ -802,7 +802,24 @@ fn main() {
         // siphon info — Show scanner info
         // ---------------------------------------------------------------
         Commands::Info => {
-            println!("siphon v{}", env!("CARGO_PKG_VERSION"));
+            println!(r#"
+                    ___
+                .-'   `-.
+              /    ___    \
+    ~@      /   /     \   \      @~
+     \    /   /  (o o)  \   \    /
+      \  |   |    \_/    |   |  /
+~@_    \ |   |   .-'-.   |   | /    _@~
+    `-._\|    \ (     ) /    |/_.~'
+         \     '.`---'.'     /
+ @~_      \   _/`-._.-'\   /      _~@
+     `-.   '-'  /  |  \  `-'   .-'
+        `-.   _/ __|__ \_   .-'
+           `-/  /     \  \-'
+            /  /       \  \
+           '~~'         '~~'
+"#);
+            println!("Polygon Siphon v{}", env!("CARGO_PKG_VERSION"));
             println!();
             println!(
                 "Patterns:    {} across {} categories",

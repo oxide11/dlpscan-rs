@@ -1,4 +1,22 @@
-# Polygon Siphon
+```
+                        ___
+                    .-'   `-.
+                  /    ___    \
+        ~@      /   /     \   \      @~
+         \    /   /  (o o)  \   \    /
+          \  |   |    \_/    |   |  /
+    ~@_    \ |   |   .-'-.   |   | /    _@~
+        `-._\|    \ (     ) /    |/_.~'
+             \     '.`---'.'     /
+     @~_      \   _/`-._.-'\   /      _~@
+         `-.   '-'  /  |  \  `-'   .-'
+            `-.   _/ __|__ \_   .-'
+               `-/  /     \  \-'
+                /  /       \  \
+               '~~'         '~~'
+
+        P O L Y G O N   S I P H O N
+```
 
 High-performance DLP scanner written in Rust. Detects, redacts, and protects
 sensitive data with exceptional throughput.
