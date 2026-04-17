@@ -1,10 +1,10 @@
-//! dlpscan CLI — High-performance DLP scanner.
+//! Polygon Siphon CLI — High-performance DLP scanner.
 //!
 //! Usage:
-//!   dlpscan scan <file>         Scan a file
-//!   dlpscan scan-dir <dir>      Scan a directory
-//!   dlpscan scan-text <text>    Scan inline text
-//!   dlpscan guard <text>        Run InputGuard on text
+//!   siphon scan <file>         Scan a file
+//!   siphon scan-dir <dir>      Scan a directory
+//!   siphon scan-text <text>    Scan inline text
+//!   siphon guard <text>        Run InputGuard on text
 
 use clap::{Parser, Subcommand, ValueEnum};
 use std::collections::HashSet;
@@ -13,13 +13,13 @@ use std::path::PathBuf;
 use std::process;
 use std::time::Instant;
 
-use dlpscan::guard::{Action, InputGuard, Mode, Preset};
-use dlpscan::pipeline::{self, Pipeline};
-use dlpscan::scanner;
+use siphon::guard::{Action, InputGuard, Mode, Preset};
+use siphon::pipeline::{self, Pipeline};
+use siphon::scanner;
 
 #[derive(Parser)]
-#[command(name = "dlpscan", version = "2.1.0")]
-#[command(about = "High-performance DLP scanner — detect, redact, and protect sensitive data")]
+#[command(name = "siphon", version = "2.1.0")]
+#[command(about = "Polygon Siphon — high-performance DLP scanner to detect, redact, and protect sensitive data")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -95,7 +95,7 @@ enum Commands {
     Categories,
     /// List available presets
     Presets,
-    /// Interactive setup wizard — create or update .dlpscanrc config
+    /// Interactive setup wizard — create or update .siphonrc config
     Init,
     /// Show or modify configuration
     Config {
@@ -170,7 +170,7 @@ enum EdmAction {
         #[arg(long)]
         file: Option<PathBuf>,
         /// EDM state file path
-        #[arg(long, default_value = ".dlpscan-edm.json")]
+        #[arg(long, default_value = ".siphon-edm.json")]
         state: String,
     },
     /// Scan text or file against registered EDM values
@@ -178,13 +178,13 @@ enum EdmAction {
         /// Text to scan (reads from stdin if omitted)
         text: Option<String>,
         /// EDM state file path
-        #[arg(long, default_value = ".dlpscan-edm.json")]
+        #[arg(long, default_value = ".siphon-edm.json")]
         state: String,
     },
     /// List registered categories and hash counts
     List {
         /// EDM state file path
-        #[arg(long, default_value = ".dlpscan-edm.json")]
+        #[arg(long, default_value = ".siphon-edm.json")]
         state: String,
     },
 }
@@ -201,7 +201,7 @@ enum LshAction {
         #[arg(long, default_value = "sensitive")]
         sensitivity: String,
         /// LSH state file path
-        #[arg(long, default_value = ".dlpscan-lsh.json")]
+        #[arg(long, default_value = ".siphon-lsh.json")]
         state: String,
     },
     /// Query for documents similar to input
@@ -212,13 +212,13 @@ enum LshAction {
         #[arg(long, default_value = "0.8")]
         threshold: f64,
         /// LSH state file path
-        #[arg(long, default_value = ".dlpscan-lsh.json")]
+        #[arg(long, default_value = ".siphon-lsh.json")]
         state: String,
     },
     /// List registered documents
     List {
         /// LSH state file path
-        #[arg(long, default_value = ".dlpscan-lsh.json")]
+        #[arg(long, default_value = ".siphon-lsh.json")]
         state: String,
     },
 }
@@ -491,7 +491,7 @@ fn main() {
                         }
                     }
                 },
-                Err(dlpscan::DlpError::SensitiveDataDetected {
+                Err(siphon::DlpError::SensitiveDataDetected {
                     finding_count,
                     categories,
                 }) => {
@@ -509,7 +509,7 @@ fn main() {
         }
 
         Commands::Categories => {
-            let cats = dlpscan::patterns::categories();
+            let cats = siphon::patterns::categories();
             for cat in cats {
                 println!("  {cat}");
             }
@@ -528,14 +528,14 @@ fn main() {
         }
 
         // ---------------------------------------------------------------
-        // dlpscan init — Interactive setup wizard
+        // siphon init — Interactive setup wizard
         // ---------------------------------------------------------------
         Commands::Init => {
             run_init_wizard();
         }
 
         // ---------------------------------------------------------------
-        // dlpscan config — Show/set configuration
+        // siphon config — Show/set configuration
         // ---------------------------------------------------------------
         Commands::Config { action } => {
             let config_path = find_or_default_config();
@@ -584,14 +584,14 @@ fn main() {
         }
 
         // ---------------------------------------------------------------
-        // dlpscan test-pattern — Test a regex pattern against text
+        // siphon test-pattern — Test a regex pattern against text
         // ---------------------------------------------------------------
         Commands::TestPattern { pattern, text } => {
             run_test_pattern(pattern, text);
         }
 
         // ---------------------------------------------------------------
-        // dlpscan edm — Exact Data Match
+        // siphon edm — Exact Data Match
         // ---------------------------------------------------------------
         Commands::Edm { action } => match action {
             EdmAction::Register {
@@ -601,10 +601,10 @@ fn main() {
                 state,
             } => {
                 let mut edm = if std::path::Path::new(&state).exists() {
-                    dlpscan::edm::ExactDataMatcher::load(&state)
-                        .unwrap_or_else(|_| dlpscan::edm::ExactDataMatcher::new(None, None))
+                    siphon::edm::ExactDataMatcher::load(&state)
+                        .unwrap_or_else(|_| siphon::edm::ExactDataMatcher::new(None, None))
                 } else {
-                    dlpscan::edm::ExactDataMatcher::new(None, None)
+                    siphon::edm::ExactDataMatcher::new(None, None)
                 };
 
                 let mut all_values = values;
@@ -642,10 +642,10 @@ fn main() {
             EdmAction::Scan { text, state } => {
                 if !std::path::Path::new(&state).exists() {
                     eprintln!("No EDM state file found at {state}");
-                    eprintln!("Run `dlpscan edm register` first");
+                    eprintln!("Run `siphon edm register` first");
                     process::exit(1);
                 }
-                let edm = dlpscan::edm::ExactDataMatcher::load(&state).unwrap_or_else(|e| {
+                let edm = siphon::edm::ExactDataMatcher::load(&state).unwrap_or_else(|e| {
                     eprintln!("Error loading EDM state: {e}");
                     process::exit(1);
                 });
@@ -671,10 +671,10 @@ fn main() {
             }
             EdmAction::List { state } => {
                 if !std::path::Path::new(&state).exists() {
-                    println!("No EDM state file found. Run `dlpscan edm register` first.");
+                    println!("No EDM state file found. Run `siphon edm register` first.");
                     return;
                 }
-                let edm = dlpscan::edm::ExactDataMatcher::load(&state).unwrap_or_else(|e| {
+                let edm = siphon::edm::ExactDataMatcher::load(&state).unwrap_or_else(|e| {
                     eprintln!("Error loading EDM state: {e}");
                     process::exit(1);
                 });
@@ -688,7 +688,7 @@ fn main() {
         },
 
         // ---------------------------------------------------------------
-        // dlpscan lsh — Document Similarity
+        // siphon lsh — Document Similarity
         // ---------------------------------------------------------------
         Commands::Lsh { action } => match action {
             LshAction::Register {
@@ -698,10 +698,10 @@ fn main() {
                 state,
             } => {
                 let vault = if std::path::Path::new(&state).exists() {
-                    dlpscan::lsh::DocumentVault::load(&state)
-                        .unwrap_or_else(|_| dlpscan::lsh::DocumentVault::default_vault())
+                    siphon::lsh::DocumentVault::load(&state)
+                        .unwrap_or_else(|_| siphon::lsh::DocumentVault::default_vault())
                 } else {
-                    dlpscan::lsh::DocumentVault::default_vault()
+                    siphon::lsh::DocumentVault::default_vault()
                 };
 
                 let text = std::fs::read_to_string(&file).unwrap_or_else(|e| {
@@ -732,10 +732,10 @@ fn main() {
             } => {
                 if !std::path::Path::new(&state).exists() {
                     eprintln!("No LSH state file found at {state}");
-                    eprintln!("Run `dlpscan lsh register` first");
+                    eprintln!("Run `siphon lsh register` first");
                     process::exit(1);
                 }
-                let vault = dlpscan::lsh::DocumentVault::load(&state).unwrap_or_else(|e| {
+                let vault = siphon::lsh::DocumentVault::load(&state).unwrap_or_else(|e| {
                     eprintln!("Error loading LSH state: {e}");
                     process::exit(1);
                 });
@@ -765,10 +765,10 @@ fn main() {
             }
             LshAction::List { state } => {
                 if !std::path::Path::new(&state).exists() {
-                    println!("No LSH state file found. Run `dlpscan lsh register` first.");
+                    println!("No LSH state file found. Run `siphon lsh register` first.");
                     return;
                 }
-                let vault = dlpscan::lsh::DocumentVault::load(&state).unwrap_or_else(|e| {
+                let vault = siphon::lsh::DocumentVault::load(&state).unwrap_or_else(|e| {
                     eprintln!("Error loading LSH state: {e}");
                     process::exit(1);
                 });
@@ -777,37 +777,37 @@ fn main() {
         },
 
         // ---------------------------------------------------------------
-        // dlpscan tui — Interactive TUI menu
+        // siphon tui — Interactive TUI menu
         // ---------------------------------------------------------------
         #[cfg(feature = "tui")]
         Commands::Tui => {
-            if let Err(e) = dlpscan::tui::app::run_menu() {
+            if let Err(e) = siphon::tui::app::run_menu() {
                 eprintln!("TUI error: {e}");
                 process::exit(1);
             }
         }
 
         // ---------------------------------------------------------------
-        // dlpscan top — Live statistics dashboard
+        // siphon top — Live statistics dashboard
         // ---------------------------------------------------------------
         #[cfg(feature = "tui")]
         Commands::Top => {
-            if let Err(e) = dlpscan::tui::app::run_live_stats() {
+            if let Err(e) = siphon::tui::app::run_live_stats() {
                 eprintln!("TUI error: {e}");
                 process::exit(1);
             }
         }
 
         // ---------------------------------------------------------------
-        // dlpscan info — Show scanner info
+        // siphon info — Show scanner info
         // ---------------------------------------------------------------
         Commands::Info => {
-            println!("dlpscan v{}", env!("CARGO_PKG_VERSION"));
+            println!("siphon v{}", env!("CARGO_PKG_VERSION"));
             println!();
             println!(
                 "Patterns:    {} across {} categories",
-                dlpscan::patterns::PATTERNS.len(),
-                dlpscan::patterns::categories().len()
+                siphon::patterns::PATTERNS.len(),
+                siphon::patterns::categories().len()
             );
             println!("Features:    {}", built_features().join(", "));
             println!();
@@ -823,10 +823,10 @@ fn main() {
                     config.blocked_extensions.len()
                 );
             } else {
-                println!("Config:      (none — run `dlpscan init` to create)");
+                println!("Config:      (none — run `siphon init` to create)");
             }
             println!();
-            let exts = dlpscan::extractors::supported_extensions();
+            let exts = siphon::extractors::supported_extensions();
             println!("Supported formats: {} file types", exts.len());
         }
     }
@@ -837,12 +837,12 @@ fn main() {
 // ===========================================================================
 
 fn run_init_wizard() {
-    println!("dlpscan setup wizard");
+    println!("siphon setup wizard");
     println!("====================");
     println!();
 
     // 1. Choose config location
-    let config_path = prompt("Config file path", ".dlpscanrc");
+    let config_path = prompt("Config file path", ".siphonrc");
 
     if std::path::Path::new(&config_path).exists() {
         let overwrite = prompt("Config already exists. Overwrite? (y/n)", "n");
@@ -884,7 +884,7 @@ fn run_init_wizard() {
     let format = prompt("Default output format (text/json/csv)", "text");
 
     // Build config
-    let config = dlpscan::config::Config {
+    let config = siphon::config::Config {
         min_confidence,
         require_context,
         deduplicate: true,
@@ -899,7 +899,7 @@ fn run_init_wizard() {
         ignore_patterns: vec![],
         ignore_paths: vec![],
         context_backend: "regex".to_string(),
-        blocked_extensions: dlpscan::extractors::DEFAULT_BLOCKED_EXTENSIONS
+        blocked_extensions: siphon::extractors::DEFAULT_BLOCKED_EXTENSIONS
             .iter()
             .map(|s| s.to_string())
             .collect(),
@@ -913,12 +913,12 @@ fn run_init_wizard() {
     println!("Configuration saved to {config_path}");
     println!();
     println!("Next steps:");
-    println!("  dlpscan scan <file>              Scan a file");
-    println!("  dlpscan scan-dir <directory>     Scan a directory");
-    println!("  dlpscan config show              View configuration");
-    println!("  dlpscan config set <key> <value> Modify a setting");
-    println!("  dlpscan test-pattern             Test a regex pattern");
-    println!("  dlpscan info                     Show scanner info");
+    println!("  siphon scan <file>              Scan a file");
+    println!("  siphon scan-dir <directory>     Scan a directory");
+    println!("  siphon config show              View configuration");
+    println!("  siphon config set <key> <value> Modify a setting");
+    println!("  siphon test-pattern             Test a regex pattern");
+    println!("  siphon info                     Show scanner info");
 }
 
 /// Maximum length of a single interactive-prompt response. Interactive
@@ -977,15 +977,15 @@ fn parse_preset_choices(input: &str) -> Vec<String> {
 // ===========================================================================
 
 fn find_or_default_config() -> String {
-    dlpscan::config::find_config_path()
+    siphon::config::find_config_path()
 }
 
-fn load_config(path: &str) -> dlpscan::config::Config {
-    dlpscan::config::load_config_json(path)
+fn load_config(path: &str) -> siphon::config::Config {
+    siphon::config::load_config_json(path)
 }
 
-fn save_config(path: &str, config: &dlpscan::config::Config) {
-    if let Err(e) = dlpscan::config::save_config_json(path, config) {
+fn save_config(path: &str, config: &siphon::config::Config) {
+    if let Err(e) = siphon::config::save_config_json(path, config) {
         eprintln!("Error writing config: {e}");
         process::exit(1);
     }
@@ -1038,7 +1038,7 @@ fn set_config_value(path: &str, key: &str, value: &str) {
 }
 
 fn reset_config(path: &str) {
-    let config = dlpscan::config::Config::default();
+    let config = siphon::config::Config::default();
     save_config(path, &config);
     println!("Config reset to defaults: {path}");
 }

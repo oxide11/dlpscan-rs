@@ -1,13 +1,13 @@
-# dlpscan-rs
+# Polygon Siphon
 
 High-performance DLP scanner written in Rust. Detects, redacts, and protects
 sensitive data with exceptional throughput.
 
-**561 patterns** across **126 categories** — full parity with the Python version.
-**68 checksum validators** for national IDs, financial identifiers, and crypto
-addresses. **500+ tests** passing across the lib, integration, evasion, and
-detection-quality harnesses, with an enforced labeled-corpus regression suite
-(**41/41 recall, 0 false positives**).
+**561 patterns** across **126 categories**. **72 checksum validators** for
+national IDs, financial identifiers, and crypto addresses. **510+ tests**
+passing across the lib, integration, evasion, and detection-quality harnesses,
+with an enforced labeled-corpus regression suite (**80/80 recall, 0 false
+positives**).
 
 ### Highlights
 
@@ -117,7 +117,7 @@ cargo build --release --no-default-features --features metrics
 ### InputGuard (application integration)
 
 ```rust
-use dlpscan::{InputGuard, Preset, Action, Mode};
+use siphon::{InputGuard, Preset, Action, Mode};
 
 // Block PCI-DSS data and PII — flag on detection
 let guard = InputGuard::new()
@@ -190,7 +190,7 @@ cargo build --release --no-default-features --features metrics
 **Usage:**
 
 ```rust
-use dlpscan::extractors::extract_text;
+use siphon::extractors::extract_text;
 
 // Image files are auto-decoded for barcodes in the default build
 let result = extract_text("boarding-pass.png")?;
@@ -201,10 +201,10 @@ let result = extract_text("boarding-pass.png")?;
 
 ```bash
 # CLI: scan an image for barcodes containing sensitive data
-dlpscan boarding-pass.png
+siphon boarding-pass.png
 
 # Scan a directory of scanned documents
-dlpscan ./scanned-forms/
+siphon ./scanned-forms/
 ```
 
 **Safety limits:** 20 MB max image size, 100 barcodes per image,
@@ -215,7 +215,7 @@ dlpscan ./scanned-forms/
 Configure which file types the pipeline blocks or skips:
 
 ```toml
-# .dlpscanrc or pyproject.toml [tool.dlpscan]
+# .siphonrc or pyproject.toml [tool.siphon]
 blocked_extensions = ["der", "p12", "pfx", "p7m", "p8", "ppk", "jks"]
 block_unreadable = true  # also blocks .exe, .dll, .gpg, .kdbx, etc.
 ```
@@ -252,7 +252,7 @@ Detect high-entropy secrets that don't match any regex pattern (random API
 keys, custom tokens, encoded credentials):
 
 ```toml
-# .dlpscanrc
+# .siphonrc
 entropy_scan = "gated"        # only near keywords like "secret", "key", "token"
 # entropy_scan = "assignment" # only in KEY=VALUE patterns
 # entropy_scan = "all"        # flag all high-entropy tokens
@@ -283,7 +283,7 @@ let guard = InputGuard::new()
 ### Low-level scanner API
 
 ```rust
-use dlpscan::scanner::{scan_text, scan_text_with_config, ScanConfig};
+use siphon::scanner::{scan_text, scan_text_with_config, ScanConfig};
 
 // Scan with defaults
 let matches = scan_text("SSN: 123-45-6789")?;
@@ -301,7 +301,7 @@ let matches = scan_text_with_config("Card: 4532015112830366", &config)?;
 
 ## Patterns and Keywords
 
-dlpscan detects sensitive data using a two-layer system:
+siphon detects sensitive data using a two-layer system:
 
 1. **560 regex patterns** match data formats (credit cards, SSNs, IBANs, API keys, etc.)
 2. **3,100+ context keywords** (English + French) confirm detections via Aho-Corasick proximity matching
@@ -367,7 +367,7 @@ Full reference:
 | `streaming` | Streaming scanner with chunk buffering |
 | `extractors` | Text extraction from 20+ formats (DOCX, XLSX, PDF, EML, MBOX, ICS, WARC, ZIP, RAR, 7z, CAB, DAT, Parquet, SQLite, QR/barcode, etc.) |
 | `cache` | Thread-safe LRU scan cache with TTL eviction |
-| `config` | Config file loading (pyproject.toml, .dlpscanrc) |
+| `config` | Config file loading (pyproject.toml, .siphonrc) |
 
 ### Advanced detection
 
@@ -425,16 +425,16 @@ Input text
 
 ```bash
 # Scan a file
-dlpscan file.txt
+siphon file.txt
 
 # Scan with JSON output
-dlpscan -f json file.txt
+siphon -f json file.txt
 
 # Scan a directory
-dlpscan ./src/
+siphon ./src/
 
 # Pipe input
-echo "SSN: 123-45-6789" | dlpscan
+echo "SSN: 123-45-6789" | siphon
 ```
 
 ## Development
@@ -456,7 +456,7 @@ cargo clippy
 
 ## Security
 
-dlpscan is hardened for enterprise deployment in regulated environments
+siphon is hardened for enterprise deployment in regulated environments
 (PCI-DSS, HIPAA, SOC 2, GDPR).
 
 ### API security

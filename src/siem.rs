@@ -59,7 +59,7 @@ pub fn enrich_event(
         .or_insert_with(|| serde_json::Value::String(hostname()));
     enriched
         .entry("source".to_string())
-        .or_insert_with(|| serde_json::Value::String("dlpscan".to_string()));
+        .or_insert_with(|| serde_json::Value::String("siphon".to_string()));
     enriched
 }
 
@@ -145,7 +145,7 @@ impl SIEMAdapter for SyslogAdapter {
             .take(255)
             .collect();
         let msg = format!(
-            "<{priority}>1 {} {} dlpscan - - - {json}",
+            "<{priority}>1 {} {} siphon - - - {json}",
             iso8601_now(),
             safe_host
         );
@@ -186,7 +186,7 @@ impl SplunkHECAdapter {
         Self {
             url: url.to_string(),
             token: token.to_string(),
-            source: "dlpscan".to_string(),
+            source: "siphon".to_string(),
             sourcetype: "_json".to_string(),
             lock: Mutex::new(()),
         }
@@ -240,7 +240,7 @@ impl ElasticsearchAdapter {
     pub fn new(url: &str) -> Self {
         Self {
             url: url.to_string(),
-            index: "dlpscan-events".to_string(),
+            index: "siphon-events".to_string(),
             api_key: None,
             lock: Mutex::new(()),
         }
@@ -321,8 +321,8 @@ impl DatadogAdapter {
         Self {
             api_key: api_key.to_string(),
             site: "datadoghq.com".to_string(),
-            source: "dlpscan".to_string(),
-            service: "dlpscan".to_string(),
+            source: "siphon".to_string(),
+            service: "siphon".to_string(),
             lock: Mutex::new(()),
         }
     }

@@ -1,7 +1,7 @@
 //! Configuration file loading.
 //!
-//! Walks the directory tree looking for `pyproject.toml` (with `[tool.dlpscan]` section)
-//! or `.dlpscanrc` (JSON). CLI args take precedence over file settings.
+//! Walks the directory tree looking for `pyproject.toml` (with `[tool.siphon]` section)
+//! or `.siphonrc` (JSON). CLI args take precedence over file settings.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -138,7 +138,7 @@ pub fn apply_env_overrides(config: &mut Config) {
 // ---------------------------------------------------------------------------
 
 /// Walk up the directory tree looking for a config file.
-/// Returns the first match: pyproject.toml (with [tool.dlpscan]) or .dlpscanrc.
+/// Returns the first match: pyproject.toml (with [tool.siphon]) or .siphonrc.
 pub fn find_config_file(start_dir: Option<&Path>) -> Option<PathBuf> {
     let start = start_dir
         .map(|p| p.to_path_buf())
@@ -150,14 +150,14 @@ pub fn find_config_file(start_dir: Option<&Path>) -> Option<PathBuf> {
         let pyproject = dir.join("pyproject.toml");
         if pyproject.is_file() {
             if let Ok(content) = std::fs::read_to_string(&pyproject) {
-                if content.contains("[tool.dlpscan]") {
+                if content.contains("[tool.siphon]") {
                     return Some(pyproject);
                 }
             }
         }
 
-        // Check .dlpscanrc
-        let rc = dir.join(".dlpscanrc");
+        // Check .siphonrc
+        let rc = dir.join(".siphonrc");
         if rc.is_file() {
             return Some(rc);
         }
@@ -182,7 +182,7 @@ pub fn find_config_file(start_dir: Option<&Path>) -> Option<PathBuf> {
 // Parsing
 // ---------------------------------------------------------------------------
 
-/// Parse [tool.dlpscan] section from pyproject.toml.
+/// Parse [tool.siphon] section from pyproject.toml.
 const MAX_CONFIG_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB
 
 fn parse_pyproject_toml(path: &Path) -> Result<Config, String> {
@@ -195,16 +195,16 @@ fn parse_pyproject_toml(path: &Path) -> Result<Config, String> {
 
     let section = table
         .get("tool")
-        .and_then(|t| t.get("dlpscan"))
-        .ok_or_else(|| "No [tool.dlpscan] section found".to_string())?;
+        .and_then(|t| t.get("siphon"))
+        .ok_or_else(|| "No [tool.siphon] section found".to_string())?;
 
     let json_str = serde_json::to_string(section).map_err(|e| e.to_string())?;
     let config: Config = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
     Ok(config)
 }
 
-/// Parse .dlpscanrc JSON file.
-fn parse_dlpscanrc(path: &Path) -> Result<Config, String> {
+/// Parse .siphonrc JSON file.
+fn parse_siphonrc(path: &Path) -> Result<Config, String> {
     let metadata = std::fs::metadata(path).map_err(|e| e.to_string())?;
     if metadata.len() > MAX_CONFIG_FILE_SIZE {
         return Err(format!("Config file too large: {} bytes", metadata.len()));
@@ -263,7 +263,7 @@ pub fn load_config(path: Option<&str>, start_dir: Option<&Path>) -> Config {
             Err("YAML config requires the 'yaml-config' feature".to_string())
         }
     } else {
-        parse_dlpscanrc(&config_path)
+        parse_siphonrc(&config_path)
     };
 
     match result {
@@ -323,12 +323,12 @@ pub fn parse_entropy_mode(s: &str) -> crate::scanner::EntropyMode {
 
 /// Find the first existing config file, or return the default path.
 pub fn find_config_path() -> String {
-    for name in &[".dlpscanrc", "dlpscan.json"] {
+    for name in &[".siphonrc", "siphon.json"] {
         if std::path::Path::new(name).exists() {
             return name.to_string();
         }
     }
-    ".dlpscanrc".to_string()
+    ".siphonrc".to_string()
 }
 
 /// Load config from a JSON file, falling back to defaults.
@@ -367,9 +367,9 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_dlpscanrc() {
+    fn test_parse_siphonrc() {
         let dir = tempfile::tempdir().unwrap();
-        let rc_path = dir.path().join(".dlpscanrc");
+        let rc_path = dir.path().join(".siphonrc");
         let mut f = std::fs::File::create(&rc_path).unwrap();
         writeln!(
             f,
@@ -377,7 +377,7 @@ mod tests {
         )
         .unwrap();
 
-        let config = parse_dlpscanrc(&rc_path).unwrap();
+        let config = parse_siphonrc(&rc_path).unwrap();
         assert_eq!(config.min_confidence, 0.5);
         assert!(config.require_context);
         assert_eq!(config.format, "json");
@@ -390,7 +390,7 @@ mod tests {
         let mut f = std::fs::File::create(&toml_path).unwrap();
         writeln!(
             f,
-            r#"[tool.dlpscan]
+            r#"[tool.siphon]
 min_confidence = 0.7
 require_context = true
 max_matches = 100
@@ -407,7 +407,7 @@ max_matches = 100
     #[test]
     fn test_find_config_file() {
         let dir = tempfile::tempdir().unwrap();
-        let rc_path = dir.path().join(".dlpscanrc");
+        let rc_path = dir.path().join(".siphonrc");
         std::fs::write(&rc_path, "{}").unwrap();
 
         let found = find_config_file(Some(dir.path()));

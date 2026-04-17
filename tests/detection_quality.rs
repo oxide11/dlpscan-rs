@@ -60,7 +60,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use dlpscan::scanner::{scan_text_with_config, ScanConfig};
+use siphon::scanner::{scan_text_with_config, ScanConfig};
 
 /// A single ground-truth finding loaded from `labels.jsonl`.
 #[derive(Debug, Clone)]

@@ -1,4 +1,4 @@
-//! Interactive TUI for dlpscan — menu system and live stats dashboard.
+//! Interactive TUI for siphon — menu system and live stats dashboard.
 //!
 //! Requires the `tui` feature flag (`ratatui` + `crossterm`).
 
@@ -71,7 +71,7 @@ pub mod app {
         "Pattern Tester    Test regex patterns",
         "Live Dashboard    Real-time scan statistics",
         "System Info       Version, patterns, features",
-        "Quit              Exit dlpscan",
+        "Quit              Exit siphon",
     ];
 
     impl App {
@@ -225,10 +225,10 @@ pub mod app {
                         app.scan_results.clear();
                         app.screen = Screen::QuickScan;
                     }
-                    1 => app.status = "Use: dlpscan scan <file>".into(),
-                    2 => app.status = "Use: dlpscan scan-dir <dir>".into(),
+                    1 => app.status = "Use: siphon scan <file>".into(),
+                    2 => app.status = "Use: siphon scan-dir <dir>".into(),
                     3 => app.screen = Screen::Config,
-                    4 => app.status = "Use: dlpscan test-pattern".into(),
+                    4 => app.status = "Use: siphon test-pattern".into(),
                     5 => app.screen = Screen::LiveStats,
                     6 => app.screen = Screen::Info,
                     7 => app.should_quit = true,
@@ -308,7 +308,7 @@ pub mod app {
         // Header
         let header = Paragraph::new(vec![
             Line::from(Span::styled(
-                " dlpscan",
+                " siphon",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
@@ -550,7 +550,7 @@ pub mod app {
         let list = List::new(items).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" Settings (use `dlpscan config set` to modify) "),
+                .title(" Settings (use `siphon config set` to modify) "),
         );
         frame.render_widget(list, chunks[1]);
 
@@ -649,7 +649,7 @@ pub mod app {
             elapsed.as_secs() % 60
         );
 
-        let title = Paragraph::new(format!(" dlpscan Live Dashboard  |  Uptime: {uptime}"))
+        let title = Paragraph::new(format!(" siphon Live Dashboard  |  Uptime: {uptime}"))
             .style(
                 Style::default()
                     .fg(Color::Cyan)

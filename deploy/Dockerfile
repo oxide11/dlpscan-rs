@@ -23,19 +23,19 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN groupadd -r dlpscan && useradd -r -g dlpscan -s /bin/false dlpscan
+RUN groupadd -r siphon && useradd -r -g siphon -s /bin/false siphon
 
-COPY --from=builder /app/target/release/dlpscan /usr/local/bin/dlpscan
+COPY --from=builder /app/target/release/siphon /usr/local/bin/siphon
 
-USER dlpscan
+USER siphon
 
-ENTRYPOINT ["dlpscan"]
+ENTRYPOINT ["siphon"]
 CMD ["--help"]
 
 # Health check for server mode
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl -sf http://localhost:8000/health || dlpscan --version || exit 1
+    CMD curl -sf http://localhost:8000/health || siphon --version || exit 1
 
-LABEL org.opencontainers.image.title="dlpscan" \
+LABEL org.opencontainers.image.title="siphon" \
       org.opencontainers.image.description="High-performance DLP scanner" \
       org.opencontainers.image.version="2.0.0"
