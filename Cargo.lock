@@ -3939,6 +3939,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "siphon-core",
+ "tempfile",
  "tokio",
  "tower",
  "tower-http",
