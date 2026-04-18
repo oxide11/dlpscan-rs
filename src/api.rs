@@ -1422,10 +1422,24 @@ fn hyper_route_request(
                         r#"{"detail":"Pattern too long"}"#.to_string(),
                     );
                 }
-                if regex::Regex::new(&req.pattern).is_err() {
+                // Compile with tight memory caps. The Rust regex crate is
+                // ReDoS-safe by construction (linear-time, no backrefs),
+                // but its default size_limit (10 MB) and dfa_size_limit
+                // (2 MB) are generous enough that an adversary submitting
+                // a deliberately-large pattern can still extract a sizable
+                // memory allocation. Cap user-supplied patterns at 1 MB
+                // compiled / 256 KB DFA — well above what any legitimate
+                // detection pattern needs and small enough that hundreds
+                // of patterns still fit in a process's RSS budget.
+                if regex::RegexBuilder::new(&req.pattern)
+                    .size_limit(1 << 20) // 1 MB compiled regex
+                    .dfa_size_limit(256 * 1024) // 256 KB DFA cache
+                    .build()
+                    .is_err()
+                {
                     return (
                         StatusCode::UNPROCESSABLE_ENTITY,
-                        r#"{"detail":"Invalid regex"}"#.to_string(),
+                        r#"{"detail":"Invalid or oversized regex"}"#.to_string(),
                     );
                 }
                 if let Ok(patterns) = state.custom_patterns.read() {

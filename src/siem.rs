@@ -6,6 +6,7 @@
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use zeroize::Zeroizing;
 
 /// Trait for SIEM adapters — all must be thread-safe.
 pub trait SIEMAdapter: Send + Sync {
@@ -173,9 +174,16 @@ impl SIEMAdapter for SyslogAdapter {
 // ---------------------------------------------------------------------------
 
 /// Splunk HTTP Event Collector adapter.
+///
+/// `token` is wrapped in [`Zeroizing`] so the long-lived in-memory copy
+/// of the HEC bearer token is wiped on drop — limits exposure in core
+/// dumps, swap files, and live-process memory inspection. The token is
+/// still copied transiently when constructing the `Authorization` header
+/// for each send; that copy is short-lived and goes through the HTTP
+/// stack's own buffers, so this only mitigates the long-lived field.
 pub struct SplunkHECAdapter {
     pub(crate) url: String,
-    pub(crate) token: String,
+    pub(crate) token: Zeroizing<String>,
     pub(crate) source: String,
     pub(crate) sourcetype: String,
     lock: Mutex<()>,
@@ -185,7 +193,7 @@ impl SplunkHECAdapter {
     pub fn new(url: &str, token: &str) -> Self {
         Self {
             url: url.to_string(),
-            token: token.to_string(),
+            token: Zeroizing::new(token.to_string()),
             source: "siphon".to_string(),
             sourcetype: "_json".to_string(),
             lock: Mutex::new(()),
@@ -220,7 +228,7 @@ impl SIEMAdapter for SplunkHECAdapter {
         let headers = vec![
             (
                 "Authorization".to_string(),
-                format!("Splunk {}", self.token),
+                format!("Splunk {}", self.token.as_str()),
             ),
             ("Content-Type".to_string(), "application/json".to_string()),
         ];
@@ -229,10 +237,13 @@ impl SIEMAdapter for SplunkHECAdapter {
 }
 
 /// Elasticsearch adapter.
+///
+/// `api_key` is wrapped in [`Zeroizing`] so the long-lived field is
+/// wiped on drop. See [`SplunkHECAdapter`] for the full caveat.
 pub struct ElasticsearchAdapter {
     pub url: String,
     pub index: String,
-    pub api_key: Option<String>,
+    pub api_key: Option<Zeroizing<String>>,
     lock: Mutex<()>,
 }
 
@@ -252,7 +263,7 @@ impl ElasticsearchAdapter {
     }
 
     pub fn with_api_key(mut self, key: &str) -> Self {
-        self.api_key = Some(key.to_string());
+        self.api_key = Some(Zeroizing::new(key.to_string()));
         self
     }
 }
@@ -265,7 +276,10 @@ impl SIEMAdapter for ElasticsearchAdapter {
         let url = format!("{}/{}/_doc", self.url.trim_end_matches('/'), self.index);
         let mut headers = vec![("Content-Type".to_string(), "application/json".to_string())];
         if let Some(ref key) = self.api_key {
-            headers.push(("Authorization".to_string(), format!("ApiKey {key}")));
+            headers.push((
+                "Authorization".to_string(),
+                format!("ApiKey {}", key.as_str()),
+            ));
         }
         http_post_sync(&url, &body, &headers).map(|_| ())
     }
@@ -308,8 +322,11 @@ impl SIEMAdapter for WebhookSIEMAdapter {
 }
 
 /// Datadog Logs adapter.
+///
+/// `api_key` is wrapped in [`Zeroizing`] so the long-lived field is
+/// wiped on drop. See [`SplunkHECAdapter`] for the full caveat.
 pub struct DatadogAdapter {
-    pub api_key: String,
+    pub api_key: Zeroizing<String>,
     pub site: String,
     pub source: String,
     pub service: String,
@@ -319,7 +336,7 @@ pub struct DatadogAdapter {
 impl DatadogAdapter {
     pub fn new(api_key: &str) -> Self {
         Self {
-            api_key: api_key.to_string(),
+            api_key: Zeroizing::new(api_key.to_string()),
             site: "datadoghq.com".to_string(),
             source: "siphon".to_string(),
             service: "siphon".to_string(),
@@ -362,7 +379,7 @@ impl SIEMAdapter for DatadogAdapter {
         }
         let url = format!("https://http-intake.logs.{}/api/v2/logs", self.site);
         let headers = vec![
-            ("DD-API-KEY".to_string(), self.api_key.clone()),
+            ("DD-API-KEY".to_string(), self.api_key.as_str().to_string()),
             ("Content-Type".to_string(), "application/json".to_string()),
         ];
         http_post_sync(&url, &body, &headers).map(|_| ())
