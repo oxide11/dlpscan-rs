@@ -3366,13 +3366,13 @@ const DashV1_Ops = () => (
       <div className="box">
         <div className="box-title"><span className="t">Findings rate · 6h</span><span className="k">by category</span></div>
         <div style={{height: 180, position:'relative'}} className="hatch--teal">
-          <span style={{position:'absolute', top:8, left:8, fontFamily:'var(--hand)', fontSize:13, color:'var(--teal)'}}>
+          <span style={{position:'absolute', top:8, left:8, fontFamily:"'JetBrains Mono', monospace", fontSize:13, color:'var(--cyan)'}}>
             stacked area chart
           </span>
         </div>
         <div className="legend" style={{marginTop:8, flexWrap:'wrap'}}>
-          <span><i style={{background:'var(--teal)'}} /> Credentials</span>
-          <span><i style={{background:'var(--sage)'}} /> PCI</span>
+          <span><i style={{background:'var(--cyan)'}} /> Credentials</span>
+          <span><i style={{background:'var(--safe)'}} /> PCI</span>
           <span><i style={{background:'var(--amber)'}} /> PII</span>
           <span><i style={{background:'var(--red)'}} /> PHI</span>
         </div>
@@ -3437,7 +3437,7 @@ const DashV2_Stream = () => (
                 borderRadius:3,
                 background: s === 'ok' ? '#e3efe7' : s === 'warn' ? '#f7eecd' : '#f5dcda',
                 textAlign:'center',
-                fontFamily:'var(--hand)', fontSize:11,
+                fontFamily:"'JetBrains Mono', monospace", fontSize:11,
               }}>
                 {n.replace('siphon-','')}
               </div>
@@ -3501,7 +3501,7 @@ const DashV3_Posture = () => (
           </div>
           <div style={{
             marginTop:10, height:10, border:'1.5px solid var(--line)', borderRadius:2,
-            position:'relative', background:'var(--paper-2)'
+            position:'relative', background:'var(--bg-1)'
           }}>
             <i style={{display:'block', width:score+'%', height:'100%', background: chip === 'safe' ? 'var(--safe)' : 'var(--amber)'}} />
           </div>
@@ -3542,7 +3542,7 @@ const DashV3_Posture = () => (
         ].map(([c,n],i) => (
           <div key={i} className="bar-row">
             <span className="hand-b" style={{fontSize:13}}>{c}</span>
-            <span className="b"><i style={{width:n+'%', background:'var(--teal)'}} /></span>
+            <span className="b"><i style={{width:n+'%', background:'var(--cyan)'}} /></span>
             <span className="n">{(n*102).toLocaleString()}</span>
           </div>
         ))}
@@ -3588,7 +3588,7 @@ const DashV4_Canvas = () => (
         padding: 14,
         borderBottom:'1.5px solid var(--line)',
         display:'flex', gap:10, alignItems:'center',
-        background:'var(--teal-deep)', color:'#e8efe6'
+        background:'var(--accent)', color:'#e8efe6'
       }}>
         <span className="label" style={{color:'#c8d6c2'}}>Live Topology</span>
         <span className="mono" style={{fontSize:11, color:'#c8d6c2'}}>· auto-refresh 2s</span>
@@ -3601,15 +3601,15 @@ const DashV4_Canvas = () => (
       <div style={{
         position:'relative', height:460,
         background:
-          'radial-gradient(ellipse at 50% 50%, rgba(39,68,79,0.08), transparent 70%), var(--paper)',
+          'radial-gradient(ellipse at 50% 50%, rgba(39,68,79,0.08), transparent 70%), var(--bg-1)',
         backgroundImage:
-          'radial-gradient(#dbe1e2 1px, transparent 1.5px)',
+          'radial-gradient(var(--line-soft) 1px, transparent 1.5px)',
         backgroundSize: '22px 22px',
       }}>
         {/* Center: Core */}
         <div style={{position:'absolute', left:'50%', top:'50%', transform:'translate(-50%,-50%)'}}>
-          <div className="node" style={{background:'var(--teal-deep)', color:'#e8efe6', borderColor:'#000'}}>
-            <span className="nt" style={{color:'var(--sage)'}}>library</span>
+          <div className="node" style={{background:'var(--accent)', color:'#e8efe6', borderColor:'#000'}}>
+            <span className="nt" style={{color:'var(--safe)'}}>library</span>
             <b>siphon-core</b>
             <div className="mono" style={{fontSize:10, color:'#c8d6c2'}}>v1.8.2 · 561 patterns</div>
           </div>
@@ -3692,7 +3692,7 @@ const DashV4_Canvas = () => (
         {TENANT_SPIKES.map(([t, d], i) => (
           <div key={i} className="bar-row">
             <span className="hand-b">{t}</span>
-            <span className="b"><i style={{width:Math.min(95,Math.abs(parseInt(d)))+'%', background:'var(--teal)'}} /></span>
+            <span className="b"><i style={{width:Math.min(95,Math.abs(parseInt(d)))+'%', background:'var(--cyan)'}} /></span>
             <span className="n">{d}</span>
           </div>
         ))}
@@ -3857,9 +3857,9 @@ function Stream({ go }) {
             className="btn ghost"
             style={{
               padding:'3px 10px', fontSize:10,
-              background: groupBy === g ? 'var(--teal-deep)' : 'transparent',
+              background: groupBy === g ? 'var(--accent)' : 'transparent',
               color: groupBy === g ? '#e8efe6' : 'var(--ink)',
-              borderColor: groupBy === g ? 'var(--teal-deep)' : 'var(--line)'
+              borderColor: groupBy === g ? 'var(--accent)' : 'var(--line)'
             }}>{g}</button>
         ))}
       </div>
@@ -3890,7 +3890,7 @@ function Stream({ go }) {
               </div>
             ))}
             {rows.length > 18 && (
-              <div style={{padding:'8px 4px', fontFamily:'var(--hand)', color:'var(--ink-soft)', fontSize:13}}>
+              <div style={{padding:'8px 4px', fontFamily:"'JetBrains Mono', monospace", color:'var(--ink-soft)', fontSize:13}}>
                 … +{rows.length - 18} more in this group
               </div>
             )}
@@ -3927,14 +3927,14 @@ function FindingDetail({ id, back }) {
           <div className="label" style={{marginBottom:4}}>Matched value (HMAC · tokenized)</div>
           <div className="mono" style={{
             fontSize:14, padding:'8px 10px',
-            background: 'var(--note-bg)',
-            border:'1.5px solid var(--note-border)',
+            background: 'var(--amber-wash)',
+            border:'1.5px solid var(--amber)',
             borderRadius:2, marginBottom:12
           }}>{f.match}</div>
 
           <div className="label" style={{marginBottom:4}}>Surrounding context (±120 chars)</div>
-          <div className="mono" style={{fontSize:12, lineHeight:1.7, padding:'10px 12px', background:'var(--paper-2)', border:'1px dashed var(--line-soft)', borderRadius:2}}>
-            Hi support team, please charge my company card <mark style={{background:'var(--chip-safe-bg)', padding:'0 3px'}}>{f.match}</mark> exp 05/29 and send the invoice to billing@{f.tenant}.com. Reference order 4821-A. Apologies for the previous decline — the bank was asking for 3DS verification.
+          <div className="mono" style={{fontSize:12, lineHeight:1.7, padding:'10px 12px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:2}}>
+            Hi support team, please charge my company card <mark style={{background:'var(--accent-wash)', padding:'0 3px'}}>{f.match}</mark> exp 05/29 and send the invoice to billing@{f.tenant}.com. Reference order 4821-A. Apologies for the previous decline — the bank was asking for 3DS verification.
           </div>
 
           <div className="label" style={{marginTop:14, marginBottom:6}}>Detection signals</div>
@@ -3947,7 +3947,7 @@ function FindingDetail({ id, back }) {
           </div>
 
           <div className="label" style={{marginTop:14, marginBottom:6}}>Audit · what happened</div>
-          <div className="mono" style={{fontSize:11, lineHeight:1.8, background:'var(--paper-2)', padding:10, border:'1px dashed var(--line-soft)'}}>
+          <div className="mono" style={{fontSize:11, lineHeight:1.8, background:'var(--bg-1)', padding:10, border:'1px dashed var(--line-soft)'}}>
             {f.ts}.142  ingest   · {f.pod}/pod-14 · bytes=2,812 mime=application/pdf<br/>
             {f.ts}.189  parse    · pdf · 3 pages · 12,004 tokens<br/>
             {f.ts}.201  patterns · 4 candidates (3 dropped by classifier)<br/>
@@ -4159,9 +4159,9 @@ function Logs() {
             className="btn ghost"
             style={{
               padding: '3px 10px', fontSize: 10,
-              background: pod === p ? 'var(--teal-deep)' : 'transparent',
+              background: pod === p ? 'var(--accent)' : 'transparent',
               color: pod === p ? '#e8efe6' : 'var(--ink)',
-              borderColor: pod === p ? 'var(--teal-deep)' : 'var(--line)'
+              borderColor: pod === p ? 'var(--accent)' : 'var(--line)'
             }}>
             <span style={{
               display:'inline-block', width:8, height:8, borderRadius:'50%',
@@ -4178,9 +4178,9 @@ function Logs() {
             className="btn ghost"
             style={{
               padding:'3px 10px', fontSize:10,
-              background: level === lv ? 'var(--teal-deep)' : 'transparent',
+              background: level === lv ? 'var(--accent)' : 'transparent',
               color: level === lv ? '#e8efe6' : 'var(--ink)',
-              borderColor: level === lv ? 'var(--teal-deep)' : 'var(--line)',
+              borderColor: level === lv ? 'var(--accent)' : 'var(--line)',
             }}>{lv}</button>
         ))}
       </div>
@@ -4273,7 +4273,7 @@ function Pods() {
           <div className="box-title"><span className="t">Version spread</span><span className="k">rollout</span></div>
           <div className="bar-row"><span className="hand-b">v1.8.2</span><span className="b"><i style={{width:'78%',background:'var(--safe)'}}/></span><span className="n">98</span></div>
           <div className="bar-row"><span className="hand-b">v1.8.1</span><span className="b"><i style={{width:'14%',background:'var(--amber)'}}/></span><span className="n">18</span></div>
-          <div className="bar-row"><span className="hand-b">v1.5.0 · ml</span><span className="b"><i style={{width:'5%',background:'var(--teal)'}}/></span><span className="n">6</span></div>
+          <div className="bar-row"><span className="hand-b">v1.5.0 · ml</span><span className="b"><i style={{width:'5%',background:'var(--cyan)'}}/></span><span className="n">6</span></div>
           <div className="bar-row"><span className="hand-b">v0.9.x · vis</span><span className="b"><i style={{width:'3%',background:'var(--red)'}}/></span><span className="n">4</span></div>
         </div>
         <div className="box">
@@ -4495,7 +4495,7 @@ function Patterns() {
             fontFamily:'JetBrains Mono, monospace', fontSize:12,
             background:'#fcfcf6', minHeight:140
           }}>
-            My card is <mark style={{background:'rgba(133,160,130,0.4)', border:'1px solid var(--sage)'}}>4532 0151 1283 0366</mark> and<br/>
+            My card is <mark style={{background:'rgba(133,160,130,0.4)', border:'1px solid var(--safe)'}}>4532 0151 1283 0366</mark> and<br/>
             my SSN is <mark style={{background:'rgba(179,52,46,0.25)', border:'1px solid var(--red)'}}>425-71-3482</mark>.<br/>
             contact: <mark style={{background:'rgba(199,152,43,0.3)', border:'1px solid var(--amber)'}}>j.lee@example.com</mark>
           </div>
@@ -4579,7 +4579,7 @@ function Models() {
         </div>
         <div className="box">
           <div className="box-title"><span className="t">Detector routing</span><span className="k">per policy</span></div>
-          <div style={{fontSize:13, lineHeight:1.7, fontFamily:'var(--hand)'}}>
+          <div style={{fontSize:13, lineHeight:1.7, fontFamily:"'JetBrains Mono', monospace"}}>
             <div><b>HIPAA strict</b> → regex + ml/bert-ner + vision/tesseract</div>
             <div><b>PCI production</b> → regex only (fastest path)</div>
             <div><b>GDPR-EU</b> → regex + classify/doc-type</div>
@@ -5023,9 +5023,9 @@ function Testing() {
             className="btn ghost"
             style={{
               padding:'5px 14px',
-              background: tab === t ? 'var(--teal-deep)' : 'transparent',
+              background: tab === t ? 'var(--accent)' : 'transparent',
               color: tab === t ? '#e8efe6' : 'var(--ink)',
-              borderColor: tab === t ? 'var(--teal-deep)' : 'var(--line)',
+              borderColor: tab === t ? 'var(--accent)' : 'var(--line)',
             }}>{t === 'library' ? 'Test library' : t === 'runs' ? 'Recent runs' : 'Schedule'}</button>
         ))}
         <span className="right label" style={{alignSelf:'center'}}>
@@ -5633,7 +5633,7 @@ function Compliance() {
               <span className="muted hand">/100</span>
               <span className={`chip chip--${c}`}>{c==='safe'?'OK':'attn'}</span>
             </div>
-            <div style={{height:8, border:'1.5px solid var(--line)', borderRadius:2, marginTop:8, background:'var(--paper-2)'}}>
+            <div style={{height:8, border:'1.5px solid var(--line)', borderRadius:2, marginTop:8, background:'var(--bg-1)'}}>
               <i style={{display:'block', width:s+'%', height:'100%', background: c==='safe'?'var(--safe)':'var(--amber)'}} />
             </div>
             <div className="muted" style={{fontSize:11, marginTop:6}}>{d}</div>
@@ -5663,7 +5663,7 @@ function Compliance() {
         </div>
         <div className="box">
           <div className="box-title"><span className="t">Evidence pack · builder</span><span className="k">auto-assembled</span></div>
-          <div style={{fontSize:13, lineHeight:1.8, fontFamily:'var(--hand)'}}>
+          <div style={{fontSize:13, lineHeight:1.8, fontFamily:"'JetBrains Mono', monospace"}}>
             <div className="tick">Findings · Q1 2026 · 2.1M rows · HMAC-signed</div>
             <div className="tick">Audit log · 18 months · rotating, verified</div>
             <div className="tick">Policy state · YAML exports · all tenants</div>
