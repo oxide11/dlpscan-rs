@@ -1,0 +1,31 @@
+# Siphon-API — sync HTTP scan service
+FROM rust:1.85-bookworm AS builder
+
+WORKDIR /app
+COPY Cargo.toml Cargo.lock* ./
+COPY crates/ crates/
+COPY src/ src/
+
+RUN cargo build --release -p siphon-api --locked
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r siphon && useradd -r -g siphon -s /bin/false siphon
+
+COPY --from=builder /app/target/release/siphon-api /usr/local/bin/siphon-api
+
+USER siphon
+EXPOSE 8080
+
+ENTRYPOINT ["siphon-api"]
+
+HEALTHCHECK --interval=15s --timeout=3s --start-period=3s --retries=3 \
+    CMD curl -sf http://localhost:8080/health || exit 1
+
+LABEL org.opencontainers.image.title="siphon-api" \
+      org.opencontainers.image.description="Polygon Siphon sync HTTP scan service" \
+      org.opencontainers.image.version="2.1.0"
