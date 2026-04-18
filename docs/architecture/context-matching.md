@@ -1,6 +1,6 @@
 # Context Matching
 
-> **Entry point:** `src/context/mod.rs`
+> **Entry point:** `crates/siphon-core/src/context/mod.rs`
 >
 > The Aho-Corasick keyword engine that determines which patterns' context
 > keywords appear in a document, where they appear, and whether a given
@@ -42,7 +42,7 @@ whose keywords are present).
 
 **Build:** `AC_MATCHER` is a `Lazy<_>` singleton (line ~142) built
 once at startup from all keywords in `CONTEXT_KEYWORDS` (defined in
-`src/context/keywords.rs`, ~8000 lines).
+`crates/siphon-core/src/context/keywords.rs`, ~8000 lines).
 
 ### Keyword deduplication and fan-out
 
@@ -86,7 +86,7 @@ ID was silently undetectable whenever its primary keyword
 
 ## The `check_context` function
 
-**File:** `src/context/mod.rs :: check_context` (line ~193)
+**File:** `crates/siphon-core/src/context/mod.rs :: check_context` (line ~193)
 
 Called per-match during stage F.2. Given a match span and its
 `(category, sub_category)`, determines whether a keyword is "close
@@ -105,7 +105,7 @@ categories use 50 characters; some use 80).
 
 ## The keywords file
 
-**File:** `src/context/keywords.rs`
+**File:** `crates/siphon-core/src/context/keywords.rs`
 
 ~8000 lines of keyword definitions, organized as:
 

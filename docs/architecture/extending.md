@@ -8,7 +8,7 @@ is the quickest path to getting it wired in correctly.
 
 ## Add a new pattern
 
-1. **Define the `PatternDef`** in `src/patterns/mod.rs` inside the
+1. **Define the `PatternDef`** in `crates/siphon-core/src/patterns/mod.rs` inside the
    `PATTERNS` static array. Each entry needs:
 
    ```rust
@@ -22,7 +22,7 @@ is the quickest path to getting it wired in correctly.
    }
    ```
 
-2. **Add context keywords** in `src/context/keywords.rs`. Without
+2. **Add context keywords** in `crates/siphon-core/src/context/keywords.rs`. Without
    keywords, context-gated patterns can never fire, and always-run
    patterns get no confidence boost:
 
@@ -33,7 +33,7 @@ is the quickest path to getting it wired in correctly.
    }),
    ```
 
-3. **Add specificity to the map** in `src/models.rs :: pattern_specificity`.
+3. **Add specificity to the map** in `crates/siphon-core/src/models.rs :: pattern_specificity`.
    The hardcoded map determines the always-run threshold (≥ 0.85) and
    the confidence calculation. If you skip this, your pattern falls
    through to `DEFAULT_SPECIFICITY = 0.40`.
@@ -41,13 +41,13 @@ is the quickest path to getting it wired in correctly.
 4. **Decide: always-run or context-gated?**
    - If `specificity >= 0.85`, it's automatically always-run.
    - If you want always-run below 0.85, add it to `CRITICAL_ALWAYS_RUN`
-     in `src/scanner/mod.rs` (line ~143). **Only do this if the pattern
+     in `crates/siphon-core/src/scanner/mod.rs` (line ~143). **Only do this if the pattern
      has a validator or a structurally tight regex.**
    - If context-gated, add it to `is_context_required` in
-     `src/models.rs` (line ~272) AND set `context_required: true` on
+     `crates/siphon-core/src/models.rs` (line ~272) AND set `context_required: true` on
      the `PatternDef`.
 
-5. **Update the pattern count test** in `src/patterns/mod.rs ::
+5. **Update the pattern count test** in `crates/siphon-core/src/patterns/mod.rs ::
    test_pattern_count` — it asserts `PATTERNS.len() == 561` (or
    whatever the current count is).
 
@@ -55,7 +55,7 @@ is the quickest path to getting it wired in correctly.
 
 ## Add a new validator
 
-1. **Write the validator function** in `src/validation.rs`. Convention:
+1. **Write the validator function** in `crates/siphon-core/src/validation.rs`. Convention:
 
    ```rust
    pub fn is_valid_my_pattern(matched_text: &str) -> bool {
@@ -67,7 +67,7 @@ is the quickest path to getting it wired in correctly.
    parsing requires.
 
 2. **Wire it into `validate_match`** at the bottom of
-   `src/validation.rs`. Add a new arm:
+   `crates/siphon-core/src/validation.rs`. Add a new arm:
 
    ```rust
    "My Pattern" => is_valid_my_pattern(matched_text),
@@ -163,7 +163,7 @@ for those patterns.
 
 1. **New stage:** Add a function with signature
    `fn my_stage(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>)`
-   in `src/normalize/mod.rs`. The function transforms the text and
+   in `crates/siphon-core/src/normalize/mod.rs`. The function transforms the text and
    returns a new offset map where `new_offsets[i]` is the original
    byte position of `new_text[i]`.
 
@@ -183,7 +183,7 @@ for those patterns.
 ## Add a new encoding codec
 
 The token-level decode stage (4c) supports multiple codecs via the
-`try_decode_any` function in `src/normalize/mod.rs`. To add a new
+`try_decode_any` function in `crates/siphon-core/src/normalize/mod.rs`. To add a new
 encoding (e.g., Base85, Quoted-Printable):
 
 1. **Write a `try_decode_mycodec` function** with signature

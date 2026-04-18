@@ -1,6 +1,6 @@
 # Normalization Pipeline
 
-> **Entry point:** `src/normalize/mod.rs :: normalize_text` (line ~1009)
+> **Entry point:** `crates/siphon-core/src/normalize/mod.rs :: normalize_text` (line ~1009)
 >
 > Transforms input text to defeat evasion while preserving a byte-level
 > mapping back to the original input.
