@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/siphon-core"]
+members = [".", "crates/siphon-core", "crates/siphon-api"]
 
 [package]
 name = "siphon"
