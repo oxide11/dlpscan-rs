@@ -4,79 +4,105 @@
 
 # Architecture
 
-This is the entry point for understanding how Polygon Siphon is put together.
-For a deeper look at any specific layer, follow the links below — each
-deep-dive doc covers one concern in detail with file/line references back
-to the source.
+Polygon Siphon is designed in two layers:
 
-## What Polygon Siphon is
+1. **A shared scanner engine** (`siphon-core`) that does all detection —
+   pattern matching, validators, context keywords, scoring. No file
+   I/O. No network. Pure `&str → Vec<Match>`.
 
-A library and CLI that takes a piece of text (or a file it can extract
-text from) and returns a list of `Match` objects describing every
-sensitive-data finding: credit cards, national IDs, secrets, addresses,
-crypto wallets, and so on. Around **560 patterns** across **126
-categories**, with a structural validator wired in for every pattern
-that has a published checksum, and an enforced labeled-corpus
-regression harness.
+2. **A family of specialized pods** that each handle one class of
+   ingestion or detection. Every pod depends on `siphon-core` for the
+   scanning logic, so detection is identical everywhere. The pods
+   differ only in how data gets in and what the output is connected
+   to.
 
-The library is single-binary, no runtime services required, and runs on
-plain `&str` inputs. The CLI, server, and Python bindings are all thin
-wrappers over the same `scanner::scan_text_with_config` entry point.
+This doc is the entry point. Each deep-dive doc below covers one
+concern in detail with file/line references back to the source.
 
-## The pipeline at a glance
-
-Every scan follows the same path, top to bottom. Optional stages are
-shown with `[opt]`.
+## The two-layer model
 
 ```
-input bytes / file path
+                     ┌──────────────────────┐
+                     │     Siphon-Core      │
+                     │  scanner + Detector  │
+                     │    trait (library)   │
+                     └──────────┬───────────┘
+    ┌─────────────┬─────────────┼─────────────┬──────────────┐
+    │             │             │             │              │
+ Ingestion pods                      Detector pods
+ (how data gets in)                  (how detection happens)
+    │             │             │             │              │
+┌───▼──┐  ┌──────▼────┐  ┌─────▼─────┐  ┌───▼──────┐  ┌────▼────┐
+│ FS   │  │ API       │  │ DS        │  │ GW       │  │ ML      │
+│      │  │           │  │           │  │          │  │ Vision  │
+│Files │  │HTTP/gRPC  │  │Multi-proto│  │Inline    │  │Classify │
+│+ bkt │  │POST /scan │  │consumer   │  │proxy     │  │(gRPC)   │
+└──────┘  └───────────┘  └───────────┘  └──────────┘  └─────────┘
+                         │
+                         ▼
+                   ┌──────────┐
+                   │Siphon-C2 │ ← admin web UI, management plane
+                   │          │   orchestration, policy, dashboards
+                   └──────────┘
+```
+
+See **[architecture/microservices.md](architecture/microservices.md)**
+for the full pod inventory, deployment topology, and migration path.
+
+## The detection core (`siphon-core`)
+
+`siphon-core` is a Rust library. Its public entry point is
+`scan_text_with_config(&str, &ScanConfig) → Vec<Match>`. Every pod
+(ingestion or detector) ultimately calls this or a derivative.
+
+The scanner runs **560+ regex patterns** across **126 categories**,
+with **72 checksum validators** and **5,000+ context keywords** across
+6 languages. A single scan passes through the pipeline below.
+
+```
+input text
         │
         ▼
-[A] file-type extraction          src/extractors.rs
-        │  produces:  utf-8 text
-        ▼
-[B] input validation              src/validation.rs :: validate_text_input
+[B] input validation              validate_text_input
         │  reject empty, reject > 10 MB
         ▼
-[C] NORMALIZATION                 src/normalize/mod.rs :: normalize_text
+[C] NORMALIZATION                 normalize_text
         │  10 stages + token-level encoded-data decode (base64,
         │  base64url, base32, hex — nested up to 3 iterations)
         │  builds offset_map: normalized byte → original byte
         ▼
-[D] CONTEXT HIT-INDEX BUILD       src/context/mod.rs :: build_hit_index
+[D] CONTEXT HIT-INDEX BUILD       build_hit_index
         │  Aho-Corasick sweep, deduplicated keywords, fan-out at match
         ▼
-[E] PATTERN PREFILTER             src/scanner/mod.rs :: active_patterns
+[E] PATTERN PREFILTER             active_patterns
         │  category filter + AC prefilter + baseline_only
         │  always-run patterns bypass the AC prefilter
         ▼
 [F] PARALLEL REGEX MATCH          rayon par_iter over active_patterns
         │  per pattern, per match:
-        │    ├─ VALIDATE         validation.rs :: validate_match
-        │    ├─ CONTEXT CHECK    context.rs :: check_context
+        │    ├─ VALIDATE         validate_match
+        │    ├─ CONTEXT CHECK    check_context
         │    ├─ CONTEXT GATE     drop if context_required && !has_context
-        │    ├─ CONFIDENCE       scoring.rs :: compute_confidence
+        │    ├─ CONFIDENCE       compute_confidence
         │    ├─ MIN CONF FILTER
         │    ├─ OFFSET REMAP     normalized span → original span
-        │    └─ BIN ENRICHMENT   credit cards only, with bin-data feature
+        │    └─ BIN ENRICHMENT   credit cards only, with bin-data
         ▼
 [G] FLATTEN + MAX-MATCHES CAP
         │
         ▼
 [H] ALT-DECODINGS SECOND PASS  [opt]
-        │  ROT13, leet-speak, morse (base64/base32 moved to stage C)
+        │  ROT13, leet-speak, morse
         │  only if matches.len() < 3 && text.len() < 4096
-        │  runs always-run patterns only; skips context-required patterns
         ▼
-[I] DEDUPLICATE OVERLAPPING       scoring.rs :: deduplicate_overlapping
+[I] DEDUPLICATE OVERLAPPING       deduplicate_overlapping
         │  tiebreakers: confidence → specificity → length
         ▼
-[J] ENTROPY SECRET SCAN  [opt]    scanner/mod.rs :: scan_high_entropy_tokens
+[J] ENTROPY SECRET SCAN  [opt]    scan_high_entropy_tokens
         │  finds high-entropy tokens not covered by regex matches
         ▼
 [K] EDM — EXACT DATA MATCH  [opt]
         │  literal match against registered known-sensitive values
-        │  EDM matches are never dominated by regex matches
         ▼
 [L] LSH — DOCUMENT SIMILARITY  [opt]
         │  MinHash query against a registered document vault
@@ -84,27 +110,78 @@ input bytes / file path
 output: Vec<Match>
 ```
 
-The single most load-bearing invariant in this whole picture is the
-**offset map** built in stage C and consumed in stage F.6. Every
-normalization stage transforms the text and preserves a parallel
-`Vec<usize>` mapping each byte of the normalized output back to its
-origin byte in the input. Without that map, every match span we report
-would be wrong relative to the user's original input — and downstream
-redaction or tokenization would slice in the middle of a UTF-8
-character.
+The single most load-bearing invariant is the **offset map** built in
+stage C and consumed in stage F. Every normalization stage preserves a
+parallel `Vec<usize>` mapping each byte of the normalized output back
+to its origin byte in the input. Without it, every match span we
+report would be wrong relative to the user's original input.
+
+## File-based ingestion (`siphon` / `siphon-fs`)
+
+File processing is a separate concern. The `extractors` module
+(shipped with the `siphon` crate, soon to move to `siphon-extractors`)
+handles 20+ formats — PDF, DOCX, XLSX, archives, email, QR codes,
+Parquet, SQLite — and produces the `&str` that `siphon-core` scans.
+
+The pre-scanner stage for file inputs:
+
+```
+input file
+    │
+    ▼
+[A] file-type extraction          extractors::extract_text
+    │  format-specific: pdf-extract, calamine, rxing, unrar, ...
+    │  produces: ExtractionResult { text, source, warnings, metadata }
+    │
+    ▼
+  &str input → siphon-core pipeline above
+```
+
+Text-only inputs (API calls, stdin, stream messages) skip stage A
+entirely. This is what makes `siphon-api`, `siphon-ds`, and `siphon-gw`
+possible without the heavy extractor dependencies.
+
+## Workspace layout
+
+```
+polygon-siphon/
+├── Cargo.toml                    # workspace root
+├── crates/
+│   ├── siphon-core/              # scanner engine (no file I/O)
+│   │   ├── models, patterns
+│   │   ├── normalize, context
+│   │   ├── validation, scoring
+│   │   ├── edm, lsh, classification
+│   │   ├── errors, bin_lookup
+│   │   └── scanner ← primary entry point
+│   │
+│   └── siphon-api/               # sync HTTP/gRPC scan service
+│       └── POST /scan endpoint
+│
+└── src/                          # siphon crate (CLI + file tooling)
+    ├── extractors                ← file format handlers
+    ├── pipeline                  ← directory/batch orchestration
+    ├── guard                     ← InputGuard scan/redact/tokenize
+    ├── main.rs                   ← siphon CLI
+    └── ...                       ← audit, compliance, policy, api,
+                                    cache, siem, webhooks, tui, etc.
+```
+
+**Future crates** (see
+[architecture/microservices.md](architecture/microservices.md)):
+`siphon-extractors`, `siphon-fs`, `siphon-ds`, `siphon-gw`,
+`siphon-ml`, `siphon-vision`, `siphon-classify`, `siphon-c2`.
 
 ## Where to read next
 
-The pipeline diagram is intentionally short. Each of these docs picks
-up one slice of it and goes deep:
-
 | Doc | What it covers |
 |---|---|
+| **[architecture/microservices.md](architecture/microservices.md)** | The pod architecture: Siphon-Core + FS/API/DS/GW, detector pods (ML/Vision/Classify), Siphon-C2 management plane, unified finding wire format, K8s deployment, migration path. |
 | **[architecture/pipeline.md](architecture/pipeline.md)** | Stage-by-stage walkthrough of `scan_text_with_config`. Read this first if you want to understand what runs in what order and why. |
 | **[architecture/normalization.md](architecture/normalization.md)** | The 10 normalization stages, what each one defends against, the offset-map invariant, and the known `collapse_padding` over-reach gotcha. |
 | **[architecture/context-matching.md](architecture/context-matching.md)** | The Aho-Corasick prefilter, the keyword hit index, why `MatchKind::LeftmostLongest` matters, and the shared-keyword fan-out fix. |
 | **[architecture/validation.md](architecture/validation.md)** | Pattern validation: how `validate_match` is wired, the always-run vs context-gated split, the validator inventory, and the labeled-corpus regression harness. |
-| **[architecture/extending.md](architecture/extending.md)** | "I want to add X" cookbook: new pattern, new validator, new corpus test, new keyword set, new file extractor. With file/line references. |
+| **[architecture/extending.md](architecture/extending.md)** | "I want to add X" cookbook: new pattern, new validator, new corpus test, new keyword set, new file extractor. |
 
 ## Cross-cutting concerns
 
@@ -127,9 +204,22 @@ lookup, and rejecting early saves work. See
 **Always-run vs context-gated.** Patterns split into two classes. The
 AC prefilter (stage E) is the biggest throughput win in the pipeline:
 for a clean English-prose document with zero PII keywords, ~80% of
-the 560 patterns are skipped entirely. The always-run set is the
-explicit exception list. See
+the patterns are skipped entirely. The always-run set is the explicit
+exception list. See
 [validation.md](architecture/validation.md#always-run-vs-context-gated).
+
+**Detector pluggability.** `siphon-core` exposes a `Detector` trait.
+Regex+validators are one `Detector` implementation; future ML, OCR,
+and classifier pods will be remote `Detector` implementations called
+via gRPC. Ingestion pods hold a list of detectors — some local, some
+remote — and call them in parallel per-request. See
+[microservices.md](architecture/microservices.md#detector-plugin-model).
+
+**Specificity drift discipline.** `pattern_specificity()` in
+`models.rs` and `PatternDef.specificity` in `patterns/mod.rs` must
+stay in sync. The `specificity_drift_zero` regression test
+(`tests/audit_spec.rs`) fails any commit that updates one without the
+other.
 
 **The alt-decodings pass is separate.** Stage H runs only when stage F
 found almost nothing on a small input. It does its own validate →

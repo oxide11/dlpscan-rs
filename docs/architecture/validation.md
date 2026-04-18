@@ -1,6 +1,6 @@
 # Validation Pipeline
 
-> **Entry point:** `src/validation.rs :: validate_match` (line ~2350+)
+> **Entry point:** `crates/siphon-core/src/validation.rs :: validate_match` (line ~2350+)
 >
 > Every regex match passes through this function before it can become
 > a reported finding. If the validator returns `false`, the match is
@@ -58,7 +58,7 @@ Every pattern is classified as one of:
 The pattern's regex runs on every scan. Either:
 - `pattern_specificity >= 0.85` (structurally tight: JWTs, Bitcoin
   Bech32, AWS keys, Private Keys, etc.)
-- Listed in `CRITICAL_ALWAYS_RUN` in `src/scanner/mod.rs` (line ~143)
+- Listed in `CRITICAL_ALWAYS_RUN` in `crates/siphon-core/src/scanner/mod.rs` (line ~143)
   — the curated set of national IDs, crypto addresses, phones, and
   core PCI/PII patterns
 
@@ -81,7 +81,7 @@ even if the regex matches, the match is dropped if no keyword is
 within `distance` characters (stage F.3).
 
 A pattern is context-gated if it appears in `is_context_required`
-in `src/models.rs` (line ~272). This is the explicit list of patterns
+in `crates/siphon-core/src/models.rs` (line ~272). This is the explicit list of patterns
 whose regexes are too loose to run without keyword evidence:
 US Bank Account Number, ACH Batch Number, Check Number, Date of Birth,
 Gender Marker, IMEISV, USA EIN, USA Passport, UK Passport, Australia
@@ -112,7 +112,7 @@ and 19 negative docs.
 
 ## Pattern specificity map
 
-**File:** `src/models.rs :: pattern_specificity` (line ~126)
+**File:** `crates/siphon-core/src/models.rs :: pattern_specificity` (line ~126)
 
 A hardcoded `match` block mapping each sub_category to a base
 specificity score (0.0–1.0). This score determines:
@@ -121,7 +121,7 @@ specificity score (0.0–1.0). This score determines:
 - The dedup tiebreaker when two patterns overlap
 
 The map must stay in sync with the `PatternDef.specificity` field in
-`src/patterns/mod.rs`. The print-only `test_patterndef_field_audit`
+`crates/siphon-core/src/patterns/mod.rs`. The print-only `test_patterndef_field_audit`
 test (line ~4660 of `patterns/mod.rs`) reports any drift between the
 two sources. As of the latest audit, there are ~8 remaining
 mismatches that a follow-up commit should sync.

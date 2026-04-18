@@ -1,6 +1,6 @@
 # Scan Pipeline — Stage by Stage
 
-> **Entry point:** `src/scanner/mod.rs :: scan_text_with_config` (line ~283)
+> **Entry point:** `crates/siphon-core/src/scanner/mod.rs :: scan_text_with_config` (line ~283)
 >
 > Every public API surface — `scan_text`, `InputGuard::scan`, the CLI,
 > the HTTP server — funnels into this single function. Understanding it
@@ -42,7 +42,7 @@ straight to stage B.
 
 ## Stage B: input validation
 
-**File:** `src/validation.rs :: validate_text_input` (line ~9)
+**File:** `crates/siphon-core/src/validation.rs :: validate_text_input` (line ~9)
 
 Two guards:
 - Empty input → `DlpError::EmptyInput`
@@ -57,7 +57,7 @@ memory as a single `&str`.
 
 ## Stage C: normalization
 
-**File:** `src/normalize/mod.rs :: normalize_text` (line ~1009)
+**File:** `crates/siphon-core/src/normalize/mod.rs :: normalize_text` (line ~1009)
 
 This is the largest single stage. It transforms the text to defeat
 evasion AND builds an `offset_map: Vec<usize>` that maps each byte in
@@ -88,7 +88,7 @@ Stages 7-10 only run if the text contains non-ASCII bytes (fast
 
 ## Stage D: context hit-index build
 
-**File:** `src/context/mod.rs :: build_hit_index` (line ~190)
+**File:** `crates/siphon-core/src/context/mod.rs :: build_hit_index` (line ~190)
 
 Runs an Aho-Corasick sweep over the normalized text to find every
 registered context keyword and record its byte position plus the
@@ -103,7 +103,7 @@ build, keyword deduplication, and the two bugs that were fixed
 
 ## Stage E: pattern prefilter
 
-**File:** `src/scanner/mod.rs` (lines ~320-343)
+**File:** `crates/siphon-core/src/scanner/mod.rs` (lines ~320-343)
 
 The scanner knows which keywords fired and where. It uses that to
 decide which of the ~560 compiled patterns to actually run:
@@ -131,7 +131,7 @@ attempt.
 
 ## Stage F: parallel regex match
 
-**File:** `src/scanner/mod.rs` (lines ~346-460)
+**File:** `crates/siphon-core/src/scanner/mod.rs` (lines ~346-460)
 
 For each active pattern, in parallel via `rayon::par_iter`:
 
@@ -176,7 +176,7 @@ For each active pattern, in parallel via `rayon::par_iter`:
 
 ## Stage G: flatten + max-matches cap
 
-**File:** `src/scanner/mod.rs` (lines ~471-475)
+**File:** `crates/siphon-core/src/scanner/mod.rs` (lines ~471-475)
 
 The `Vec<Vec<Match>>` from rayon gets flattened into a single
 `Vec<Match>` and truncated to `config.max_matches` (default
@@ -186,7 +186,7 @@ The `Vec<Vec<Match>>` from rayon gets flattened into a single
 
 ## Stage H: alt-decodings second pass
 
-**File:** `src/scanner/mod.rs` (lines ~494-560)
+**File:** `crates/siphon-core/src/scanner/mod.rs` (lines ~494-560)
 
 **Only runs if:**
 - `matches.len() < 3` (primary pass found almost nothing)
@@ -194,7 +194,7 @@ The `Vec<Vec<Match>>` from rayon gets flattened into a single
 - Elapsed time < `MAX_SCAN_SECONDS / 2`
 
 Generates alternative decodings of the normalized text
-(`src/normalize/mod.rs :: generate_alternative_decodings`):
+(`crates/siphon-core/src/normalize/mod.rs :: generate_alternative_decodings`):
 - ROT13
 - leet-speak (`h3ll0` → `hello`)
 - morse code
@@ -222,7 +222,7 @@ After stage H, three optional stages run in sequence. They're additive
 
 ### Stage I: deduplication
 
-**File:** `src/scoring.rs :: deduplicate_overlapping`
+**File:** `crates/siphon-core/src/scoring.rs :: deduplicate_overlapping`
 
 When two patterns match overlapping byte ranges (common: Visa + IMEISV
 on the same 16 digits), keep one. Tiebreaker chain:
@@ -235,7 +235,7 @@ Controlled by `config.deduplicate` (default `true`).
 
 ### Stage J: entropy secret scan
 
-**File:** `src/scanner/mod.rs :: scan_high_entropy_tokens` (line ~679)
+**File:** `crates/siphon-core/src/scanner/mod.rs :: scan_high_entropy_tokens` (line ~679)
 
 Controlled by `config.entropy_scan` (`EntropyMode`):
 
@@ -252,7 +252,7 @@ match) are dropped.
 
 ### Stage K: EDM (Exact Data Match)
 
-**File:** `src/scanner/mod.rs` (lines ~566-589)
+**File:** `crates/siphon-core/src/scanner/mod.rs` (lines ~566-589)
 
 Scans for registered known-sensitive values (literal strings). EDM
 matches are **never dominated** by regex matches — if you registered
@@ -262,7 +262,7 @@ known data, not a pattern guess.
 
 ### Stage L: LSH (Document Similarity)
 
-**File:** `src/scanner/mod.rs` (lines ~591-610)
+**File:** `crates/siphon-core/src/scanner/mod.rs` (lines ~591-610)
 
 MinHash/LSH query against a registered document vault. Detects
 whole-document similarity: "is this document similar to an internal

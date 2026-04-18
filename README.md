@@ -401,22 +401,64 @@ Full reference:
 
 ## Architecture
 
+Polygon Siphon is designed as a **shared scanner engine** plus a
+**family of specialized pods** that each handle one class of
+ingestion or detection:
+
+```
+                    ┌─────────────────┐
+                    │   Siphon-Core   │ ← scanner engine (library)
+                    │  561 patterns,  │
+                    │ 72 validators   │
+                    └────────┬────────┘
+    ┌─────────────┬──────────┼──────────┬──────────────┐
+    │             │          │          │              │
+ Ingestion pods (how data gets in)
+    │             │          │          │
+ ┌──▼──┐    ┌────▼────┐ ┌───▼───┐ ┌───▼──┐
+ │ FS  │    │   API   │ │  DS   │ │  GW  │
+ │files│    │sync HTTP│ │stream │ │proxy │
+ └─────┘    └─────────┘ └───────┘ └──────┘
+                        │
+ Detector pods (how detection happens, called via gRPC)
+                        │
+    ┌───────────────────┼────────────────────┐
+    │                   │                    │
+ ┌──▼───┐         ┌────▼────┐         ┌────▼────┐
+ │  ML  │         │ Vision  │         │Classify │
+ │ GPU  │         │  OCR    │         │doc type │
+ └──────┘         └─────────┘         └─────────┘
+                        │
+                        ▼
+                 ┌───────────┐
+                 │ Siphon-C2 │ ← admin web UI, management plane
+                 └───────────┘
+```
+
+Every pod depends on `siphon-core` for detection logic, so scanning
+is identical everywhere. Pods differ only in how data gets in and
+what's connected to the output. See
+[docs/architecture/microservices.md](docs/architecture/microservices.md)
+for the full pod inventory and deployment topology.
+
+### Scanner pipeline (inside `siphon-core`)
+
 ```
 Input text
   │
-  ├── Filename context (pipeline: prepend filename words as keywords)
+  ├── normalize (ASCII fast-path, or NFKC + homoglyph + zero-width
+  │            + base64/base32/hex/url decode with nested iteration)
   │
-  ├── normalize (ASCII fast-path, or NFKC + homoglyph + zero-width)
-  │
-  ├── Aho-Corasick keyword pre-scan (single O(n) pass)
-  │   └── Builds ContextHitIndex: (category, sub_category) → positions
+  ├── Aho-Corasick keyword pre-scan (single O(n) pass over 5,000+
+  │   multilingual keywords across 6 languages)
   │
   ├── Pattern prefilter
-  │   ├── 107 always-run patterns (specificity ≥ 0.85 or critical)
-  │   └── 453 context-gated patterns (only run if keywords present)
+  │   ├── always-run patterns (specificity ≥ 0.85 or critical set)
+  │   └── context-gated patterns (only run if keywords present)
   │
   ├── Parallel regex matching (Rayon par_iter over active patterns)
-  │   ├── Structural validation (Luhn, SWIFT, CUSIP, SEDOL, TFN, SSN)
+  │   ├── Structural validation (72 checksum validators — Luhn,
+  │   │   mod-97, Verhoeff, Base58Check, Bech32 polymod, ISO 3779)
   │   ├── Context proximity check (AC hit index lookup)
   │   └── Confidence scoring (base + context boost)
   │
@@ -428,7 +470,9 @@ Input text
   │
   ├── LSH query (optional: document similarity check)
   │
-  └── Action: Flag | Redact | Obfuscate | Tokenize | Reject
+  └── Classification policy (TLP, sensitivity labels)
+       │
+       └── Action: Flag | Redact | Obfuscate | Tokenize | Reject
 ```
 
 ## CLI
@@ -547,6 +591,8 @@ See [docs/enterprise/security.md](docs/enterprise/security.md) for full details.
 
 | Document | Description |
 |---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Top-level architecture: two-layer model, pod inventory, workspace layout |
+| [docs/architecture/microservices.md](docs/architecture/microservices.md) | Full pod design — Siphon-Core + FS/API/DS/GW, detector pods (ML/Vision/Classify), Siphon-C2 management plane, deployment topology |
 | [docs/getting-started/concepts.md](docs/getting-started/concepts.md) | Core concepts: specificity, context keywords, validators, actions |
 | [docs/getting-started/quickstart.md](docs/getting-started/quickstart.md) | Quick start guide with CLI and Rust API examples |
 | [docs/getting-started/configuration.md](docs/getting-started/configuration.md) | Full configuration reference (config file, env vars, CLI, policies) |
