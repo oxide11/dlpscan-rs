@@ -3,8 +3,55 @@
 //! Provides URL parsing, SSRF validation, and a safe HTTP POST client
 //! with DNS rebinding protection.
 
+use once_cell::sync::Lazy;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs};
+#[cfg(test)]
+use std::sync::atomic::{AtomicI8, Ordering};
 use std::time::Duration;
+
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
+/// When `SIPHON_ALLOW_PRIVATE_DESTINATIONS` is set to `1`/`true`/`yes`/`on`,
+/// the SSRF defenses ([`is_safe_url`] and [`safe_http_post`]) are bypassed
+/// and outbound HTTP can target private/loopback/link-local addresses.
+///
+/// Intended for development and integration testing against local stacks
+/// (e.g., a Splunk container at 127.0.0.1). Production deployments should
+/// leave this unset so the default-deny policy applies. Cached at first
+/// read so an attacker who later writes the env var inside the process
+/// cannot weaken the policy at runtime.
+static ALLOW_PRIVATE_DESTINATIONS: Lazy<bool> = Lazy::new(|| {
+    matches!(
+        std::env::var("SIPHON_ALLOW_PRIVATE_DESTINATIONS")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+});
+
+/// Test-only override of [`allow_private_destinations`]. `-1` = unset
+/// (delegate to the env-var-cached static), `0` = force-off, `1` =
+/// force-on. Lets tests exercise both branches without racing on the
+/// global env var.
+#[cfg(test)]
+static TEST_OVERRIDE: AtomicI8 = AtomicI8::new(-1);
+
+/// Returns `true` if the operator has explicitly opted in to allowing
+/// outbound HTTP requests to private/loopback/link-local addresses.
+pub fn allow_private_destinations() -> bool {
+    #[cfg(test)]
+    {
+        match TEST_OVERRIDE.load(Ordering::Relaxed) {
+            0 => return false,
+            1 => return true,
+            _ => {}
+        }
+    }
+    *ALLOW_PRIVATE_DESTINATIONS
+}
 
 // ---------------------------------------------------------------------------
 // URL parsing
@@ -151,8 +198,15 @@ pub fn is_private_ip(ip: IpAddr) -> bool {
 
 /// Check whether a URL is safe to connect to (pre-resolution SSRF check).
 ///
-/// Rejects localhost, private IPs, and reserved ranges.
+/// Rejects localhost, private IPs, and reserved ranges. When
+/// `SIPHON_ALLOW_PRIVATE_DESTINATIONS` is enabled, returns `true` for
+/// any syntactically valid URL — for development/testing only.
 pub fn is_safe_url(url: &str) -> bool {
+    if allow_private_destinations() {
+        // Still require a parseable scheme/host so we don't silently accept
+        // malformed input — but skip the IP-range checks.
+        return parse_url(url).is_ok();
+    }
     let parsed = match parse_url(url) {
         Ok(p) => p,
         Err(_) => return false,
@@ -230,13 +284,17 @@ pub fn safe_http_post(
         if all_addrs.is_empty() {
             return Err("DNS resolution returned no addresses".to_string());
         }
-        // Reject if ANY resolved address is private (prevents DNS round-robin bypass)
-        for resolved in &all_addrs {
-            if is_private_ip(resolved.ip()) {
-                return Err(format!(
-                    "Target resolved to private/reserved IP: {}",
-                    resolved.ip()
-                ));
+        // Reject if ANY resolved address is private (prevents DNS round-robin bypass).
+        // Bypass when SIPHON_ALLOW_PRIVATE_DESTINATIONS is set — operators
+        // explicitly opt in to private targets for dev/test stacks.
+        if !allow_private_destinations() {
+            for resolved in &all_addrs {
+                if is_private_ip(resolved.ip()) {
+                    return Err(format!(
+                        "Target resolved to private/reserved IP: {}",
+                        resolved.ip()
+                    ));
+                }
             }
         }
         all_addrs[0]
@@ -390,5 +448,37 @@ mod tests {
         assert_eq!(safe, "example.comInjected: header");
         assert!(!safe.contains('\r'));
         assert!(!safe.contains('\n'));
+    }
+
+    /// Serializes the test-override mutations so concurrent tests don't
+    /// race on the global atomic. Each test that flips the override must
+    /// hold this guard for its duration.
+    static TEST_OVERRIDE_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn test_allow_private_destinations_default_off() {
+        let _guard = TEST_OVERRIDE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        TEST_OVERRIDE.store(0, Ordering::Relaxed);
+        assert!(!allow_private_destinations());
+        assert!(!is_safe_url("http://127.0.0.1/test"));
+        assert!(!is_safe_url("http://10.0.0.1/api"));
+        assert!(!is_safe_url("http://169.254.169.254/latest/meta-data/"));
+        TEST_OVERRIDE.store(-1, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn test_allow_private_destinations_opt_in() {
+        let _guard = TEST_OVERRIDE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        TEST_OVERRIDE.store(1, Ordering::Relaxed);
+        assert!(allow_private_destinations());
+        // Loopback and RFC1918 now accepted at pre-resolution stage.
+        assert!(is_safe_url("http://127.0.0.1/test"));
+        assert!(is_safe_url("http://10.0.0.1/api"));
+        assert!(is_safe_url("http://169.254.169.254/latest/meta-data/"));
+        // Malformed URLs are still rejected — opt-in only relaxes the
+        // private-IP rule, not the parser.
+        assert!(!is_safe_url("not-a-url"));
+        assert!(!is_safe_url("ftp://example.com"));
+        TEST_OVERRIDE.store(-1, Ordering::Relaxed);
     }
 }
