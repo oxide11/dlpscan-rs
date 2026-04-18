@@ -5,14 +5,19 @@
 //! inter-pod mTLS is supported for service-mesh deployments.
 //!
 //! Configuration via environment variables:
-//!   SIPHON_PORT          Listen port (default: 8080)
-//!   SIPHON_BIND          Bind address (default: 127.0.0.1)
-//!   SIPHON_API_KEY       Required API key (SHA-256 hashed at rest)
-//!   SIPHON_TLS_CERT      TLS certificate path (PEM)
-//!   SIPHON_TLS_KEY       TLS private key path (PEM)
-//!   SIPHON_CORS_ORIGINS  Comma-separated allowed origins (default: none)
-//!   SIPHON_RATE_LIMIT    Max requests per minute per IP (default: 120)
-//!   SIPHON_REQUEST_TIMEOUT_SECS  Request timeout (default: 30)
+//!   SIPHON_PORT                      Listen port (default: 8080)
+//!   SIPHON_BIND                      Bind address (default: 127.0.0.1)
+//!   SIPHON_API_KEY                   Required API key (SHA-256 hashed at rest)
+//!   SIPHON_TLS_CERT                  TLS certificate path (PEM)
+//!   SIPHON_TLS_KEY                   TLS private key path (PEM)
+//!   SIPHON_CORS_ORIGINS              Comma-separated allowed origins (default: none)
+//!   SIPHON_RATE_LIMIT                Max requests per minute per IP (default: 120)
+//!   SIPHON_REQUEST_TIMEOUT_SECS      Request timeout (default: 30)
+//!   SIPHON_AUDIT_LOG_PATH            Audit log file path (JSONL)
+//!   SIPHON_AUDIT_SIGNING_KEY_HEX     Hex-encoded HMAC-SHA256 key (enables
+//!                                    tamper-evident chain mode)
+//!   SIPHON_AUDIT_TAIL_PATH           Chain tail state path (persists chain
+//!                                    across process restarts; requires key)
 
 use axum::{
     body::Body,
@@ -25,6 +30,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use siphon_core::audit::{
+    audit_event, set_audit_logger, AuditEvent, AuditLogger, FileAuditHandler,
+    RotatingFileAuditHandler,
+};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -39,7 +48,6 @@ use tower_http::trace::TraceLayer;
 
 #[derive(Clone)]
 struct AppState {
-    version: &'static str,
     api_key_hash: Option<[u8; 32]>,
     rate_limiter: Arc<Mutex<RateLimiter>>,
     rate_limit: u32,
@@ -89,11 +97,86 @@ impl RateLimiter {
 }
 
 // ---------------------------------------------------------------------------
+// Audit logger construction
+// ---------------------------------------------------------------------------
+
+/// Build an [`AuditLogger`] from explicit configuration. Returns `None`
+/// when `log_path` is not set — with no log path, signing and tail
+/// persistence have nothing to write to. Kept out of `main` so the
+/// config parsing can be unit-tested without racing on std::env.
+///
+/// - `log_path`: audit log file (JSONL). When set, a
+///   [`RotatingFileAuditHandler`] is installed.
+/// - `signing_key_hex`: hex-encoded HMAC-SHA256 key. When set and the
+///   log path is set, chain mode is enabled; every event is re-signed
+///   with its predecessor's signature in `prev_signature`, making the
+///   log tamper-evident.
+/// - `tail_path`: chain tail persistence file. Only honoured when chain
+///   mode is enabled. Lets the chain resume across process restarts.
+fn build_audit_logger(
+    log_path: Option<&str>,
+    signing_key_hex: Option<&str>,
+    tail_path: Option<&str>,
+) -> Option<AuditLogger> {
+    let path = log_path?;
+    // 50 MB / 10 rotated files — matches the RotatingFileAuditHandler
+    // defaults used in the root siphon crate.
+    let mut handler = RotatingFileAuditHandler::new(path, 50 * 1024 * 1024, 10);
+
+    if let Some(hex_key) = signing_key_hex {
+        match hex::decode(hex_key) {
+            Ok(key) if key.len() >= 16 => {
+                handler = handler.with_chain_key(&key);
+                if let Some(tp) = tail_path {
+                    handler = handler.with_chain_tail_path(tp);
+                }
+                tracing::info!(
+                    log_path = %path,
+                    tail = tail_path.is_some(),
+                    "Audit log chain signing enabled"
+                );
+            }
+            Ok(_) => {
+                tracing::warn!(
+                    "SIPHON_AUDIT_SIGNING_KEY_HEX is too short (<16 bytes); audit chain disabled"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "SIPHON_AUDIT_SIGNING_KEY_HEX is not valid hex; audit chain disabled"
+                );
+            }
+        }
+    } else {
+        tracing::info!(log_path = %path, "Audit logging enabled (unsigned — set SIPHON_AUDIT_SIGNING_KEY_HEX for tamper-evidence)");
+    }
+
+    // Also mirror events to a lightweight file handler in case
+    // rotation config differs in future — but for now the rotating
+    // handler IS our one file handler. Suppress the unused import for
+    // FileAuditHandler: it's exposed as part of the re-export surface
+    // but this pod only installs the rotating variant.
+    let _ = std::marker::PhantomData::<FileAuditHandler>;
+
+    Some(AuditLogger::new().with_handler(Box::new(handler)))
+}
+
+/// Emit an event via the global audit logger (no-op if none is set).
+/// Wraps [`audit_event`] so call sites in this binary go through a
+/// single function that can later be extended with additional
+/// enrichment (source_pod, correlation IDs, etc.).
+fn emit_audit(event: AuditEvent) {
+    audit_event(&event.with_source("siphon-api"));
+}
+
+// ---------------------------------------------------------------------------
 // Auth middleware
 // ---------------------------------------------------------------------------
 
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     request: Request<Body>,
     next: Next,
@@ -119,6 +202,18 @@ async fn auth_middleware(
             }
             if diff != 0 {
                 tracing::warn!("auth_failed: invalid API key");
+                if let Ok(event) = AuditEvent::new("REJECT") {
+                    emit_audit(
+                        event
+                            .with_action("auth")
+                            .with_outcome("rejected")
+                            .with_source_ip(&addr.ip().to_string())
+                            .with_metadata(
+                                "reason",
+                                serde_json::json!("invalid_api_key"),
+                            ),
+                    );
+                }
                 return (
                     StatusCode::UNAUTHORIZED,
                     Json(ErrorResponse { error: "invalid API key".into() }),
@@ -127,6 +222,15 @@ async fn auth_middleware(
             next.run(request).await
         }
         None => {
+            if let Ok(event) = AuditEvent::new("REJECT") {
+                emit_audit(
+                    event
+                        .with_action("auth")
+                        .with_outcome("rejected")
+                        .with_source_ip(&addr.ip().to_string())
+                        .with_metadata("reason", serde_json::json!("missing_api_key")),
+                );
+            }
             (
                 StatusCode::UNAUTHORIZED,
                 [(header::WWW_AUTHENTICATE, "Bearer")],
@@ -154,6 +258,15 @@ async fn rate_limit_middleware(
 
     if !allowed {
         tracing::warn!(ip = %ip, "rate_limited");
+        if let Ok(event) = AuditEvent::new("REJECT") {
+            emit_audit(
+                event
+                    .with_action("rate_limit")
+                    .with_outcome("rejected")
+                    .with_source_ip(&ip)
+                    .with_metadata("reason", serde_json::json!("rate_limit_exceeded")),
+            );
+        }
         return (
             StatusCode::TOO_MANY_REQUESTS,
             [(header::RETRY_AFTER, "60")],
@@ -255,8 +368,11 @@ async fn health() -> Json<HealthResponse> {
 }
 
 async fn scan(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<ScanRequest>,
 ) -> Result<Json<ScanResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let source_ip = addr.ip().to_string();
+
     if req.text.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -289,6 +405,16 @@ async fn scan(
 
     let matches = scan_text_with_config(&req.text, &config).map_err(|e| {
         tracing::error!(request_id = %request_id, error = %e, "scan_failed");
+        if let Ok(event) = AuditEvent::new("SCAN") {
+            emit_audit(
+                event
+                    .with_action("scan")
+                    .with_outcome("error")
+                    .with_request_id(&request_id)
+                    .with_source_ip(&source_ip)
+                    .with_metadata("text_len", serde_json::json!(req.text.len())),
+            );
+        }
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
@@ -298,6 +424,7 @@ async fn scan(
     })?;
 
     let elapsed = start.elapsed();
+    let duration_ms = elapsed.as_millis() as f64;
 
     let findings: Vec<Finding> = matches
         .into_iter()
@@ -313,21 +440,43 @@ async fn scan(
         .collect();
 
     let count = findings.len();
+    let categories_found: Vec<String> = findings
+        .iter()
+        .map(|f| f.category.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect();
 
     tracing::info!(
         request_id = %request_id,
         text_len = req.text.len(),
         findings_count = count,
-        duration_ms = elapsed.as_millis() as u64,
+        duration_ms = duration_ms as u64,
         "scan_complete"
     );
+
+    if let Ok(event) = AuditEvent::new("SCAN") {
+        let outcome = if count == 0 { "success" } else { "findings_detected" };
+        emit_audit(
+            event
+                .with_action("scan")
+                .with_outcome(outcome)
+                .with_is_clean(count == 0)
+                .with_finding_count(count)
+                .with_categories_found(categories_found)
+                .with_duration_ms(duration_ms)
+                .with_request_id(&request_id)
+                .with_source_ip(&source_ip)
+                .with_metadata("text_len", serde_json::json!(req.text.len())),
+        );
+    }
 
     Ok(Json(ScanResponse {
         source_pod: "siphon-api",
         request_id,
         findings,
         finding_count: count,
-        scan_duration_ms: elapsed.as_millis() as u64,
+        scan_duration_ms: duration_ms as u64,
     }))
 }
 
@@ -376,6 +525,17 @@ async fn main() {
     let tls_cert = std::env::var("SIPHON_TLS_CERT").ok();
     let tls_key = std::env::var("SIPHON_TLS_KEY").ok();
 
+    // Install the global audit logger (no-op when SIPHON_AUDIT_LOG_PATH
+    // is unset). Done before the router is built so every emitted event
+    // — including any from startup itself — has a handler to dispatch to.
+    if let Some(logger) = build_audit_logger(
+        std::env::var("SIPHON_AUDIT_LOG_PATH").ok().as_deref(),
+        std::env::var("SIPHON_AUDIT_SIGNING_KEY_HEX").ok().as_deref(),
+        std::env::var("SIPHON_AUDIT_TAIL_PATH").ok().as_deref(),
+    ) {
+        set_audit_logger(logger);
+    }
+
     let cors = match std::env::var("SIPHON_CORS_ORIGINS") {
         Ok(origins) if !origins.is_empty() => {
             let allowed: Vec<HeaderValue> = origins
@@ -393,7 +553,6 @@ async fn main() {
     };
 
     let state = Arc::new(AppState {
-        version: env!("CARGO_PKG_VERSION"),
         api_key_hash,
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
         rate_limit,
@@ -472,4 +631,98 @@ async fn shutdown_signal() {
         .await
         .expect("failed to install signal handler");
     tracing::info!("shutdown signal received, draining connections...");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use siphon_core::audit::AuditEvent;
+
+    #[test]
+    fn test_build_audit_logger_none_without_path() {
+        // No log path => no logger. Signing key alone is not enough;
+        // without a file to write to, signatures have nowhere to go.
+        assert!(build_audit_logger(None, None, None).is_none());
+        assert!(build_audit_logger(None, Some("deadbeef"), None).is_none());
+        assert!(
+            build_audit_logger(None, Some("deadbeef"), Some("/tmp/tail")).is_none(),
+            "tail path without log path must not synthesise a logger"
+        );
+    }
+
+    #[test]
+    fn test_build_audit_logger_unsigned_writes_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("audit.jsonl");
+        let logger = build_audit_logger(Some(log_path.to_str().unwrap()), None, None)
+            .expect("logger should be built");
+
+        logger.log(&AuditEvent::new("SCAN").unwrap().with_user("test-user"));
+
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        assert!(content.contains("SCAN"));
+        assert!(content.contains("test-user"));
+        // Without a signing key, events are unsigned.
+        let event: AuditEvent = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        assert!(event.signature.is_none());
+        assert!(event.prev_signature.is_none());
+    }
+
+    #[test]
+    fn test_build_audit_logger_chain_mode_signs_and_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("audit.jsonl");
+        let tail_path = dir.path().join("audit.tail");
+        // 32-byte hex key (64 hex chars)
+        let key_hex = "aa".repeat(32);
+        let logger = build_audit_logger(
+            Some(log_path.to_str().unwrap()),
+            Some(&key_hex),
+            Some(tail_path.to_str().unwrap()),
+        )
+        .expect("logger should be built with chain mode");
+
+        logger.log(&AuditEvent::new("SCAN").unwrap().with_user("a"));
+        logger.log(&AuditEvent::new("SCAN").unwrap().with_user("b"));
+
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        let events: Vec<AuditEvent> = content
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(events.len(), 2);
+
+        let key = hex::decode(&key_hex).unwrap();
+        assert!(events[0].signature.is_some());
+        assert!(events[0].prev_signature.is_none());
+        assert!(events[0].verify(&key));
+
+        assert!(events[1].signature.is_some());
+        assert_eq!(
+            events[1].prev_signature.as_deref(),
+            events[0].signature.as_deref(),
+            "second event must link to first"
+        );
+        assert!(events[1].verify(&key));
+
+        // Tail file now reflects the second event's signature.
+        let tail = std::fs::read_to_string(&tail_path).unwrap();
+        assert_eq!(tail, events[1].signature.clone().unwrap());
+    }
+
+    #[test]
+    fn test_build_audit_logger_invalid_hex_key_falls_back_to_unsigned() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("audit.jsonl");
+        let logger =
+            build_audit_logger(Some(log_path.to_str().unwrap()), Some("not-valid-hex!"), None)
+                .expect("logger should still be built, just unsigned");
+        logger.log(&AuditEvent::new("SCAN").unwrap());
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        let event: AuditEvent = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        assert!(
+            event.signature.is_none(),
+            "invalid hex key should disable signing, not error out"
+        );
+    }
 }
