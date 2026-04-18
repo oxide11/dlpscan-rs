@@ -1,25 +1,13 @@
-```
-                        ___
-                    .-'   `-.
-                  /    ___    \
-        ~@      /   /     \   \      @~
-         \    /   /  (o o)  \   \    /
-          \  |   |    \_/    |   |  /
-    ~@_    \ |   |   .-'-.   |   | /    _@~
-        `-._\|    \ (     ) /    |/_.~'
-             \     '.`---'.'     /
-     @~_      \   _/`-._.-'\   /      _~@
-         `-.   '-'  /  |  \  `-'   .-'
-            `-.   _/ __|__ \_   .-'
-               `-/  /     \  \-'
-                /  /       \  \
-               '~~'         '~~'
+<p align="center">
+  <img src="docs/assets/logo.png" alt="Polygon Siphon" width="300">
+</p>
 
-        P O L Y G O N   S I P H O N
-```
+<h1 align="center">Polygon Siphon</h1>
 
-High-performance DLP scanner written in Rust. Detects, redacts, and protects
-sensitive data with exceptional throughput.
+<p align="center">
+  High-performance DLP scanner written in Rust. Detects, redacts, and protects
+  sensitive data with exceptional throughput.
+</p>
 
 **561 patterns** across **126 categories**. **72 checksum validators** for
 national IDs, financial identifiers, and crypto addresses. **510+ tests**
