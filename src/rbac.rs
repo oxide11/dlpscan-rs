@@ -94,12 +94,17 @@ pub fn resolve_role(
 ///
 /// **DEPRECATED:** Use `resolve_role()` instead for production. This function
 /// trusts the client-supplied `X-Role` header, which can be trivially spoofed.
-/// It is only safe in trusted internal networks where all clients are verified.
+/// Restricted to `pub(crate)` so external library consumers cannot bypass
+/// the key-derived RBAC path; retained for the in-crate regression tests
+/// that still pin its parsing behaviour.
 #[deprecated(
     since = "2.1.0",
     note = "Use resolve_role() which derives roles from authenticated API keys"
 )]
-pub fn extract_role(raw_request: &str) -> Role {
+// Kept for the in-crate parsing regression test. No production callers
+// remain; this is dead code outside `cfg(test)`.
+#[allow(dead_code)]
+pub(crate) fn extract_role(raw_request: &str) -> Role {
     raw_request
         .lines()
         .find(|l| l.to_lowercase().starts_with("x-role:"))
@@ -158,6 +163,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn test_extract_role_from_header() {
         assert_eq!(
             extract_role("GET / HTTP/1.1\r\nX-Role: admin\r\n"),

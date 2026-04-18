@@ -70,6 +70,14 @@ pub struct AuditEvent {
     /// canonical JSON of all other fields when a signing key is configured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    /// HMAC-SHA256 signature of the immediately preceding event in the
+    /// log (hex-encoded). Used by [`RotatingFileAuditHandler`] in chain
+    /// mode to make the audit log tamper-evident: deleting or modifying
+    /// any event invalidates the verification of every event that
+    /// follows it. `None` for the first event in a chain or when the
+    /// handler is not in chain mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev_signature: Option<String>,
 }
 
 impl AuditEvent {
@@ -97,7 +105,16 @@ impl AuditEvent {
             outcome: None,
             metadata: HashMap::new(),
             signature: None,
+            prev_signature: None,
         })
+    }
+
+    /// Set the `prev_signature` linking this event to the previous one in a
+    /// hash chain. Called by [`RotatingFileAuditHandler`] before signing in
+    /// chain mode; rarely needed by application code.
+    pub fn with_prev_signature(mut self, prev: Option<String>) -> Self {
+        self.prev_signature = prev;
+        self
     }
 
     pub fn with_user(mut self, user: &str) -> Self {
@@ -347,15 +364,38 @@ impl AuditHandler for FileAuditHandler {
     }
 }
 
+/// Per-handler mutable state behind the write lock.
+struct HandlerState {
+    /// HMAC signing key used to chain events. `None` disables chain mode;
+    /// each event is written as-is with whatever signature it carries.
+    chain_key: Option<Vec<u8>>,
+    /// Signature of the most recently written event, used as
+    /// `prev_signature` for the next event. Resets on rotation only when
+    /// chain mode is off — in chain mode the chain spans rotations so an
+    /// attacker cannot rotate-then-replace to hide entries.
+    last_signature: Option<String>,
+}
+
 /// Writes JSON lines to a file with size-based rotation (thread-safe, append mode, 0o600).
 ///
 /// When the active log exceeds `max_bytes`, it is renamed to `{path}.1` (shifting
 /// any existing rotated files up to `max_files`), and a fresh file is opened.
+///
+/// # Tamper-evident chain mode
+///
+/// Construct with [`Self::with_chain_key`] to enable a rolling HMAC chain.
+/// Each event is signed with `HMAC-SHA256(key, canonical_json)` *after* its
+/// `prev_signature` field is set to the previous event's signature. Any
+/// modification, deletion, or reordering of events invalidates verification
+/// of every subsequent event in the chain, so post-hoc log scrubbing becomes
+/// detectable. The chain spans rotations within a single process lifetime;
+/// process restarts begin a new chain segment (the previous segment's tail
+/// signature should be stored externally to verify across restarts).
 pub struct RotatingFileAuditHandler {
     path: String,
     max_bytes: u64,
     max_files: usize,
-    lock: Mutex<()>,
+    state: Mutex<HandlerState>,
 }
 
 impl RotatingFileAuditHandler {
@@ -368,8 +408,36 @@ impl RotatingFileAuditHandler {
             path: path.to_string(),
             max_bytes: max_bytes.max(1024), // minimum 1 KB
             max_files: max_files.max(1),    // minimum 1 rotated file
-            lock: Mutex::new(()),
+            state: Mutex::new(HandlerState {
+                chain_key: None,
+                last_signature: None,
+            }),
         }
+    }
+
+    /// Enable tamper-evident hash-chain signing. The handler will overwrite
+    /// each event's `signature` field with a fresh HMAC computed over the
+    /// canonical JSON (including the `prev_signature` set from the
+    /// previous event). The `key` is held in the handler for the lifetime
+    /// of the process. Chain state begins fresh; supply the prior tail
+    /// signature via [`Self::with_seeded_chain`] to continue a chain
+    /// across process restarts.
+    pub fn with_chain_key(mut self, key: &[u8]) -> Self {
+        if let Ok(st) = self.state.get_mut() {
+            st.chain_key = Some(key.to_vec());
+        }
+        self
+    }
+
+    /// Seed the chain with the tail signature of a previously closed
+    /// segment, so the first event written in this process links back to
+    /// it. No-op if chain mode is not enabled. Persisting the tail
+    /// signature across restarts is the operator's responsibility.
+    pub fn with_seeded_chain(mut self, prev_tail: &str) -> Self {
+        if let Ok(st) = self.state.get_mut() {
+            st.last_signature = Some(prev_tail.to_string());
+        }
+        self
     }
 
     fn rotate(&self) {
@@ -397,8 +465,28 @@ impl RotatingFileAuditHandler {
 
 impl AuditHandler for RotatingFileAuditHandler {
     fn handle(&self, event: &AuditEvent) {
-        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let json = match serde_json::to_string(event) {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+
+        // Chain mode: overwrite the event's prev_signature with the tail
+        // of the chain and re-sign so the chain link is itself signed.
+        // Non-chain mode: pass the event through verbatim.
+        let event_to_write: AuditEvent = if let Some(ref key) = state.chain_key {
+            let prev = state.last_signature.clone();
+            let mut e = event.clone();
+            e.prev_signature = prev;
+            e.signature = None;
+            match e.sign(key) {
+                Ok(signed) => signed,
+                Err(err) => {
+                    tracing::error!(path = %self.path, error = %err, "Failed to sign chained audit event");
+                    return;
+                }
+            }
+        } else {
+            event.clone()
+        };
+
+        let json = match serde_json::to_string(&event_to_write) {
             Ok(j) => j,
             Err(e) => {
                 tracing::error!(path = %self.path, error = %e, "Failed to serialize audit event");
@@ -412,7 +500,9 @@ impl AuditHandler for RotatingFileAuditHandler {
             return;
         }
 
-        // Check if rotation is needed
+        // Check if rotation is needed. The chain spans rotations: we do
+        // NOT reset last_signature here, so the first event of the new
+        // file links back to the last event of the rotated file.
         if let Ok(meta) = std::fs::metadata(&self.path) {
             if meta.len() >= self.max_bytes {
                 self.rotate();
@@ -435,11 +525,19 @@ impl AuditHandler for RotatingFileAuditHandler {
             .open(&self.path);
 
         match file {
-            Ok(mut f) => {
-                if let Err(e) = writeln!(f, "{json}") {
+            Ok(mut f) => match writeln!(f, "{json}") {
+                Ok(()) => {
+                    // Advance the chain only on successful write so a
+                    // failed write doesn't leave a dangling prev_signature
+                    // pointing at an event that was never persisted.
+                    if state.chain_key.is_some() {
+                        state.last_signature = event_to_write.signature.clone();
+                    }
+                }
+                Err(e) => {
                     tracing::error!(path = %self.path, error = %e, "Failed to write audit log");
                 }
-            }
+            },
             Err(e) => {
                 tracing::error!(path = %self.path, error = %e, "Failed to open audit log file");
             }
@@ -611,6 +709,7 @@ pub fn event_from_scan(
                 outcome: None,
                 metadata: HashMap::new(),
                 signature: None,
+                prev_signature: None,
             });
         }
     };
@@ -1008,5 +1107,85 @@ mod tests {
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("SCAN"));
+    }
+
+    #[test]
+    fn test_chain_links_consecutive_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.jsonl");
+        let key = b"chain-test-key-32-bytes-aaaaaaaa";
+        let handler =
+            RotatingFileAuditHandler::new(path.to_str().unwrap(), 1024 * 1024, 5).with_chain_key(key);
+
+        handler.handle(&AuditEvent::new("SCAN").unwrap().with_user("a"));
+        handler.handle(&AuditEvent::new("SCAN").unwrap().with_user("b"));
+        handler.handle(&AuditEvent::new("SCAN").unwrap().with_user("c"));
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let events: Vec<AuditEvent> = content
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(events.len(), 3);
+
+        // First event has no predecessor.
+        assert!(events[0].prev_signature.is_none());
+        // Each subsequent event's prev_signature equals the previous event's signature.
+        assert_eq!(
+            events[1].prev_signature.as_deref(),
+            events[0].signature.as_deref()
+        );
+        assert_eq!(
+            events[2].prev_signature.as_deref(),
+            events[1].signature.as_deref()
+        );
+        // Every event verifies under the chain key.
+        for e in &events {
+            assert!(e.verify(key), "event failed signature verification");
+        }
+    }
+
+    #[test]
+    fn test_chain_tampering_invalidates_subsequent_events() {
+        // Modify the first event after the fact (simulating an attacker
+        // editing the audit file). Because the second event's
+        // prev_signature is signed in, the attacker would need to forge
+        // both — and that requires the HMAC key. Re-signing the first
+        // event with a wrong key changes its signature, breaking the
+        // link.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.jsonl");
+        let key = b"chain-tamper-key-32-bytes-bbbbbb";
+        let handler =
+            RotatingFileAuditHandler::new(path.to_str().unwrap(), 1024 * 1024, 5).with_chain_key(key);
+
+        handler.handle(&AuditEvent::new("SCAN").unwrap().with_user("victim"));
+        handler.handle(&AuditEvent::new("SCAN").unwrap().with_user("witness"));
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let mut events: Vec<AuditEvent> = content
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        let original_first_sig = events[0].signature.clone();
+
+        // Attacker modifies the first event (e.g., changes the user) and
+        // tries to re-sign with a wrong key — they cannot produce a valid
+        // signature without the real chain key.
+        events[0].user = Some("attacker".to_string());
+        events[0] = events[0].clone().sign(b"wrong-key").unwrap();
+
+        // Second event still verifies in isolation (its own signature
+        // hasn't been touched), BUT its prev_signature no longer points
+        // to a verifiable predecessor — the chain is broken.
+        assert!(events[1].verify(key));
+        assert_ne!(
+            events[1].prev_signature.as_deref(),
+            events[0].signature.as_deref(),
+            "tampered event has different signature, breaking chain link"
+        );
+        // The original first signature is still what event[1] points to,
+        // proving the tamper changed the on-disk hash.
+        assert_eq!(events[1].prev_signature, original_first_sig);
     }
 }
