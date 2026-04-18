@@ -8,6 +8,7 @@
 //! Ingestion pods (siphon-fs, siphon-api, siphon-ds, siphon-gw)
 //! depend on this crate for detection logic.
 
+pub mod audit;
 pub mod bin_lookup;
 pub mod classification;
 pub mod context;

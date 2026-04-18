@@ -25,3 +25,6 @@ rand = "0.8"
 
 [features]
 bin-data = []
+
+[dev-dependencies]
+tempfile = "3"
