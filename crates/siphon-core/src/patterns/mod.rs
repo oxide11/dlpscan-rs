@@ -125,7 +125,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "SWIFT/BIC",
         regex: r"\b[A-Z]{4}[A-Z]{2}[A-Z2-9][A-NP-Z0-9](?:[A-Z\d]{3})?\b",
         case_insensitive: false,
-        specificity: 0.85,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -245,7 +245,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "SEDOL",
         regex: r"\b[0-9BCDFGHJKLMNPQRSTVWXYZ]{6}\d\b",
         case_insensitive: false,
-        specificity: 0.70,
+        specificity: 0.50,
         context_required: false,
     },
     PatternDef {
@@ -269,7 +269,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Ticker Symbol",
         regex: r"(?:^|[\s\(\[{,;])\$[A-Z]{1,5}\b",
         case_insensitive: false,
-        specificity: 0.80,
+        specificity: 0.60,
         context_required: false,
     },
     PatternDef {
@@ -445,7 +445,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "E.164 Phone Number",
         regex: r"\+[1-9]\d{6,14}\b",
         case_insensitive: false,
-        specificity: 0.70,
+        specificity: 0.40,
         context_required: false,
     },
     PatternDef {
@@ -796,7 +796,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Medical Record Number",
         regex: r"\b\d{6,10}\b",
         case_insensitive: false,
-        specificity: 0.20,
+        specificity: 0.40,
         context_required: true,
     },
     PatternDef {
@@ -1445,7 +1445,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Slack Webhook",
         regex: r"https://hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+",
         case_insensitive: false,
-        specificity: 0.90,
+        specificity: 0.40,
         context_required: false,
     },
     PatternDef {
@@ -1501,7 +1501,7 @@ pub static PATTERNS: &[PatternDef] = &[
         // show the tradeoff matters in practice.
         regex: r"\b\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]\d{2}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]\d{4}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.70,
         context_required: false,
     },
     PatternDef {
@@ -2028,7 +2028,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Canada SIN",
         regex: r"\b\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.70,
         context_required: false,
     },
     PatternDef {
@@ -2104,7 +2104,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Quebec HC",
         regex: r"\b[A-Z]{4}\d{8}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.55,
         context_required: false,
     },
     PatternDef {
@@ -2264,7 +2264,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Mexico CURP",
         regex: r"\b[A-Z]{4}\d{6}[HM][A-Z]{5}[A-Z0-9]\d\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.70,
         context_required: false,
     },
     PatternDef {
@@ -2329,7 +2329,7 @@ pub static PATTERNS: &[PatternDef] = &[
         // same as the separator classes used elsewhere (SSN, etc.).
         regex: r"\b[A-CEGHJ-PR-TW-Z]{2}[-.\s]?\d{2}[-.\s]?\d{2}[-.\s]?\d{2}[-.\s]?[A-D]\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -2365,7 +2365,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "British NHS",
         regex: r"\b\d{3}\s?\d{3}\s?\d{4}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -2424,7 +2424,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Germany Tax ID",
         regex: r"\b\d{11}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -2456,7 +2456,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "France NIR",
         regex: r"\b[12]\d{2}(?:0[1-9]|1[0-2])(?:\d{2}|2[AB])\d{3}\d{3}\d{2}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -2496,7 +2496,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Italy Codice Fiscale",
         regex: r"\b[A-Z]{6}\d{2}[A-EHLMPR-T]\d{2}[A-Z]\d{3}[A-Z]\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -2520,7 +2520,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Italy SSN",
         regex: r"\b[A-Z]{6}\d{2}[A-Z]\d{2}[A-Z]\d{3}[A-Z]\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -2536,7 +2536,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Netherlands BSN",
         regex: r"\b\d{9}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -2568,7 +2568,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Spain DNI",
         regex: r"\b\d{8}[A-Z]\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -2608,7 +2608,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Poland PESEL",
         regex: r"\b\d{11}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -2656,7 +2656,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Sweden PIN",
         regex: r"\b\d{6}[-+]?\d{4}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -2824,7 +2824,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Belgium NRN",
         regex: r"\b\d{2}[.\s]?\d{2}[.\s]?\d{2}[-.\s]?\d{3}[.\s]?\d{2}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -2888,7 +2888,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Denmark CPR",
         regex: r"\b[0-3]\d[01]\d{3}[-]?\d{4}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.55,
         context_required: false,
     },
     PatternDef {
@@ -3424,7 +3424,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "India PAN",
         regex: r"\b[A-Z]{5}\d{4}[A-Z]\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -3432,7 +3432,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "India Aadhaar",
         regex: r"\b[2-9]\d{3}[\s-]?\d{4}[\s-]?\d{4}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -3472,7 +3472,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "China Resident ID",
         regex: r"\b\d{6}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.70,
         context_required: false,
     },
     PatternDef {
@@ -3488,7 +3488,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Hong Kong ID",
         regex: r"\b[A-Z]{1,2}\d{6}\s?\(?[0-9A]\)?\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -3512,7 +3512,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Japan My Number",
         regex: r"\b\d{12}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -3560,7 +3560,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "South Korea RRN",
         regex: r"\b\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])[-\s]?[1-8]\d{6}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -3584,7 +3584,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Singapore NRIC",
         regex: r"\b[ST]\d{7}[A-Z]\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -3592,7 +3592,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Singapore FIN",
         regex: r"\b[FGM]\d{7}[A-Z]\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -3616,7 +3616,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Australia TFN",
         regex: r"\b\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{2,3}\b",
         case_insensitive: false,
-        specificity: 0.55,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -3624,7 +3624,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Australia Medicare",
         regex: r"\b[2-6]\d{3}[\s]?\d{5}[\s]?\d[\s]?\d?\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.55,
         // Australia Medicare has an internal mod-10 sanity check
         // but the spec isn't published for third-party use, and
         // the regex alone matches any 10/11-digit sequence with
@@ -3961,7 +3961,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Brazil CPF",
         regex: r"\b\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{2}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -3969,7 +3969,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Brazil CNPJ",
         regex: r"\b\d{2}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{4}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{2}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.70,
         context_required: false,
     },
     PatternDef {
@@ -4017,7 +4017,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Argentina CUIL/CUIT",
         regex: r"\b(?:20|2[3-7]|30|33)[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{8}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -4065,7 +4065,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Chile RUN/RUT",
         regex: r"\b\d{1,2}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?[\dkK]\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -4253,7 +4253,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "UAE Emirates ID",
         regex: r"\b784[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{4}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{7}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -4277,7 +4277,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Israel Teudat Zehut",
         regex: r"\b\d{9}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
@@ -4405,7 +4405,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "South Africa ID",
         regex: r"\b\d{13}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.65,
         context_required: false,
     },
     PatternDef {
