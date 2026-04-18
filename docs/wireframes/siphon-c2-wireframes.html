@@ -2164,7 +2164,6 @@ const WORKSPACES = [
 const SURFACES = [
   // ── OPERATE ──────────────────────────────────────────────────
   { id: 'dashboard',      workspace: 'operate', icon: '◈',  title: 'Dashboard' },
-  { id: 'livescan',       workspace: 'operate', icon: '⌁',  title: 'Live Scan',      sub: 'POST /scan' },
   { id: 'stream',         workspace: 'operate', icon: '≋',  title: 'Findings' },
   { id: 'investigations', workspace: 'operate', icon: '⌖',  title: 'Investigations' },
   { id: 'pods',           workspace: 'operate', icon: '▦',  title: 'Pods' },
@@ -2189,6 +2188,8 @@ const SURFACES = [
   { id: 'integrations',   workspace: 'admin',   icon: '⇄',  title: 'Integrations' },
   { id: 'keys',           workspace: 'admin',   icon: '⚿',  title: 'API Keys' },
   { id: 'agents',         workspace: 'admin',   icon: '◆',  title: 'Agents' },
+  // ── ADMIN · ENGINEERING ─────────────────────────────────────
+  { id: 'livescan',       workspace: 'admin',   icon: '⌁',  title: 'Live Scan',      sub: 'POST /scan',        group: 'engineering' },
 ];
 
 // Find workspace id for a given surface id
@@ -2245,17 +2246,34 @@ function WorkspaceBar({ current, go }) {
 function SurfaceBar({ current, go }) {
   const activeW = workspaceOf(current);
   const items = SURFACES.filter(s => s.workspace === activeW);
+  let lastGroup = null;
   return (
     <nav className="surfacebar" aria-label="Surfaces">
-      {items.map(s => (
-        <a key={s.id}
-           className={current === s.id ? 'active' : ''}
-           onClick={() => go(s.id)}>
-          <span className="icn">{s.icon}</span>
-          <span className="t">{s.title}</span>
-          {s.sub && <span className="sub">· {s.sub}</span>}
-        </a>
-      ))}
+      {items.flatMap(s => {
+        const nodes = [];
+        const g = s.group || null;
+        if (g && g !== lastGroup) {
+          nodes.push(
+            <span key={'g-'+g} className="sub" style={{
+              display:'inline-flex', alignItems:'center', padding:'0 10px',
+              color:'var(--ink-dim)', letterSpacing:'0.16em',
+              textTransform:'uppercase', fontSize:10,
+              borderLeft:'1px dashed var(--line)'
+            }}>— {g} —</span>
+          );
+        }
+        lastGroup = g;
+        nodes.push(
+          <a key={s.id}
+             className={current === s.id ? 'active' : ''}
+             onClick={() => go(s.id)}>
+            <span className="icn">{s.icon}</span>
+            <span className="t">{s.title}</span>
+            {s.sub && <span className="sub">· {s.sub}</span>}
+          </a>
+        );
+        return nodes;
+      })}
       <div className="utility">
         <a title="Docs & runbooks"><span className="icn">?</span><span className="t">Docs</span></a>
         <a title="Sign out"><span className="icn">⎋</span></a>
@@ -2268,20 +2286,32 @@ function SideNav({ current, go }) {
   const activeW = workspaceOf(current);
   const ws = WORKSPACES.find(w => w.id === activeW);
   const items = SURFACES.filter(s => s.workspace === activeW);
+  let lastGroup = null;
   return (
     <aside className="sidenav" aria-label="Primary">
       <div className="section-l">{ws ? ws.label : ''}</div>
-      {items.map(s => (
-        <a key={s.id}
-           className={current === s.id ? 'active' : ''}
-           onClick={() => go(s.id)}>
-          <span className="icn">{s.icon}</span>
-          <span className="t">
-            {s.title}
-            {s.sub && <span className="sub"> · {s.sub}</span>}
-          </span>
-        </a>
-      ))}
+      {items.flatMap(s => {
+        const nodes = [];
+        const g = s.group || null;
+        if (g && g !== lastGroup) {
+          nodes.push(
+            <div key={'g-'+g} className="section-l" style={{marginTop: 14}}>{g}</div>
+          );
+        }
+        lastGroup = g;
+        nodes.push(
+          <a key={s.id}
+             className={current === s.id ? 'active' : ''}
+             onClick={() => go(s.id)}>
+            <span className="icn">{s.icon}</span>
+            <span className="t">
+              {s.title}
+              {s.sub && <span className="sub"> · {s.sub}</span>}
+            </span>
+          </a>
+        );
+        return nodes;
+      })}
       <div className="section-l" style={{marginTop: 22}}>Utility</div>
       <a><span className="icn">?</span><span className="t">Docs &amp; runbooks</span></a>
       <a><span className="icn">⎋</span><span className="t">Sign out</span></a>
@@ -7080,7 +7110,7 @@ function LiveScan() {
     <div>
       <div className="page-head">
         <div>
-          <div className="crumbs">Operate · Live Scan</div>
+          <div className="crumbs">Admin · Engineering · Live Scan</div>
           <h1>Live Scan</h1>
         </div>
         <div className="actions">
