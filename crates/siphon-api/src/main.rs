@@ -538,14 +538,19 @@ async fn main() {
 
     let cors = match std::env::var("SIPHON_CORS_ORIGINS") {
         Ok(origins) if !origins.is_empty() => {
-            let allowed: Vec<HeaderValue> = origins
-                .split(',')
-                .filter_map(|o| o.trim().parse().ok())
-                .collect();
-            CorsLayer::new()
-                .allow_origin(AllowOrigin::list(allowed))
+            let trimmed = origins.trim();
+            let base = CorsLayer::new()
                 .allow_methods([axum::http::Method::POST, axum::http::Method::GET])
-                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
+            if trimmed == "*" {
+                base.allow_origin(AllowOrigin::any())
+            } else {
+                let allowed: Vec<HeaderValue> = trimmed
+                    .split(',')
+                    .filter_map(|o| o.trim().parse().ok())
+                    .collect();
+                base.allow_origin(AllowOrigin::list(allowed))
+            }
         }
         _ => CorsLayer::new()
             .allow_methods([axum::http::Method::POST, axum::http::Method::GET])
