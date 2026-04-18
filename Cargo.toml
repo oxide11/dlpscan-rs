@@ -64,7 +64,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Metrics
-prometheus = { version = "0.13", features = ["process"], optional = true }
+prometheus = { version = "0.13", default-features = false, features = ["process"], optional = true }
 
 # Config
 toml = "0.8"
@@ -95,7 +95,7 @@ rxing = { version = "0.6", optional = true }
 image = { version = "0.25", optional = true }
 
 # Python bindings
-pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
+pyo3 = { version = "0.24", features = ["extension-module"], optional = true }
 
 # TUI (terminal UI)
 ratatui = { version = "0.29", optional = true }
