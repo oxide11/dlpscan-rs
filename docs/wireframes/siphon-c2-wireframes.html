@@ -2176,6 +2176,7 @@ const SURFACES = [
   { id: 'patterns',       workspace: 'detect',  icon: '⌘',  title: 'Patterns' },
   { id: 'models',         workspace: 'detect',  icon: '⌬',  title: 'Models' },
   { id: 'assets',         workspace: 'detect',  icon: '◉',  title: 'Fingerprints',  sub: 'EDM · LSH' },
+  { id: 'profiles',       workspace: 'detect',  icon: '◎',  title: 'Masking Profiles' },
   { id: 'tokenization',   workspace: 'detect',  icon: '⎔',  title: 'Tokenization' },
   // ── ASSURE ───────────────────────────────────────────────────
   { id: 'assurance',      workspace: 'assure',  icon: '◈',  title: 'Overview', sub: 'availability · coverage · efficacy' },
@@ -3220,14 +3221,8 @@ function Users() {
     ['svc-soar',    'ingest-only',        'service','key-only',      '2m',   '—'],
     ['svc-notebook','analyst',            'service','key-only',      '18m',  '—'],
   ];
-  const roles = [
-    ['root',                1,  'break-glass · 2-person rule'],
-    ['admin',               2,  'full control · audited'],
-    ['policy-writer',       3,  'CRUD policies & patterns'],
-    ['analyst',             5,  'read findings · open investigations'],
-    ['compliance-auditor',  2,  'read-only + evidence export'],
-    ['ingest-only',         4,  'POST findings only'],
-  ];
+  const rx = window.useSiphonApi('/v1/roles');
+  const liveRoles = (rx.data && rx.data.roles) || [];
   return (
     <div>
       <div className="page-head">
@@ -3269,17 +3264,32 @@ function Users() {
 
       <div className="grid grid-2">
         <div className="box">
-          <div className="box-title"><span className="t">Roles &amp; grants</span><span className="k">6 roles · click to inspect</span></div>
-          <div style={{display:'grid', gridTemplateColumns:'200px 60px 1fr', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
-            <span className="label">Role</span><span className="label">Holders</span><span className="label">Notes</span>
+          <div className="box-title">
+            <span className="t">Roles &amp; permissions</span>
+            <span className="k">
+              <window.LivePill source={rx.source} onClick={rx.refetch} title={rx.error || ''} />
+              {' '}{rx.data ? `${rx.data.total} roles from siphon-api` : 'loading…'}
+            </span>
           </div>
-          {roles.map(([r,n,note],i)=>(
-            <div key={i} style={{display:'grid', gridTemplateColumns:'200px 60px 1fr', gap:10, padding:'7px 0', borderBottom:'1px dashed var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
-              <span style={{color:'var(--ink-bright)'}}>{r}</span>
-              <span>{n}</span>
-              <span className="muted">{note}</span>
+          <div style={{display:'grid', gridTemplateColumns:'140px 1fr 1fr', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+            <span className="label">Role</span><span className="label">Description</span><span className="label">Permissions</span>
+          </div>
+          {liveRoles.map((r, i) => (
+            <div key={i} style={{display:'grid', gridTemplateColumns:'140px 1fr 1fr', gap:10, padding:'8px 0', borderBottom:'1px dashed var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+              <span style={{color:'var(--ink-bright)'}}>{r.role}</span>
+              <span className="muted">{r.description}</span>
+              <span style={{display:'flex', flexWrap:'wrap', gap:3}}>
+                {r.permissions.map((p, j) => (
+                  <span key={j} className={`chip chip--${p==='AdminAction'?'red':p==='ViewStatus'?'ghost':'safe'}`} style={{fontSize:9}}>{p}</span>
+                ))}
+              </span>
             </div>
           ))}
+          {!rx.loading && liveRoles.length === 0 && (
+            <div className="muted" style={{padding:14, textAlign:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+              {rx.error ? `error: ${rx.error}` : '— no roles —'}
+            </div>
+          )}
         </div>
 
         <div className="box">
@@ -3311,6 +3321,56 @@ Object.assign(window, {
   Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users
 });
 
+</script>
+
+<script type="text/babel" data-presets="react">
+/* ===== lib/siphon-api.jsx ===== */
+// Shared fetch helper used by every surface that pulls live data from
+// siphon-api. URL is shared with Live Scan / Corpus Runner via the
+// `c2:apiUrl` localStorage key.
+
+window.SIPHON_API_URL = function() {
+  try { return localStorage.getItem('c2:apiUrl') || 'http://127.0.0.1:8080'; }
+  catch { return 'http://127.0.0.1:8080'; }
+};
+
+// React hook. Returns { loading, data, error, refetch, source }.
+// `source` is 'live' | 'offline' | 'loading' — useful for the live chip.
+window.useSiphonApi = function(path, deps) {
+  const [tick, setTick] = React.useState(0);
+  const [state, setState] = React.useState({ loading: true, data: null, error: null });
+  React.useEffect(() => {
+    let cancelled = false;
+    setState(s => ({ ...s, loading: true, error: null }));
+    const url = window.SIPHON_API_URL().replace(/\/$/, '') + path;
+    fetch(url, { method: 'GET' })
+      .then(async r => {
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+        return r.json();
+      })
+      .then(data => { if (!cancelled) setState({ loading: false, data, error: null }); })
+      .catch(e => { if (!cancelled) setState({ loading: false, data: null, error: String(e.message || e) }); });
+    return () => { cancelled = true; };
+  }, [...(deps || []), tick]);
+
+  const source = state.loading ? 'loading' : state.error ? 'offline' : 'live';
+  return { ...state, source, refetch: () => setTick(t => t + 1) };
+};
+
+// Small chip rendered in page-head actions to signal live vs. fixture data.
+window.LivePill = function LivePill({ source, onClick, title }) {
+  const map = { live:'safe', offline:'red', loading:'warn', fixture:'ghost' };
+  const label = { live:'LIVE', offline:'OFFLINE', loading:'LOADING…', fixture:'FIXTURE' }[source] || source;
+  return (
+    <span
+      className={`chip chip--${map[source] || 'ghost'}`}
+      onClick={onClick}
+      title={title || ''}
+      style={{cursor: onClick ? 'pointer' : 'default'}}>
+      {label}
+    </span>
+  );
+};
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -3743,6 +3803,54 @@ const DashV4_Canvas = () => (
   </div>
 );
 
+function LiveMetricsStrip() {
+  const mx = window.useSiphonApi('/v1/metrics');
+  // refresh every 5s
+  React.useEffect(() => {
+    const t = setInterval(() => mx.refetch(), 5000);
+    return () => clearInterval(t);
+  }, []);
+  const m = mx.data || {};
+  const fmtUptime = (s) => {
+    if (!s && s !== 0) return '—';
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+    return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+  };
+  return (
+    <div className="op-slo-strip" style={{gridTemplateColumns:'repeat(5, 1fr) auto'}}>
+      <div className="op-slo-cell">
+        <span className="op-slo-label">Scans</span>
+        <span className="op-slo-val">{m.scans_total != null ? m.scans_total.toLocaleString() : '—'}</span>
+        <span className="op-slo-sub">since boot</span>
+      </div>
+      <div className="op-slo-cell">
+        <span className="op-slo-label">Findings</span>
+        <span className="op-slo-val">{m.findings_total != null ? m.findings_total.toLocaleString() : '—'}</span>
+        <span className="op-slo-sub">since boot</span>
+      </div>
+      <div className="op-slo-cell">
+        <span className="op-slo-label">Errors</span>
+        <span className="op-slo-val" style={{color: (m.scan_errors_total || 0) > 0 ? 'var(--red)' : undefined}}>
+          {m.scan_errors_total != null ? m.scan_errors_total : '—'}
+        </span>
+        <span className="op-slo-sub">scan 5xx</span>
+      </div>
+      <div className="op-slo-cell">
+        <span className="op-slo-label">Patterns</span>
+        <span className="op-slo-val">{m.patterns_loaded != null ? m.patterns_loaded : '—'}</span>
+        <span className="op-slo-sub">{m.categories_loaded != null ? m.categories_loaded + ' cats' : ''}</span>
+      </div>
+      <div className="op-slo-cell">
+        <span className="op-slo-label">Uptime</span>
+        <span className="op-slo-val">{fmtUptime(m.uptime_secs)}</span>
+        <span className="op-slo-sub">policies: {m.policies_loaded != null ? m.policies_loaded : '—'}</span>
+      </div>
+      <window.LivePill source={mx.source} onClick={mx.refetch} title={mx.error || 'polls every 5s · click to force refresh'} />
+    </div>
+  );
+}
+
 function Dashboard({ variant, setVariant }) {
   const tabs = [
     ['ops',     'A · Operational overview',    'Pods first. Fleet table dominates. NOC feel.'],
@@ -3764,6 +3872,7 @@ function Dashboard({ variant, setVariant }) {
           <button className="btn primary">New scan</button>
         </div>
       </div>
+      <LiveMetricsStrip />
       <div className="variant-tabs">
         {tabs.map(([id, label]) => (
           <button
@@ -4455,97 +4564,241 @@ Object.assign(window, { Policy });
 /* ===== surfaces/patterns.jsx ===== */
 // Patterns — browse + live tester
 function Patterns() {
-  const cats = [
-    ['Credit Card Numbers',    7, 95],
-    ['National IDs',         250, 78],
-    ['Secrets & Credentials', 20, 88],
-    ['Banking & Financial',   30, 82],
-    ['Healthcare',            10, 70],
-    ['Contact Info',           5, 65],
-    ['Cryptocurrency',         7, 90],
-    ['Classification labels', 40, 72],
-    ['Device & Biometric',     7, 74],
-    ['Geolocation',            8, 68],
-  ];
-  const pats = [
-    ['Visa 16-digit',        '^4[0-9]{12}(?:[0-9]{3})?$',  0.95, true,  'on'],
-    ['MasterCard',           '^5[1-5][0-9]{14}$',          0.95, true,  'on'],
-    ['Amex',                 '^3[47][0-9]{13}$',           0.95, true,  'on'],
-    ['US SSN · contexted',   '(?i)(?:ssn|social).{0,20}d{3}-d{2}-d{4}', 0.92, true, 'on'],
-    ['Canadian SIN',         'd{3}-?d{3}-?d{3}',   0.88, true, 'on'],
-    ['AWS access key',       'AKIA[0-9A-Z]{16}',           0.98, false, 'on'],
-    ['JWT bearer',           'eyJ[A-Za-z0-9_-]{10,}.',   0.92, false, 'on'],
-    ['ICD-10 code',          '[A-TV-Z][0-9][0-9AB].?',   0.58, true,  'off'],
-  ];
+  const [selected, setSelected] = React.useState(null);
+  const [filter, setFilter] = React.useState('');
+  const cats = window.useSiphonApi('/v1/categories');
+  // default-select the first category once categories arrive
+  React.useEffect(() => {
+    if (!selected && cats.data && cats.data.categories && cats.data.categories.length) {
+      setSelected(cats.data.categories[0].category);
+    }
+  }, [cats.data, selected]);
+
+  const pats = window.useSiphonApi(
+    selected ? `/v1/patterns?category=${encodeURIComponent(selected)}&limit=500` : '/v1/patterns?limit=0',
+    [selected]
+  );
+
+  const avgSpec = (list) => {
+    if (!list || !list.length) return 0;
+    return list.reduce((a, b) => a + (b.specificity || 0), 0) / list.length;
+  };
+
+  const catList = (cats.data && cats.data.categories) || [];
+  const catFiltered = filter
+    ? catList.filter(c => c.category.toLowerCase().includes(filter.toLowerCase()))
+    : catList;
+  const patList = (pats.data && pats.data.patterns) || [];
+
   return (
     <div>
       <div className="page-head">
         <div>
-          <div className="crumbs">Operate · Patterns</div>
+          <div className="crumbs">Detect · Patterns</div>
           <h1>Patterns &amp; Keywords</h1>
         </div>
         <div className="actions">
+          <window.LivePill source={cats.source} onClick={cats.refetch} title={cats.error || 'click to refetch'} />
           <button className="btn ghost">Import ruleset</button>
           <button className="btn primary">New pattern</button>
         </div>
       </div>
 
-      <div className="grid" style={{gridTemplateColumns:'220px 1fr 320px', gap:'var(--gap)'}}>
-        <div className="box" style={{padding:10}}>
-          <div className="label" style={{marginBottom:8}}>Categories · 126</div>
-          {cats.map(([c,n,spec],i)=>(
-            <div key={i} style={{display:'flex', justifyContent:'space-between', padding:'4px 2px', fontSize:13, borderBottom:'1px dashed var(--line-soft)'}}>
-              <span className={i===0?'hand-b':'hand'}>{c}</span>
-              <span className="mono" style={{fontSize:11, color:'var(--ink-faint)'}}>{n}</span>
+      {cats.error && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', marginBottom:'var(--gap)'}}>
+          <b>Error:</b> {cats.error} · is siphon-api running at {window.SIPHON_API_URL()}?
+        </div>
+      )}
+
+      <div className="grid" style={{gridTemplateColumns:'260px 1fr', gap:'var(--gap)'}}>
+        <div className="box" style={{padding:10, maxHeight:680, overflowY:'auto'}}>
+          <div className="label" style={{marginBottom:8}}>
+            Categories · {cats.data ? cats.data.total : '—'}
+          </div>
+          <input
+            placeholder="filter…"
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            style={{
+              width:'100%', marginBottom:8, padding:'4px 8px',
+              fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+              background:'var(--bg-1)', color:'var(--ink)',
+              border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'
+            }}
+          />
+          {catFiltered.map((c, i) => (
+            <div
+              key={i}
+              onClick={() => setSelected(c.category)}
+              style={{
+                display:'flex', justifyContent:'space-between', padding:'4px 6px',
+                fontSize:12, borderBottom:'1px dashed var(--line-soft)', cursor:'pointer',
+                background: c.category === selected ? 'var(--bg-3)' : 'transparent',
+                color: c.category === selected ? 'var(--accent)' : 'var(--ink)',
+              }}>
+              <span style={{fontFamily:"'JetBrains Mono', monospace"}}>{c.category}</span>
+              <span className="mono" style={{fontSize:11, color:'var(--ink-faint)'}}>{c.pattern_count}</span>
             </div>
           ))}
+          {!cats.loading && catFiltered.length === 0 && (
+            <div className="muted" style={{padding:10, fontSize:11, textAlign:'center'}}>— no matches —</div>
+          )}
         </div>
 
         <div className="box">
-          <div className="box-title"><span className="t">Credit Card Numbers</span><span className="k">7 patterns · 95% avg specificity</span></div>
-          <div className="pat-row label" style={{borderBottom:'1.5px solid var(--line)'}}>
-            <span></span><span>Name · regex</span><span>Specificity</span><span>Ctx</span><span>Valid</span><span>State</span>
+          <div className="box-title">
+            <span className="t">{selected || (cats.loading ? 'loading…' : 'select a category')}</span>
+            <span className="k">
+              {pats.data
+                ? `${pats.data.total} pattern${pats.data.total===1?'':'s'} · ${(avgSpec(patList)*100).toFixed(0)}% avg specificity`
+                : ''}
+            </span>
           </div>
-          {pats.map(([name,rx,spec,ctx,state],i)=>(
+          <div className="pat-row label" style={{borderBottom:'1.5px solid var(--line)'}}>
+            <span></span><span>Sub-category · regex</span><span>Specificity</span><span>Ctx</span><span>Case</span><span></span>
+          </div>
+          {pats.loading && <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>loading patterns…</div>}
+          {!pats.loading && patList.length === 0 && (
+            <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>— no patterns —</div>
+          )}
+          {patList.map((p, i) => (
             <div key={i} className="pat-row">
               <input type="checkbox" defaultChecked />
               <span>
-                <div className="pn">{name}</div>
-                <div className="pr">{rx}</div>
+                <div className="pn">{p.sub_category}</div>
+                <div className="pr" style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:600}} title={p.regex}>{p.regex}</div>
               </span>
-              <span className="mono">{spec}</span>
-              <span>{ctx ? <span className="chip chip--teal">req</span> : <span className="chip chip--ghost">—</span>}</span>
-              <span><span className="chip chip--safe">Luhn</span></span>
-              <span className={`chip chip--${state==='on'?'safe':'ghost'}`}>{state}</span>
+              <span className="mono">{p.specificity.toFixed(2)}</span>
+              <span>{p.context_required ? <span className="chip chip--teal">req</span> : <span className="chip chip--ghost">—</span>}</span>
+              <span>{p.case_insensitive ? <span className="chip">/i</span> : <span className="chip chip--ghost">—</span>}</span>
+              <span className="arrow">›</span>
             </div>
           ))}
-        </div>
-
-        <div className="box">
-          <div className="box-title"><span className="t">Live tester</span><span className="k">paste text → match</span></div>
-          <div style={{
-            border:'1.5px dashed var(--line-soft)', padding:10, borderRadius:3,
-            fontFamily:'JetBrains Mono, monospace', fontSize:12,
-            background:'#fcfcf6', minHeight:140
-          }}>
-            My card is <mark style={{background:'rgba(133,160,130,0.4)', border:'1px solid var(--safe)'}}>4532 0151 1283 0366</mark> and<br/>
-            my SSN is <mark style={{background:'rgba(179,52,46,0.25)', border:'1px solid var(--red)'}}>425-71-3482</mark>.<br/>
-            contact: <mark style={{background:'rgba(199,152,43,0.3)', border:'1px solid var(--amber)'}}>j.lee@example.com</mark>
-          </div>
-          <div className="label" style={{marginTop:10}}>Findings · 3</div>
-          <div style={{fontSize:12, lineHeight:1.6}}>
-            <div><span className="chip chip--teal">PCI</span> Visa · 0.95 · ✓ Luhn</div>
-            <div><span className="chip chip--red">PII</span> SSN · 0.92 · ctx "ssn"</div>
-            <div><span className="chip chip--warn">CONTACT</span> email · 0.62</div>
-          </div>
-          <hr className="sep" />
-          <div className="muted scribble" style={{fontSize:14}}>try evasion: homoglyphs · base64 · zero-width</div>
+          {pats.data && pats.data.returned < pats.data.total && (
+            <div className="muted" style={{padding:'8px 4px', fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>
+              showing {pats.data.returned} of {pats.data.total} — raise limit= to see more
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
-Object.assign(window, { Patterns });
+function Profiles() {
+  const px = window.useSiphonApi('/v1/profiles');
+  const profiles = (px.data && px.data.profiles) || [];
+  const [selected, setSelected] = React.useState(null);
+  React.useEffect(() => {
+    if (!selected && profiles.length) setSelected(profiles[0].name);
+  }, [profiles.length, selected]);
+
+  const active = profiles.find(p => p.name === selected);
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Detect · Masking Profiles</div>
+          <h1>Masking Profiles</h1>
+        </div>
+        <div className="actions">
+          <window.LivePill source={px.source} onClick={px.refetch} title={px.error || ''} />
+          <button className="btn ghost">Export</button>
+          <button className="btn primary">New profile</button>
+        </div>
+      </div>
+
+      {px.error && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', marginBottom:'var(--gap)'}}>
+          <b>Error:</b> {px.error}
+        </div>
+      )}
+
+      <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
+        <div className="box"><div className="stat"><span className="s-label">Profiles</span><span className="s-val">{px.data ? px.data.total : '—'}</span><span className="s-delta">built-in + custom</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Actions in use</span><span className="s-val">{new Set(profiles.map(p => p.action)).size || '—'}</span><span className="s-delta">distinct</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Require context</span><span className="s-val">{profiles.filter(p => p.require_context).length}</span><span className="s-delta">of {profiles.length}</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Avg min-conf</span><span className="s-val">{profiles.length ? (profiles.reduce((a,b) => a + (b.min_confidence || 0), 0) / profiles.length).toFixed(2) : '—'}</span><span className="s-delta">threshold</span></div></div>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:'260px 1fr', gap:'var(--gap)'}}>
+        <div className="box" style={{padding:10, maxHeight:680, overflowY:'auto'}}>
+          <div className="label" style={{marginBottom:8}}>Profiles · {profiles.length}</div>
+          {profiles.map((p, i) => (
+            <div
+              key={i}
+              onClick={() => setSelected(p.name)}
+              style={{
+                padding:'6px 6px', borderBottom:'1px dashed var(--line-soft)', cursor:'pointer',
+                background: p.name === selected ? 'var(--bg-3)' : 'transparent',
+              }}>
+              <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, color: p.name === selected ? 'var(--accent)' : 'var(--ink-bright)'}}>{p.name}</div>
+              <div className="muted" style={{fontSize:10.5, fontFamily:"'JetBrains Mono', monospace", marginTop:2}}>
+                {p.action} · conf≥{p.min_confidence}
+              </div>
+            </div>
+          ))}
+          {px.loading && <div className="muted" style={{padding:12, fontSize:11, textAlign:'center'}}>loading…</div>}
+        </div>
+
+        <div className="box">
+          {!active ? (
+            <div className="muted" style={{padding:30, textAlign:'center', fontFamily:"'JetBrains Mono', monospace"}}>
+              {px.loading ? 'loading…' : 'select a profile'}
+            </div>
+          ) : (
+            <>
+              <div className="box-title">
+                <span className="t">{active.name}</span>
+                <span className="k">{active.description}</span>
+              </div>
+              <div className="kv" style={{marginBottom:'var(--gap)'}}>
+                <span className="k">Action</span>        <span className="v"><span className={`chip chip--${active.action==='reject'?'red':active.action==='obfuscate'?'warn':'safe'}`}>{active.action}</span></span>
+                <span className="k">Mode</span>          <span className="v">{active.mode}</span>
+                <span className="k">Min confidence</span><span className="v mono">{active.min_confidence}</span>
+                <span className="k">Require context</span><span className="v">{active.require_context ? <span className="chip chip--teal">yes</span> : <span className="chip chip--ghost">no</span>}</span>
+                <span className="k">Redaction char</span><span className="v mono">{active.redaction_char}</span>
+              </div>
+
+              <div className="grid grid-2" style={{gap:'var(--gap)'}}>
+                <div>
+                  <div className="label" style={{marginBottom:6}}>Presets</div>
+                  {active.presets && active.presets.length ? (
+                    <div style={{display:'flex', flexWrap:'wrap', gap:4}}>
+                      {active.presets.map((p, i) => <span key={i} className="chip chip--teal">{p}</span>)}
+                    </div>
+                  ) : <div className="muted" style={{fontSize:11}}>— none —</div>}
+                </div>
+                <div>
+                  <div className="label" style={{marginBottom:6}}>Explicit categories</div>
+                  {active.categories && active.categories.length ? (
+                    <div style={{display:'flex', flexWrap:'wrap', gap:4}}>
+                      {active.categories.map((c, i) => <span key={i} className="chip">{c}</span>)}
+                    </div>
+                  ) : <div className="muted" style={{fontSize:11}}>— presets only —</div>}
+                </div>
+              </div>
+
+              {active.confidence_overrides && Object.keys(active.confidence_overrides).length > 0 && (
+                <>
+                  <hr className="sep" />
+                  <div className="label" style={{marginBottom:6}}>Confidence overrides</div>
+                  <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.8}}>
+                    {Object.entries(active.confidence_overrides).map(([cat, val]) => (
+                      <div key={cat}><span className="muted">{cat}</span> → <span style={{color:'var(--accent)'}}>{val}</span></div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { Patterns, Profiles });
 
 </script>
 
@@ -5638,39 +5891,50 @@ Object.assign(window, { DetectOverview });
 /* ===== surfaces/compliance.jsx ===== */
 // Compliance reporting
 function Compliance() {
-  const frameworks = [
-    ['PCI-DSS v4', 92, 'safe',  'Quarterly · due 12d', 87, 5],
-    ['HIPAA',      74, 'warn',  'Annual · due 34d',    68, 12],
-    ['SOC 2 T2',   88, 'safe',  'In progress · 68%',   80, 3],
-    ['GDPR',       81, 'safe',  'Continuous',          75, 6],
-  ];
+  const fx = window.useSiphonApi('/v1/compliance/frameworks');
+  const liveFrameworks = (fx.data && fx.data.frameworks) || [];
   return (
     <div>
       <div className="page-head">
         <div>
-          <div className="crumbs">Govern · Compliance</div>
+          <div className="crumbs">Assure · Compliance</div>
           <h1>Compliance Posture</h1>
         </div>
         <div className="actions">
+          <window.LivePill source={fx.source} onClick={fx.refetch} title={fx.error || 'click to refetch'} />
           <button className="btn ghost">Evidence pack</button>
           <button className="btn">Schedule report</button>
           <button className="btn primary">Run audit sim</button>
         </div>
       </div>
+      {fx.error && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', marginBottom:'var(--gap)'}}>
+          <b>Error:</b> {fx.error}
+        </div>
+      )}
       <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
-        {frameworks.map(([f,s,c,d,ctrl,gaps],i)=>(
+        {liveFrameworks.map((fw, i) => (
           <div key={i} className="box">
-            <div className="label">{f}</div>
+            <div className="label">{fw.name}</div>
             <div style={{display:'flex', alignItems:'baseline', gap:8, marginTop:6}}>
-              <div className="hand-b" style={{fontSize:40, lineHeight:1}}>{s}</div>
-              <span className="muted hand">/100</span>
-              <span className={`chip chip--${c}`}>{c==='safe'?'OK':'attn'}</span>
+              <div className="hand-b" style={{fontSize:40, lineHeight:1}}>{fw.failing_categories.length}</div>
+              <span className="muted hand">gating cats</span>
+              <span className="chip chip--safe" style={{marginLeft:'auto'}}>live</span>
             </div>
-            <div style={{height:8, border:'1.5px solid var(--line)', borderRadius:2, marginTop:8, background:'var(--bg-1)'}}>
-              <i style={{display:'block', width:s+'%', height:'100%', background: c==='safe'?'var(--safe)':'var(--amber)'}} />
+            <div className="muted" style={{fontSize:11, marginTop:8}}>
+              Fail-triggering categories watched by siphon-core:
             </div>
-            <div className="muted" style={{fontSize:11, marginTop:6}}>{d}</div>
-            <div className="mono" style={{fontSize:11, marginTop:4}}>{ctrl} controls · {gaps} gaps</div>
+            <div style={{display:'flex', flexWrap:'wrap', gap:4, marginTop:6}}>
+              {fw.failing_categories.map((c, j) => (
+                <span key={j} className="chip" style={{fontSize:9}}>{c}</span>
+              ))}
+            </div>
+          </div>
+        ))}
+        {fx.loading && Array.from({length:4}).map((_, i) => (
+          <div key={i} className="box">
+            <div className="label">loading…</div>
+            <div style={{height:80, background:'var(--bg-3)', marginTop:8, borderRadius:'var(--radius)'}} />
           </div>
         ))}
       </div>
@@ -7561,7 +7825,7 @@ function App() {
   const { Dashboard, Stream, FindingDetail, Pods, Policy, Patterns, Models, Assets,
           Compliance, Testing, AssureOverview, DetectOverview, Settings, Logs, Topbar, WorkspaceBar, SurfaceBar, TweaksPanel,
           Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users,
-          LiveScan, CorpusRunner } = window;
+          LiveScan, CorpusRunner, Profiles } = window;
 
   // expose go() globally so nested surfaces (e.g. DetectOverview cards) can navigate.
   React.useEffect(() => { window.__c2_go = go; }, []);
@@ -7582,6 +7846,7 @@ function App() {
       detect:         <DetectOverview />,
       policy:         <Policy />,
       patterns:       <Patterns />,
+      profiles:       <Profiles />,
       models:         <Models />,
       assets:         <Assets />,
       tokenization:   <Tokenization />,
