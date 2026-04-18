@@ -395,6 +395,123 @@ The registry is a small config service, not a pod — a ConfigMap or
 an external service like MLflow. Each detector pod loads its routing
 rules at startup and can hot-reload.
 
+## Siphon-C2 (Command & Control)
+
+The management plane. Web UI and control API for administrators to
+orchestrate, monitor, and manage the entire Siphon deployment. Not
+on the data path — C2 never scans data itself, it only manages and
+observes the pods that do.
+
+**Crate:** `siphon-c2`
+
+**Depends on:** `siphon-core` (for shared types) + axum + PostgreSQL
++ React frontend
+
+**Architecture:**
+
+```
+                    ┌──────────────────┐
+                    │   Siphon-C2      │
+                    │  (Admin Web UI)  │
+                    └─────────┬────────┘
+                              │ mgmt API (gRPC/REST)
+          ┌───────────┬───────┴────────┬───────────┐
+          │           │                │           │
+    ┌─────▼────┐ ┌───▼─────┐ ┌────────▼───┐ ┌────▼────┐
+    │Ingestion │ │Detector │ │  Findings  │ │  Audit  │
+    │  Pods    │ │  Pods   │ │   Store    │ │  Store  │
+    └──────────┘ └─────────┘ └────────────┘ └─────────┘
+```
+
+### Capabilities
+
+**Orchestration**
+- Pod inventory: which ingestion/detector pods are deployed, version,
+  health, replica count
+- Scale up/down via Kubernetes HPA policies
+- Configure detector routing: which ingestion pods call which detector
+  pods, per tenant and per policy
+- Hot-reload configuration without pod restarts
+
+**Policy Management**
+- Visual policy editor: drag-and-drop rules for PCI, HIPAA, GDPR,
+  custom frameworks
+- Action configuration: flag, redact, block, tokenize, obfuscate
+- Per-tenant policy assignment
+- Policy simulator: paste sample text, see what would fire
+
+**Pattern & Rule Management**
+- Browse 561 built-in patterns by category
+- Create custom patterns with regex + validator picker
+- Pattern tester: paste text, see which patterns match in real-time
+- Enable/disable patterns per tenant
+
+**Detection Assets**
+- EDM management: upload known-sensitive values for exact matching
+- LSH vault: register confidential documents for similarity detection
+- Allowlists: suppress known false positives
+
+**Model Registry** (when detector pods exist)
+- Deployed ML/Vision/Classify models per pod
+- Version history, rollback
+- A/B routing weights
+- Per-model accuracy metrics from labeled eval corpus
+- Canary deployment controls
+
+**Monitoring Dashboards**
+- Live throughput: scans/sec per pod, MB/s
+- Findings volume by category / sub_category / tenant
+- FP/FN trends from labeled corpus re-runs
+- Consumer lag for DS adapters (per protocol)
+- GPU utilization for detector pods
+- Circuit breaker states
+- p50/p95/p99 scan latency per pod
+
+**Live Findings Stream**
+- SIEM-console-style view of findings as they happen
+- Filter by tenant, category, severity, pod
+- Drill-down: click a finding to see the source, context, policy
+  action taken
+- Export to CSV / SIEM
+
+**Compliance Reporting**
+- Auto-generated PCI-DSS, HIPAA, SOC 2, GDPR reports
+- Evidence pack assembly (findings, audit logs, policy state)
+- Scheduled delivery to auditors
+
+**Identity & Access**
+- User management (local accounts or SSO via OIDC/SAML)
+- RBAC: Admin, Analyst, Operator, Viewer roles
+- API key rotation and scope management
+- Audit trail for every C2 action
+
+**Testing**
+- Blind test runner: trigger evadex-style FP/FN corpus runs
+- Corpus regression dashboard: recall/FP history over time
+- Pattern coverage reports
+
+### Technology
+
+- **Backend:** Rust (axum), gRPC clients to all pods, PostgreSQL for
+  C2 state, Redis for session cache
+- **Frontend:** React + TypeScript + shadcn/ui + Tailwind +
+  Recharts. Clean, modern admin console
+- **Live updates:** WebSocket for findings stream and live metrics
+- **Deployment:** Single pod, stateless except for PostgreSQL
+  connection. Can run behind any ingress
+
+### What C2 is NOT
+
+- **Not on the data plane.** C2 doesn't scan, redact, or forward
+  user data. It only manages the pods that do.
+- **Not a SIEM.** C2 shows findings, but long-term findings storage
+  and correlation belong in a real SIEM (Splunk, Elastic, Datadog).
+  C2 forwards findings there.
+- **Not an auth server.** C2 uses your existing OIDC/SAML provider.
+  It has local users only as a fallback for bootstrap.
+- **Not critical path.** If C2 is down, the data plane keeps
+  scanning. Pods hold their last-known-good config in memory.
+
 ## Which Pod Do I Use?
 
 | Use case | Pod | Why |
@@ -409,6 +526,8 @@ rules at startup and can hot-reload.
 | Outbound HTTP traffic monitoring | GW | Transparent interception |
 | Air-gap blocking of egress | GW | `block` policy |
 | Scanned documents / images | FS + Vision | Extract with OCR, then scan |
+| Admin wants to manage policies | C2 | Web UI for orchestration |
+| View live findings / dashboards | C2 | Management console |
 
 ## Crate Workspace Layout
 
@@ -429,7 +548,11 @@ polygon-siphon/
 │   │   # Detector pods (called via gRPC)
 │   ├── siphon-ml/            # transformer-based NER and PII
 │   ├── siphon-vision/        # OCR + image content analysis
-│   └── siphon-classify/      # document classification
+│   ├── siphon-classify/      # document classification
+│   │
+│   │   # Management plane
+│   ├── siphon-c2/            # admin web UI + control API
+│   └── siphon-c2-ui/         # React frontend (or separate repo)
 ├── tests/
 ├── docs/
 └── deploy/
@@ -485,22 +608,39 @@ share no state — all scanning is stateless. EDM and LSH state is
 loaded at startup from a ConfigMap or mounted volume.
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                 Kubernetes Cluster                    │
-│                                                       │
-│  ┌────────┐  ┌─────────┐  ┌────────┐  ┌────────┐    │
-│  │Siphon- │  │Siphon-  │  │Siphon- │  │Siphon- │    │
-│  │  FS    │  │  API    │  │  DS    │  │  GW    │    │
-│  │1-10    │  │2-50     │  │1-30    │  │2-20    │    │
-│  └────┬───┘  └────┬────┘  └───┬────┘  └───┬────┘    │
-│       │            │            │            │        │
-│       └────────────┴────┬───────┴────────────┘        │
-│                         ▼                             │
-│                 ┌──────────────┐                      │
-│                 │   Findings   │                      │
-│                 │  Stream/SIEM │                      │
-│                 └──────────────┘                      │
-└──────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                   Kubernetes Cluster                        │
+│                                                             │
+│  Management Plane                                           │
+│  ┌──────────┐                                               │
+│  │Siphon-C2 │◄──── admin browser, API clients               │
+│  │  1-2     │                                               │
+│  └────┬─────┘                                               │
+│       │ gRPC mgmt API                                       │
+│  ─────┼─────────────────────────────────────────────────    │
+│       │                                                     │
+│  Data Plane                                                 │
+│  ┌────▼───┐  ┌─────────┐  ┌────────┐  ┌────────┐           │
+│  │Siphon- │  │Siphon-  │  │Siphon- │  │Siphon- │           │
+│  │  FS    │  │  API    │  │  DS    │  │  GW    │           │
+│  │1-10    │  │2-50     │  │1-30    │  │2-20    │           │
+│  └────┬───┘  └────┬────┘  └───┬────┘  └───┬────┘           │
+│       │            │            │            │              │
+│       │     ┌──────┴────────────┴────┐      │              │
+│       │     │  gRPC detector calls    │      │              │
+│       │     ▼                         ▼      │              │
+│       │  ┌────────┐  ┌────────┐  ┌────────┐ │              │
+│       │  │Siphon- │  │Siphon- │  │Siphon- │ │              │
+│       │  │  ML    │  │ Vision │  │Classify│ │              │
+│       │  │ GPU    │  │ GPU/CPU│  │  CPU   │ │              │
+│       │  └────────┘  └────────┘  └────────┘ │              │
+│       └────────────────┬─────────────────────┘              │
+│                        ▼                                    │
+│                ┌──────────────┐                             │
+│                │   Findings   │                             │
+│                │  Stream/SIEM │                             │
+│                └──────────────┘                             │
+└────────────────────────────────────────────────────────────┘
 ```
 
 **Scaling:**
@@ -550,3 +690,10 @@ Incremental. Each step is independently shippable.
 11. Helm charts per pod. Shared ConfigMap for scanner config and
     detector routing rules.
 12. Model registry for versioning and A/B routing.
+
+**Phase 6: Management plane**
+13. Siphon-C2 backend: gRPC management API, PostgreSQL state,
+    pod inventory and health, policy CRUD.
+14. Siphon-C2 frontend: React admin console. Dashboards, policy
+    editor, pattern tester, findings stream, compliance reports.
+15. SSO integration (OIDC/SAML) and RBAC enforcement.
