@@ -2155,10 +2155,11 @@ if (_RO) {
 // Each workspace has its own surfaces shown in the left rail.
 
 const WORKSPACES = [
-  { id: 'operate', label: 'Operate', hint: 'monitor · investigate',          glyph: '◈' },
-  { id: 'detect',  label: 'Detect',  hint: 'rules · patterns · models',      glyph: '⤷' },
-  { id: 'assure',  label: 'Assure',  hint: 'test · comply · audit',          glyph: '✓' },
-  { id: 'admin',   label: 'Admin',   hint: 'users · system · integrations',  glyph: '⚙' },
+  { id: 'operate',     label: 'Operate',     hint: 'monitor · investigate',          glyph: '◈' },
+  { id: 'detect',      label: 'Detect',      hint: 'rules · patterns · models',      glyph: '⤷' },
+  { id: 'assure',      label: 'Assure',      hint: 'test · comply · audit',          glyph: '✓' },
+  { id: 'admin',       label: 'Admin',       hint: 'users · system · integrations',  glyph: '⚙' },
+  { id: 'engineering', label: 'Engineering', hint: 'dev tools · live API',           glyph: '⌁' },
 ];
 
 const SURFACES = [
@@ -2188,8 +2189,9 @@ const SURFACES = [
   { id: 'integrations',   workspace: 'admin',   icon: '⇄',  title: 'Integrations' },
   { id: 'keys',           workspace: 'admin',   icon: '⚿',  title: 'API Keys' },
   { id: 'agents',         workspace: 'admin',   icon: '◆',  title: 'Agents' },
-  // ── ADMIN · ENGINEERING ─────────────────────────────────────
-  { id: 'livescan',       workspace: 'admin',   icon: '⌁',  title: 'Live Scan',      sub: 'POST /scan',        group: 'engineering' },
+  // ── ENGINEERING ─────────────────────────────────────────────
+  { id: 'livescan',       workspace: 'engineering', icon: '⌁',  title: 'Live Scan',      sub: 'POST /scan' },
+  { id: 'corpusrun',      workspace: 'engineering', icon: '⎔',  title: 'Corpus Runner',  sub: 'batch /scan' },
 ];
 
 // Find workspace id for a given surface id
@@ -7110,7 +7112,7 @@ function LiveScan() {
     <div>
       <div className="page-head">
         <div>
-          <div className="crumbs">Admin · Engineering · Live Scan</div>
+          <div className="crumbs">Engineering · Live Scan</div>
           <h1>Live Scan</h1>
         </div>
         <div className="actions">
@@ -7235,7 +7237,271 @@ function LiveScan() {
   );
 }
 
-Object.assign(window, { LiveScan });
+/* ===== surfaces/corpusrun.jsx ===== */
+// Corpus Runner — batch /scan. Paste N docs separated by a line
+// containing "---" and optionally prefix each with [category[,category]]
+// to mark expected categories. Renders a per-doc result matrix.
+
+const CR_SAMPLE = `[Contact Information]
+Email the team at support@polygoncyber.ca for onboarding.
+
+---
+
+[Contact Information]
+Call us at +1 (415) 555-0199 or text 415-555-0199.
+
+---
+
+[PCI]
+Please charge the following card:
+Visa 4532 0151 1283 0366, exp 05/29, CVV 921.
+
+---
+
+[PII]
+Customer SSN on file: 123-45-6789 for claim review.
+
+---
+
+[Secret]
+AWS access key AKIAIOSFODNN7EXAMPLE — rotate on next deploy.
+
+---
+
+[negative]
+Hello team, meeting moved to 3pm tomorrow in room 204. Agenda attached.`;
+
+function parseCorpus(raw) {
+  return raw.split(/^---\s*$/m).map(block => block.trim()).filter(Boolean).map((block, i) => {
+    const m = block.match(/^\s*\[([^\]]+)\]\s*\n?/);
+    let expected = null;
+    let text = block;
+    if (m) {
+      expected = m[1].split(/[,;]\s*/).map(s => s.trim()).filter(Boolean);
+      text = block.slice(m[0].length);
+    }
+    return { index: i + 1, expected, text: text.trim(), raw: block };
+  });
+}
+
+function CorpusRunner() {
+  const apiUrl = (() => {
+    try { return localStorage.getItem('c2:apiUrl') || 'http://127.0.0.1:8080'; }
+    catch { return 'http://127.0.0.1:8080'; }
+  })();
+  const [source, setSource] = React.useState(CR_SAMPLE);
+  const [results, setResults] = React.useState([]);   // [{doc, res, err, ms}]
+  const [running, setRunning] = React.useState(false);
+  const [progress, setProgress] = React.useState(0);
+  const [expanded, setExpanded] = React.useState(null);
+
+  const docs = React.useMemo(() => parseCorpus(source), [source]);
+
+  const run = async () => {
+    setRunning(true); setResults([]); setProgress(0); setExpanded(null);
+    const acc = [];
+    for (let i = 0; i < docs.length; i++) {
+      const d = docs[i];
+      const t0 = performance.now();
+      try {
+        const r = await fetch(apiUrl.replace(/\/$/, '') + '/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: d.text, options: {} }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        acc.push({ doc: d, res: j, err: null, ms: performance.now() - t0 });
+      } catch (e) {
+        acc.push({ doc: d, res: null, err: String(e.message || e), ms: performance.now() - t0 });
+      }
+      setProgress(i + 1);
+      setResults([...acc]);
+    }
+    setRunning(false);
+  };
+
+  // Aggregate stats and categories
+  const { totalFindings, byCategory, passCount, failCount, negativeExpected } = React.useMemo(() => {
+    let totalFindings = 0;
+    const byCategory = {};
+    let passCount = 0, failCount = 0, negativeExpected = 0;
+    results.forEach(r => {
+      if (!r.res) return;
+      totalFindings += r.res.finding_count || 0;
+      (r.res.findings || []).forEach(f => {
+        byCategory[f.category] = (byCategory[f.category] || 0) + 1;
+      });
+      const exp = r.doc.expected || [];
+      const foundCats = new Set((r.res.findings || []).map(f => f.category.toLowerCase()));
+      const isNeg = exp.some(e => e.toLowerCase() === 'negative');
+      if (isNeg) negativeExpected++;
+      let ok;
+      if (isNeg) {
+        ok = (r.res.finding_count === 0);
+      } else if (exp.length) {
+        ok = exp.every(e => Array.from(foundCats).some(c => c.includes(e.toLowerCase()) || e.toLowerCase().includes(c)));
+      } else {
+        ok = true;
+      }
+      if (ok) passCount++; else failCount++;
+    });
+    return { totalFindings, byCategory, passCount, failCount, negativeExpected };
+  }, [results]);
+
+  const verdict = (r) => {
+    if (r.err) return ['err', 'var(--red)'];
+    const exp = r.doc.expected || [];
+    const cats = (r.res.findings || []).map(f => f.category.toLowerCase());
+    const isNeg = exp.some(e => e.toLowerCase() === 'negative');
+    if (isNeg) {
+      return r.res.finding_count === 0 ? ['pass', 'var(--safe)'] : ['FP', 'var(--red)'];
+    }
+    if (!exp.length) return ['—', 'var(--ink-soft)'];
+    const ok = exp.every(e => cats.some(c => c.includes(e.toLowerCase()) || e.toLowerCase().includes(c)));
+    return ok ? ['pass', 'var(--safe)'] : ['miss', 'var(--amber)'];
+  };
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Engineering · Corpus Runner</div>
+          <h1>Corpus Runner</h1>
+        </div>
+        <div className="actions">
+          <span className="muted mono" style={{fontSize:11}}>target: {apiUrl}</span>
+          <button className="btn ghost" onClick={() => setSource(CR_SAMPLE)}>Load sample</button>
+          <button className="btn primary" onClick={run} disabled={running || !docs.length}>
+            {running ? `Running ${progress}/${docs.length}…` : `▶ Run ${docs.length} doc${docs.length===1?'':'s'}`}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
+        <div className="box"><div className="stat"><span className="s-label">Docs</span><span className="s-val">{docs.length}</span><span className="s-delta">{negativeExpected} negative</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Pass</span><span className="s-val" style={{color:'var(--safe)'}}>{passCount}</span><span className="s-delta">{results.length ? Math.round((passCount/results.length)*100) : 0}%</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Fail</span><span className="s-val" style={{color:'var(--red)'}}>{failCount}</span><span className="s-delta">miss · FP · err</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Findings</span><span className="s-val">{totalFindings}</span><span className="s-delta">across all docs</span></div></div>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:'1.1fr 1.6fr', gap:'var(--gap)', marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title"><span className="t">Corpus source</span><span className="k">split on lines with ---</span></div>
+          <textarea
+            value={source}
+            onChange={e => setSource(e.target.value)}
+            rows={18}
+            spellCheck={false}
+            style={{
+              width:'100%', resize:'vertical',
+              fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.6,
+              padding:10, background:'var(--bg-1)',
+              color:'var(--ink)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)',
+            }}
+          />
+          <div className="margin-note" style={{marginTop:6}}>
+            prefix a doc with <b>[Category]</b> to mark expected; use <b>[negative]</b> for docs that must not produce findings
+          </div>
+        </div>
+
+        <div className="box">
+          <div className="box-title"><span className="t">Category totals</span><span className="k">findings summed across corpus</span></div>
+          {Object.keys(byCategory).length === 0 ? (
+            <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+              {results.length ? '— no findings —' : '— run to populate —'}
+            </div>
+          ) : (
+            Object.entries(byCategory).sort((a,b) => b[1]-a[1]).map(([cat, n]) => {
+              const max = Math.max(...Object.values(byCategory));
+              return (
+                <div key={cat} className="bar-row">
+                  <span className="hand-b">{cat}</span>
+                  <span className="b"><i style={{width: (n/max*100)+'%', background:'var(--accent)'}}/></span>
+                  <span className="n">{n}</span>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      <div className="box">
+        <div className="box-title"><span className="t">Per-doc results</span><span className="k">click a row to drill into findings</span></div>
+        <div style={{display:'grid', gridTemplateColumns:'40px 130px 1fr 110px 70px 70px 70px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+          <span className="label">#</span>
+          <span className="label">Expected</span>
+          <span className="label">Preview</span>
+          <span className="label">Categories</span>
+          <span className="label">Findings</span>
+          <span className="label">Time</span>
+          <span className="label">Verdict</span>
+        </div>
+        {docs.length === 0 && (
+          <div className="muted" style={{padding:14, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+            — paste documents separated by <b>---</b> lines —
+          </div>
+        )}
+        {docs.map((d, i) => {
+          const r = results[i];
+          const ran = !!r;
+          const [vTxt, vColor] = r ? verdict(r) : [ran ? '…' : 'queued', 'var(--ink-faint)'];
+          const preview = (d.text || '').replace(/\s+/g,' ').slice(0, 90);
+          const cats = r && r.res ? [...new Set((r.res.findings || []).map(f => f.category))] : [];
+          const expCls = d.expected && d.expected[0] && d.expected[0].toLowerCase() === 'negative'
+            ? 'chip chip--ghost' : d.expected ? 'chip chip--teal' : 'chip chip--ghost';
+          return (
+            <React.Fragment key={i}>
+              <div
+                onClick={() => setExpanded(expanded === i ? null : i)}
+                style={{display:'grid', gridTemplateColumns:'40px 130px 1fr 110px 70px 70px 70px', gap:10, padding:'8px 0', borderBottom:'1px solid var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace", cursor:'pointer', background: expanded===i ? 'var(--bg-3)' : 'transparent'}}>
+                <span className="muted">#{d.index}</span>
+                <span>{d.expected ? <span className={expCls} style={{fontSize:9}}>{d.expected.join(',')}</span> : <span className="muted">—</span>}</span>
+                <span style={{color:'var(--ink-bright)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{preview}{(d.text || '').length > 90 ? '…' : ''}</span>
+                <span style={{color:'var(--cyan)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                  {cats.length ? cats.join(', ') : (ran ? '—' : '')}
+                </span>
+                <span>{r && r.res ? r.res.finding_count : (r && r.err ? '!' : '')}</span>
+                <span className="muted">{r ? Math.round(r.ms) + 'ms' : ''}</span>
+                <span><span className="chip" style={{color: vColor, borderColor: vColor, background:'transparent', fontSize:9}}>{vTxt}</span></span>
+              </div>
+              {expanded === i && r && (
+                <div style={{padding:'10px 14px', background:'var(--bg-1)', borderBottom:'1px solid var(--line-soft)', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.7}}>
+                  {r.err ? (
+                    <div style={{color:'var(--red)'}}>{r.err}</div>
+                  ) : (
+                    <>
+                      <div className="label" style={{marginBottom:6}}>Text</div>
+                      <div style={{whiteSpace:'pre-wrap', padding:'6px 8px', background:'var(--bg-2)', borderLeft:'2px solid var(--accent)', marginBottom:10}}>{d.text}</div>
+                      <div className="label" style={{marginBottom:6}}>Findings ({r.res.finding_count})</div>
+                      {(r.res.findings || []).length === 0 ? (
+                        <div className="muted">— none —</div>
+                      ) : (
+                        <div style={{display:'grid', gridTemplateColumns:'1.2fr 1.2fr 2fr 60px 80px', gap:8}}>
+                          {(r.res.findings || []).map((f, fi) => (
+                            <React.Fragment key={fi}>
+                              <span style={{color:'var(--ink-bright)'}}>{f.category}</span>
+                              <span className="muted">{f.sub_category || '—'}</span>
+                              <span style={{color:'var(--accent)'}}>{f.text}</span>
+                              <span>{f.confidence != null ? f.confidence.toFixed(2) : '—'}</span>
+                              <span className="muted">{f.span ? f.span.join('..') : '—'}</span>
+                            </React.Fragment>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { LiveScan, CorpusRunner });
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -7295,7 +7561,7 @@ function App() {
   const { Dashboard, Stream, FindingDetail, Pods, Policy, Patterns, Models, Assets,
           Compliance, Testing, AssureOverview, DetectOverview, Settings, Logs, Topbar, WorkspaceBar, SurfaceBar, TweaksPanel,
           Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users,
-          LiveScan } = window;
+          LiveScan, CorpusRunner } = window;
 
   // expose go() globally so nested surfaces (e.g. DetectOverview cards) can navigate.
   React.useEffect(() => { window.__c2_go = go; }, []);
@@ -7307,6 +7573,7 @@ function App() {
     Surface = {
       dashboard:      <Dashboard variant={dashVariant} setVariant={setDashVariant} go={go} />,
       livescan:       <LiveScan />,
+      corpusrun:      <CorpusRunner />,
       stream:         <Stream go={go} />,
       investigations: <Investigations />,
       pods:           <Pods />,
