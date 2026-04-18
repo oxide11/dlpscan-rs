@@ -2397,258 +2397,885 @@ function StubPage({ title, crumbs, blurb, sections }) {
 }
 
 function Investigations() {
-  return <StubPage
-    title="Investigations"
-    crumbs={['Operate','Investigations']}
-    blurb="Pinned queries + linked-finding clusters. Analysts open an investigation when one finding warrants a thread — it collects related findings, notes, assignees, and timeline across tenants."
-    sections={[
-      { t: 'Open investigations', k: '6 active · 2 assigned to me', rows: [
-        '▸  INV-2046  ·  acme-corp ·  PCI spike from pod/ingest-04  ·  owner: R.Solanki  ·  opened 2h',
-        '▸  INV-2045  ·  trailcom  ·  JWT leak in ticket attachments ·  owner: K.Mori    ·  opened 6h',
-        '▸  INV-2041  ·  acme-corp ·  SSN + email co-occurrence     ·  owner: unassigned ·  opened 1d',
-      ]},
-      { t: 'Saved queries', k: 'reusable filters', rows: [
-        '⌕  pci.visa.v3 AND tenant=acme-corp AND policy.action=block',
-        '⌕  finding.confidence < 0.6 AND category=PII    (tuning review)',
-        '⌕  severity=red AND forwarded=false             (needs routing)',
-      ]},
-      { t: 'Cluster feed', k: 'auto-groups of related findings', rows: [
-        '◎  Cluster C-A12  ·  14 findings  ·  doc-fingerprint match  ·  doc_1200.pdf',
-        '◎  Cluster C-A0F  ·  38 findings  ·  pattern hot-streak     ·  pci.visa.v3',
-      ]},
-      { t: 'Timeline activity', k: 'across all open', rows: [
-        '12:42  note  R.Solanki  —  "likely mis-scoped policy, needs ctx.invoice gate"',
-        '12:38  link  auto        —  added F-4a93, F-4a94 to INV-2046',
-        '12:31  open  K.Mori      —  INV-2045 from Finding F-3c01',
-      ]},
-    ]} />;
+  const cases = [
+    ['INV-2046','acme-corp','PCI spike from pod/ingest-04',  'R.Solanki','red', 14, '2h'],
+    ['INV-2045','trailcom', 'JWT leak in ticket attachments','K.Mori',   'red',  8, '6h'],
+    ['INV-2041','acme-corp','SSN + email co-occurrence',     '—',        'warn',22, '1d'],
+    ['INV-2039','widgetco', 'OCR false-positive tuning',     'K.Mori',   'warn', 6, '2d'],
+    ['INV-2034','trailcom', 'Policy #12 gate regression',    'R.Solanki','ok',   3, '4d'],
+    ['INV-2021','acme-corp','Base64 evasion in attachments', 'J.Nguyen', 'ok',  41, '9d'],
+  ];
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Operate · Investigations</div>
+          <h1>Investigations</h1>
+        </div>
+        <div className="actions">
+          <button className="btn ghost">Filter</button>
+          <button className="btn">Saved queries</button>
+          <button className="btn primary">New investigation</button>
+        </div>
+      </div>
+
+      <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
+        <div className="box"><div className="stat"><span className="s-label">Open</span><span className="s-val">6</span><span className="s-delta">2 assigned to you</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Linked findings</span><span className="s-val">94</span><span className="s-delta up">+12 today</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">MTTA p50</span><span className="s-val" style={{color:'var(--safe)'}}>8m</span><span className="s-delta">below SLO</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Stale &gt; 7d</span><span className="s-val" style={{color:'var(--amber)'}}>1</span><span className="s-delta">needs triage</span></div></div>
+      </div>
+
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title"><span className="t">Open investigations</span><span className="k">click to open thread</span></div>
+        <div style={{display:'grid', gridTemplateColumns:'90px 110px 1fr 140px 70px 60px 50px', gap:10, alignItems:'center', padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+          <span className="label">ID</span><span className="label">Tenant</span><span className="label">Title</span><span className="label">Owner</span><span className="label">Sev</span><span className="label">Links</span><span className="label">Age</span>
+        </div>
+        {cases.map(([id,tn,title,own,sev,links,age],i)=>(
+          <div key={i} style={{display:'grid', gridTemplateColumns:'90px 110px 1fr 140px 70px 60px 50px', gap:10, alignItems:'center', padding:'7px 0', borderBottom:'1px solid var(--line-soft)', fontSize:12, fontFamily:"'JetBrains Mono', monospace", cursor:'pointer'}}>
+            <span style={{color:'var(--accent)'}}>{id}</span>
+            <span>{tn}</span>
+            <span style={{color:'var(--ink-bright)'}}>{title}</span>
+            <span style={{color: own==='—' ? 'var(--amber)' : 'var(--ink)'}}>{own}</span>
+            <span><span className={`chip chip--${sev==='red'?'red':sev==='warn'?'warn':'safe'}`}>{sev.toUpperCase()}</span></span>
+            <span className="muted">{links}</span>
+            <span className="muted">{age}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-2">
+        <div className="box">
+          <div className="box-title"><span className="t">Cluster feed</span><span className="k">auto-grouped findings</span></div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.7}}>
+            <div style={{padding:'6px 0', borderBottom:'1px dashed var(--line-soft)'}}>
+              <span style={{color:'var(--cyan)'}}>◎ C-A12</span> · doc-fingerprint match ·{' '}
+              <span className="muted">doc_1200.pdf × 14 findings · 3 tenants</span>
+            </div>
+            <div style={{padding:'6px 0', borderBottom:'1px dashed var(--line-soft)'}}>
+              <span style={{color:'var(--cyan)'}}>◎ C-A0F</span> · pattern hot-streak ·{' '}
+              <span className="muted">pci.visa.v3 × 38 findings · pod/ingest-04</span>
+            </div>
+            <div style={{padding:'6px 0', borderBottom:'1px dashed var(--line-soft)'}}>
+              <span style={{color:'var(--cyan)'}}>◎ C-9F2</span> · co-occurrence ·{' '}
+              <span className="muted">SSN+email × 22 · tenant acme-corp</span>
+            </div>
+            <div style={{padding:'6px 0'}}>
+              <span style={{color:'var(--cyan)'}}>◎ C-9E8</span> · evasion signature ·{' '}
+              <span className="muted">homoglyph AKIA × 7 · eng repo</span>
+            </div>
+          </div>
+          <div className="margin-note" style={{marginTop:8}}>clusters collapse when MTTD drops below threshold</div>
+        </div>
+
+        <div className="box">
+          <div className="box-title"><span className="t">Activity · last 1h</span><span className="k">across all open</span></div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8, color:'var(--ink-soft)'}}>
+            <div><span style={{color:'var(--ink-faint)'}}>12:42</span> <span className="chip" style={{fontSize:9}}>NOTE</span> R.Solanki — "likely mis-scoped policy, needs ctx.invoice gate"</div>
+            <div><span style={{color:'var(--ink-faint)'}}>12:38</span> <span className="chip chip--teal" style={{fontSize:9}}>LINK</span> auto — added F-4a93, F-4a94 to INV-2046</div>
+            <div><span style={{color:'var(--ink-faint)'}}>12:31</span> <span className="chip chip--safe" style={{fontSize:9}}>OPEN</span> K.Mori — INV-2045 from finding F-3c01</div>
+            <div><span style={{color:'var(--ink-faint)'}}>12:18</span> <span className="chip" style={{fontSize:9}}>ASSIGN</span> R.Solanki → J.Nguyen on INV-2021</div>
+            <div><span style={{color:'var(--ink-faint)'}}>12:02</span> <span className="chip chip--warn" style={{fontSize:9}}>ESC</span> on-call — INV-2039 &gt; 24h no movement</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="box" style={{marginTop:'var(--gap)'}}>
+        <div className="box-title"><span className="t">Saved queries</span><span className="k">reusable filters · used by team</span></div>
+        <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.8}}>
+          <div><span style={{color:'var(--accent)'}}>⌕</span> pci.visa.v3 AND tenant=acme-corp AND policy.action=block <span className="muted">· R.Solanki · 14 uses</span></div>
+          <div><span style={{color:'var(--accent)'}}>⌕</span> finding.confidence &lt; 0.6 AND category=PII <span className="muted">· tuning review · 32 uses</span></div>
+          <div><span style={{color:'var(--accent)'}}>⌕</span> severity=red AND forwarded=false <span className="muted">· K.Mori · 8 uses</span></div>
+          <div><span style={{color:'var(--accent)'}}>⌕</span> cluster.size &gt; 10 AND age &lt; 1h <span className="muted">· spike watch · 41 uses</span></div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Alerts() {
-  return <StubPage
-    title="Alerts"
-    crumbs={['Operate','Alerts']}
-    blurb="Routing history, acknowledgement status, on-call escalations. Routing RULES live under Detect → Policies; this surface shows what happened when those rules fired."
-    sections={[
-      { t: 'Live alerts', k: '3 unacknowledged', rows: [
-        '✱  CRIT  ·  acme-corp  ·  PCI breach suspected  ·  routed: splunk-hec + #secops  ·  0 ack',
-        '!   WARN  ·  trailcom   ·  pattern spike 9.2σ     ·  routed: pagerduty P2         ·  0 ack',
-        '!   WARN  ·  acme-corp  ·  model drift on v2.3.1  ·  routed: #ml-ops             ·  1 ack',
-      ]},
-      { t: 'Routing destinations', k: '7 configured', rows: [
-        '▸ splunk-hec       ·  healthy   ·  last ingest 4s ago',
-        '▸ pagerduty        ·  healthy   ·  last incident 1h',
-        '▸ #secops (slack)  ·  healthy   ·  last post 3m',
-        '▸ s3://audit-vault ·  degraded  ·  backlog 2.1k events',
-      ]},
-      { t: 'Escalations (24h)', k: '14 fired · 12 acked · 2 missed', rows: [
-        '04:02  P1 → K.Mori   → acked 2m',
-        '06:18  P2 → on-call  → acked 8m',
-        '09:44  P2 → on-call  → MISSED → re-routed to P1',
-      ]},
-      { t: 'Quiet hours & gates', k: 'tenant-scoped', rows: [
-        'acme-corp   22:00–06:00 local  ·  only severity=red escalates',
-        'trailcom    24h open            ·  all P1+P2 escalate',
-      ]},
-    ]} />;
+  const live = [
+    ['CRIT','acme-corp','PCI breach suspected',   'splunk-hec + #secops','0/3','2m'],
+    ['WARN','trailcom', 'pattern spike 9.2σ',     'pagerduty P2',        '0/2','7m'],
+    ['WARN','acme-corp','model drift on v2.3.1',  '#ml-ops',             '1/2','14m'],
+  ];
+  const dests = [
+    ['splunk-hec',       'ok',  '4s',   '0.4s'],
+    ['pagerduty',        'ok',  '1h',   '1.2s'],
+    ['#secops · slack',  'ok',  '3m',   '—'],
+    ['datadog-security', 'ok',  '12s',  '0.7s'],
+    ['s3://audit-vault', 'bad', '—',    'backlog 2.1k'],
+    ['jira · cloud',     'ok',  '18m',  '0.9s'],
+    ['email · on-call',  'ok',  '44m',  '—'],
+  ];
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Operate · Alerts</div>
+          <h1>Alerts &amp; Routing</h1>
+        </div>
+        <div className="actions">
+          <button className="btn ghost">Playbooks</button>
+          <button className="btn">Quiet hours</button>
+          <button className="btn primary">New destination</button>
+        </div>
+      </div>
+
+      <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
+        <div className="box"><div className="stat"><span className="s-label">Unacked</span><span className="s-val" style={{color:'var(--red)'}}>3</span><span className="s-delta">2 CRIT</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Fired · 24h</span><span className="s-val">142</span><span className="s-delta up">+6 vs baseline</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Ack p50</span><span className="s-val" style={{color:'var(--safe)'}}>4.2m</span><span className="s-delta">SLO: 5m</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Missed</span><span className="s-val" style={{color:'var(--amber)'}}>2</span><span className="s-delta">24h window</span></div></div>
+      </div>
+
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title"><span className="t">Live alerts</span><span className="k">unacknowledged · newest first</span></div>
+        <div style={{display:'grid', gridTemplateColumns:'60px 110px 1fr 240px 60px 50px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+          <span className="label">Sev</span><span className="label">Tenant</span><span className="label">Summary</span><span className="label">Routed to</span><span className="label">Ack</span><span className="label">Age</span>
+        </div>
+        {live.map(([sev,tn,msg,route,ack,age],i)=>(
+          <div key={i} style={{display:'grid', gridTemplateColumns:'60px 110px 1fr 240px 60px 50px', gap:10, padding:'7px 0', borderBottom:'1px solid var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+            <span className={`chip chip--${sev==='CRIT'?'red':'warn'}`}>{sev}</span>
+            <span>{tn}</span>
+            <span style={{color:'var(--ink-bright)'}}>{msg}</span>
+            <span className="muted">{route}</span>
+            <span style={{color: ack.startsWith('0')?'var(--red)':'var(--ink)'}}>{ack}</span>
+            <span className="muted">{age}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-2" style={{marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title"><span className="t">Destinations</span><span className="k">7 configured · health checked 30s</span></div>
+          {dests.map(([n,s,last,lat],i)=>(
+            <div key={i} className="pod-row">
+              <span className={`dot-k ${s}`} />
+              <span className="name">{n}</span>
+              <span className="mono">{last}</span>
+              <span className="mono">{lat}</span>
+              <span className="mono muted">—</span>
+              <span className={`chip chip--${s==='ok'?'safe':s==='warn'?'warn':'red'}`}>{s==='ok'?'healthy':s==='warn'?'degraded':'failing'}</span>
+              <span className="arrow">→</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="box">
+          <div className="box-title"><span className="t">Escalations · 24h</span><span className="k">14 fired · 12 acked · 2 missed</span></div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.9, color:'var(--ink-soft)'}}>
+            <div><span style={{color:'var(--ink-faint)'}}>04:02</span> <span className="chip chip--red" style={{fontSize:9}}>P1</span> → K.Mori → <span style={{color:'var(--safe)'}}>acked 2m</span></div>
+            <div><span style={{color:'var(--ink-faint)'}}>06:18</span> <span className="chip chip--warn" style={{fontSize:9}}>P2</span> → on-call → <span style={{color:'var(--safe)'}}>acked 8m</span></div>
+            <div><span style={{color:'var(--ink-faint)'}}>08:44</span> <span className="chip chip--warn" style={{fontSize:9}}>P2</span> → on-call → <span style={{color:'var(--threat)'}}>MISSED → re-routed P1</span></div>
+            <div><span style={{color:'var(--ink-faint)'}}>09:52</span> <span className="chip chip--red" style={{fontSize:9}}>P1</span> → R.Solanki → <span style={{color:'var(--safe)'}}>acked 14m</span></div>
+            <div><span style={{color:'var(--ink-faint)'}}>10:11</span> <span className="chip chip--warn" style={{fontSize:9}}>P2</span> → on-call → <span style={{color:'var(--safe)'}}>acked 3m</span></div>
+            <div><span style={{color:'var(--ink-faint)'}}>11:04</span> <span className="chip chip--warn" style={{fontSize:9}}>P2</span> → on-call → <span style={{color:'var(--threat)'}}>MISSED</span></div>
+          </div>
+          <hr className="sep" />
+          <div className="label" style={{marginBottom:6}}>Quiet hours · tenant-scoped</div>
+          <div className="mono" style={{fontSize:11, color:'var(--ink-soft)', lineHeight:1.7}}>
+            <div>acme-corp · 22:00–06:00 local · only CRIT escalates</div>
+            <div>trailcom  · 24h open · all P1+P2 escalate</div>
+            <div>widgetco  · 09:00–18:00 local · slack only off-hours</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Tokenization() {
-  return <StubPage
-    title="Tokenization"
-    crumbs={['Detect','Tokenization']}
-    blurb="Format-preserving tokens, HMAC vaults, and per-category redaction templates. Used by policy actions (REDACT, TOKENIZE) and by the finding console to display sensitive values without leaking them."
-    sections={[
-      { t: 'Token vaults', k: '4 active · HMAC-SHA256', rows: [
-        '▦ customer-pii     ·  rotated 4d ago  ·  238k tokens issued',
-        '▦ card-numbers     ·  rotated 2d ago  ·  94k tokens issued',
-        '▦ medical-records  ·  rotated 7d ago  ·  11k tokens issued',
-        '▦ device-ids       ·  rotated 1d ago  ·  1.2M tokens issued',
-      ]},
-      { t: 'Redaction templates', k: '8 categories', rows: [
-        'PCI visa       →  •••• •••• •••• NNNN   (keep last 4)',
-        'US SSN         →  XXX-XX-NNNN            (keep last 4)',
-        'email          →  a****@example.com     (keep tld)',
-        'phone intl     →  +N (•••) •••-NNNN     (keep last 4)',
-        'freeform PII   →  [REDACTED:CATEGORY]',
-      ]},
-      { t: 'Policy usage', k: 'which policies consume which vault', rows: [
-        '⤷ #12 block-pci-egress    →  card-numbers vault',
-        '⤷ #14 redact-support-log  →  customer-pii + card-numbers',
-        '⤷ #18 hash-device-ids     →  device-ids',
-      ]},
-      { t: 'Detokenize policy', k: 'who/when allowed', rows: [
-        'role=analyst           →  NEVER',
-        'role=incident-lead     →  with MFA + justification',
-        'role=compliance-auditor→  read-only, with audit trail',
-      ]},
-    ]} />;
+  const vaults = [
+    ['customer-pii',    'HMAC-SHA256', '238,412',  '4d ago',  'customer service'],
+    ['card-numbers',    'HMAC-SHA256', '94,210',   '2d ago',  'billing, fraud'],
+    ['medical-records', 'HMAC-SHA256', '11,088',   '7d ago',  'healthcare-only'],
+    ['device-ids',      'HMAC-SHA256', '1,204,501','1d ago',  'telemetry'],
+  ];
+  const tpls = [
+    ['PCI · visa',     '•••• •••• •••• NNNN',     'keep last 4'],
+    ['US SSN',         'XXX-XX-NNNN',             'keep last 4'],
+    ['email',          'a****@example.com',       'keep tld'],
+    ['phone · intl',   '+N (•••) •••-NNNN',       'keep last 4'],
+    ['IBAN',           'XX## •••• •••• NNNN',     'keep country + last 4'],
+    ['freeform PII',   '[REDACTED:CATEGORY]',     'full mask'],
+  ];
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Detect · Tokenization</div>
+          <h1>Tokenization &amp; Redaction</h1>
+        </div>
+        <div className="actions">
+          <button className="btn ghost">Rotation policy</button>
+          <button className="btn">New template</button>
+          <button className="btn primary">New vault</button>
+        </div>
+      </div>
+
+      <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
+        <div className="box"><div className="stat"><span className="s-label">Active vaults</span><span className="s-val">4</span><span className="s-delta">HMAC-SHA256</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Tokens issued</span><span className="s-val">1.5M</span><span className="s-delta up">+82k · 24h</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Detoken reads</span><span className="s-val" style={{color:'var(--amber)'}}>14</span><span className="s-delta">24h · all MFA</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Rotation due</span><span className="s-val" style={{color:'var(--amber)'}}>1</span><span className="s-delta">medical-records</span></div></div>
+      </div>
+
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title"><span className="t">Token vaults</span><span className="k">format-preserving · per-tenant salt</span></div>
+        <div style={{display:'grid', gridTemplateColumns:'1.3fr 140px 110px 100px 1.2fr 30px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+          <span className="label">Name</span><span className="label">Algo</span><span className="label">Tokens</span><span className="label">Rotated</span><span className="label">Scope</span><span></span>
+        </div>
+        {vaults.map(([n,a,t,r,s],i)=>(
+          <div key={i} style={{display:'grid', gridTemplateColumns:'1.3fr 140px 110px 100px 1.2fr 30px', gap:10, padding:'7px 0', borderBottom:'1px solid var(--line-soft)', fontSize:12, fontFamily:"'JetBrains Mono', monospace", alignItems:'center'}}>
+            <span style={{color:'var(--ink-bright)'}}>▦ {n}</span>
+            <span className="muted">{a}</span>
+            <span>{t}</span>
+            <span className={r.includes('7d')?'':''} style={{color: r.includes('7d')?'var(--amber)':'var(--ink-soft)'}}>{r}</span>
+            <span className="muted">{s}</span>
+            <span className="arrow">→</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-2" style={{marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title"><span className="t">Redaction templates</span><span className="k">6 categories</span></div>
+          {tpls.map(([cat,fmt,note],i)=>(
+            <div key={i} style={{display:'grid', gridTemplateColumns:'140px 1fr 130px', gap:10, padding:'6px 0', borderBottom:'1px dashed var(--line-soft)', alignItems:'center', fontSize:12}}>
+              <span style={{fontFamily:"'JetBrains Mono', monospace", color:'var(--ink-bright)'}}>{cat}</span>
+              <span style={{fontFamily:"'JetBrains Mono', monospace", color:'var(--accent)'}}>{fmt}</span>
+              <span className="muted" style={{fontSize:11}}>{note}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="box">
+          <div className="box-title"><span className="t">Policy usage</span><span className="k">which policies consume which vault</span></div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.9}}>
+            <div><span style={{color:'var(--accent)'}}>⤷</span> #12 block-pci-egress    → <span style={{color:'var(--ink-bright)'}}>card-numbers</span></div>
+            <div><span style={{color:'var(--accent)'}}>⤷</span> #14 redact-support-log  → <span style={{color:'var(--ink-bright)'}}>customer-pii + card-numbers</span></div>
+            <div><span style={{color:'var(--accent)'}}>⤷</span> #18 hash-device-ids     → <span style={{color:'var(--ink-bright)'}}>device-ids</span></div>
+            <div><span style={{color:'var(--accent)'}}>⤷</span> #22 healthcare-hipaa    → <span style={{color:'var(--ink-bright)'}}>medical-records</span></div>
+          </div>
+          <hr className="sep" />
+          <div className="label" style={{marginBottom:6}}>Detokenize policy · who/when allowed</div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8}}>
+            <div>role=<b>analyst</b>           → <span className="chip chip--red">NEVER</span></div>
+            <div>role=<b>incident-lead</b>     → <span className="chip chip--warn">MFA + justification</span></div>
+            <div>role=<b>compliance-auditor</b>→ <span className="chip chip--teal">read-only · audit trail</span></div>
+            <div>role=<b>admin</b>             → <span className="chip chip--warn">MFA + 2-person rule</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div className="box">
+        <div className="box-title"><span className="t">Recent detokenize events</span><span className="k">all recorded · 7y retention</span></div>
+        <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8, color:'var(--ink-soft)'}}>
+          <div><span style={{color:'var(--ink-faint)'}}>12:33</span> K.Mori · read <span style={{color:'var(--accent)'}}>card-numbers:a4f2</span> · justify: INV-2046 · MFA ✓</div>
+          <div><span style={{color:'var(--ink-faint)'}}>11:08</span> R.Solanki · read <span style={{color:'var(--accent)'}}>customer-pii:9c21</span> · justify: ticket T-1144 · MFA ✓</div>
+          <div><span style={{color:'var(--ink-faint)'}}>09:41</span> J.Nguyen · read <span style={{color:'var(--accent)'}}>card-numbers:5e8d</span> · justify: SOC2 evidence pack · MFA ✓</div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Corpora() {
-  return <StubPage
-    title="Test Corpora"
-    crumbs={['Assure','Test Corpora']}
-    blurb="Golden datasets used by Adversarial Tests. Positive examples (must detect), negative examples (must not false-positive), and evasion pairs (original vs obfuscated). Versioned, scoped per tenant if needed."
-    sections={[
-      { t: 'Corpora', k: '12 corpora · 4.2k labelled docs', rows: [
-        '❖ pci-positive-v3        ·  80 docs   ·  curated 2026-04-01',
-        '❖ pci-negative-v3        ·  160 docs  ·  curated 2026-04-01',
-        '❖ evasion-homoglyph-v1   ·  120 pairs ·  curated 2026-03-12',
-        '❖ healthcare-hipaa-v2    ·  220 docs  ·  curated 2026-02-22',
-        '❖ base64-obfuscated-v1   ·  90 docs   ·  curated 2026-04-10',
-      ]},
-      { t: 'Recent contributions', k: 'who added what', rows: [
-        'K.Mori      +14 pairs to evasion-homoglyph-v1',
-        'R.Solanki   +6 docs   to pci-negative-v3 (false-positive regressions)',
-        'auto-gen    +40 docs  to base64-obfuscated-v1 (nightly synth)',
-      ]},
-      { t: 'Coverage map', k: 'categories × corpora', rows: [
-        'PCI            ████████░░  82%',
-        'PII · SSN      ██████████  98%',
-        'PII · email    ███████░░░  71%',
-        'Healthcare     █████████░  91%',
-        'Secrets        ██████░░░░  64%   ← gap',
-      ]},
-      { t: 'Consumed by', k: 'tests referencing corpora', rows: [
-        'T-01 nightly-pci-recall       →  pci-positive-v3, pci-negative-v3',
-        'T-04 evasion-homoglyph        →  evasion-homoglyph-v1',
-        'T-07 base64-obfuscation       →  base64-obfuscated-v1',
-      ]},
-    ]} />;
+  const corpora = [
+    ['pci-positive-v3',        'positive',  80,   '2026-04-01', 'PCI'],
+    ['pci-negative-v3',        'negative',  160,  '2026-04-01', 'PCI'],
+    ['evasion-homoglyph-v1',   'evasion',   120,  '2026-03-12', 'evasion'],
+    ['healthcare-hipaa-v2',    'positive',  220,  '2026-02-22', 'PHI'],
+    ['base64-obfuscated-v1',   'evasion',   90,   '2026-04-10', 'evasion'],
+    ['pii-co-occurrence-v2',   'positive',  180,  '2026-03-28', 'PII'],
+    ['secrets-negative-v1',    'negative',  140,  '2026-03-15', 'secrets'],
+  ];
+  const cov = [
+    ['PCI',         82, 'ok'],
+    ['PII · SSN',   98, 'ok'],
+    ['PII · email', 71, 'warn'],
+    ['Healthcare',  91, 'ok'],
+    ['Secrets',     64, 'bad'],
+    ['Classified',  58, 'bad'],
+  ];
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Assure · Test Corpora</div>
+          <h1>Test Corpora</h1>
+        </div>
+        <div className="actions">
+          <button className="btn ghost">Export</button>
+          <button className="btn">Import labelled</button>
+          <button className="btn primary">New corpus</button>
+        </div>
+      </div>
+
+      <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
+        <div className="box"><div className="stat"><span className="s-label">Corpora</span><span className="s-val">12</span><span className="s-delta">7 positive · 3 negative · 2 evasion</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Labelled docs</span><span className="s-val">4,218</span><span className="s-delta up">+60 this week</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Coverage avg</span><span className="s-val">77%</span><span className="s-delta">5 categories &gt; 80</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Gaps</span><span className="s-val" style={{color:'var(--amber)'}}>2</span><span className="s-delta">secrets · classified</span></div></div>
+      </div>
+
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title"><span className="t">Corpora</span><span className="k">versioned · hash-pinned · 7y retention</span></div>
+        <div style={{display:'grid', gridTemplateColumns:'1.6fr 110px 90px 120px 120px 30px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+          <span className="label">Name</span><span className="label">Kind</span><span className="label">Docs</span><span className="label">Curated</span><span className="label">Category</span><span></span>
+        </div>
+        {corpora.map(([n,k,d,c,cat],i)=>(
+          <div key={i} style={{display:'grid', gridTemplateColumns:'1.6fr 110px 90px 120px 120px 30px', gap:10, padding:'7px 0', borderBottom:'1px solid var(--line-soft)', fontSize:12, fontFamily:"'JetBrains Mono', monospace", alignItems:'center'}}>
+            <span style={{color:'var(--ink-bright)'}}>❖ {n}</span>
+            <span><span className={`chip chip--${k==='positive'?'safe':k==='negative'?'teal':'warn'}`}>{k}</span></span>
+            <span>{d}</span>
+            <span className="muted">{c}</span>
+            <span style={{color:'var(--cyan)'}}>{cat}</span>
+            <span className="arrow">→</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-2" style={{marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title"><span className="t">Coverage map</span><span className="k">categories × corpora</span></div>
+          {cov.map(([c,pct,s],i)=>(
+            <div key={i} className="bar-row">
+              <span className="hand-b">{c}</span>
+              <span className="b"><i style={{width:pct+'%', background: s==='ok'?'var(--safe)':s==='warn'?'var(--amber)':'var(--red)'}}/></span>
+              <span className="n">{pct}%</span>
+            </div>
+          ))}
+          <div className="margin-note red" style={{marginTop:8}}>secrets &amp; classified are below the 70% gate — blocks release of classifier v2.4</div>
+        </div>
+
+        <div className="box">
+          <div className="box-title"><span className="t">Recent contributions</span><span className="k">labelled &amp; reviewed</span></div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.9}}>
+            <div><span className="muted">12:18</span> K.Mori +14 pairs → evasion-homoglyph-v1</div>
+            <div><span className="muted">09:02</span> R.Solanki +6 docs → pci-negative-v3 <span className="muted">(FP regressions)</span></div>
+            <div><span className="muted">04:00</span> auto-gen +40 docs → base64-obfuscated-v1 <span className="muted">(nightly synth)</span></div>
+            <div><span className="muted">yday</span> J.Nguyen +12 docs → healthcare-hipaa-v2</div>
+            <div><span className="muted">yday</span> auto-gen +28 docs → pii-co-occurrence-v2</div>
+          </div>
+          <hr className="sep" />
+          <div className="label" style={{marginBottom:6}}>Consumed by tests</div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8}}>
+            <div>T-01 nightly-pci-recall → pci-positive-v3, pci-negative-v3</div>
+            <div>T-04 evasion-homoglyph → evasion-homoglyph-v1</div>
+            <div>T-07 base64-obfuscation → base64-obfuscated-v1</div>
+            <div>T-12 hipaa-coverage → healthcare-hipaa-v2</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Audit() {
-  return <StubPage
-    title="Audit Log"
-    crumbs={['Assure','Audit Log']}
-    blurb="Immutable record of every change to detection logic, every role grant, every detokenization event. Searchable, exportable as evidence packs."
-    sections={[
-      { t: 'Recent events', k: '1.2M events · last 30d', rows: [
-        '12:42:18  policy.edit   R.Solanki  →  #12 block-pci-egress  ·  added ctx.invoice gate',
-        '11:03:02  detoken.read  K.Mori     →  token:cust-pii:a4f2  ·  justify: INV-2046',
-        '09:21:55  role.grant    root       →  J.Nguyen += compliance-auditor',
-        '08:14:30  model.deploy  auto       →  classify-v2.3.1  ·  canary 5%',
-      ]},
-      { t: 'Filters', k: 'who · what · when', rows: [
-        'actor  = any',
-        'object = policy · pattern · model · role · token · tenant',
-        'action = read · edit · deploy · grant · revoke',
-        'range  = last 24h',
-      ]},
-      { t: 'Evidence packs', k: 'signed, hash-chained exports', rows: [
-        '◈ 2026-Q1  SOC2-controls   ·  142MB ·  exported 2026-04-03',
-        '◈ 2026-Q1  PCI-DSS-section-3 ·  38MB ·  exported 2026-03-29',
-      ]},
-      { t: 'Retention', k: 'by event class', rows: [
-        'policy / model changes    →  7 years',
-        'detokenization events     →  7 years',
-        'read-only queries         →  90 days',
-        'system heartbeats         →  30 days',
-      ]},
-    ]} />;
+  const events = [
+    ['12:42:18','policy.edit',  'R.Solanki','#12 block-pci-egress',      'added ctx.invoice gate',    'ok'],
+    ['11:03:02','detoken.read', 'K.Mori',   'token:cust-pii:a4f2',       'justify: INV-2046',         'warn'],
+    ['09:21:55','role.grant',   'root',     'J.Nguyen',                  '+= compliance-auditor',      'warn'],
+    ['08:14:30','model.deploy', 'auto',     'classify-v2.3.1',           'canary 5%',                 'ok'],
+    ['06:08:14','pattern.edit', 'R.Solanki','pci.visa.v3',               'threshold 0.88 → 0.91',     'ok'],
+    ['04:55:22','key.rotate',   'auto',     'ingest-agent-prod',         'scheduled 90d rotation',    'ok'],
+    ['03:11:48','tenant.create','K.Mori',   'widgetco-eu',               'region=eu-west, plan=gold', 'ok'],
+    ['01:44:02','detoken.read', 'J.Nguyen', 'token:card-numbers:5e8d',   'SOC2 evidence pack',        'warn'],
+    ['00:02:19','policy.revert','R.Solanki','#7 hipaa-strict',           'rolled back v8 → v7',       'bad'],
+  ];
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Assure · Audit Log</div>
+          <h1>Audit Log</h1>
+        </div>
+        <div className="actions">
+          <button className="btn ghost">Search</button>
+          <button className="btn">Export CSV</button>
+          <button className="btn primary">Build evidence pack</button>
+        </div>
+      </div>
+
+      <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
+        <div className="box"><div className="stat"><span className="s-label">Events · 30d</span><span className="s-val">1.2M</span><span className="s-delta">hash-chained</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Policy changes</span><span className="s-val">48</span><span className="s-delta up">14 pending review</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Detoken reads</span><span className="s-val" style={{color:'var(--amber)'}}>142</span><span className="s-delta">all with justification</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Chain verify</span><span className="s-val" style={{color:'var(--safe)'}}>OK</span><span className="s-delta">last check 2m ago</span></div></div>
+      </div>
+
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title"><span className="t">Filters</span><span className="k">who · what · when</span></div>
+        <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
+          <div className="tb-filter"><span className="l">actor</span><span className="v">any</span><span className="chev">▾</span></div>
+          <div className="tb-filter"><span className="l">object</span><span className="v">policy · pattern · model · role · token · tenant</span><span className="chev">▾</span></div>
+          <div className="tb-filter"><span className="l">action</span><span className="v">read · edit · deploy · grant · revoke</span><span className="chev">▾</span></div>
+          <div className="tb-filter"><span className="l">range</span><span className="v">last 24h</span><span className="chev">▾</span></div>
+          <div className="tb-filter"><span className="l">tenant</span><span className="v">any</span><span className="chev">▾</span></div>
+        </div>
+      </div>
+
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title"><span className="t">Recent events</span><span className="k">immutable · newest first</span></div>
+        <div style={{display:'grid', gridTemplateColumns:'90px 120px 110px 1.4fr 1fr 30px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+          <span className="label">Time</span><span className="label">Action</span><span className="label">Actor</span><span className="label">Object</span><span className="label">Detail</span><span></span>
+        </div>
+        {events.map(([t,a,actor,obj,detail,s],i)=>(
+          <div key={i} style={{display:'grid', gridTemplateColumns:'90px 120px 110px 1.4fr 1fr 30px', gap:10, padding:'6px 0', borderBottom:'1px solid var(--line-soft)', fontSize:11.5, fontFamily:"'JetBrains Mono', monospace", alignItems:'center'}}>
+            <span className="muted">{t}</span>
+            <span style={{color: a.startsWith('detoken')?'var(--amber)': a.startsWith('policy.revert')?'var(--red)':'var(--cyan)'}}>{a}</span>
+            <span>{actor}</span>
+            <span style={{color:'var(--ink-bright)'}}>{obj}</span>
+            <span className="muted">{detail}</span>
+            <span><span className={`chip chip--${s==='ok'?'safe':s==='warn'?'warn':'red'}`} style={{fontSize:9}}>{s}</span></span>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-2">
+        <div className="box">
+          <div className="box-title"><span className="t">Evidence packs</span><span className="k">signed · hash-chained exports</span></div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.9}}>
+            <div style={{padding:'6px 0', borderBottom:'1px dashed var(--line-soft)'}}>
+              <span style={{color:'var(--accent)'}}>◈</span> 2026-Q1 · SOC2-controls · <span className="muted">142MB · 2026-04-03</span> <span className="chip chip--safe" style={{marginLeft:6}}>verified</span>
+            </div>
+            <div style={{padding:'6px 0', borderBottom:'1px dashed var(--line-soft)'}}>
+              <span style={{color:'var(--accent)'}}>◈</span> 2026-Q1 · PCI-DSS-§3 · <span className="muted">38MB · 2026-03-29</span> <span className="chip chip--safe" style={{marginLeft:6}}>verified</span>
+            </div>
+            <div style={{padding:'6px 0', borderBottom:'1px dashed var(--line-soft)'}}>
+              <span style={{color:'var(--accent)'}}>◈</span> 2025-Q4 · HIPAA-§164 · <span className="muted">74MB · 2026-01-12</span> <span className="chip chip--safe" style={{marginLeft:6}}>verified</span>
+            </div>
+            <div style={{padding:'6px 0'}}>
+              <span style={{color:'var(--accent)'}}>◈</span> 2025-Q4 · GDPR-Art.30 · <span className="muted">52MB · 2026-01-08</span> <span className="chip chip--safe" style={{marginLeft:6}}>verified</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="box">
+          <div className="box-title"><span className="t">Retention policy</span><span className="k">by event class</span></div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:2}}>
+            <div>policy / model changes &nbsp;&nbsp;&nbsp;→ <span className="chip chip--safe">7 years</span></div>
+            <div>detokenization events &nbsp;&nbsp;&nbsp;&nbsp;→ <span className="chip chip--safe">7 years</span></div>
+            <div>role grants / revokes &nbsp;&nbsp;&nbsp;&nbsp;→ <span className="chip chip--safe">7 years</span></div>
+            <div>read-only queries &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ <span className="chip chip--warn">90 days</span></div>
+            <div>system heartbeats &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;→ <span className="chip">30 days</span></div>
+          </div>
+          <div className="margin-note" style={{marginTop:10}}>retention tiers enforced by lifecycle rules on the object store</div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Integrations() {
-  return <StubPage
-    title="Integrations"
-    crumbs={['Admin','Integrations']}
-    blurb="Outbound destinations (SIEM, SOAR, ticketing, storage) and inbound sources (agents, cloud feeds, message queues). Credentials vaulted; health checked every 30s."
-    sections={[
-      { t: 'Destinations', k: '7 configured · 6 healthy · 1 degraded', rows: [
-        '▸ Splunk HEC              ·  healthy   ·  0.4s p95',
-        '▸ Datadog Security        ·  healthy   ·  0.7s p95',
-        '▸ PagerDuty               ·  healthy   ·  1.2s p95',
-        '▸ Slack #secops           ·  healthy   ·  — ',
-        '▸ S3 · audit-vault        ·  degraded  ·  backlog 2.1k',
-        '▸ Jira · cloud            ·  healthy   ·  0.9s p95',
-      ]},
-      { t: 'Sources', k: 'where findings come from', rows: [
-        '▸ siphon-agent · 48 pods   ·  all green',
-        '▸ AWS CloudTrail           ·  green · 12m lag',
-        '▸ Kafka · events-prod      ·  green · 0 lag',
-        '▸ Gmail API · acme-corp    ·  auth expiring in 6d ⚠',
-      ]},
-      { t: 'Marketplace', k: 'not yet connected', rows: [
-        '+ Microsoft Sentinel',
-        '+ Chronicle (Google)',
-        '+ ServiceNow ITSM',
-        '+ Okta · event hook',
-      ]},
-      { t: 'Health history (24h)', k: 'outages & degradations', rows: [
-        '08:14  S3 audit-vault  degraded → healthy  (12m)',
-        '03:02  Jira            rate-limited (2m)',
-      ]},
-    ]} />;
+  const dests = [
+    ['Splunk HEC',        'SIEM',       'ok',  '0.4s', 'findings + alerts'],
+    ['Datadog Security',  'SIEM',       'ok',  '0.7s', 'findings'],
+    ['PagerDuty',         'SOAR',       'ok',  '1.2s', 'P1/P2 incidents'],
+    ['#secops · slack',   'chat',       'ok',  '—',    'alerts + digest'],
+    ['S3 audit-vault',    'storage',    'bad', 'backlog','evidence packs'],
+    ['Jira · cloud',      'ticketing',  'ok',  '0.9s', 'investigations'],
+    ['webhook · acme',    'webhook',    'ok',  '0.3s', 'tenant-scoped'],
+  ];
+  const srcs = [
+    ['siphon-agent · 48 pods', 'agents',    'ok',  '—',     'all 48 green'],
+    ['AWS CloudTrail',         'cloud',     'ok',  '12m',   'lag within SLA'],
+    ['Kafka · events-prod',    'stream',    'ok',  '0s',    '0 consumer lag'],
+    ['Gmail API · acme-corp',  'SaaS',      'warn','—',     'auth expires 6d'],
+    ['O365 · widgetco',        'SaaS',      'ok',  '—',     'connected 2w'],
+  ];
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Admin · Integrations</div>
+          <h1>Integrations</h1>
+        </div>
+        <div className="actions">
+          <button className="btn ghost">Marketplace</button>
+          <button className="btn">Credentials vault</button>
+          <button className="btn primary">Connect…</button>
+        </div>
+      </div>
+
+      <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
+        <div className="box"><div className="stat"><span className="s-label">Destinations</span><span className="s-val">7</span><span className="s-delta">6 healthy · 1 degraded</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Sources</span><span className="s-val">5</span><span className="s-delta up">4 green · 1 auth-warn</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Throughput</span><span className="s-val">82</span><span className="s-delta">k events/hr</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Errors · 24h</span><span className="s-val" style={{color:'var(--amber)'}}>14</span><span className="s-delta">0.017% err rate</span></div></div>
+      </div>
+
+      <div className="grid grid-2" style={{marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title"><span className="t">Destinations</span><span className="k">outbound · health 30s</span></div>
+          <div style={{display:'grid', gridTemplateColumns:'16px 1.3fr 80px 80px 60px 1fr', gap:8, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+            <span></span><span className="label">Name</span><span className="label">Kind</span><span className="label">p95</span><span className="label">State</span><span className="label">Scope</span>
+          </div>
+          {dests.map(([n,k,s,lat,scope],i)=>(
+            <div key={i} style={{display:'grid', gridTemplateColumns:'16px 1.3fr 80px 80px 60px 1fr', gap:8, padding:'6px 0', borderBottom:'1px solid var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+              <span className={`dot-k ${s}`} />
+              <span style={{color:'var(--ink-bright)'}}>{n}</span>
+              <span className="muted">{k}</span>
+              <span>{lat}</span>
+              <span className={`chip chip--${s==='ok'?'safe':s==='warn'?'warn':'red'}`}>{s==='ok'?'healthy':s==='warn'?'degraded':'failing'}</span>
+              <span className="muted">{scope}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="box">
+          <div className="box-title"><span className="t">Sources</span><span className="k">inbound · where findings come from</span></div>
+          <div style={{display:'grid', gridTemplateColumns:'16px 1.4fr 80px 80px 1fr', gap:8, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+            <span></span><span className="label">Name</span><span className="label">Kind</span><span className="label">Lag</span><span className="label">Detail</span>
+          </div>
+          {srcs.map(([n,k,s,lag,d],i)=>(
+            <div key={i} style={{display:'grid', gridTemplateColumns:'16px 1.4fr 80px 80px 1fr', gap:8, padding:'6px 0', borderBottom:'1px solid var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+              <span className={`dot-k ${s}`} />
+              <span style={{color:'var(--ink-bright)'}}>{n}</span>
+              <span className="muted">{k}</span>
+              <span>{lag}</span>
+              <span className={s==='warn'?'':'muted'} style={{color: s==='warn'?'var(--amber)':undefined}}>{d}</span>
+            </div>
+          ))}
+          <div className="margin-note" style={{marginTop:8}}>credentials stored in vault-tenant · rotated per integration policy</div>
+        </div>
+      </div>
+
+      <div className="grid grid-2">
+        <div className="box">
+          <div className="box-title"><span className="t">Marketplace</span><span className="k">one-click connectors</span></div>
+          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+            <div style={{padding:'8px 10px', border:'1px dashed var(--line)', borderRadius:'var(--radius)'}}>+ Microsoft Sentinel<div className="muted" style={{fontSize:10}}>SIEM · cert pinned</div></div>
+            <div style={{padding:'8px 10px', border:'1px dashed var(--line)', borderRadius:'var(--radius)'}}>+ Chronicle (Google)<div className="muted" style={{fontSize:10}}>SIEM · JSON lines</div></div>
+            <div style={{padding:'8px 10px', border:'1px dashed var(--line)', borderRadius:'var(--radius)'}}>+ ServiceNow ITSM<div className="muted" style={{fontSize:10}}>ticketing</div></div>
+            <div style={{padding:'8px 10px', border:'1px dashed var(--line)', borderRadius:'var(--radius)'}}>+ Okta · event hook<div className="muted" style={{fontSize:10}}>identity source</div></div>
+            <div style={{padding:'8px 10px', border:'1px dashed var(--line)', borderRadius:'var(--radius)'}}>+ Azure Sentinel<div className="muted" style={{fontSize:10}}>SIEM</div></div>
+            <div style={{padding:'8px 10px', border:'1px dashed var(--line)', borderRadius:'var(--radius)'}}>+ Snowflake · table sink<div className="muted" style={{fontSize:10}}>warehouse</div></div>
+          </div>
+        </div>
+
+        <div className="box">
+          <div className="box-title"><span className="t">Health history · 24h</span><span className="k">outages &amp; degradations</span></div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.9, color:'var(--ink-soft)'}}>
+            <div><span style={{color:'var(--ink-faint)'}}>08:14</span> <span style={{color:'var(--amber)'}}>degraded</span> S3 audit-vault → healthy <span className="muted">(12m)</span></div>
+            <div><span style={{color:'var(--ink-faint)'}}>07:02</span> <span style={{color:'var(--amber)'}}>rate-limited</span> Jira · cloud <span className="muted">(2m)</span></div>
+            <div><span style={{color:'var(--ink-faint)'}}>04:44</span> <span style={{color:'var(--amber)'}}>auth-warn</span> Gmail API · acme-corp <span className="muted">(ongoing)</span></div>
+            <div><span style={{color:'var(--ink-faint)'}}>yday</span> <span style={{color:'var(--red)'}}>failed</span> PagerDuty burst → 1m retry succeeded</div>
+            <div><span style={{color:'var(--ink-faint)'}}>yday</span> <span style={{color:'var(--amber)'}}>degraded</span> Splunk HEC p95 → healthy <span className="muted">(6m)</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ApiKeys() {
-  return <StubPage
-    title="API Keys"
-    crumbs={['Admin','API Keys']}
-    blurb="Programmatic access for ingest agents, data-science notebooks, CI/CD, and partner integrations. Scoped to roles; last-used tracked; rotation enforced."
-    sections={[
-      { t: 'Active keys', k: '12 · 2 rotation-due', rows: [
-        '⚿ ci-deploy-key        · role=policy-writer  · used 4m ago',
-        '⚿ notebook-r-solanki   · role=analyst        · used 12m ago',
-        '⚿ ingest-agent-prod    · role=ingest-only    · used now  ·  rotate in 3d',
-        '⚿ partner-acme         · role=read-findings  · used 2h   ·  ROTATE OVERDUE',
-      ]},
-      { t: 'Scopes in use', k: 'principle of least privilege', rows: [
-        'ingest-only           — POST /v1/ingest',
-        'read-findings         — GET  /v1/findings · /v1/investigations',
-        'policy-writer         — CRUD /v1/policies · /v1/patterns',
-        'admin-full            — everything',
-      ]},
-      { t: 'IP allowlists', k: 'optional', rows: [
-        'ingest-agent-prod  →  10.0.0.0/8',
-        'partner-acme       →  203.0.113.0/24',
-      ]},
-      { t: 'Rotation policy', k: 'per scope', rows: [
-        'ingest-only       →  every 90 days',
-        'policy-writer     →  every 30 days',
-        'admin-full        →  every 30 days + MFA + 2-person rule',
-      ]},
-    ]} />;
+  const keys = [
+    ['ci-deploy-key',       'policy-writer',  '4m',   'in 23d',  'ok'],
+    ['notebook-r-solanki',  'analyst',        '12m',  'in 14d',  'ok'],
+    ['ingest-agent-prod',   'ingest-only',    'now',  'in 3d',   'warn'],
+    ['ingest-agent-eu',     'ingest-only',    '2m',   'in 41d',  'ok'],
+    ['partner-acme',        'read-findings',  '2h',   'OVERDUE', 'bad'],
+    ['notebook-k-mori',     'analyst',        '38m',  'in 22d',  'ok'],
+    ['slack-bot-secops',    'read-findings',  '14m',  'in 18d',  'ok'],
+    ['soar-playbook-1',     'ingest-only',    '4h',   'in 8d',   'warn'],
+  ];
+  const scopes = [
+    ['ingest-only',    'POST /v1/ingest',                              '90d rotation'],
+    ['read-findings',  'GET  /v1/findings · /v1/investigations',       '60d rotation'],
+    ['policy-writer',  'CRUD /v1/policies · /v1/patterns',             '30d rotation'],
+    ['admin-full',     'everything',                                    '30d + MFA + 2-person rule'],
+  ];
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Admin · API Keys</div>
+          <h1>API Keys</h1>
+        </div>
+        <div className="actions">
+          <button className="btn ghost">Audit key usage</button>
+          <button className="btn">Rotation policy</button>
+          <button className="btn primary">Issue new key</button>
+        </div>
+      </div>
+
+      <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
+        <div className="box"><div className="stat"><span className="s-label">Active keys</span><span className="s-val">12</span><span className="s-delta">8 humans · 4 service</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Due soon</span><span className="s-val" style={{color:'var(--amber)'}}>2</span><span className="s-delta">&lt; 7d window</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Overdue</span><span className="s-val" style={{color:'var(--red)'}}>1</span><span className="s-delta">partner-acme</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Unused 30d</span><span className="s-val" style={{color:'var(--amber)'}}>3</span><span className="s-delta">candidates for revoke</span></div></div>
+      </div>
+
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title"><span className="t">Active keys</span><span className="k">last-used tracked · IP-bound where set</span></div>
+        <div style={{display:'grid', gridTemplateColumns:'16px 1.4fr 140px 90px 120px 80px 30px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+          <span></span><span className="label">Name</span><span className="label">Role</span><span className="label">Last used</span><span className="label">Rotation</span><span className="label">State</span><span></span>
+        </div>
+        {keys.map(([n,r,last,rot,s],i)=>(
+          <div key={i} style={{display:'grid', gridTemplateColumns:'16px 1.4fr 140px 90px 120px 80px 30px', gap:10, padding:'7px 0', borderBottom:'1px solid var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+            <span className={`dot-k ${s}`} />
+            <span style={{color:'var(--ink-bright)'}}>⚿ {n}</span>
+            <span className="muted">{r}</span>
+            <span>{last}</span>
+            <span style={{color: s==='bad'?'var(--red)':s==='warn'?'var(--amber)':'var(--ink-soft)'}}>{rot}</span>
+            <span><span className={`chip chip--${s==='ok'?'safe':s==='warn'?'warn':'red'}`} style={{fontSize:9}}>{s==='ok'?'ok':s==='warn'?'rotate':'overdue'}</span></span>
+            <span className="arrow">→</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-2">
+        <div className="box">
+          <div className="box-title"><span className="t">Scopes &amp; rotation</span><span className="k">least-privilege defaults</span></div>
+          <div style={{display:'grid', gridTemplateColumns:'140px 1.2fr 140px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+            <span className="label">Scope</span><span className="label">Allowed</span><span className="label">Rotation</span>
+          </div>
+          {scopes.map(([s,allowed,rot],i)=>(
+            <div key={i} style={{display:'grid', gridTemplateColumns:'140px 1.2fr 140px', gap:10, padding:'7px 0', borderBottom:'1px dashed var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+              <span style={{color:'var(--ink-bright)'}}>{s}</span>
+              <span className="muted">{allowed}</span>
+              <span>{rot}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="box">
+          <div className="box-title"><span className="t">IP allowlists</span><span className="k">optional · per key</span></div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:2}}>
+            <div>ingest-agent-prod  → <span className="chip chip--teal">10.0.0.0/8</span></div>
+            <div>ingest-agent-eu   → <span className="chip chip--teal">172.16.0.0/12</span></div>
+            <div>partner-acme      → <span className="chip chip--teal">203.0.113.0/24</span></div>
+            <div>soar-playbook-1   → <span className="chip chip--teal">198.51.100.0/24</span></div>
+            <div>slack-bot-secops  → <span className="chip chip--ghost">— (any)</span></div>
+          </div>
+          <hr className="sep" />
+          <div className="label" style={{marginBottom:6}}>Key lifecycle events · 7d</div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8, color:'var(--ink-soft)'}}>
+            <div><span className="muted">2d</span> issued <span style={{color:'var(--ink-bright)'}}>notebook-k-mori</span> · role=analyst</div>
+            <div><span className="muted">3d</span> revoked <span style={{color:'var(--red)'}}>partner-beta</span> · unused 90d</div>
+            <div><span className="muted">5d</span> rotated <span style={{color:'var(--ink-bright)'}}>ci-deploy-key</span> · auto</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Agents() {
-  return <StubPage
-    title="Agents"
-    crumbs={['Admin','Agents']}
-    blurb="Siphon-agent pods installed in customer environments. Version, upgrade cadence, remote config, and health. Detect-side happens server-side in C2; agents are ingest-only."
-    sections={[
-      { t: 'Fleet', k: '48 pods · 46 green · 1 warn · 1 drift', rows: [
-        '◆ acme-corp · us-east · pod-01 … pod-14   · v4.2.1 · healthy',
-        '◆ acme-corp · eu-west · pod-15 … pod-22   · v4.2.1 · healthy',
-        '◆ trailcom  · us-west · pod-23 … pod-36   · v4.2.0 · warn (1)',
-        '◆ demo      · us-east · pod-99            · v4.1.7 · DRIFT — upgrade required',
-      ]},
-      { t: 'Release channels', k: 'controlled rollout', rows: [
-        'stable        → v4.2.1   (default, 80% of fleet)',
-        'canary        → v4.3.0-rc1 (5 pods, 48h soak)',
-        'beta          → opt-in per tenant',
-        'legacy-hold   → v4.1.x (demo · EOL 2026-06)',
-      ]},
-      { t: 'Remote config', k: 'pushed every 60s', rows: [
-        'sample_rate       = 1.0',
-        'max_doc_bytes     = 8_388_608',
-        'policy_cache_ttl  = 120s',
-        'report_interval   = 15s',
-      ]},
-      { t: 'Install methods', k: 'getting started', rows: [
-        'helm install siphon-agent polygon/siphon-agent',
-        'kubectl apply -f https://siphon.polygon.ca/install.yaml',
-        'docker run polygon/siphon-agent:4.2.1',
-        'systemd (bare metal) — see Docs → Agents → Install',
-      ]},
-    ]} />;
+  const fleet = [
+    ['acme-corp · us-east',  'pod-01…14', 14, 'v4.2.1',       'stable', 'ok'],
+    ['acme-corp · eu-west',  'pod-15…22',  8, 'v4.2.1',       'stable', 'ok'],
+    ['trailcom · us-west',   'pod-23…36', 14, 'v4.2.0',       'stable', 'warn'],
+    ['widgetco · us-east',   'pod-37…44',  8, 'v4.3.0-rc1',   'canary', 'ok'],
+    ['widgetco · eu-west',   'pod-45…48',  4, 'v4.3.0-rc1',   'canary', 'ok'],
+    ['demo · us-east',       'pod-99',     1, 'v4.1.7',       'legacy', 'bad'],
+  ];
+  const channels = [
+    ['stable',       'v4.2.1',      '80%',  'default'],
+    ['canary',       'v4.3.0-rc1',  '10%',  '48h soak · 5 pods'],
+    ['beta',         'v4.3.0-beta', '0%',   'opt-in per tenant'],
+    ['legacy-hold',  'v4.1.x',      '2%',   'demo only · EOL 2026-06'],
+  ];
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Admin · Agents</div>
+          <h1>Agents</h1>
+        </div>
+        <div className="actions">
+          <button className="btn ghost">Install instructions</button>
+          <button className="btn">Remote config</button>
+          <button className="btn primary">Promote canary</button>
+        </div>
+      </div>
+
+      <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
+        <div className="box"><div className="stat"><span className="s-label">Fleet</span><span className="s-val">48</span><span className="s-delta">pods across 4 tenants</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Healthy</span><span className="s-val" style={{color:'var(--safe)'}}>46</span><span className="s-delta">96%</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Warn</span><span className="s-val" style={{color:'var(--amber)'}}>1</span><span className="s-delta">trailcom · queue lag</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Drift</span><span className="s-val" style={{color:'var(--red)'}}>1</span><span className="s-delta">demo · v4.1.7</span></div></div>
+      </div>
+
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title"><span className="t">Fleet · by deployment</span><span className="k">remote-config pushed every 60s</span></div>
+        <div style={{display:'grid', gridTemplateColumns:'16px 1.4fr 120px 60px 120px 80px 60px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+          <span></span><span className="label">Tenant · region</span><span className="label">Pods</span><span className="label">Count</span><span className="label">Version</span><span className="label">Channel</span><span className="label">State</span>
+        </div>
+        {fleet.map(([grp,pods,n,v,ch,s],i)=>(
+          <div key={i} style={{display:'grid', gridTemplateColumns:'16px 1.4fr 120px 60px 120px 80px 60px', gap:10, padding:'7px 0', borderBottom:'1px solid var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+            <span className={`dot-k ${s}`} />
+            <span style={{color:'var(--ink-bright)'}}>◆ {grp}</span>
+            <span className="muted">{pods}</span>
+            <span>{n}</span>
+            <span style={{color: s==='bad'?'var(--red)':'var(--ink)'}}>{v}</span>
+            <span><span className={`chip chip--${ch==='stable'?'safe':ch==='canary'?'warn':ch==='legacy'?'red':'ghost'}`}>{ch}</span></span>
+            <span><span className={`chip chip--${s==='ok'?'safe':s==='warn'?'warn':'red'}`} style={{fontSize:9}}>{s}</span></span>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-2" style={{marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title"><span className="t">Release channels</span><span className="k">controlled rollout</span></div>
+          <div style={{display:'grid', gridTemplateColumns:'130px 140px 60px 1fr', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+            <span className="label">Channel</span><span className="label">Version</span><span className="label">% fleet</span><span className="label">Detail</span>
+          </div>
+          {channels.map(([c,v,pct,detail],i)=>(
+            <div key={i} style={{display:'grid', gridTemplateColumns:'130px 140px 60px 1fr', gap:10, padding:'7px 0', borderBottom:'1px dashed var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+              <span><span className={`chip chip--${c==='stable'?'safe':c==='canary'?'warn':c==='legacy-hold'?'red':'ghost'}`}>{c}</span></span>
+              <span style={{color:'var(--ink-bright)'}}>{v}</span>
+              <span>{pct}</span>
+              <span className="muted">{detail}</span>
+            </div>
+          ))}
+          <div className="margin-note" style={{marginTop:8}}>canary → stable gate: 48h soak, error &lt; 0.1%, no crash-loops</div>
+        </div>
+
+        <div className="box">
+          <div className="box-title"><span className="t">Remote config</span><span className="k">effective across fleet</span></div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.9, background:'var(--bg-1)', padding:12, borderRadius:'var(--radius)', border:'1px solid var(--line-soft)'}}>
+            <div><span style={{color:'var(--cyan)'}}>sample_rate</span>      = <span style={{color:'var(--accent)'}}>1.0</span></div>
+            <div><span style={{color:'var(--cyan)'}}>max_doc_bytes</span>    = <span style={{color:'var(--accent)'}}>8_388_608</span></div>
+            <div><span style={{color:'var(--cyan)'}}>policy_cache_ttl</span> = <span style={{color:'var(--accent)'}}>120s</span></div>
+            <div><span style={{color:'var(--cyan)'}}>report_interval</span>  = <span style={{color:'var(--accent)'}}>15s</span></div>
+            <div><span style={{color:'var(--cyan)'}}>compress</span>         = <span style={{color:'var(--violet)'}}>"zstd"</span></div>
+            <div><span style={{color:'var(--cyan)'}}>tls_min</span>          = <span style={{color:'var(--violet)'}}>"1.3"</span></div>
+            <div><span style={{color:'var(--cyan)'}}>backoff</span>          = {'{ base: 1s, max: 60s }'}</div>
+          </div>
+          <div className="muted" style={{marginTop:8, fontSize:11, fontFamily:"'JetBrains Mono', monospace"}}>overrides: trailcom.sample_rate=0.5 (cost gate)</div>
+        </div>
+      </div>
+
+      <div className="box">
+        <div className="box-title"><span className="t">Install methods</span><span className="k">copy &amp; paste</span></div>
+        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, fontFamily:"'JetBrains Mono', monospace", fontSize:11.5}}>
+          <div style={{padding:10, background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)'}}>
+            <div className="label">Helm</div>
+            <div style={{color:'var(--accent)'}}>$ helm install siphon-agent polygon/siphon-agent</div>
+          </div>
+          <div style={{padding:10, background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)'}}>
+            <div className="label">Kubernetes manifest</div>
+            <div style={{color:'var(--accent)'}}>$ kubectl apply -f https://siphon.polygon.ca/install.yaml</div>
+          </div>
+          <div style={{padding:10, background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)'}}>
+            <div className="label">Docker</div>
+            <div style={{color:'var(--accent)'}}>$ docker run polygon/siphon-agent:4.2.1</div>
+          </div>
+          <div style={{padding:10, background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)'}}>
+            <div className="label">Bare metal</div>
+            <div className="muted">systemd — see Docs → Agents → Install</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Users() {
+  const members = [
+    ['R. Solanki',  'admin',              'human',  'MFA · hw-key',  'now',  'us-east'],
+    ['K. Mori',     'analyst',            'human',  'MFA · TOTP',    '3m',   'jp-east'],
+    ['J. Nguyen',   'compliance-auditor', 'human',  'MFA · TOTP',    '1h',   'us-west'],
+    ['A. Park',     'policy-writer',      'human',  'MFA · hw-key',  '22m',  'us-east'],
+    ['T. Ivanova',  'analyst',            'human',  'MFA · TOTP',    '4h',   'eu-west'],
+    ['S. Okafor',   'policy-writer',      'human',  'MFA · hw-key',  '8h',   'eu-central'],
+    ['svc-ingest',  'ingest-only',        'service','key-only',      'now',  '—'],
+    ['svc-soar',    'ingest-only',        'service','key-only',      '2m',   '—'],
+    ['svc-notebook','analyst',            'service','key-only',      '18m',  '—'],
+  ];
+  const roles = [
+    ['root',                1,  'break-glass · 2-person rule'],
+    ['admin',               2,  'full control · audited'],
+    ['policy-writer',       3,  'CRUD policies & patterns'],
+    ['analyst',             5,  'read findings · open investigations'],
+    ['compliance-auditor',  2,  'read-only + evidence export'],
+    ['ingest-only',         4,  'POST findings only'],
+  ];
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Admin · Users &amp; Roles</div>
+          <h1>Users &amp; Roles</h1>
+        </div>
+        <div className="actions">
+          <button className="btn ghost">Invite</button>
+          <button className="btn">SAML / OIDC</button>
+          <button className="btn primary">New role</button>
+        </div>
+      </div>
+
+      <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
+        <div className="box"><div className="stat"><span className="s-label">Members</span><span className="s-val">18</span><span className="s-delta">14 humans · 4 service</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Roles</span><span className="s-val">6</span><span className="s-delta">least-privilege</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">MFA coverage</span><span className="s-val" style={{color:'var(--safe)'}}>100%</span><span className="s-delta">enforced</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Stale 90d</span><span className="s-val" style={{color:'var(--amber)'}}>1</span><span className="s-delta">review candidate</span></div></div>
+      </div>
+
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title"><span className="t">Members</span><span className="k">IdP: Okta · SAML 2.0</span></div>
+        <div style={{display:'grid', gridTemplateColumns:'1.2fr 160px 90px 140px 80px 110px 30px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+          <span className="label">Name</span><span className="label">Role</span><span className="label">Kind</span><span className="label">MFA</span><span className="label">Active</span><span className="label">Region</span><span></span>
+        </div>
+        {members.map(([n,r,k,mfa,act,region],i)=>(
+          <div key={i} style={{display:'grid', gridTemplateColumns:'1.2fr 160px 90px 140px 80px 110px 30px', gap:10, padding:'7px 0', borderBottom:'1px solid var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+            <span style={{color:'var(--ink-bright)'}}>{n}</span>
+            <span className="muted">{r}</span>
+            <span><span className={`chip chip--${k==='human'?'safe':'teal'}`} style={{fontSize:9}}>{k}</span></span>
+            <span className={mfa==='key-only'?'muted':''} style={{color: mfa==='key-only'?undefined:'var(--safe)'}}>{mfa}</span>
+            <span>{act}</span>
+            <span className="muted">{region}</span>
+            <span className="arrow">→</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-2">
+        <div className="box">
+          <div className="box-title"><span className="t">Roles &amp; grants</span><span className="k">6 roles · click to inspect</span></div>
+          <div style={{display:'grid', gridTemplateColumns:'200px 60px 1fr', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+            <span className="label">Role</span><span className="label">Holders</span><span className="label">Notes</span>
+          </div>
+          {roles.map(([r,n,note],i)=>(
+            <div key={i} style={{display:'grid', gridTemplateColumns:'200px 60px 1fr', gap:10, padding:'7px 0', borderBottom:'1px dashed var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+              <span style={{color:'var(--ink-bright)'}}>{r}</span>
+              <span>{n}</span>
+              <span className="muted">{note}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="box">
+          <div className="box-title"><span className="t">Access policy</span><span className="k">enforced globally</span></div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:2}}>
+            <div className="tick">MFA required for all human roles</div>
+            <div className="tick">Hardware keys required for <b>admin</b>, <b>root</b>, <b>policy-writer</b></div>
+            <div className="tick">2-person rule for <b>root</b> (break-glass)</div>
+            <div className="tick">SAML SSO via Okta · SCIM provisioning</div>
+            <div className="tick">Session 8h · idle 30m · reauth on sensitive ops</div>
+            <div className="cross">Direct password auth disabled</div>
+          </div>
+          <hr className="sep" />
+          <div className="label" style={{marginBottom:6}}>Recent access events</div>
+          <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8, color:'var(--ink-soft)'}}>
+            <div><span className="muted">12:40</span> sign-in R.Solanki · hw-key · us-east</div>
+            <div><span className="muted">12:12</span> role change root → J.Nguyen += compliance-auditor</div>
+            <div><span className="muted">11:44</span> sign-in K.Mori · TOTP · jp-east</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 Object.assign(window, {
   SURFACES, WORKSPACES, workspaceOf, firstSurfaceOf,
-  Topbar, WorkspaceBar, SurfaceBar, SideNav, TweaksPanel, PageBar,
-  Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents
+  Topbar, WorkspaceBar, SurfaceBar, SideNav, TweaksPanel, PageBar, StubPage,
+  Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users
 });
 
 </script>
@@ -3099,15 +3726,10 @@ function Dashboard({ variant, setVariant }) {
           <h1>Dashboard</h1>
         </div>
         <div className="actions">
-          <span className="margin-note">pick a variant ↓</span>
           <button className="btn ghost">Export</button>
+          <button className="btn">Time range · 24h</button>
           <button className="btn primary">New scan</button>
         </div>
-      </div>
-      <div className="note" style={{marginBottom:16, maxWidth:560}}>
-        <b>Wireframe note —</b> this is the single surface we're exploring in depth.
-        4 distinct structural takes. The other 9 surfaces below are single-layout sketches;
-        flip through them via the sidebar or top-nav tweak.
       </div>
       <div className="variant-tabs">
         {tabs.map(([id, label]) => (
@@ -3119,7 +3741,7 @@ function Dashboard({ variant, setVariant }) {
           </button>
         ))}
       </div>
-      <div className="scribble muted" style={{marginTop:-10, marginBottom:14, fontSize:16}}>
+      <div className="label" style={{marginTop:-6, marginBottom:14, color:'var(--ink-faint)'}}>
         {active[2]}
       </div>
 
@@ -3689,10 +4311,6 @@ function Policy() {
           <button className="btn primary">Submit for review</button>
         </div>
       </div>
-      <div className="note note--teal" style={{marginBottom:16, maxWidth:600}}>
-        Drag-drop flowchart. Left rail = palette. Canvas = policy. Right rail = selected-node inspector.
-      </div>
-
       <div className="grid" style={{gridTemplateColumns:'180px 1fr 260px', gap:'var(--gap)'}}>
         <div className="box" style={{padding:10}}>
           <div className="label" style={{marginBottom:6}}>Triggers</div>
@@ -6416,7 +7034,7 @@ function App() {
 
   const { Dashboard, Stream, FindingDetail, Pods, Policy, Patterns, Models, Assets,
           Compliance, Testing, AssureOverview, DetectOverview, Settings, Logs, Topbar, WorkspaceBar, SurfaceBar, TweaksPanel,
-          Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents } = window;
+          Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users } = window;
 
   // expose go() globally so nested surfaces (e.g. DetectOverview cards) can navigate.
   React.useEffect(() => { window.__c2_go = go; }, []);
@@ -6444,7 +7062,7 @@ function App() {
       compliance:     <Compliance />,
       audit:          <Audit />,
       settings:       <Settings />,
-      users:          <StubPage title="Users & Roles" crumbs={['Admin','Users & Roles']} blurb="RBAC. Roles, grants, MFA enforcement. Wire-level only; deepen in a later pass." sections={[{t:'Roles',k:'6 defined',rows:['root · admin · policy-writer · analyst · compliance-auditor · ingest-only']},{t:'Members',k:'14 humans · 4 service',rows:['R.Solanki · admin','K.Mori · analyst','J.Nguyen · compliance-auditor','…']}]} />,
+      users:          <Users />,
       integrations:   <Integrations />,
       keys:           <ApiKeys />,
       agents:         <Agents />,
