@@ -374,6 +374,11 @@ struct HandlerState {
     /// chain mode is off — in chain mode the chain spans rotations so an
     /// attacker cannot rotate-then-replace to hide entries.
     last_signature: Option<String>,
+    /// Optional path to a tail-state file. When set, the handler writes
+    /// `last_signature` to this file (atomically, mode 0600) after every
+    /// successful event so a process restart can resume the chain by
+    /// reading the file back.
+    tail_path: Option<String>,
 }
 
 /// Writes JSON lines to a file with size-based rotation (thread-safe, append mode, 0o600).
@@ -411,6 +416,7 @@ impl RotatingFileAuditHandler {
             state: Mutex::new(HandlerState {
                 chain_key: None,
                 last_signature: None,
+                tail_path: None,
             }),
         }
     }
@@ -432,12 +438,110 @@ impl RotatingFileAuditHandler {
     /// Seed the chain with the tail signature of a previously closed
     /// segment, so the first event written in this process links back to
     /// it. No-op if chain mode is not enabled. Persisting the tail
-    /// signature across restarts is the operator's responsibility.
+    /// signature across restarts is the operator's responsibility — or
+    /// use [`Self::with_chain_tail_path`] which automates it.
     pub fn with_seeded_chain(mut self, prev_tail: &str) -> Self {
         if let Ok(st) = self.state.get_mut() {
             st.last_signature = Some(prev_tail.to_string());
         }
         self
+    }
+
+    /// Persist the chain tail to disk so the chain survives process
+    /// restarts. After every successful event the handler writes the
+    /// new tail signature to `path` atomically (temp + rename, mode
+    /// 0600); on construction it reads the file back to seed
+    /// `last_signature`. If the file is missing, malformed, or
+    /// unreadable the chain starts fresh — the next handler reading
+    /// from the log can still verify intra-segment integrity, but
+    /// detection of the gap is the operator's job (e.g., monitoring
+    /// for `prev_signature: None` events that aren't the first ever
+    /// event).
+    ///
+    /// The tail file MUST be on the same filesystem and the same trust
+    /// boundary as the audit log itself. An attacker who can write to
+    /// the tail file can break the chain; an attacker who can write to
+    /// the audit log was already game over for tamper-evidence.
+    pub fn with_chain_tail_path(mut self, path: &str) -> Self {
+        if let Ok(st) = self.state.get_mut() {
+            // Read existing tail (if any) to seed the chain.
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    let trimmed = content.trim();
+                    if !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+                        st.last_signature = Some(trimmed.to_string());
+                    } else if !trimmed.is_empty() {
+                        tracing::warn!(
+                            tail_path = %path,
+                            "Audit chain tail file has non-hex content; ignoring and starting fresh chain"
+                        );
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // First run — no prior tail to seed.
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        tail_path = %path,
+                        error = %e,
+                        "Failed to read audit chain tail; starting fresh chain"
+                    );
+                }
+            }
+            st.tail_path = Some(path.to_string());
+        }
+        self
+    }
+
+    /// Atomically write `signature` to the tail file. Best-effort: a
+    /// failure is logged and the chain continues in memory. Refuses to
+    /// follow symlinks.
+    fn persist_tail(tail_path: &str, signature: &str) {
+        let path = std::path::Path::new(tail_path);
+        if path.is_symlink() {
+            tracing::error!(
+                tail_path = %tail_path,
+                "Audit chain tail path is a symlink, refusing to write"
+            );
+            return;
+        }
+        let tmp_path = format!("{tail_path}.tmp");
+        #[cfg(unix)]
+        let file = {
+            use std::os::unix::fs::OpenOptionsExt;
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp_path)
+        };
+        #[cfg(not(unix))]
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp_path);
+        match file {
+            Ok(mut f) => {
+                if let Err(e) = f.write_all(signature.as_bytes()) {
+                    tracing::warn!(tail_path = %tail_path, error = %e, "Failed to write audit chain tail");
+                    let _ = std::fs::remove_file(&tmp_path);
+                    return;
+                }
+                if let Err(e) = f.sync_all() {
+                    tracing::warn!(tail_path = %tail_path, error = %e, "Failed to fsync audit chain tail");
+                }
+                drop(f);
+                if let Err(e) = std::fs::rename(&tmp_path, tail_path) {
+                    tracing::warn!(tail_path = %tail_path, error = %e, "Failed to rename audit chain tail");
+                    let _ = std::fs::remove_file(&tmp_path);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(tail_path = %tail_path, error = %e, "Failed to open audit chain tail for write");
+            }
+        }
     }
 
     fn rotate(&self) {
@@ -532,6 +636,16 @@ impl AuditHandler for RotatingFileAuditHandler {
                     // pointing at an event that was never persisted.
                     if state.chain_key.is_some() {
                         state.last_signature = event_to_write.signature.clone();
+                        // Persist the new tail before releasing the lock
+                        // so a crash between write and persist still
+                        // leaves the on-disk tail consistent with the
+                        // last-but-one event (a chain restart, not a
+                        // chain split).
+                        if let (Some(tail_path), Some(sig)) =
+                            (state.tail_path.as_deref(), state.last_signature.as_deref())
+                        {
+                            Self::persist_tail(tail_path, sig);
+                        }
                     }
                 }
                 Err(e) => {
@@ -1143,6 +1257,76 @@ mod tests {
         for e in &events {
             assert!(e.verify(key), "event failed signature verification");
         }
+    }
+
+    #[test]
+    fn test_chain_persists_across_restarts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.jsonl");
+        let tail = dir.path().join("audit.tail");
+        let key = b"chain-restart-key-32-bytes-cccccc";
+
+        // First "process": write two events with chain mode + tail persistence.
+        {
+            let handler = RotatingFileAuditHandler::new(path.to_str().unwrap(), 1024 * 1024, 5)
+                .with_chain_key(key)
+                .with_chain_tail_path(tail.to_str().unwrap());
+            handler.handle(&AuditEvent::new("SCAN").unwrap().with_user("a"));
+            handler.handle(&AuditEvent::new("SCAN").unwrap().with_user("b"));
+        }
+
+        // The tail file now holds the signature of event "b".
+        let tail_after_first = std::fs::read_to_string(&tail).unwrap();
+        assert!(!tail_after_first.is_empty());
+        assert!(tail_after_first.chars().all(|c| c.is_ascii_hexdigit()));
+
+        // Second "process": new handler reads the tail and continues the chain.
+        {
+            let handler = RotatingFileAuditHandler::new(path.to_str().unwrap(), 1024 * 1024, 5)
+                .with_chain_key(key)
+                .with_chain_tail_path(tail.to_str().unwrap());
+            handler.handle(&AuditEvent::new("SCAN").unwrap().with_user("c"));
+        }
+
+        // Verify the third event's prev_signature equals the second event's signature.
+        let content = std::fs::read_to_string(&path).unwrap();
+        let events: Vec<AuditEvent> = content
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert_eq!(events.len(), 3);
+        assert_eq!(
+            events[2].prev_signature.as_deref(),
+            events[1].signature.as_deref(),
+            "third event (post-restart) must link to second event (pre-restart)"
+        );
+        assert_eq!(events[2].prev_signature.as_deref(), Some(tail_after_first.as_str()));
+        for e in &events {
+            assert!(e.verify(key));
+        }
+    }
+
+    #[test]
+    fn test_chain_tail_missing_on_first_run_starts_fresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.jsonl");
+        let tail = dir.path().join("does-not-exist.tail");
+        let key = b"chain-fresh-key-32-bytes-dddddddd";
+
+        let handler = RotatingFileAuditHandler::new(path.to_str().unwrap(), 1024 * 1024, 5)
+            .with_chain_key(key)
+            .with_chain_tail_path(tail.to_str().unwrap());
+        handler.handle(&AuditEvent::new("SCAN").unwrap());
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let event: AuditEvent = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        assert!(event.prev_signature.is_none());
+        assert!(event.verify(key));
+        // Tail file is now created with the event's signature.
+        assert_eq!(
+            std::fs::read_to_string(&tail).unwrap(),
+            event.signature.unwrap()
+        );
     }
 
     #[test]

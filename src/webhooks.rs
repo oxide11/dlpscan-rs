@@ -139,9 +139,31 @@ pub struct WebhookNotifier {
 }
 
 impl WebhookNotifier {
+    /// Construct a notifier from a seed URL list.
+    ///
+    /// URLs that fail [`is_safe_url`] (private/loopback/link-local
+    /// destinations, when `SIPHON_ALLOW_PRIVATE_DESTINATIONS` is unset)
+    /// are dropped at construction time with a `tracing::warn!` so the
+    /// notifier never holds a reference to an SSRF target. The
+    /// per-request safety check in [`add_url`] still applies for any
+    /// URLs added later.
     pub fn new(urls: Vec<String>) -> Self {
+        let safe_urls: Vec<String> = urls
+            .into_iter()
+            .filter(|u| {
+                if is_safe_url(u) {
+                    true
+                } else {
+                    tracing::warn!(
+                        url = %sanitize_url(u),
+                        "Dropping unsafe/internal webhook URL at notifier construction"
+                    );
+                    false
+                }
+            })
+            .collect();
         Self {
-            urls: Mutex::new(urls),
+            urls: Mutex::new(safe_urls),
             retries: 2,
             timeout_secs: 10,
             backoff_base: 1.0,
