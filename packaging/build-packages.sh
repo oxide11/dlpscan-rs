@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# Build distributable Linux packages for dlpscan.
+# Build distributable Linux packages for siphon.
 #
 # Produces:
-#   target/debian/dlpscan_<version>_amd64.deb
-#   target/generate-rpm/dlpscan-<version>-1.x86_64.rpm
-#   target/release-tarball/dlpscan-<version>-x86_64-unknown-linux-gnu.tar.gz
+#   target/debian/siphon_<version>_amd64.deb
+#   target/generate-rpm/siphon-<version>-1.x86_64.rpm
+#   target/release-tarball/siphon-<version>-x86_64-unknown-linux-gnu.tar.gz
 #
 # Requires:
 #   cargo, rustc (>= 1.75)
@@ -33,7 +33,7 @@ VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1
 ARCH=$(uname -m)
 TRIPLE="${ARCH}-unknown-linux-gnu"
 
-echo "==> Building dlpscan v${VERSION} for ${TRIPLE}"
+echo "==> Building siphon v${VERSION} for ${TRIPLE}"
 echo "    features: ${FEATURES}"
 
 build_release() {
@@ -64,20 +64,20 @@ build_rpm() {
 build_tarball() {
     echo "==> Building .tar.gz release archive"
     local outdir="target/release-tarball"
-    local stage="${outdir}/dlpscan-${VERSION}"
+    local stage="${outdir}/siphon-${VERSION}"
     rm -rf "${stage}"
-    mkdir -p "${stage}/bin" "${stage}/share/doc/dlpscan" "${stage}/share/systemd"
+    mkdir -p "${stage}/bin" "${stage}/share/doc/siphon" "${stage}/share/systemd"
 
-    cp target/release/dlpscan "${stage}/bin/"
-    cp README.md LICENSE "${stage}/share/doc/dlpscan/"
-    cp -r docs "${stage}/share/doc/dlpscan/"
-    cp packaging/dlpscan.service "${stage}/share/systemd/"
-    cp packaging/dlpscan.env.example "${stage}/share/systemd/"
+    cp target/release/siphon "${stage}/bin/"
+    cp README.md LICENSE "${stage}/share/doc/siphon/"
+    cp -r docs "${stage}/share/doc/siphon/"
+    cp packaging/siphon.service "${stage}/share/systemd/"
+    cp packaging/siphon.env.example "${stage}/share/systemd/"
     cp packaging/install.sh "${stage}/install.sh"
     chmod +x "${stage}/install.sh"
 
-    local tarball="${outdir}/dlpscan-${VERSION}-${TRIPLE}.tar.gz"
-    tar -czf "${tarball}" -C "${outdir}" "dlpscan-${VERSION}"
+    local tarball="${outdir}/siphon-${VERSION}-${TRIPLE}.tar.gz"
+    tar -czf "${tarball}" -C "${outdir}" "siphon-${VERSION}"
     rm -rf "${stage}"
     ls -lh "${tarball}"
     sha256sum "${tarball}" > "${tarball}.sha256"

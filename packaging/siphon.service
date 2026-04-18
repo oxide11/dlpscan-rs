@@ -1,27 +1,27 @@
 [Unit]
-Description=dlpscan - High-performance DLP scanner REST API
-Documentation=https://github.com/oxide11/dlpscan-rs
+Description=siphon - High-performance DLP scanner REST API
+Documentation=https://github.com/oxide11/siphon-rs
 After=network.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/dlpscan serve
+ExecStart=/usr/bin/siphon serve
 Restart=on-failure
 RestartSec=5s
 
 # Run as a dedicated unprivileged user. The .deb / .rpm post-install
-# script creates the dlpscan user.
-User=dlpscan
-Group=dlpscan
+# script creates the siphon user.
+User=siphon
+Group=siphon
 
-# Pull configuration from /etc/dlpscan/dlpscan.env if present.
-EnvironmentFile=-/etc/dlpscan/dlpscan.env
+# Pull configuration from /etc/siphon/siphon.env if present.
+EnvironmentFile=-/etc/siphon/siphon.env
 
 # Default state and audit log directories.
-StateDirectory=dlpscan
-LogsDirectory=dlpscan
-ConfigurationDirectory=dlpscan
+StateDirectory=siphon
+LogsDirectory=siphon
+ConfigurationDirectory=siphon
 
 # Hardening
 NoNewPrivileges=true
@@ -29,7 +29,7 @@ PrivateTmp=true
 PrivateDevices=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/dlpscan /var/log/dlpscan
+ReadWritePaths=/var/lib/siphon /var/log/siphon
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectKernelLogs=true

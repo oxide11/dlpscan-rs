@@ -1,7 +1,7 @@
 # Linux Packaging
 
 This directory contains the configuration and helper scripts for
-building distributable dlpscan packages on Linux.
+building distributable siphon packages on Linux.
 
 ## What gets built
 
@@ -9,20 +9,20 @@ building distributable dlpscan packages on Linux.
 
 | Format | Path | Use case |
 |---|---|---|
-| `.deb` | `target/debian/dlpscan_<version>_amd64.deb` | Debian / Ubuntu / derivatives |
-| `.rpm` | `target/generate-rpm/dlpscan-<version>-1.x86_64.rpm` | RHEL / Rocky / Alma / Fedora / SUSE |
-| `.tar.gz` | `target/release-tarball/dlpscan-<version>-x86_64-unknown-linux-gnu.tar.gz` | Generic Linux (no package manager) |
+| `.deb` | `target/debian/siphon_<version>_amd64.deb` | Debian / Ubuntu / derivatives |
+| `.rpm` | `target/generate-rpm/siphon-<version>-1.x86_64.rpm` | RHEL / Rocky / Alma / Fedora / SUSE |
+| `.tar.gz` | `target/release-tarball/siphon-<version>-x86_64-unknown-linux-gnu.tar.gz` | Generic Linux (no package manager) |
 
 Each artifact installs:
 
-- `/usr/bin/dlpscan` (or `/usr/local/bin/dlpscan` for the tarball)
-- `/lib/systemd/system/dlpscan.service` — hardened systemd unit
-- `/etc/dlpscan/dlpscan.env.example` — annotated config template
-- Documentation under `/usr/share/doc/dlpscan/`
+- `/usr/bin/siphon` (or `/usr/local/bin/siphon` for the tarball)
+- `/lib/systemd/system/siphon.service` — hardened systemd unit
+- `/etc/siphon/siphon.env.example` — annotated config template
+- Documentation under `/usr/share/doc/siphon/`
 
-The systemd unit creates a dedicated `dlpscan` system user, sandboxes
+The systemd unit creates a dedicated `siphon` system user, sandboxes
 the process with `ProtectSystem=strict`, and reads runtime config from
-`/etc/dlpscan/dlpscan.env`.
+`/etc/siphon/siphon.env`.
 
 ## Prerequisites
 
@@ -55,34 +55,34 @@ FEATURES=full ./packaging/build-packages.sh
 ### Debian / Ubuntu
 
 ```bash
-sudo apt install ./target/debian/dlpscan_2.1.0_amd64.deb
-sudo cp /etc/dlpscan/dlpscan.env.example /etc/dlpscan/dlpscan.env
-sudoedit /etc/dlpscan/dlpscan.env       # set DLPSCAN_API_KEY
-sudo systemctl enable --now dlpscan
+sudo apt install ./target/debian/siphon_2.1.0_amd64.deb
+sudo cp /etc/siphon/siphon.env.example /etc/siphon/siphon.env
+sudoedit /etc/siphon/siphon.env       # set DLPSCAN_API_KEY
+sudo systemctl enable --now siphon
 ```
 
 ### RHEL / Rocky / Alma / Fedora
 
 ```bash
-sudo dnf install ./target/generate-rpm/dlpscan-2.1.0-1.x86_64.rpm
-sudo cp /etc/dlpscan/dlpscan.env.example /etc/dlpscan/dlpscan.env
-sudoedit /etc/dlpscan/dlpscan.env
-sudo systemctl enable --now dlpscan
+sudo dnf install ./target/generate-rpm/siphon-2.1.0-1.x86_64.rpm
+sudo cp /etc/siphon/siphon.env.example /etc/siphon/siphon.env
+sudoedit /etc/siphon/siphon.env
+sudo systemctl enable --now siphon
 ```
 
 ### Generic tarball
 
 ```bash
-tar xzf dlpscan-2.1.0-x86_64-unknown-linux-gnu.tar.gz
-cd dlpscan-2.1.0
+tar xzf siphon-2.1.0-x86_64-unknown-linux-gnu.tar.gz
+cd siphon-2.1.0
 sudo ./install.sh
 ```
 
 ## Verifying
 
 ```bash
-dlpscan info
-systemctl status dlpscan
+siphon info
+systemctl status siphon
 curl http://127.0.0.1:8000/health
 ```
 
