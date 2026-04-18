@@ -2164,6 +2164,7 @@ const WORKSPACES = [
 const SURFACES = [
   // ── OPERATE ──────────────────────────────────────────────────
   { id: 'dashboard',      workspace: 'operate', icon: '◈',  title: 'Dashboard' },
+  { id: 'livescan',       workspace: 'operate', icon: '⌁',  title: 'Live Scan',      sub: 'POST /scan' },
   { id: 'stream',         workspace: 'operate', icon: '≋',  title: 'Findings' },
   { id: 'investigations', workspace: 'operate', icon: '⌖',  title: 'Investigations' },
   { id: 'pods',           workspace: 'operate', icon: '▦',  title: 'Pods' },
@@ -6979,6 +6980,235 @@ Object.assign(window, {
 </script>
 
 <script type="text/babel" data-presets="react">
+/* ===== surfaces/livescan.jsx ===== */
+// Live Scan — the one surface that talks to a real siphon-api.
+// POSTs text to /scan and renders findings returned by the scanner.
+
+const LS_SAMPLE = `Hi support team, please charge my visa 4532 0151 1283 0366 (exp 05/29) and
+send the receipt to jane.doe@example.com.
+Customer SSN on file: 123-45-6789, phone 415-555-0199.
+AWS key for the old integration: AKIAIOSFODNN7EXAMPLE (should be rotated).`;
+
+function LiveScan() {
+  const defaultUrl = (() => {
+    try { return localStorage.getItem('c2:apiUrl') || 'http://127.0.0.1:8080'; }
+    catch { return 'http://127.0.0.1:8080'; }
+  })();
+  const [apiUrl, setApiUrl] = React.useState(defaultUrl);
+  const [text, setText] = React.useState(LS_SAMPLE);
+  const [minConf, setMinConf] = React.useState(0);
+  const [requireCtx, setRequireCtx] = React.useState(false);
+  const [dedupe, setDedupe] = React.useState(true);
+  const [loading, setLoading] = React.useState(false);
+  const [health, setHealth] = React.useState('unknown');
+  const [result, setResult] = React.useState(null);
+  const [error, setError] = React.useState(null);
+
+  React.useEffect(() => {
+    try { localStorage.setItem('c2:apiUrl', apiUrl); } catch {}
+  }, [apiUrl]);
+
+  const pingHealth = React.useCallback(async () => {
+    setHealth('checking');
+    try {
+      const r = await fetch(apiUrl.replace(/\/$/, '') + '/health', { method: 'GET' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      setHealth(j.status === 'ok' ? 'ok' : 'degraded');
+    } catch (e) {
+      setHealth('down');
+    }
+  }, [apiUrl]);
+
+  React.useEffect(() => { pingHealth(); }, [pingHealth]);
+
+  const runScan = async () => {
+    setLoading(true); setError(null); setResult(null);
+    const body = {
+      text,
+      options: {
+        min_confidence: minConf || undefined,
+        require_context: requireCtx || undefined,
+        deduplicate:     dedupe || undefined,
+      },
+    };
+    try {
+      const r = await fetch(apiUrl.replace(/\/$/, '') + '/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      setResult(j);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const findings = (result && result.findings) || [];
+  const confColor = (c) => c >= 0.9 ? 'var(--safe)' : c >= 0.7 ? 'var(--amber)' : 'var(--ink-soft)';
+
+  // Highlight matched spans in the source text
+  const highlighted = React.useMemo(() => {
+    if (!findings.length) return null;
+    const marks = findings
+      .filter(f => f.span && typeof f.span[0] === 'number')
+      .map(f => ({ start: f.span[0], end: f.span[1], cat: f.category, conf: f.confidence }))
+      .sort((a,b) => a.start - b.start);
+    const out = [];
+    let cursor = 0;
+    marks.forEach((m, i) => {
+      if (m.start < cursor) return;
+      out.push(<span key={'t'+i}>{text.slice(cursor, m.start)}</span>);
+      out.push(
+        <mark key={'m'+i}
+              title={`${m.cat} · conf ${m.conf.toFixed(2)}`}
+              style={{background:'var(--accent-wash)', border:'1px solid var(--accent)', color:'var(--ink-bright)', padding:'0 2px', borderRadius:2}}>
+          {text.slice(m.start, m.end)}
+        </mark>
+      );
+      cursor = m.end;
+    });
+    out.push(<span key="tail">{text.slice(cursor)}</span>);
+    return out;
+  }, [findings, text]);
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Operate · Live Scan</div>
+          <h1>Live Scan</h1>
+        </div>
+        <div className="actions">
+          <span className={`chip chip--${health==='ok'?'safe':health==='down'?'red':'warn'}`} title={`API ${health}`}>
+            API · {health}
+          </span>
+          <button className="btn ghost" onClick={pingHealth}>Re-check</button>
+        </div>
+      </div>
+
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title"><span className="t">Endpoint</span><span className="k">POST /scan</span></div>
+        <div style={{display:'grid', gridTemplateColumns:'auto 1fr auto auto auto', gap:10, alignItems:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+          <span className="label">API URL</span>
+          <input
+            type="text"
+            value={apiUrl}
+            onChange={e => setApiUrl(e.target.value)}
+            style={{
+              fontFamily:"'JetBrains Mono', monospace", fontSize:12,
+              padding:'6px 8px', background:'var(--bg-1)',
+              color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+            }}
+          />
+          <label style={{display:'inline-flex', alignItems:'center', gap:6}}>
+            <input type="checkbox" checked={requireCtx} onChange={e => setRequireCtx(e.target.checked)} />
+            <span className="label">require-context</span>
+          </label>
+          <label style={{display:'inline-flex', alignItems:'center', gap:6}}>
+            <input type="checkbox" checked={dedupe} onChange={e => setDedupe(e.target.checked)} />
+            <span className="label">deduplicate</span>
+          </label>
+          <label style={{display:'inline-flex', alignItems:'center', gap:6}}>
+            <span className="label">min-conf</span>
+            <input type="number" min="0" max="1" step="0.05" value={minConf}
+                   onChange={e => setMinConf(parseFloat(e.target.value) || 0)}
+                   style={{width:60, fontFamily:"'JetBrains Mono', monospace", fontSize:12, padding:'4px 6px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}} />
+          </label>
+        </div>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:'1fr 1fr', gap:'var(--gap)', marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title"><span className="t">Input text</span><span className="k">{text.length} chars</span></div>
+          <textarea
+            value={text}
+            onChange={e => setText(e.target.value)}
+            rows={14}
+            style={{
+              width:'100%', resize:'vertical',
+              fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.6,
+              padding:10, background:'var(--bg-1)',
+              color:'var(--ink)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)',
+            }}
+          />
+          <div style={{display:'flex', gap:8, marginTop:10, alignItems:'center'}}>
+            <button className="btn primary" onClick={runScan} disabled={loading || !text.trim()}>
+              {loading ? 'Scanning…' : '▶ Scan'}
+            </button>
+            <button className="btn ghost" onClick={() => setText(LS_SAMPLE)}>Load sample</button>
+            <button className="btn ghost" onClick={() => { setText(''); setResult(null); setError(null); }}>Clear</button>
+            {result && <span className="muted" style={{marginLeft:'auto', fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>
+              {result.finding_count} findings · {result.scan_duration_ms}ms · {result.source_pod}
+            </span>}
+          </div>
+        </div>
+
+        <div className="box">
+          <div className="box-title"><span className="t">Highlighted</span><span className="k">{findings.length} spans</span></div>
+          {error && (
+            <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)'}}>
+              <b>Error:</b> {error}<br/>
+              <span className="muted" style={{fontSize:11}}>Check the server is running and CORS is open for this origin.</span>
+            </div>
+          )}
+          {!error && !result && !loading && (
+            <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+              ─ no scan yet ─
+            </div>
+          )}
+          {!error && result && (
+            <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.7, whiteSpace:'pre-wrap', wordBreak:'break-word', padding:'8px 10px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:'var(--radius)', maxHeight:360, overflow:'auto'}}>
+              {highlighted || text}
+            </div>
+          )}
+          {!error && result && result.request_id && (
+            <div className="muted" style={{fontFamily:"'JetBrains Mono', monospace", fontSize:10.5, marginTop:8}}>request_id: {result.request_id}</div>
+          )}
+        </div>
+      </div>
+
+      <div className="box">
+        <div className="box-title"><span className="t">Findings</span><span className="k">{findings.length} rows</span></div>
+        {findings.length === 0 ? (
+          <div className="muted" style={{padding:14, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+            {result ? '— nothing detected —' : '— run a scan to see findings —'}
+          </div>
+        ) : (
+          <>
+            <div style={{display:'grid', gridTemplateColumns:'1.4fr 1.4fr 2fr 90px 80px 90px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+              <span className="label">Category</span>
+              <span className="label">Sub-category</span>
+              <span className="label">Match</span>
+              <span className="label">Conf</span>
+              <span className="label">Ctx</span>
+              <span className="label">Span</span>
+            </div>
+            {findings.map((f,i) => (
+              <div key={i} style={{display:'grid', gridTemplateColumns:'1.4fr 1.4fr 2fr 90px 80px 90px', gap:10, padding:'7px 0', borderBottom:'1px solid var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+                <span style={{color:'var(--ink-bright)'}}>{f.category}</span>
+                <span className="muted">{f.sub_category || '—'}</span>
+                <span style={{color:'var(--accent)'}}>{f.text}</span>
+                <span style={{color: confColor(f.confidence)}}>{(f.confidence != null ? f.confidence.toFixed(2) : '—')}</span>
+                <span>{f.has_context ? <span className="chip chip--safe" style={{fontSize:9}}>yes</span> : <span className="chip chip--ghost" style={{fontSize:9}}>no</span>}</span>
+                <span className="muted">{f.span ? f.span.join('..') : '—'}</span>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { LiveScan });
+</script>
+
+<script type="text/babel" data-presets="react">
 /* ===== app.jsx ===== */
 // Main app — shell + route + tweaks + editmode wiring
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -7034,7 +7264,8 @@ function App() {
 
   const { Dashboard, Stream, FindingDetail, Pods, Policy, Patterns, Models, Assets,
           Compliance, Testing, AssureOverview, DetectOverview, Settings, Logs, Topbar, WorkspaceBar, SurfaceBar, TweaksPanel,
-          Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users } = window;
+          Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users,
+          LiveScan } = window;
 
   // expose go() globally so nested surfaces (e.g. DetectOverview cards) can navigate.
   React.useEffect(() => { window.__c2_go = go; }, []);
@@ -7045,6 +7276,7 @@ function App() {
   } else {
     Surface = {
       dashboard:      <Dashboard variant={dashVariant} setVariant={setDashVariant} go={go} />,
+      livescan:       <LiveScan />,
       stream:         <Stream go={go} />,
       investigations: <Investigations />,
       pods:           <Pods />,
