@@ -174,17 +174,226 @@ knows it's talking to a scanner. GW is transparent — the client doesn't
 know its traffic is being scanned. GW has upstream forwarding, circuit
 breakers, and proxy semantics that API doesn't need.
 
-### Siphon-Vision (Future)
+## Detector Plugin Model
 
-OCR and ML-based document understanding. Deferred — fundamentally
-different problem (computer vision, not text matching).
+Regex is only one way to find sensitive data. Future detection types —
+OCR, ML-based NER, document classifiers, image content analysis — fit
+the same pipeline as long as they expose a common `Detector` interface.
+
+```
+                   ┌────────────────────┐
+                   │  Detector (trait)  │
+                   └─────────┬──────────┘
+          ┌──────────────────┼──────────────────┐
+          │                  │                  │
+  ┌───────▼──────┐  ┌────────▼────────┐  ┌─────▼─────────┐
+  │Regex Detector│  │  ML Detector    │  │Classifier     │
+  │  (in-proc)   │  │  (remote gRPC)  │  │  (remote gRPC)│
+  │              │  │                 │  │               │
+  │561 patterns  │  │BERT NER, PII,   │  │Doc type,      │
+  │72 validators │  │custom models    │  │intent, toxic  │
+  └──────────────┘  └─────────────────┘  └───────────────┘
+```
+
+### The Detector trait
+
+```rust
+pub trait Detector: Send + Sync {
+    fn name(&self) -> &str;
+    fn version(&self) -> &str;
+
+    /// Scan input and return findings.
+    async fn detect(&self, input: &DetectorInput) -> Result<Vec<Finding>>;
+
+    /// What this detector looks for. Used for routing and reporting.
+    fn categories(&self) -> &[&str];
+
+    /// Is this detector healthy? Used for circuit breaking on
+    /// remote detectors.
+    async fn healthy(&self) -> bool { true }
+}
+
+pub struct DetectorInput {
+    pub text: Option<String>,
+    pub bytes: Option<Vec<u8>>,          // for image/binary detectors
+    pub mime_type: Option<String>,
+    pub metadata: HashMap<String, String>,
+}
+```
+
+Detectors are **composable**. A scan request runs through every
+configured detector in parallel (or sequentially if there are
+dependencies), findings are merged, deduplicated, and reported.
+
+### Local vs Remote Detectors
+
+**Local detectors** run in-process inside the calling pod:
+- Regex + validators (current behavior)
+- Simple heuristics (entropy, LSH)
+- Lightweight rule-based classifiers
+
+**Remote detectors** run in their own pods and are called over gRPC:
+- ML models that need GPUs (Siphon-ML, Siphon-Vision)
+- Models with large memory footprints (transformer-based NER)
+- Shared models used by many caller pods
+
+The caller pod (FS, API, DS, GW) holds a list of configured detectors
+— some local, some remote — and calls them in parallel. Remote
+detectors have retry, timeout, and circuit-breaker logic.
+
+## Detector Pods
+
+### Siphon-ML (ML-based Detection)
+
+Transformer-based detectors for PII, NER, and custom fine-tuned
+models. Runs on GPU nodes. Exposes a gRPC service that any caller
+pod can use.
+
+**Crate:** `siphon-ml`
+
+**Depends on:** `siphon-core` (for finding types) + ONNX Runtime or
+`candle` for model inference
 
 **Responsibilities:**
-- Image → text via OCR (Tesseract or cloud API)
-- Document layout analysis
-- Handwriting recognition
-- Table extraction from scanned documents
-- Classification model inference
+- Host one or more ML models (e.g., HuggingFace BERT-NER, Presidio,
+  custom fine-tuned models)
+- gRPC endpoint: `Detect(text) → findings`
+- Model versioning and A/B routing
+- Batch inference for throughput
+- Warm pool of loaded models
+
+**Use cases:**
+- PII detection that regex misses (contextual names, addresses)
+- Custom-trained models for industry-specific data (medical terms,
+  legal documents)
+- Zero-shot classification
+
+### Siphon-Vision (OCR + Image Analysis)
+
+Image and scanned-document understanding. Extracts text from images
+and emits findings for visual content.
+
+**Crate:** `siphon-vision`
+
+**Depends on:** `siphon-core` + OCR engine (Tesseract, PaddleOCR, or
+cloud API) + optional CV models
+
+**Responsibilities:**
+- OCR: image → text with bounding boxes and confidence
+- Layout analysis: detect tables, forms, signatures
+- Logo / watermark detection
+- Face detection (PII category)
+- Document classification (ID card, invoice, medical record)
+
+**Finding extension:**
+```json
+{
+  "source_pod": "siphon-vision",
+  "findings": [{
+    "category": "PII",
+    "sub_category": "Printed SSN",
+    "text": "425-71-3482",
+    "confidence": 0.92,
+    "metadata": {
+      "bbox": [120, 340, 280, 360],
+      "page": 1,
+      "ocr_confidence": 0.98,
+      "model_version": "tesseract-5.3.0"
+    }
+  }]
+}
+```
+
+### Siphon-Classify (Document Classification)
+
+Classifies whole documents or spans of text. Orthogonal to PII
+detection — answers "what kind of document is this?" not "does it
+contain PII?"
+
+**Crate:** `siphon-classify`
+
+**Depends on:** `siphon-core` + classification models
+
+**Responsibilities:**
+- Document type classification (contract, medical record, financial
+  statement, source code, chat log, ...)
+- Sensitivity classification (public, internal, confidential, secret)
+- Intent detection (customer request, complaint, legal notice)
+- Language detection
+- Toxicity / harmful content classification
+
+**Why it's separate from ML:**
+- Different model families (classifiers vs. NER)
+- Different output shape (labels + confidence, not spans)
+- Can run on CPU where NER needs GPU
+
+## Extended Pod Map
+
+```
+               ┌─────────────────────────────────┐
+               │        Siphon-Core              │
+               │  scanner + Detector trait       │
+               └────────────────┬────────────────┘
+    ┌─────────────┬─────────────┼─────────────┬──────────────┐
+    │             │             │             │              │
+Ingestion Pods    │        Detector Pods      │              │
+(local detectors) │        (remote, gRPC)     │              │
+    │             │             │             │              │
+┌───▼──┐  ┌──────▼────┐  ┌─────▼─────┐  ┌───▼──────┐  ┌────▼────┐
+│ FS   │  │ API       │  │ ML        │  │ Vision   │  │Classify │
+│ DS   │  │           │  │ (GPU)     │  │ (OCR+CV) │  │         │
+│ GW   │  │           │  │           │  │          │  │         │
+└──┬───┘  └──────┬────┘  └───────────┘  └──────────┘  └─────────┘
+   │             │           ▲               ▲             ▲
+   └─────────────┴───────────┴───────────────┴─────────────┘
+                    gRPC Detector protocol
+```
+
+Ingestion pods (FS, API, DS, GW) run local detectors (regex + validators)
+and **optionally** call remote detector pods (ML, Vision, Classify)
+based on configuration. A policy can say: "For HIPAA-regulated
+uploads, run regex + ML + Vision and combine the findings."
+
+### Pipeline Composition
+
+A scan request can route through multiple pods:
+
+```
+Image upload (PDF scan of a form)
+  │
+  ▼
+Siphon-FS: extract PDF → stream of page images
+  │
+  ▼
+Siphon-Vision: OCR each page → text + bounding boxes
+  │
+  ▼
+Siphon-Core (in FS): regex + validators → structural findings
+  │
+  ▼
+Siphon-ML: contextual NER → name/address findings regex missed
+  │
+  ▼
+Siphon-Classify: document type = "medical intake form"
+  │
+  ▼
+Unified finding stream with provenance for each finding
+```
+
+Each step is optional and configurable per-policy.
+
+## Model Registry (Future)
+
+When multiple ML pods are running, a lightweight **model registry**
+tracks:
+- Deployed model versions per pod
+- A/B routing weights
+- Per-model accuracy metrics from labeled eval corpus
+- Canary deployment state
+
+The registry is a small config service, not a pod — a ConfigMap or
+an external service like MLflow. Each detector pod loads its routing
+rules at startup and can hot-reload.
 
 ## Which Pod Do I Use?
 
@@ -205,27 +414,27 @@ different problem (computer vision, not text matching).
 
 ```
 polygon-siphon/
-├── Cargo.toml              # workspace root
+├── Cargo.toml                # workspace root
 ├── crates/
-│   ├── siphon-core/        # scanner engine (no file I/O deps)
-│   ├── siphon-extractors/  # file format handlers
-│   ├── siphon-fs/          # file scanner binary
-│   ├── siphon-api/         # sync HTTP/gRPC scan service
-│   ├── siphon-ds/          # multi-protocol stream consumer
-│   └── siphon-gw/          # inline HTTP/gRPC proxy
+│   ├── siphon-core/          # scanner engine + Detector trait
+│   ├── siphon-detect-proto/  # gRPC protobuf for remote detectors
+│   ├── siphon-extractors/    # file format handlers
+│   │
+│   │   # Ingestion pods
+│   ├── siphon-fs/            # file scanner binary
+│   ├── siphon-api/           # sync HTTP/gRPC scan service
+│   ├── siphon-ds/            # multi-protocol stream consumer
+│   ├── siphon-gw/            # inline HTTP/gRPC proxy
+│   │
+│   │   # Detector pods (called via gRPC)
+│   ├── siphon-ml/            # transformer-based NER and PII
+│   ├── siphon-vision/        # OCR + image content analysis
+│   └── siphon-classify/      # document classification
 ├── tests/
 ├── docs/
 └── deploy/
-    ├── helm/
-    │   ├── siphon-fs/
-    │   ├── siphon-api/
-    │   ├── siphon-ds/
-    │   └── siphon-gw/
-    └── docker/
-        ├── Dockerfile.fs
-        ├── Dockerfile.api
-        ├── Dockerfile.ds
-        └── Dockerfile.gw
+    ├── helm/                 # one chart per pod
+    └── docker/               # one Dockerfile per pod
 ```
 
 ## Unified Finding Wire Format
@@ -307,27 +516,37 @@ policy, EDM state) are shared via a base chart or ConfigMap.
 
 ## Migration Path
 
-The workspace split is the prerequisite. The migration is incremental:
+Incremental. Each step is independently shippable.
 
-1. **Split the workspace** — move scanner logic to `siphon-core`,
-   extractors to `siphon-extractors`, CLI/pipeline to `siphon-fs`.
-   Everything still builds and tests pass. No new pods yet.
+**Phase 1: Workspace split**
+1. Move scanner logic to `siphon-core`, extractors to
+   `siphon-extractors`, CLI/pipeline to `siphon-fs`. Everything
+   still builds and tests pass.
+2. Define the `Detector` trait in `siphon-core`. Wrap the existing
+   regex+validator pipeline as a `RegexDetector` implementation.
 
-2. **Build Siphon-API** — new crate that depends on `siphon-core` +
-   `hyper` or `axum`. `POST /scan` endpoint with API-key auth. This
-   is the simplest new pod and covers most integration use cases.
+**Phase 2: Ingestion pods (simplest first)**
+3. Build Siphon-API (`POST /scan`). Simplest new pod, covers most
+   integration use cases.
+4. Build Siphon-DS with syslog + fluent adapters first. These
+   require zero app changes on the producer side.
+5. Build Siphon-GW. Higher complexity (mTLS, upstream management,
+   streaming bodies) so ship after API and DS are stable.
 
-3. **Build Siphon-DS** — new crate with pluggable ingestion adapters.
-   Ship syslog + fluent first (most enterprise value, zero app changes
-   for existing log pipelines). Add AMQP / Redis Streams / cloud
-   queues as follow-ups.
+**Phase 3: Detector protocol**
+6. Define `siphon-detect-proto` — gRPC service definition for
+   remote detectors. Thin protobuf layer: `Detect(DetectorInput)
+   → Findings`.
+7. Add `RemoteDetector` implementation in `siphon-core` with
+   timeout, retry, and circuit breaker.
 
-4. **Build Siphon-GW** — new crate for the inline proxy use case.
-   Higher complexity (mTLS, upstream management, streaming bodies)
-   so ship it after API and DS are stable.
+**Phase 4: Detector pods**
+8. Build Siphon-ML. Start with a single model (e.g., bert-base-NER
+   or Presidio) and expose the gRPC detector service.
+9. Build Siphon-Vision. Tesseract OCR first; add CV models later.
+10. Build Siphon-Classify. Document type classification first.
 
-5. **Helm charts** — one chart per pod with shared ConfigMap for
-   scanner config.
-
-6. **Siphon-Vision** — separate repo, separate timeline. Integrates
-   via the unified finding format.
+**Phase 5: Infrastructure**
+11. Helm charts per pod. Shared ConfigMap for scanner config and
+    detector routing rules.
+12. Model registry for versioning and A/B routing.
