@@ -3,38 +3,41 @@
 //! Designed for maximum throughput using RegexSet two-phase matching, zero-copy
 //! scanning, and rayon parallelism.
 
+// Re-export siphon-core modules so existing `crate::models`, `crate::scanner`, etc.
+// references in this crate keep compiling unchanged.
+pub use siphon_core::context;
+pub use siphon_core::edm;
+pub use siphon_core::errors;
+pub use siphon_core::lsh;
+pub use siphon_core::models;
+pub use siphon_core::normalize;
+pub use siphon_core::patterns;
+pub use siphon_core::scanner;
+pub use siphon_core::scoring;
+pub use siphon_core::validation;
+
 pub mod allowlist;
 pub mod api;
 pub mod audit;
 pub mod batch;
-pub mod bin_lookup;
+pub use siphon_core::bin_lookup;
 pub mod cache;
 pub mod compliance;
 pub mod config;
-pub mod context;
-pub mod edm;
 pub mod entropy;
-pub mod errors;
 pub mod extractors;
 pub mod guard;
 pub mod http_util;
-pub mod lsh;
 pub mod metrics;
-pub mod models;
-pub mod normalize;
-pub mod patterns;
 pub mod pipeline;
 pub mod plugins;
 pub mod policy;
 pub mod profiles;
 pub mod rbac;
-pub mod scanner;
-pub mod scoring;
 #[cfg(feature = "siem")]
 pub mod siem;
 pub mod streaming;
 pub mod tui;
-pub mod validation;
 #[cfg(feature = "webhooks")]
 pub mod webhooks;
 

@@ -1,0 +1,27 @@
+[package]
+name = "siphon-core"
+version = "2.1.0"
+edition = "2021"
+description = "Polygon Siphon scanner engine — patterns, validators, and detection pipeline"
+license = "MIT"
+rust-version = "1.75"
+
+[dependencies]
+regex = "1"
+aho-corasick = "1.1"
+once_cell = "1.19"
+unicode-normalization = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rayon = "1"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+tracing = "0.1"
+toml = "0.8"
+strsim = "0.11"
+rand = "0.8"
+
+[features]
+bin-data = []

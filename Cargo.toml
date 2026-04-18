@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "crates/siphon-core"]
+
 [package]
 name = "siphon"
 version = "2.1.0"
@@ -7,6 +10,9 @@ license = "MIT"
 rust-version = "1.75"
 
 [dependencies]
+# Siphon crates
+siphon-core = { path = "crates/siphon-core", features = [] }
+
 # Core matching
 regex = "1"
 aho-corasick = "1.1"
@@ -114,7 +120,7 @@ archives = ["dep:sevenz-rust", "dep:unrar"]
 data-formats = ["dep:parquet", "dep:arrow", "dep:rusqlite"]
 msg = ["dep:cfb"]
 barcode = ["dep:rxing", "dep:image"]
-bin-data = []
+bin-data = ["siphon-core/bin-data"]
 tui = ["dep:ratatui", "dep:crossterm"]
 # SIEM forwarders (Splunk HEC, Elasticsearch, Syslog, Datadog, generic
 # webhook). Ships its own synchronous HTTP client, so there are no
