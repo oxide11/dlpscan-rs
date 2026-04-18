@@ -3776,6 +3776,7 @@ dependencies = [
  "serde_yaml",
  "sevenz-rust",
  "sha2",
+ "siphon-core",
  "strsim",
  "tempfile",
  "tokio",
@@ -3787,6 +3788,27 @@ dependencies = [
  "unrar",
  "zeroize",
  "zip",
+]
+
+[[package]]
+name = "siphon-core"
+version = "2.1.0"
+dependencies = [
+ "aho-corasick",
+ "base64",
+ "hex",
+ "hmac",
+ "once_cell",
+ "rand 0.8.5",
+ "rayon",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "strsim",
+ "toml",
+ "tracing",
+ "unicode-normalization",
 ]
 
 [[package]]
