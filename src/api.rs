@@ -147,6 +147,12 @@ pub struct AppState {
     /// Wrapped in RwLock to support runtime key rotation.
     pub api_key_hash: RwLock<Option<[u8; 32]>>,
     pub rate_limiter: RwLock<RateLimiter>,
+    /// Optional distributed rate limiter backed by Redis. When present,
+    /// it is consulted first; if the Redis call fails the in-memory
+    /// limiter is used as a fallback so a Redis outage cannot take
+    /// the API offline.
+    #[cfg(feature = "redis-rate-limit")]
+    pub redis_rate_limiter: Option<crate::redis_rate_limit::RedisRateLimiter>,
     pub vaults: RwLock<HashMap<String, VaultEntry>>,
     pub custom_patterns: RwLock<Vec<PatternResponse>>,
     pub start_time: Instant,
@@ -313,8 +319,48 @@ impl ApiConfig {
 /// Process a scan request.
 pub fn handle_scan(req: &ScanRequest) -> Result<ScanResponse, String> {
     let guard = build_guard(req)?;
-    let result = guard.scan(&req.text).map_err(|e| format!("{e}"))?;
+    let result = guard.scan(&req.text).map_err(format_dlp_error)?;
     Ok(scan_result_to_response(&result))
+}
+
+/// Format a [`DlpError`] with a stable, sentinel-prefixed string so
+/// that the HTTP route layer can map the classification-policy
+/// violation to a distinct status code without needing every handler
+/// to return a typed error.
+///
+/// Sentinels:
+/// - `CLASSIFICATION_POLICY_VIOLATION: ...` → HTTP 422
+/// - `SENSITIVE_DATA_DETECTED: ...` → HTTP 422 (Reject mode)
+/// - (anything else) → HTTP 400
+#[cfg(feature = "async-support")]
+fn format_dlp_error(err: crate::errors::DlpError) -> String {
+    use crate::errors::DlpError;
+    match err {
+        DlpError::ClassificationPolicyViolation { .. } => {
+            format!("CLASSIFICATION_POLICY_VIOLATION: {err}")
+        }
+        DlpError::SensitiveDataDetected { .. } => {
+            format!("SENSITIVE_DATA_DETECTED: {err}")
+        }
+        other => format!("{other}"),
+    }
+}
+
+#[cfg(not(feature = "async-support"))]
+fn format_dlp_error(err: crate::errors::DlpError) -> String {
+    format!("{err}")
+}
+
+/// Map a formatted [`format_dlp_error`] string to an HTTP status code.
+#[cfg(feature = "async-support")]
+fn http_status_for_scan_error(err: &str) -> hyper::StatusCode {
+    if err.starts_with("CLASSIFICATION_POLICY_VIOLATION")
+        || err.starts_with("SENSITIVE_DATA_DETECTED")
+    {
+        hyper::StatusCode::UNPROCESSABLE_ENTITY
+    } else {
+        hyper::StatusCode::BAD_REQUEST
+    }
 }
 
 /// Process a batch scan request.
@@ -364,7 +410,7 @@ pub fn handle_tokenize(
         require_context: false,
     };
     let guard = build_guard(&scan_req)?;
-    let result = guard.scan(&req.text).map_err(|e| format!("{e}"))?;
+    let result = guard.scan(&req.text).map_err(format_dlp_error)?;
 
     // Create a vault and tokenize all findings
     let vault_id = generate_id();
@@ -438,7 +484,7 @@ pub fn handle_obfuscate(req: &ScanRequest) -> Result<ScanResponse, String> {
     let mut obf_req = req.clone();
     obf_req.action = "obfuscate".to_string();
     let guard = build_guard(&obf_req)?;
-    let result = guard.scan(&obf_req.text).map_err(|e| format!("{e}"))?;
+    let result = guard.scan(&obf_req.text).map_err(format_dlp_error)?;
     Ok(scan_result_to_response(&result))
 }
 
@@ -640,12 +686,11 @@ const MAX_REQUEST_BODY_SIZE: usize = 10 * 1024 * 1024; // 10 MB
 /// Start the API server with HTTP/1.1 and HTTP/2 support via hyper.
 #[cfg(feature = "async-support")]
 pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> {
-    use bytes::Bytes;
-    use http_body_util::{BodyExt, Full};
+    use http_body_util::BodyExt;
     use hyper::body::Incoming;
     use hyper::service::service_fn;
     use hyper::{Request, Response, StatusCode};
-    use hyper_util::rt::TokioIo;
+    use hyper_util::rt::{TokioExecutor, TokioIo};
     use hyper_util::server::conn::auto::Builder as HttpBuilder;
     use std::sync::Arc;
     use tokio::net::TcpListener;
@@ -683,9 +728,40 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
     // Store only the hash of the API key, never the plaintext
     let api_key_hash = config.api_key.as_deref().map(hash_api_key);
 
+    // Optional Redis-backed distributed rate limiter. When
+    // `DLPSCAN_RATE_LIMIT_REDIS_URL` is set we try to connect at
+    // startup. A failure here is logged but does NOT abort startup —
+    // the in-memory limiter keeps the API online.
+    #[cfg(feature = "redis-rate-limit")]
+    let redis_rate_limiter = match std::env::var("DLPSCAN_RATE_LIMIT_REDIS_URL") {
+        Ok(url) if !url.is_empty() => {
+            match crate::redis_rate_limit::RedisRateLimiter::new(&url, config.rate_limit, 60) {
+                Ok(rl) => {
+                    tracing::info!(
+                        "Distributed rate limiting enabled (redis, {}/{}s per client)",
+                        rl.max_requests(),
+                        rl.window_secs()
+                    );
+                    Some(rl)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to connect to Redis for distributed rate limiting: {}. \
+                         Falling back to in-memory limiter.",
+                        e
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+
     let state = Arc::new(AppState {
         api_key_hash: RwLock::new(api_key_hash),
         rate_limiter: RwLock::new(RateLimiter::new(config.rate_limit, 60)),
+        #[cfg(feature = "redis-rate-limit")]
+        redis_rate_limiter,
         vaults: RwLock::new(HashMap::new()),
         custom_patterns: RwLock::new(Vec::new()),
         start_time: Instant::now(),
@@ -734,6 +810,9 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
     tokio::pin!(shutdown);
 
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
+    // Single shared HTTP builder reused across connections (matches the
+    // upstream hyper-util `server_graceful` example).
+    let http_builder = HttpBuilder::new(TokioExecutor::new());
 
     loop {
         tokio::select! {
@@ -989,6 +1068,39 @@ fn check_rate_limit(
     let rate_key = api_key_header
         .map(|k| format!("key:{}", api_key_bucket(k)))
         .unwrap_or_else(|| format!("ip:{client_ip}"));
+
+    // Distributed path: consult the Redis limiter first if configured.
+    // A Redis error falls through to the in-memory limiter so a Redis
+    // outage does not take the API offline.
+    #[cfg(feature = "redis-rate-limit")]
+    {
+        if let Some(ref redis_rl) = state.redis_rate_limiter {
+            match redis_rl.check_client(&rate_key) {
+                Ok(true) => return None,
+                Ok(false) => {
+                    tracing::warn!(client_ip = %client_ip, rate_key = %rate_key, path = %path, backend = "redis", "Rate limit exceeded");
+                    if let Ok(event) = crate::audit::AuditEvent::new("REJECT") {
+                        let event = event
+                            .with_action("rate_limit")
+                            .with_source_ip(client_ip)
+                            .with_outcome("rejected")
+                            .with_metadata("reason", serde_json::json!("rate_limit_exceeded"))
+                            .with_metadata("backend", serde_json::json!("redis"))
+                            .with_metadata("path", serde_json::json!(path));
+                        crate::audit::audit_event(&event);
+                    }
+                    return Some((
+                        hyper::StatusCode::TOO_MANY_REQUESTS,
+                        r#"{"detail":"Rate limit exceeded"}"#.to_string(),
+                    ));
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Redis rate limiter error — falling back to in-memory limiter");
+                }
+            }
+        }
+    }
+
     if let Ok(mut rl) = state.rate_limiter.write() {
         if !rl.check_client(&rate_key) {
             tracing::warn!(client_ip = %client_ip, rate_key = %rate_key, path = %path, "Rate limit exceeded");
@@ -1095,11 +1207,31 @@ fn hyper_route_request(
                     serde_json::to_string(&resp).unwrap_or_default(),
                 ),
                 Err(e) => {
-                    tracing::warn!("Scan error: {}", e);
-                    (
-                        StatusCode::BAD_REQUEST,
-                        r#"{"detail":"Scan failed"}"#.to_string(),
-                    )
+                    let status = http_status_for_scan_error(&e);
+                    if status == StatusCode::UNPROCESSABLE_ENTITY {
+                        tracing::info!("Scan rejected by policy: {}", e);
+                        // Strip sentinel prefix for the client-facing message.
+                        let detail = e
+                            .strip_prefix("CLASSIFICATION_POLICY_VIOLATION: ")
+                            .or_else(|| e.strip_prefix("SENSITIVE_DATA_DETECTED: "))
+                            .unwrap_or(&e);
+                        let body = serde_json::json!({
+                            "detail": detail,
+                            "code": if e.starts_with("CLASSIFICATION_POLICY_VIOLATION") {
+                                "classification_policy_violation"
+                            } else {
+                                "sensitive_data_detected"
+                            },
+                        })
+                        .to_string();
+                        (status, body)
+                    } else {
+                        tracing::warn!("Scan error: {}", e);
+                        (
+                            StatusCode::BAD_REQUEST,
+                            r#"{"detail":"Scan failed"}"#.to_string(),
+                        )
+                    }
                 }
             },
             Err(_) => (

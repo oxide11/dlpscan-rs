@@ -1,7 +1,7 @@
-# dlpscan-rs Benchmark Results
+# siphon-rs Benchmark Results
 
 Comprehensive performance comparison between the Python and Rust implementations
-of dlpscan, including the impact of each optimization pass and the baseline-only
+of siphon, including the impact of each optimization pass and the baseline-only
 scanning mode.
 
 **Environment:** Linux 6.18.5, Rust 1.75+ (release profile with LTO), Python 3.x  
@@ -131,27 +131,51 @@ of keyword presence.
 | Full | 164 | Credit Card Numbers, Contact Information, Cloud Provider Secrets |
 | Baseline | 164 | Credit Card Numbers, Contact Information, Cloud Provider Secrets |
 
-### Full Latency Table (v2.1.0)
+### Full Latency Table (v2.1.0 optimized)
 
 | Test | Full (ms) | Baseline (ms) | Speedup |
 |---|---:|---:|---:|
-| scan_clean_1KB | 0.45 | 0.34 | 1.3x |
-| scan_mixed_1KB | 0.26 | 0.15 | 1.7x |
-| scan_dense_1KB | 0.23 | 0.21 | 1.1x |
-| scan_kw_heavy_1KB | 0.35 | 0.33 | 1.1x |
-| scan_clean_10KB | 0.35 | 0.31 | 1.1x |
-| scan_mixed_10KB | 0.55 | 0.54 | 1.0x |
-| scan_dense_10KB | 0.62 | 0.67 | 0.9x |
-| scan_kw_heavy_10KB | 0.56 | 0.50 | 1.1x |
-| scan_clean_100KB | 1.79 | 1.86 | 1.0x |
-| scan_mixed_100KB | 3.36 | 3.20 | 1.1x |
-| scan_dense_100KB | 4.09 | 4.00 | 1.0x |
-| scan_kw_heavy_100KB | 2.95 | 2.89 | 1.0x |
-| scan_clean_1MB | 14.97 | 15.07 | 1.0x |
-| scan_mixed_1MB | 49.07 | 47.96 | 1.0x |
-| scan_dense_1MB | 47.84 | 46.50 | 1.0x |
-| scan_kw_heavy_1MB | 29.08 | 25.73 | 1.1x |
-| redact_mixed_10KB | 0.56 | 0.52 | 1.1x |
+| scan_clean_1MB | 17.54 | 16.88 | 1.0x |
+| scan_mixed_1MB | 50.89 | 49.63 | 1.0x |
+| scan_dense_1MB | 62.18 | 60.75 | 1.0x |
+| scan_kw_heavy_1MB | 33.40 | 31.65 | 1.1x |
+| redact_mixed_10KB | 0.88 | 0.82 | 1.1x |
+
+### Throughput Comparison (1MB, v2.1.0 optimized)
+
+| Scenario | Full | Baseline |
+|---|---:|---:|
+| Clean text | 57.0 MB/s | 59.3 MB/s |
+| Mixed content | 19.7 MB/s | 20.1 MB/s |
+| Dense sensitive data | 16.1 MB/s | 16.5 MB/s |
+| **Keyword-heavy text** | **29.9 MB/s** | **31.6 MB/s** |
+
+### Performance journey
+
+The v2.1.0 release added 2,500 multilingual keywords (English + 5 other
+languages) and the Aho-Corasick automaton grew to ~5,000 unique keywords.
+This initially caused a ~30% throughput drop on dense content.
+
+The context hit index was then optimized:
+
+1. **Keyword deduplication** — identical keywords across patterns
+   (`credit card` appears in 7+ entries) are now stored once in the AC
+   automaton and mapped to all pattern IDs that use them. The automaton
+   itself became smaller.
+2. **Pattern-ID indexing** — the hit index was refactored from a
+   `HashMap<(&str, &str), Vec<(usize, usize)>>` with a cloned
+   `HashMap<String, HashMap<String, ...>>` reverse map to a simple
+   `Vec<Vec<u32>>` keyed by pattern ID. This eliminated ~5,000 String
+   allocations per scan.
+3. **Sorted position lists** — positions are sorted once per scan
+   enabling O(log n) binary search in range checks instead of linear scan.
+4. **Compact u32 positions** — hit positions are stored as u32 instead
+   of usize pairs (only `start` is needed for range checks).
+
+Result: mixed content throughput recovered from 14 MB/s to 20 MB/s
+(+40%), matching pre-multilingual performance. Dense content still has
+some overhead from the larger automaton but is within ~20% of the
+pre-multilingual baseline.
 
 ### Analysis
 
@@ -174,7 +198,7 @@ Baseline mode is best suited for:
 ### Rust API
 
 ```rust
-use dlpscan::guard::{InputGuard, Preset, Action};
+use siphon::guard::{InputGuard, Preset, Action};
 
 // Full scan (default) — all 560 patterns with AC prefilter
 let guard = InputGuard::new()
@@ -195,7 +219,7 @@ let result_fast = guard_fast.scan("SSN: 123-45-6789, Card: 4532015112830366")?;
 
 ```bash
 # Build and run Rust benchmark
-cd dlpscan-rs
+cd siphon-rs
 cargo run --release --bin benchmark
 
 # Run Python benchmark for comparison

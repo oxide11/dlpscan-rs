@@ -14,6 +14,7 @@ pub use tokenize::TokenVault;
 use std::collections::HashSet;
 
 use crate::allowlist::Allowlist;
+use crate::classification::{self, ClassificationLevel, DEFAULT_BLOCK_LEVEL};
 use crate::models::Match;
 use crate::scanner::{self, ScanConfig};
 
@@ -45,6 +46,18 @@ pub enum Mode {
 
 use serde::{Deserialize, Serialize};
 
+/// Pattern categories that carry classification / sharing-control
+/// markings. The guard force-includes these when a classification
+/// block policy is active so the threshold cannot be bypassed by
+/// choosing a preset that omits them.
+const CLASSIFICATION_CATEGORIES: &[&str] = &[
+    "Traffic Light Protocol",
+    "Data Classification Labels",
+    "Corporate Classification",
+    "Legal Privileged Content",
+    "Financial Regulatory Labels",
+];
+
 /// Result of an InputGuard scan.
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanResult {
@@ -60,6 +73,12 @@ pub struct ScanResult {
     pub categories_found: HashSet<String>,
     /// Whether the scan was truncated.
     pub scan_truncated: bool,
+    /// Highest classification level among the findings, if any
+    /// classification or TLP label was detected. Lets downstream
+    /// policy layers apply their own thresholds on top of the
+    /// guard's built-in block policy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classification_level: Option<ClassificationLevel>,
 }
 
 impl ScanResult {
@@ -80,10 +99,24 @@ pub struct InputGuard {
     redaction_char: char,
     allowlist: Option<Allowlist>,
     baseline_only: bool,
+    /// Minimum classification level that triggers a blocking error.
+    /// `Some(level)` — any finding at or above `level` returns
+    /// `DlpError::ClassificationPolicyViolation` regardless of `action`.
+    /// `None` — classification labels pass through as ordinary findings.
+    /// Defaults to [`DEFAULT_BLOCK_LEVEL`] (Confidential / TLP:AMBER).
+    block_classification_at_or_above: Option<ClassificationLevel>,
 }
 
 impl InputGuard {
     /// Create a new InputGuard with default settings.
+    ///
+    /// By default the guard blocks any input containing a
+    /// classification label at or above `Confidential` (which
+    /// includes TLP:AMBER and TLP:AMBER+STRICT). This is an
+    /// enterprise-safe default — to allow confidential content
+    /// through, call [`Self::with_block_classification`] with a
+    /// higher threshold or disable blocking entirely with
+    /// [`Self::without_classification_blocking`].
     pub fn new() -> Self {
         Self {
             presets: Vec::new(),
@@ -95,6 +128,7 @@ impl InputGuard {
             redaction_char: 'X',
             allowlist: None,
             baseline_only: false,
+            block_classification_at_or_above: Some(DEFAULT_BLOCK_LEVEL),
         }
     }
 
@@ -153,6 +187,34 @@ impl InputGuard {
         self
     }
 
+    /// Set the classification threshold at which the guard returns
+    /// a blocking [`crate::errors::DlpError::ClassificationPolicyViolation`]
+    /// error.
+    ///
+    /// Any finding mapped to a [`ClassificationLevel`] at or above
+    /// `level` causes `scan()` to return an error regardless of the
+    /// configured [`Action`]. Default: `Confidential`.
+    ///
+    /// ```
+    /// use siphon::guard::InputGuard;
+    /// use siphon::classification::ClassificationLevel;
+    ///
+    /// let guard = InputGuard::new()
+    ///     .with_block_classification(ClassificationLevel::Secret);
+    /// ```
+    pub fn with_block_classification(mut self, level: ClassificationLevel) -> Self {
+        self.block_classification_at_or_above = Some(level);
+        self
+    }
+
+    /// Disable the classification blocking policy entirely.
+    /// Classification and TLP labels will still be detected and
+    /// reported as findings, but will not cause `scan()` to fail.
+    pub fn without_classification_blocking(mut self) -> Self {
+        self.block_classification_at_or_above = None;
+        self
+    }
+
     /// Resolve effective categories based on presets and mode.
     fn resolve_categories(&self) -> Option<HashSet<String>> {
         let mut cats = HashSet::new();
@@ -170,10 +232,21 @@ impl InputGuard {
         }
 
         if cats.is_empty() {
-            None // Scan all
-        } else {
-            Some(cats)
+            return None; // Scan all
         }
+
+        // When classification blocking is active we must always scan
+        // the classification categories, even if the active presets
+        // don't include them — otherwise the guard could let a
+        // TLP:AMBER doc through simply because it was called with
+        // `Preset::PciDss` only.
+        if self.block_classification_at_or_above.is_some() {
+            for c in CLASSIFICATION_CATEGORIES {
+                cats.insert((*c).to_string());
+            }
+        }
+
+        Some(cats)
     }
 
     /// Scan text and return a ScanResult.
@@ -191,6 +264,32 @@ impl InputGuard {
         // Apply allowlist
         if let Some(ref allowlist) = self.allowlist {
             findings.retain(|m| !allowlist.is_suppressed(m));
+        }
+
+        // Classification policy: enforced BEFORE action processing so
+        // a blocked doc can't be tokenized or obfuscated and leaked as
+        // "clean" output. The threshold default is Confidential
+        // (TLP:AMBER and above) — see InputGuard::new.
+        let classification_level = classification::highest_level(findings.iter());
+        if let (Some(threshold), Some(level)) =
+            (self.block_classification_at_or_above, classification_level)
+        {
+            if level >= threshold {
+                let labels: Vec<String> = findings
+                    .iter()
+                    .filter(|m| {
+                        classification::classify(&m.category, &m.sub_category)
+                            .map(|l| l >= threshold)
+                            .unwrap_or(false)
+                    })
+                    .map(|m| format!("{}: {}", m.category, m.sub_category))
+                    .collect();
+                return Err(crate::errors::DlpError::ClassificationPolicyViolation {
+                    level,
+                    threshold,
+                    labels,
+                });
+            }
         }
 
         let is_clean = findings.is_empty();
@@ -211,6 +310,7 @@ impl InputGuard {
             redacted_text,
             categories_found,
             scan_truncated: false,
+            classification_level,
         };
 
         if self.action == Action::Reject && !result.is_clean {

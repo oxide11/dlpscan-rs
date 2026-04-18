@@ -5,6 +5,7 @@
 
 // Re-export siphon-core modules so existing `crate::models`, `crate::scanner`, etc.
 // references in this crate keep compiling unchanged.
+pub use siphon_core::classification;
 pub use siphon_core::context;
 pub use siphon_core::edm;
 pub use siphon_core::errors;
@@ -34,6 +35,8 @@ pub mod plugins;
 pub mod policy;
 pub mod profiles;
 pub mod rbac;
+#[cfg(feature = "redis-rate-limit")]
+pub mod redis_rate_limit;
 #[cfg(feature = "siem")]
 pub mod siem;
 pub mod streaming;

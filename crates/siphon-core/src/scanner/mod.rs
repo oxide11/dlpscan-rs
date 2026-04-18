@@ -96,6 +96,71 @@ impl std::fmt::Debug for ScanConfig {
     }
 }
 
+impl ScanConfig {
+    /// Create a new ScanConfig with default settings.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Restrict scanning to specific categories.
+    pub fn with_categories<I, S>(mut self, categories: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.categories = Some(categories.into_iter().map(Into::into).collect());
+        self
+    }
+
+    /// Require context keywords for all matches.
+    pub fn with_require_context(mut self, require: bool) -> Self {
+        self.require_context = require;
+        self
+    }
+
+    /// Set maximum matches per scan.
+    pub fn with_max_matches(mut self, max: usize) -> Self {
+        self.max_matches = max;
+        self
+    }
+
+    /// Enable or disable deduplication of overlapping matches.
+    pub fn with_deduplicate(mut self, dedup: bool) -> Self {
+        self.deduplicate = dedup;
+        self
+    }
+
+    /// Set minimum confidence threshold (0.0-1.0).
+    pub fn with_min_confidence(mut self, min: f64) -> Self {
+        self.min_confidence = min.clamp(0.0, 1.0);
+        self
+    }
+
+    /// Enable baseline-only mode (skip context-gated patterns).
+    pub fn with_baseline_only(mut self, baseline: bool) -> Self {
+        self.baseline_only = baseline;
+        self
+    }
+
+    /// Set entropy scan mode.
+    pub fn with_entropy_scan(mut self, mode: EntropyMode) -> Self {
+        self.entropy_scan = mode;
+        self
+    }
+
+    /// Attach an EDM (Exact Data Match) engine.
+    pub fn with_edm(mut self, edm: Arc<crate::edm::ExactDataMatcher>) -> Self {
+        self.edm = Some(edm);
+        self
+    }
+
+    /// Attach an LSH (Document Similarity) vault.
+    pub fn with_lsh(mut self, lsh: Arc<crate::lsh::DocumentVault>) -> Self {
+        self.lsh = Some(lsh);
+        self
+    }
+}
+
 /// Compiled regex cache: one Regex per pattern, compiled once at startup.
 struct CompiledPattern {
     regex: Regex,
@@ -263,6 +328,16 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         // URLs with credentials
         "URL with Password",
         "URL with Token",
+        // Traffic Light Protocol (FIRST.org TLP 2.0) — always run
+        // because a TLP marking at any level carries binding
+        // sharing rules that must be enforced regardless of
+        // surrounding keywords.
+        "TLP:RED",
+        "TLP:AMBER+STRICT",
+        "TLP:AMBER",
+        "TLP:GREEN",
+        "TLP:CLEAR",
+        "TLP:WHITE",
     ]
     .into_iter()
     .collect()
@@ -462,12 +537,15 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
 
                 // BIN enrichment for credit card matches
                 if pat.category == "Credit Card Numbers" {
-                    if let Some((brand, card_type, country)) =
+                    if let Some((brand, card_type, country, issuer)) =
                         crate::validation::get_bin_info(matched_text)
                     {
                         m.metadata.insert("bin_brand".into(), brand);
                         m.metadata.insert("bin_card_type".into(), card_type);
                         m.metadata.insert("bin_country".into(), country);
+                        if !issuer.is_empty() {
+                            m.metadata.insert("bin_issuer".into(), issuer);
+                        }
                         // Known BIN: small confidence boost
                         m.confidence = (m.confidence + 0.05).min(1.0);
                     }
@@ -685,6 +763,34 @@ const ENTROPY_CONTEXT_KEYWORDS: &[&str] = &[
     "aws_secret",
     "github_token",
     "slack_token",
+    // French
+    "mot de passe",
+    "clé privée",
+    "clé api",
+    "jeton",
+    "identifiant",
+    "chaîne de connexion",
+    // Spanish
+    "contraseña",
+    "contrasena",
+    "clave privada",
+    "clave api",
+    "credencial",
+    // German
+    "passwort",
+    "kennwort",
+    "zugangsdaten",
+    "anmeldedaten",
+    "privater schlüssel",
+    "api-schlüssel",
+    // Italian
+    "credenziali",
+    "chiave privata",
+    "chiave api",
+    // Portuguese
+    "senha",
+    "chave privada",
+    "chave api",
 ];
 
 /// Assignment patterns that precede a value (key=VALUE, "key": "VALUE", etc.).

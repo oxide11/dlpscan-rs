@@ -31,6 +31,15 @@ pub enum DlpError {
         finding_count: usize,
         categories: Vec<String>,
     },
+    /// A classification marking at or above the configured policy
+    /// threshold was found (e.g., "Confidential", "TLP:AMBER"). The
+    /// input is blocked regardless of the guard's configured
+    /// `Action` because these labels carry binding sharing rules.
+    ClassificationPolicyViolation {
+        level: crate::classification::ClassificationLevel,
+        threshold: crate::classification::ClassificationLevel,
+        labels: Vec<String>,
+    },
     /// Generic error with message.
     Other(String),
 }
@@ -56,6 +65,18 @@ impl fmt::Display for DlpError {
                 f,
                 "Sensitive data detected: {finding_count} findings in categories: {}",
                 categories.join(", ")
+            ),
+            Self::ClassificationPolicyViolation {
+                level,
+                threshold,
+                labels,
+            } => write!(
+                f,
+                "Classification policy violation: found {} label(s) at level '{}' (threshold: '{}'): {}",
+                labels.len(),
+                level.label(),
+                threshold.label(),
+                labels.join(", ")
             ),
             Self::Other(msg) => write!(f, "{msg}"),
         }
