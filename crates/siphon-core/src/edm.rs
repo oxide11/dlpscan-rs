@@ -212,7 +212,31 @@ impl ExactDataMatcher {
     /// Beyond this threshold, the O(tokens * hashes) scan becomes a DoS risk.
     const MAX_CONSTANT_TIME_HASHES: usize = 50_000;
 
+    /// Constant-time comparison of two byte slices. Returns 1 if equal,
+    /// 0 otherwise. A length mismatch is folded into the diff accumulator
+    /// rather than producing an early branch — both arms of the comparison
+    /// execute the same number of byte operations regardless of length.
+    #[inline]
+    fn ct_eq_bytes(a: &[u8], b: &[u8]) -> u8 {
+        // Length difference becomes a non-zero contribution to diff.
+        let len_diff = (a.len() ^ b.len()) as u8;
+        let n = a.len().min(b.len());
+        let mut diff = len_diff;
+        for i in 0..n {
+            diff |= a[i] ^ b[i];
+        }
+        // 1 iff diff == 0, branch-free
+        ((diff as u16).wrapping_sub(1) >> 8) as u8 & 1
+    }
+
     /// Scan text for registered values.
+    ///
+    /// Constant-time across category membership and registered-value count:
+    /// every category and every hash is iterated regardless of the
+    /// `categories` filter or whether an earlier hash already matched.
+    /// Filtered-out categories still execute the full per-hash loop and
+    /// XOR their result against zero, preventing timing inference of
+    /// which categories are registered or how many entries each holds.
     pub fn scan(&self, text: &str, categories: Option<&HashSet<String>>) -> Vec<EDMMatch> {
         let mut matches = Vec::new();
 
@@ -224,29 +248,28 @@ impl ExactDataMatcher {
             }
         }
 
-        // Check each token against all category hashes using constant-time comparison
         for (token_text, span) in &tokens {
             let hash = self.hmac_hash(token_text);
             let hash_bytes = hash.as_bytes();
 
             for (category, hash_set) in &self.hashes {
-                if let Some(cats) = categories {
-                    if !cats.contains(category) {
-                        continue;
-                    }
-                }
-                // Constant-time scan: always iterate ALL hashes to prevent timing leaks
-                let mut found = false;
+                // Branch-free mask: 1 if this category is allowed, 0 otherwise.
+                // We compute the mask but ALWAYS iterate the hash set, so the
+                // observable work is identical for filtered and unfiltered
+                // categories.
+                let allowed_mask: u8 = match categories {
+                    Some(cats) => cats.contains(category) as u8,
+                    None => 1,
+                };
+
+                let mut found_acc: u8 = 0;
                 for registered in hash_set.iter() {
-                    let reg_bytes = registered.as_bytes();
-                    if reg_bytes.len() == hash_bytes.len() {
-                        let mut diff = 0u8;
-                        for (a, b) in reg_bytes.iter().zip(hash_bytes.iter()) {
-                            diff |= a ^ b;
-                        }
-                        found |= diff == 0;
-                    }
+                    found_acc |= Self::ct_eq_bytes(registered.as_bytes(), hash_bytes);
                 }
+                // Zero out matches in disallowed categories without branching
+                // on the filter result.
+                let found = (found_acc & allowed_mask) == 1;
+
                 if found {
                     matches.push(EDMMatch {
                         value_hash: hash.clone(),
@@ -263,27 +286,28 @@ impl ExactDataMatcher {
     }
 
     /// Check if a specific value is registered (constant-time comparison).
+    ///
+    /// Iterates every category and every hash regardless of the `category`
+    /// argument — when a category is named, non-matching categories still
+    /// execute the full comparison and XOR their result into a discarded
+    /// mask. Closes the timing channel that would otherwise reveal which
+    /// categories exist and how many values each contains.
     pub fn check_value(&self, value: &str, category: Option<&str>) -> bool {
         let hash = self.hmac_hash(value);
         let hash_bytes = hash.as_bytes();
-        let sets: Vec<&std::collections::HashSet<String>> = match category {
-            Some(cat) => self.hashes.get(cat).into_iter().collect(),
-            None => self.hashes.values().collect(),
-        };
-        let mut found = false;
-        for set in sets {
+        let mut found_acc: u8 = 0;
+        for (cat_name, set) in &self.hashes {
+            let allowed_mask: u8 = match category {
+                Some(target) => (cat_name == target) as u8,
+                None => 1,
+            };
+            let mut cat_found: u8 = 0;
             for registered in set.iter() {
-                let reg_bytes = registered.as_bytes();
-                if reg_bytes.len() == hash_bytes.len() {
-                    let mut diff = 0u8;
-                    for (a, b) in reg_bytes.iter().zip(hash_bytes.iter()) {
-                        diff |= a ^ b;
-                    }
-                    found |= diff == 0;
-                }
+                cat_found |= Self::ct_eq_bytes(registered.as_bytes(), hash_bytes);
             }
+            found_acc |= cat_found & allowed_mask;
         }
-        found
+        found_acc == 1
     }
 
     /// Clear hashes for a category, or all categories.

@@ -204,6 +204,15 @@ pub struct RateLimiter {
 }
 
 impl RateLimiter {
+    /// Hard cap on the number of distinct client buckets the in-memory
+    /// limiter will track. Defends against IP-rotation memory DoS where
+    /// an attacker uses millions of unique source IPs to grow the map
+    /// unboundedly. When the cap is hit we clear the map — this briefly
+    /// resets the limiter (a known trade-off vs unbounded memory) and
+    /// emits a warning so operators can tune the cap or move to the
+    /// distributed Redis backend.
+    pub const MAX_CLIENTS: usize = 100_000;
+
     pub fn new(max_requests: usize, window_secs: u64) -> Self {
         Self {
             clients: HashMap::new(),
@@ -221,6 +230,23 @@ impl RateLimiter {
     pub fn check_client(&mut self, client_id: &str) -> bool {
         let now = Instant::now();
         let window = self.window;
+
+        // Hard cap: if we're at the limit and this is a new client, evict
+        // stale entries first; if still at cap, clear the entire map.
+        if self.clients.len() >= Self::MAX_CLIENTS && !self.clients.contains_key(client_id) {
+            self.clients.retain(|_, reqs| {
+                reqs.retain(|&t| now.duration_since(t) < window);
+                !reqs.is_empty()
+            });
+            if self.clients.len() >= Self::MAX_CLIENTS {
+                tracing::warn!(
+                    max_clients = Self::MAX_CLIENTS,
+                    "Rate limiter client map at hard cap after cleanup — clearing to prevent unbounded growth (possible IP-rotation DoS)"
+                );
+                self.clients.clear();
+            }
+        }
+
         let requests = self.clients.entry(client_id.to_string()).or_default();
         requests.retain(|&t| now.duration_since(t) < window);
         if requests.len() < self.max_requests {
@@ -544,6 +570,57 @@ fn api_key_bucket(key: &str) -> String {
     s
 }
 
+/// Whether `SIPHON_AUDIT_ANONYMIZE_KEYS` is enabled (cached after first read).
+///
+/// When enabled, audit-event user fields use a fresh random identifier
+/// per event instead of the deterministic SHA-256-derived bucket. The
+/// rate-limit bucket itself stays deterministic — this only affects what
+/// gets written to the audit log, trading correlation across events for
+/// a stronger guarantee that audit storage cannot be cross-referenced
+/// to identify which API key took an action.
+#[cfg(feature = "async-support")]
+fn audit_anonymize_enabled() -> bool {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    // 0 = unset, 1 = false, 2 = true
+    static CACHED: AtomicU8 = AtomicU8::new(0);
+    match CACHED.load(Ordering::Relaxed) {
+        1 => false,
+        2 => true,
+        _ => {
+            let on = matches!(
+                std::env::var("SIPHON_AUDIT_ANONYMIZE_KEYS")
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+                    .as_str(),
+                "1" | "true" | "yes" | "on"
+            );
+            CACHED.store(if on { 2 } else { 1 }, Ordering::Relaxed);
+            on
+        }
+    }
+}
+
+/// Build the audit-log `user` field for an authenticated request.
+///
+/// Default behaviour returns `key:<bucket>`, a deterministic SHA-256-derived
+/// short identifier of the API key. This preserves cross-event correlation
+/// (operators can group audit records by caller).
+///
+/// When `SIPHON_AUDIT_ANONYMIZE_KEYS` is set, returns `anon:<random-hex>`
+/// — a fresh per-event random identifier with no link back to the API key
+/// or to other events from the same caller. Use in high-sensitivity
+/// deployments where audit-log correlation is itself a privacy concern.
+///
+/// `None` (no key header present) always returns `"anonymous"`.
+#[cfg(feature = "async-support")]
+fn audit_user_field(api_key_header: Option<&str>) -> String {
+    match api_key_header {
+        None => "anonymous".to_string(),
+        Some(_) if audit_anonymize_enabled() => format!("anon:{}", generate_id()),
+        Some(k) => format!("key:{}", api_key_bucket(k)),
+    }
+}
+
 /// Generate a simple random ID (hex string).
 fn generate_id() -> String {
     use rand::RngCore;
@@ -785,6 +862,24 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
                 .is_err()
                 {
                     tracing::error!("Vault eviction task panicked — recovering");
+                }
+            }
+        });
+    }
+
+    // Background task: rate-limiter cleanup every 60 seconds, independent
+    // of request traffic. Without this, idle clients accumulate stale
+    // entries in the in-memory map and only get evicted when a request
+    // happens to hit the inline cleanup path — meaning a low-traffic API
+    // can hold onto memory for clients that have long since gone away.
+    {
+        let rl_state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                if let Ok(mut rl) = rl_state.rate_limiter.write() {
+                    rl.cleanup();
                 }
             }
         });
@@ -1084,6 +1179,7 @@ fn check_rate_limit(
                             .with_action("rate_limit")
                             .with_source_ip(client_ip)
                             .with_outcome("rejected")
+                            .with_user(&audit_user_field(api_key_header))
                             .with_metadata("reason", serde_json::json!("rate_limit_exceeded"))
                             .with_metadata("backend", serde_json::json!("redis"))
                             .with_metadata("path", serde_json::json!(path));
@@ -1109,6 +1205,7 @@ fn check_rate_limit(
                     .with_action("rate_limit")
                     .with_source_ip(client_ip)
                     .with_outcome("rejected")
+                    .with_user(&audit_user_field(api_key_header))
                     .with_metadata("reason", serde_json::json!("rate_limit_exceeded"))
                     .with_metadata("path", serde_json::json!(path));
                 crate::audit::audit_event(&event);
@@ -1118,7 +1215,9 @@ fn check_rate_limit(
                 r#"{"detail":"Rate limit exceeded"}"#.to_string(),
             ));
         }
-        rl.cleanup();
+        // Cleanup runs on a 60s background task instead of inline per-request
+        // so high-throughput requests don't pay the eviction cost and so
+        // idle APIs still bound memory growth.
     }
     None
 }
@@ -1399,11 +1498,7 @@ fn hyper_route_request(
                             .with_action("rotate_api_key")
                             .with_source_ip(client_ip)
                             .with_outcome("success")
-                            .with_user(
-                                &api_key_header
-                                    .map(|k| format!("key:{}", api_key_bucket(k)))
-                                    .unwrap_or_else(|| "admin".to_string()),
-                            );
+                            .with_user(&audit_user_field(api_key_header));
                         crate::audit::audit_event(&event);
                     }
                     (
