@@ -18,10 +18,12 @@
 //!                                    tamper-evident chain mode)
 //!   SIPHON_AUDIT_TAIL_PATH           Chain tail state path (persists chain
 //!                                    across process restarts; requires key)
+//!   SIPHON_POLICIES_DIR              Optional directory of *.toml policies
+//!                                    exposed read-only via GET /v1/policies
 
 use axum::{
     body::Body,
-    extract::{ConnectInfo, State},
+    extract::{ConnectInfo, Query, State},
     http::{header, HeaderMap, HeaderValue, Request, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -30,6 +32,9 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use siphon::policy::{load_policies_from_dir, Policy};
+use siphon::profiles::{get_profile, list_profiles};
+use siphon::rbac::{role_has_permission, Permission, Role};
 use siphon_core::audit::{
     audit_event, set_audit_logger, AuditEvent, AuditLogger, FileAuditHandler,
     RotatingFileAuditHandler,
@@ -37,6 +42,7 @@ use siphon_core::audit::{
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -51,6 +57,27 @@ struct AppState {
     api_key_hash: Option<[u8; 32]>,
     rate_limiter: Arc<Mutex<RateLimiter>>,
     rate_limit: u32,
+    policies: Arc<Vec<Policy>>,
+    metrics: Arc<ApiMetrics>,
+}
+
+/// Process-local counters surfaced by GET /v1/metrics.
+struct ApiMetrics {
+    started_at: Instant,
+    scans_total: AtomicU64,
+    findings_total: AtomicU64,
+    scan_errors_total: AtomicU64,
+}
+
+impl ApiMetrics {
+    fn new() -> Self {
+        Self {
+            started_at: Instant::now(),
+            scans_total: AtomicU64::new(0),
+            findings_total: AtomicU64::new(0),
+            scan_errors_total: AtomicU64::new(0),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -368,6 +395,7 @@ async fn health() -> Json<HealthResponse> {
 }
 
 async fn scan(
+    State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<ScanRequest>,
 ) -> Result<Json<ScanResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -404,6 +432,7 @@ async fn scan(
     let start = Instant::now();
 
     let matches = scan_text_with_config(&req.text, &config).map_err(|e| {
+        state.metrics.scan_errors_total.fetch_add(1, Ordering::Relaxed);
         tracing::error!(request_id = %request_id, error = %e, "scan_failed");
         if let Ok(event) = AuditEvent::new("SCAN") {
             emit_audit(
@@ -440,6 +469,9 @@ async fn scan(
         .collect();
 
     let count = findings.len();
+    state.metrics.scans_total.fetch_add(1, Ordering::Relaxed);
+    state.metrics.findings_total.fetch_add(count as u64, Ordering::Relaxed);
+
     let categories_found: Vec<String> = findings
         .iter()
         .map(|f| f.category.clone())
@@ -478,6 +510,236 @@ async fn scan(
         finding_count: count,
         scan_duration_ms: duration_ms as u64,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// /v1 read-only handlers (admin console)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct PatternsQuery {
+    category: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct PatternItem {
+    category: &'static str,
+    sub_category: &'static str,
+    regex: &'static str,
+    case_insensitive: bool,
+    specificity: f64,
+    context_required: bool,
+}
+
+#[derive(Serialize)]
+struct PatternsResponse {
+    total: usize,
+    returned: usize,
+    patterns: Vec<PatternItem>,
+}
+
+async fn list_patterns(Query(q): Query<PatternsQuery>) -> Json<PatternsResponse> {
+    let all = siphon_core::patterns::PATTERNS;
+    let filtered: Vec<&'static siphon_core::models::PatternDef> = match q.category.as_deref() {
+        Some(c) if !c.is_empty() => all.iter().filter(|p| p.category == c).collect(),
+        _ => all.iter().collect(),
+    };
+    let total = filtered.len();
+    let cap = q.limit.unwrap_or(500).min(5_000);
+    let patterns: Vec<PatternItem> = filtered
+        .into_iter()
+        .take(cap)
+        .map(|p| PatternItem {
+            category: p.category,
+            sub_category: p.sub_category,
+            regex: p.regex,
+            case_insensitive: p.case_insensitive,
+            specificity: p.specificity,
+            context_required: p.context_required,
+        })
+        .collect();
+    let returned = patterns.len();
+    Json(PatternsResponse {
+        total,
+        returned,
+        patterns,
+    })
+}
+
+#[derive(Serialize)]
+struct CategoryItem {
+    category: &'static str,
+    pattern_count: usize,
+}
+
+#[derive(Serialize)]
+struct CategoriesResponse {
+    total: usize,
+    categories: Vec<CategoryItem>,
+}
+
+async fn list_categories() -> Json<CategoriesResponse> {
+    let cats = siphon_core::patterns::categories();
+    let categories: Vec<CategoryItem> = cats
+        .into_iter()
+        .map(|c| CategoryItem {
+            category: c,
+            pattern_count: siphon_core::patterns::patterns_for_category(c).len(),
+        })
+        .collect();
+    Json(CategoriesResponse {
+        total: categories.len(),
+        categories,
+    })
+}
+
+#[derive(Serialize)]
+struct PoliciesResponse {
+    loaded: bool,
+    total: usize,
+    source: Option<String>,
+    policies: Vec<Policy>,
+}
+
+async fn list_policies(State(state): State<Arc<AppState>>) -> Json<PoliciesResponse> {
+    let source = std::env::var("SIPHON_POLICIES_DIR").ok();
+    Json(PoliciesResponse {
+        loaded: source.is_some(),
+        total: state.policies.len(),
+        source,
+        policies: (*state.policies).clone(),
+    })
+}
+
+#[derive(Serialize)]
+struct ProfilesResponse {
+    total: usize,
+    profiles: Vec<siphon::profiles::MaskingProfile>,
+}
+
+async fn list_profiles_handler() -> Json<ProfilesResponse> {
+    let names = list_profiles();
+    let profiles: Vec<siphon::profiles::MaskingProfile> =
+        names.into_iter().filter_map(|n| get_profile(&n)).collect();
+    Json(ProfilesResponse {
+        total: profiles.len(),
+        profiles,
+    })
+}
+
+#[derive(Serialize)]
+struct RoleItem {
+    role: &'static str,
+    permissions: Vec<&'static str>,
+    description: &'static str,
+}
+
+#[derive(Serialize)]
+struct RolesResponse {
+    total: usize,
+    roles: Vec<RoleItem>,
+}
+
+async fn list_roles() -> Json<RolesResponse> {
+    const ROLES: [(Role, &str, &str); 4] = [
+        (Role::Admin,    "admin",    "Full control. All permissions."),
+        (Role::Analyst,  "analyst",  "Scan + detokenize + read status."),
+        (Role::Operator, "operator", "Scan + read status."),
+        (Role::Viewer,   "viewer",   "Read status only."),
+    ];
+    const PERMS: [(Permission, &str); 7] = [
+        (Permission::Scan,            "Scan"),
+        (Permission::BatchScan,       "BatchScan"),
+        (Permission::ManagePatterns,  "ManagePatterns"),
+        (Permission::Detokenize,      "Detokenize"),
+        (Permission::ExportVault,     "ExportVault"),
+        (Permission::ViewStatus,      "ViewStatus"),
+        (Permission::AdminAction,     "AdminAction"),
+    ];
+    let roles: Vec<RoleItem> = ROLES
+        .iter()
+        .map(|(r, name, desc)| RoleItem {
+            role: name,
+            description: desc,
+            permissions: PERMS
+                .iter()
+                .filter(|(p, _)| role_has_permission(*r, *p))
+                .map(|(_, n)| *n)
+                .collect(),
+        })
+        .collect();
+    Json(RolesResponse {
+        total: roles.len(),
+        roles,
+    })
+}
+
+#[derive(Serialize)]
+struct FrameworkItem {
+    name: &'static str,
+    failing_categories: Vec<&'static str>,
+}
+
+#[derive(Serialize)]
+struct FrameworksResponse {
+    total: usize,
+    frameworks: Vec<FrameworkItem>,
+}
+
+async fn list_frameworks() -> Json<FrameworksResponse> {
+    // Mirrors siphon::compliance::framework_failing_categories (private fn).
+    // Kept here to avoid widening that module's visibility just for the API.
+    let frameworks = vec![
+        FrameworkItem {
+            name: "PCI-DSS",
+            failing_categories: vec!["Credit Card Numbers", "Primary Account Numbers"],
+        },
+        FrameworkItem {
+            name: "HIPAA",
+            failing_categories: vec!["Medical Identifiers"],
+        },
+        FrameworkItem {
+            name: "SOC2",
+            failing_categories: vec![
+                "Generic Secrets",
+                "Cloud Provider Secrets",
+                "Code Platform Secrets",
+            ],
+        },
+        FrameworkItem {
+            name: "GDPR",
+            failing_categories: vec!["Contact Information", "Personal Identifiers"],
+        },
+    ];
+    Json(FrameworksResponse {
+        total: frameworks.len(),
+        frameworks,
+    })
+}
+
+#[derive(Serialize)]
+struct MetricsResponse {
+    uptime_secs: u64,
+    scans_total: u64,
+    findings_total: u64,
+    scan_errors_total: u64,
+    patterns_loaded: usize,
+    categories_loaded: usize,
+    policies_loaded: usize,
+}
+
+async fn metrics_snapshot(State(state): State<Arc<AppState>>) -> Json<MetricsResponse> {
+    Json(MetricsResponse {
+        uptime_secs: state.metrics.started_at.elapsed().as_secs(),
+        scans_total: state.metrics.scans_total.load(Ordering::Relaxed),
+        findings_total: state.metrics.findings_total.load(Ordering::Relaxed),
+        scan_errors_total: state.metrics.scan_errors_total.load(Ordering::Relaxed),
+        patterns_loaded: siphon_core::patterns::PATTERNS.len(),
+        categories_loaded: siphon_core::patterns::categories().len(),
+        policies_loaded: state.policies.len(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -557,15 +819,46 @@ async fn main() {
             .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]),
     };
 
+    // Optional policies directory — loaded once at startup. Endpoints that
+    // enumerate policies read from this cache; a HUP restart is required to
+    // pick up on-disk changes (deliberate: policies are security-critical).
+    let policies: Vec<Policy> = match std::env::var("SIPHON_POLICIES_DIR") {
+        Ok(path) if !path.is_empty() => match load_policies_from_dir(&path) {
+            Ok(map) => {
+                let policies: Vec<Policy> = map.into_values().collect();
+                tracing::info!(
+                    count = policies.len(),
+                    path = %path,
+                    "policies loaded"
+                );
+                policies
+            }
+            Err(e) => {
+                tracing::error!(path = %path, error = %e, "policies load failed");
+                Vec::new()
+            }
+        },
+        _ => Vec::new(),
+    };
+
     let state = Arc::new(AppState {
         api_key_hash,
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
         rate_limit,
+        policies: Arc::new(policies),
+        metrics: Arc::new(ApiMetrics::new()),
     });
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/scan", post(scan))
+        .route("/v1/patterns", get(list_patterns))
+        .route("/v1/categories", get(list_categories))
+        .route("/v1/policies", get(list_policies))
+        .route("/v1/profiles", get(list_profiles_handler))
+        .route("/v1/roles", get(list_roles))
+        .route("/v1/compliance/frameworks", get(list_frameworks))
+        .route("/v1/metrics", get(metrics_snapshot))
         .layer(middleware::from_fn(security_headers))
         .layer(middleware::from_fn_with_state(
             state.clone(),

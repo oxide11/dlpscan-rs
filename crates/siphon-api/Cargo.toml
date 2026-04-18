@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 siphon-core = { path = "../siphon-core" }
+siphon = { path = "../.." }
 
 # HTTP server
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "time"] }
