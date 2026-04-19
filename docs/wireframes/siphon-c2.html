@@ -6804,7 +6804,7 @@ function FindingDetail({ id, back }) {
   );
 }
 
-Object.assign(window, { Stream, FindingDetail });
+Object.assign(window, { Stream, FindingDetail, fmtWallClock });
 
 </script>
 
@@ -7316,8 +7316,17 @@ function Patterns() {
             <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>— no patterns —</div>
           )}
           {patList.map((p, i) => (
-            <div key={i} className="pat-row">
-              <input type="checkbox" defaultChecked />
+            <div key={i} className="pat-row"
+                 onClick={(e) => {
+                   // checkbox clicks shouldn't navigate — they'll
+                   // toggle enable/disable in Phase 4. Stop the event
+                   // there so rows stay clickable everywhere else.
+                   if (e.target && e.target.tagName === 'INPUT') return;
+                   window.__c2_go && window.__c2_go('patterns', 'pattern:' + p.category + '/' + p.sub_category);
+                 }}
+                 style={{cursor:'pointer'}}
+                 title={`open ${p.sub_category}`}>
+              <input type="checkbox" defaultChecked onClick={(e) => e.stopPropagation()} />
               <span>
                 <div className="pn">{p.sub_category}</div>
                 <div className="pr" style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:600}} title={p.regex}>{p.regex}</div>
@@ -7452,7 +7461,367 @@ function Profiles() {
   );
 }
 
-Object.assign(window, { Patterns, Profiles });
+// ────────────────────────────────────────────────────────────────
+// PatternDetail — read-only drill-in view for a single pattern,
+// keyed by (category, sub_category). Phase 1: purely render-side.
+// Edit/Reset/Enable/Disable/Simulator/Threshold buttons are present
+// but disabled with honest tooltips pointing at the Phase that
+// unlocks each. Stats are computed client-side off /v1/findings +
+// the local FP queue — no server-side per-pattern aggregation exists
+// yet (needs pattern_id on findings, Phase 3).
+// ────────────────────────────────────────────────────────────────
+function PatternStatsBox({ stats, ringCapacity }) {
+  if (!stats || stats.count === 0) {
+    return (
+      <div className="box">
+        <div className="box-title"><span className="t">Detection stats</span><span className="k">from /v1/findings ring</span></div>
+        <div className="muted mono" style={{padding:'6px 0', fontSize:11.5, lineHeight:1.7}}>
+          No findings for this pattern in the ring (capacity {ringCapacity || '—'}).
+          Run a scan that fires this pattern to populate stats.
+        </div>
+      </div>
+    );
+  }
+  const fmtPct = (n) => (n * 100).toFixed(1) + '%';
+  const fmt3 = (n) => n != null ? n.toFixed(3) : '—';
+  const wc = window.fmtWallClock || ((s) => s || '—');
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Detection stats</span>
+        <span className="k">last {stats.count} hit{stats.count === 1 ? '' : 's'} in ring · date range {wc(stats.firstTs)} → {wc(stats.lastTs)}</span>
+      </div>
+      <div className="kv" style={{gridTemplateColumns:'auto 1fr'}}>
+        <span className="k">Fire count</span>       <span className="v mono">{stats.count}</span>
+        <span className="k">First seen</span>       <span className="v mono">{stats.firstTs || '—'}</span>
+        <span className="k">Last seen</span>        <span className="v mono">{stats.lastTs || '—'}</span>
+        <span className="k">Unique sources</span>   <span className="v mono">{stats.uniqueSources}</span>
+        <span className="k">Confidence</span>       <span className="v mono">{fmt3(stats.confMin)} · avg {fmt3(stats.confAvg)} · {fmt3(stats.confMax)}</span>
+        <span className="k">Flagged as FP</span>    <span className="v mono">{stats.fpCount} · <span style={{color: stats.fpRate > 0.2 ? 'var(--red)' : stats.fpRate > 0.05 ? 'var(--amber)' : 'var(--ink-soft)'}}>{fmtPct(stats.fpRate)} FP rate</span></span>
+      </div>
+      <div className="margin-note" style={{marginTop:8}}>
+        Stats derived from in-memory findings ring (bounded to {ringCapacity || '—'} entries) + local FP queue.
+        Per-pattern aggregation with full-history FP rate ships once findings carry <span className="mono">pattern_id</span> (Phase 3).
+      </div>
+    </div>
+  );
+}
+
+function PatternRegexBox({ pattern }) {
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Regex</span>
+        <span className="k">compile-time baseline · edit ships in Phase 5</span>
+      </div>
+      <div className="mono" style={{
+        fontSize:13, padding:'10px 12px',
+        background:'var(--amber-wash)',
+        border:'1.5px solid var(--amber)',
+        borderRadius:2, marginBottom:10,
+        wordBreak:'break-all', lineHeight:1.5,
+      }}>{pattern.regex}</div>
+      <div style={{display:'flex', gap:6, flexWrap:'wrap'}}>
+        <span className={`chip chip--${pattern.case_insensitive ? 'teal' : 'ghost'}`}>
+          {pattern.case_insensitive ? 'case-insensitive · /i' : 'case-sensitive'}
+        </span>
+        <span className={`chip chip--${pattern.context_required ? 'teal' : 'ghost'}`}>
+          {pattern.context_required ? 'context required' : 'context optional'}
+        </span>
+        <span className="chip">specificity {pattern.specificity.toFixed(2)}</span>
+      </div>
+    </div>
+  );
+}
+
+function PatternKeywordsBox({ pattern }) {
+  // Context keywords for (category, sub_category) live in
+  // crates/siphon-core/src/context/keywords.rs and aren't returned by
+  // /v1/patterns today. Honest empty state until Phase 1b adds the
+  // 'context_keywords' field to the patterns response.
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Context keywords</span>
+        <span className="k">
+          {pattern.context_required
+            ? <>requirement: <b>required</b> · at least one keyword must appear near the match</>
+            : <>requirement: <b>optional</b> · keywords boost confidence but aren't gating</>}
+        </span>
+      </div>
+      <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:12, lineHeight:1.7}}>
+        Keyword list not exposed by <span className="mono">/v1/patterns</span> yet — the map lives in
+        <span className="mono"> crates/siphon-core/src/context/keywords.rs</span> keyed by <span className="mono">(category, sub_category)</span>.
+        <br/>
+        <b>Phase 1b</b> adds a <span className="mono">context_keywords</span> field to the response so we can render + toggle them here.
+        <b> Phase 5</b> enables add/remove and per-keyword enable/disable through the overrides layer.
+      </div>
+    </div>
+  );
+}
+
+function PatternValidatorsBox({ pattern }) {
+  // Validators today are compile-time Rust fns applied per category
+  // (Luhn for PCI, IBAN checksums, BIN lookups, etc.). They're not
+  // individually declared per pattern. Honest empty state + a nod at
+  // what becomes possible in the overrides model.
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Validators</span>
+        <span className="k">compile-time · applied per category</span>
+      </div>
+      <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:12, lineHeight:1.7}}>
+        Validators aren't attached to patterns individually — they're Rust fns in
+        <span className="mono"> crates/siphon-core/src/validation/</span> dispatched by category
+        (Luhn check for PCI, IBAN checksum, BIN lookup, etc.).
+        <br/>
+        <b>Phase 5</b> surfaces the dispatch map + lets a pattern opt-in or opt-out of the default validator set via the overrides layer.
+        Defining new validators still requires Rust code.
+      </div>
+    </div>
+  );
+}
+
+function PatternSpecificityBox({ pattern }) {
+  const pct = Math.round((pattern.specificity || 0) * 100);
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Specificity</span>
+        <span className="k">weight in the scoring pass · tune ships in Phase 5</span>
+      </div>
+      <div style={{padding:'4px 0 8px'}}>
+        <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
+          <span className="mono" style={{fontSize:18, color:'var(--accent)', minWidth:60}}>{pattern.specificity.toFixed(2)}</span>
+          <span className="muted mono" style={{fontSize:11}}>of 1.00</span>
+        </div>
+        <div style={{background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:2, height:10, overflow:'hidden'}}>
+          <div style={{background:'var(--accent)', height:'100%', width: pct + '%'}} />
+        </div>
+        <div className="margin-note" style={{marginTop:6}}>
+          Higher specificity → larger confidence boost when this pattern fires.
+          Default is set in <span className="mono">crates/siphon-core/src/patterns/mod.rs</span>.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PatternSimulatorStub() {
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Simulator</span>
+        <span className="k">Phase 2 · reuses /scan?trace=true</span>
+      </div>
+      <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:12, lineHeight:1.7}}>
+        The pattern simulator will let you paste or pick text from the findings ring and re-run
+        just this pattern through the scanner pipeline with <span className="mono">trace:true</span>,
+        showing which stages it passed / was dropped at.
+        <br/>
+        Historical-data mode will loop through recent findings that fired this pattern so you can
+        see how a regex or keyword change would affect them retroactively. File-mode simulation
+        goes through <b>siphon-fs</b> (Phase 2b).
+      </div>
+    </div>
+  );
+}
+
+function PatternThresholdStub() {
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Unique-count threshold</span>
+        <span className="k">Phase 9 · belongs in policies, not patterns</span>
+      </div>
+      <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:12, lineHeight:1.7}}>
+        A threshold like "1 SIN is fine, 2 distinct SINs = block" is a policy concern, not a pattern
+        property — one pattern can be tolerated or blocked depending on which policy picks it up.
+        <br/>
+        <b>Phase 9</b> adds <span className="mono">scan.max_unique_count</span> to the Policy schema and enforcement in the scanner.
+        This box becomes a read-only cross-link to the policies that apply a threshold to this pattern.
+      </div>
+    </div>
+  );
+}
+
+function PatternDetail({ category, sub_category, back }) {
+  // Hooks first — rules of hooks. No early returns above this block.
+  const pats = window.useSiphonApi(
+    category ? `/v1/patterns?category=${encodeURIComponent(category)}&limit=500` : '/v1/patterns?limit=0'
+  );
+  const fx = window.useSiphonApi('/v1/findings?limit=500');
+  const fpQueue = window.useFpQueue();
+  const { PageBar } = window;
+
+  const list = (pats.data && pats.data.patterns) || [];
+  const p = list.find(x => x.sub_category === sub_category);
+  const findings = (fx.data && fx.data.findings) || [];
+
+  // Prev/Next across sibling patterns in this category (j/k/arrows).
+  const idx = p ? list.findIndex(x => x.sub_category === sub_category) : -1;
+  const prev = idx > 0 ? list[idx - 1] : null;
+  const next = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
+  const gotoPat = (sub) =>
+    window.__c2_go && window.__c2_go('patterns', 'pattern:' + category + '/' + sub);
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      if (e.key === 'j' || e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        if (next) gotoPat(next.sub_category);
+      } else if (e.key === 'k' || e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        if (prev) gotoPat(prev.sub_category);
+      } else if (e.key === 'Escape') {
+        back && back();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [prev, next, back]);
+
+  // Stats — filter findings ring by (category, sub_category) + overlay
+  // FP queue counts. No pattern_id on findings yet (Phase 3), so this
+  // will over-count when two patterns share the same sub_category
+  // within a category. Rare in practice; honest caveat in the box.
+  const stats = React.useMemo(() => {
+    const matches = findings.filter(f =>
+      f.category === category && f.sub_category === sub_category
+    );
+    if (matches.length === 0) return { count: 0 };
+    const tsNums = matches.map(m => new Date(m.ts).getTime()).filter(x => !isNaN(x));
+    const confs  = matches.map(m => m.confidence).filter(c => typeof c === 'number');
+    const ips    = new Set(matches.map(m => m.source_ip).filter(Boolean));
+    const fps    = fpQueue.filter(e =>
+      e.finding &&
+      e.finding.category === category &&
+      e.finding.sub_category === sub_category
+    );
+    return {
+      count: matches.length,
+      firstTs: tsNums.length ? new Date(Math.min.apply(null, tsNums)).toISOString() : null,
+      lastTs:  tsNums.length ? new Date(Math.max.apply(null, tsNums)).toISOString() : null,
+      uniqueSources: ips.size,
+      confMin: confs.length ? Math.min.apply(null, confs) : null,
+      confMax: confs.length ? Math.max.apply(null, confs) : null,
+      confAvg: confs.length ? confs.reduce(function (a, b) { return a + b; }, 0) / confs.length : null,
+      fpCount: fps.length,
+      fpRate:  matches.length ? fps.length / matches.length : 0,
+    };
+  }, [findings, fpQueue, category, sub_category]);
+
+  // Early returns — AFTER hooks.
+  if (!pats.loading && list.length && !p) {
+    return (
+      <div>
+        <PageBar
+          crumbs={['Detect', 'Patterns', category, sub_category]}
+          title="Pattern not found"
+          subtitle={<>No pattern with sub_category <span className="mono">{sub_category}</span> under <span className="mono">{category}</span>.</>}
+          actions={<button className="btn ghost" onClick={back}>‹ Back to library</button>}
+        />
+      </div>
+    );
+  }
+  if (!p) {
+    return <div className="muted" style={{padding:30, textAlign:'center'}}>loading…</div>;
+  }
+
+  const ringCapacity = fx.data ? fx.data.capacity : null;
+
+  return (
+    <div>
+      <PageBar
+        crumbs={['Detect', 'Patterns', category, sub_category]}
+        title={<>
+          <span className="mono" style={{color:'var(--ink-bright)'}}>{sub_category}</span>
+          <span className="muted" style={{marginLeft:10, fontSize:14}}>·</span>
+          <span style={{marginLeft:10, fontFamily:"'Space Grotesk', sans-serif"}}>{category}</span>
+          <HelpIcon topic="patterns" title="Pattern anatomy" size={16} />
+        </>}
+        subtitle={<>
+          <span className="mono">specificity {p.specificity.toFixed(2)}</span>
+          <span className="muted"> · </span>
+          <span className="mono">{p.context_required ? 'context required' : 'context optional'}</span>
+          <span className="muted"> · </span>
+          <span className="mono">{p.case_insensitive ? 'case-insensitive' : 'case-sensitive'}</span>
+          {idx >= 0 && list.length > 0 && (
+            <>
+              <span className="muted"> · </span>
+              <span className="mono">{idx + 1} of {list.length} in {category}</span>
+            </>
+          )}
+        </>}
+        actions={<>
+          <window.LivePill source={pats.source} onClick={pats.refetch} />
+          <div style={{display:'flex', gap:2, border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', overflow:'hidden'}}>
+            <button
+              className="btn ghost"
+              onClick={() => prev && gotoPat(prev.sub_category)}
+              disabled={!prev}
+              title={prev ? `prev · ${prev.sub_category} · k / ← / ↑` : 'no previous pattern in category'}
+              style={{border:'none', borderRight:'1px solid var(--line-strong)', padding:'5px 10px', opacity: prev ? 1 : 0.4, cursor: prev ? 'pointer' : 'not-allowed'}}>
+              ‹ Prev
+            </button>
+            <button
+              className="btn ghost"
+              onClick={() => next && gotoPat(next.sub_category)}
+              disabled={!next}
+              title={next ? `next · ${next.sub_category} · j / → / ↓` : 'no next pattern in category'}
+              style={{border:'none', padding:'5px 10px', opacity: next ? 1 : 0.4, cursor: next ? 'pointer' : 'not-allowed'}}>
+              Next ›
+            </button>
+          </div>
+          <button className="btn ghost" onClick={back} title="Esc">‹ Back</button>
+          <button className="btn" disabled title="pattern edit ships in Phase 5 · needs PatternOverrides layer (Phase 3-4)"
+                  style={{opacity:0.5, cursor:'not-allowed'}}>✎ Edit</button>
+          <button className="btn" disabled title="reset to compile-time default · Phase 5"
+                  style={{opacity:0.5, cursor:'not-allowed'}}>↺ Reset</button>
+          <button className="btn" disabled title="toggle enable/disable · Phase 4 · rolls ConfigMap + restarts detection pods"
+                  style={{opacity:0.5, cursor:'not-allowed'}}>◉ Enabled</button>
+        </>}
+      />
+
+      {/* Top pair: stats + regex */}
+      <div style={{
+             display:'grid',
+             gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)',
+             gap:'var(--gap)',
+             alignItems:'stretch',
+           }}>
+        <PatternStatsBox stats={stats} ringCapacity={ringCapacity} />
+        <PatternRegexBox pattern={p} />
+      </div>
+
+      {/* 3-row detail grid mirroring the FindingDetail shape */}
+      <div className="finding-hero"
+           style={{
+             marginTop:'var(--gap)',
+             gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)',
+             alignItems:'stretch',
+           }}>
+        <PatternKeywordsBox pattern={p} />
+        <PatternValidatorsBox pattern={p} />
+        <PatternSpecificityBox pattern={p} />
+        <PatternSimulatorStub />
+        <PatternThresholdStub />
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Change history</span>
+            <span className="k">Phase 7</span>
+          </div>
+          <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:12, lineHeight:1.7}}>
+            Once the overrides layer is wired (Phase 3-4) every edit writes a versioned entry here,
+            with diff view and a <i>Revert to version N</i> / <i>Revert to default</i> action.
+            Base patterns always remain restorable — the overrides file is additive.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { Patterns, Profiles, PatternDetail });
 
 </script>
 
@@ -12516,7 +12885,7 @@ function App() {
 
   const go = (id, s) => { setSurface(id); setSub(s || ''); };
 
-  const { Dashboard, Stream, FindingDetail, Pods, Policy, Patterns, Models, Assets,
+  const { Dashboard, Stream, FindingDetail, Pods, Policy, Patterns, PatternDetail, Models, Assets,
           Compliance, Testing, AssureOverview, DetectOverview, Settings, Logs, Topbar, WorkspaceBar, SurfaceBar, TweaksPanel,
           Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users,
           LiveScan, CorpusRunner, ApiExplorer, ScanDiff, ProcessState, FPTool, FpQueue, Profiles,
@@ -12528,6 +12897,13 @@ function App() {
   let Surface;
   if (surface === 'stream' && sub && sub.startsWith('finding:')) {
     Surface = <FindingDetail id={sub.slice(8)} back={() => setSub('')} />;
+  } else if (surface === 'patterns' && sub && sub.startsWith('pattern:')) {
+    // sub-route shape: pattern:<category>/<sub_category>
+    const key = sub.slice(8);
+    const slash = key.indexOf('/');
+    const cat = slash >= 0 ? key.slice(0, slash) : key;
+    const subCat = slash >= 0 ? key.slice(slash + 1) : '';
+    Surface = <PatternDetail category={cat} sub_category={subCat} back={() => setSub('')} />;
   } else {
     Surface = {
       dashboard:      <Dashboard variant={dashVariant} setVariant={setDashVariant} go={go} />,
