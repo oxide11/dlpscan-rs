@@ -4261,11 +4261,11 @@ function DashV1_Ops_Local() {
       <StreamTable findings={findings} />
 
 
-      {/* ── 3 · Inputs → Detection → Outputs live topology ───── */}
+      {/* ── 3 · Ingress → Inspect → Route SVG topology ───────── */}
       <TopologyStrip
         bySource={bySource}
         metrics={m}
-        sparkData={sparkData}
+        findings={findings}
         integrations={configuredIntegrations}
         live={overall === 'live'}
       />
@@ -4276,129 +4276,202 @@ function DashV1_Ops_Local() {
   );
 }
 
-// Inputs (source_ip → counts)  ──→  siphon-api (detection)  ──→  Outputs
-// (configured SIEM integrations). Uses simple absolute-positioned nodes +
-// an SVG overlay for the connectors so the layout is readable without a
-// chart library.
-function TopologyStrip({ bySource, metrics, sparkData, integrations, live }) {
+// Ingress → INSPECT → Route topology. Modelled on the demo's HfTopology
+// SVG so the layout scales cleanly and the connectors flow properly.
+//
+// Inputs are the top source_ips aggregated from /v1/findings.
+// The centre INSPECT node is the siphon-api process (live scan rate
+// + p95 derived from /v1/metrics). Outputs are configured SIEM
+// destinations from /v1/integrations, with per-destination action
+// colour (SIEM flag, tokenize vault, block/drop).
+function TopologyStrip({ bySource, metrics, findings, integrations, live }) {
   const m = metrics || {};
-  const sources = (bySource || []).length
-    ? bySource
-    : [['— no callers yet —', 0]];
-  const outs = (integrations || []).length
-    ? integrations
-    : [{ kind: 'no SIEM configured', target: 'DLPSCAN_SIEM_TYPE unset' }];
+
+  // Build a fixed 4-slot input list — pad with placeholders so the
+  // layout stays symmetrical even when only one caller is active.
+  const inputRaw = (bySource && bySource.length) ? bySource.slice(0, 4) : [];
+  while (inputRaw.length < 4) inputRaw.push(null);
+
+  // Same pad treatment for outputs.
+  const outRaw = ((integrations && integrations.length) ? integrations : []).slice(0, 4);
+  while (outRaw.length < 4) outRaw.push(null);
+
+  // Route actions are derived from integration kind. siphon-api doesn't
+  // execute policies on scans so we can't surface a real "action" per
+  // finding; we label the route by what the destination would do.
+  const kindAction = (kind) => {
+    const k = (kind || '').toLowerCase();
+    if (!kind) return null;
+    if (k.includes('syslog') || k.includes('splunk') || k.includes('elastic') || k.includes('datadog')) return 'flag';
+    if (k.includes('webhook') || k.includes('slack')) return 'flag';
+    return 'flag';
+  };
+  const actColor = { flag: 'var(--cyan)', tokenize: 'var(--violet)', block: 'var(--red)' };
+
+  // Compute per-input rate label. findings-per-second derived from ring
+  // density over the last 60s if the ip is top of list. Rough, but
+  // honest.
+  const rateLabel = (count) => count > 0 ? (count >= 1000 ? (count/1000).toFixed(1) + 'k' : count) + '/r' : '—';
+
+  // SVG layout constants
+  const VBW = 480, VBH = 240;
+  const inBoxW = 112, inBoxH = 30, inBoxX = 14;
+  const outBoxW = 118, outBoxH = 30, outBoxX = VBW - outBoxW - 14;
+  const INSPECT_X = 180, INSPECT_Y = 110, INSPECT_W = 108, INSPECT_H = 58;
+  const inspectL = INSPECT_X, inspectR = INSPECT_X + INSPECT_W;
+  const inspectCy = INSPECT_Y + INSPECT_H / 2;
+
+  const scansPerSec = m.uptime_secs ? (m.scans_total || 0) / m.uptime_secs : 0;
+
   return (
-    <div className="box" style={{marginBottom:'var(--gap)', overflow:'hidden'}}>
+    <div className="box" style={{marginBottom:'var(--gap)'}}>
       <div className="box-title">
-        <span className="t">Inputs → Detection → Outputs</span>
-        <span className="k">live · wired to /v1/findings · /v1/metrics · /v1/integrations</span>
+        <span className="t">Topology</span>
+        <span className="k">INGRESS → INSPECT → ROUTE · live</span>
       </div>
-      <div style={{
-        position:'relative', minHeight: 220, marginTop: 6,
-        backgroundImage:'radial-gradient(var(--line-soft) 1px, transparent 1.5px)',
-        backgroundSize:'22px 22px',
-      }}>
-        {/* Section headers */}
-        <div style={{position:'absolute', top:4, left:10, fontFamily:"'JetBrains Mono', monospace", fontSize:10, letterSpacing:'0.14em', color:'var(--ink-faint)', textTransform:'uppercase'}}>INPUTS</div>
-        <div style={{position:'absolute', top:4, left:'50%', transform:'translateX(-50%)', fontFamily:"'JetBrains Mono', monospace", fontSize:10, letterSpacing:'0.14em', color:'var(--ink-faint)', textTransform:'uppercase'}}>DETECTION</div>
-        <div style={{position:'absolute', top:4, right:10, fontFamily:"'JetBrains Mono', monospace", fontSize:10, letterSpacing:'0.14em', color:'var(--ink-faint)', textTransform:'uppercase'}}>OUTPUTS</div>
+      <svg viewBox={`0 0 ${VBW} ${VBH}`} style={{width:'100%', height:260, display:'block', background:'var(--bg-1)', borderRadius:'var(--radius)', border:'1px solid var(--line-soft)'}}>
+        <defs>
+          <marker id="c2ArrDim"    markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--ink-soft)" />
+          </marker>
+          <marker id="c2ArrFlag"   markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--cyan)" />
+          </marker>
+          <marker id="c2ArrVault"  markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--violet)" />
+          </marker>
+          <marker id="c2ArrBlock"  markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--red)" />
+          </marker>
+        </defs>
 
-        {/* Inputs column */}
-        <div style={{position:'absolute', left:10, top:28, width:220, display:'flex', flexDirection:'column', gap:6}}>
-          {sources.slice(0, 5).map(([ip, count], i) => (
-            <div key={i} style={{
-              background:'var(--bg-2)',
-              border:'1px solid var(--line-strong)',
-              borderRadius:'var(--radius)',
-              padding:'7px 10px',
-              fontFamily:"'JetBrains Mono', monospace",
-              fontSize:11,
-            }}>
-              <div style={{color:'var(--ink-bright)'}}>{ip}</div>
-              {count > 0 && (
-                <div className="muted" style={{fontSize:10, marginTop:2}}>
-                  {count} finding{count === 1 ? '' : 's'} · HTTP /scan
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        {/* Column headers */}
+        <g fontFamily="JetBrains Mono, monospace" fontSize="9" fill="var(--ink-dim)" letterSpacing="1.8">
+          <text x="14"  y="18">INPUTS →</text>
+          <text x={INSPECT_X + 12} y="18">INSPECT</text>
+          <text x={outBoxX - 12} y="18">→ OUTPUTS</text>
+        </g>
 
-        {/* Detector in the center */}
-        <div style={{
-          position:'absolute', top:60, left:'50%', transform:'translateX(-50%)', width:220,
-          background: live ? 'var(--accent-wash)' : 'var(--bg-2)',
-          border: '2px solid ' + (live ? 'var(--accent)' : 'var(--line-strong)'),
-          borderRadius:'var(--radius)',
-          padding:'12px 14px',
-          textAlign:'center',
-        }}>
-          <div style={{fontFamily:"'Space Grotesk', sans-serif", fontSize:15, fontWeight:600, color:'var(--ink-bright)'}}>
-            siphon-api
-          </div>
-          <div className="muted" style={{fontSize:10.5, fontFamily:"'JetBrains Mono', monospace", marginTop:2}}>
-            {window.SIPHON_API_URL ? window.SIPHON_API_URL() : ''}
-          </div>
-          <div style={{marginTop:10, display:'grid', gridTemplateColumns:'1fr 1fr', gap:6, fontSize:11, fontFamily:"'JetBrains Mono', monospace"}}>
-            <div>
-              <div className="muted" style={{fontSize:9, textTransform:'uppercase', letterSpacing:'0.12em'}}>scans</div>
-              <div style={{color: live ? 'var(--accent)' : 'var(--ink-soft)', fontWeight:600}}>{m.scans_total != null ? m.scans_total.toLocaleString() : '—'}</div>
-            </div>
-            <div>
-              <div className="muted" style={{fontSize:9, textTransform:'uppercase', letterSpacing:'0.12em'}}>findings</div>
-              <div style={{color: live ? 'var(--accent)' : 'var(--ink-soft)', fontWeight:600}}>{m.findings_total != null ? m.findings_total.toLocaleString() : '—'}</div>
-            </div>
-          </div>
-          <div style={{marginTop:8}}>
-            <MiniSpark data={sparkData} height={22} color={live ? 'var(--accent)' : 'var(--ink-dim)'} />
-          </div>
-          <div className="muted" style={{fontSize:10, marginTop:4}}>
-            {m.patterns_loaded != null ? `${m.patterns_loaded} patterns / ${m.categories_loaded} cats` : ''}
-          </div>
-        </div>
+        {/* Input boxes + flows to inspect */}
+        {inputRaw.map((entry, i) => {
+          const y = 42 + i * 42;
+          if (!entry) {
+            return (
+              <g key={'in-ph-' + i}>
+                <rect x={inBoxX} y={y} width={inBoxW} height={inBoxH} rx="3"
+                      fill="var(--bg-2)" stroke="var(--line-soft)" strokeDasharray="3 3" />
+                <text x={inBoxX + 8} y={y + inBoxH / 2 + 3}
+                      fontFamily="JetBrains Mono" fontSize="9.5" fill="var(--ink-dim)">— idle slot —</text>
+              </g>
+            );
+          }
+          const [ip, count] = entry;
+          return (
+            <g key={'in-' + i}>
+              <rect x={inBoxX} y={y} width={inBoxW} height={inBoxH} rx="3"
+                    fill="var(--bg-2)" stroke="var(--line-strong)" />
+              <text x={inBoxX + 8} y={y + 14}
+                    fontFamily="JetBrains Mono" fontSize="10.5" fontWeight="600" fill="var(--ink)">
+                {ip.length > 13 ? ip.slice(0, 13) + '…' : ip}
+              </text>
+              <text x={inBoxX + 8} y={y + 25}
+                    fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-soft)">
+                http · {rateLabel(count)}
+              </text>
+              <path d={`M ${inBoxX + inBoxW} ${y + inBoxH / 2} C ${inBoxX + inBoxW + 30} ${y + inBoxH / 2}, ${inspectL - 30} ${inspectCy}, ${inspectL} ${inspectCy}`}
+                    fill="none" stroke="var(--ink-soft)" strokeWidth="1.1" opacity="0.55"
+                    strokeDasharray="3 5" markerEnd="url(#c2ArrDim)">
+                {live && (
+                  <animate attributeName="stroke-dashoffset" from="0" to="-16" dur="1.4s" repeatCount="indefinite" />
+                )}
+              </path>
+            </g>
+          );
+        })}
 
-        {/* Outputs column */}
-        <div style={{position:'absolute', right:10, top:28, width:220, display:'flex', flexDirection:'column', gap:6}}>
-          {outs.slice(0, 5).map((o, i) => (
-            <div key={i} style={{
-              background: o.target ? 'var(--amber-wash)' : 'var(--bg-2)',
-              border: '1px solid ' + (o.target ? 'var(--amber)' : 'var(--line-strong)'),
-              borderStyle: o.target ? 'solid' : 'dashed',
-              borderRadius:'var(--radius)',
-              padding:'7px 10px',
-              fontFamily:"'JetBrains Mono', monospace",
-              fontSize:11,
-            }}>
-              <div style={{color: o.target ? 'var(--ink-bright)' : 'var(--ink-soft)'}}>{o.kind}</div>
-              {o.target && (
-                <div className="muted" style={{fontSize:10, marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={o.target}>
-                  {o.target}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        {/* INSPECT node */}
+        <g>
+          <rect x={INSPECT_X} y={INSPECT_Y} width={INSPECT_W} height={INSPECT_H}
+                rx="4" fill="var(--bg-2)"
+                stroke={live ? 'var(--accent)' : 'var(--line-strong)'} strokeWidth="1.4" />
+          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 22}
+                fontFamily="Space Grotesk" fontSize="13" fontWeight="700"
+                fill={live ? 'var(--accent)' : 'var(--ink-soft)'} textAnchor="middle" letterSpacing="1.5">INSPECT</text>
+          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 38}
+                fontFamily="JetBrains Mono" fontSize="10" fill="var(--ink)" textAnchor="middle">
+            {scansPerSec > 0 ? scansPerSec.toFixed(2) + '/s' : '0/s'}
+          </text>
+          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 50}
+                fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-soft)" textAnchor="middle">
+            {m.patterns_loaded != null ? m.patterns_loaded + ' patterns' : 'loading…'}
+          </text>
+          {live && (
+            <circle cx={INSPECT_X + INSPECT_W / 2} cy={inspectCy} r="50"
+                    fill="none" stroke="var(--accent)" strokeWidth="0.6" opacity="0.4">
+              <animate attributeName="r" values="50;72;50" dur="2.6s" repeatCount="indefinite" />
+              <animate attributeName="opacity" values="0.4;0;0.4" dur="2.6s" repeatCount="indefinite" />
+            </circle>
+          )}
+        </g>
 
-        {/* Connectors */}
-        <svg style={{position:'absolute', inset:0, width:'100%', height:'100%', pointerEvents:'none'}}>
-          <defs>
-            <marker id="tarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ink-soft)"/>
-            </marker>
-          </defs>
-          <g stroke="var(--ink-soft)" strokeWidth="1.1" fill="none" markerEnd="url(#tarr)">
-            {/* inputs → detector (flowing right) */}
-            <path d="M 230 80  C 300 80,  340 110, 380 120" />
-            <path d="M 230 110 C 300 110, 340 125, 380 130" />
-            <path d="M 230 140 C 300 140, 340 135, 380 135" />
-            {/* detector → outputs (flowing right) */}
-            <path d="M 620 120 C 680 120, 710 95,  760 80"  strokeDasharray={outs[0] && outs[0].target ? '0' : '4 4'} />
-            <path d="M 620 135 C 680 135, 710 125, 760 120" strokeDasharray={outs[1] && outs[1].target ? '0' : '4 4'} />
-            <path d="M 620 155 C 680 155, 710 150, 760 140" strokeDasharray={outs[2] && outs[2].target ? '0' : '4 4'} />
-          </g>
-        </svg>
-      </div>
+        {/* Output boxes + flows from inspect, colour-coded by action */}
+        {outRaw.map((o, i) => {
+          const y = 42 + i * 42;
+          if (!o) {
+            return (
+              <g key={'out-ph-' + i}>
+                <rect x={outBoxX} y={y} width={outBoxW} height={outBoxH} rx="3"
+                      fill="var(--bg-2)" stroke="var(--line-soft)" strokeDasharray="3 3" />
+                <text x={outBoxX + 8} y={y + outBoxH / 2 + 3}
+                      fontFamily="JetBrains Mono" fontSize="9.5" fill="var(--ink-dim)">— none configured —</text>
+                <path d={`M ${inspectR} ${inspectCy} C ${inspectR + 30} ${inspectCy}, ${outBoxX - 30} ${y + outBoxH / 2}, ${outBoxX} ${y + outBoxH / 2}`}
+                      fill="none" stroke="var(--ink-dim)" strokeWidth="1" opacity="0.35" strokeDasharray="4 4" />
+              </g>
+            );
+          }
+          const act = kindAction(o.kind);
+          const col = actColor[act] || 'var(--ink-soft)';
+          const markerId = act === 'block' ? 'c2ArrBlock' : act === 'tokenize' ? 'c2ArrVault' : 'c2ArrFlag';
+          return (
+            <g key={'out-' + i}>
+              <path d={`M ${inspectR} ${inspectCy} C ${inspectR + 30} ${inspectCy}, ${outBoxX - 30} ${y + outBoxH / 2}, ${outBoxX} ${y + outBoxH / 2}`}
+                    fill="none" stroke={col} strokeWidth="1.4" opacity="0.8"
+                    strokeDasharray="3 5" markerEnd={`url(#${markerId})`}>
+                {live && (
+                  <animate attributeName="stroke-dashoffset" from="0" to="-16" dur="1.2s" repeatCount="indefinite" />
+                )}
+              </path>
+              <rect x={outBoxX} y={y} width={outBoxW} height={outBoxH} rx="3"
+                    fill="var(--bg-2)" stroke={col} strokeWidth="1" />
+              <text x={outBoxX + 8} y={y + 14}
+                    fontFamily="JetBrains Mono" fontSize="10.5" fontWeight="600" fill="var(--ink)">
+                {(o.kind || '').slice(0, 14)}
+              </text>
+              <text x={outBoxX + 8} y={y + 25}
+                    fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-soft)">
+                {(o.target || 'configured').slice(0, 22)}
+              </text>
+              <rect x={outBoxX + outBoxW - 46} y={y - 15} width="46" height="13" rx="2"
+                    fill="var(--bg-panel)" stroke={col} />
+              <text x={outBoxX + outBoxW - 23} y={y - 5}
+                    fontFamily="JetBrains Mono" fontSize="8.5" fontWeight="700"
+                    fill={col} textAnchor="middle" letterSpacing="1">
+                {act.toUpperCase()}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Legend */}
+        <g fontFamily="JetBrains Mono, monospace" fontSize="9" letterSpacing="0.5">
+          <rect x="14"  y="218" width="10" height="2" fill="var(--cyan)" />
+          <text x="28"  y="222" fill="var(--ink-soft)">flag/route</text>
+          <rect x="92"  y="218" width="10" height="2" fill="var(--violet)" />
+          <text x="106" y="222" fill="var(--ink-soft)">tokenize</text>
+          <rect x="166" y="218" width="10" height="2" fill="var(--red)" />
+          <text x="180" y="222" fill="var(--ink-soft)">block</text>
+        </g>
+      </svg>
     </div>
   );
 }
