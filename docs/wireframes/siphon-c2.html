@@ -3496,6 +3496,31 @@ window.SIPHON_LAUNCHER_URL = function () {
   return 'http://127.0.0.1:8090';
 };
 
+// Admin console API-key support. When the pod is started with
+// SIPHON_API_KEY set, every /v1 request requires
+// `Authorization: Bearer <key>` (see auth_middleware in siphon-api).
+// Without this wiring the console 401s on every fetch in production.
+// The key lives in localStorage so multiple tabs share it; cleared
+// by saving an empty string.
+window.SIPHON_API_KEY = function () {
+  try { return localStorage.getItem('c2:apiKey') || null; }
+  catch { return null; }
+};
+window.siphonAuthHeaders = function () {
+  const k = window.SIPHON_API_KEY();
+  return k ? { 'Authorization': 'Bearer ' + k } : {};
+};
+/// Thin fetch wrapper that injects the Authorization header when the
+/// admin console has an API key configured. Safe to use against any
+/// URL (pods ignore the header when SIPHON_API_KEY isn't set); the
+/// launcher has its own no-auth loopback model so LocalLauncherPanel
+/// deliberately continues to use plain `fetch` for those calls.
+window.siphonFetch = function (url, options) {
+  const opts = options || {};
+  opts.headers = { ...(opts.headers || {}), ...window.siphonAuthHeaders() };
+  return fetch(url, opts);
+};
+
 // ─── Pod registry ────────────────────────────────────────────────
 // Phase 4.5a: the C2 historically treated SIPHON_API_URL as a single
 // destination. Real deployments run many pods (multiple siphon-api
@@ -3592,7 +3617,7 @@ window.useSiphonApi = function(path, deps) {
     let cancelled = false;
     setState(s => ({ ...s, loading: true, error: null }));
     const url = window.SIPHON_API_URL().replace(/\/$/, '') + path;
-    fetch(url, { method: 'GET' })
+    window.siphonFetch(url, { method: 'GET' })
       .then(async r => {
         if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
         return r.json();
@@ -3656,7 +3681,7 @@ window.useFindingsUnion = function(qs, deps) {
 
     const fetchFrom = (pod) => {
       const url = pod.url.replace(/\/$/, '') + '/v1/findings' + (qs || '');
-      return fetch(url, { method: 'GET' })
+      return window.siphonFetch(url, { method: 'GET' })
         .then(async r => {
           if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
           return r.json();
@@ -4926,7 +4951,7 @@ function PodFleetChip({ pod }) {
   React.useEffect(() => {
     let cancelled = false;
     const url = pod.url.replace(/\/$/, '') + '/health';
-    fetch(url)
+    window.siphonFetch(url)
       .then(async r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(d => { if (!cancelled) setState({ loading: false, data: d, error: null }); })
       .catch(e => { if (!cancelled) setState({ loading: false, data: null, error: String(e.message || e) }); });
@@ -6798,7 +6823,7 @@ function DetectionPipeline({ finding }) {
     let cancelled = false;
     setState(s => ({ ...s, loading: true, error: null }));
     const url = (window.SIPHON_API_URL ? window.SIPHON_API_URL() : 'http://127.0.0.1:8080').replace(/\/$/, '') + '/scan';
-    fetch(url, {
+    window.siphonFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: finding.text, options: { trace: true } }),
@@ -8124,7 +8149,7 @@ function PendingChangesBanner({ customCategories: customCategoriesProp }) {
     };
     try {
       const url = window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/overrides/apply';
-      const r = await fetch(url, {
+      const r = await window.siphonFetch(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(doc),
@@ -8295,7 +8320,7 @@ function OverridesHistoryPanel() {
     setReverting(version); setErr(null); setNote(null);
     try {
       const url = window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/overrides/revert';
-      const r = await fetch(url, {
+      const r = await window.siphonFetch(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ version }),
@@ -8434,7 +8459,7 @@ function RollPodsFooter() {
     setState({ phase: 'rolling', data: null, error: null });
     try {
       const url = window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/overrides/roll';
-      const r = await fetch(url, {
+      const r = await window.siphonFetch(url, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({}),
@@ -9249,7 +9274,7 @@ function PatternSimulator({ pattern, findings }) {
     const url = (window.SIPHON_API_URL ? window.SIPHON_API_URL() : 'http://127.0.0.1:8080')
       .replace(/\/$/, '') + '/scan';
     try {
-      const r = await fetch(url, {
+      const r = await window.siphonFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, options: { trace: true } }),
@@ -11302,6 +11327,10 @@ function DeploymentTab() {
           siphon-fs URL <span className="muted" style={{textTransform:'none', letterSpacing:0}}>— file-scanner pod, used by Live Scan file-mode</span>
         </div>
         <FsUrlControl />
+        <div className="label" style={{marginTop:12, marginBottom:6}}>
+          API key <span className="muted" style={{textTransform:'none', letterSpacing:0}}>— sent as <span className="mono">Authorization: Bearer …</span> when set; required if <span className="mono">SIPHON_API_KEY</span> is configured on the pod</span>
+        </div>
+        <ApiKeyControl />
       </div>
 
       <div className="v-gap" />
@@ -11434,7 +11463,7 @@ function PodHealthRow({ pod, onToggle, onRemove, isSeed }) {
     let cancelled = false;
     setState(s => ({ ...s, loading: true, error: null }));
     const url = pod.url.replace(/\/$/, '') + '/health';
-    fetch(url, { method: 'GET' })
+    window.siphonFetch(url, { method: 'GET' })
       .then(async r => {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.json();
@@ -11448,7 +11477,7 @@ function PodHealthRow({ pod, onToggle, onRemove, isSeed }) {
     let cancelled = false;
     setCaps(c => ({ ...c, loading: true, error: null }));
     const url = pod.url.replace(/\/$/, '') + '/v1/capabilities';
-    fetch(url)
+    window.siphonFetch(url)
       .then(async r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
       .then(data => { if (!cancelled) setCaps({ loading: false, data, error: null }); })
       .catch(e => { if (!cancelled) setCaps({ loading: false, data: null, error: String(e.message || e) }); });
@@ -11948,6 +11977,62 @@ function ApiUrlControl() {
       <button className="btn" onClick={save}>{saved ? 'Saved' : 'Save'}</button>
       <button className="btn ghost" onClick={() => { setUrl('http://127.0.0.1:8080'); }}>Reset</button>
     </div>
+  );
+}
+
+// Editable API-key control. The key is stashed in localStorage under
+// `c2:apiKey` and attached as `Authorization: Bearer …` by
+// window.siphonFetch. Empty value clears the override. The key is
+// masked (last-4 only) after Save so a shoulder-surfer can't lift it
+// out of a screenshot — tick "show" to re-reveal for editing.
+function ApiKeyControl() {
+  const [key, setKey] = React.useState(() => {
+    try { return localStorage.getItem('c2:apiKey') || ''; }
+    catch { return ''; }
+  });
+  const [show, setShow] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+  const save = () => {
+    try {
+      if (key.trim()) localStorage.setItem('c2:apiKey', key.trim());
+      else localStorage.removeItem('c2:apiKey');
+    } catch {}
+    setSaved(true);
+    setShow(false);
+    setTimeout(() => setSaved(false), 1500);
+  };
+  const clear = () => {
+    setKey('');
+    try { localStorage.removeItem('c2:apiKey'); } catch {}
+  };
+  const masked = key
+    ? (key.length <= 4 ? '•'.repeat(key.length) : '•'.repeat(Math.max(4, key.length - 4)) + key.slice(-4))
+    : '';
+  return (
+    <>
+      <div style={{display:'flex', gap:8, alignItems:'center'}}>
+        <input
+          type={show ? 'text' : 'password'}
+          value={show ? key : (key ? masked : '')}
+          onChange={e => { setShow(true); setKey(e.target.value); }}
+          onFocus={() => setShow(true)}
+          placeholder="(none — unauth)"
+          autoComplete="off"
+          spellCheck={false}
+          style={{
+            flex:1,
+            fontFamily:"'JetBrains Mono', monospace", fontSize:12,
+            padding:'6px 8px', background:'var(--bg-1)',
+            color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+          }}
+        />
+        <button className="btn" onClick={save}>{saved ? 'Saved' : 'Save'}</button>
+        <button className="btn ghost" onClick={clear} title="Remove the stored API key">Clear</button>
+      </div>
+      <div className="muted" style={{fontSize:10.5, marginTop:4}}>
+        Stored in <span className="mono">localStorage[c2:apiKey]</span> on this browser only · launcher calls (<span className="mono">127.0.0.1:8787</span>) and the file-upload to siphon-fs don't use auth.
+      </div>
+    </>
   );
 }
 
@@ -13625,7 +13710,7 @@ function LiveScan() {
   const pingHealth = React.useCallback(async () => {
     setHealth('checking');
     try {
-      const r = await fetch(apiUrl.replace(/\/$/, '') + '/health', { method: 'GET' });
+      const r = await window.siphonFetch(apiUrl.replace(/\/$/, '') + '/health', { method: 'GET' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       setHealth(j.status === 'ok' ? 'ok' : 'degraded');
@@ -13648,7 +13733,7 @@ function LiveScan() {
       },
     };
     try {
-      const r = await fetch(apiUrl.replace(/\/$/, '') + '/scan', {
+      const r = await window.siphonFetch(apiUrl.replace(/\/$/, '') + '/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -14293,7 +14378,7 @@ function CorpusRunner() {
       const d = docs[i];
       const t0 = performance.now();
       try {
-        const r = await fetch(apiUrl.replace(/\/$/, '') + '/scan', {
+        const r = await window.siphonFetch(apiUrl.replace(/\/$/, '') + '/scan', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: d.text, options: {} }),
@@ -14557,7 +14642,7 @@ function ApiExplorer() {
         opts.headers = { 'Content-Type': 'application/json' };
         opts.body = body;
       }
-      const r = await fetch(url, opts);
+      const r = await window.siphonFetch(url, opts);
       const ct = r.headers.get('content-type') || '';
       const raw = await r.text();
       let parsed = null;
@@ -14806,7 +14891,7 @@ function ScanDiff() {
   const [error, setError] = React.useState(null);
 
   const scan = async (text) => {
-    const r = await fetch(apiUrl.replace(/\/$/, '') + '/scan', {
+    const r = await window.siphonFetch(apiUrl.replace(/\/$/, '') + '/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, options: {} }),
@@ -15166,7 +15251,7 @@ function FPTool() {
   const apiUrl = window.SIPHON_API_URL();
 
   const scan = async (text) => {
-    const r = await fetch(apiUrl.replace(/\/$/, '') + '/scan', {
+    const r = await window.siphonFetch(apiUrl.replace(/\/$/, '') + '/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, options: {} }),
