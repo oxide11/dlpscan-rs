@@ -370,6 +370,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
+}
+
+// Shutdown trigger — completes when EITHER SIGINT (Ctrl-C, dev) or
+// SIGTERM (k8s pod termination) arrives. with_graceful_shutdown holds
+// new accepts off and waits for in-flight scans to finish before
+// returning. The Deployment's terminationGracePeriodSeconds (60s for
+// siphon-fs, larger than api because file uploads can be mid-flight
+// when the roll starts) caps the wait before SIGKILL.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl-C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c   => tracing::info!(signal = "SIGINT",  "shutdown signal received, draining"),
+        _ = terminate => tracing::info!(signal = "SIGTERM", "shutdown signal received, draining"),
+    }
 }
