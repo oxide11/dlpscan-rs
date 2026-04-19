@@ -4272,9 +4272,12 @@ function DashV1_Ops_Local() {
   //
   // Layout (top → bottom):
   //   1. metrics strip (scans / findings / errors / uptime)
-  //   2. full-width Recent findings list
-  //   3. Inputs → Detection → Outputs topology
-  //   4. Detection histogram (by category · live)
+  //   2. Inputs → Detection → Outputs topology
+  //   3. Detection histogram (by category · live)
+  //
+  // Recent-findings stream used to live between (1) and (2) but the
+  // dedicated Findings Console (Operate · Findings) does that job
+  // better — dashboard stays a summary, not a secondary log.
   //
   // Everything is derived from /v1/metrics + /v1/findings +
   // /v1/integrations. No audit panel, no fleet, no tenants.
@@ -4377,11 +4380,12 @@ function DashV1_Ops_Local() {
         />
       </div>
 
-      {/* ── 2 · Rich stream table · full width ────────────────── */}
-      <StreamTable findings={findings} />
+      {/* Recent findings lived here — removed in favour of the
+          dedicated Findings Console. The KPI strip + topology +
+          histogram below already give the at-a-glance view; the
+          console is one click away from the Operate workspace. */}
 
-
-      {/* ── 3 · Ingress → Inspect → Route SVG topology ───────── */}
+      {/* ── 2 · Ingress → Inspect → Route SVG topology ───────── */}
       <TopologyStrip
         bySource={bySource}
         metrics={m}
@@ -4390,7 +4394,7 @@ function DashV1_Ops_Local() {
         live={overall === 'live'}
       />
 
-      {/* ── 4 · Detection histogram (by category, live) ──────── */}
+      {/* ── 3 · Detection histogram (by category, live) ──────── */}
       <DetectionHistogram findings={findings} />
     </div>
   );
