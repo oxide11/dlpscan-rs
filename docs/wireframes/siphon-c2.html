@@ -4146,8 +4146,30 @@ function MiniSpark({ data, height, color }) {
 // Bucket the 127 real categories into the 6 high-level groups the
 // hi-fi dashboard renders (PCI · PII · CRED · PHI · SECRET ·
 // CLASSIFIED). Anything that doesn't match falls through to OTHER.
-const CAT_GROUPS = ['PCI','PII','CRED','PHI','SECRET','CLASSIFIED','OTHER'];
+// Geographic regions taken straight from the pattern catalogue —
+// categories shaped like '<Region> - <Country>' (e.g. 'North America
+// - Canada', 'Europe - Germany') get bucketed by their region prefix
+// instead of the substring-derived PCI/PII/CRED/etc. axis. Keeps the
+// regional country categories together so an analyst hunting 'all the
+// EU stuff' doesn't have to chase them across multiple buckets.
+const REGION_GROUPS = [
+  'North America', 'Europe', 'Asia-Pacific',
+  'Latin America', 'Middle East', 'Africa',
+];
+const CAT_GROUPS = [
+  ...REGION_GROUPS,
+  'PCI', 'PII', 'CRED', 'PHI', 'SECRET', 'CLASSIFIED', 'OTHER',
+];
 const CAT_GROUP_COLOR = {
+  // Regions — slightly desaturated so the substantive axis (PCI etc.)
+  // still pops; analysts learn the region tier as a softer band.
+  'North America':  'var(--cyan)',
+  'Europe':         'var(--violet)',
+  'Asia-Pacific':   'var(--amber)',
+  'Latin America':  'var(--magenta)',
+  'Middle East':    'var(--accent)',
+  'Africa':         'var(--ink-bright)',
+  // Substantive groups (unchanged)
   PCI:        'var(--red)',
   PII:        'var(--cyan)',
   CRED:       'var(--amber)',
@@ -4156,7 +4178,27 @@ const CAT_GROUP_COLOR = {
   CLASSIFIED: 'var(--ink-bright)',
   OTHER:      'var(--ink-soft)',
 };
+// Strip the '<Region> - ' prefix off a category for compact rendering
+// inside a region group. Returns the original string unchanged when
+// no region prefix is present.
+function categoryDisplayName(category) {
+  if (!category) return '';
+  const dash = category.indexOf(' - ');
+  if (dash <= 0) return category;
+  const region = category.slice(0, dash);
+  if (REGION_GROUPS.includes(region)) {
+    return category.slice(dash + 3);
+  }
+  return category;
+}
 function catGroup(category) {
+  // Region prefix wins when present — those categories are otherwise
+  // hard to find in the existing PCI/PII/etc. taxonomy.
+  const dash = (category || '').indexOf(' - ');
+  if (dash > 0) {
+    const region = category.slice(0, dash);
+    if (REGION_GROUPS.includes(region)) return region;
+  }
   const c = (category || '').toLowerCase();
   if (c.includes('credit card') || c.includes('primary account') || c.includes('iban') || c.includes('bank')) return 'PCI';
   if (c.includes('medical') || c.includes('health') || c.includes('phi')) return 'PHI';
@@ -6962,7 +7004,11 @@ function FindingDetail({ id, back }) {
   );
 }
 
-Object.assign(window, { Stream, FindingDetail, fmtWallClock, catGroup, CAT_GROUPS, CAT_GROUP_COLOR });
+Object.assign(window, {
+  Stream, FindingDetail, fmtWallClock,
+  catGroup, CAT_GROUPS, CAT_GROUP_COLOR,
+  REGION_GROUPS, categoryDisplayName,
+});
 
 </script>
 
@@ -7916,7 +7962,13 @@ function Patterns() {
                       color: c.category === selected ? 'var(--accent)' : 'var(--ink)',
                     }}>
                     <span style={{display:'flex', alignItems:'center', gap:6, overflow:'hidden', minWidth:0}}>
-                      <span style={{fontFamily:"'JetBrains Mono', monospace", overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{c.category}</span>
+                      <span style={{fontFamily:"'JetBrains Mono', monospace", overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+                            title={c.category}>
+                        {/* Strip the '<Region> - ' prefix when the
+                            row is rendered inside a region group;
+                            full category name on hover. */}
+                        {window.categoryDisplayName ? window.categoryDisplayName(c.category) : c.category}
+                      </span>
                       {c.isCustom && (
                         <span className="chip chip--teal" style={{fontSize:8.5, padding:'1px 4px', letterSpacing:0.5, flexShrink:0}}>custom</span>
                       )}
