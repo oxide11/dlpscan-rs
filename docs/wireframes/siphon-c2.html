@@ -5356,6 +5356,74 @@ function FilterRow({
   );
 }
 
+// Advanced search parser.
+// Supports space-separated tokens, each of which is either:
+//   - free text        → substring match across text, category,
+//                        sub_category, source_ip, id, request_id
+//   - `id:XYZ`         → id contains XYZ (case-insensitive)
+//   - `sev:red`        → severity is red|warn|safe
+//   - `cat:PCI`        → category group (PCI, PII, CRED, PHI, SECRET,
+//                        CLASSIFIED, OTHER) — uses catGroup()
+//   - `sub:visa`       → sub_category contains visa (case-insens.)
+//   - `source:1.2.3.4` → source_ip contains
+//   - `conf:>0.9`      → confidence > 0.9 (also <, >=, <=, =)
+//   - `conf:0.7..0.95` → inclusive range
+// Returns a function f → boolean.
+function parseFindingQuery(raw) {
+  const q = (raw || '').trim();
+  if (!q) return () => true;
+  const tokens = q.match(/"[^"]*"|\S+/g) || [];
+  const predicates = [];
+  const cmpNum = (op, lhs, rhs) => {
+    switch (op) {
+      case '>':  return lhs > rhs;
+      case '<':  return lhs < rhs;
+      case '>=': return lhs >= rhs;
+      case '<=': return lhs <= rhs;
+      case '=':  return lhs === rhs;
+      default:   return false;
+    }
+  };
+  for (const rawTok of tokens) {
+    const tok = rawTok.replace(/^"(.*)"$/, '$1');
+    const colon = tok.indexOf(':');
+    if (colon > 0) {
+      const key = tok.slice(0, colon).toLowerCase();
+      const val = tok.slice(colon + 1);
+      if (key === 'id')         predicates.push(f => (f.id || '').toLowerCase().includes(val.toLowerCase()));
+      else if (key === 'sev')   predicates.push(f => (f.severity || '') === val.toLowerCase());
+      else if (key === 'cat')   predicates.push(f => catGroup(f.category) === val.toUpperCase());
+      else if (key === 'sub')   predicates.push(f => (f.sub_category || '').toLowerCase().includes(val.toLowerCase()));
+      else if (key === 'source') predicates.push(f => (f.source_ip || '').toLowerCase().includes(val.toLowerCase()));
+      else if (key === 'req')   predicates.push(f => (f.request_id || '').toLowerCase().includes(val.toLowerCase()));
+      else if (key === 'conf') {
+        const range = val.match(/^([0-9]*\.?[0-9]+)\.\.([0-9]*\.?[0-9]+)$/);
+        if (range) {
+          const lo = parseFloat(range[1]), hi = parseFloat(range[2]);
+          predicates.push(f => typeof f.confidence === 'number' && f.confidence >= lo && f.confidence <= hi);
+        } else {
+          const m = val.match(/^(>=|<=|>|<|=)?([0-9]*\.?[0-9]+)$/);
+          if (m) {
+            const op = m[1] || '=';
+            const n = parseFloat(m[2]);
+            predicates.push(f => typeof f.confidence === 'number' && cmpNum(op, f.confidence, n));
+          }
+        }
+      } else {
+        // unknown prefix → fall back to substring match across the whole token
+        const needle = tok.toLowerCase();
+        predicates.push(f => (f.text + ' ' + (f.category || '') + ' ' + (f.sub_category || '') + ' ' + (f.source_ip || '') + ' ' + (f.id || ''))
+          .toLowerCase().includes(needle));
+      }
+    } else {
+      const needle = tok.toLowerCase();
+      predicates.push(f => (f.text + ' ' + (f.category || '') + ' ' + (f.sub_category || '') + ' ' + (f.source_ip || '') + ' ' + (f.id || '') + ' ' + (f.request_id || ''))
+        .toLowerCase().includes(needle));
+    }
+  }
+  return (f) => predicates.every(p => p(f));
+}
+
 // Timeframes for the stream console header. `ms: null` means "no
 // window constraint" — i.e. show everything in the ring regardless of
 // age. Custom timeframes are not yet wired.
@@ -5377,6 +5445,7 @@ function Stream({ go }) {
   const [groupBy, setGroupBy] = React.useState('none');
   const [paused, setPaused] = React.useState(false);
   const [tf, setTf] = React.useState('24h');
+  const [advOpen, setAdvOpen] = React.useState(false);
 
   const fx = window.useSiphonApi('/v1/findings?limit=500');
   // Live tail — refetch every 2s unless paused.
@@ -5398,13 +5467,13 @@ function Stream({ go }) {
     });
   }, [all, tfMeta]);
 
+  const queryPredicate = React.useMemo(() => parseFindingQuery(search), [search]);
   const filtered = inWindow.filter(f =>
     (severity === 'any' || f.severity === severity) &&
     (category === 'any' || f.category === category) &&
     (subCategory === 'any' || f.sub_category === subCategory) &&
     (source === 'any' || f.source_ip === source) &&
-    (!search || (f.text + ' ' + f.category + ' ' + (f.sub_category || '') + ' ' + (f.source_ip || '') + ' ' + (f.id || ''))
-      .toLowerCase().includes(search.toLowerCase()))
+    queryPredicate(f)
   );
 
   // Sparkline for the header — matching-count per bucket over the
@@ -5501,13 +5570,13 @@ function Stream({ go }) {
 
       {/* ── Search row + timeframe tabs + header sparkline ───── */}
       <div className="box" style={{marginBottom:'var(--gap)', padding:'10px 14px'}}>
-        <div style={{display:'grid', gridTemplateColumns:'1fr auto auto', gap:14, alignItems:'center'}}>
+        <div style={{display:'grid', gridTemplateColumns:'1fr auto auto auto', gap:14, alignItems:'center'}}>
           <div className="tb-search" style={{minWidth: 'auto', flex:'none', width:'100%'}}>
             <span className="mag">⌕</span>
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="search match, doc, id, hash, ip" />
+              placeholder="search match, doc, id, hash, ip   ·   id:F- · sev:red · cat:PCI · conf:>0.9" />
             <span className="kbd">/</span>
           </div>
           <div style={{display:'flex', alignItems:'center', gap:10}}>
@@ -5529,6 +5598,17 @@ function Stream({ go }) {
               ))}
             </div>
           </div>
+          <button
+            className="btn ghost"
+            onClick={() => setAdvOpen(v => !v)}
+            title="show advanced search syntax"
+            style={{
+              borderStyle:'dashed',
+              color: advOpen ? 'var(--accent)' : 'var(--ink)',
+              borderColor: advOpen ? 'var(--accent)' : 'var(--line)',
+            }}>
+            + Advanced search
+          </button>
           <div style={{display:'flex', alignItems:'center', gap:8, minWidth:180}}>
             <div style={{flex:1}}>
               <MiniSpark data={headerSpark} height={24} color="var(--accent)" />
@@ -5539,6 +5619,25 @@ function Stream({ go }) {
             </div>
           </div>
         </div>
+
+        {advOpen && (
+          <div style={{marginTop:12, paddingTop:12, borderTop:'1px dashed var(--line-soft)', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8}}>
+            <div className="label" style={{marginBottom:6}}>Advanced search — combine tokens with spaces</div>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(2, 1fr)', gap:'2px 24px'}}>
+              <div><span style={{color:'var(--cyan)'}}>id:</span>F- <span className="muted">— match finding id prefix/substring</span></div>
+              <div><span style={{color:'var(--cyan)'}}>sev:</span>red <span className="muted">— red · warn · safe</span></div>
+              <div><span style={{color:'var(--cyan)'}}>cat:</span>PCI <span className="muted">— PCI · PII · CRED · PHI · SECRET · CLASSIFIED · OTHER</span></div>
+              <div><span style={{color:'var(--cyan)'}}>sub:</span>visa <span className="muted">— sub-category contains</span></div>
+              <div><span style={{color:'var(--cyan)'}}>source:</span>127.0.0.1 <span className="muted">— source_ip contains</span></div>
+              <div><span style={{color:'var(--cyan)'}}>req:</span>a1b2 <span className="muted">— request_id contains</span></div>
+              <div><span style={{color:'var(--cyan)'}}>conf:</span>&gt;0.9 <span className="muted">— &gt; &lt; &gt;= &lt;= = accepted</span></div>
+              <div><span style={{color:'var(--cyan)'}}>conf:</span>0.7..0.95 <span className="muted">— inclusive range</span></div>
+            </div>
+            <div className="muted" style={{marginTop:8, fontSize:11}}>
+              e.g. <span style={{color:'var(--accent)'}}>cat:PCI sev:red conf:&gt;0.85</span> — all high-confidence PCI reds
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Filter row ─────────────────────────────────────────── */}
