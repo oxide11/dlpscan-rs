@@ -8650,11 +8650,16 @@ then
   );
 }
 
-// Legacy HI-FI versions (DashboardHF / StreamHF / FindingDetailHF) are
-// kept in-file as design-reference fixtures but are NOT registered —
-// they would overwrite the live, mode-dispatching Dashboard / Stream /
-// FindingDetail that actually read /v1/metrics + /v1/findings. If you
-// want to see the hi-fi look again, expose them under different names.
+// NOTE: this HI-FI registration is kept in the DEMO build of the
+// wireframe so the showcase shows the hi-fi design. The real admin
+// console (siphon-c2.html) does NOT register these — it uses the
+// live mode-dispatching Dashboard / Stream / FindingDetail that read
+// /v1/metrics + /v1/findings.
+Object.assign(window, {
+  Dashboard: DashboardHF,
+  Stream: StreamHF,
+  FindingDetail: FindingDetailHF,
+});
 </script>
 
 <script type="text/babel" data-presets="react">
