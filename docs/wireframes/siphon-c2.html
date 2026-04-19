@@ -3455,6 +3455,29 @@ window.SIPHON_API_URL = function() {
   catch { return 'http://127.0.0.1:8080'; }
 };
 
+// siphon-fs URL — file-scanner pod. Defaults auto-derive from the
+// API URL so analysts running the kind lab (apiUrl = http://localhost/api)
+// pick up http://localhost/fs for free. Direct-dev users (apiUrl =
+// http://127.0.0.1:8080) get http://127.0.0.1:8081 (the default
+// SIPHON_FS_BIND of the siphon-fs binary). Overridable via the
+// c2:fsUrl localStorage key from the Deployment settings tab.
+window.SIPHON_FS_URL = function() {
+  try {
+    const explicit = localStorage.getItem('c2:fsUrl');
+    if (explicit) return explicit;
+  } catch {}
+  const api = window.SIPHON_API_URL();
+  // Lab pattern: ingress-fronted → same origin, swap /api for /fs.
+  if (/\/api\/?$/.test(api)) return api.replace(/\/api\/?$/, '/fs');
+  // Direct pattern: sibling port. Works for the common case where
+  // siphon-api runs on :8080 and siphon-fs on :8081.
+  try {
+    const u = new URL(api);
+    if (u.port === '8080') { u.port = '8081'; return u.origin; }
+  } catch {}
+  return 'http://127.0.0.1:8081';
+};
+
 // React hook. Returns { loading, data, error, refetch, source }.
 // `source` is 'live' | 'offline' | 'loading' — useful for the live chip.
 window.useSiphonApi = function(path, deps) {
@@ -9846,6 +9869,10 @@ function DeploymentTab() {
         <hr className="sep" />
         <div className="label" style={{marginBottom:6}}>Change the API URL</div>
         <ApiUrlControl />
+        <div className="label" style={{marginTop:12, marginBottom:6}}>
+          siphon-fs URL <span className="muted" style={{textTransform:'none', letterSpacing:0}}>— file-scanner pod, used by Live Scan file-mode</span>
+        </div>
+        <FsUrlControl />
       </div>
 
       <div className="v-gap" />
@@ -9896,6 +9923,53 @@ function DeploymentTab() {
           <span><span className="chip chip--safe">live</span> env-detected</span>
           <span><span className="chip chip--safe">live</span> env-detected</span>
         </div>
+      </div>
+    </>
+  );
+}
+
+// Small editable siphon-fs URL control. Empty value clears the
+// localStorage override so SIPHON_FS_URL() goes back to auto-derive
+// from the API URL (lab = same origin /fs; direct = port 8081).
+function FsUrlControl() {
+  const [url, setUrl] = React.useState(() => {
+    try { return localStorage.getItem('c2:fsUrl') || ''; }
+    catch { return ''; }
+  });
+  const [saved, setSaved] = React.useState(false);
+  const save = () => {
+    try {
+      if (url.trim()) localStorage.setItem('c2:fsUrl', url.trim());
+      else localStorage.removeItem('c2:fsUrl');
+    } catch {}
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  };
+  const derived = window.SIPHON_FS_URL();
+  return (
+    <>
+      <div style={{display:'flex', gap:8, alignItems:'center'}}>
+        <input
+          type="text"
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          placeholder={`auto · ${derived}`}
+          style={{
+            flex:1,
+            fontFamily:"'JetBrains Mono', monospace", fontSize:12,
+            padding:'6px 8px', background:'var(--bg-1)',
+            color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+          }}
+        />
+        <button className="btn" onClick={save}>{saved ? 'Saved' : 'Save'}</button>
+        <button className="btn ghost"
+                onClick={() => { setUrl(''); try { localStorage.removeItem('c2:fsUrl'); } catch {} }}
+                title="Clear override — revert to auto-derive from the API URL">
+          Auto
+        </button>
+      </div>
+      <div className="muted" style={{fontSize:10.5, marginTop:4}}>
+        Empty → auto-derive · lab pattern swaps <span className="mono">/api → /fs</span> on the same origin · direct-dev pattern bumps port 8080 → 8081.
       </div>
     </>
   );
@@ -11574,6 +11648,15 @@ function LiveScan() {
     return LS_SAMPLE;
   }, []);
   const [text, setText] = React.useState(initialText);
+  // Mode toggle: text (siphon-api /scan) | file (siphon-fs /scan).
+  // Defaults to text; flips to file when the user explicitly chooses
+  // file mode. A fresh hand-off from finding-detail (c2:livescan-text)
+  // always lands in text mode since that flow carries a string, not
+  // a file.
+  const [mode, setMode] = React.useState('text');
+  const [file, setFile] = React.useState(null);           // File | null
+  const [dragOver, setDragOver] = React.useState(false);
+  const fileInputRef = React.useRef(null);
   const [minConf, setMinConf] = React.useState(0);
   const [requireCtx, setRequireCtx] = React.useState(false);
   const [dedupe, setDedupe] = React.useState(true);
@@ -11628,6 +11711,45 @@ function LiveScan() {
     }
   };
 
+  // File upload → siphon-fs. Response is normalised so the existing
+  // findings table + metadata chip in the input box work unchanged:
+  //   · findings         (same shape)
+  //   · finding_count    (derived from findings.length)
+  //   · scan_duration_ms (siphon-fs ships `duration_ms`)
+  //   · source_pod       (hardcoded 'siphon-fs' for the chip)
+  //   · parsed_as        (extractor that ran — pdf/rtf/plain/etc.)
+  //   · warnings         (extractor diagnostics, if any)
+  // Options (min_confidence, require_context, etc.) aren't yet wired
+  // through to siphon-fs — Phase 0c's TODO. Scans run with default
+  // ScanConfig for now.
+  const runFileScan = async () => {
+    if (!file) return;
+    setLoading(true); setError(null); setResult(null);
+    try {
+      const form = new FormData();
+      form.append('file', file, file.name);
+      const fsUrl = window.SIPHON_FS_URL().replace(/\/$/, '');
+      const r = await fetch(fsUrl + '/scan', { method: 'POST', body: form });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      setResult({
+        request_id: j.request_id,
+        findings: j.findings || [],
+        finding_count: (j.findings || []).length,
+        scan_duration_ms: j.duration_ms,
+        source_pod: 'siphon-fs',
+        filename: j.filename,
+        bytes: j.bytes,
+        parsed_as: j.parsed_as,
+        warnings: j.warnings || [],
+      });
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const findings = (result && result.findings) || [];
   const confColor = (c) => c >= 0.9 ? 'var(--safe)' : c >= 0.7 ? 'var(--amber)' : 'var(--ink-soft)';
 
@@ -11671,14 +11793,46 @@ function LiveScan() {
         </div>
       </div>
 
+      {/* Mode tabs — text goes to siphon-api /scan, file goes to
+          siphon-fs /scan as multipart. Tab styling mirrors the
+          Settings side-tabs for visual consistency. */}
+      <div style={{display:'flex', gap:0, marginBottom:'var(--gap)', borderBottom:'1px solid var(--line)'}}>
+        {[
+          ['text', 'Text',  'paste/edit text · siphon-api'],
+          ['file', 'File',  'upload a file · siphon-fs extracts + scans'],
+        ].map(([k, label, hint]) => (
+          <button
+            key={k}
+            onClick={() => { setMode(k); setResult(null); setError(null); }}
+            title={hint}
+            style={{
+              padding:'8px 16px',
+              background:'transparent',
+              border:'none',
+              borderBottom: mode === k ? '2px solid var(--accent)' : '2px solid transparent',
+              color: mode === k ? 'var(--accent)' : 'var(--ink-soft)',
+              fontFamily:"'Space Grotesk', sans-serif",
+              fontWeight: 600,
+              fontSize:13,
+              letterSpacing:'0.04em',
+              cursor:'pointer',
+              marginBottom:-1,
+            }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
       <div className="box" style={{marginBottom:'var(--gap)'}}>
-        <div className="box-title"><span className="t">Endpoint</span><span className="k">POST /scan</span></div>
-        <div style={{display:'grid', gridTemplateColumns:'auto 1fr auto auto auto', gap:10, alignItems:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+        <div className="box-title"><span className="t">Endpoint</span><span className="k">POST {mode === 'file' ? window.SIPHON_FS_URL() + '/scan · multipart' : '/scan'}</span></div>
+        <div style={{display:'grid', gridTemplateColumns:'auto 1fr auto auto auto', gap:10, alignItems:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12, opacity: mode === 'file' ? 0.55 : 1}}>
           <span className="label">API URL</span>
           <input
             type="text"
             value={apiUrl}
             onChange={e => setApiUrl(e.target.value)}
+            disabled={mode === 'file'}
+            title={mode === 'file' ? 'file mode hits siphon-fs — URL configured under Settings · Deployment' : undefined}
             style={{
               fontFamily:"'JetBrains Mono', monospace", fontSize:12,
               padding:'6px 8px', background:'var(--bg-1)',
@@ -11686,59 +11840,149 @@ function LiveScan() {
             }}
           />
           <label style={{display:'inline-flex', alignItems:'center', gap:6}}>
-            <input type="checkbox" checked={requireCtx} onChange={e => setRequireCtx(e.target.checked)} />
+            <input type="checkbox" checked={requireCtx} onChange={e => setRequireCtx(e.target.checked)}
+                   disabled={mode === 'file'} />
             <span className="label">require-context</span>
           </label>
           <label style={{display:'inline-flex', alignItems:'center', gap:6}}>
-            <input type="checkbox" checked={dedupe} onChange={e => setDedupe(e.target.checked)} />
+            <input type="checkbox" checked={dedupe} onChange={e => setDedupe(e.target.checked)}
+                   disabled={mode === 'file'} />
             <span className="label">deduplicate</span>
           </label>
           <label style={{display:'inline-flex', alignItems:'center', gap:6}}
                  title="when on, the server records every candidate's trip through the pipeline so you can see where a detection was accepted or dropped">
-            <input type="checkbox" checked={traceOn} onChange={e => setTraceOn(e.target.checked)} />
-            <span className="label" style={{color: traceOn ? 'var(--accent)' : undefined}}>trace pipeline</span>
+            <input type="checkbox" checked={traceOn} onChange={e => setTraceOn(e.target.checked)}
+                   disabled={mode === 'file'} />
+            <span className="label" style={{color: traceOn && mode !== 'file' ? 'var(--accent)' : undefined}}>trace pipeline</span>
           </label>
           <label style={{display:'inline-flex', alignItems:'center', gap:6}}>
             <span className="label">min-conf</span>
             <input type="number" min="0" max="1" step="0.05" value={minConf}
                    onChange={e => setMinConf(parseFloat(e.target.value) || 0)}
+                   disabled={mode === 'file'}
                    style={{width:60, fontFamily:"'JetBrains Mono', monospace", fontSize:12, padding:'4px 6px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}} />
           </label>
         </div>
+        {mode === 'file' && (
+          <div className="muted" style={{fontSize:11, marginTop:8, lineHeight:1.6}}>
+            File mode hits <span className="mono">{window.SIPHON_FS_URL()}/scan</span> — options above
+            don't apply yet (siphon-fs runs with default <span className="mono">ScanConfig</span>).
+            Plumbing options + trace through siphon-fs lands in a follow-up.
+          </div>
+        )}
       </div>
 
       <div className="grid" style={{gridTemplateColumns:'1fr 1fr', gap:'var(--gap)', marginBottom:'var(--gap)'}}>
         <div className="box">
-          <div className="box-title"><span className="t">Input text</span><span className="k">{text.length} chars</span></div>
-          <textarea
-            value={text}
-            onChange={e => setText(e.target.value)}
-            rows={14}
-            style={{
-              width:'100%', resize:'vertical',
-              fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.6,
-              padding:10, background:'var(--bg-1)',
-              color:'var(--ink)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)',
-            }}
-          />
+          <div className="box-title">
+            <span className="t">{mode === 'file' ? 'Input file' : 'Input text'}</span>
+            <span className="k">
+              {mode === 'file'
+                ? (file ? `${file.name} · ${file.size.toLocaleString()} bytes` : 'drop a file or pick one below')
+                : `${text.length} chars`}
+            </span>
+          </div>
+          {mode === 'text' ? (
+            <textarea
+              value={text}
+              onChange={e => setText(e.target.value)}
+              rows={14}
+              style={{
+                width:'100%', resize:'vertical',
+                fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.6,
+                padding:10, background:'var(--bg-1)',
+                color:'var(--ink)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)',
+              }}
+            />
+          ) : (
+            <div
+              onClick={() => fileInputRef.current && fileInputRef.current.click()}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOver(false);
+                const f = e.dataTransfer.files && e.dataTransfer.files[0];
+                if (f) { setFile(f); setResult(null); setError(null); }
+              }}
+              style={{
+                width:'100%', minHeight:260,
+                display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center',
+                padding:20, cursor:'pointer',
+                background: dragOver ? 'var(--accent-wash)' : 'var(--bg-1)',
+                border: `2px dashed ${dragOver ? 'var(--accent)' : 'var(--line-soft)'}`,
+                borderRadius:'var(--radius)',
+                transition:'background 80ms, border-color 80ms',
+              }}>
+              <div style={{fontSize:32, marginBottom:8, color:'var(--ink-soft)'}}>⭳</div>
+              {file ? (
+                <>
+                  <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:13, color:'var(--ink-bright)', marginBottom:4}}>
+                    {file.name}
+                  </div>
+                  <div className="muted mono" style={{fontSize:11}}>
+                    {file.size.toLocaleString()} bytes · {file.type || 'unknown mime'}
+                  </div>
+                  <div className="muted" style={{fontSize:11, marginTop:6}}>
+                    click or drop another file to replace
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{fontFamily:"'Space Grotesk', sans-serif", fontSize:14, color:'var(--ink)', marginBottom:4}}>
+                    Drop a file here or click to pick
+                  </div>
+                  <div className="muted" style={{fontSize:11, lineHeight:1.6, textAlign:'center', maxWidth:340}}>
+                    PDF · DOCX / XLSX / PPTX · RTF · EML · text · CSV · zip / 7z / rar ·
+                    parquet · sqlite · images with barcodes — max 64MB
+                  </div>
+                </>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                onChange={(e) => {
+                  const f = e.target.files && e.target.files[0];
+                  if (f) { setFile(f); setResult(null); setError(null); }
+                }}
+                style={{display:'none'}}
+              />
+            </div>
+          )}
           <div style={{display:'flex', gap:8, marginTop:10, alignItems:'center'}}>
-            <button className="btn primary" onClick={runScan} disabled={loading || !text.trim()}>
+            <button
+              className="btn primary"
+              onClick={mode === 'file' ? runFileScan : runScan}
+              disabled={loading || (mode === 'file' ? !file : !text.trim())}>
               {loading ? 'Scanning…' : '▶ Scan'}
             </button>
-            <button className="btn ghost" onClick={() => setText(LS_SAMPLE)}>Load sample</button>
-            <button className="btn ghost" onClick={() => { setText(''); setResult(null); setError(null); }}>Clear</button>
+            {mode === 'text' ? (
+              <>
+                <button className="btn ghost" onClick={() => setText(LS_SAMPLE)}>Load sample</button>
+                <button className="btn ghost" onClick={() => { setText(''); setResult(null); setError(null); }}>Clear</button>
+              </>
+            ) : (
+              <button className="btn ghost" onClick={() => { setFile(null); setResult(null); setError(null); }}>Clear</button>
+            )}
             {result && <span className="muted" style={{marginLeft:'auto', fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>
-              {result.finding_count} findings · {result.scan_duration_ms}ms · {result.source_pod}
+              {result.finding_count} findings · {Math.round(result.scan_duration_ms)}ms · {result.source_pod}
             </span>}
           </div>
         </div>
 
         <div className="box">
-          <div className="box-title"><span className="t">Highlighted</span><span className="k">{findings.length} spans</span></div>
+          <div className="box-title">
+            <span className="t">{mode === 'file' ? 'File scan result' : 'Highlighted'}</span>
+            <span className="k">{findings.length} {mode === 'file' ? 'findings' : 'spans'}</span>
+          </div>
           {error && (
             <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)'}}>
               <b>Error:</b> {error}<br/>
-              <span className="muted" style={{fontSize:11}}>Check the server is running and CORS is open for this origin.</span>
+              <span className="muted" style={{fontSize:11}}>
+                {mode === 'file'
+                  ? <>Check siphon-fs is running at <span className="mono">{window.SIPHON_FS_URL()}</span> and CORS is open for this origin.</>
+                  : <>Check siphon-api is running and CORS is open for this origin.</>}
+              </span>
             </div>
           )}
           {!error && !result && !loading && (
@@ -11746,7 +11990,29 @@ function LiveScan() {
               ─ no scan yet ─
             </div>
           )}
-          {!error && result && (
+          {/* File-mode result: metadata + warnings. Span-based
+              highlighting isn't possible because offsets are into the
+              extractor's output text, which we don't receive. */}
+          {!error && result && mode === 'file' && (
+            <>
+              <div className="kv" style={{gridTemplateColumns:'130px 1fr', fontSize:12}}>
+                <span className="k">Filename</span>     <span className="v mono">{result.filename || '—'}</span>
+                <span className="k">Parsed as</span>    <span className="v mono">{result.parsed_as || '—'}</span>
+                <span className="k">Bytes</span>        <span className="v mono">{result.bytes != null ? result.bytes.toLocaleString() : '—'}</span>
+                <span className="k">Findings</span>     <span className="v mono">{result.finding_count}</span>
+                <span className="k">Duration</span>     <span className="v mono">{Math.round(result.scan_duration_ms)}ms</span>
+              </div>
+              {(result.warnings || []).length > 0 && (
+                <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:12, lineHeight:1.6, marginTop:10}}>
+                  <b>Extractor warnings</b>
+                  <ul style={{margin:'4px 0 0 18px', padding:0}}>
+                    {result.warnings.map((w, i) => <li key={i} className="mono" style={{fontSize:11}}>{w}</li>)}
+                  </ul>
+                </div>
+              )}
+            </>
+          )}
+          {!error && result && mode !== 'file' && (
             <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.7, whiteSpace:'pre-wrap', wordBreak:'break-word', padding:'8px 10px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:'var(--radius)', maxHeight:360, overflow:'auto'}}>
               {highlighted || text}
             </div>
