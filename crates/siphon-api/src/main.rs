@@ -757,6 +757,10 @@ async fn list_patterns(Query(q): Query<PatternsQuery>) -> Json<PatternsResponse>
 struct CategoryItem {
     category: &'static str,
     pattern_count: usize,
+    // All sub_category names inside this category — gives the admin
+    // console enough data to implement client-side search across
+    // sub-categories without needing to pull the full pattern list.
+    sub_categories: Vec<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -769,9 +773,15 @@ async fn list_categories() -> Json<CategoriesResponse> {
     let cats = siphon_core::patterns::categories();
     let categories: Vec<CategoryItem> = cats
         .into_iter()
-        .map(|c| CategoryItem {
-            category: c,
-            pattern_count: siphon_core::patterns::patterns_for_category(c).len(),
+        .map(|c| {
+            let pats = siphon_core::patterns::patterns_for_category(c);
+            let sub_categories: Vec<&'static str> =
+                pats.iter().map(|p| p.sub_category).collect();
+            CategoryItem {
+                category: c,
+                pattern_count: pats.len(),
+                sub_categories,
+            }
         })
         .collect();
     Json(CategoriesResponse {

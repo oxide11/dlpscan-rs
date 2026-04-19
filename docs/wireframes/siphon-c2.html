@@ -6818,7 +6818,7 @@ function FindingDetail({ id, back }) {
   );
 }
 
-Object.assign(window, { Stream, FindingDetail, fmtWallClock });
+Object.assign(window, { Stream, FindingDetail, fmtWallClock, catGroup, CAT_GROUPS, CAT_GROUP_COLOR });
 
 </script>
 
@@ -7234,11 +7234,36 @@ Object.assign(window, { Policy });
 function Patterns() {
   const [selected, setSelected] = React.useState(null);
   const [filter, setFilter] = React.useState('');
+  // Expanded-group state, persisted so the left rail remembers which
+  // regions the analyst had open between visits.
+  const [expandedGroups, setExpandedGroups] = React.useState(() => {
+    try {
+      const raw = localStorage.getItem('c2:patterns-expanded-groups');
+      return raw ? new Set(JSON.parse(raw)) : new Set(['PCI']);
+    } catch { return new Set(['PCI']); }
+  });
+  const toggleGroup = (g) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(g)) next.delete(g); else next.add(g);
+      try { localStorage.setItem('c2:patterns-expanded-groups', JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
   const cats = window.useSiphonApi('/v1/categories');
-  // default-select the first category once categories arrive
+  // default-select the first category once categories arrive, and
+  // make sure its region group is expanded so the analyst can see it.
   React.useEffect(() => {
     if (!selected && cats.data && cats.data.categories && cats.data.categories.length) {
-      setSelected(cats.data.categories[0].category);
+      const first = cats.data.categories[0].category;
+      setSelected(first);
+      const g = window.catGroup(first);
+      setExpandedGroups(prev => {
+        if (prev.has(g)) return prev;
+        const next = new Set(prev); next.add(g);
+        try { localStorage.setItem('c2:patterns-expanded-groups', JSON.stringify([...next])); } catch {}
+        return next;
+      });
     }
   }, [cats.data, selected]);
 
@@ -7253,9 +7278,35 @@ function Patterns() {
   };
 
   const catList = (cats.data && cats.data.categories) || [];
-  const catFiltered = filter
-    ? catList.filter(c => c.category.toLowerCase().includes(filter.toLowerCase()))
-    : catList;
+  // Filter matches category name, region name, or any sub-category
+  // under the category. Typing 'pci' surfaces the whole PCI group;
+  // typing 'visa' narrows to the category containing that sub-cat.
+  // Multiple whitespace-separated terms must ALL match somewhere in
+  // the haystack (AND semantics) so 'pci visa' still works.
+  const terms = filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const catFiltered = terms.length === 0 ? catList : catList.filter(c => {
+    const subs = (c.sub_categories || []).join(' ');
+    const haystack = (c.category + ' ' + window.catGroup(c.category) + ' ' + subs).toLowerCase();
+    return terms.every(t => haystack.includes(t));
+  });
+  // Bucket the filtered categories by region group (PCI / PII / CRED /
+  // PHI / SECRET / CLASSIFIED / OTHER). Preserve WORKSPACES ordering.
+  const grouped = React.useMemo(() => {
+    const by = Object.fromEntries(window.CAT_GROUPS.map(g => [g, []]));
+    for (const c of catFiltered) {
+      const g = window.catGroup(c.category);
+      (by[g] || by.OTHER).push(c);
+    }
+    return window.CAT_GROUPS
+      .map(g => [g, by[g]])
+      .filter(([, items]) => items.length > 0);
+  }, [catFiltered]);
+  // When the analyst is typing, auto-expand every group with a match
+  // so the filter feels responsive instead of silently dropping items
+  // behind collapsed sections.
+  const effectiveExpanded = terms.length
+    ? new Set(grouped.map(([g]) => g))
+    : expandedGroups;
   const patList = (pats.data && pats.data.patterns) || [];
 
   return (
@@ -7294,21 +7345,47 @@ function Patterns() {
               border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'
             }}
           />
-          {catFiltered.map((c, i) => (
-            <div
-              key={i}
-              onClick={() => setSelected(c.category)}
-              style={{
-                display:'flex', justifyContent:'space-between', padding:'4px 6px',
-                fontSize:12, borderBottom:'1px dashed var(--line-soft)', cursor:'pointer',
-                background: c.category === selected ? 'var(--bg-3)' : 'transparent',
-                color: c.category === selected ? 'var(--accent)' : 'var(--ink)',
-              }}>
-              <span style={{fontFamily:"'JetBrains Mono', monospace"}}>{c.category}</span>
-              <span className="mono" style={{fontSize:11, color:'var(--ink-faint)'}}>{c.pattern_count}</span>
-            </div>
-          ))}
-          {!cats.loading && catFiltered.length === 0 && (
+          {grouped.map(([g, items]) => {
+            const open = effectiveExpanded.has(g);
+            const totalPats = items.reduce((a, c) => a + (c.pattern_count || 0), 0);
+            const gColor = window.CAT_GROUP_COLOR[g] || 'var(--ink-soft)';
+            return (
+              <div key={g} style={{marginBottom:4}}>
+                <div
+                  onClick={() => toggleGroup(g)}
+                  title={open ? 'collapse region' : 'expand region'}
+                  style={{
+                    display:'flex', justifyContent:'space-between', alignItems:'center',
+                    padding:'5px 6px', cursor:'pointer', userSelect:'none',
+                    borderBottom:'1px solid var(--line)',
+                    background:'var(--bg-1)',
+                  }}>
+                  <span style={{display:'flex', alignItems:'center', gap:6}}>
+                    <span className="mono" style={{fontSize:10, color:'var(--ink-soft)', width:10, display:'inline-block'}}>{open ? '▼' : '▶'}</span>
+                    <span style={{width:6, height:6, borderRadius:'50%', background:gColor, display:'inline-block'}} />
+                    <span style={{fontFamily:"'Space Grotesk', sans-serif", fontWeight:600, letterSpacing:'0.08em', fontSize:11, color:'var(--ink-bright)'}}>{g}</span>
+                    <span className="muted mono" style={{fontSize:10}}>{items.length} cat</span>
+                  </span>
+                  <span className="mono" style={{fontSize:10, color:'var(--ink-faint)'}}>{totalPats}</span>
+                </div>
+                {open && items.map((c, i) => (
+                  <div
+                    key={g + ':' + i}
+                    onClick={() => setSelected(c.category)}
+                    style={{
+                      display:'flex', justifyContent:'space-between', padding:'3px 6px 3px 22px',
+                      fontSize:12, borderBottom:'1px dashed var(--line-soft)', cursor:'pointer',
+                      background: c.category === selected ? 'var(--bg-3)' : 'transparent',
+                      color: c.category === selected ? 'var(--accent)' : 'var(--ink)',
+                    }}>
+                    <span style={{fontFamily:"'JetBrains Mono', monospace", overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{c.category}</span>
+                    <span className="mono" style={{fontSize:11, color:'var(--ink-faint)', flexShrink:0, marginLeft:6}}>{c.pattern_count}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+          {!cats.loading && grouped.length === 0 && (
             <div className="muted" style={{padding:10, fontSize:11, textAlign:'center'}}>— no matches —</div>
           )}
         </div>
