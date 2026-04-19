@@ -23,6 +23,7 @@
 //!   SIPHON_ALLOWLIST_PATH            Optional JSON file {texts,patterns,paths}
 //!                                    exposed read-only via GET /v1/allowlist
 //!   SIPHON_AUDIT_RING_CAP            In-memory audit ring capacity (default: 500)
+//!   SIPHON_FINDINGS_RING_CAP         In-memory findings ring capacity (default: 1000)
 
 use axum::{
     body::Body,
@@ -40,8 +41,8 @@ use siphon::policy::{load_policies_from_dir, Policy};
 use siphon::profiles::{get_profile, list_profiles};
 use siphon::rbac::{role_has_permission, Permission, Role};
 use siphon_core::audit::{
-    audit_event, set_audit_logger, AuditEvent, AuditHandler, AuditLogger, FileAuditHandler,
-    RotatingFileAuditHandler,
+    audit_event, iso8601_now, set_audit_logger, AuditEvent, AuditHandler, AuditLogger,
+    FileAuditHandler, RotatingFileAuditHandler,
 };
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -66,6 +67,76 @@ struct AppState {
     audit_ring: Arc<Mutex<VecDeque<AuditEvent>>>,
     audit_ring_cap: usize,
     allowlist: Arc<Allowlist>,
+    findings: Arc<FindingsRing>,
+}
+
+// ---------------------------------------------------------------------------
+// FindingsRing — in-memory buffer of recent finding records so the console
+// can tail them without persisting to disk. Each scan push-flushes every
+// returned finding with a scan-scoped id and the originating request_id.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Serialize)]
+struct FindingRecord {
+    id: String,
+    ts: String,
+    request_id: String,
+    source_ip: String,
+    category: String,
+    sub_category: String,
+    text: String,
+    confidence: f64,
+    has_context: bool,
+    span: (usize, usize),
+    metadata: HashMap<String, String>,
+    severity: &'static str,
+}
+
+/// Derive a coarse severity bucket from the finding category and confidence.
+/// Keeping this on the server means every client sees the same classification.
+fn severity_for(category: &str, confidence: f64) -> &'static str {
+    let c = category.to_ascii_lowercase();
+    let critical = c.contains("credit card")
+        || c.contains("primary account")
+        || c.contains("secret")
+        || c.contains("medical identifier");
+    if critical && confidence >= 0.80 {
+        return "red";
+    }
+    if confidence >= 0.90 {
+        return "red";
+    }
+    if confidence >= 0.70 {
+        return "warn";
+    }
+    "safe"
+}
+
+struct FindingsRing {
+    buf: Mutex<VecDeque<FindingRecord>>,
+    cap: usize,
+}
+
+impl FindingsRing {
+    fn new(cap: usize) -> Self {
+        Self {
+            buf: Mutex::new(VecDeque::with_capacity(cap)),
+            cap,
+        }
+    }
+
+    fn push(&self, rec: FindingRecord) {
+        let mut guard = self.buf.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.len() >= self.cap {
+            guard.pop_front();
+        }
+        guard.push_back(rec);
+    }
+
+    fn snapshot(&self) -> Vec<FindingRecord> {
+        let guard = self.buf.lock().unwrap_or_else(|e| e.into_inner());
+        guard.iter().rev().cloned().collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -510,6 +581,28 @@ async fn scan(
     let count = findings.len();
     state.metrics.scans_total.fetch_add(1, Ordering::Relaxed);
     state.metrics.findings_total.fetch_add(count as u64, Ordering::Relaxed);
+
+    // Push each finding into the in-memory ring so /v1/findings can surface
+    // the live stream without touching disk. Reuse the audit module's
+    // iso8601 timestamp so the frontend renders a single consistent format.
+    let ts_now = iso8601_now();
+    for (idx, f) in findings.iter().enumerate() {
+        let short_req = request_id.split('-').next().unwrap_or(&request_id);
+        state.findings.push(FindingRecord {
+            id: format!("f-{short_req}-{idx:02x}"),
+            ts: ts_now.clone(),
+            request_id: request_id.clone(),
+            source_ip: source_ip.clone(),
+            category: f.category.clone(),
+            sub_category: f.sub_category.clone(),
+            text: f.text.clone(),
+            confidence: f.confidence,
+            has_context: f.has_context,
+            span: f.span,
+            metadata: f.metadata.clone(),
+            severity: severity_for(&f.category, f.confidence),
+        });
+    }
 
     let categories_found: Vec<String> = findings
         .iter()
@@ -990,6 +1083,57 @@ async fn list_lsh_vaults() -> Json<VaultStubResponse> {
     })
 }
 
+#[derive(Deserialize)]
+struct FindingsQuery {
+    limit: Option<usize>,
+    category: Option<String>,
+    severity: Option<String>,
+    contains: Option<String>,
+    since: Option<String>,
+}
+
+#[derive(Serialize)]
+struct FindingsResponse {
+    total: usize,
+    returned: usize,
+    capacity: usize,
+    findings: Vec<FindingRecord>,
+}
+
+async fn list_findings(
+    Query(q): Query<FindingsQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Json<FindingsResponse> {
+    let all = state.findings.snapshot();
+    let total = all.len();
+    let cat = q.category.as_deref();
+    let sev = q.severity.as_deref();
+    let needle = q.contains.as_deref().map(|s| s.to_ascii_lowercase());
+    let since = q.since.as_deref();
+
+    let filtered: Vec<FindingRecord> = all
+        .into_iter()
+        .filter(|f| cat.map_or(true, |c| f.category == c))
+        .filter(|f| sev.map_or(true, |s| f.severity == s))
+        .filter(|f| needle.as_deref().map_or(true, |n| {
+            f.text.to_ascii_lowercase().contains(n)
+                || f.category.to_ascii_lowercase().contains(n)
+                || f.sub_category.to_ascii_lowercase().contains(n)
+        }))
+        .filter(|f| since.map_or(true, |s| f.ts.as_str() > s))
+        .collect();
+
+    let cap = q.limit.unwrap_or(200).min(state.findings.cap);
+    let findings: Vec<FindingRecord> = filtered.into_iter().take(cap).collect();
+    let returned = findings.len();
+    Json(FindingsResponse {
+        total,
+        returned,
+        capacity: state.findings.cap,
+        findings,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -1148,6 +1292,12 @@ async fn main() {
         _ => Vec::new(),
     };
 
+    let findings_cap: usize = std::env::var("SIPHON_FINDINGS_RING_CAP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1000);
+    let findings = Arc::new(FindingsRing::new(findings_cap));
+
     let state = Arc::new(AppState {
         api_key_hash,
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
@@ -1157,6 +1307,7 @@ async fn main() {
         audit_ring,
         audit_ring_cap,
         allowlist: Arc::new(allowlist),
+        findings,
     });
 
     let app = Router::new()
@@ -1177,6 +1328,7 @@ async fn main() {
         .route("/v1/allowlist", get(list_allowlist))
         .route("/v1/edm", get(list_edm_vaults))
         .route("/v1/lsh", get(list_lsh_vaults))
+        .route("/v1/findings", get(list_findings))
         .layer(middleware::from_fn(security_headers))
         .layer(middleware::from_fn_with_state(
             state.clone(),
