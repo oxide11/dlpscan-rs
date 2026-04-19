@@ -9159,6 +9159,7 @@ function Settings({ tweaks, setTweak }) {
   const tabs = [
     ['Deployment',  'deployment'],
     ['General',     'general'],
+    ['Changelog',   'changelog'],
     ['Appearance',  'appearance'],
     ['Features',    'features'],
     ['Users',       'users'],
@@ -9181,7 +9182,7 @@ function Settings({ tweaks, setTweak }) {
             className="btn ghost"
             onClick={() => window.__c2_go && window.__c2_go('docs')}
             title="Open the full docs browser">Docs</button>
-          <button className="btn" onClick={() => setTab('general')}>Changelog</button>
+          <button className="btn" onClick={() => setTab('changelog')}>Changelog</button>
         </>}
       />
 
@@ -9192,7 +9193,7 @@ function Settings({ tweaks, setTweak }) {
             <a key={k} className={tab===k?'active':''} onClick={() => setTab(k)}>{l}</a>
           ))}
           <div className="section-l">Account</div>
-          {tabs.filter(([, k]) => k === 'general' || k === 'appearance').map(([l,k]) => (
+          {tabs.filter(([, k]) => ['general','changelog','appearance'].includes(k)).map(([l,k]) => (
             <a key={k} className={tab===k?'active':''} onClick={() => setTab(k)}>{l}</a>
           ))}
           <div className="section-l">Identity &amp; access</div>
@@ -9208,6 +9209,7 @@ function Settings({ tweaks, setTweak }) {
         <div>
           {tab === 'deployment' && <DeploymentTab />}
           {tab === 'general' && <GeneralTab />}
+          {tab === 'changelog' && <ChangelogTab />}
           {tab === 'appearance' && <AppearanceTab tweaks={tweaks} setTweak={setTweak} />}
           {tab === 'features' && <FeaturesTab />}
           {tab === 'users' && <UsersTab />}
@@ -9414,52 +9416,55 @@ function renderMarkdown(src) {
 
 function GeneralTab() {
   const v = window.useSiphonApi('/v1/version');
-  const cl = window.useSiphonApi('/v1/docs/changelog');
   const d = v.data || {};
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">About this deployment</span>
+        <span className="k">
+          <window.LivePill source={v.source} onClick={v.refetch} /> from /v1/version
+        </span>
+      </div>
+      <div className="kv" style={{gridTemplateColumns:'180px 1fr'}}>
+        <span className="k">siphon-api version</span>  <span className="v mono">{d.api_version || '—'}</span>
+        <span className="k">siphon-core version</span> <span className="v mono">{d.core_version || '—'}</span>
+        <span className="k">Build profile</span>       <span className="v mono">{d.build_profile || '—'}</span>
+        <span className="k">Rust version</span>        <span className="v mono">{d.rust_version || '—'}</span>
+        <span className="k">Target triple</span>       <span className="v mono">{d.target_triple || '—'}</span>
+        <span className="k">Patterns loaded</span>     <span className="v mono">{d.patterns_loaded != null ? d.patterns_loaded : '—'}</span>
+        <span className="k">Categories loaded</span>   <span className="v mono">{d.categories_loaded != null ? d.categories_loaded : '—'}</span>
+      </div>
+    </div>
+  );
+}
+
+// Changelog — dedicated tab so the header Changelog button has a
+// predictable landing. renderMarkdown (below) gets the rich rendering
+// pass next.
+function ChangelogTab() {
+  const cl = window.useSiphonApi('/v1/docs/changelog');
   const clContent = (cl.data && cl.data.content) || '';
   return (
-    <>
-      <div className="box">
-        <div className="box-title">
-          <span className="t">About this deployment</span>
-          <span className="k">
-            <window.LivePill source={v.source} onClick={v.refetch} /> from /v1/version
-          </span>
-        </div>
-        <div className="kv" style={{gridTemplateColumns:'180px 1fr'}}>
-          <span className="k">siphon-api version</span>  <span className="v mono">{d.api_version || '—'}</span>
-          <span className="k">siphon-core version</span> <span className="v mono">{d.core_version || '—'}</span>
-          <span className="k">Build profile</span>       <span className="v mono">{d.build_profile || '—'}</span>
-          <span className="k">Rust version</span>        <span className="v mono">{d.rust_version || '—'}</span>
-          <span className="k">Target triple</span>       <span className="v mono">{d.target_triple || '—'}</span>
-          <span className="k">Patterns loaded</span>     <span className="v mono">{d.patterns_loaded != null ? d.patterns_loaded : '—'}</span>
-          <span className="k">Categories loaded</span>   <span className="v mono">{d.categories_loaded != null ? d.categories_loaded : '—'}</span>
-        </div>
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Changelog</span>
+        <span className="k">
+          <window.LivePill source={cl.source} onClick={cl.refetch} /> from docs/CHANGELOG.md · {cl.data ? cl.data.bytes + ' bytes' : ''}
+        </span>
       </div>
-
-      <div className="v-gap" />
-
-      <div className="box">
-        <div className="box-title">
-          <span className="t">Changelog</span>
-          <span className="k">
-            <window.LivePill source={cl.source} onClick={cl.refetch} /> from docs/CHANGELOG.md · {cl.data ? cl.data.bytes + ' bytes' : ''}
-          </span>
+      {cl.loading && <div className="muted" style={{padding:14, textAlign:'center'}}>loading…</div>}
+      {cl.error && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)'}}>
+          <b>Error:</b> {cl.error}
         </div>
-        {cl.loading && <div className="muted" style={{padding:14, textAlign:'center'}}>loading…</div>}
-        {cl.error && (
-          <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)'}}>
-            <b>Error:</b> {cl.error}
-          </div>
-        )}
-        {clContent && (
-          <div
-            style={{maxHeight: 520, overflow: 'auto', fontSize: 13, lineHeight: 1.6, color: 'var(--ink)', padding: '4px 2px'}}
-            dangerouslySetInnerHTML={{ __html: renderMarkdown(clContent) }}
-          />
-        )}
-      </div>
-    </>
+      )}
+      {clContent && (
+        <div
+          style={{maxHeight: 640, overflow: 'auto', fontSize: 13, lineHeight: 1.6, color: 'var(--ink)', padding: '4px 2px'}}
+          dangerouslySetInnerHTML={{ __html: renderMarkdown(clContent) }}
+        />
+      )}
+    </div>
   );
 }
 
