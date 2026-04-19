@@ -7949,8 +7949,12 @@ function Patterns() {
                 <div className="pat-row label" style={{borderBottom:'1.5px solid var(--line)'}}>
                   <span></span><span>Sub-category · regex</span><span>Specificity</span><span>Ctx</span><span>Case</span><span></span>
                 </div>
-                {selectedCustom.patterns.map((p, i) => (
-                  <div key={i} className="pat-row"
+                {selectedCustom.patterns.map((p) => (
+                  // Stable key by sub_category — same fix as the
+                  // built-in list above. Avoids the cross-category
+                  // checkbox cascade when reused DOM nodes carry
+                  // uncontrolled `defaultChecked` state.
+                  <div key={`${selectedCustom.name}/${p.sub_category}`} className="pat-row"
                        onClick={(e) => {
                          if (e.target && e.target.tagName === 'INPUT') return;
                          if (e.target && e.target.getAttribute('data-action') === 'delete') return;
@@ -8014,8 +8018,15 @@ function Patterns() {
           {!pats.loading && patList.length === 0 && (
             <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>— no patterns —</div>
           )}
-          {patList.map((p, i) => (
-            <div key={i} className="pat-row"
+          {patList.map((p) => (
+            // Stable key based on identity, not array index. Without
+            // this, switching categories caused React to reuse DOM
+            // nodes between unrelated patterns; the uncontrolled
+            // `defaultChecked` state stayed glued to the reused node,
+            // so unchecking the first row in category A made the
+            // first row in category B look unchecked too. Identity-
+            // based keys force a fresh mount per pattern.
+            <div key={`${p.category}/${p.sub_category}`} className="pat-row"
                  onClick={(e) => {
                    // checkbox clicks shouldn't navigate — they'll
                    // toggle enable/disable in Phase 4. Stop the event
