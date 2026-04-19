@@ -6631,33 +6631,16 @@ function FindingDetail({ id, back }) {
         </>}
       />
 
-      {/* Detection pipeline + Source→Destination — side-by-side above
-          the detail grid. minmax(0,1fr) so the DetectionPipeline chips
-          and the SVG can shrink cleanly at narrower widths instead of
-          forcing horizontal overflow. */}
+      {/* Top pair — the two panels an analyst reads first: the actual
+          matched value + the actions they can take on it. Everything
+          below is context/history/provenance. */}
       <div style={{
              display:'grid',
              gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)',
              gap:'var(--gap)',
              alignItems:'stretch',
            }}>
-        <DetectionPipeline finding={f} />
-        <SourceDestination finding={f} />
-      </div>
-
-      {/* 3-row detail grid. Boxes flow left-to-right into equal-width
-          columns: Match&Ctx|Actions, Timeline|Record, Related|Policy.
-          alignItems:stretch so both cells in a row match heights —
-          analysts read the layout as an aligned grid, not a ragged
-          masonry. minmax(0,1fr) keeps long mono strings from blowing
-          out column widths. */}
-      <div className="finding-hero"
-           style={{
-             marginTop:'var(--gap)',
-             gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)',
-             alignItems:'stretch',
-           }}>
-        {/* row 1 · left: Match & context */}
+        {/* top · left: Match & context */}
         <div className="box">
           <div className="box-title"><span className="t">Match &amp; context</span><span className="k">from /v1/findings</span></div>
 
@@ -6710,7 +6693,7 @@ function FindingDetail({ id, back }) {
           )}
         </div>
 
-        {/* row 1 · right: Actions */}
+        {/* top · right: Actions */}
         <div className="box">
           <div className="box-title"><span className="t">Actions</span><span className="k">this finding</span></div>
           <div style={{display:'flex', flexDirection:'column', gap:6}}>
@@ -6766,9 +6749,29 @@ function FindingDetail({ id, back }) {
             </button>
           </div>
         </div>
+      </div>
 
-        {/* row 2 · left: Timeline */}
-        <FindingTimeline finding={f} sameReq={sameReq} />
+      {/* 3-row detail grid. Boxes flow left-to-right into equal-width
+          columns: DP|SD, Related|Record, Timeline|Policy.
+          alignItems:stretch so both cells in a row match heights —
+          analysts read the layout as an aligned grid, not a ragged
+          masonry. minmax(0,1fr) keeps long mono strings from blowing
+          out column widths. */}
+      <div className="finding-hero"
+           style={{
+             marginTop:'var(--gap)',
+             gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)',
+             alignItems:'stretch',
+           }}>
+        {/* row 1 · left: Detection pipeline */}
+        <DetectionPipeline finding={f} />
+
+        {/* row 1 · right: Source → Destination */}
+        <SourceDestination finding={f} />
+
+        {/* row 2 · left: Related findings (onJump hops via gotoFinding
+            so j/k shortcuts stay consistent) */}
+        <RelatedFindings finding={f} onJump={gotoFinding} />
 
         {/* row 2 · right: Record */}
         <div className="box">
@@ -6791,9 +6794,8 @@ function FindingDetail({ id, back }) {
           </div>
         </div>
 
-        {/* row 3 · left: Related findings (onJump hops via gotoFinding
-            so j/k shortcuts stay consistent) */}
-        <RelatedFindings finding={f} onJump={gotoFinding} />
+        {/* row 3 · left: Timeline */}
+        <FindingTimeline finding={f} sameReq={sameReq} />
 
         {/* row 3 · right: Policy that fired */}
         <PolicyThatFired finding={f} />
