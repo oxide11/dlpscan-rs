@@ -575,7 +575,12 @@ impl CompiledList {
         match self.kind {
             ListKind::Keyword => self.entries.iter().any(|e| lower.contains(e)),
             ListKind::Domain => self.entries.iter().any(|e| {
-                lower == *e || lower.ends_with(&format!(".{e}"))
+                // Matches bare domain, sub-domain suffix, AND emails
+                // whose local@<domain> ends with the entry — that's
+                // the common 'partner domains allow list' case.
+                lower == *e
+                    || lower.ends_with(&format!(".{e}"))
+                    || lower.ends_with(&format!("@{e}"))
             }),
             ListKind::Email => self.entries.iter().any(|e| {
                 if let Some(dom) = e.strip_prefix('@') {
@@ -774,7 +779,10 @@ mod tests {
         assert!(c.matches("example.com"));
         assert!(c.matches("Foo.Example.COM"));          // case-insensitive
         assert!(c.matches("mail.globex.eu"));            // subdomain
+        assert!(c.matches("alice@example.com"));         // email at domain
+        assert!(c.matches("Alice@mail.example.com"));    // email at subdomain
         assert!(!c.matches("notexample.com"));            // no false suffix
+        assert!(!c.matches("test@nope.com"));             // wrong domain
     }
 
     #[test]
