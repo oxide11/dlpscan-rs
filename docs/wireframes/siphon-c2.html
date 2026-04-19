@@ -2198,6 +2198,7 @@ const SURFACES = [
   { id: 'apiex',          workspace: 'engineering', icon: '⟁',  title: 'API Explorer',   sub: 'every /v1 endpoint' },
   { id: 'procstate',      workspace: 'engineering', icon: '⌬',  title: 'Process State',  sub: 'cache · rate · vault' },
   { id: 'fptool',         workspace: 'engineering', icon: '⚑',  title: 'FP Troubleshooter', sub: 'allowlist + rescan' },
+  { id: 'fpqueue',        workspace: 'engineering', icon: '⚐',  title: 'FP Queue',     sub: 'review queue' },
   // ── DOCS ────────────────────────────────────────────────────
   { id: 'docs',           workspace: 'docs',        icon: '❖',  title: 'Browse',       sub: 'all bundled docs' },
 ];
@@ -5356,6 +5357,49 @@ function FilterRow({
   );
 }
 
+// ── FP queue ─────────────────────────────────────────────────
+// Findings that an analyst flagged as potential false positives are
+// stored in localStorage.c2:fp-queue so they're reviewable in one
+// place and survive reloads. Each entry is { finding, flaggedAt,
+// status, note }.
+window.c2FpQueue = function() {
+  try { return JSON.parse(localStorage.getItem('c2:fp-queue') || '[]'); }
+  catch { return []; }
+};
+window.useFpQueue = function() {
+  const [q, setQ] = React.useState(window.c2FpQueue());
+  React.useEffect(() => {
+    const poll = setInterval(() => setQ(window.c2FpQueue()), 500);
+    const h = (e) => { if (e.key === 'c2:fp-queue') setQ(window.c2FpQueue()); };
+    window.addEventListener('storage', h);
+    return () => { clearInterval(poll); window.removeEventListener('storage', h); };
+  }, []);
+  return q;
+};
+window.c2FpQueueAdd = function(finding, note) {
+  const q = window.c2FpQueue();
+  // Dedup by finding id — re-flagging bumps the entry's flaggedAt.
+  const filtered = q.filter(e => !e.finding || e.finding.id !== finding.id);
+  filtered.unshift({
+    finding,
+    flaggedAt: new Date().toISOString(),
+    status: 'open',
+    note: note || '',
+  });
+  try { localStorage.setItem('c2:fp-queue', JSON.stringify(filtered.slice(0, 200))); } catch {}
+};
+window.c2FpQueueRemove = function(findingId) {
+  const q = window.c2FpQueue().filter(e => !e.finding || e.finding.id !== findingId);
+  try { localStorage.setItem('c2:fp-queue', JSON.stringify(q)); } catch {}
+};
+window.c2FpQueueSetStatus = function(findingId, status, note) {
+  const q = window.c2FpQueue().map(e => {
+    if (!e.finding || e.finding.id !== findingId) return e;
+    return { ...e, status, note: note != null ? note : e.note };
+  });
+  try { localStorage.setItem('c2:fp-queue', JSON.stringify(q)); } catch {}
+};
+
 // Advanced search parser.
 // Supports space-separated tokens, each of which is either:
 //   - free text        → substring match across text, category,
@@ -5839,6 +5883,600 @@ function StreamRow({ f, onOpen, cellPad }) {
 // Finding Detail — full page, drilled in from the stream.
 // Fetches the same /v1/findings list and looks up by id so a fresh deep
 // link works even without prior stream state in memory.
+// SourceDestination — the repurposed "pod path" view. Shows how the
+// finding entered the system (HTTP POST /scan from a source IP, Kafka
+// event, email, etc.) and where any configured integrations would
+// route it. All three swim-lanes are derived from real data:
+//
+//   - source:   finding.source_ip (who called POST /scan)
+//   - channel:  always "http · POST /scan" today; future ingest shapes
+//               (email, kafka, s3 upload) would set this differently
+//   - detector: siphon-api · siphon-core
+//   - outputs:  /v1/integrations → the configured SIEM kinds
+//
+// No fabrication — fields that don't exist in the current runtime are
+// rendered as "not configured" dashed boxes.
+function SourceDestination({ finding }) {
+  const ix = window.useSiphonApi('/v1/integrations');
+  const outs = ((ix.data && ix.data.integrations) || []).filter(i => i.configured);
+  const apiUrl = window.SIPHON_API_URL ? window.SIPHON_API_URL() : '';
+  return (
+    <div className="box">
+      <div className="box-title"><span className="t">Source → Destination</span><span className="k">how the scan arrived · where it was routed</span></div>
+      <svg viewBox="0 0 520 170" style={{width:'100%', height:200, display:'block', background:'var(--bg-1)', borderRadius:'var(--radius)', border:'1px solid var(--line-soft)'}}>
+        <defs>
+          <marker id="sdArr" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--ink-soft)" />
+          </marker>
+          <marker id="sdArrAmber" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--amber)" />
+          </marker>
+        </defs>
+
+        {/* SOURCE */}
+        <g>
+          <text x="12" y="16" fontFamily="JetBrains Mono, monospace" fontSize="9"
+                letterSpacing="1.5" fill="var(--ink-dim)">SOURCE</text>
+          <rect x="10" y="32" width="140" height="54" rx="3"
+                fill="var(--bg-2)" stroke="var(--line-strong)" />
+          <text x="18" y="50" fontFamily="JetBrains Mono" fontSize="11" fontWeight="600" fill="var(--ink)">
+            {finding.source_ip || '—'}
+          </text>
+          <text x="18" y="64" fontFamily="JetBrains Mono" fontSize="9.5" fill="var(--ink-soft)">
+            caller · http client
+          </text>
+          <text x="18" y="78" fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-faint)">
+            req {(finding.request_id || '').slice(0, 8)}…
+          </text>
+        </g>
+
+        {/* CHANNEL */}
+        <g>
+          <text x="180" y="16" fontFamily="JetBrains Mono, monospace" fontSize="9"
+                letterSpacing="1.5" fill="var(--ink-dim)">CHANNEL</text>
+          <rect x="178" y="32" width="130" height="54" rx="3"
+                fill="var(--bg-2)" stroke="var(--cyan)" />
+          <text x="186" y="50" fontFamily="JetBrains Mono" fontSize="11" fontWeight="600" fill="var(--cyan)">
+            http · /scan
+          </text>
+          <text x="186" y="64" fontFamily="JetBrains Mono" fontSize="9.5" fill="var(--ink-soft)">
+            POST · JSON body
+          </text>
+          <text x="186" y="78" fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-faint)">
+            {new Date(finding.ts).toLocaleTimeString()}
+          </text>
+        </g>
+
+        {/* DETECTOR */}
+        <g>
+          <text x="334" y="16" fontFamily="JetBrains Mono, monospace" fontSize="9"
+                letterSpacing="1.5" fill="var(--ink-dim)">DETECTOR</text>
+          <rect x="332" y="32" width="160" height="54" rx="3"
+                fill="var(--accent-wash)" stroke="var(--accent)" strokeWidth="1.4" />
+          <text x="340" y="50" fontFamily="Space Grotesk" fontWeight="700" fontSize="12" fill="var(--accent)" letterSpacing="1">
+            siphon-api
+          </text>
+          <text x="340" y="64" fontFamily="JetBrains Mono" fontSize="9.5" fill="var(--ink)">
+            siphon-core · {finding.category}
+          </text>
+          <text x="340" y="78" fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-soft)">
+            {apiUrl}
+          </text>
+        </g>
+
+        {/* arrows: source → channel → detector */}
+        <path d="M 150 59 L 178 59" stroke="var(--ink-soft)" strokeWidth="1.2" fill="none" markerEnd="url(#sdArr)" />
+        <path d="M 308 59 L 332 59" stroke="var(--ink-soft)" strokeWidth="1.2" fill="none" markerEnd="url(#sdArr)" />
+
+        {/* OUTPUTS row along the bottom */}
+        <g>
+          <text x="12" y="112" fontFamily="JetBrains Mono, monospace" fontSize="9"
+                letterSpacing="1.5" fill="var(--ink-dim)">OUTPUTS</text>
+          {(outs.length ? outs : [null, null]).slice(0, 4).map((o, i) => {
+            const x = 80 + i * 110;
+            if (!o) {
+              return (
+                <g key={i}>
+                  <rect x={x} y="128" width="100" height="30" rx="3"
+                        fill="var(--bg-2)" stroke="var(--line-soft)" strokeDasharray="3 3" />
+                  <text x={x + 8} y="146" fontFamily="JetBrains Mono" fontSize="9.5" fill="var(--ink-dim)">
+                    — no output —
+                  </text>
+                </g>
+              );
+            }
+            return (
+              <g key={i}>
+                <path d={`M 412 86 C 412 110, ${x + 50} 118, ${x + 50} 128`}
+                      fill="none" stroke="var(--amber)" strokeWidth="1.3" opacity="0.75"
+                      strokeDasharray="3 5" markerEnd="url(#sdArrAmber)" />
+                <rect x={x} y="128" width="100" height="30" rx="3"
+                      fill="var(--amber-wash)" stroke="var(--amber)" />
+                <text x={x + 8} y="143" fontFamily="JetBrains Mono" fontSize="10.5" fontWeight="600" fill="var(--ink)">
+                  {(o.kind || '').slice(0, 12)}
+                </text>
+                <text x={x + 8} y="153" fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-soft)">
+                  {(o.target || '').slice(0, 18)}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+
+        {/* back-arrow label on the right for HTTP response */}
+        <text x="412" y="104" fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-faint)" textAnchor="middle">
+          200 OK ↩ response
+        </text>
+      </svg>
+      <div className="margin-note" style={{marginTop:6}}>
+        ingress shape is HTTP today · other channel kinds (email, kafka, s3, mq) will populate this box when those ingest modes are wired in siphon-api
+      </div>
+    </div>
+  );
+}
+
+// Timeline — derived from the finding itself: request_id tells us
+// when the scan was accepted, ts marks detection, neighbouring
+// findings in the same request share the pipeline, and the audit
+// event (if present in /v1/audit) closes it out.
+function FindingTimeline({ finding, sameReq }) {
+  const ax = window.useSiphonApi('/v1/audit?limit=200');
+  const events = (ax.data && ax.data.events) || [];
+  const auditEvt = events.find(e => e.request_id === finding.request_id);
+
+  const baseMs = auditEvt ? new Date(finding.ts).getTime() - ((auditEvt.duration_ms || 0) | 0) : new Date(finding.ts).getTime();
+  const fmt = (ts) => fmtWallClock(ts) + (ts ? '.' + new Date(ts).getMilliseconds().toString().padStart(3, '0') : '');
+  const offset = (ts) => {
+    const ms = new Date(ts).getTime() - baseMs;
+    const sign = ms >= 0 ? '+' : '-';
+    return sign + Math.abs(ms) + 'ms';
+  };
+
+  const steps = [];
+  steps.push({
+    ts: new Date(baseMs).toISOString(),
+    label: 'request accepted',
+    detail: <>source <span className="mono">{finding.source_ip || '—'}</span> · POST /scan · req <span className="mono">{(finding.request_id || '').slice(0, 8)}</span></>,
+    marker: 'dim',
+  });
+  steps.push({
+    ts: finding.ts,
+    label: 'match detected',
+    detail: <>pattern <span className="mono">{finding.sub_category || finding.category}</span> · span {finding.span ? finding.span.join('..') : '—'} · conf <b>{finding.confidence != null ? finding.confidence.toFixed(3) : '—'}</b></>,
+    marker: 'accent',
+  });
+  (sameReq || []).forEach(r => {
+    steps.push({
+      ts: r.ts,
+      label: 'also in same scan',
+      detail: <><span className="mono">{r.sub_category || r.category}</span> · <span style={{color:'var(--accent)'}}>{r.text}</span> · conf {r.confidence != null ? r.confidence.toFixed(2) : '—'}</>,
+      marker: 'dim',
+    });
+  });
+  if (auditEvt) {
+    steps.push({
+      ts: auditEvt.timestamp,
+      label: 'audit event emitted',
+      detail: <>outcome <b>{auditEvt.outcome || '—'}</b> · {auditEvt.finding_count} finding{auditEvt.finding_count === 1 ? '' : 's'} total · duration {auditEvt.duration_ms != null ? Math.round(auditEvt.duration_ms) + 'ms' : '—'}</>,
+      marker: 'accent',
+    });
+  }
+  steps.push({
+    ts: new Date().toISOString(),
+    label: 'you are here',
+    detail: <>awaiting analyst decision · <i>Acknowledge</i> or <i>Mark as FP</i></>,
+    marker: 'live',
+  });
+
+  return (
+    <div className="box">
+      <div className="box-title"><span className="t">Timeline</span><span className="k">detection → audit → you are here</span></div>
+      <div style={{display:'grid', gridTemplateColumns:'100px 16px 1fr', rowGap:8, fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, marginTop:4}}>
+        {steps.map((s, i) => {
+          const markerColor = s.marker === 'accent' ? 'var(--accent)'
+                            : s.marker === 'live'   ? 'var(--red)'
+                            : 'var(--ink-faint)';
+          return (
+            <React.Fragment key={i}>
+              <div className="muted mono" style={{fontSize:10.5}} title={s.ts + ' (' + offset(s.ts) + ')'}>
+                {fmt(s.ts)}
+              </div>
+              <div style={{display:'flex', justifyContent:'center', alignItems:'center', position:'relative'}}>
+                <span style={{
+                  display:'inline-block', width: s.marker === 'live' ? 10 : 8, height: s.marker === 'live' ? 10 : 8,
+                  borderRadius:'50%', background: markerColor,
+                  boxShadow: s.marker === 'live' ? '0 0 0 2px var(--bg-1), 0 0 8px ' + markerColor : 'none',
+                }} />
+                {i < steps.length - 1 && (
+                  <span style={{
+                    position:'absolute', top:'calc(50% + 6px)', bottom:'-8px',
+                    width:1, background:'var(--line)',
+                  }} />
+                )}
+              </div>
+              <div>
+                <div style={{color:'var(--ink-bright)', fontWeight:600}}>{s.label}</div>
+                <div className="muted" style={{fontSize:11, marginTop:2, lineHeight:1.5}}>{s.detail}</div>
+              </div>
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// PolicyThatFired — walks /v1/policies (loaded from SIPHON_POLICIES_DIR)
+// and surfaces any policy whose scan config could have applied to
+// this finding's category. Policies are TOML-declared; we can't
+// actually evaluate them server-side since siphon-api doesn't run
+// the rule engine on /scan — this is a best-match view.
+function PolicyThatFired({ finding }) {
+  const px = window.useSiphonApi('/v1/policies');
+  const policies = (px.data && px.data.policies) || [];
+  const loaded = px.data && px.data.loaded;
+
+  const matches = React.useMemo(() => {
+    if (!policies.length) return [];
+    const cat = (finding.category || '').toLowerCase();
+    return policies
+      .map(p => {
+        const scope = (p.scan && p.scan.categories) || [];
+        const hits = scope.filter(c => cat.includes(c.toLowerCase()) || c.toLowerCase().includes(cat));
+        return { policy: p, hits };
+      })
+      .filter(m => m.hits.length > 0);
+  }, [policies, finding]);
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Policy that fired</span>
+        <span className="k">
+          {loaded
+            ? <>{matches.length} match · /v1/policies has {policies.length} loaded</>
+            : <span className="chip chip--ghost">no policies loaded · set SIPHON_POLICIES_DIR</span>}
+        </span>
+      </div>
+
+      {!loaded && (
+        <div className="muted mono" style={{padding:'6px 0', fontSize:11.5, lineHeight:1.7}}>
+          Start siphon-api with <span style={{color:'var(--cyan)'}}>SIPHON_POLICIES_DIR</span> pointing at a directory of <span className="mono">*.toml</span> policy files to populate this panel.
+          siphon-api serves them read-only via <span className="mono">/v1/policies</span>.
+        </div>
+      )}
+
+      {loaded && matches.length === 0 && (
+        <div className="muted mono" style={{padding:'6px 0', fontSize:11.5}}>
+          No policy in <span className="mono">/v1/policies</span> declares a <span className="mono">scan.categories</span> that includes <span style={{color:'var(--accent)'}}>{finding.category}</span>.
+        </div>
+      )}
+
+      {matches.map((m, i) => (
+        <div key={i} style={{padding:'8px 0', borderBottom: i < matches.length - 1 ? '1px dashed var(--line-soft)' : 'none'}}>
+          <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:3, flexWrap:'wrap'}}>
+            <span style={{fontFamily:"'Space Grotesk', sans-serif", fontWeight:600, color:'var(--ink-bright)', fontSize:13}}>{m.policy.name}</span>
+            <span className="muted mono" style={{fontSize:11}}>v{m.policy.version}</span>
+            {m.policy.scan && m.policy.scan.action && (
+              <span className={`chip chip--${m.policy.scan.action === 'block' ? 'red' : m.policy.scan.action === 'redact' ? 'warn' : 'safe'}`} style={{fontSize:9}}>
+                {m.policy.scan.action.toUpperCase()}
+              </span>
+            )}
+            {m.policy.scan && m.policy.scan.min_confidence > 0 && (
+              <span className="muted mono" style={{fontSize:10.5}}>min conf {m.policy.scan.min_confidence}</span>
+            )}
+          </div>
+          {m.policy.description && (
+            <div className="muted" style={{fontSize:11.5, marginBottom:3}}>{m.policy.description}</div>
+          )}
+          <div className="mono" style={{fontSize:10.5, color:'var(--ink-soft)'}}>
+            scope: {m.hits.map(h => <span key={h} style={{color:'var(--accent)'}}>{h}</span>).reduce((acc, el, idx) => idx === 0 ? [el] : [...acc, ', ', el], [])}
+            {m.policy.rules && m.policy.rules.length > 0 && <> · {m.policy.rules.length} rule{m.policy.rules.length === 1 ? '' : 's'}</>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// RelatedFindings — clusters neighbouring findings by four axes:
+//   · same request_id     (found in the same scan)
+//   · same source_ip      (same caller, different scan)
+//   · same category       (same detection type, anywhere in ring)
+//   · temporal proximity  (within ±5 min of this finding)
+// A finding can hit multiple axes — we surface the strongest signal
+// first and render smaller chips for the rest.
+function RelatedFindings({ finding, onJump }) {
+  const fx = window.useSiphonApi('/v1/findings?limit=500');
+  const list = (fx.data && fx.data.findings) || [];
+  const selfTs = new Date(finding.ts).getTime();
+  const WINDOW_MS = 5 * 60 * 1000;
+
+  const axes = React.useMemo(() => {
+    const out = { request: [], source: [], category: [], temporal: [] };
+    for (const r of list) {
+      if (r.id === finding.id) continue;
+      if (r.request_id && r.request_id === finding.request_id) out.request.push(r);
+      if (r.source_ip && r.source_ip === finding.source_ip) out.source.push(r);
+      if (r.category && r.category === finding.category) out.category.push(r);
+      const rt = new Date(r.ts).getTime();
+      if (!isNaN(rt) && Math.abs(rt - selfTs) <= WINDOW_MS) out.temporal.push(r);
+    }
+    return out;
+  }, [list, finding]);
+
+  // Build a scored/deduped union: each finding carries which axes it hit
+  // so the render can show badges.
+  const clustered = React.useMemo(() => {
+    const map = new Map();
+    const tag = (arr, axis, weight) => {
+      for (const r of arr) {
+        const e = map.get(r.id) || { finding: r, axes: new Set(), score: 0 };
+        if (!e.axes.has(axis)) {
+          e.axes.add(axis);
+          e.score += weight;
+        }
+        map.set(r.id, e);
+      }
+    };
+    // weight order mirrors analyst intent: same-scan is always
+    // strongest, then same-caller, then same-category, then windowed.
+    tag(axes.request, 'request', 8);
+    tag(axes.source, 'source', 4);
+    tag(axes.category, 'category', 2);
+    tag(axes.temporal, 'temporal', 1);
+    return Array.from(map.values()).sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return new Date(b.finding.ts).getTime() - new Date(a.finding.ts).getTime();
+    });
+  }, [axes]);
+
+  const AXIS_META = {
+    request:  { label: 'same scan',     color: 'var(--accent)',  hint: 'same request_id' },
+    source:   { label: 'same source',   color: 'var(--cyan)',    hint: 'same source_ip' },
+    category: { label: 'same category', color: 'var(--amber)',   hint: 'same category' },
+    temporal: { label: '±5 min',        color: 'var(--ink-soft)',hint: 'within ±5 min' },
+  };
+
+  const counts = {
+    request:  axes.request.length,
+    source:   axes.source.length,
+    category: axes.category.length,
+    temporal: axes.temporal.length,
+  };
+
+  const offsetLabel = (ts) => {
+    const ms = new Date(ts).getTime() - selfTs;
+    if (isNaN(ms)) return '—';
+    const abs = Math.abs(ms);
+    const sign = ms >= 0 ? '+' : '−';
+    if (abs < 1000) return sign + abs + 'ms';
+    if (abs < 60000) return sign + (abs / 1000).toFixed(1) + 's';
+    if (abs < 3600000) return sign + Math.round(abs / 60000) + 'm';
+    return sign + Math.round(abs / 3600000) + 'h';
+  };
+
+  if (fx.loading && clustered.length === 0) {
+    return (
+      <div className="box">
+        <div className="box-title"><span className="t">Related findings</span><span className="k">loading…</span></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Related findings</span>
+        <span className="k">
+          {clustered.length} in ring · scan <b>{counts.request}</b> · source <b>{counts.source}</b> · category <b>{counts.category}</b> · ±5m <b>{counts.temporal}</b>
+        </span>
+      </div>
+
+      {clustered.length === 0 ? (
+        <div className="muted mono" style={{fontSize:11.5, padding:'6px 0', lineHeight:1.7}}>
+          No other findings in <span className="mono">/v1/findings</span> share this finding's scan, source, category, or ±5 min window.
+        </div>
+      ) : (
+        <div style={{display:'grid', gridTemplateColumns:'auto auto 1fr auto', rowGap:6, columnGap:10, alignItems:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5}}>
+          {clustered.slice(0, 12).map(({ finding: r, axes: hits }) => (
+            <React.Fragment key={r.id}>
+              <span className={`chip chip--${r.severity}`} style={{fontSize:9, padding:'2px 6px'}}>{r.severity}</span>
+              <span style={{color:'var(--ink-bright)', fontWeight:600}}>
+                <a href="#" onClick={(e) => { e.preventDefault(); onJump && onJump(r.id); }}
+                   style={{color:'inherit', textDecoration:'none', borderBottom:'1px dashed var(--line-strong)'}}>
+                  {r.id}
+                </a>
+              </span>
+              <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', minWidth:0}}>
+                <span style={{color:'var(--cyan)'}}>{r.category}</span>
+                {r.sub_category && <span className="muted"> / {r.sub_category}</span>}
+                <span className="muted"> · </span>
+                <span style={{color:'var(--ink)'}}>{r.text}</span>
+              </span>
+              <span style={{display:'flex', gap:3, alignItems:'center'}}>
+                {[...hits].map(a => (
+                  <span key={a}
+                        title={AXIS_META[a].hint}
+                        style={{
+                          fontSize:9, padding:'1px 5px',
+                          border:`1px solid ${AXIS_META[a].color}`,
+                          color: AXIS_META[a].color,
+                          borderRadius:2, letterSpacing:0.5,
+                        }}>
+                    {AXIS_META[a].label}
+                  </span>
+                ))}
+                <span className="muted" style={{fontSize:10, marginLeft:4}} title={r.ts}>
+                  {offsetLabel(r.ts)}
+                </span>
+              </span>
+            </React.Fragment>
+          ))}
+          {clustered.length > 12 && (
+            <div className="muted" style={{gridColumn:'1 / -1', fontSize:11, paddingTop:4}}>
+              … {clustered.length - 12} more hidden. Narrow the filter on the Findings Console to see them.
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="margin-note" style={{marginTop:8}}>
+        ring is bounded ({fx.data ? fx.data.capacity : '—'}) — only findings still in-memory are considered. User-behavioural joins across pods will come later.
+      </div>
+    </div>
+  );
+}
+
+// DetectionPipeline — re-runs /scan with trace:true against the
+// finding's matched text so the analyst can see every stage in the
+// scanner pipeline and the exact moment this match was either
+// emitted or dropped. Self-contained (doesn't cross-reference the
+// Engineering TracePanel) so it can live in an earlier script block.
+const FD_STAGES = [
+  { key: 'regex',           label: 'regex' },
+  { key: 'validation',      label: 'validate' },
+  { key: 'context',         label: 'context' },
+  { key: 'ctx_required',    label: 'ctx-gate' },
+  { key: 'require_context', label: 'req-ctx' },
+  { key: 'min_confidence',  label: 'min-conf' },
+  { key: 'emit',            label: 'emit' },
+];
+function DetectionPipeline({ finding }) {
+  const [state, setState] = React.useState({ loading: true, trace: null, error: null });
+
+  React.useEffect(() => {
+    if (!finding || !finding.text) {
+      setState({ loading: false, trace: [], error: null });
+      return;
+    }
+    let cancelled = false;
+    setState(s => ({ ...s, loading: true, error: null }));
+    const url = (window.SIPHON_API_URL ? window.SIPHON_API_URL() : 'http://127.0.0.1:8080').replace(/\/$/, '') + '/scan';
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: finding.text, options: { trace: true } }),
+    })
+      .then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(new Error('HTTP ' + r.status + ': ' + t))))
+      .then(j => { if (!cancelled) setState({ loading: false, trace: j.trace || [], error: null }); })
+      .catch(e => { if (!cancelled) setState({ loading: false, trace: null, error: String(e.message || e) }); });
+    return () => { cancelled = true; };
+  }, [finding && finding.id]);
+
+  // Narrow the trace to events about THIS candidate — matching
+  // category + sub_category (more forgiving than span since the
+  // rescan text is just the matched slice, not the original document).
+  const events = (state.trace || []).filter(e =>
+    e.category === finding.category &&
+    (!finding.sub_category || e.sub_category === finding.sub_category)
+  );
+  const byStage = {};
+  events.forEach(e => { byStage[e.stage] = e; });
+  const wasEmitted = events.some(e => e.outcome === 'emit');
+  const dropEvt = events.find(e => e.outcome === 'drop');
+
+  return (
+    <div className="box" style={{marginBottom:'var(--gap)'}}>
+      <div className="box-title">
+        <span className="t">Detection pipeline</span>
+        <span className="k">
+          re-run of <span className="mono">POST /scan</span> against the matched slice with <span className="mono">trace:true</span>
+        </span>
+      </div>
+
+      {state.loading && (
+        <div className="muted" style={{padding:12, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5}}>
+          tracing pipeline…
+        </div>
+      )}
+      {state.error && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)'}}>
+          <b>Error:</b> {state.error}
+        </div>
+      )}
+
+      {!state.loading && !state.error && (
+        <>
+          {/* verdict row */}
+          <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:10, flexWrap:'wrap'}}>
+            <span className={`chip chip--${wasEmitted ? 'safe' : 'red'}`} style={{fontSize:9, minWidth:50, textAlign:'center'}}>
+              {wasEmitted ? 'EMIT' : 'DROP'}
+            </span>
+            <span style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, color:'var(--ink)'}}>
+              {finding.category} / {finding.sub_category || '—'}
+            </span>
+            {typeof finding.confidence === 'number' && (
+              <span className="muted mono" style={{fontSize:11}}>confidence {finding.confidence.toFixed(3)}</span>
+            )}
+            <span className="muted mono" style={{marginLeft:'auto', fontSize:10}}>
+              {events.length} stage event{events.length === 1 ? '' : 's'}
+            </span>
+          </div>
+
+          {/* stage strip */}
+          <div style={{display:'flex', gap:2, marginBottom:10, flexWrap:'wrap'}}>
+            {FD_STAGES.map((s, si) => {
+              const e = byStage[s.key];
+              const color = !e
+                ? { bg: 'var(--bg-3)', fg: 'var(--ink-dim)', border: 'var(--line)' }
+                : e.outcome === 'emit'
+                  ? { bg: 'var(--accent-wash)', fg: 'var(--accent)', border: 'var(--accent)' }
+                  : e.outcome === 'drop'
+                    ? { bg: 'var(--red-wash)', fg: 'var(--red)', border: 'var(--red)' }
+                    : { bg: 'var(--amber-wash)', fg: 'var(--amber)', border: 'var(--amber)' };
+              return (
+                <React.Fragment key={si}>
+                  <span
+                    title={e
+                      ? `${s.label} · ${e.outcome}${e.confidence != null ? ' · conf ' + e.confidence.toFixed(3) : ''}${e.reason ? '\n' + e.reason : ''}`
+                      : `${s.label} · not reached`}
+                    style={{
+                      padding:'4px 10px',
+                      fontFamily:"'JetBrains Mono', monospace",
+                      fontSize:10,
+                      fontWeight: 600,
+                      letterSpacing:'0.08em',
+                      textTransform:'uppercase',
+                      border:'1px solid ' + color.border,
+                      color: color.fg,
+                      background: color.bg,
+                      borderRadius:'var(--radius)',
+                      borderStyle: e ? 'solid' : 'dashed',
+                    }}>
+                    {s.label}
+                  </span>
+                  {si < FD_STAGES.length - 1 && (
+                    <span style={{alignSelf:'center', color: e && e.outcome !== 'drop' ? 'var(--accent)' : 'var(--line)', fontSize:12}}>→</span>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </div>
+
+          {/* reason for the final outcome */}
+          {dropEvt && (
+            <div className="margin-note red" style={{marginTop:4}}>
+              dropped at <b>{dropEvt.stage}</b>: {dropEvt.reason}
+              {dropEvt.confidence != null && <> · confidence {dropEvt.confidence.toFixed(3)}</>}
+            </div>
+          )}
+          {!dropEvt && wasEmitted && byStage.emit && byStage.emit.confidence != null && (
+            <div className="margin-note" style={{marginTop:4}}>
+              emitted at confidence <b>{byStage.emit.confidence.toFixed(3)}</b>
+            </div>
+          )}
+          {events.length === 0 && (
+            <div className="muted mono" style={{padding:8, fontSize:11}}>
+              No stage events for this category · may have been the alt-decoding pass or a different pattern class.
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function FindingDetail({ id, back }) {
   const fx = window.useSiphonApi('/v1/findings?limit=500');
   const { PageBar } = window;
@@ -5866,76 +6504,215 @@ function FindingDetail({ id, back }) {
   }
 
   const sev = f.severity;
-  const others = list.filter(x => x.category === f.category && x.id !== f.id).slice(0, 5);
   const sameReq = list.filter(x => x.request_id === f.request_id && x.id !== f.id);
+
+  const fpQueue = window.useFpQueue();
+  const inFpQueue = fpQueue.some(e => e.finding && e.finding.id === f.id);
+  const flagFp = () => {
+    window.c2FpQueueAdd(f);
+    try { localStorage.setItem('c2:fp-finding', JSON.stringify(f)); } catch {}
+    window.__c2_go && window.__c2_go('fptool');
+  };
+  const unflagFp = () => window.c2FpQueueRemove(f.id);
+
+  // Prev/Next navigation. Finds the index of the current finding in
+  // the newest-first ring and moves the sub-route forward/backward.
+  // Arrow keys bound at window level for analyst speed.
+  const idx = list.findIndex(x => x.id === id);
+  const prev = idx > 0 ? list[idx - 1] : null;
+  const next = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
+  const gotoFinding = (fid) => window.__c2_go && window.__c2_go('stream', 'finding:' + fid);
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      if (e.key === 'j' || e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        if (next) gotoFinding(next.id);
+      } else if (e.key === 'k' || e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        if (prev) gotoFinding(prev.id);
+      } else if (e.key === 'Escape') {
+        back && back();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [prev, next, back]);
+
   return (
     <div>
       <PageBar
         crumbs={['Operate', 'Findings', f.id]}
-        title={`${f.category} match · ${f.id}`}
-        subtitle={`source ${f.source_ip} · request ${f.request_id} · ${f.ts}`}
+        title={<>
+          <span className="mono" style={{color:'var(--ink-bright)'}}>{f.id}</span>
+          <span className="muted" style={{marginLeft:10, fontSize:14}}>·</span>
+          <span style={{marginLeft:10, fontFamily:"'Space Grotesk', sans-serif"}}>{f.category}</span>
+          <span className={`chip chip--${sev}`} style={{marginLeft:12, fontSize:10, verticalAlign:'middle'}}>{sev.toUpperCase()}</span>
+          <HelpIcon topic="finding_detail" title="Finding anatomy" size={16} />
+        </>}
+        subtitle={<>
+          <span className="mono">source {f.source_ip}</span>
+          <span className="muted"> · req </span>
+          <span className="mono">{(f.request_id || '').split('-')[0]}</span>
+          <span className="muted"> · </span>
+          <span className="mono">{f.ts}</span>
+          {idx >= 0 && (
+            <>
+              <span className="muted"> · </span>
+              <span className="mono">{idx + 1} of {list.length} in ring</span>
+            </>
+          )}
+        </>}
         actions={<>
           <window.LivePill source={fx.source} onClick={fx.refetch} />
-          <button className="btn ghost" onClick={back}>‹ Back to console</button>
-          <button className="btn">Mark FP</button>
+          <div style={{display:'flex', gap:2, border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', overflow:'hidden'}}>
+            <button
+              className="btn ghost"
+              onClick={() => prev && gotoFinding(prev.id)}
+              disabled={!prev}
+              title={prev ? `newer · ${prev.id} · k / ← / ↑` : 'no newer finding in ring'}
+              style={{border:'none', borderRight:'1px solid var(--line-strong)', padding:'5px 10px', opacity: prev ? 1 : 0.4, cursor: prev ? 'pointer' : 'not-allowed'}}>
+              ‹ Prev
+            </button>
+            <button
+              className="btn ghost"
+              onClick={() => next && gotoFinding(next.id)}
+              disabled={!next}
+              title={next ? `older · ${next.id} · j / → / ↓` : 'no older finding in ring'}
+              style={{border:'none', padding:'5px 10px', opacity: next ? 1 : 0.4, cursor: next ? 'pointer' : 'not-allowed'}}>
+              Next ›
+            </button>
+          </div>
+          <button className="btn ghost" onClick={back} title="Esc">‹ Back</button>
+          {inFpQueue
+            ? <button className="btn" onClick={unflagFp} title="finding is in the FP queue · click to remove" style={{color:'var(--amber)', borderColor:'var(--amber)'}}>⚑ In FP queue</button>
+            : <button className="btn" onClick={flagFp} title="add to the FP review queue + open in FP Troubleshooter">⚑ Mark as FP</button>}
           <button className="btn primary">Acknowledge</button>
         </>}
       />
 
-      <div className="finding-hero">
-        <div className="box">
-          <div className="box-title"><span className="t">Match &amp; context</span><span className="k">from /v1/findings</span></div>
+      {/* Detection pipeline — full width above the hero grid */}
+      <DetectionPipeline finding={f} />
 
-          <div className="label" style={{marginBottom:4}}>Matched value</div>
-          <div className="mono" style={{
-            fontSize:14, padding:'8px 10px',
-            background: 'var(--amber-wash)',
-            border:'1.5px solid var(--amber)',
-            borderRadius:2, marginBottom:12
-          }}>{f.text}</div>
+      {/* Source → Destination — full-width under the pipeline */}
+      <div style={{marginTop:'var(--gap)'}}>
+        <SourceDestination finding={f} />
+      </div>
 
-          <div className="label" style={{marginBottom:4}}>Span</div>
-          <div className="mono" style={{fontSize:12, lineHeight:1.7, padding:'10px 12px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:2, marginBottom:12}}>
-            offset {f.span ? f.span[0] : '—'} → {f.span ? f.span[1] : '—'} ({f.span ? (f.span[1] - f.span[0]) : 0} chars)
+      <div className="finding-hero" style={{marginTop:'var(--gap)'}}>
+        <div style={{display:'flex', flexDirection:'column', gap:'var(--gap)'}}>
+          <div className="box">
+            <div className="box-title"><span className="t">Match &amp; context</span><span className="k">from /v1/findings</span></div>
+
+            <div className="label" style={{marginBottom:4}}>Matched value</div>
+            <div className="mono" style={{
+              fontSize:14, padding:'8px 10px',
+              background: 'var(--amber-wash)',
+              border:'1.5px solid var(--amber)',
+              borderRadius:2, marginBottom:12
+            }}>{f.text}</div>
+
+            <div className="label" style={{marginBottom:4}}>Span</div>
+            <div className="mono" style={{fontSize:12, lineHeight:1.7, padding:'10px 12px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:2, marginBottom:12}}>
+              offset {f.span ? f.span[0] : '—'} → {f.span ? f.span[1] : '—'} ({f.span ? (f.span[1] - f.span[0]) : 0} chars)
+            </div>
+
+            <div className="label" style={{marginTop:14, marginBottom:6}}>Signals (from scanner)</div>
+            <div style={{fontSize:13, lineHeight:1.9}}>
+              <div className="tick">Category <span className="mono">{f.category}</span>{f.sub_category ? <> · sub <span className="mono">{f.sub_category}</span></> : null}</div>
+              <div className="tick">Confidence <span className="mono">{f.confidence != null ? f.confidence.toFixed(3) : '—'}</span></div>
+              <div className={f.has_context ? 'tick' : 'cross'}>Context {f.has_context ? 'matched' : 'not matched'}</div>
+              <div className="tick">Severity <span className="mono">{f.severity}</span> (derived)</div>
+            </div>
+
+            {f.metadata && Object.keys(f.metadata).length > 0 && (
+              <>
+                <div className="label" style={{marginTop:14, marginBottom:6}}>Metadata (from pattern match)</div>
+                <div className="mono" style={{fontSize:11, lineHeight:1.8, background:'var(--bg-1)', padding:10, border:'1px dashed var(--line-soft)'}}>
+                  {Object.entries(f.metadata).map(([k, v]) => (
+                    <div key={k}><span style={{color:'var(--cyan)'}}>{k}</span> = <span style={{color:'var(--accent)'}}>{String(v)}</span></div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {sameReq.length > 0 && (
+              <>
+                <div className="label" style={{marginTop:14, marginBottom:6}}>Other findings in the same scan</div>
+                <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8}}>
+                  {sameReq.map(r => (
+                    <div key={r.id}>
+                      <span className={`chip chip--${r.severity}`} style={{fontSize:9}}>{r.severity}</span>{' '}
+                      <span style={{color:'var(--cyan)'}}>{r.category}</span> / {r.sub_category}{' '}
+                      · <span style={{color:'var(--ink-bright)'}}>{r.text}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
-          <div className="label" style={{marginTop:14, marginBottom:6}}>Signals (from scanner)</div>
-          <div style={{fontSize:13, lineHeight:1.9}}>
-            <div className="tick">Category <span className="mono">{f.category}</span>{f.sub_category ? <> · sub <span className="mono">{f.sub_category}</span></> : null}</div>
-            <div className="tick">Confidence <span className="mono">{f.confidence != null ? f.confidence.toFixed(3) : '—'}</span></div>
-            <div className={f.has_context ? 'tick' : 'cross'}>Context {f.has_context ? 'matched' : 'not matched'}</div>
-            <div className="tick">Severity <span className="mono">{f.severity}</span> (derived)</div>
-          </div>
-
-          {f.metadata && Object.keys(f.metadata).length > 0 && (
-            <>
-              <div className="label" style={{marginTop:14, marginBottom:6}}>Metadata (from pattern match)</div>
-              <div className="mono" style={{fontSize:11, lineHeight:1.8, background:'var(--bg-1)', padding:10, border:'1px dashed var(--line-soft)'}}>
-                {Object.entries(f.metadata).map(([k, v]) => (
-                  <div key={k}><span style={{color:'var(--cyan)'}}>{k}</span> = <span style={{color:'var(--accent)'}}>{String(v)}</span></div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {sameReq.length > 0 && (
-            <>
-              <div className="label" style={{marginTop:14, marginBottom:6}}>Other findings in the same scan</div>
-              <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8}}>
-                {sameReq.map(r => (
-                  <div key={r.id}>
-                    <span className={`chip chip--${r.severity}`} style={{fontSize:9}}>{r.severity}</span>{' '}
-                    <span style={{color:'var(--cyan)'}}>{r.category}</span> / {r.sub_category}{' '}
-                    · <span style={{color:'var(--ink-bright)'}}>{r.text}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
+          <FindingTimeline finding={f} sameReq={sameReq} />
         </div>
 
-        <div>
-          <div className="box" style={{marginBottom: 'var(--gap)'}}>
+        <div style={{display:'flex', flexDirection:'column', gap:'var(--gap)'}}>
+          <PolicyThatFired finding={f} />
+
+          <div className="box">
+            <div className="box-title"><span className="t">Actions</span><span className="k">this finding</span></div>
+            <div style={{display:'flex', flexDirection:'column', gap:6}}>
+              {inFpQueue ? (
+                <button className="btn" onClick={unflagFp} style={{color:'var(--amber)', borderColor:'var(--amber)'}}>
+                  ⚑ Remove from FP queue
+                </button>
+              ) : (
+                <button className="btn primary" onClick={flagFp}>
+                  ⚑ Flag as false positive…
+                </button>
+              )}
+              <button
+                className="btn ghost"
+                onClick={() => window.__c2_go && window.__c2_go('fpqueue')}>
+                Open FP queue ({fpQueue.length})
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  try {
+                    localStorage.setItem('c2:scandiff-a', f.text || '');
+                    // seed side B with a minimally redacted variant so the diff
+                    // is non-trivial on first paint. Analyst can overwrite.
+                    const masked = (f.text || '').replace(/[A-Za-z0-9]/g, '*');
+                    localStorage.setItem('c2:scandiff-b', masked);
+                  } catch {}
+                  window.__c2_go && window.__c2_go('scandiff');
+                }}
+                title="compare this match against a mitigated variant">
+                Send to Scan Diff ⇌
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  try { localStorage.setItem('c2:livescan-text', f.text || ''); } catch {}
+                  window.__c2_go && window.__c2_go('livescan');
+                }}
+                title="open this match's text in Live Scan for re-analysis">
+                Send to Live Scan ▶
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  try { navigator.clipboard.writeText(JSON.stringify(f, null, 2)); } catch {}
+                }}>
+                Copy record as JSON
+              </button>
+              <button
+                className="btn ghost"
+                onClick={() => window.__c2_go && window.__c2_go('patterns')}>
+                Open in Patterns browser
+              </button>
+            </div>
+          </div>
+
+          <div className="box">
             <div className="box-title"><span className="t">Record</span><span className="k">raw shape</span></div>
             <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:8}}>
               <span className={`chip chip--${sev}`} style={{fontSize:12, padding:'4px 12px'}}>{f.severity.toUpperCase()}</span>
@@ -5954,54 +6731,13 @@ function FindingDetail({ id, back }) {
               <span className="k">Severity</span>        <span className="v">{f.severity}</span>
             </div>
           </div>
-
-          <div className="box" style={{marginBottom: 'var(--gap)'}}>
-            <div className="box-title"><span className="t">Related · same category</span><span className="k">{others.length} in ring</span></div>
-            {others.length === 0 ? (
-              <div className="muted" style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, padding:'6px 0'}}>none</div>
-            ) : (
-              <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.8}}>
-                {others.map(r => (
-                  <div key={r.id}>
-                    <span className="muted" title={r.ts}>{fmtWallClock(r.ts)}</span>{' '}
-                    <span style={{color:'var(--ink-bright)'}}>{r.text}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div className="box">
-            <div className="box-title"><span className="t">Actions</span><span className="k">this finding</span></div>
-            <div style={{display:'flex', flexDirection:'column', gap:6}}>
-              <button
-                className="btn primary"
-                onClick={() => {
-                  try { localStorage.setItem('c2:fp-finding', JSON.stringify(f)); } catch {}
-                  window.__c2_go && window.__c2_go('fptool');
-                }}>
-                ⚑ Flag as false positive…
-              </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  try { navigator.clipboard.writeText(JSON.stringify(f, null, 2)); } catch {}
-                }}>
-                Copy record as JSON
-              </button>
-              <button
-                className="btn"
-                onClick={() => window.__c2_go && window.__c2_go('patterns')}>
-                Open in Patterns browser
-              </button>
-              <button
-                className="btn ghost"
-                onClick={() => window.__c2_go && window.__c2_go('livescan')}>
-                Open in Live Scan
-              </button>
-            </div>
-          </div>
         </div>
+      </div>
+
+      {/* Related findings — full-width below the hero grid. Jump-to
+          is wired through the sub-route hand-off used by Next/Prev. */}
+      <div style={{marginTop:'var(--gap)'}}>
+        <RelatedFindings finding={f} onJump={gotoFinding} />
       </div>
     </div>
   );
@@ -9585,7 +10321,16 @@ function LiveScan() {
     catch { return 'http://127.0.0.1:8080'; }
   })();
   const [apiUrl, setApiUrl] = React.useState(defaultUrl);
-  const [text, setText] = React.useState(LS_SAMPLE);
+  // Accept a preloaded text blob from the finding-detail / FP-queue
+  // hand-off and clear it so reloads don't keep re-seeding.
+  const initialText = React.useMemo(() => {
+    try {
+      const v = localStorage.getItem('c2:livescan-text');
+      if (v != null) { localStorage.removeItem('c2:livescan-text'); return v; }
+    } catch {}
+    return LS_SAMPLE;
+  }, []);
+  const [text, setText] = React.useState(initialText);
   const [minConf, setMinConf] = React.useState(0);
   const [requireCtx, setRequireCtx] = React.useState(false);
   const [dedupe, setDedupe] = React.useState(true);
@@ -10489,8 +11234,25 @@ SSN on file: 123 45 6789. AWS key AKIAIOSFODNN7EXAMPLE.`;
 
 function ScanDiff() {
   const apiUrl = window.SIPHON_API_URL();
-  const [a, setA] = React.useState(SD_SAMPLE_A);
-  const [b, setB] = React.useState(SD_SAMPLE_B);
+  // Finding-detail + FP-queue hand-off: if a preload blob is in
+  // localStorage, use it to seed side A (and optionally B) and then
+  // clear so a reload doesn't keep re-seeding.
+  const initialA = React.useMemo(() => {
+    try {
+      const v = localStorage.getItem('c2:scandiff-a');
+      if (v != null) { localStorage.removeItem('c2:scandiff-a'); return v; }
+    } catch {}
+    return SD_SAMPLE_A;
+  }, []);
+  const initialB = React.useMemo(() => {
+    try {
+      const v = localStorage.getItem('c2:scandiff-b');
+      if (v != null) { localStorage.removeItem('c2:scandiff-b'); return v; }
+    } catch {}
+    return SD_SAMPLE_B;
+  }, []);
+  const [a, setA] = React.useState(initialA);
+  const [b, setB] = React.useState(initialB);
   const [ra, setRa] = React.useState(null);
   const [rb, setRb] = React.useState(null);
   const [running, setRunning] = React.useState(false);
@@ -11432,7 +12194,176 @@ const HELP_MAP = {
 };
 window.HELP_MAP = HELP_MAP;
 
-Object.assign(window, { ApiExplorer, ScanDiff, ProcessState, FPTool, DocsSurface, HelpIcon, HelpModal });
+// FP Queue — a persisted review list of findings the analyst flagged
+// as suspected false positives. Stored in localStorage.c2:fp-queue via
+// window.c2FpQueue*(). Each entry has { finding, flaggedAt, status,
+// note }. The queue is the central pivot for the FP-Troubleshooting
+// workflow: from here you dispatch to FP Troubleshooter, Scan Diff,
+// or Live Scan.
+function FpQueue() {
+  const queue = window.useFpQueue();
+  const [filter, setFilter] = React.useState('open');
+  const statuses = ['open', 'investigating', 'confirmed', 'dismissed'];
+  const statusColor = {
+    open:          'var(--amber)',
+    investigating: 'var(--cyan)',
+    confirmed:     'var(--safe)',
+    dismissed:     'var(--ink-faint)',
+  };
+  const filtered = filter === 'all' ? queue : queue.filter(e => (e.status || 'open') === filter);
+
+  const openInTroubleshooter = (entry) => {
+    try { localStorage.setItem('c2:fp-finding', JSON.stringify(entry.finding)); } catch {}
+    window.__c2_go && window.__c2_go('fptool');
+  };
+  const openInLiveScan = (entry) => {
+    try { localStorage.setItem('c2:livescan-text', entry.finding.text || ''); } catch {}
+    window.__c2_go && window.__c2_go('livescan');
+  };
+  const openInScanDiff = (entry) => {
+    try { localStorage.setItem('c2:scandiff-a', entry.finding.text || ''); } catch {}
+    window.__c2_go && window.__c2_go('scandiff');
+  };
+  const clearAll = () => {
+    if (confirm('Clear every entry from the FP queue?')) {
+      try { localStorage.setItem('c2:fp-queue', '[]'); } catch {}
+    }
+  };
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Engineering · FP Queue</div>
+          <h1>FP Queue <HelpIcon topic="patterns" title="FP workflow" size={18} /></h1>
+        </div>
+        <div className="actions">
+          <span className="muted mono" style={{fontSize:11}}>
+            {queue.length} total · {queue.filter(e => (e.status || 'open') === 'open').length} open
+          </span>
+          <button className="btn ghost" onClick={clearAll}>Clear all</button>
+        </div>
+      </div>
+
+      {/* FP Troubleshooting toolset overview */}
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title"><span className="t">FP troubleshooting toolset</span><span className="k">workflow</span></div>
+        <div style={{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:10, marginTop:8}}>
+          {[
+            { id:'fptool',   label:'1 · FP Troubleshooter', desc:'Allowlist-merge preview, rescan-with-mitigation, pattern-culprit spotlight.' },
+            { id:'scandiff', label:'2 · Scan Diff',         desc:'A/B compare two inputs — see which finding a variant loses or gains.' },
+            { id:'livescan', label:'3 · Live Scan',         desc:'Free-form scan with optional pipeline trace.' },
+          ].map(t => (
+            <div key={t.id}
+                 onClick={() => window.__c2_go && window.__c2_go(t.id)}
+                 style={{
+                   padding:'10px 12px', cursor:'pointer',
+                   border:'1px solid var(--line-strong)',
+                   borderRadius:'var(--radius)',
+                   background:'var(--bg-2)',
+                 }}>
+              <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, fontWeight:600, color:'var(--ink-bright)'}}>{t.label}</div>
+              <div className="muted" style={{fontSize:11, marginTop:4}}>{t.desc}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Status filter chips */}
+      <div style={{display:'flex', gap:6, marginBottom:'var(--gap)', alignItems:'center'}}>
+        <span className="label">STATUS</span>
+        {['all', ...statuses].map(s => {
+          const n = s === 'all' ? queue.length : queue.filter(e => (e.status || 'open') === s).length;
+          return (
+            <button key={s}
+              onClick={() => setFilter(s)}
+              className="btn ghost"
+              style={{
+                padding:'3px 10px', fontSize:10,
+                background: filter === s ? 'var(--accent)' : 'transparent',
+                color: filter === s ? 'var(--bg-0)' : 'var(--ink)',
+                borderColor: filter === s ? 'var(--accent)' : 'var(--line)',
+              }}>{s} · {n}</button>
+          );
+        })}
+      </div>
+
+      <div className="box" style={{padding:0, overflow:'hidden'}}>
+        {filtered.length === 0 ? (
+          <div className="muted" style={{padding:30, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+            — no entries · flag a finding from <b>Operate → Findings → [detail]</b> with <b>Mark as FP</b> —
+          </div>
+        ) : (
+          <table style={{width:'100%', borderCollapse:'collapse', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5}}>
+            <thead>
+              <tr style={{background:'var(--bg-2)', borderBottom:'1px solid var(--line-strong)'}}>
+                {['FLAGGED','STATUS','ID','SEV','CATEGORY','SUB-CATEGORY','MATCH','ACTIONS'].map((h, i) => (
+                  <th key={i} className="label" style={{textAlign:'left', padding:'7px 10px', fontWeight:600, color:'var(--ink-faint)', whiteSpace:'nowrap'}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((entry, i) => {
+                const f = entry.finding || {};
+                const st = entry.status || 'open';
+                return (
+                  <tr key={i} style={{borderBottom:'1px solid var(--line-soft)'}}>
+                    <td style={{padding:'7px 10px', color:'var(--ink-soft)', whiteSpace:'nowrap'}} title={entry.flaggedAt}>
+                      {fmtWallClock(entry.flaggedAt)}
+                    </td>
+                    <td style={{padding:'7px 10px'}}>
+                      <select value={st}
+                        onChange={(e) => window.c2FpQueueSetStatus(f.id, e.target.value)}
+                        style={{
+                          background:'var(--bg-1)',
+                          color: statusColor[st] || 'var(--ink)',
+                          border:'1px solid ' + (statusColor[st] || 'var(--line-strong)'),
+                          borderRadius:'var(--radius)',
+                          padding:'2px 6px',
+                          fontFamily:"'JetBrains Mono', monospace", fontSize:10.5,
+                          fontWeight:600,
+                          cursor:'pointer',
+                        }}>
+                        {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </td>
+                    <td style={{padding:'7px 10px', color:'var(--ink-dim)', whiteSpace:'nowrap'}}>{(f.id || '').slice(-8)}</td>
+                    <td style={{padding:'7px 10px'}}>
+                      <span className={`chip chip--${f.severity || 'ghost'}`} style={{fontSize:9}}>{f.severity || '—'}</span>
+                    </td>
+                    <td style={{padding:'7px 10px'}}>
+                      <span style={{fontSize:10, padding:'2px 6px', border:'1px solid ' + CAT_GROUP_COLOR[catGroup(f.category)], color: CAT_GROUP_COLOR[catGroup(f.category)], borderRadius:'var(--radius)', fontWeight:600}}>
+                        {catGroup(f.category)}
+                      </span>
+                    </td>
+                    <td style={{padding:'7px 10px', color:'var(--ink)', maxWidth:180, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={f.category + ' / ' + (f.sub_category || '')}>
+                      {f.sub_category || '—'}
+                    </td>
+                    <td style={{padding:'7px 10px', color:'var(--ink-bright)', maxWidth:260, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={f.text}>
+                      {f.text}
+                    </td>
+                    <td style={{padding:'7px 10px', whiteSpace:'nowrap'}}>
+                      <button className="btn ghost" onClick={() => openInTroubleshooter(entry)} title="FP Troubleshooter"
+                              style={{padding:'2px 8px', fontSize:9, marginRight:4}}>FP Tool</button>
+                      <button className="btn ghost" onClick={() => openInScanDiff(entry)} title="Scan Diff · A/B"
+                              style={{padding:'2px 8px', fontSize:9, marginRight:4}}>Diff</button>
+                      <button className="btn ghost" onClick={() => openInLiveScan(entry)} title="Live Scan · rerun"
+                              style={{padding:'2px 8px', fontSize:9, marginRight:4}}>Scan</button>
+                      <button className="btn ghost" onClick={() => window.c2FpQueueRemove(f.id)} title="remove from queue"
+                              style={{padding:'2px 8px', fontSize:9, color:'var(--red)', borderColor:'var(--red)'}}>×</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { ApiExplorer, ScanDiff, ProcessState, FPTool, FpQueue, DocsSurface, HelpIcon, HelpModal });
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -11527,7 +12458,7 @@ function App() {
   const { Dashboard, Stream, FindingDetail, Pods, Policy, Patterns, Models, Assets,
           Compliance, Testing, AssureOverview, DetectOverview, Settings, Logs, Topbar, WorkspaceBar, SurfaceBar, TweaksPanel,
           Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users,
-          LiveScan, CorpusRunner, ApiExplorer, ScanDiff, ProcessState, FPTool, Profiles,
+          LiveScan, CorpusRunner, ApiExplorer, ScanDiff, ProcessState, FPTool, FpQueue, Profiles,
           DocsSurface, HelpModal } = window;
 
   // expose go() globally so nested surfaces (e.g. DetectOverview cards) can navigate.
@@ -11545,6 +12476,7 @@ function App() {
       apiex:          <ApiExplorer />,
       procstate:      <ProcessState />,
       fptool:         <FPTool />,
+      fpqueue:        <FpQueue />,
       stream:         <Stream go={go} />,
       investigations: <Investigations />,
       pods:           <Pods />,
