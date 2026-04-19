@@ -5277,6 +5277,85 @@ function fmtWallClock(iso) {
        + String(d.getSeconds()).padStart(2,'0');
 }
 
+// Reusable select styled to match the mock. options = [[value, label]] or [value]
+function FilterSelect({ label, value, setValue, options }) {
+  const opts = options.map(o => Array.isArray(o) ? o : [o, o]);
+  return (
+    <label style={{display:'flex', alignItems:'center', gap:6}}>
+      <span className="label" style={{whiteSpace:'nowrap'}}>{label}</span>
+      <div style={{
+        display:'inline-flex', alignItems:'center', gap:4,
+        background:'var(--bg-1)',
+        border:'1px solid var(--line-strong)',
+        borderRadius:'var(--radius)',
+        padding:'3px 8px',
+        fontFamily:"'JetBrains Mono', monospace",
+        fontSize:11,
+      }}>
+        <select value={value} onChange={e => setValue(e.target.value)}
+                style={{
+                  appearance:'none', background:'transparent',
+                  border:'none', outline:'none',
+                  color: value === 'any' ? 'var(--ink-soft)' : 'var(--ink-bright)',
+                  fontFamily:'inherit', fontSize:11, paddingRight:4, cursor:'pointer',
+                }}>
+          {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        <span style={{color:'var(--ink-faint)', fontSize:9}}>▾</span>
+      </div>
+    </label>
+  );
+}
+
+// Combined filter row: severity / category / sub-category / source /
+// action / group-by, all as proper dropdowns populated from the
+// actual data currently in the ring.
+function FilterRow({
+  severity, setSeverity,
+  category, setCategory, categories,
+  subCategory, setSubCategory,
+  source, setSource,
+  groupBy, setGroupBy,
+  findings,
+}) {
+  // Filter options derived from the live data so we never offer a
+  // choice that produces zero rows.
+  const subCats = Array.from(new Set((findings || []).map(f => f.sub_category).filter(Boolean))).sort();
+  const sources = Array.from(new Set((findings || []).map(f => f.source_ip).filter(Boolean))).sort();
+
+  return (
+    <div className="box" style={{marginBottom:'var(--gap)', padding:'10px 14px'}}>
+      <div style={{display:'flex', gap:18, flexWrap:'wrap', alignItems:'center'}}>
+        <FilterSelect
+          label="SEVERITY"
+          value={severity} setValue={setSeverity}
+          options={[['any','any'], ['red','red'], ['warn','warn'], ['safe','safe']]}
+        />
+        <FilterSelect
+          label="CATEGORY"
+          value={category} setValue={setCategory}
+          options={[['any','any'], ...categories.map(c => [c, c.length > 28 ? c.slice(0, 28) + '…' : c])]}
+        />
+        <FilterSelect
+          label="SUB-CATEGORY"
+          value={subCategory} setValue={setSubCategory}
+          options={[['any','any'], ...subCats.map(s => [s, s])]}
+        />
+        <FilterSelect
+          label="SOURCE"
+          value={source} setValue={setSource}
+          options={[['any','any'], ...sources.map(s => [s, s])]}
+        />
+        <FilterSelect
+          label="GROUP BY"
+          value={groupBy} setValue={setGroupBy}
+          options={[['none','none'], ['category','category'], ['severity','severity'], ['sub_category','sub-category'], ['source_ip','source']]}
+        />
+      </div>
+    </div>
+  );
+}
+
 // Timeframes for the stream console header. `ms: null` means "no
 // window constraint" — i.e. show everything in the ring regardless of
 // age. Custom timeframes are not yet wired.
@@ -5293,6 +5372,8 @@ function Stream({ go }) {
   const [search, setSearch] = React.useState('');
   const [severity, setSeverity] = React.useState('any');
   const [category, setCategory] = React.useState('any');
+  const [subCategory, setSubCategory] = React.useState('any');
+  const [source, setSource] = React.useState('any');
   const [groupBy, setGroupBy] = React.useState('none');
   const [paused, setPaused] = React.useState(false);
   const [tf, setTf] = React.useState('24h');
@@ -5320,6 +5401,8 @@ function Stream({ go }) {
   const filtered = inWindow.filter(f =>
     (severity === 'any' || f.severity === severity) &&
     (category === 'any' || f.category === category) &&
+    (subCategory === 'any' || f.sub_category === subCategory) &&
+    (source === 'any' || f.source_ip === source) &&
     (!search || (f.text + ' ' + f.category + ' ' + (f.sub_category || '') + ' ' + (f.source_ip || '') + ' ' + (f.id || ''))
       .toLowerCase().includes(search.toLowerCase()))
   );
@@ -5357,7 +5440,9 @@ function Stream({ go }) {
   const categories = Array.from(new Set(all.map(f => f.category))).sort();
 
   const clearFilters = () => {
-    setSearch(''); setSeverity('any'); setCategory('any'); setGroupBy('none'); setTf('24h');
+    setSearch(''); setSeverity('any'); setCategory('any');
+    setSubCategory('any'); setSource('any');
+    setGroupBy('none'); setTf('24h');
   };
   const exportJson = () => {
     try {
@@ -5456,54 +5541,16 @@ function Stream({ go }) {
         </div>
       </div>
 
-      {/* severity + category quick filters pulled from real data */}
-      <div className="row" style={{marginBottom: 'var(--gap)', flexWrap:'wrap'}}>
-        <span className="label" style={{alignSelf:'center'}}>Sev</span>
-        {['any','red','warn','safe'].map(s => (
-          <button key={s}
-            onClick={() => setSeverity(s)}
-            className="btn ghost"
-            style={{
-              padding:'3px 10px', fontSize:10,
-              background: severity === s ? 'var(--accent)' : 'transparent',
-              color: severity === s ? 'var(--bg-0)' : 'var(--ink)',
-              borderColor: severity === s ? 'var(--accent)' : 'var(--line)'
-            }}>{s}</button>
-        ))}
-        <span className="right label" style={{alignSelf:'center'}}>Group by</span>
-        {['none','category','severity'].map(g => (
-          <button key={g}
-            onClick={() => setGroupBy(g)}
-            className="btn ghost"
-            style={{
-              padding:'3px 10px', fontSize:10,
-              background: groupBy === g ? 'var(--accent)' : 'transparent',
-              color: groupBy === g ? 'var(--bg-0)' : 'var(--ink)',
-              borderColor: groupBy === g ? 'var(--accent)' : 'var(--line)'
-            }}>{g}</button>
-        ))}
-      </div>
-
-      {categories.length > 0 && (
-        <div className="row" style={{marginBottom: 'var(--gap)', flexWrap:'wrap'}}>
-          <span className="label" style={{alignSelf:'center'}}>Cat</span>
-          <button onClick={() => setCategory('any')}
-            className="btn ghost"
-            style={{padding:'3px 10px', fontSize:10,
-              background: category === 'any' ? 'var(--accent)' : 'transparent',
-              color: category === 'any' ? 'var(--bg-0)' : 'var(--ink)',
-              borderColor: category === 'any' ? 'var(--accent)' : 'var(--line)'}}>any</button>
-          {categories.slice(0, 8).map(c => (
-            <button key={c}
-              onClick={() => setCategory(c)}
-              className="btn ghost"
-              style={{padding:'3px 10px', fontSize:10,
-                background: category === c ? 'var(--accent)' : 'transparent',
-                color: category === c ? 'var(--bg-0)' : 'var(--ink)',
-                borderColor: category === c ? 'var(--accent)' : 'var(--line)'}}>{c}</button>
-          ))}
-        </div>
-      )}
+      {/* ── Filter row ─────────────────────────────────────────── */}
+      <FilterRow
+        severity={severity} setSeverity={setSeverity}
+        category={category} setCategory={setCategory}
+        subCategory={subCategory} setSubCategory={setSubCategory}
+        source={source} setSource={setSource}
+        categories={categories}
+        groupBy={groupBy} setGroupBy={setGroupBy}
+        findings={all}
+      />
 
       <div className="box">
         <div className="find-row label" style={{borderBottom:'1.5px solid var(--line)'}}>
