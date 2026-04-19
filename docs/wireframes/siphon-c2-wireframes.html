@@ -2451,6 +2451,7 @@ function Investigations() {
           <h1>Investigations</h1>
         </div>
         <div className="actions">
+          <window.FixtureBadge reason="no investigations backend" />
           <button className="btn ghost">Filter</button>
           <button className="btn">Saved queries</button>
           <button className="btn primary">New investigation</button>
@@ -2554,6 +2555,7 @@ function Alerts() {
           <h1>Alerts &amp; Routing</h1>
         </div>
         <div className="actions">
+          <window.FixtureBadge reason="no alert-routing backend" />
           <button className="btn ghost">Playbooks</button>
           <button className="btn">Quiet hours</button>
           <button className="btn primary">New destination</button>
@@ -2646,6 +2648,7 @@ function Tokenization() {
           <h1>Tokenization &amp; Redaction</h1>
         </div>
         <div className="actions">
+          <window.FixtureBadge reason="tokenize vault is per-scanner in siphon-api" />
           <button className="btn ghost">Rotation policy</button>
           <button className="btn">New template</button>
           <button className="btn primary">New vault</button>
@@ -2745,6 +2748,7 @@ function Corpora() {
           <h1>Test Corpora</h1>
         </div>
         <div className="actions">
+          <window.FixtureBadge reason="no corpus store backend" />
           <button className="btn ghost">Export</button>
           <button className="btn">Import labelled</button>
           <button className="btn primary">New corpus</button>
@@ -2915,7 +2919,7 @@ function Audit() {
 
       <div className="grid grid-2">
         <div className="box">
-          <div className="box-title"><span className="t">Evidence packs</span><span className="k">signed · hash-chained exports · fixture</span></div>
+          <div className="box-title"><span className="t">Evidence packs</span><span className="k"><window.FixtureBadge small /> signed · hash-chained exports</span></div>
           <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.9}}>
             <div style={{padding:'6px 0', borderBottom:'1px dashed var(--line-soft)'}}>
               <span style={{color:'var(--accent)'}}>◈</span> 2026-Q1 · SOC2-controls · <span className="muted">142MB · 2026-04-03</span> <span className="chip chip--safe" style={{marginLeft:6}}>verified</span>
@@ -2933,7 +2937,7 @@ function Audit() {
         </div>
 
         <div className="box">
-          <div className="box-title"><span className="t">Retention policy</span><span className="k">by event class · fixture</span></div>
+          <div className="box-title"><span className="t">Retention policy</span><span className="k"><window.FixtureBadge small /> by event class</span></div>
           <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:2}}>
             <div>policy / model changes &nbsp;&nbsp;&nbsp;→ <span className="chip chip--safe">7 years</span></div>
             <div>detokenization events &nbsp;&nbsp;&nbsp;&nbsp;→ <span className="chip chip--safe">7 years</span></div>
@@ -2977,9 +2981,9 @@ function Integrations() {
 
       <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
         <div className="box"><div className="stat"><span className="s-label">SIEM destinations</span><span className="s-val">{liveConfigured}<span style={{fontSize:18,color:'var(--ink-soft)'}}>/{liveTotal}</span></span><span className="s-delta">env-configured</span></div></div>
-        <div className="box"><div className="stat"><span className="s-label">Sources</span><span className="s-val">5</span><span className="s-delta up">4 green · 1 auth-warn</span></div></div>
-        <div className="box"><div className="stat"><span className="s-label">Throughput</span><span className="s-val">82</span><span className="s-delta">k events/hr</span></div></div>
-        <div className="box"><div className="stat"><span className="s-label">Errors · 24h</span><span className="s-val" style={{color:'var(--amber)'}}>14</span><span className="s-delta">0.017% err rate</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Sources <window.FixtureBadge small /></span><span className="s-val">5</span><span className="s-delta up">4 green · 1 auth-warn</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Throughput <window.FixtureBadge small /></span><span className="s-val">82</span><span className="s-delta">k events/hr</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Errors · 24h <window.FixtureBadge small /></span><span className="s-val" style={{color:'var(--amber)'}}>14</span><span className="s-delta">0.017% err rate</span></div></div>
       </div>
 
       <div className="grid grid-2" style={{marginBottom:'var(--gap)'}}>
@@ -3010,7 +3014,7 @@ function Integrations() {
         </div>
 
         <div className="box">
-          <div className="box-title"><span className="t">Sources</span><span className="k">inbound · where findings come from</span></div>
+          <div className="box-title"><span className="t">Sources</span><span className="k"><window.FixtureBadge small /> inbound · where findings come from</span></div>
           <div style={{display:'grid', gridTemplateColumns:'16px 1.4fr 80px 80px 1fr', gap:8, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
             <span></span><span className="label">Name</span><span className="label">Kind</span><span className="label">Lag</span><span className="label">Detail</span>
           </div>
@@ -3029,7 +3033,7 @@ function Integrations() {
 
       <div className="grid grid-2">
         <div className="box">
-          <div className="box-title"><span className="t">Marketplace</span><span className="k">one-click connectors</span></div>
+          <div className="box-title"><span className="t">Marketplace</span><span className="k"><window.FixtureBadge small /> one-click connectors</span></div>
           <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
             <div style={{padding:'8px 10px', border:'1px dashed var(--line)', borderRadius:'var(--radius)'}}>+ Microsoft Sentinel<div className="muted" style={{fontSize:10}}>SIEM · cert pinned</div></div>
             <div style={{padding:'8px 10px', border:'1px dashed var(--line)', borderRadius:'var(--radius)'}}>+ Chronicle (Google)<div className="muted" style={{fontSize:10}}>SIEM · JSON lines</div></div>
@@ -3041,7 +3045,7 @@ function Integrations() {
         </div>
 
         <div className="box">
-          <div className="box-title"><span className="t">Health history · 24h</span><span className="k">outages &amp; degradations</span></div>
+          <div className="box-title"><span className="t">Health history · 24h</span><span className="k"><window.FixtureBadge small /> outages &amp; degradations</span></div>
           <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.9, color:'var(--ink-soft)'}}>
             <div><span style={{color:'var(--ink-faint)'}}>08:14</span> <span style={{color:'var(--amber)'}}>degraded</span> S3 audit-vault → healthy <span className="muted">(12m)</span></div>
             <div><span style={{color:'var(--ink-faint)'}}>07:02</span> <span style={{color:'var(--amber)'}}>rate-limited</span> Jira · cloud <span className="muted">(2m)</span></div>
@@ -3080,6 +3084,7 @@ function ApiKeys() {
           <h1>API Keys</h1>
         </div>
         <div className="actions">
+          <window.FixtureBadge reason="key registry is a single SHA-256 in env" />
           <button className="btn ghost">Audit key usage</button>
           <button className="btn">Rotation policy</button>
           <button className="btn primary">Issue new key</button>
@@ -3171,6 +3176,7 @@ function Agents() {
           <h1>Agents</h1>
         </div>
         <div className="actions">
+          <window.FixtureBadge reason="no agent fleet — siphon-api is the only pod" />
           <button className="btn ghost">Install instructions</button>
           <button className="btn">Remote config</button>
           <button className="btn primary">Promote canary</button>
@@ -3288,14 +3294,17 @@ function Users() {
       </div>
 
       <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
-        <div className="box"><div className="stat"><span className="s-label">Members</span><span className="s-val">18</span><span className="s-delta">14 humans · 4 service</span></div></div>
-        <div className="box"><div className="stat"><span className="s-label">Roles</span><span className="s-val">6</span><span className="s-delta">least-privilege</span></div></div>
-        <div className="box"><div className="stat"><span className="s-label">MFA coverage</span><span className="s-val" style={{color:'var(--safe)'}}>100%</span><span className="s-delta">enforced</span></div></div>
-        <div className="box"><div className="stat"><span className="s-label">Stale 90d</span><span className="s-val" style={{color:'var(--amber)'}}>1</span><span className="s-delta">review candidate</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Members <window.FixtureBadge small /></span><span className="s-val">18</span><span className="s-delta">14 humans · 4 service</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Roles</span><span className="s-val">{(rx.data && rx.data.total) || '—'}</span><span className="s-delta">from /v1/roles</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">MFA coverage <window.FixtureBadge small /></span><span className="s-val" style={{color:'var(--safe)'}}>100%</span><span className="s-delta">enforced</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Stale 90d <window.FixtureBadge small /></span><span className="s-val" style={{color:'var(--amber)'}}>1</span><span className="s-delta">review candidate</span></div></div>
       </div>
 
       <div className="box" style={{marginBottom:'var(--gap)'}}>
-        <div className="box-title"><span className="t">Members</span><span className="k">IdP: Okta · SAML 2.0</span></div>
+        <div className="box-title">
+          <span className="t">Members</span>
+          <span className="k"><window.FixtureBadge small reason="no user store" /> IdP: Okta · SAML 2.0</span>
+        </div>
         <div style={{display:'grid', gridTemplateColumns:'1.2fr 160px 90px 140px 80px 110px 30px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
           <span className="label">Name</span><span className="label">Role</span><span className="label">Kind</span><span className="label">MFA</span><span className="label">Active</span><span className="label">Region</span><span></span>
         </div>
@@ -3421,6 +3430,57 @@ window.LivePill = function LivePill({ source, onClick, title }) {
     </span>
   );
 };
+
+// Badge for surfaces (or sections) that aren't wired to real data yet.
+// When `full` is true, returns a bigger "FIXTURE · design-only" banner
+// intended for the page-head of entirely-fictional surfaces, plus a
+// style wrapper hook the caller can spread onto the root div.
+window.FixtureBadge = function FixtureBadge({ small, reason }) {
+  return (
+    <span
+      className="chip chip--warn"
+      title={reason || 'No backing data in siphon-api yet — this surface is a design fixture.'}
+      style={{
+        fontSize: small ? 9 : 10,
+        letterSpacing: '0.14em',
+        fontWeight: 700,
+      }}>
+      FIXTURE{reason ? ' · ' + reason : ''}
+    </span>
+  );
+};
+
+// A subtle visual treatment for entirely-fictional surfaces — dashed
+// left rule + slightly muted opacity. Applied to the page root via a
+// wrapper div so every box inside inherits the same cue.
+window.FixtureWrap = function FixtureWrap({ reason, children }) {
+  return (
+    <div style={{
+      position: 'relative',
+      borderLeft: '2px dashed var(--amber)',
+      paddingLeft: 14,
+      marginLeft: -16,
+    }}>
+      <div style={{
+        position: 'absolute', top: 0, left: -2,
+        background: 'var(--amber-wash)',
+        borderLeft: '2px solid var(--amber)',
+        padding: '4px 10px',
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 9,
+        letterSpacing: '0.14em',
+        fontWeight: 700,
+        color: 'var(--amber)',
+        textTransform: 'uppercase',
+        pointerEvents: 'none',
+        zIndex: 2,
+      }}>
+        FIXTURE · {reason || 'design-only'}
+      </div>
+      <div style={{paddingTop: 22}}>{children}</div>
+    </div>
+  );
+};
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -3455,6 +3515,10 @@ const PENDING = [
 const DashV1_Ops = () => (
   // === Variant A: Operational Overview — fleet-first, NOC-feeling ===
   <div className="variant-body">
+    <div style={{marginBottom: 'var(--gap)', display:'flex', gap:8, alignItems:'center'}}>
+      <window.FixtureBadge reason="variant A is design-only — variant D (Topology) is live" />
+      <span className="muted mono" style={{fontSize:11}}>all tiles and pod list are fictional</span>
+    </div>
     <div className="grid grid-4" style={{marginBottom: 'var(--gap)'}}>
       <div className="box"><div className="stat">
         <span className="s-label">Scans · 5m</span>
@@ -3556,6 +3620,10 @@ const DashV1_Ops = () => (
 const DashV2_Stream = () => (
   // === Variant B: Stream-first (SOC analyst) — half screen is live findings ===
   <div className="variant-body">
+    <div style={{marginBottom: 'var(--gap)', display:'flex', gap:8, alignItems:'center'}}>
+      <window.FixtureBadge reason="variant B is design-only — the real findings stream is Operate → Findings" />
+      <span className="muted mono" style={{fontSize:11}}>open the real console at Operate → Findings</span>
+    </div>
     <div className="grid" style={{gridTemplateColumns:'1fr 1.3fr', gap:'var(--gap)'}}>
       <div>
         <div className="grid grid-2" style={{marginBottom:'var(--gap)'}}>
@@ -3629,6 +3697,10 @@ const DashV2_Stream = () => (
 const DashV3_Posture = () => (
   // === Variant C: Posture/CISO — big-picture scorecards, trend-forward ===
   <div className="variant-body">
+    <div style={{marginBottom: 'var(--gap)', display:'flex', gap:8, alignItems:'center'}}>
+      <window.FixtureBadge reason="posture scores need an availability/coverage/efficacy pipeline" />
+      <span className="muted mono" style={{fontSize:11}}>real framework data is on Assure → Compliance</span>
+    </div>
     <div className="grid grid-3" style={{marginBottom: 'var(--gap)'}}>
       {[
         ['PCI-DSS', 92, 'safe',  'audit-ready'],
@@ -4545,6 +4617,7 @@ function Logs() {
           { label: 'Tag',   value: 'any' },
         ]}
         actions={<>
+          <window.FixtureBadge reason="no log aggregator — lines generated client-side" />
           <button className="btn ghost"
             onClick={() => setFollow(f => !f)}
             style={{color: follow ? 'var(--safe)' : 'var(--ink-soft)'}}>
@@ -4644,6 +4717,7 @@ function Pods() {
           <h1>Pods</h1>
         </div>
         <div className="actions">
+          <window.FixtureBadge reason="no k8s/fleet — only siphon-api runs" />
           <button className="btn ghost">Topology view</button>
           <button className="btn">Config reload</button>
           <button className="btn primary">Scale…</button>
@@ -4708,10 +4782,11 @@ function Policy() {
     <div>
       <div className="page-head">
         <div>
-          <div className="crumbs">Operate · Policy · Policy #7 · HIPAA strict</div>
+          <div className="crumbs">Detect · Policy · Policy #7 · HIPAA strict</div>
           <h1>Policy Editor</h1>
         </div>
         <div className="actions">
+          <window.FixtureBadge reason="policy TOML is loaded (see /v1/policies) but the graph editor is design-only" />
           <button className="btn ghost">Simulate</button>
           <button className="btn">Save draft</button>
           <button className="btn primary">Submit for review</button>
@@ -5087,6 +5162,7 @@ function Models() {
           <h1>Models</h1>
         </div>
         <div className="actions">
+          <window.FixtureBadge reason="siphon has no ML pipeline — regex-only" />
           <button className="btn ghost">Routing rules</button>
           <button className="btn">Deploy…</button>
           <button className="btn primary">Upload model</button>
@@ -5257,7 +5333,7 @@ function Assets() {
       </div>
 
       <div className="box">
-        <div className="box-title"><span className="t">Upload flow · new vault</span><span className="k">design sketch</span></div>
+        <div className="box-title"><span className="t">Upload flow · new vault</span><span className="k"><window.FixtureBadge small /> design sketch</span></div>
         <div style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
           <div className="node" style={{position:'static'}}><span className="nt">1</span><b>Upload CSV</b><div className="mono" style={{fontSize:10}}>tls · client-side hash</div></div>
           <span className="arrow">→</span>
@@ -5342,6 +5418,7 @@ function AssureOverview() {
           <div className="hf-sub">the three promises · measured continuously · reviewed weekly with leadership</div>
         </div>
         <div className="hf-dash-actions">
+          <window.FixtureBadge reason="availability · coverage · efficacy need a real metrics pipeline" />
           <AsPulse on={true} />
           <div className="hf-timerange">
             <span className="l">window</span>
@@ -5585,6 +5662,7 @@ function Testing() {
           { label: 'Range',    value: 'last 30d' },
         ]}
         actions={<>
+          <window.FixtureBadge reason="no adversarial-test runner in siphon-api (see Engineering → Corpus Runner for live version)" />
           <button className="btn ghost">Import test</button>
           <button className="btn">Schedule…</button>
           <button className="btn primary">＋ New test</button>
@@ -5908,6 +5986,7 @@ function DetectOverview() {
           <div className="hf-sub">patterns · models · fingerprints · composed by policy</div>
         </div>
         <div className="hf-dash-actions">
+          <window.FixtureBadge reason="overview KPIs are fictional — pattern count is live via /v1/metrics" />
           <span className="hf-pulse" data-on="1"><span className="dot" /> LIVE</span>
           <div className="hf-timerange">
             <span className="l">window</span>
@@ -6255,7 +6334,7 @@ function Compliance() {
 
       <div className="grid grid-2">
         <div className="box">
-          <div className="box-title"><span className="t">HIPAA · open findings</span><span className="k">12 controls</span></div>
+          <div className="box-title"><span className="t">HIPAA · open findings</span><span className="k"><window.FixtureBadge small /> 12 controls</span></div>
           {[
             ['164.312(a)(1)', 'Access controls',   'Admin keys · no rotation &gt; 90d', 'red'],
             ['164.312(b)',    'Audit controls',    'Vision pod audit incomplete',  'warn'],
@@ -6324,10 +6403,11 @@ function Settings() {
   return (
     <div>
       <PageBar
-        crumbs={['System', 'Settings']}
+        crumbs={['Admin', 'Settings']}
         title="Settings"
         subtitle="Account, identity, and platform configuration"
         actions={<>
+          <window.FixtureBadge reason="settings are env-var driven today — see Topology → 'How to extend'" />
           <button className="btn ghost">Docs</button>
           <button className="btn">Changelog</button>
         </>}
