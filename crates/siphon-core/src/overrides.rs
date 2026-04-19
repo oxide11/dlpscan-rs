@@ -249,6 +249,17 @@ pub struct PatternOverrides {
     /// silently take effect — operators opt in by merging the ones
     /// they actually want enforced into this field.
     pub active_list_bindings: Vec<ListAttachment>,
+    /// Per-(category, sub_category) distinct-value thresholds.
+    /// Keys are wire-formatted as "<category>/<sub_category>" — same
+    /// convention as `pattern_overrides`. Value is the maximum number
+    /// of distinct match strings the scanner will tolerate for that
+    /// tuple in a single scan. Over the limit, every affected match
+    /// gets metadata["unique_count_breach"] = "true" and
+    /// metadata["action"] = "block" so downstream forwarders can
+    /// escalate. Scanner doesn't drop breached matches — the analyst
+    /// still sees everything, the router decides what to do. Empty
+    /// map means no thresholds (Phase 9 default).
+    pub max_unique_per_subcategory: HashMap<String, usize>,
 }
 
 /// Errors surfaced by the loader. Kept simple — the caller logs and
@@ -376,6 +387,7 @@ impl PatternOverrides {
                 .sum(),
             lists: self.lists.len(),
             list_entries: self.lists.iter().map(|l| l.entries.len()).sum(),
+            unique_thresholds: self.max_unique_per_subcategory.len(),
             version: self.version,
         }
     }
@@ -391,6 +403,8 @@ pub struct OverridesSummary {
     /// lists.
     pub lists: usize,
     pub list_entries: usize,
+    /// Count of per-(cat,sub) thresholds declared (Phase 9).
+    pub unique_thresholds: usize,
     pub version: u32,
 }
 
@@ -640,6 +654,27 @@ impl PatternOverrides {
             .iter()
             .filter(|l| !l.id.is_empty())
             .map(|l| (l.id.clone(), CompiledList::from_list(l)))
+            .collect()
+    }
+
+    /// Resolve `max_unique_per_subcategory` wire-keys into the
+    /// `(category, sub_category) → usize` lookup the scanner
+    /// consumes. Malformed keys (not "<cat>/<sub>") are skipped with
+    /// a stderr warning so one typo doesn't take the pod offline.
+    pub fn compile_unique_thresholds(&self) -> HashMap<(String, String), usize> {
+        self.max_unique_per_subcategory
+            .iter()
+            .filter_map(|(wire_key, limit)| {
+                match wire_key.split_once('/') {
+                    Some((cat, sub)) => Some(((cat.to_string(), sub.to_string()), *limit)),
+                    None => {
+                        eprintln!(
+                            "siphon overrides: max_unique_per_subcategory key '{wire_key}' is not '<cat>/<sub>', skipping"
+                        );
+                        None
+                    }
+                }
+            })
             .collect()
     }
 

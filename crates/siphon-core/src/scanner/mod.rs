@@ -154,6 +154,14 @@ pub struct ScanConfig {
     /// (block > allow > mask > tag) is applied per-finding when
     /// multiple lists match the same text.
     pub list_bindings: Option<Arc<Vec<(String, crate::overrides::CompiledList)>>>,
+    /// Per-(category, sub_category) distinct-value thresholds
+    /// (Phase 9). When the number of distinct match texts in a
+    /// tuple exceeds the limit, every match for that tuple gets
+    /// `metadata.unique_count_breach = "true"`,
+    /// `metadata.unique_count = <N>`, and `metadata.action = "block"`.
+    /// Scanner does not drop breached matches — the analyst sees
+    /// everything; downstream forwarders decide treatment.
+    pub max_unique_per_subcategory: Option<Arc<HashMap<(String, String), usize>>>,
 }
 
 /// Entropy scanning mode.
@@ -190,6 +198,7 @@ impl Default for ScanConfig {
             runtime_patterns: None,
             pattern_regex_overrides: None,
             list_bindings: None,
+            max_unique_per_subcategory: None,
         }
     }
 }
@@ -1169,6 +1178,36 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
         }
     }
 
+    // Phase 9: per-(cat, sub) unique-count threshold. When set and
+    // the number of DISTINCT match texts for a tuple exceeds the
+    // limit, every affected match is tagged — analyst still sees
+    // them all; the router/SIEM decides treatment based on metadata.
+    if let Some(thresholds) = config.max_unique_per_subcategory.as_ref() {
+        if !thresholds.is_empty() {
+            // Pre-compute distinct-text counts per (cat, sub). Small
+            // scan footprint (usually <100 matches) — simple HashSet
+            // of refs is fine.
+            let mut distinct: HashMap<(String, String), HashSet<String>> = HashMap::new();
+            for m in matches.iter() {
+                let key = (m.category.clone(), m.sub_category.clone());
+                distinct.entry(key).or_default().insert(m.text.clone());
+            }
+            // Now tag every match whose tuple exceeded the threshold.
+            for m in matches.iter_mut() {
+                let key = (m.category.clone(), m.sub_category.clone());
+                let Some(limit) = thresholds.get(&key) else { continue; };
+                let Some(set) = distinct.get(&key) else { continue; };
+                let n = set.len();
+                if n > *limit {
+                    m.metadata.insert("unique_count".to_string(), n.to_string());
+                    m.metadata.insert("unique_count_limit".to_string(), limit.to_string());
+                    m.metadata.insert("unique_count_breach".to_string(), "true".to_string());
+                    m.metadata.insert("action".to_string(), "block".to_string());
+                }
+            }
+        }
+    }
+
     // PatternOverrides: drop any match whose (category, sub_category)
     // is on the disabled list. Filter at the very end so every other
     // pipeline stage stays oblivious to overrides — overrides are a
@@ -1729,6 +1768,79 @@ mod tests {
             .collect();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].has_context);
+    }
+
+    #[test]
+    fn unique_threshold_tags_breaches_with_block_metadata() {
+        // 3 distinct emails for Contact Information / Email Address;
+        // threshold = 2 → all 3 matches get unique_count_breach=true
+        // + action=block in metadata. None are dropped.
+        let mut t: HashMap<(String, String), usize> = HashMap::new();
+        t.insert(
+            ("Contact Information".to_string(), "Email Address".to_string()),
+            2,
+        );
+        let cfg = ScanConfig {
+            max_unique_per_subcategory: Some(Arc::new(t)),
+            ..Default::default()
+        };
+        let text = "alice@x.io bob@x.io charlie@x.io — three distinct addresses";
+        let res = scan_text_with_config(text, &cfg).unwrap();
+        let emails: Vec<&Match> = res
+            .iter()
+            .filter(|m| m.sub_category == "Email Address")
+            .collect();
+        assert_eq!(emails.len(), 3, "all three emails survive the scan");
+        for m in &emails {
+            assert_eq!(m.metadata.get("unique_count"), Some(&"3".to_string()));
+            assert_eq!(m.metadata.get("unique_count_limit"), Some(&"2".to_string()));
+            assert_eq!(m.metadata.get("unique_count_breach"), Some(&"true".to_string()));
+            assert_eq!(m.metadata.get("action"), Some(&"block".to_string()));
+        }
+    }
+
+    #[test]
+    fn unique_threshold_under_limit_leaves_matches_alone() {
+        // Two emails under a threshold of 2 → no metadata changes.
+        // Strict > comparison means the boundary case (count == limit)
+        // is a pass.
+        let mut t: HashMap<(String, String), usize> = HashMap::new();
+        t.insert(
+            ("Contact Information".to_string(), "Email Address".to_string()),
+            2,
+        );
+        let cfg = ScanConfig {
+            max_unique_per_subcategory: Some(Arc::new(t)),
+            ..Default::default()
+        };
+        let res = scan_text_with_config("alice@x.io bob@x.io", &cfg).unwrap();
+        for m in res.iter().filter(|m| m.sub_category == "Email Address") {
+            assert!(m.metadata.get("unique_count_breach").is_none());
+            assert!(m.metadata.get("action").is_none());
+        }
+    }
+
+    #[test]
+    fn unique_threshold_duplicates_dont_count() {
+        // Same email repeated 5 times → distinct count is 1.
+        let mut t: HashMap<(String, String), usize> = HashMap::new();
+        t.insert(
+            ("Contact Information".to_string(), "Email Address".to_string()),
+            2,
+        );
+        let cfg = ScanConfig {
+            max_unique_per_subcategory: Some(Arc::new(t)),
+            deduplicate: false,  // keep dupes in output
+            ..Default::default()
+        };
+        let text = "alice@x.io alice@x.io alice@x.io";
+        let res = scan_text_with_config(text, &cfg).unwrap();
+        for m in res.iter().filter(|m| m.sub_category == "Email Address") {
+            assert!(
+                m.metadata.get("unique_count_breach").is_none(),
+                "duplicates of the same text shouldn't breach a distinct-count threshold"
+            );
+        }
     }
 
     #[test]

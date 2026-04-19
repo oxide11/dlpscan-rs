@@ -92,6 +92,10 @@ struct AppState {
     /// (Phase 4.7c.3). Consulted at emit time: allow drops, block /
     /// mask / tag annotate metadata.
     list_bindings: Arc<Vec<(String, CompiledList)>>,
+    /// Per-(category, sub_category) distinct-value thresholds
+    /// (Phase 9). Matches exceeding the limit get
+    /// metadata.unique_count_breach + action=block.
+    unique_thresholds: Arc<HashMap<(String, String), usize>>,
     /// Stable identifier for this pod instance. Generated once at
     /// startup; surfaced via /health so the C2 can deduplicate
     /// replicas of the same Service.
@@ -553,6 +557,7 @@ async fn scan(
         runtime_patterns: Some(state.runtime_patterns.clone()),
         pattern_regex_overrides: Some(state.pattern_regex_overrides.clone()),
         list_bindings: Some(state.list_bindings.clone()),
+        max_unique_per_subcategory: Some(state.unique_thresholds.clone()),
         ..Default::default()
     };
 
@@ -2343,6 +2348,8 @@ async fn main() {
     let regex_override_count = pattern_regex_overrides.len();
     let list_bindings = Arc::new(overrides.compile_active_list_bindings());
     let list_binding_count = list_bindings.len();
+    let unique_thresholds = Arc::new(overrides.compile_unique_thresholds());
+    let unique_threshold_count = unique_thresholds.len();
     tracing::info!(
         path = %overrides_path,
         version = overrides_summary.version,
@@ -2352,6 +2359,7 @@ async fn main() {
         runtime_patterns_compiled = runtime_pattern_count,
         regex_swaps_compiled = regex_override_count,
         list_bindings_active = list_binding_count,
+        unique_thresholds = unique_threshold_count,
         "PatternOverrides loaded"
     );
 
@@ -2376,6 +2384,7 @@ async fn main() {
         runtime_patterns,
         pattern_regex_overrides,
         list_bindings,
+        unique_thresholds,
         pod_id: pod_id.clone(),
         started_at_iso,
         started_at,
