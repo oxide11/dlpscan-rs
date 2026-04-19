@@ -1571,7 +1571,20 @@ async fn main() {
 
         tracing::info!("TLS enabled");
 
+        // axum-server uses a Handle-based graceful shutdown rather than
+        // axum::serve's with_graceful_shutdown future. Spawn a task that
+        // waits on shutdown_signal() and then asks the server to drain.
+        // 30s drain budget — Deployment grace period (45s) covers that
+        // plus startup-of-replacement-pod overhead.
+        let handle = axum_server::Handle::new();
+        let shutdown_handle = handle.clone();
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            shutdown_handle.graceful_shutdown(Some(Duration::from_secs(30)));
+        });
+
         axum_server::bind_rustls(addr.parse().unwrap(), rustls_config)
+            .handle(handle)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await
             .unwrap();
@@ -1594,11 +1607,32 @@ async fn main() {
     }
 }
 
+// Shutdown trigger — completes when EITHER SIGINT (Ctrl-C, dev) or
+// SIGTERM (k8s pod termination) arrives. axum's with_graceful_shutdown
+// holds new accepts off and waits for in-flight requests to complete
+// before returning. The Deployment's terminationGracePeriodSeconds (45s
+// for siphon-api) caps how long k8s will wait before SIGKILL.
 async fn shutdown_signal() {
-    tokio::signal::ctrl_c()
-        .await
-        .expect("failed to install signal handler");
-    tracing::info!("shutdown signal received, draining connections...");
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl-C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c   => tracing::info!(signal = "SIGINT",  "shutdown signal received, draining connections..."),
+        _ = terminate => tracing::info!(signal = "SIGTERM", "shutdown signal received, draining connections..."),
+    }
 }
 
 #[cfg(test)]
