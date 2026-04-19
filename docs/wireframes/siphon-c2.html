@@ -6584,7 +6584,28 @@ function PolicyThatFired({ finding }) {
           <div className="mono" style={{fontSize:10.5, color:'var(--ink-soft)'}}>
             scope: {m.hits.map(h => <span key={h} style={{color:'var(--accent)'}}>{h}</span>).reduce((acc, el, idx) => idx === 0 ? [el] : [...acc, ', ', el], [])}
             {m.policy.rules && m.policy.rules.length > 0 && <> · {m.policy.rules.length} rule{m.policy.rules.length === 1 ? '' : 's'}</>}
+            {m.policy.list_bindings && m.policy.list_bindings.length > 0 && (
+              <> · {m.policy.list_bindings.length} list{m.policy.list_bindings.length === 1 ? '' : 's'} bound</>
+            )}
           </div>
+          {m.policy.list_bindings && m.policy.list_bindings.length > 0 && (
+            <div style={{display:'flex', flexWrap:'wrap', gap:4, marginTop:4}}>
+              {m.policy.list_bindings.map((b, bi) => {
+                const actionTone = b.action === 'allow' ? 'teal'
+                                 : b.action === 'block' ? 'red'
+                                 : b.action === 'mask'  ? 'warn'
+                                 : 'ghost';
+                return (
+                  <span key={bi}
+                        title={b.note || `${b.action} · evaluated in Phase 4.7c`}
+                        className={`chip chip--${actionTone}`}
+                        style={{fontSize:9, letterSpacing:0.5}}>
+                    {b.action} · <span className="mono">{b.list_id}</span>
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
       ))}
     </div>

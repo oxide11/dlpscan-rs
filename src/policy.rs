@@ -32,6 +32,34 @@ pub struct PolicyRule {
     pub priority: i32,
 }
 
+/// Binding between a policy and a reusable match list. The list lives
+/// in the overrides file (siphon_core::overrides::MatchList) and is
+/// referenced here by its stable `list_id`. `action` tells the
+/// scanner / router how to treat findings whose text matches the
+/// list's entries:
+///
+///   · `allow` — drop the finding (exception / safe-listed content)
+///   · `block` — elevate finding to the strictest treatment
+///   · `mask`  — redact the matched span but keep the finding
+///   · `tag`   — annotate the finding with a metadata tag; no
+///               behavioural change (audit-only)
+///
+/// Phase 4.7b ships the schema + admin-console display. Phase 4.7c
+/// wires scanner enforcement so these attachments actually change
+/// what /scan returns.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListBinding {
+    pub list_id: String,
+    #[serde(default = "default_list_action")]
+    pub action: String,
+    #[serde(default)]
+    pub note: String,
+}
+
+fn default_list_action() -> String {
+    "tag".to_string()
+}
+
 /// Complete DLP scanning policy loaded from TOML.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Policy {
@@ -48,6 +76,10 @@ pub struct Policy {
     pub audit: Option<AuditPolicyConfig>,
     #[serde(default)]
     pub rate_limit: Option<RateLimitConfig>,
+    /// Reusable match lists attached to this policy (Phase 4.7b).
+    /// Empty vec for policies authored before the schema landed.
+    #[serde(default)]
+    pub list_bindings: Vec<ListBinding>,
 }
 
 /// Scan configuration block within a policy.
@@ -483,6 +515,7 @@ min_confidence = 0.8
             }],
             audit: None,
             rate_limit: None,
+            list_bindings: Vec::new(),
         };
 
         let warnings = validate_policy(&policy);
@@ -603,6 +636,7 @@ min_confidence = 0.8
             rules: vec![],
             audit: None,
             rate_limit: None,
+            list_bindings: Vec::new(),
         };
         let warnings = validate_policy(&policy);
         // Version "2" should not generate a warning
