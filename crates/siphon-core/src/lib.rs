@@ -25,4 +25,7 @@ pub mod validation;
 pub use errors::DlpError;
 pub use models::{Match, PatternDef};
 
+/// Crate version as declared in Cargo.toml, baked in at compile time.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub type Result<T> = std::result::Result<T, errors::DlpError>;

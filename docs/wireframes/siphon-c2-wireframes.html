@@ -2167,14 +2167,14 @@ const SURFACES = [
   { id: 'dashboard',      workspace: 'operate', icon: '◈',  title: 'Dashboard' },
   { id: 'stream',         workspace: 'operate', icon: '≋',  title: 'Findings' },
   { id: 'investigations', workspace: 'operate', icon: '⌖',  title: 'Investigations' },
-  { id: 'pods',           workspace: 'operate', icon: '▦',  title: 'Pods' },
-  { id: 'logs',           workspace: 'operate', icon: '>_', title: 'Pod Logs' },
+  { id: 'pods',           workspace: 'operate', icon: '▦',  title: 'Pods',          cluster: true },
+  { id: 'logs',           workspace: 'operate', icon: '>_', title: 'Pod Logs',      cluster: true },
   { id: 'alerts',         workspace: 'operate', icon: '!',  title: 'Alerts' },
   // ── DETECT ───────────────────────────────────────────────────
   { id: 'detect',         workspace: 'detect',  icon: '◈',  title: 'Overview',      sub: 'patterns · models · fingerprints' },
   { id: 'policy',         workspace: 'detect',  icon: '⤷',  title: 'Policies' },
   { id: 'patterns',       workspace: 'detect',  icon: '⌘',  title: 'Patterns' },
-  { id: 'models',         workspace: 'detect',  icon: '⌬',  title: 'Models' },
+  { id: 'models',         workspace: 'detect',  icon: '⌬',  title: 'Models',        cluster: true },
   { id: 'assets',         workspace: 'detect',  icon: '◉',  title: 'Fingerprints',  sub: 'EDM · LSH' },
   { id: 'profiles',       workspace: 'detect',  icon: '◎',  title: 'Masking Profiles' },
   { id: 'tokenization',   workspace: 'detect',  icon: '⎔',  title: 'Tokenization' },
@@ -2189,7 +2189,7 @@ const SURFACES = [
   { id: 'users',          workspace: 'admin',   icon: '◍',  title: 'Users & Roles' },
   { id: 'integrations',   workspace: 'admin',   icon: '⇄',  title: 'Integrations' },
   { id: 'keys',           workspace: 'admin',   icon: '⚿',  title: 'API Keys' },
-  { id: 'agents',         workspace: 'admin',   icon: '◆',  title: 'Agents' },
+  { id: 'agents',         workspace: 'admin',   icon: '◆',  title: 'Agents',        cluster: true },
   // ── ENGINEERING ─────────────────────────────────────────────
   { id: 'livescan',       workspace: 'engineering', icon: '⌁',  title: 'Live Scan',      sub: 'POST /scan' },
   { id: 'corpusrun',      workspace: 'engineering', icon: '⎔',  title: 'Corpus Runner',  sub: 'batch /scan' },
@@ -2285,9 +2285,26 @@ function WorkspaceBar({ current, go }) {
   );
 }
 
+// When running in Local Only deployment mode, cluster-fleet surfaces
+// (Pods · Pod Logs · Models · Agents) are irrelevant — there's no
+// fleet. Hide them unless the user explicitly flips the "always show
+// cluster-only surfaces" feature flag.
+function visibleSurfaces(activeW) {
+  const mode = window.c2DeploymentMode();
+  const showClusterAnyway = window.c2Flag && window.c2Flag('show_cluster_nav');
+  return SURFACES.filter(s => {
+    if (s.workspace !== activeW) return false;
+    if (s.cluster && mode === 'local' && !showClusterAnyway) return false;
+    return true;
+  });
+}
+
 function SurfaceBar({ current, go }) {
+  // Re-render when mode or feature flags change so nav updates live.
+  window.useDeploymentMode();
+  window.useFeatureFlag('show_cluster_nav');
   const activeW = workspaceOf(current);
-  const items = SURFACES.filter(s => s.workspace === activeW);
+  const items = visibleSurfaces(activeW);
   let lastGroup = null;
   return (
     <nav className="surfacebar" aria-label="Surfaces">
@@ -2325,9 +2342,12 @@ function SurfaceBar({ current, go }) {
 }
 
 function SideNav({ current, go }) {
+  // Re-render when mode or feature flags change so nav updates live.
+  window.useDeploymentMode();
+  window.useFeatureFlag('show_cluster_nav');
   const activeW = workspaceOf(current);
   const ws = WORKSPACES.find(w => w.id === activeW);
-  const items = SURFACES.filter(s => s.workspace === activeW);
+  const items = visibleSurfaces(activeW);
   let lastGroup = null;
   return (
     <aside className="sidenav" aria-label="Primary">
@@ -4597,6 +4617,97 @@ Object.assign(window, { Dashboard });
 // Findings Console — lives off /v1/findings. Polls every 2s unless paused.
 // Drill-in to a finding populates the Finding Detail route with the id.
 
+// Findings-density histogram — bucketed per-minute counts with a severity
+// stack (red / warn / safe). Drawn as an inline SVG so there's no chart
+// library dependency. Window defaults to 10 minutes but is adjustable.
+function FindingsDensity({ findings, windowMin, buckets }) {
+  const [minutes, setMinutes] = React.useState(windowMin || 15);
+  const n = buckets || 30;
+
+  const stats = React.useMemo(() => {
+    const now = Date.now();
+    const bucketMs = (minutes * 60 * 1000) / n;
+    const rows = Array.from({length: n}, () => ({ red: 0, warn: 0, safe: 0, total: 0 }));
+    let inWindow = 0, red = 0;
+    findings.forEach(f => {
+      const t = new Date(f.ts).getTime();
+      if (isNaN(t)) return;
+      const delta = now - t;
+      if (delta < 0 || delta > minutes * 60 * 1000) return;
+      inWindow++;
+      if (f.severity === 'red') red++;
+      const idx = n - 1 - Math.floor(delta / bucketMs);
+      if (idx >= 0 && idx < n) {
+        const key = f.severity === 'red' ? 'red' : f.severity === 'warn' ? 'warn' : 'safe';
+        rows[idx][key]++;
+        rows[idx].total++;
+      }
+    });
+    const max = Math.max(1, ...rows.map(r => r.total));
+    return { rows, max, inWindow, red, bucketMs };
+  }, [findings, minutes, n]);
+
+  const width = 100; // percent viewport
+  const height = 64;
+  const colW = width / n;
+
+  return (
+    <div className="box" style={{marginBottom:'var(--gap)'}}>
+      <div className="box-title">
+        <span className="t">Findings density</span>
+        <span className="k">
+          {stats.inWindow} in last {minutes}m · {stats.red} red · 1 bucket = {Math.round(stats.bucketMs/1000)}s
+        </span>
+      </div>
+      <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
+        <span className="label">Window</span>
+        {[5, 15, 60, 240].map(m => (
+          <button key={m}
+                  onClick={() => setMinutes(m)}
+                  className="btn ghost"
+                  style={{
+                    padding:'2px 10px', fontSize:10,
+                    background: minutes === m ? 'var(--accent)' : 'transparent',
+                    color: minutes === m ? 'var(--bg-0)' : 'var(--ink)',
+                    borderColor: minutes === m ? 'var(--accent)' : 'var(--line)',
+                  }}>{m < 60 ? m + 'm' : (m/60) + 'h'}</button>
+        ))}
+        <span className="right" style={{marginLeft:'auto', display:'flex', gap:10, fontFamily:"'JetBrains Mono', monospace", fontSize:10, color:'var(--ink-soft)'}}>
+          <span><i style={{display:'inline-block', width:8, height:8, background:'var(--red)', borderRadius:1, marginRight:4}} />red</span>
+          <span><i style={{display:'inline-block', width:8, height:8, background:'var(--amber)', borderRadius:1, marginRight:4}} />warn</span>
+          <span><i style={{display:'inline-block', width:8, height:8, background:'var(--safe)', borderRadius:1, marginRight:4}} />safe</span>
+        </span>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{width:'100%', height:height+16, display:'block', borderBottom:'1px dashed var(--line-soft)'}}>
+        {/* grid: quarter lines */}
+        {[0.25, 0.5, 0.75].map(f => (
+          <line key={f} x1="0" y1={height*f} x2={width} y2={height*f} stroke="var(--line-soft)" strokeWidth="0.2" strokeDasharray="1 2"/>
+        ))}
+        {stats.rows.map((r, i) => {
+          const bar = stats.max ? (r.total / stats.max) * height : 0;
+          if (r.total === 0) return null;
+          const x = i * colW;
+          const rh = r.red  / r.total * bar;
+          const wh = r.warn / r.total * bar;
+          const sh = r.safe / r.total * bar;
+          return (
+            <g key={i}>
+              <title>{`${r.total} finding${r.total===1?'':'s'} · red ${r.red} warn ${r.warn} safe ${r.safe}`}</title>
+              <rect x={x+0.2} y={height - rh} width={colW - 0.4} height={rh} fill="var(--red)"/>
+              <rect x={x+0.2} y={height - rh - wh} width={colW - 0.4} height={wh} fill="var(--amber)"/>
+              <rect x={x+0.2} y={height - rh - wh - sh} width={colW - 0.4} height={sh} fill="var(--safe)"/>
+            </g>
+          );
+        })}
+      </svg>
+      <div style={{display:'flex', justifyContent:'space-between', fontFamily:"'JetBrains Mono', monospace", fontSize:10, color:'var(--ink-faint)', marginTop:4}}>
+        <span>−{minutes}m</span>
+        <span>now</span>
+      </div>
+    </div>
+  );
+}
+
 // Display-only helper — pull HH:MM:SS out of an ISO timestamp, or the raw
 // string if it doesn't parse.
 function fmtWallClock(iso) {
@@ -4675,6 +4786,8 @@ function Stream({ go }) {
           <b>Error:</b> {fx.error}
         </div>
       )}
+
+      <FindingsDensity findings={all} />
 
       {/* severity + category quick filters pulled from real data */}
       <div className="row" style={{marginBottom: 'var(--gap)', flexWrap:'wrap'}}>
@@ -6837,7 +6950,7 @@ Object.assign(window, { Compliance });
 // Max 2 panels: settings-side-tabs + the settings content. The topbar is the third row,
 // not a panel.
 
-function Settings() {
+function Settings({ tweaks, setTweak }) {
   const [tab, setTab] = React.useState('deployment');
   const { PageBar } = window;
 
@@ -6845,6 +6958,7 @@ function Settings() {
     ['Deployment',  'deployment'],
     ['General',     'general'],
     ['Appearance',  'appearance'],
+    ['Features',    'features'],
     ['Users',       'users'],
     ['Roles',       'roles'],
     ['API keys',    'keys'],
@@ -6861,15 +6975,15 @@ function Settings() {
         title="Settings"
         subtitle="Platform, identity, and account configuration"
         actions={<>
-          <button className="btn ghost">Docs</button>
-          <button className="btn">Changelog</button>
+          <button className="btn ghost" onClick={() => setTab('general')}>Docs</button>
+          <button className="btn" onClick={() => setTab('general')}>Changelog</button>
         </>}
       />
 
       <div className="settings-wrap">
         <aside className="settings-tabs">
           <div className="section-l">Platform</div>
-          {tabs.filter(([, k]) => k === 'deployment').map(([l,k]) => (
+          {tabs.filter(([, k]) => k === 'deployment' || k === 'features').map(([l,k]) => (
             <a key={k} className={tab===k?'active':''} onClick={() => setTab(k)}>{l}</a>
           ))}
           <div className="section-l">Account</div>
@@ -6889,7 +7003,8 @@ function Settings() {
         <div>
           {tab === 'deployment' && <DeploymentTab />}
           {tab === 'general' && <GeneralTab />}
-          {tab === 'appearance' && <AppearanceTab />}
+          {tab === 'appearance' && <AppearanceTab tweaks={tweaks} setTweak={setTweak} />}
+          {tab === 'features' && <FeaturesTab />}
           {tab === 'users' && <UsersTab />}
           {tab === 'roles' && <RolesTab />}
           {tab === 'keys' && <KeysTab />}
@@ -7070,55 +7185,300 @@ function ApiUrlControl() {
   );
 }
 
-const GeneralTab = () => (
-  <div className="box">
-    <div className="box-title"><span className="t">Organisation</span><span className="k">polygon-cyber · tenant root</span></div>
-    <div className="kv" style={{gridTemplateColumns:'160px 1fr'}}>
-      <span className="k">Display name</span>    <span className="v">Polygon Cyber — Prod</span>
-      <span className="k">Tenant slug</span>     <span className="v mono">polygon-cyber</span>
-      <span className="k">Region</span>          <span className="v">us-east · ca-central (fail-over)</span>
-      <span className="k">Data residency</span>  <span className="v">Canada · US (no EU)</span>
-      <span className="k">Support plan</span>    <span className="v">Enterprise · 24/7</span>
-      <span className="k">Contract</span>        <span className="v mono">SC-2026-041 · renews 2027-03-14</span>
-    </div>
-    <hr className="sep" />
-    <div className="box-title"><span className="t">Notifications</span><span className="k">defaults per role · override per user</span></div>
-    <div style={{display:'grid', gridTemplateColumns:'1fr 70px 70px 70px 70px', fontSize:13, gap:8}}>
-      <span className="label">Event</span><span className="label">Email</span><span className="label">Slack</span><span className="label">PagerDuty</span><span className="label">SIEM</span>
-      {[
-        ['Critical finding · cross-tenant',      '·','✓','✓','✓'],
-        ['Test failing (adversarial)',           '✓','✓','·','·'],
-        ['Policy pending approval',              '✓','·','·','·'],
-        ['Pod down > 5m',                        '·','✓','✓','·'],
-        ['API key rotation overdue',             '✓','·','·','·'],
-      ].flatMap(([n,a,b,c,d],i)=>[
-        <span key={'n'+i} className="hand-b">{n}</span>,
-        <span key={'a'+i} style={{textAlign:'center'}}>{a}</span>,
-        <span key={'b'+i} style={{textAlign:'center'}}>{b}</span>,
-        <span key={'c'+i} style={{textAlign:'center'}}>{c}</span>,
-        <span key={'d'+i} style={{textAlign:'center'}}>{d}</span>,
-      ])}
-    </div>
-  </div>
-);
+// ---------------------------------------------------------------------------
+// Very small Markdown → HTML renderer, targeted at the subset siphon's
+// docs actually use (headings, lists, code fences, inline code, bold,
+// italic, links). Intentionally tiny so we don't pull a 30kb CDN lib
+// just for a changelog. Output is injected via dangerouslySetInnerHTML;
+// we escape HTML first so user docs can't inject tags.
+function renderMarkdown(src) {
+  if (!src) return '';
+  const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const lines = src.split('\n');
+  const out = [];
+  let inCode = false, codeLang = '', codeBuf = [];
+  let inList = false, listOrdered = false;
+  const flushList = () => { if (inList) { out.push(listOrdered ? '</ol>' : '</ul>'); inList = false; } };
+  const inlineMd = (s) => {
+    let t = esc(s);
+    t = t.replace(/`([^`]+)`/g, '<code style="background:var(--bg-3);padding:0 4px;border-radius:2px;font-family:\'JetBrains Mono\',monospace;font-size:0.95em">$1</code>');
+    t = t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+    t = t.replace(/\*([^*]+)\*/g, '<i>$1</i>');
+    t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" style="color:var(--accent)">$1</a>');
+    return t;
+  };
+  for (let raw of lines) {
+    if (raw.startsWith('```')) {
+      if (inCode) {
+        out.push(`<pre style="background:var(--bg-1);border:1px solid var(--line-soft);border-radius:var(--radius);padding:10px;margin:8px 0;overflow:auto;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.5;color:var(--ink)"><code>${codeBuf.map(esc).join('\n')}</code></pre>`);
+        inCode = false; codeBuf = []; codeLang = '';
+      } else {
+        flushList();
+        inCode = true; codeLang = raw.slice(3).trim();
+      }
+      continue;
+    }
+    if (inCode) { codeBuf.push(raw); continue; }
+    const hMatch = /^(#{1,6})\s+(.+)$/.exec(raw);
+    if (hMatch) {
+      flushList();
+      const lvl = hMatch[1].length;
+      const size = ({1:22,2:18,3:15,4:13,5:12,6:11})[lvl];
+      const mt = lvl <= 2 ? 18 : 12;
+      out.push(`<h${lvl} style="font-family:'Space Grotesk',sans-serif;font-size:${size}px;font-weight:600;margin:${mt}px 0 8px;color:var(--ink-bright)">${inlineMd(hMatch[2])}</h${lvl}>`);
+      continue;
+    }
+    const ol = /^\s*(\d+)\.\s+(.*)$/.exec(raw);
+    const ul = /^\s*[-*]\s+(.*)$/.exec(raw);
+    if (ul || ol) {
+      const wantOrdered = !!ol;
+      if (!inList || listOrdered !== wantOrdered) { flushList(); out.push(wantOrdered ? '<ol style="padding-left:22px;margin:6px 0">' : '<ul style="padding-left:22px;margin:6px 0">'); inList = true; listOrdered = wantOrdered; }
+      out.push(`<li style="margin:3px 0">${inlineMd((ul||ol)[ul?1:2])}</li>`);
+      continue;
+    }
+    if (!raw.trim()) { flushList(); out.push(''); continue; }
+    flushList();
+    out.push(`<p style="margin:6px 0;line-height:1.6">${inlineMd(raw)}</p>`);
+  }
+  flushList();
+  if (inCode) out.push(`<pre style="background:var(--bg-1);padding:10px;border-radius:var(--radius);border:1px solid var(--line-soft)"><code>${codeBuf.map(esc).join('\n')}</code></pre>`);
+  return out.join('\n');
+}
 
-const AppearanceTab = () => (
-  <div className="box">
-    <div className="box-title"><span className="t">Theme &amp; density</span><span className="k">affects every page · per-user</span></div>
-    <div className="kv">
-      <span className="k">Theme</span>         <span className="v">light · dark · <b>system</b> — toggle lives in the top bar</span>
-      <span className="k">Density</span>       <span className="v">comfy · compact</span>
-      <span className="k">Findings stream</span><span className="v">follow theme · force dark</span>
-      <span className="k">Font scale</span>    <span className="v">small · <b>default</b> · large</span>
-      <span className="k">Reduced motion</span><span className="v">off · <b>on</b> (matches OS)</span>
-      <span className="k">Time format</span>   <span className="v">24h · UTC preferred</span>
+function GeneralTab() {
+  const v = window.useSiphonApi('/v1/version');
+  const cl = window.useSiphonApi('/v1/docs/changelog');
+  const d = v.data || {};
+  const clContent = (cl.data && cl.data.content) || '';
+  return (
+    <>
+      <div className="box">
+        <div className="box-title">
+          <span className="t">About this deployment</span>
+          <span className="k">
+            <window.LivePill source={v.source} onClick={v.refetch} /> from /v1/version
+          </span>
+        </div>
+        <div className="kv" style={{gridTemplateColumns:'180px 1fr'}}>
+          <span className="k">siphon-api version</span>  <span className="v mono">{d.api_version || '—'}</span>
+          <span className="k">siphon-core version</span> <span className="v mono">{d.core_version || '—'}</span>
+          <span className="k">Build profile</span>       <span className="v mono">{d.build_profile || '—'}</span>
+          <span className="k">Rust version</span>        <span className="v mono">{d.rust_version || '—'}</span>
+          <span className="k">Target triple</span>       <span className="v mono">{d.target_triple || '—'}</span>
+          <span className="k">Patterns loaded</span>     <span className="v mono">{d.patterns_loaded != null ? d.patterns_loaded : '—'}</span>
+          <span className="k">Categories loaded</span>   <span className="v mono">{d.categories_loaded != null ? d.categories_loaded : '—'}</span>
+        </div>
+      </div>
+
+      <div className="v-gap" />
+
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Changelog</span>
+          <span className="k">
+            <window.LivePill source={cl.source} onClick={cl.refetch} /> from docs/CHANGELOG.md · {cl.data ? cl.data.bytes + ' bytes' : ''}
+          </span>
+        </div>
+        {cl.loading && <div className="muted" style={{padding:14, textAlign:'center'}}>loading…</div>}
+        {cl.error && (
+          <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)'}}>
+            <b>Error:</b> {cl.error}
+          </div>
+        )}
+        {clContent && (
+          <div
+            style={{maxHeight: 520, overflow: 'auto', fontSize: 13, lineHeight: 1.6, color: 'var(--ink)', padding: '4px 2px'}}
+            dangerouslySetInnerHTML={{ __html: renderMarkdown(clContent) }}
+          />
+        )}
+      </div>
+    </>
+  );
+}
+
+function AppearanceTab({ tweaks, setTweak }) {
+  const themes = [
+    { id: 'phosphor', label: 'Phosphor', note: 'green-on-black terminal' },
+    { id: 'amber',    label: 'Amber',    note: 'CRT amber variant' },
+    { id: 'ice',      label: 'Ice',      note: 'electric cyan on graphite' },
+    { id: 'light',    label: 'Day',      note: 'high-contrast daylight' },
+  ];
+  const densities = [
+    { id: 'comfy',   label: 'Comfortable', note: '16px padding · full breathing room' },
+    { id: 'compact', label: 'Compact',     note: '10px padding · denser grids' },
+  ];
+  return (
+    <>
+      <div className="box">
+        <div className="box-title"><span className="t">Theme</span><span className="k">applied globally via data-theme on &lt;html&gt;</span></div>
+        <div className="grid grid-4" style={{marginTop:10}}>
+          {themes.map(t => (
+            <div key={t.id}
+                 onClick={() => setTweak('theme', t.id)}
+                 style={{
+                   padding:12,
+                   border: tweaks.theme === t.id ? '2px solid var(--accent)' : '1px solid var(--line-strong)',
+                   background: tweaks.theme === t.id ? 'var(--accent-wash)' : 'transparent',
+                   borderRadius:'var(--radius)',
+                   cursor:'pointer',
+                 }}>
+              <div style={{display:'flex', alignItems:'center', gap:6, marginBottom:6}}>
+                <span className={`chip chip--${tweaks.theme === t.id ? 'safe' : 'ghost'}`} style={{fontSize:9}}>{tweaks.theme === t.id ? 'SELECTED' : 'select'}</span>
+                <b style={{color:'var(--ink-bright)'}}>{t.label}</b>
+              </div>
+              <div className="muted" style={{fontSize:11}}>{t.note}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="v-gap" />
+
+      <div className="box">
+        <div className="box-title"><span className="t">Density</span><span className="k">applied globally via data-density on the shell root</span></div>
+        <div className="grid grid-2" style={{marginTop:10}}>
+          {densities.map(d => (
+            <div key={d.id}
+                 onClick={() => setTweak('density', d.id)}
+                 style={{
+                   padding:12,
+                   border: tweaks.density === d.id ? '2px solid var(--accent)' : '1px solid var(--line-strong)',
+                   background: tweaks.density === d.id ? 'var(--accent-wash)' : 'transparent',
+                   borderRadius:'var(--radius)',
+                   cursor:'pointer',
+                 }}>
+              <div style={{display:'flex', alignItems:'center', gap:6, marginBottom:6}}>
+                <span className={`chip chip--${tweaks.density === d.id ? 'safe' : 'ghost'}`} style={{fontSize:9}}>{tweaks.density === d.id ? 'SELECTED' : 'select'}</span>
+                <b style={{color:'var(--ink-bright)'}}>{d.label}</b>
+              </div>
+              <div className="muted" style={{fontSize:11}}>{d.note}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="v-gap" />
+
+      <div className="box">
+        <div className="box-title"><span className="t">Preview</span><span className="k">effective right now</span></div>
+        <div className="kv">
+          <span className="k">Theme</span>        <span className="v mono">{tweaks.theme}</span>
+          <span className="k">Density</span>      <span className="v mono">{tweaks.density}</span>
+          <span className="k">Stored under</span> <span className="v mono">localStorage.c2:tweaks</span>
+        </div>
+        <div className="margin-note" style={{marginTop:10}}>
+          the floating tweaks panel (accessible via edit-mode) and this tab are bound to the same state — change either, the other updates
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Feature flags
+// ---------------------------------------------------------------------------
+
+const FEATURE_FLAGS = [
+  { key: 'show_cluster_nav', label: 'Always show cluster-only surfaces',
+    desc: 'Keep Pods · Logs · Models · Agents visible in the nav even when Local Only deployment mode is selected.',
+    default: false },
+  { key: 'trace_by_default',   label: 'Trace pipeline by default',
+    desc: 'Live Scan starts with the "trace pipeline" toggle ON so you immediately see stage events.',
+    default: false },
+  { key: 'dashboard_autorefresh', label: 'Dashboard auto-refresh',
+    desc: 'Polls the configured endpoints every 5s on the Dashboard. Disable to freeze the view.',
+    default: true },
+  { key: 'help_icons',           label: 'Contextual help icons',
+    desc: 'Render the small (?) help icons next to panel titles. [Phase 2 — no-op until help modals land.]',
+    default: true },
+  { key: 'show_request_ids',     label: 'Show request IDs in Findings',
+    desc: 'Add a request_id column to the Findings stream so you can correlate back to a specific scan.',
+    default: false },
+];
+
+window.c2Flags = function() {
+  try { return JSON.parse(localStorage.getItem('c2:flags') || '{}'); }
+  catch { return {}; }
+};
+window.c2Flag = function(key) {
+  const flags = window.c2Flags();
+  const def = (FEATURE_FLAGS.find(f => f.key === key) || {}).default;
+  return flags[key] != null ? flags[key] : def;
+};
+window.useFeatureFlag = function(key) {
+  const [v, setV] = React.useState(window.c2Flag(key));
+  React.useEffect(() => {
+    const poll = setInterval(() => setV(window.c2Flag(key)), 500);
+    const h = (e) => { if (e.key === 'c2:flags') setV(window.c2Flag(key)); };
+    window.addEventListener('storage', h);
+    return () => { clearInterval(poll); window.removeEventListener('storage', h); };
+  }, [key]);
+  return v;
+};
+window.setC2Flag = function(key, value) {
+  const flags = window.c2Flags();
+  flags[key] = value;
+  try { localStorage.setItem('c2:flags', JSON.stringify(flags)); } catch {}
+};
+
+function FeaturesTab() {
+  const [flags, setFlags] = React.useState(window.c2Flags());
+  const setFlag = (k, v) => {
+    const next = { ...flags, [k]: v };
+    setFlags(next);
+    try { localStorage.setItem('c2:flags', JSON.stringify(next)); } catch {}
+  };
+  const reset = () => {
+    try { localStorage.removeItem('c2:flags'); } catch {}
+    setFlags({});
+  };
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Feature flags</span>
+        <span className="k">persisted in localStorage.c2:flags · takes effect immediately</span>
+      </div>
+      {FEATURE_FLAGS.map(f => {
+        const current = flags[f.key] != null ? flags[f.key] : f.default;
+        return (
+          <div key={f.key} style={{display:'grid', gridTemplateColumns:'1fr auto', gap:12, padding:'10px 0', borderBottom:'1px dashed var(--line-soft)', alignItems:'center'}}>
+            <div>
+              <div style={{display:'flex', alignItems:'center', gap:8}}>
+                <span className="mono" style={{fontSize:10.5, color:'var(--ink-faint)'}}>{f.key}</span>
+                {flags[f.key] != null && flags[f.key] !== f.default && (
+                  <span className="chip chip--warn" style={{fontSize:9}}>OVERRIDDEN</span>
+                )}
+              </div>
+              <div style={{color:'var(--ink-bright)', fontWeight:600, marginTop:2}}>{f.label}</div>
+              <div className="muted" style={{fontSize:11.5, marginTop:3}}>{f.desc}</div>
+            </div>
+            <div style={{display:'flex', gap:4}}>
+              {[true, false].map(v => (
+                <button key={String(v)}
+                        onClick={() => setFlag(f.key, v)}
+                        className="btn ghost"
+                        style={{
+                          padding:'4px 14px', fontSize:10,
+                          background: current === v ? 'var(--accent)' : 'transparent',
+                          color: current === v ? 'var(--bg-0)' : 'var(--ink)',
+                          borderColor: current === v ? 'var(--accent)' : 'var(--line)',
+                        }}>
+                  {v ? 'ON' : 'OFF'}
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+      <div style={{display:'flex', gap:8, marginTop:12}}>
+        <button className="btn ghost" onClick={reset}>Reset all to defaults</button>
+        <span className="muted" style={{alignSelf:'center', fontSize:11}}>
+          {Object.keys(flags).length} override{Object.keys(flags).length === 1 ? '' : 's'} active
+        </span>
+      </div>
     </div>
-    <hr className="sep" />
-    <div className="muted scribble" style={{fontSize:15}}>
-      → dark mode uses a single token swap across the platform · no per-screen overrides
-    </div>
-  </div>
-);
+  );
+}
 
 const UsersTab = () => {
   const users = [
@@ -8314,7 +8674,7 @@ function LiveScan() {
   const [minConf, setMinConf] = React.useState(0);
   const [requireCtx, setRequireCtx] = React.useState(false);
   const [dedupe, setDedupe] = React.useState(true);
-  const [traceOn, setTraceOn] = React.useState(false);
+  const [traceOn, setTraceOn] = React.useState(() => !!(window.c2Flag && window.c2Flag('trace_by_default')));
   const [loading, setLoading] = React.useState(false);
   const [health, setHealth] = React.useState('unknown');
   const [result, setResult] = React.useState(null);
@@ -9873,12 +10233,47 @@ function App() {
   const [dashVariant, setDashVariant] = React.useState(() => {
     try { return localStorage.getItem('c2:dash') || 'ops'; } catch { return 'ops'; }
   });
-  const [tweaks, setTweaks] = React.useState({ ...TWEAK_DEFAULTS });
+  const [tweaks, setTweaks] = React.useState(() => {
+    // Hydrate from localStorage so theme / density / nav choices
+    // survive reloads. Falls back to TWEAK_DEFAULTS per key.
+    let stored = {};
+    try { stored = JSON.parse(localStorage.getItem('c2:tweaks') || '{}'); } catch {}
+    return { ...TWEAK_DEFAULTS, ...stored };
+  });
   const [tweakOpen, setTweakOpen] = React.useState(false);
 
   React.useEffect(() => { try { localStorage.setItem('c2:surface', surface); } catch {} }, [surface]);
   React.useEffect(() => { try { localStorage.setItem('c2:sub', sub); } catch {} }, [sub]);
   React.useEffect(() => { try { localStorage.setItem('c2:dash', dashVariant); } catch {} }, [dashVariant]);
+  // Persist tweaks so Settings → Appearance + the floating tweaks
+  // panel both see the same source of truth across reloads.
+  React.useEffect(() => {
+    try { localStorage.setItem('c2:tweaks', JSON.stringify(tweaks)); } catch {}
+  }, [tweaks]);
+
+  // Cross-tab / same-tab-from-Settings sync: if another component writes
+  // to c2:tweaks directly via localStorage, pick up the change.
+  React.useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== 'c2:tweaks') return;
+      try {
+        const parsed = JSON.parse(e.newValue || '{}');
+        setTweaks(t => ({ ...t, ...parsed }));
+      } catch {}
+    };
+    window.addEventListener('storage', onStorage);
+    const poll = setInterval(() => {
+      try {
+        const stored = JSON.parse(localStorage.getItem('c2:tweaks') || '{}');
+        setTweaks(t => {
+          // Cheap shallow equality — only update if something differs.
+          for (const k of Object.keys(stored)) if (stored[k] !== t[k]) return { ...t, ...stored };
+          return t;
+        });
+      } catch {}
+    }, 500);
+    return () => { window.removeEventListener('storage', onStorage); clearInterval(poll); };
+  }, []);
 
   // Apply theme attr to html so dark-mode CSS kicks in globally
   React.useEffect(() => {
@@ -9942,9 +10337,9 @@ function App() {
       testing:        <Testing />,
       assurance:      <AssureOverview />,
       corpora:        <Corpora />,
+      settings:       <Settings tweaks={tweaks} setTweak={setTweak} />,
       compliance:     <Compliance />,
       audit:          <Audit />,
-      settings:       <Settings />,
       users:          <Users />,
       integrations:   <Integrations />,
       keys:           <ApiKeys />,
