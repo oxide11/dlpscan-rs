@@ -1157,6 +1157,328 @@ async fn overrides_apply(
     }))
 }
 
+// ─── /v1/overrides/history + /revert (Phase 7) ─────────────────
+//
+// `apply` has been creating timestamped `.v<nanos>.bak` backups
+// alongside the overrides file since 4a. This pair of endpoints
+// surfaces that history for the admin console:
+//
+//   · GET  /v1/overrides/history — list all backups + the current
+//                                   file, newest-first, with size +
+//                                   mtime + parsed-or-malformed
+//                                   indicators.
+//   · POST /v1/overrides/revert  — body: { version }. Copies the
+//                                   chosen backup back over the
+//                                   current file (itself backed up
+//                                   first so revert is undoable).
+//
+// Revert deliberately DOESN'T hot-reload — same operational model as
+// apply: write the file, require a pod restart to pick up the
+// change. Phase 6 auto-roll handles the restart; until then the
+// response includes restart_required=true.
+
+#[derive(Serialize)]
+struct HistoryEntry {
+    /// Wire-stable version id ("current" for the live file;
+    /// "v<unix_nanos>" for backups) so the revert endpoint can
+    /// round-trip exactly what history returned.
+    version: String,
+    path: String,
+    size_bytes: u64,
+    /// ISO8601 mtime (or nanos-derived when the filename carries one).
+    ts: String,
+    /// `true` when the bytes parse cleanly as a PatternOverrides
+    /// document. Lets the UI grey out a malformed version so the
+    /// analyst doesn't try to revert to an unusable snapshot.
+    parses: bool,
+    summary: Option<siphon_core::overrides::OverridesSummary>,
+}
+
+#[derive(Serialize)]
+struct HistoryResponse {
+    current_path: String,
+    total: usize,
+    entries: Vec<HistoryEntry>,
+}
+
+fn parse_backup_entry(path: &std::path::Path, current_stem: &str) -> Option<HistoryEntry> {
+    use siphon_core::overrides::PatternOverrides;
+    let file_name = path.file_name()?.to_str()?;
+    // Apply uses `path.with_extension("v<nanos>.bak")` which strips
+    // the original extension, so a backup of /tmp/overrides.json
+    // lands at /tmp/overrides.v<nanos>.bak. Parse format is therefore
+    // "<stem>.v<nanos>.bak" — match on the stem, not the full file
+    // name.
+    let prefix = format!("{current_stem}.v");
+    if !file_name.starts_with(&prefix) || !file_name.ends_with(".bak") {
+        return None;
+    }
+    let mid = &file_name[prefix.len()..file_name.len() - ".bak".len()];
+    let nanos: u128 = mid.parse().ok()?;
+    let version = format!("v{nanos}");
+
+    let meta = std::fs::metadata(path).ok()?;
+    let size_bytes = meta.len();
+    // Prefer the filename-encoded nanos timestamp over the filesystem
+    // mtime — backups are rsync-safe that way.
+    let secs = (nanos / 1_000_000_000) as i64;
+    let sub_nanos = (nanos % 1_000_000_000) as u32;
+    let ts = format_iso8601(secs, sub_nanos);
+
+    let bytes = std::fs::read(path).ok()?;
+    let parsed = PatternOverrides::from_bytes(&bytes).ok();
+    Some(HistoryEntry {
+        version,
+        path: path.display().to_string(),
+        size_bytes,
+        ts,
+        parses: parsed.is_some(),
+        summary: parsed.as_ref().map(|o| o.summary()),
+    })
+}
+
+/// Minimal UNIX-seconds → ISO8601 formatter. Avoids pulling chrono
+/// into siphon-api for a single call site; the audit module has
+/// iso8601_now() but not a seconds-based variant.
+fn format_iso8601(secs: i64, nanos: u32) -> String {
+    // Good enough for the admin console — humans read it, Rust
+    // doesn't parse it back.
+    let days_per_year = [365, 365, 365, 366];
+    let mut y = 1970;
+    let mut days = secs / 86_400;
+    let mut secs_today = secs % 86_400;
+    if secs_today < 0 {
+        days -= 1;
+        secs_today += 86_400;
+    }
+    // Walk forward by year blocks until the remaining days fit.
+    while days >= 1461 {
+        y += 4;
+        days -= 1461;
+    }
+    while days >= days_per_year[(y - 1970) as usize % 4] as i64 {
+        days -= days_per_year[(y - 1970) as usize % 4] as i64;
+        y += 1;
+    }
+    let is_leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+    let month_days = if is_leap {
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    } else {
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    };
+    let mut m = 0;
+    while m < 12 && days >= month_days[m] as i64 {
+        days -= month_days[m] as i64;
+        m += 1;
+    }
+    let h = secs_today / 3600;
+    let mn = (secs_today % 3600) / 60;
+    let s = secs_today % 60;
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        y, m + 1, days + 1, h, mn, s, nanos / 1_000_000
+    )
+}
+
+async fn overrides_history(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<HistoryResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let path = state.overrides_path.as_path();
+    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("overrides");
+
+    let mut entries: Vec<HistoryEntry> = Vec::new();
+
+    // Current file first (if present) with version id "current".
+    if path.exists() {
+        if let (Ok(meta), Ok(bytes)) =
+            (std::fs::metadata(path), std::fs::read(path))
+        {
+            let parsed = siphon_core::overrides::PatternOverrides::from_bytes(&bytes).ok();
+            let ts = meta
+                .modified()
+                .ok()
+                .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| format_iso8601(d.as_secs() as i64, d.subsec_nanos()))
+                .unwrap_or_else(|| "—".to_string());
+            entries.push(HistoryEntry {
+                version: "current".to_string(),
+                path: path.display().to_string(),
+                size_bytes: meta.len(),
+                ts,
+                parses: parsed.is_some(),
+                summary: parsed.as_ref().map(|o| o.summary()),
+            });
+        }
+    }
+
+    // Backups alongside the current file. Ignore unrelated files.
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for dirent in rd.flatten() {
+            let p = dirent.path();
+            if p == path {
+                continue;
+            }
+            if let Some(entry) = parse_backup_entry(&p, stem) {
+                entries.push(entry);
+            }
+        }
+    }
+
+    // Newest first. 'current' always wins the tie via its higher
+    // mtime; backups sort by their parsed nanos timestamp.
+    entries.sort_by(|a, b| b.ts.cmp(&a.ts));
+
+    Ok(Json(HistoryResponse {
+        current_path: path.display().to_string(),
+        total: entries.len(),
+        entries,
+    }))
+}
+
+#[derive(Deserialize)]
+struct RevertRequest {
+    version: String,
+}
+
+#[derive(Serialize)]
+struct RevertResponse {
+    status: &'static str,
+    reverted_to: String,
+    written_path: String,
+    backup_path: Option<String>,
+    summary: siphon_core::overrides::OverridesSummary,
+    restart_required: bool,
+    note: &'static str,
+}
+
+/// POST /v1/overrides/revert — body: { version }. Reverts the live
+/// overrides file to the contents of the named backup. The current
+/// file is backed up FIRST so a revert is itself undoable via
+/// another revert.
+async fn overrides_revert(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(req): Json<RevertRequest>,
+) -> Result<Json<RevertResponse>, (StatusCode, Json<ErrorResponse>)> {
+    use siphon_core::overrides::PatternOverrides;
+    let path = state.overrides_path.as_path();
+    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("overrides");
+
+    if req.version == "current" {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "'current' is the live file; nothing to revert to".into(),
+            }),
+        ));
+    }
+
+    // Expected backup filename shape: "<stem>.<version>.bak"
+    // (apply's with_extension() strips the original ext — see
+    // parse_backup_entry for the symmetric decode).
+    let backup_name = format!("{stem}.{}.bak", req.version);
+    let backup_path = dir.join(&backup_name);
+    if !backup_path.exists() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("no such backup: {}", backup_path.display()),
+            }),
+        ));
+    }
+    let bytes = std::fs::read(&backup_path).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("read backup failed: {e}"),
+            }),
+        )
+    })?;
+    let parsed = PatternOverrides::from_bytes(&bytes).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("backup does not parse as PatternOverrides: {e}"),
+            }),
+        )
+    })?;
+
+    // Back up the CURRENT file first so the revert itself is
+    // undoable — same convention as /apply.
+    let pre_revert_backup = if path.exists() {
+        let ts_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let bkp = path.with_extension(format!("v{ts_ns}.bak"));
+        match std::fs::copy(path, &bkp) {
+            Ok(_) => Some(bkp.display().to_string()),
+            Err(e) => {
+                tracing::warn!(error = %e, "revert: pre-revert backup failed");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Atomic replace: write the backup contents as a fresh temp file
+    // then rename over the current file. Keeps /current readable at
+    // every instant (even under crash).
+    let tmp = path.with_extension("tmp.revert");
+    std::fs::write(&tmp, &bytes).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("temp write failed: {e}"),
+            }),
+        )
+    })?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("atomic rename failed: {e}"),
+            }),
+        )
+    })?;
+
+    tracing::info!(
+        source_ip = %addr.ip(),
+        version = %req.version,
+        backup = %backup_path.display(),
+        "overrides reverted"
+    );
+    if let Ok(event) = AuditEvent::new("CONFIG") {
+        emit_audit(
+            event
+                .with_action("overrides_revert")
+                .with_outcome("applied")
+                .with_source_ip(&addr.ip().to_string())
+                .with_metadata("reverted_to", serde_json::json!(req.version)),
+        );
+    }
+
+    Ok(Json(RevertResponse {
+        status: "reverted",
+        reverted_to: req.version.clone(),
+        written_path: path.display().to_string(),
+        backup_path: pre_revert_backup,
+        summary: parsed.summary(),
+        restart_required: true,
+        note: "overrides file restored to the requested version · restart detection pods to pick up the changes",
+    }))
+}
+
 // ---------------------------------------------------------------------------
 // Bundled documentation — every markdown file in docs/ (plus README) is
 // baked into the binary at compile time. The admin console renders
@@ -1828,6 +2150,8 @@ async fn main() {
         .route("/v1/overrides/current", get(overrides_current))
         .route("/v1/overrides/disk", get(overrides_disk))
         .route("/v1/overrides/apply", post(overrides_apply))
+        .route("/v1/overrides/history", get(overrides_history))
+        .route("/v1/overrides/revert", post(overrides_revert))
         .route("/v1/docs", get(docs_index))
         .route("/v1/docs/content", get(docs_content))
         .route("/v1/docs/changelog", get(doc_changelog))

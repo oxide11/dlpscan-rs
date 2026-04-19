@@ -8259,6 +8259,156 @@ function PendingChangesBanner({ customCategories: customCategoriesProp }) {
   );
 }
 
+// ─── Overrides history panel (Phase 7b) ─────────────────────────
+// Surfaces the .v<nanos>.bak backups via /v1/overrides/history and
+// exposes a per-version revert button. Mounts alongside
+// PendingChangesBanner on the Patterns + Match Lists surfaces.
+
+function OverridesHistoryPanel() {
+  // Poll on every surface mount + manual refresh — not polled on a
+  // timer because history only changes when an Apply/Revert
+  // happens, both of which trigger a refetch() from inside this
+  // component or via the existing Apply button.
+  const hist = window.useSiphonApi('/v1/overrides/history');
+  const [open, setOpen] = React.useState(false);
+  const [reverting, setReverting] = React.useState(null);  // version-in-flight
+  const [err, setErr] = React.useState(null);
+  const [note, setNote] = React.useState(null);
+
+  const entries = (hist.data && hist.data.entries) || [];
+  const backupCount = entries.filter(e => e.version !== 'current').length;
+
+  const doRevert = async (version) => {
+    if (!confirm(`Revert overrides to ${version}? The current file is backed up first, so this can be undone.`)) return;
+    setReverting(version); setErr(null); setNote(null);
+    try {
+      const url = window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/overrides/revert';
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ version }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      setNote(`Reverted to ${version}. Pod restart required to pick up the change.`);
+      hist.refetch();
+    } catch (e) {
+      setErr(String(e.message || e));
+    } finally {
+      setReverting(null);
+    }
+  };
+
+  return (
+    <div className="box" style={{marginBottom:'var(--gap)'}}>
+      <div className="box-title" style={{cursor:'pointer', userSelect:'none'}}
+           onClick={() => setOpen(o => !o)}
+           title={open ? 'collapse' : 'expand'}>
+        <span className="t">
+          <span style={{display:'inline-block', width:12, color:'var(--ink-soft)'}}>{open ? '▼' : '▶'}</span>{' '}
+          Overrides history
+        </span>
+        <span className="k">
+          {hist.loading
+            ? 'loading…'
+            : <>{backupCount} backup{backupCount === 1 ? '' : 's'}{entries.some(e => e.version === 'current') ? ' · current on disk' : ''}</>}
+          {' · '}<a onClick={(e) => { e.stopPropagation(); hist.refetch(); }}
+                     style={{color:'var(--accent)', cursor:'pointer'}}>refetch</a>
+        </span>
+      </div>
+
+      {open && (
+        <>
+          {hist.error && (
+            <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', fontSize:12, marginBottom:8}}>
+              <b>Error:</b> {hist.error}
+            </div>
+          )}
+          {err && (
+            <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', fontSize:12, marginBottom:8}}>
+              <b>Revert failed:</b> {err}
+            </div>
+          )}
+          {note && (
+            <div className="note" style={{borderColor:'var(--safe)', background:'var(--accent-wash)', color:'var(--ink)', fontSize:12, marginBottom:8}}>
+              {note}
+            </div>
+          )}
+
+          {entries.length === 0 && !hist.loading ? (
+            <div className="muted mono" style={{padding:10, fontSize:11, textAlign:'center'}}>
+              — no overrides file or backups at <span className="mono">{hist.data ? hist.data.current_path : '—'}</span> —
+            </div>
+          ) : (
+            <div>
+              <div style={{display:'grid', gridTemplateColumns:'160px 210px 90px 1fr 100px', gap:8, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+                <span className="label">Version</span>
+                <span className="label">Timestamp</span>
+                <span className="label">Size</span>
+                <span className="label">Summary</span>
+                <span className="label">Action</span>
+              </div>
+              {entries.map((e) => {
+                const isCurrent = e.version === 'current';
+                const s = e.summary || {};
+                const pieces = [];
+                if (s.disabled_patterns) pieces.push(`${s.disabled_patterns} disabled`);
+                if (s.pattern_overrides) pieces.push(`${s.pattern_overrides} field ov`);
+                if (s.custom_categories) pieces.push(`${s.custom_categories} cat / ${s.custom_patterns || 0} pat`);
+                if (s.lists) pieces.push(`${s.lists} list / ${s.list_entries || 0} entry`);
+                const summaryStr = pieces.length ? pieces.join(' · ') : (e.parses ? 'empty document' : '— does not parse —');
+                return (
+                  <div key={e.version + ':' + e.path}
+                       style={{
+                         display:'grid',
+                         gridTemplateColumns:'160px 210px 90px 1fr 100px',
+                         gap:8, padding:'7px 0',
+                         borderBottom:'1px solid var(--line-soft)',
+                         fontSize:12,
+                         opacity: e.parses ? 1 : 0.55,
+                       }}>
+                    <span className="mono" style={{color: isCurrent ? 'var(--accent)' : 'var(--ink-bright)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+                          title={e.path}>
+                      {isCurrent ? <b>current</b> : e.version}
+                    </span>
+                    <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{e.ts}</span>
+                    <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{e.size_bytes} B</span>
+                    <span className="mono" style={{fontSize:11, color:'var(--ink-soft)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+                          title={summaryStr}>
+                      {summaryStr}
+                    </span>
+                    <span>
+                      {isCurrent ? (
+                        <span className="muted mono" style={{fontSize:10.5}}>live</span>
+                      ) : !e.parses ? (
+                        <span className="muted mono" style={{fontSize:10.5}} title="backup bytes don't parse — refusing to revert to an unusable snapshot">unusable</span>
+                      ) : reverting === e.version ? (
+                        <span className="muted mono" style={{fontSize:10.5}}>reverting…</span>
+                      ) : (
+                        <button className="btn" onClick={() => doRevert(e.version)}
+                                title="restore this version as the live file · current is backed up first">
+                          ↶ Revert
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          <div className="muted" style={{fontSize:10.5, marginTop:8, lineHeight:1.6}}>
+            Backups accumulate with every Apply / Revert. Pruning is manual for now — delete
+            unwanted <span className="mono">.v&lt;nanos&gt;.bak</span> files from the overrides
+            directory (an auto-prune knob lands later). Reverting to a version creates a fresh
+            backup of the current file first, so the revert is itself undoable.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Patterns() {
   const [selected, setSelected] = React.useState(null);
   const [filter, setFilter] = React.useState('');
@@ -8411,6 +8561,7 @@ function Patterns() {
       )}
 
       <PendingChangesBanner customCategories={customCategories} />
+      <OverridesHistoryPanel />
 
       <div className="grid" style={{gridTemplateColumns:'260px 1fr', gap:'var(--gap)'}}>
         <div className="box" style={{padding:10, maxHeight:680, overflowY:'auto'}}>
@@ -9523,6 +9674,7 @@ function MatchLists() {
       </div>
 
       <PendingChangesBanner />
+      <OverridesHistoryPanel />
 
       <div className="grid" style={{gridTemplateColumns:'280px 1fr', gap:'var(--gap)'}}>
         {/* Left rail — all lists + filter */}
