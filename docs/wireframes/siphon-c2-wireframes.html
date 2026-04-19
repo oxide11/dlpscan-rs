@@ -2160,6 +2160,7 @@ const WORKSPACES = [
   { id: 'assure',      label: 'Assure',      hint: 'test · comply · audit',          glyph: '✓' },
   { id: 'admin',       label: 'Admin',       hint: 'users · system · integrations',  glyph: '⚙' },
   { id: 'engineering', label: 'Engineering', hint: 'dev tools · live API',           glyph: '⌁' },
+  { id: 'docs',        label: 'Docs',        hint: 'architecture · guides · reference', glyph: '❖' },
 ];
 
 const SURFACES = [
@@ -2197,6 +2198,8 @@ const SURFACES = [
   { id: 'apiex',          workspace: 'engineering', icon: '⟁',  title: 'API Explorer',   sub: 'every /v1 endpoint' },
   { id: 'procstate',      workspace: 'engineering', icon: '⌬',  title: 'Process State',  sub: 'cache · rate · vault' },
   { id: 'fptool',         workspace: 'engineering', icon: '⚑',  title: 'FP Troubleshooter', sub: 'allowlist + rescan' },
+  // ── DOCS ────────────────────────────────────────────────────
+  { id: 'docs',           workspace: 'docs',        icon: '❖',  title: 'Browse',       sub: 'all bundled docs' },
 ];
 
 // Find workspace id for a given surface id
@@ -2908,7 +2911,7 @@ function Audit() {
       <div className="page-head">
         <div>
           <div className="crumbs">Assure · Audit Log</div>
-          <h1>Audit Log</h1>
+          <h1>Audit Log <HelpIcon topic="audit" title="Audit Log" size={18} /></h1>
         </div>
         <div className="actions">
           <window.LivePill source={ax.source} onClick={ax.refetch} title={ax.error || 'polls every 5s'} />
@@ -3024,7 +3027,7 @@ function Integrations() {
       <div className="page-head">
         <div>
           <div className="crumbs">Admin · Integrations</div>
-          <h1>Integrations</h1>
+          <h1>Integrations <HelpIcon topic="siem" title="SIEM Integrations" size={18} /></h1>
         </div>
         <div className="actions">
           <window.LivePill source={ix.source} onClick={ix.refetch} title={ix.error || ''} />
@@ -3339,7 +3342,7 @@ function Users() {
       <div className="page-head">
         <div>
           <div className="crumbs">Admin · Users &amp; Roles</div>
-          <h1>Users &amp; Roles</h1>
+          <h1>Users &amp; Roles <HelpIcon topic="rbac" title="RBAC" size={18} /></h1>
         </div>
         <div className="actions">
           <button className="btn ghost">Invite</button>
@@ -4577,7 +4580,7 @@ function Dashboard({ variant, setVariant }) {
       <div className="page-head">
         <div>
           <div className="crumbs">Overview · Dashboard</div>
-          <h1>Dashboard</h1>
+          <h1>Dashboard <HelpIcon topic="architecture" title="Architecture overview" size={18} /></h1>
         </div>
         <div className="actions">
           <button className="btn ghost">Export</button>
@@ -4761,7 +4764,7 @@ function Stream({ go }) {
     <div>
       <PageBar
         crumbs={['Operate', 'Findings']}
-        title="Findings Console"
+        title={<>Findings Console <HelpIcon topic="findings" title="Findings pipeline" size={16} /></>}
         subtitle={fx.data
           ? `${filtered.length.toLocaleString()} / ${fx.data.total} in ring (cap ${fx.data.capacity}) · ${paused ? 'paused' : 'tail -f'}`
           : 'loading…'}
@@ -5349,7 +5352,7 @@ function Policy() {
       <div className="page-head">
         <div>
           <div className="crumbs">Detect · Policy · Policy #7 · HIPAA strict</div>
-          <h1>Policy Editor</h1>
+          <h1>Policy Editor <HelpIcon topic="pipeline" title="Detection pipeline" size={18} /></h1>
         </div>
         <div className="actions">
           <window.FixtureBadge reason="policy TOML is loaded (see /v1/policies) but the graph editor is design-only" />
@@ -5500,7 +5503,7 @@ function Patterns() {
       <div className="page-head">
         <div>
           <div className="crumbs">Detect · Patterns</div>
-          <h1>Patterns &amp; Keywords</h1>
+          <h1>Patterns &amp; Keywords <HelpIcon topic="patterns" title="Patterns" size={18} /></h1>
         </div>
         <div className="actions">
           <window.LivePill source={cats.source} onClick={cats.refetch} title={cats.error || 'click to refetch'} />
@@ -5604,7 +5607,7 @@ function Profiles() {
       <div className="page-head">
         <div>
           <div className="crumbs">Detect · Masking Profiles</div>
-          <h1>Masking Profiles</h1>
+          <h1>Masking Profiles <HelpIcon topic="profiles" title="Masking Profiles" size={18} /></h1>
         </div>
         <div className="actions">
           <window.LivePill source={px.source} onClick={px.refetch} title={px.error || ''} />
@@ -5831,7 +5834,7 @@ function Assets() {
       <div className="page-head">
         <div>
           <div className="crumbs">Detect · Detection Assets</div>
-          <h1>EDM / LSH / Allowlists</h1>
+          <h1>EDM / LSH / Allowlists <HelpIcon topic="validation" title="EDM / LSH" size={18} /></h1>
         </div>
         <div className="actions">
           <window.LivePill source={overallSource} onClick={() => { edm.refetch(); lsh.refetch(); aw.refetch(); }} />
@@ -6857,7 +6860,7 @@ function Compliance() {
       <div className="page-head">
         <div>
           <div className="crumbs">Assure · Compliance</div>
-          <h1>Compliance Posture</h1>
+          <h1>Compliance Posture <HelpIcon topic="compliance" title="Compliance frameworks" size={18} /></h1>
         </div>
         <div className="actions">
           <window.LivePill source={fx.source} onClick={fx.refetch} title={fx.error || 'click to refetch'} />
@@ -8647,11 +8650,11 @@ then
   );
 }
 
-Object.assign(window, {
-  Dashboard: DashboardHF,
-  Stream: StreamHF,
-  FindingDetail: FindingDetailHF,
-});
+// Legacy HI-FI versions (DashboardHF / StreamHF / FindingDetailHF) are
+// kept in-file as design-reference fixtures but are NOT registered —
+// they would overwrite the live, mode-dispatching Dashboard / Stream /
+// FindingDetail that actually read /v1/metrics + /v1/findings. If you
+// want to see the hi-fi look again, expose them under different names.
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -8758,7 +8761,7 @@ function LiveScan() {
       <div className="page-head">
         <div>
           <div className="crumbs">Engineering · Live Scan</div>
-          <h1>Live Scan</h1>
+          <h1>Live Scan <HelpIcon topic="api" title="siphon-api scan endpoint" size={18} /></h1>
         </div>
         <div className="actions">
           <span className={`chip chip--${health==='ok'?'safe':health==='down'?'red':'warn'}`} title={`API ${health}`}>
@@ -9188,7 +9191,7 @@ function CorpusRunner() {
       <div className="page-head">
         <div>
           <div className="crumbs">Engineering · Corpus Runner</div>
-          <h1>Corpus Runner</h1>
+          <h1>Corpus Runner <HelpIcon topic="evasion" title="Evasion defenses" size={18} /></h1>
         </div>
         <div className="actions">
           <span className="muted mono" style={{fontSize:11}}>target: {apiUrl}</span>
@@ -9419,7 +9422,7 @@ function ApiExplorer() {
       <div className="page-head">
         <div>
           <div className="crumbs">Engineering · API Explorer</div>
-          <h1>API Explorer</h1>
+          <h1>API Explorer <HelpIcon topic="api" title="API reference" size={18} /></h1>
         </div>
         <div className="actions">
           <span className="muted mono" style={{fontSize:11}}>target: {apiUrl}</span>
@@ -9626,7 +9629,7 @@ function ScanDiff() {
       <div className="page-head">
         <div>
           <div className="crumbs">Engineering · Scan Diff</div>
-          <h1>Scan Diff</h1>
+          <h1>Scan Diff <HelpIcon topic="pipeline" title="Detection pipeline" size={18} /></h1>
         </div>
         <div className="actions">
           <span className="muted mono" style={{fontSize:11}}>target: {apiUrl}</span>
@@ -9771,7 +9774,7 @@ function ProcessState() {
       <div className="page-head">
         <div>
           <div className="crumbs">Engineering · Process State</div>
-          <h1>Process State</h1>
+          <h1>Process State <HelpIcon topic="rate_limit" title="Rate limiting &amp; cache" size={18} /></h1>
         </div>
         <div className="actions">
           <window.LivePill source={overallSource} onClick={() => { cache.refetch(); rate.refetch(); tok.refetch(); mx.refetch(); }} title="polls every 5s · click to force" />
@@ -10014,7 +10017,7 @@ function FPTool() {
       <div className="page-head">
         <div>
           <div className="crumbs">Engineering · FP Troubleshooter · {finding.id}</div>
-          <h1>FP Troubleshooter</h1>
+          <h1>FP Troubleshooter <HelpIcon topic="patterns" title="Pattern tuning" size={18} /></h1>
         </div>
         <div className="actions">
           <span className="muted mono" style={{fontSize:11}}>target: {apiUrl}</span>
@@ -10210,7 +10213,314 @@ function severityJS(category, confidence) {
   return 'safe';
 }
 
-Object.assign(window, { ApiExplorer, ScanDiff, ProcessState, FPTool });
+// ---------------------------------------------------------------------------
+// Docs viewer — browse every markdown doc bundled into siphon-api.
+// Left rail: tree grouped by section, with a live search that filters
+// by path + title. Main panel: rendered markdown via renderMarkdown().
+// Deep-link: the selected doc path is persisted in localStorage so
+// refreshes don't lose your place, and window.__c2_open_doc(path, search)
+// lets other surfaces navigate here directly.
+// ---------------------------------------------------------------------------
+
+const DOC_SECTION_LABELS = {
+  root: 'Root',
+  top: 'Top-level',
+  architecture: 'Architecture',
+  baselines: 'Baselines',
+  deployment: 'Deployment',
+  enterprise: 'Enterprise',
+  'getting-started': 'Getting started',
+  other: 'Other',
+};
+
+function DocsSurface() {
+  const ix = window.useSiphonApi('/v1/docs');
+  const [selected, setSelected] = React.useState(() => {
+    try { return localStorage.getItem('c2:doc') || 'README.md'; }
+    catch { return 'README.md'; }
+  });
+  const [search, setSearch] = React.useState('');
+
+  React.useEffect(() => {
+    try { localStorage.setItem('c2:doc', selected); } catch {}
+  }, [selected]);
+
+  // Register a global opener so HelpIcon (and other code) can navigate
+  // the Docs surface to a specific path.
+  React.useEffect(() => {
+    window.__c2_open_doc = (path, searchFor) => {
+      if (path) setSelected(path);
+      if (searchFor != null) setSearch(searchFor);
+    };
+  }, []);
+
+  const entries = (ix.data && ix.data.entries) || [];
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? entries.filter(e =>
+        e.path.toLowerCase().includes(q) ||
+        (e.title || '').toLowerCase().includes(q))
+    : entries;
+
+  // Group by section for the sidebar.
+  const grouped = React.useMemo(() => {
+    const by = new Map();
+    for (const e of filtered) {
+      const s = e.section || 'other';
+      if (!by.has(s)) by.set(s, []);
+      by.get(s).push(e);
+    }
+    // Deterministic section order
+    const order = ['root', 'top', 'getting-started', 'architecture', 'baselines', 'deployment', 'enterprise', 'other'];
+    return order
+      .filter(k => by.has(k))
+      .map(k => [k, by.get(k)]);
+  }, [filtered]);
+
+  const cur = window.useSiphonApi(
+    selected ? `/v1/docs/content?path=${encodeURIComponent(selected)}` : '/v1/docs/content?path=',
+    [selected]
+  );
+  const content = (cur.data && cur.data.content) || '';
+  const title = entries.find(e => e.path === selected)?.title || selected;
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Docs · {DOC_SECTION_LABELS[(entries.find(e => e.path === selected) || {}).section] || 'all'}</div>
+          <h1 style={{margin:0, fontFamily:"'Space Grotesk', sans-serif", fontWeight:600}}>{title}</h1>
+          <div className="page-sub mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{selected} · {cur.data ? cur.data.bytes : '—'} bytes</div>
+        </div>
+        <div className="actions">
+          <window.LivePill source={cur.source} onClick={cur.refetch} title={cur.error || 'click to refetch'} />
+          <button className="btn ghost" onClick={() => {
+            try { navigator.clipboard.writeText(content); } catch {}
+          }}>Copy markdown</button>
+        </div>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:'300px 1fr', gap:'var(--gap)'}}>
+        <div className="box" style={{padding:10, maxHeight:760, overflowY:'auto', position:'sticky', top:100}}>
+          <div className="label" style={{marginBottom:6}}>
+            Docs · {ix.data ? ix.data.total : '—'}
+          </div>
+          <input
+            placeholder="filter…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            style={{
+              width:'100%', marginBottom:8, padding:'4px 8px',
+              fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+              background:'var(--bg-1)', color:'var(--ink)',
+              border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'
+            }}
+          />
+          {grouped.length === 0 && (
+            <div className="muted" style={{padding:10, fontSize:11, textAlign:'center'}}>— no matches —</div>
+          )}
+          {grouped.map(([section, list]) => (
+            <React.Fragment key={section}>
+              <div className="section-l" style={{marginTop:10, marginBottom:4}}>
+                {DOC_SECTION_LABELS[section] || section}
+              </div>
+              {list.map(e => (
+                <div key={e.path}
+                     onClick={() => setSelected(e.path)}
+                     style={{
+                       padding:'5px 8px', cursor:'pointer',
+                       borderLeft: e.path === selected ? '2px solid var(--accent)' : '2px solid transparent',
+                       background: e.path === selected ? 'var(--bg-3)' : 'transparent',
+                       color: e.path === selected ? 'var(--accent)' : 'var(--ink)',
+                       fontSize:12,
+                       fontFamily:"'JetBrains Mono', monospace",
+                     }}>
+                  <div style={{fontWeight: e.path === selected ? 600 : 400}}>{e.title}</div>
+                  <div className="muted" style={{fontSize:10, marginTop:2}}>
+                    {e.path.split('/').pop()}
+                  </div>
+                </div>
+              ))}
+            </React.Fragment>
+          ))}
+        </div>
+
+        <div className="box">
+          {cur.loading && !content && (
+            <div className="muted" style={{padding:30, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>loading…</div>
+          )}
+          {cur.error && (
+            <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)'}}>
+              <b>Error:</b> {cur.error}
+            </div>
+          )}
+          {content && (
+            <div
+              style={{fontSize:13, lineHeight:1.7, color:'var(--ink)', padding:'4px 2px'}}
+              dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// HelpIcon + HelpModal — small "?" chip next to panel titles that pops
+// open a modal rendering the relevant markdown doc. A shared global
+// state (window.__c2_help) is used instead of React context so any
+// component can mount a HelpIcon without prop-drilling.
+// ---------------------------------------------------------------------------
+
+window.__c2_help_listeners = window.__c2_help_listeners || new Set();
+window.openHelp = function(path, opts) {
+  window.__c2_help_current = { path, title: (opts && opts.title) || null };
+  window.__c2_help_listeners.forEach(fn => { try { fn(); } catch {} });
+};
+window.closeHelp = function() {
+  window.__c2_help_current = null;
+  window.__c2_help_listeners.forEach(fn => { try { fn(); } catch {} });
+};
+
+function useHelpState() {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const fn = () => setTick(t => t + 1);
+    window.__c2_help_listeners.add(fn);
+    return () => window.__c2_help_listeners.delete(fn);
+  }, []);
+  return window.__c2_help_current;
+}
+
+function HelpIcon({ path, title, topic, size }) {
+  // honour the help_icons feature flag — when off, render nothing
+  const enabled = window.useFeatureFlag('help_icons');
+  if (!enabled) return null;
+  const resolved = path || (topic && HELP_MAP[topic]);
+  if (!resolved) return null;
+  return (
+    <span
+      onClick={(e) => { e.stopPropagation(); window.openHelp(resolved, { title }); }}
+      title={`open help · ${title || resolved}`}
+      style={{
+        display:'inline-flex', alignItems:'center', justifyContent:'center',
+        width: size || 16, height: size || 16, marginLeft:6,
+        fontFamily:"'JetBrains Mono', monospace", fontSize: (size || 16) - 5,
+        fontWeight: 700,
+        border:'1px solid var(--line-strong)', borderRadius:'50%',
+        color:'var(--ink-soft)', background:'var(--bg-3)',
+        cursor:'pointer',
+        verticalAlign:'middle',
+      }}>
+      ?
+    </span>
+  );
+}
+
+function HelpModal() {
+  const st = useHelpState();
+  const cur = window.useSiphonApi(
+    st ? `/v1/docs/content?path=${encodeURIComponent(st.path)}` : '/v1/docs/content?path=',
+    [st && st.path]
+  );
+  if (!st) return null;
+  const content = (cur.data && cur.data.content) || '';
+  return (
+    <div
+      onClick={window.closeHelp}
+      style={{
+        position:'fixed', inset:0, background:'rgba(0,0,0,0.55)',
+        zIndex: 500, display:'flex', alignItems:'flex-start', justifyContent:'center',
+        padding:'56px 24px',
+      }}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width:'100%', maxWidth: 880, maxHeight:'calc(100vh - 112px)',
+          background:'var(--bg-2)', border:'1px solid var(--accent)',
+          borderRadius:'var(--radius)',
+          boxShadow:'0 20px 60px rgba(0,0,0,0.7), 0 0 0 1px var(--accent-wash)',
+          display:'flex', flexDirection:'column', overflow:'hidden',
+        }}>
+        <div style={{
+          padding:'10px 14px', borderBottom:'1px solid var(--line-strong)',
+          display:'flex', gap:10, alignItems:'center',
+          background:'var(--bg-topbar)',
+        }}>
+          <span className="chip chip--safe" style={{fontSize:9}}>HELP</span>
+          <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{st.path}</span>
+          <span style={{flex:1}} />
+          <button
+            className="btn ghost"
+            onClick={() => { window.closeHelp(); window.__c2_go && window.__c2_go('docs'); setTimeout(() => window.__c2_open_doc && window.__c2_open_doc(st.path), 50); }}
+            title="open this doc in the full Docs workspace">
+            Open in Docs →
+          </button>
+          <button className="btn" onClick={window.closeHelp}>Close</button>
+        </div>
+        <div style={{padding:'16px 20px', overflow:'auto', fontSize:13, lineHeight:1.7, color:'var(--ink)'}}>
+          {cur.loading && !content && <div className="muted" style={{textAlign:'center', padding:20}}>loading…</div>}
+          {cur.error && (
+            <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)'}}>
+              <b>Error:</b> {cur.error}
+            </div>
+          )}
+          {content && (
+            <div dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }} />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Registry: maps UI topic keys to the best doc path for context-sensitive
+// help. Adding a new panel? Pick the doc that answers "how does this
+// actually work" and add it here. Multiple panels can share a topic.
+const HELP_MAP = {
+  // Operate
+  findings:       'docs/architecture/pipeline.md',
+  finding_detail: 'docs/architecture/pipeline.md',
+  // Detect
+  patterns:       'docs/PATTERNS.md',
+  keywords:       'docs/KEYWORDS.md',
+  profiles:       'docs/getting-started/configuration.md',
+  pipeline:       'docs/architecture/pipeline.md',
+  normalization:  'docs/architecture/normalization.md',
+  context:        'docs/architecture/context-matching.md',
+  validation:     'docs/architecture/validation.md',
+  // Assure
+  compliance:     'docs/enterprise/compliance.md',
+  audit:          'docs/enterprise/audit.md',
+  evasion:        'docs/evasion_defenses.md',
+  // Admin
+  rbac:           'docs/enterprise/rbac.md',
+  rate_limit:     'docs/enterprise/rate-limiting.md',
+  siem:           'docs/enterprise/siem.md',
+  security:      'docs/enterprise/security.md',
+  env_config:     'docs/enterprise/env-config.md',
+  // Engineering
+  api:            'docs/api-reference.md',
+  extending:      'docs/architecture/extending.md',
+  zero_trust:     'docs/architecture/zero-trust.md',
+  // Topology / architecture overview
+  architecture:   'docs/ARCHITECTURE.md',
+  microservices:  'docs/architecture/microservices.md',
+  // Baselines
+  baselines:      'docs/baselines/ABOUT-BASELINES.md',
+  pci:            'docs/baselines/pci.md',
+  pii:            'docs/baselines/pii.md',
+  phi:            'docs/baselines/phi.md',
+  secrets:        'docs/baselines/source-code-secrets.md',
+  // Getting started
+  quickstart:     'docs/getting-started/quickstart.md',
+  install:        'docs/getting-started/installation.md',
+  concepts:       'docs/getting-started/concepts.md',
+};
+window.HELP_MAP = HELP_MAP;
+
+Object.assign(window, { ApiExplorer, ScanDiff, ProcessState, FPTool, DocsSurface, HelpIcon, HelpModal });
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -10305,7 +10615,8 @@ function App() {
   const { Dashboard, Stream, FindingDetail, Pods, Policy, Patterns, Models, Assets,
           Compliance, Testing, AssureOverview, DetectOverview, Settings, Logs, Topbar, WorkspaceBar, SurfaceBar, TweaksPanel,
           Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users,
-          LiveScan, CorpusRunner, ApiExplorer, ScanDiff, ProcessState, FPTool, Profiles } = window;
+          LiveScan, CorpusRunner, ApiExplorer, ScanDiff, ProcessState, FPTool, Profiles,
+          DocsSurface, HelpModal } = window;
 
   // expose go() globally so nested surfaces (e.g. DetectOverview cards) can navigate.
   React.useEffect(() => { window.__c2_go = go; }, []);
@@ -10340,6 +10651,7 @@ function App() {
       settings:       <Settings tweaks={tweaks} setTweak={setTweak} />,
       compliance:     <Compliance />,
       audit:          <Audit />,
+      docs:           <DocsSurface />,
       users:          <Users />,
       integrations:   <Integrations />,
       keys:           <ApiKeys />,
@@ -10354,6 +10666,7 @@ function App() {
       <SurfaceBar current={surface} go={go} />
       <main className="page">{Surface}</main>
       <TweaksPanel on={tweakOpen} state={tweaks} set={setTweak} />
+      {HelpModal && <HelpModal />}
     </div>
   );
 }
