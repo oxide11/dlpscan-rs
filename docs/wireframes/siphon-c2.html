@@ -6478,11 +6478,41 @@ function DetectionPipeline({ finding }) {
 }
 
 function FindingDetail({ id, back }) {
+  // ALL hooks must run on every render — any early return below must
+  // come AFTER the hook block, otherwise React throws
+  // 'Rendered more hooks than during the previous render' once the
+  // first /v1/findings response lands.
   const fx = window.useSiphonApi('/v1/findings?limit=500');
+  const fpQueue = window.useFpQueue();
   const { PageBar } = window;
   const list = (fx.data && fx.data.findings) || [];
   const f = list.find(x => x.id === id);
 
+  // Prev/Next navigation — must be computed before the keyboard
+  // useEffect so the closure captures the right neighbours. Guarded
+  // for the not-yet-loaded case.
+  const idx = f ? list.findIndex(x => x.id === id) : -1;
+  const prev = idx > 0 ? list[idx - 1] : null;
+  const next = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
+  const gotoFinding = (fid) => window.__c2_go && window.__c2_go('stream', 'finding:' + fid);
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      if (e.key === 'j' || e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        if (next) gotoFinding(next.id);
+      } else if (e.key === 'k' || e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        if (prev) gotoFinding(prev.id);
+      } else if (e.key === 'Escape') {
+        back && back();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [prev, next, back]);
+
+  // Early returns live here — AFTER all hooks. React's hook-order
+  // invariant allows divergent branches as long as the hook calls
+  // above this line are the same on every render.
   if (!fx.loading && !f) {
     return (
       <div>
@@ -6505,8 +6535,6 @@ function FindingDetail({ id, back }) {
 
   const sev = f.severity;
   const sameReq = list.filter(x => x.request_id === f.request_id && x.id !== f.id);
-
-  const fpQueue = window.useFpQueue();
   const inFpQueue = fpQueue.some(e => e.finding && e.finding.id === f.id);
   const flagFp = () => {
     window.c2FpQueueAdd(f);
@@ -6514,28 +6542,6 @@ function FindingDetail({ id, back }) {
     window.__c2_go && window.__c2_go('fptool');
   };
   const unflagFp = () => window.c2FpQueueRemove(f.id);
-
-  // Prev/Next navigation. Finds the index of the current finding in
-  // the newest-first ring and moves the sub-route forward/backward.
-  // Arrow keys bound at window level for analyst speed.
-  const idx = list.findIndex(x => x.id === id);
-  const prev = idx > 0 ? list[idx - 1] : null;
-  const next = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
-  const gotoFinding = (fid) => window.__c2_go && window.__c2_go('stream', 'finding:' + fid);
-  React.useEffect(() => {
-    const onKey = (e) => {
-      if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
-      if (e.key === 'j' || e.key === 'ArrowDown' || e.key === 'ArrowRight') {
-        if (next) gotoFinding(next.id);
-      } else if (e.key === 'k' || e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
-        if (prev) gotoFinding(prev.id);
-      } else if (e.key === 'Escape') {
-        back && back();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [prev, next, back]);
 
   return (
     <div>
