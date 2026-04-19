@@ -2195,6 +2195,7 @@ const SURFACES = [
   { id: 'corpusrun',      workspace: 'engineering', icon: '⎔',  title: 'Corpus Runner',  sub: 'batch /scan' },
   { id: 'scandiff',       workspace: 'engineering', icon: '⇌',  title: 'Scan Diff',      sub: 'A/B compare' },
   { id: 'apiex',          workspace: 'engineering', icon: '⟁',  title: 'API Explorer',   sub: 'every /v1 endpoint' },
+  { id: 'procstate',      workspace: 'engineering', icon: '⌬',  title: 'Process State',  sub: 'cache · rate · vault' },
 ];
 
 // Find workspace id for a given surface id
@@ -2810,17 +2811,38 @@ function Corpora() {
 }
 
 function Audit() {
-  const events = [
-    ['12:42:18','policy.edit',  'R.Solanki','#12 block-pci-egress',      'added ctx.invoice gate',    'ok'],
-    ['11:03:02','detoken.read', 'K.Mori',   'token:cust-pii:a4f2',       'justify: INV-2046',         'warn'],
-    ['09:21:55','role.grant',   'root',     'J.Nguyen',                  '+= compliance-auditor',      'warn'],
-    ['08:14:30','model.deploy', 'auto',     'classify-v2.3.1',           'canary 5%',                 'ok'],
-    ['06:08:14','pattern.edit', 'R.Solanki','pci.visa.v3',               'threshold 0.88 → 0.91',     'ok'],
-    ['04:55:22','key.rotate',   'auto',     'ingest-agent-prod',         'scheduled 90d rotation',    'ok'],
-    ['03:11:48','tenant.create','K.Mori',   'widgetco-eu',               'region=eu-west, plan=gold', 'ok'],
-    ['01:44:02','detoken.read', 'J.Nguyen', 'token:card-numbers:5e8d',   'SOC2 evidence pack',        'warn'],
-    ['00:02:19','policy.revert','R.Solanki','#7 hipaa-strict',           'rolled back v8 → v7',       'bad'],
-  ];
+  const ax = window.useSiphonApi('/v1/audit?limit=200');
+  // poll every 5s for live tail effect
+  React.useEffect(() => {
+    const t = setInterval(() => ax.refetch(), 5000);
+    return () => clearInterval(t);
+  }, []);
+  const events = (ax.data && ax.data.events) || [];
+  const fmtTs = (iso) => {
+    if (!iso) return '—';
+    const t = new Date(iso);
+    if (isNaN(t.getTime())) return iso;
+    return String(t.getHours()).padStart(2,'0') + ':'
+         + String(t.getMinutes()).padStart(2,'0') + ':'
+         + String(t.getSeconds()).padStart(2,'0');
+  };
+  const actionColor = (a) => {
+    if (!a) return 'var(--ink)';
+    if (a.includes('error') || a.includes('revert')) return 'var(--red)';
+    if (a.includes('detoken') || a.includes('grant')) return 'var(--amber)';
+    return 'var(--cyan)';
+  };
+  const eventColor = (et) => {
+    if (et === 'SCAN') return 'var(--accent)';
+    if (et === 'POLICY') return 'var(--cyan)';
+    return 'var(--ink-soft)';
+  };
+
+  // basic counts derived live from the ring
+  const scanCount  = events.filter(e => e.event_type === 'SCAN').length;
+  const errorCount = events.filter(e => e.outcome === 'error').length;
+  const flagged    = events.filter(e => (e.finding_count || 0) > 0).length;
+
   return (
     <div>
       <div className="page-head">
@@ -2829,50 +2851,70 @@ function Audit() {
           <h1>Audit Log</h1>
         </div>
         <div className="actions">
+          <window.LivePill source={ax.source} onClick={ax.refetch} title={ax.error || 'polls every 5s'} />
           <button className="btn ghost">Search</button>
           <button className="btn">Export CSV</button>
           <button className="btn primary">Build evidence pack</button>
         </div>
       </div>
 
+      {ax.error && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', marginBottom:'var(--gap)'}}>
+          <b>Error:</b> {ax.error}
+        </div>
+      )}
+
       <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
-        <div className="box"><div className="stat"><span className="s-label">Events · 30d</span><span className="s-val">1.2M</span><span className="s-delta">hash-chained</span></div></div>
-        <div className="box"><div className="stat"><span className="s-label">Policy changes</span><span className="s-val">48</span><span className="s-delta up">14 pending review</span></div></div>
-        <div className="box"><div className="stat"><span className="s-label">Detoken reads</span><span className="s-val" style={{color:'var(--amber)'}}>142</span><span className="s-delta">all with justification</span></div></div>
-        <div className="box"><div className="stat"><span className="s-label">Chain verify</span><span className="s-val" style={{color:'var(--safe)'}}>OK</span><span className="s-delta">last check 2m ago</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">In ring</span><span className="s-val">{ax.data ? ax.data.total : '—'}</span><span className="s-delta">cap {ax.data ? ax.data.capacity : '—'}</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Scans</span><span className="s-val">{scanCount}</span><span className="s-delta">in window</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Errors</span><span className="s-val" style={{color: errorCount ? 'var(--red)' : undefined}}>{errorCount}</span><span className="s-delta">outcome=error</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Flagged</span><span className="s-val">{flagged}</span><span className="s-delta">findings &gt; 0</span></div></div>
       </div>
 
       <div className="box" style={{marginBottom:'var(--gap)'}}>
-        <div className="box-title"><span className="t">Filters</span><span className="k">who · what · when</span></div>
-        <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
-          <div className="tb-filter"><span className="l">actor</span><span className="v">any</span><span className="chev">▾</span></div>
-          <div className="tb-filter"><span className="l">object</span><span className="v">policy · pattern · model · role · token · tenant</span><span className="chev">▾</span></div>
-          <div className="tb-filter"><span className="l">action</span><span className="v">read · edit · deploy · grant · revoke</span><span className="chev">▾</span></div>
-          <div className="tb-filter"><span className="l">range</span><span className="v">last 24h</span><span className="chev">▾</span></div>
-          <div className="tb-filter"><span className="l">tenant</span><span className="v">any</span><span className="chev">▾</span></div>
+        <div className="box-title">
+          <span className="t">Live audit ring</span>
+          <span className="k">in-memory · newest first · cap {ax.data ? ax.data.capacity : '—'}</span>
         </div>
-      </div>
-
-      <div className="box" style={{marginBottom:'var(--gap)'}}>
-        <div className="box-title"><span className="t">Recent events</span><span className="k">immutable · newest first</span></div>
-        <div style={{display:'grid', gridTemplateColumns:'90px 120px 110px 1.4fr 1fr 30px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
-          <span className="label">Time</span><span className="label">Action</span><span className="label">Actor</span><span className="label">Object</span><span className="label">Detail</span><span></span>
+        <div style={{display:'grid', gridTemplateColumns:'90px 80px 110px 110px 1fr 80px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+          <span className="label">Time</span>
+          <span className="label">Type</span>
+          <span className="label">Action</span>
+          <span className="label">Source</span>
+          <span className="label">Detail</span>
+          <span className="label">Outcome</span>
         </div>
-        {events.map(([t,a,actor,obj,detail,s],i)=>(
-          <div key={i} style={{display:'grid', gridTemplateColumns:'90px 120px 110px 1.4fr 1fr 30px', gap:10, padding:'6px 0', borderBottom:'1px solid var(--line-soft)', fontSize:11.5, fontFamily:"'JetBrains Mono', monospace", alignItems:'center'}}>
-            <span className="muted">{t}</span>
-            <span style={{color: a.startsWith('detoken')?'var(--amber)': a.startsWith('policy.revert')?'var(--red)':'var(--cyan)'}}>{a}</span>
-            <span>{actor}</span>
-            <span style={{color:'var(--ink-bright)'}}>{obj}</span>
-            <span className="muted">{detail}</span>
-            <span><span className={`chip chip--${s==='ok'?'safe':s==='warn'?'warn':'red'}`} style={{fontSize:9}}>{s}</span></span>
+        {ax.loading && events.length === 0 && (
+          <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>loading…</div>
+        )}
+        {!ax.loading && events.length === 0 && (
+          <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+            — ring empty · run a scan to populate —
           </div>
-        ))}
+        )}
+        {events.map((e, i) => {
+          const cats = (e.categories_found || []).join(', ');
+          const detail = cats
+            ? `${cats} · ${e.finding_count || 0} finding${e.finding_count===1?'':'s'} · ${e.duration_ms != null ? Math.round(e.duration_ms) + 'ms' : ''}`
+            : (e.metadata && Object.entries(e.metadata).map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ')) || '—';
+          const outcome = e.outcome || (e.is_clean === true ? 'clean' : e.is_clean === false ? 'flagged' : '—');
+          const oColor = outcome === 'error' ? 'red' : outcome === 'flagged' || outcome === 'findings_detected' ? 'warn' : 'safe';
+          return (
+            <div key={i} style={{display:'grid', gridTemplateColumns:'90px 80px 110px 110px 1fr 80px', gap:10, padding:'6px 0', borderBottom:'1px solid var(--line-soft)', fontSize:11.5, fontFamily:"'JetBrains Mono', monospace", alignItems:'center'}}>
+              <span className="muted" title={e.timestamp}>{fmtTs(e.timestamp)}</span>
+              <span style={{color: eventColor(e.event_type)}}>{e.event_type}</span>
+              <span style={{color: actionColor(e.action)}}>{e.action || '—'}</span>
+              <span className="muted">{e.source || '—'}</span>
+              <span style={{color:'var(--ink-bright)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={detail}>{detail}</span>
+              <span><span className={`chip chip--${oColor}`} style={{fontSize:9}}>{outcome}</span></span>
+            </div>
+          );
+        })}
       </div>
 
       <div className="grid grid-2">
         <div className="box">
-          <div className="box-title"><span className="t">Evidence packs</span><span className="k">signed · hash-chained exports</span></div>
+          <div className="box-title"><span className="t">Evidence packs</span><span className="k">signed · hash-chained exports · fixture</span></div>
           <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.9}}>
             <div style={{padding:'6px 0', borderBottom:'1px dashed var(--line-soft)'}}>
               <span style={{color:'var(--accent)'}}>◈</span> 2026-Q1 · SOC2-controls · <span className="muted">142MB · 2026-04-03</span> <span className="chip chip--safe" style={{marginLeft:6}}>verified</span>
@@ -2890,7 +2932,7 @@ function Audit() {
         </div>
 
         <div className="box">
-          <div className="box-title"><span className="t">Retention policy</span><span className="k">by event class</span></div>
+          <div className="box-title"><span className="t">Retention policy</span><span className="k">by event class · fixture</span></div>
           <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:2}}>
             <div>policy / model changes &nbsp;&nbsp;&nbsp;→ <span className="chip chip--safe">7 years</span></div>
             <div>detokenization events &nbsp;&nbsp;&nbsp;&nbsp;→ <span className="chip chip--safe">7 years</span></div>
@@ -2906,15 +2948,10 @@ function Audit() {
 }
 
 function Integrations() {
-  const dests = [
-    ['Splunk HEC',        'SIEM',       'ok',  '0.4s', 'findings + alerts'],
-    ['Datadog Security',  'SIEM',       'ok',  '0.7s', 'findings'],
-    ['PagerDuty',         'SOAR',       'ok',  '1.2s', 'P1/P2 incidents'],
-    ['#secops · slack',   'chat',       'ok',  '—',    'alerts + digest'],
-    ['S3 audit-vault',    'storage',    'bad', 'backlog','evidence packs'],
-    ['Jira · cloud',      'ticketing',  'ok',  '0.9s', 'investigations'],
-    ['webhook · acme',    'webhook',    'ok',  '0.3s', 'tenant-scoped'],
-  ];
+  const ix = window.useSiphonApi('/v1/integrations');
+  const liveIntegrations = (ix.data && ix.data.integrations) || [];
+  const liveConfigured = (ix.data && ix.data.configured) || 0;
+  const liveTotal = (ix.data && ix.data.total) || 0;
   const srcs = [
     ['siphon-agent · 48 pods', 'agents',    'ok',  '—',     'all 48 green'],
     ['AWS CloudTrail',         'cloud',     'ok',  '12m',   'lag within SLA'],
@@ -2930,6 +2967,7 @@ function Integrations() {
           <h1>Integrations</h1>
         </div>
         <div className="actions">
+          <window.LivePill source={ix.source} onClick={ix.refetch} title={ix.error || ''} />
           <button className="btn ghost">Marketplace</button>
           <button className="btn">Credentials vault</button>
           <button className="btn primary">Connect…</button>
@@ -2937,7 +2975,7 @@ function Integrations() {
       </div>
 
       <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
-        <div className="box"><div className="stat"><span className="s-label">Destinations</span><span className="s-val">7</span><span className="s-delta">6 healthy · 1 degraded</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">SIEM destinations</span><span className="s-val">{liveConfigured}<span style={{fontSize:18,color:'var(--ink-soft)'}}>/{liveTotal}</span></span><span className="s-delta">env-configured</span></div></div>
         <div className="box"><div className="stat"><span className="s-label">Sources</span><span className="s-val">5</span><span className="s-delta up">4 green · 1 auth-warn</span></div></div>
         <div className="box"><div className="stat"><span className="s-label">Throughput</span><span className="s-val">82</span><span className="s-delta">k events/hr</span></div></div>
         <div className="box"><div className="stat"><span className="s-label">Errors · 24h</span><span className="s-val" style={{color:'var(--amber)'}}>14</span><span className="s-delta">0.017% err rate</span></div></div>
@@ -2945,20 +2983,29 @@ function Integrations() {
 
       <div className="grid grid-2" style={{marginBottom:'var(--gap)'}}>
         <div className="box">
-          <div className="box-title"><span className="t">Destinations</span><span className="k">outbound · health 30s</span></div>
-          <div style={{display:'grid', gridTemplateColumns:'16px 1.3fr 80px 80px 60px 1fr', gap:8, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
-            <span></span><span className="label">Name</span><span className="label">Kind</span><span className="label">p95</span><span className="label">State</span><span className="label">Scope</span>
+          <div className="box-title">
+            <span className="t">SIEM destinations</span>
+            <span className="k">env-detected · DLPSCAN_SIEM_TYPE</span>
           </div>
-          {dests.map(([n,k,s,lat,scope],i)=>(
-            <div key={i} style={{display:'grid', gridTemplateColumns:'16px 1.3fr 80px 80px 60px 1fr', gap:8, padding:'6px 0', borderBottom:'1px solid var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
-              <span className={`dot-k ${s}`} />
-              <span style={{color:'var(--ink-bright)'}}>{n}</span>
-              <span className="muted">{k}</span>
-              <span>{lat}</span>
-              <span className={`chip chip--${s==='ok'?'safe':s==='warn'?'warn':'red'}`}>{s==='ok'?'healthy':s==='warn'?'degraded':'failing'}</span>
-              <span className="muted">{scope}</span>
+          <div style={{display:'grid', gridTemplateColumns:'16px 140px 90px 1.4fr', gap:8, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+            <span></span><span className="label">Adapter</span><span className="label">State</span><span className="label">Target</span>
+          </div>
+          {ix.loading && liveIntegrations.length === 0 && (
+            <div className="muted" style={{padding:14, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>loading…</div>
+          )}
+          {liveIntegrations.map((i, idx) => (
+            <div key={idx} style={{display:'grid', gridTemplateColumns:'16px 140px 90px 1.4fr', gap:8, padding:'7px 0', borderBottom:'1px solid var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+              <span className={`dot-k ${i.configured ? 'ok' : 'warn'}`} />
+              <span style={{color: i.configured ? 'var(--ink-bright)' : 'var(--ink-soft)'}}>{i.kind}</span>
+              <span><span className={`chip chip--${i.configured ? 'safe' : 'ghost'}`} style={{fontSize:9}}>{i.configured ? 'configured' : 'inactive'}</span></span>
+              <span className="muted" style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={i.target || ''}>{i.target || '—'}</span>
             </div>
           ))}
+          {ix.data && liveConfigured === 0 && (
+            <div className="muted" style={{padding:'10px 4px', fontSize:11, fontFamily:"'JetBrains Mono', monospace"}}>
+              none configured · set DLPSCAN_SIEM_TYPE + DLPSCAN_SIEM_URL to enable
+            </div>
+          )}
         </div>
 
         <div className="box">
@@ -4890,72 +4937,122 @@ Object.assign(window, { Models });
 /* ===== surfaces/assets.jsx ===== */
 // EDM / LSH assets
 function Assets() {
-  const vaults = [
-    ['patients-2026',    'EDM', 'HMAC-SHA256', '48,214',  'medical',  '2d ago'],
-    ['employees-pii',    'EDM', 'HMAC-SHA256', '12,088',  'hr',       '7d ago'],
-    ['customer-ccs',     'EDM', 'HMAC-SHA256', '194,500', 'billing',  'today' ],
-    ['confidential-docs','LSH', 'MinHash-128', '842 docs','legal',    '14d ago'],
-    ['source-ip',        'LSH', 'MinHash-128', '2,112',   'eng',      '30d ago'],
+  const edm = window.useSiphonApi('/v1/edm');
+  const lsh = window.useSiphonApi('/v1/lsh');
+  const aw  = window.useSiphonApi('/v1/allowlist');
+
+  const allow = aw.data;
+  const allowlistEntries = (allow && allow.entries) || { texts: [], patterns: [], paths: [] };
+  const allowlistRows = [
+    ...allowlistEntries.texts.map(t   => ({ value: t, kind: 'text',    note: 'exact match' })),
+    ...allowlistEntries.patterns.map(p => ({ value: p, kind: 'pattern', note: 'sub-category glob' })),
+    ...allowlistEntries.paths.map(p   => ({ value: p, kind: 'path',    note: 'file glob' })),
   ];
-  const allow = [
-    ['support@polygoncyber.ca', 'Email · contact',     'global', 'R. Solanki'],
-    ['0000-0000-0000-0000',     'PCI · test PAN',      'dev',    'auto'],
-    ['AKIAIOSFODNN7EXAMPLE',    'AWS · docs fixture',  'global', 'auto'],
+
+  const composite = [
+    {
+      kind: 'EDM',
+      loaded: edm.data && edm.data.loaded,
+      vaults: (edm.data && edm.data.vaults) || [],
+      note: edm.data && edm.data.note,
+    },
+    {
+      kind: 'LSH',
+      loaded: lsh.data && lsh.data.loaded,
+      vaults: (lsh.data && lsh.data.vaults) || [],
+      note: lsh.data && lsh.data.note,
+    },
   ];
+  const overallSource = (edm.source === 'live' && lsh.source === 'live' && aw.source === 'live')
+    ? 'live'
+    : (edm.source === 'offline' || lsh.source === 'offline' || aw.source === 'offline')
+      ? 'offline'
+      : 'loading';
+
   return (
     <div>
       <div className="page-head">
         <div>
-          <div className="crumbs">Operate · Detection Assets</div>
+          <div className="crumbs">Detect · Detection Assets</div>
           <h1>EDM / LSH / Allowlists</h1>
         </div>
         <div className="actions">
+          <window.LivePill source={overallSource} onClick={() => { edm.refetch(); lsh.refetch(); aw.refetch(); }} />
           <button className="btn ghost">Import CSV</button>
           <button className="btn primary">New vault</button>
         </div>
       </div>
 
-      <div className="box" style={{marginBottom:'var(--gap)'}}>
-        <div className="box-title"><span className="t">Detection vaults</span><span className="k">known-value &amp; similarity stores</span></div>
-        <div style={{display:'grid', gridTemplateColumns:'1.4fr 90px 140px 1fr 100px 100px', gap:8, fontSize:13}}>
-          <span className="label">Name</span><span className="label">Type</span><span className="label">Algo</span><span className="label">Size</span><span className="label">Tenant</span><span className="label">Updated</span>
-          {vaults.flatMap(([n,t,a,s,tn,u],i)=>[
-            <span key={'a'+i} className="hand-b">{n}</span>,
-            <span key={'b'+i}><span className={`chip chip--${t==='EDM'?'teal':'safe'}`}>{t}</span></span>,
-            <span key={'c'+i} className="mono" style={{fontSize:11}}>{a}</span>,
-            <span key={'d'+i} className="mono" style={{fontSize:11}}>{s}</span>,
-            <span key={'e'+i} className="hand">{tn}</span>,
-            <span key={'f'+i} className="muted" style={{fontSize:12}}>{u}</span>,
-          ])}
-        </div>
+      <div className="grid grid-2" style={{marginBottom:'var(--gap)'}}>
+        {composite.map((c, i) => (
+          <div key={i} className="box">
+            <div className="box-title">
+              <span className="t">{c.kind} vaults</span>
+              <span className="k">
+                {c.loaded ? `${c.vaults.length} loaded` : <span className="chip chip--ghost">not loaded</span>}
+              </span>
+            </div>
+            {c.loaded && c.vaults.length > 0 ? (
+              <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.8}}>
+                {c.vaults.map((v, j) => <div key={j}>▦ {v}</div>)}
+              </div>
+            ) : (
+              <div className="muted" style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.7, padding:'10px 0'}}>
+                {c.note || 'No vaults reported by siphon-api.'}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
 
-      <div className="grid grid-2">
-        <div className="box">
-          <div className="box-title"><span className="t">Upload flow · new vault</span><span className="k">sketch</span></div>
-          <div style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
-            <div className="node" style={{position:'static'}}><span className="nt">1</span><b>Upload CSV</b><div className="mono" style={{fontSize:10}}>tls · client-side hash</div></div>
-            <span className="arrow">→</span>
-            <div className="node" style={{position:'static'}}><span className="nt">2</span><b>Pick column</b><div className="mono" style={{fontSize:10}}>card · ssn · email</div></div>
-            <span className="arrow">→</span>
-            <div className="node" style={{position:'static'}}><span className="nt">3</span><b>HMAC keygen</b><div className="mono" style={{fontSize:10}}>salt per tenant</div></div>
-            <span className="arrow">→</span>
-            <div className="node act-ok" style={{position:'static'}}><span className="nt">4</span><b>Deploy</b><div className="mono" style={{fontSize:10}}>push to all pods</div></div>
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title">
+          <span className="t">Allowlist</span>
+          <span className="k">
+            {allow
+              ? `${allow.text_count} exact · ${allow.pattern_count} pattern · ${allow.path_count} path${allow.loaded_from ? ` · from ${allow.loaded_from}` : ''}`
+              : 'loading…'}
+          </span>
+        </div>
+        {allow && !allow.loaded_from && (
+          <div className="margin-note" style={{marginBottom:8}}>
+            empty · set <b>SIPHON_ALLOWLIST_PATH</b> to a JSON file with {'{texts, patterns, paths}'}
           </div>
-          <div className="muted scribble" style={{fontSize:14, marginTop:10}}>raw values never leave the browser — only HMAC hashes are stored</div>
-        </div>
-        <div className="box">
-          <div className="box-title"><span className="t">Allowlist</span><span className="k">known false positives</span></div>
-          {allow.map(([v,r,s,w],i)=>(
-            <div key={i} style={{display:'grid', gridTemplateColumns:'1fr 1fr 70px 100px 20px', padding:'5px 0', borderBottom:'1px dashed var(--line-soft)', fontSize:12, gap:8, alignItems:'center'}}>
-              <span className="mono" style={{fontSize:11}}>{v}</span>
-              <span className="hand">{r}</span>
-              <span className="chip">{s}</span>
-              <span className="muted">{w}</span>
-              <span>×</span>
+        )}
+        {allowlistRows.length === 0 ? (
+          <div className="muted" style={{padding:14, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+            — empty —
+          </div>
+        ) : (
+          <>
+            <div style={{display:'grid', gridTemplateColumns:'90px 1fr 1fr', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+              <span className="label">Kind</span>
+              <span className="label">Value</span>
+              <span className="label">Note</span>
             </div>
-          ))}
+            {allowlistRows.map((r, i) => (
+              <div key={i} style={{display:'grid', gridTemplateColumns:'90px 1fr 1fr', gap:10, padding:'6px 0', borderBottom:'1px dashed var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+                <span><span className={`chip chip--${r.kind==='text'?'safe':r.kind==='pattern'?'teal':'warn'}`} style={{fontSize:9}}>{r.kind}</span></span>
+                <span style={{color:'var(--ink-bright)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={r.value}>{r.value}</span>
+                <span className="muted">{r.note}</span>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+
+      <div className="box">
+        <div className="box-title"><span className="t">Upload flow · new vault</span><span className="k">design sketch</span></div>
+        <div style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
+          <div className="node" style={{position:'static'}}><span className="nt">1</span><b>Upload CSV</b><div className="mono" style={{fontSize:10}}>tls · client-side hash</div></div>
+          <span className="arrow">→</span>
+          <div className="node" style={{position:'static'}}><span className="nt">2</span><b>Pick column</b><div className="mono" style={{fontSize:10}}>card · ssn · email</div></div>
+          <span className="arrow">→</span>
+          <div className="node" style={{position:'static'}}><span className="nt">3</span><b>HMAC keygen</b><div className="mono" style={{fontSize:10}}>salt per tenant</div></div>
+          <span className="arrow">→</span>
+          <div className="node act-ok" style={{position:'static'}}><span className="nt">4</span><b>Deploy</b><div className="mono" style={{fontSize:10}}>push to all pods</div></div>
         </div>
+        <div className="muted scribble" style={{fontSize:14, marginTop:10}}>raw values never leave the browser — only HMAC hashes are stored</div>
       </div>
     </div>
   );
@@ -8170,7 +8267,167 @@ function ScanDiff() {
   );
 }
 
-Object.assign(window, { ApiExplorer, ScanDiff });
+// ---------------------------------------------------------------------------
+
+/* ===== surfaces/procstate.jsx ===== */
+// Process State — a per-process diagnostic view of siphon-api's runtime
+// machinery: cache hit-rate, rate-limit bucket usage, tokenize vault
+// status. Single page, polls every 5s. Useful when you're trying to
+// figure out why something is slow / why a request is being throttled.
+
+function ProcessState() {
+  const cache = window.useSiphonApi('/v1/cache/stats');
+  const rate  = window.useSiphonApi('/v1/ratelimit');
+  const tok   = window.useSiphonApi('/v1/tokenize/status');
+  const mx    = window.useSiphonApi('/v1/metrics');
+
+  React.useEffect(() => {
+    const t = setInterval(() => {
+      cache.refetch(); rate.refetch(); tok.refetch(); mx.refetch();
+    }, 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  const overallSource = [cache.source, rate.source, tok.source, mx.source].includes('offline')
+    ? 'offline'
+    : [cache.source, rate.source, tok.source, mx.source].every(s => s === 'live')
+      ? 'live'
+      : 'loading';
+
+  const c = cache.data || {};
+  const r = rate.data || {};
+  const t = tok.data || {};
+  const m = mx.data || {};
+
+  const fmtUptime = (s) => {
+    if (!s && s !== 0) return '—';
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+    return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+  };
+
+  const bucketPct = (r.active_buckets || 0) / (r.max_buckets || 1) * 100;
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Engineering · Process State</div>
+          <h1>Process State</h1>
+        </div>
+        <div className="actions">
+          <window.LivePill source={overallSource} onClick={() => { cache.refetch(); rate.refetch(); tok.refetch(); mx.refetch(); }} title="polls every 5s · click to force" />
+          <span className="muted mono" style={{fontSize:11}}>target: {window.SIPHON_API_URL()}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
+        <div className="box"><div className="stat">
+          <span className="s-label">Uptime</span>
+          <span className="s-val">{fmtUptime(m.uptime_secs)}</span>
+          <span className="s-delta">since boot</span>
+        </div></div>
+        <div className="box"><div className="stat">
+          <span className="s-label">Scans</span>
+          <span className="s-val">{m.scans_total != null ? m.scans_total.toLocaleString() : '—'}</span>
+          <span className="s-delta">total served</span>
+        </div></div>
+        <div className="box"><div className="stat">
+          <span className="s-label">Errors</span>
+          <span className="s-val" style={{color: (m.scan_errors_total || 0) > 0 ? 'var(--red)' : undefined}}>
+            {m.scan_errors_total != null ? m.scan_errors_total : '—'}
+          </span>
+          <span className="s-delta">scan 5xx</span>
+        </div></div>
+        <div className="box"><div className="stat">
+          <span className="s-label">Findings</span>
+          <span className="s-val">{m.findings_total != null ? m.findings_total.toLocaleString() : '—'}</span>
+          <span className="s-delta">cumulative</span>
+        </div></div>
+      </div>
+
+      <div className="grid grid-2" style={{marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Result cache</span>
+            <span className="k">{c.enabled ? 'LRU · SHA-256 keyed · TTL' : 'disabled'}</span>
+          </div>
+          {c.enabled ? (
+            <>
+              <div style={{display:'flex', gap:18, alignItems:'baseline', marginBottom:14}}>
+                <div>
+                  <div className="label">Hit rate</div>
+                  <div className="hand-b" style={{fontSize:36, color: c.hit_rate >= 0.6 ? 'var(--safe)' : c.hit_rate >= 0.3 ? 'var(--amber)' : 'var(--red)'}}>
+                    {(c.hit_rate * 100).toFixed(1)}%
+                  </div>
+                </div>
+                <div style={{marginLeft:'auto', textAlign:'right'}}>
+                  <div className="label">Entries</div>
+                  <div className="mono" style={{fontSize:18}}>{c.size.toLocaleString()}</div>
+                </div>
+              </div>
+              <div className="bar-row">
+                <span className="hand-b">hits</span>
+                <span className="b"><i style={{width: (c.hits + c.misses ? (c.hits / (c.hits + c.misses) * 100) : 0) + '%', background:'var(--safe)'}}/></span>
+                <span className="n">{c.hits.toLocaleString()}</span>
+              </div>
+              <div className="bar-row">
+                <span className="hand-b">misses</span>
+                <span className="b"><i style={{width: (c.hits + c.misses ? (c.misses / (c.hits + c.misses) * 100) : 100) + '%', background:'var(--amber)'}}/></span>
+                <span className="n">{c.misses.toLocaleString()}</span>
+              </div>
+            </>
+          ) : (
+            <div className="muted" style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.7, padding:'12px 0'}}>
+              No global cache configured.<br/>
+              <span style={{fontSize:11}}>Activate via <b>siphon::cache::set_default_cache(Some(ScanCache::new(...)))</b> at startup.</span>
+            </div>
+          )}
+        </div>
+
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Rate limiter</span>
+            <span className="k">sliding window · per IP</span>
+          </div>
+          <div style={{display:'flex', gap:18, alignItems:'baseline', marginBottom:14}}>
+            <div>
+              <div className="label">Active IPs</div>
+              <div className="hand-b" style={{fontSize:36}}>{r.active_buckets != null ? r.active_buckets.toLocaleString() : '—'}</div>
+            </div>
+            <div style={{marginLeft:'auto', textAlign:'right'}}>
+              <div className="label">In-window reqs</div>
+              <div className="mono" style={{fontSize:18}}>{r.total_recent_requests != null ? r.total_recent_requests.toLocaleString() : '—'}</div>
+            </div>
+          </div>
+          <div className="bar-row">
+            <span className="hand-b">bucket usage</span>
+            <span className="b"><i style={{width: Math.min(100, bucketPct) + '%', background: bucketPct >= 75 ? 'var(--red)' : bucketPct >= 25 ? 'var(--amber)' : 'var(--safe)'}}/></span>
+            <span className="n">{r.max_buckets ? `${bucketPct.toFixed(2)}%` : ''}</span>
+          </div>
+          <hr className="sep" />
+          <div className="kv" style={{fontSize:12}}>
+            <span className="k">Window</span>      <span className="v mono">{r.window_secs ? r.window_secs + 's' : '—'}</span>
+            <span className="k">Per-IP limit</span><span className="v mono">{r.per_ip_limit != null ? r.per_ip_limit + ' req/window' : '—'}</span>
+            <span className="k">Max buckets</span> <span className="v mono">{r.max_buckets != null ? r.max_buckets.toLocaleString() : '—'}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Tokenize vault</span>
+          <span className="k">{t.global_vault ? 'global vault active' : 'no global vault'}</span>
+        </div>
+        <div className="muted" style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.7}}>
+          {t.note || 'No tokenize status reported.'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { ApiExplorer, ScanDiff, ProcessState });
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -8230,7 +8487,7 @@ function App() {
   const { Dashboard, Stream, FindingDetail, Pods, Policy, Patterns, Models, Assets,
           Compliance, Testing, AssureOverview, DetectOverview, Settings, Logs, Topbar, WorkspaceBar, SurfaceBar, TweaksPanel,
           Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users,
-          LiveScan, CorpusRunner, ApiExplorer, ScanDiff, Profiles } = window;
+          LiveScan, CorpusRunner, ApiExplorer, ScanDiff, ProcessState, Profiles } = window;
 
   // expose go() globally so nested surfaces (e.g. DetectOverview cards) can navigate.
   React.useEffect(() => { window.__c2_go = go; }, []);
@@ -8245,6 +8502,7 @@ function App() {
       corpusrun:      <CorpusRunner />,
       scandiff:       <ScanDiff />,
       apiex:          <ApiExplorer />,
+      procstate:      <ProcessState />,
       stream:         <Stream go={go} />,
       investigations: <Investigations />,
       pods:           <Pods />,
