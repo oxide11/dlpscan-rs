@@ -129,6 +129,78 @@ pub struct CustomCategory {
     pub patterns: Vec<CustomPattern>,
 }
 
+// ─── Reusable match lists (Phase 4.7) ────────────────────────────
+//
+// Lists are analyst-authored collections that policies reference
+// with an action (allow, block, mask). Examples: an allow-list of
+// partner domains that suppress email-address findings, a block-list
+// of leaked hashes that force a red severity, a path-based exception
+// list for a finance-team inbound flow.
+//
+// Lists themselves are purely data. Policies (loaded separately)
+// attach them with an action; the scanner / router consults the
+// combined (list, action) set at emit time (Phase 4.7c).
+
+/// Discriminator for how entries in a list should be interpreted.
+/// The scanner picks the right matcher per kind — exact for hashes,
+/// case-insensitive substring for keywords, suffix match for domains,
+/// etc. Serialises as lowercase ("keyword", "domain", …) so the wire
+/// file stays readable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ListKind {
+    /// Free-text words/phrases. Case-insensitive substring match.
+    Keyword,
+    /// Fully-qualified domains. Suffix match so `example.com` in the
+    /// list also matches `foo.example.com`. Case-insensitive.
+    Domain,
+    /// Email addresses. Exact match case-insensitive, with an
+    /// optional domain fallback when the entry begins with '@'.
+    Email,
+    /// Content hashes — MD5 / SHA-1 / SHA-256, hex-encoded lowercase.
+    /// Exact match.
+    Hash,
+    /// IP addresses or CIDR blocks (`10.0.0.0/8`). Matches by
+    /// containment.
+    Ip,
+    /// URLs or URL prefixes. Prefix match with trailing-slash
+    /// normalisation.
+    Url,
+    /// Filesystem paths or glob patterns (`**/payroll/*`). Useful for
+    /// destination-aware exceptions ("files going to /mnt/audit/**").
+    Path,
+    /// Generic fallback for kinds not yet modelled; matcher treats
+    /// entries as case-insensitive exact strings.
+    Other,
+}
+
+impl Default for ListKind {
+    fn default() -> Self {
+        ListKind::Keyword
+    }
+}
+
+/// An analyst-authored list. `id` is stable across edits so policies
+/// can reference it without risking rename drift. Timestamps are
+/// strings (ISO8601) for wire-file readability; the scanner doesn't
+/// read them today.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MatchList {
+    /// Stable opaque id (e.g. `ml_<slug>`). Policies reference this.
+    pub id: String,
+    /// Human-facing label.
+    pub name: String,
+    /// Free-text description — why the list exists, who owns it.
+    pub description: String,
+    pub kind: ListKind,
+    /// Raw entries. Interpretation depends on `kind`. Order doesn't
+    /// matter for matching but is preserved for the UI.
+    pub entries: Vec<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 /// Top-level overrides document. Designed for human edits in git as
 /// well as machine writes from the admin console — every collection is
 /// optional + defaults to empty so a partially-filled document still
@@ -144,6 +216,10 @@ pub struct PatternOverrides {
     pub pattern_overrides: HashMap<String, PatternOverride>,
     /// Analyst-authored categories with their own patterns.
     pub custom_categories: Vec<CustomCategory>,
+    /// Reusable match lists (Phase 4.7). Policies reference these by
+    /// id; the scanner consults them at emit time when Phase 4.7c
+    /// wires list-aware allow/block/mask actions.
+    pub lists: Vec<MatchList>,
 }
 
 /// Errors surfaced by the loader. Kept simple — the caller logs and
@@ -269,6 +345,8 @@ impl PatternOverrides {
                 .iter()
                 .map(|c| c.patterns.len())
                 .sum(),
+            lists: self.lists.len(),
+            list_entries: self.lists.iter().map(|l| l.entries.len()).sum(),
             version: self.version,
         }
     }
@@ -280,6 +358,10 @@ pub struct OverridesSummary {
     pub pattern_overrides: usize,
     pub custom_categories: usize,
     pub custom_patterns: usize,
+    /// Count of match lists (Phase 4.7). Sum of entries across all
+    /// lists.
+    pub lists: usize,
+    pub list_entries: usize,
     pub version: u32,
 }
 
@@ -513,6 +595,52 @@ mod tests {
         let re = map.get(&("PCI".to_string(), "visa.v3".to_string())).unwrap();
         assert!(re.is_match("4111111111111111"));
         assert!(!re.is_match("411111111"));
+    }
+
+    #[test]
+    fn match_list_parses_and_summarises() {
+        let json = r#"{
+            "version":0,
+            "lists":[
+                {"id":"ml_partners","name":"Partner domains","kind":"domain",
+                 "entries":["acme.com","globex.eu"]},
+                {"id":"ml_leaked","name":"Known leaked hashes","kind":"hash",
+                 "description":"IR triage",
+                 "entries":["5d41402abc4b2a76b9719d911017c592"]},
+                {"id":"ml_kws","name":"Weaponised phrases","kind":"keyword",
+                 "entries":["project icarus","shell access"]}
+            ]
+        }"#;
+        let o = PatternOverrides::from_bytes(json.as_bytes()).unwrap();
+        assert_eq!(o.lists.len(), 3);
+        assert_eq!(o.lists[0].kind, ListKind::Domain);
+        assert_eq!(o.lists[1].kind, ListKind::Hash);
+        assert_eq!(o.lists[2].entries.len(), 2);
+        let s = o.summary();
+        assert_eq!(s.lists, 3);
+        assert_eq!(s.list_entries, 5);
+    }
+
+    #[test]
+    fn match_list_kind_round_trips_unknown_as_other_fails() {
+        // Unknown kind should fail hard — no silent downgrade to Other.
+        let json = r#"{
+            "version":0,
+            "lists":[{"id":"x","name":"x","kind":"not-a-real-kind","entries":[]}]
+        }"#;
+        let err = PatternOverrides::from_bytes(json.as_bytes()).unwrap_err();
+        assert!(matches!(err, LoadError::Parse(_)));
+    }
+
+    #[test]
+    fn match_list_default_kind_is_keyword() {
+        // Missing `kind` should default to Keyword via serde(default).
+        let json = r#"{
+            "version":0,
+            "lists":[{"id":"x","name":"x","entries":["hi"]}]
+        }"#;
+        let o = PatternOverrides::from_bytes(json.as_bytes()).unwrap();
+        assert_eq!(o.lists[0].kind, ListKind::Keyword);
     }
 
     #[test]

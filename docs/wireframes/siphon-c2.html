@@ -2185,6 +2185,7 @@ const SURFACES = [
   { id: 'models',         workspace: 'detect',  icon: '⌬',  title: 'Models',        cluster: true },
   { id: 'assets',         workspace: 'detect',  icon: '◉',  title: 'Fingerprints',  sub: 'EDM · LSH' },
   { id: 'profiles',       workspace: 'detect',  icon: '◎',  title: 'Masking Profiles' },
+  { id: 'lists',          workspace: 'detect',  icon: '⊞',  title: 'Match Lists', sub: 'allow · block · mask collections' },
   { id: 'tokenization',   workspace: 'detect',  icon: '⎔',  title: 'Tokenization',  cluster: true },
   // ── ASSURE ───────────────────────────────────────────────────
   { id: 'assurance',      workspace: 'assure',  icon: '◈',  title: 'Overview', sub: 'availability · coverage · efficacy', cluster: true },
@@ -7970,6 +7971,21 @@ function NewPatternModal({ open, category, onClose, onSaved }) {
 // actually picks up the new rules.
 // ─────────────────────────────────────────────────────────────────
 
+// Wire-shape helper for MatchList (Phase 4.7a.3). Maps camelCase
+// client fields to snake_case Rust fields + fills in defaults so a
+// partially-filled list still round-trips through /v1/overrides.
+function __siphonListsForWire(staged) {
+  return (staged || []).map(l => ({
+    id: l.id,
+    name: l.name || '',
+    description: l.description || '',
+    kind: l.kind || 'keyword',
+    entries: Array.isArray(l.entries) ? l.entries.filter(Boolean) : [],
+    created_at: l.createdAt || l.created_at || '',
+    updated_at: l.updatedAt || l.updated_at || '',
+  }));
+}
+
 // Strip client-only fields (id, createdAt, denormalised category) so
 // what we serialise matches the Rust PatternOverrides schema.
 function __siphonCustomCatsForWire(staged) {
@@ -8012,9 +8028,16 @@ function writeApplyPending(state) {
   } catch {}
 }
 
-function PendingChangesBanner({ customCategories }) {
+function PendingChangesBanner({ customCategories: customCategoriesProp }) {
   const current = window.useSiphonApi('/v1/overrides/current');
   const health  = window.useSiphonApi('/health');
+  // Read both staged sources internally so the banner can mount on
+  // any surface (Patterns, Match Lists, future Policies) without
+  // prop-drilling. Accept a prop override so the Patterns surface's
+  // existing wiring continues to work.
+  const customCategoriesFromHook = window.useCustomCategories ? window.useCustomCategories() : [];
+  const customCategories = customCategoriesProp || customCategoriesFromHook;
+  const matchLists = window.useMatchLists ? window.useMatchLists() : [];
   const [apply, setApply] = React.useState({ loading: false, error: null, success: null });
   // Restart-pending bookkeeping persisted across reloads. Key by pod
   // URL so multiple pods (Phase 4.5) don't trample each other.
@@ -8025,9 +8048,13 @@ function PendingChangesBanner({ customCategories }) {
   const bump = () => force(x => x + 1);
 
   const currentOverrides = (current.data && current.data.overrides) || {};
-  const stagedWire = __siphonCustomCatsForWire(customCategories);
-  const currentWire = __siphonCustomCatsForWire(currentOverrides.custom_categories);
-  const dirty = !__siphonCatsEqual(stagedWire, currentWire);
+  const stagedCatsWire  = __siphonCustomCatsForWire(customCategories);
+  const currentCatsWire = __siphonCustomCatsForWire(currentOverrides.custom_categories);
+  const stagedListsWire  = __siphonListsForWire(matchLists);
+  const currentListsWire = __siphonListsForWire(currentOverrides.lists);
+  const dirtyCats  = !__siphonCatsEqual(stagedCatsWire,  currentCatsWire);
+  const dirtyLists = !__siphonCatsEqual(stagedListsWire, currentListsWire);
+  const dirty = dirtyCats || dirtyLists;
 
   // Roll detection: if the pod's started_at moved past the apply
   // timestamp (or away from the pre-apply baseline), the pod has
@@ -8059,7 +8086,8 @@ function PendingChangesBanner({ customCategories }) {
       version: 0,
       disabled_patterns: currentOverrides.disabled_patterns || [],
       pattern_overrides: currentOverrides.pattern_overrides || {},
-      custom_categories: stagedWire,
+      custom_categories: stagedCatsWire,
+      lists: stagedListsWire,
     };
     try {
       const url = window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/overrides/apply';
@@ -8093,8 +8121,10 @@ function PendingChangesBanner({ customCategories }) {
     }
   };
 
-  const catCount = stagedWire.length;
-  const patCount = stagedWire.reduce((a, c) => a + (c.patterns || []).length, 0);
+  const catCount = stagedCatsWire.length;
+  const patCount = stagedCatsWire.reduce((a, c) => a + (c.patterns || []).length, 0);
+  const listCount = stagedListsWire.length;
+  const listEntryCount = stagedListsWire.reduce((a, l) => a + (l.entries || []).length, 0);
 
   // Restart-required branch: an apply has landed on disk but the
   // pod hasn't restarted yet, so the scanner is still using the old
@@ -8177,8 +8207,15 @@ function PendingChangesBanner({ customCategories }) {
         <div style={{flex:1, minWidth:240}}>
           {dirty ? (
             <>
-              <b>Pending changes</b> · {catCount} custom categor{catCount === 1 ? 'y' : 'ies'} · {patCount} pattern{patCount === 1 ? '' : 's'} staged locally.
-              Nothing has been written to <span className="mono">SIPHON_OVERRIDES_PATH</span> yet.
+              <b>Pending changes</b> staged locally ·{' '}
+              {dirtyCats && (
+                <>{catCount} custom categor{catCount === 1 ? 'y' : 'ies'} / {patCount} pattern{patCount === 1 ? '' : 's'}</>
+              )}
+              {dirtyCats && dirtyLists && ' · '}
+              {dirtyLists && (
+                <>{listCount} list{listCount === 1 ? '' : 's'} / {listEntryCount} entr{listEntryCount === 1 ? 'y' : 'ies'}</>
+              )}
+              . Nothing has been written to <span className="mono">SIPHON_OVERRIDES_PATH</span> yet.
             </>
           ) : (
             <><b>Staged state matches live overrides.</b> Nothing to apply.</>
@@ -9316,7 +9353,277 @@ function PatternDetail({ category, sub_category, back }) {
   );
 }
 
-Object.assign(window, { Patterns, Profiles, PatternDetail });
+// ─────────────────────────────────────────────────────────────────
+// Match lists — reusable allow / block / mask collections that
+// policies attach with an action. Phase 4.7a.2 ships the UI +
+// localStorage staging; Phase 4.7a.3 folds them into the Apply
+// banner's diff; Phase 4.7b teaches policies to reference them;
+// Phase 4.7c adds scanner-time enforcement.
+// ─────────────────────────────────────────────────────────────────
+const ML_STORAGE_KEY = 'c2:match-lists';
+window.__ml_listeners = window.__ml_listeners || new Set();
+function mlRead() {
+  try { return JSON.parse(localStorage.getItem(ML_STORAGE_KEY) || '[]'); }
+  catch { return []; }
+}
+function mlWrite(list) {
+  try { localStorage.setItem(ML_STORAGE_KEY, JSON.stringify(list)); } catch {}
+  window.__ml_listeners.forEach(fn => { try { fn(); } catch {} });
+}
+window.c2MatchListAdd = function (entry) {
+  const list = mlRead();
+  list.push({
+    id: entry.id || ('ml_' + Date.now().toString(36)),
+    name: entry.name,
+    description: entry.description || '',
+    kind: entry.kind || 'keyword',
+    entries: entry.entries || [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  mlWrite(list);
+  return list[list.length - 1].id;
+};
+window.c2MatchListUpdate = function (id, patch) {
+  const list = mlRead();
+  const idx = list.findIndex(l => l.id === id);
+  if (idx < 0) return false;
+  list[idx] = {
+    ...list[idx], ...patch,
+    updatedAt: new Date().toISOString(),
+  };
+  mlWrite(list);
+  return true;
+};
+window.c2MatchListRemove = function (id) {
+  mlWrite(mlRead().filter(l => l.id !== id));
+};
+window.useMatchLists = function () {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const fn = () => setTick(t => t + 1);
+    window.__ml_listeners.add(fn);
+    const onStorage = (e) => { if (e.key === ML_STORAGE_KEY) fn(); };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.__ml_listeners.delete(fn);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+  return mlRead();
+};
+
+const ML_KINDS = [
+  { id: 'keyword', label: 'keyword',  hint: 'case-insensitive substring match' },
+  { id: 'domain',  label: 'domain',   hint: 'suffix match · example.com matches foo.example.com' },
+  { id: 'email',   label: 'email',    hint: 'exact address; leading @ = domain fallback' },
+  { id: 'hash',    label: 'hash',     hint: 'exact hex-lowercase MD5/SHA-1/SHA-256' },
+  { id: 'ip',      label: 'ip',       hint: 'IP or CIDR · 10.0.0.0/8' },
+  { id: 'url',     label: 'url',      hint: 'URL or prefix' },
+  { id: 'path',    label: 'path',     hint: 'filesystem path or glob · **/payroll/*' },
+  { id: 'other',   label: 'other',    hint: 'case-insensitive exact string' },
+];
+
+function MatchLists() {
+  const lists = window.useMatchLists();
+  const [selectedId, setSelectedId] = React.useState(() =>
+    (mlRead()[0] && mlRead()[0].id) || null);
+  const [filter, setFilter] = React.useState('');
+  const { PageBar } = window;
+
+  // Draft state for the detail editor — changes are held locally
+  // until the analyst hits Save. Keeps the 'staged' concept clean
+  // and keeps the Apply banner diff honest.
+  const [draft, setDraft] = React.useState(null);
+  const selected = lists.find(l => l.id === selectedId);
+  React.useEffect(() => {
+    if (selected) setDraft({ ...selected, entries: [...(selected.entries || [])] });
+    else setDraft(null);
+  }, [selectedId, selected && selected.updatedAt]);
+
+  const filtered = filter.trim()
+    ? lists.filter(l =>
+        (l.name + ' ' + l.description + ' ' + l.kind + ' ' + l.entries.join(' '))
+          .toLowerCase()
+          .includes(filter.trim().toLowerCase()))
+    : lists;
+
+  const createNew = () => {
+    const name = prompt('Name for the new list:');
+    if (!name || !name.trim()) return;
+    const id = window.c2MatchListAdd({ name: name.trim() });
+    setSelectedId(id);
+  };
+
+  const saveDraft = () => {
+    if (!draft || !selected) return;
+    window.c2MatchListUpdate(selected.id, {
+      name: draft.name,
+      description: draft.description,
+      kind: draft.kind,
+      entries: draft.entries,
+    });
+  };
+
+  const removeSelected = () => {
+    if (!selected) return;
+    if (!confirm(`Delete list '${selected.name}' (${selected.entries.length} entries)? Policies referencing this id will lose their attachment.`)) return;
+    window.c2MatchListRemove(selected.id);
+    setSelectedId(null);
+  };
+
+  const kindMeta = ML_KINDS.find(k => k.id === (draft && draft.kind)) || ML_KINDS[0];
+  const dirty = selected && draft && (
+    draft.name !== selected.name ||
+    draft.description !== selected.description ||
+    draft.kind !== selected.kind ||
+    JSON.stringify(draft.entries) !== JSON.stringify(selected.entries)
+  );
+
+  return (
+    <div>
+      <PageBar
+        crumbs={['Detect', 'Match Lists']}
+        title={<>Match Lists <HelpIcon topic="patterns" title="Match lists" size={16} /></>}
+        subtitle="reusable collections of keywords, domains, hashes, etc. — policies attach them with an action (allow / block / mask)"
+        actions={<>
+          <span className="muted mono" style={{fontSize:11}}>
+            {lists.length} list{lists.length === 1 ? '' : 's'} · staged locally
+          </span>
+          <button className="btn primary" onClick={createNew}>+ New list</button>
+        </>}
+      />
+
+      <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:12, lineHeight:1.6, marginBottom:'var(--gap)'}}>
+        <b>Staged locally.</b> Lists live in <span className="mono">localStorage</span> until you Apply —
+        Apply writes them into the shared overrides file alongside custom categories, and a restart
+        picks them up. Phase 4.7b wires Policies to attach lists with actions; Phase 4.7c adds
+        scanner-time enforcement.
+      </div>
+
+      <PendingChangesBanner />
+
+      <div className="grid" style={{gridTemplateColumns:'280px 1fr', gap:'var(--gap)'}}>
+        {/* Left rail — all lists + filter */}
+        <div className="box" style={{padding:10, maxHeight:680, overflowY:'auto'}}>
+          <input
+            placeholder="filter…"
+            value={filter}
+            onChange={e => setFilter(e.target.value)}
+            style={{
+              width:'100%', marginBottom:8, padding:'4px 8px',
+              fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+              background:'var(--bg-1)', color:'var(--ink)',
+              border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'
+            }}
+          />
+          {filtered.length === 0 ? (
+            <div className="muted" style={{padding:10, fontSize:11, textAlign:'center'}}>
+              {lists.length === 0 ? '— no lists yet · click New list to create one —' : '— no matches —'}
+            </div>
+          ) : filtered.map(l => (
+            <div
+              key={l.id}
+              onClick={() => setSelectedId(l.id)}
+              style={{
+                display:'flex', justifyContent:'space-between', alignItems:'center',
+                padding:'5px 6px', fontSize:12, cursor:'pointer',
+                borderBottom:'1px dashed var(--line-soft)',
+                background: l.id === selectedId ? 'var(--bg-3)' : 'transparent',
+                color: l.id === selectedId ? 'var(--accent)' : 'var(--ink)',
+              }}>
+              <span style={{display:'flex', alignItems:'center', gap:6, overflow:'hidden', minWidth:0}}>
+                <span className="chip chip--teal" style={{fontSize:8.5, padding:'1px 5px', letterSpacing:0.5}}>{l.kind}</span>
+                <span style={{fontFamily:"'Space Grotesk', sans-serif", fontWeight:600, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                  {l.name}
+                </span>
+              </span>
+              <span className="muted mono" style={{fontSize:10.5, flexShrink:0, marginLeft:6}}>
+                {l.entries.length}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* Right panel — editor */}
+        {!selected ? (
+          <div className="box" style={{display:'flex', alignItems:'center', justifyContent:'center', minHeight:260}}>
+            <span className="muted">— select a list to edit, or click <b>+ New list</b> —</span>
+          </div>
+        ) : draft ? (
+          <div className="box">
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
+              <div style={{fontFamily:"'Space Grotesk', sans-serif", fontWeight:600, fontSize:15, color:'var(--ink-bright)'}}>
+                {selected.name}
+                <span className="muted mono" style={{fontSize:10.5, marginLeft:10, fontWeight:400, fontFamily:"'JetBrains Mono', monospace"}}>
+                  {selected.id}
+                </span>
+              </div>
+              <div style={{display:'flex', gap:6}}>
+                <button
+                  className="btn"
+                  onClick={saveDraft}
+                  disabled={!dirty}
+                  style={dirty ? {color:'var(--accent)', borderColor:'var(--accent)'} : null}>
+                  {dirty ? 'Save changes' : 'Saved'}
+                </button>
+                <button className="btn" onClick={removeSelected}
+                        style={{color:'var(--red)', borderColor:'var(--red)'}}>Delete</button>
+              </div>
+            </div>
+
+            <div className="kv" style={{gridTemplateColumns:'130px 1fr', fontSize:12, marginBottom:12}}>
+              <span className="k">Name</span>
+              <input value={draft.name}
+                     onChange={e => setDraft({ ...draft, name: e.target.value })}
+                     style={{fontFamily:"inherit", fontSize:13, padding:'4px 8px', background:'var(--bg-1)', color:'var(--ink-bright)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}} />
+              <span className="k">Kind</span>
+              <select value={draft.kind}
+                      onChange={e => setDraft({ ...draft, kind: e.target.value })}
+                      title={kindMeta.hint}
+                      style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, padding:'4px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}>
+                {ML_KINDS.map(k => <option key={k.id} value={k.id}>{k.label} — {k.hint}</option>)}
+              </select>
+              <span className="k">Description</span>
+              <textarea value={draft.description}
+                        onChange={e => setDraft({ ...draft, description: e.target.value })}
+                        rows={2}
+                        placeholder="what this list is for, who owns it"
+                        style={{fontFamily:"inherit", fontSize:12, padding:'4px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', resize:'vertical'}} />
+              <span className="k">Created</span>  <span className="v mono" style={{fontSize:11}}>{selected.createdAt}</span>
+              <span className="k">Updated</span>  <span className="v mono" style={{fontSize:11}}>{selected.updatedAt}</span>
+            </div>
+
+            <div className="label" style={{marginBottom:4}}>
+              Entries · {draft.entries.length} · <span className="muted" style={{textTransform:'none', letterSpacing:0}}>{kindMeta.hint}</span>
+            </div>
+            <textarea
+              value={draft.entries.join('\n')}
+              onChange={e => setDraft({
+                ...draft,
+                entries: e.target.value.split('\n').map(s => s.trim()).filter(Boolean),
+              })}
+              rows={12}
+              placeholder="one entry per line"
+              style={{
+                width:'100%', resize:'vertical',
+                fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.55,
+                padding:'8px 10px', background:'var(--bg-1)', color:'var(--ink-bright)',
+                border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+              }}
+            />
+            <div className="muted" style={{fontSize:10.5, marginTop:4}}>
+              Blank lines + leading/trailing whitespace are stripped on save.
+              Policies reference this list by its <span className="mono">id</span>, not its name — renaming is safe.
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { Patterns, Profiles, PatternDetail, MatchLists });
 
 </script>
 
@@ -15044,7 +15351,7 @@ function App() {
 
   const go = (id, s) => { setSurface(id); setSub(s || ''); };
 
-  const { Dashboard, Stream, FindingDetail, Pods, Policy, Patterns, PatternDetail, Models, Assets,
+  const { Dashboard, Stream, FindingDetail, Pods, Policy, Patterns, PatternDetail, MatchLists, Models, Assets,
           Compliance, Testing, AssureOverview, DetectOverview, Settings, Logs, Topbar, WorkspaceBar, SurfaceBar, TweaksPanel,
           Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users,
           LiveScan, CorpusRunner, ApiExplorer, ScanDiff, ProcessState, FPTool, FpQueue, Profiles,
@@ -15082,6 +15389,7 @@ function App() {
       policy:         <Policy />,
       patterns:       <Patterns />,
       profiles:       <Profiles />,
+      lists:          <MatchLists />,
       models:         <Models />,
       assets:         <Assets />,
       tokenization:   <Tokenization />,
