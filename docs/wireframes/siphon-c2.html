@@ -6498,6 +6498,12 @@ function FindingDetail({ id, back }) {
   // first /v1/findings response lands.
   const fx = window.useSiphonApi('/v1/findings?limit=500');
   const fpQueue = window.useFpQueue();
+  // Escalation state is keyed by `id` (the route param), not `f` — so
+  // this hook can run before the ring has loaded the full finding.
+  const [escalated, setEscalated] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem('c2:escalations') || '[]').includes(id); }
+    catch { return false; }
+  });
   const { PageBar } = window;
   const list = (fx.data && fx.data.findings) || [];
   const f = list.find(x => x.id === id);
@@ -6550,12 +6556,22 @@ function FindingDetail({ id, back }) {
   const sev = f.severity;
   const sameReq = list.filter(x => x.request_id === f.request_id && x.id !== f.id);
   const inFpQueue = fpQueue.some(e => e.finding && e.finding.id === f.id);
-  const flagFp = () => {
-    window.c2FpQueueAdd(f);
-    try { localStorage.setItem('c2:fp-finding', JSON.stringify(f)); } catch {}
-    window.__c2_go && window.__c2_go('fptool');
-  };
+  // Queue-only — analyst workflow is to gather several FPs, then switch
+  // to the FP Troubleshooter. No navigation on click; the Actions panel
+  // already has an explicit 'Open FP queue' button for the task-switch.
+  const flagFp = () => { window.c2FpQueueAdd(f); };
   const unflagFp = () => window.c2FpQueueRemove(f.id);
+  // Escalation is a placeholder until a real pipeline exists (email,
+  // ticketing, PagerDuty, etc.). Persisted locally so the button can
+  // flip state between renders. No navigation.
+  const toggleEscalate = () => {
+    try {
+      const cur = JSON.parse(localStorage.getItem('c2:escalations') || '[]');
+      const next = escalated ? cur.filter(x => x !== f.id) : [...new Set([...cur, f.id])];
+      localStorage.setItem('c2:escalations', JSON.stringify(next));
+      setEscalated(!escalated);
+    } catch {}
+  };
 
   return (
     <div>
@@ -6602,9 +6618,15 @@ function FindingDetail({ id, back }) {
             </button>
           </div>
           <button className="btn ghost" onClick={back} title="Esc">‹ Back</button>
-          {inFpQueue
-            ? <button className="btn" onClick={unflagFp} title="finding is in the FP queue · click to remove" style={{color:'var(--amber)', borderColor:'var(--amber)'}}>⚑ In FP queue</button>
-            : <button className="btn" onClick={flagFp} title="add to the FP review queue + open in FP Troubleshooter">⚑ Mark as FP</button>}
+          <button
+            className="btn"
+            onClick={toggleEscalate}
+            title={escalated
+              ? 'escalation flagged locally · click to clear · escalation pipeline not yet wired in siphon-api'
+              : 'escalate this finding · stored locally until an escalation pipeline is wired'}
+            style={escalated ? {color:'var(--red)', borderColor:'var(--red)'} : null}>
+            {escalated ? '✦ Escalated' : '✦ Escalate'}
+          </button>
           <button className="btn primary">Acknowledge</button>
         </>}
       />
