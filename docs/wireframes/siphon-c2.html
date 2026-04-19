@@ -4476,58 +4476,109 @@ function TopologyStrip({ bySource, metrics, findings, integrations, live }) {
   );
 }
 
-// Detection histogram — distribution of findings by category, updated
-// live. Stacks severity within each category bar so red/warn/safe are
-// visible at a glance.
+// Finding density — 24-hour × 1-hour-bucket heatmap per category
+// group (PCI · PII · CRED · PHI · SECRET · CLASSIFIED). One row per
+// group, one cell per hour, opacity scaled by density. Reproduces
+// the demo's hf-heat layout but reads live /v1/findings.
 function DetectionHistogram({ findings }) {
-  const stats = React.useMemo(() => {
-    const by = {};
+  const BUCKETS = 24;
+  const WINDOW_MIN = 24 * 60;
+
+  const rows = React.useMemo(() => {
+    // Pre-build an empty per-group × per-bucket matrix so every
+    // defined group appears in the heatmap even when idle.
+    const zeros = () => Array.from({ length: BUCKETS }, () => 0);
+    const matrix = {};
+    CAT_GROUPS.forEach(g => { matrix[g] = zeros(); });
+
+    const now = Date.now();
+    const bucketMs = (WINDOW_MIN * 60 * 1000) / BUCKETS;
     (findings || []).forEach(f => {
-      const k = f.category || '(uncategorised)';
-      if (!by[k]) by[k] = { red: 0, warn: 0, safe: 0, total: 0 };
-      const sev = f.severity === 'red' ? 'red' : f.severity === 'warn' ? 'warn' : 'safe';
-      by[k][sev]++;
-      by[k].total++;
+      const t = new Date(f.ts).getTime();
+      if (isNaN(t)) return;
+      const delta = now - t;
+      if (delta < 0 || delta > WINDOW_MIN * 60 * 1000) return;
+      const idx = BUCKETS - 1 - Math.floor(delta / bucketMs);
+      if (idx < 0 || idx >= BUCKETS) return;
+      const g = catGroup(f.category);
+      matrix[g][idx]++;
     });
-    const rows = Object.entries(by).sort((a, b) => b[1].total - a[1].total);
-    const max = rows.length ? rows[0][1].total : 1;
-    return { rows, max };
+    return CAT_GROUPS.map(g => ({
+      group: g,
+      buckets: matrix[g],
+      total: matrix[g].reduce((a, b) => a + b, 0),
+    }));
   }, [findings]);
+
+  const maxCell = Math.max(1, ...rows.flatMap(r => r.buckets));
 
   return (
     <div className="box">
       <div className="box-title">
-        <span className="t">Detection histogram</span>
-        <span className="k">
-          findings by category · {(findings || []).length} in ring
-          {' '}
-          <span style={{marginLeft:8, fontFamily:"'JetBrains Mono', monospace", fontSize:10}}>
-            <i style={{display:'inline-block', width:8, height:8, background:'var(--red)', borderRadius:1, marginRight:4}} />red
-            <i style={{display:'inline-block', width:8, height:8, background:'var(--amber)', borderRadius:1, margin:'0 4px 0 10px'}} />warn
-            <i style={{display:'inline-block', width:8, height:8, background:'var(--safe)', borderRadius:1, margin:'0 4px 0 10px'}} />safe
-          </span>
+        <span className="t">Finding density</span>
+        <span className="k">by category · last 24h · 1h buckets · {(findings || []).length} in ring</span>
+        <span style={{marginLeft:'auto', display:'flex', gap:8, flexWrap:'wrap', fontFamily:"'JetBrains Mono', monospace", fontSize:10}}>
+          {CAT_GROUPS.filter(g => g !== 'OTHER').map(g => (
+            <span key={g} style={{display:'inline-flex', alignItems:'center', gap:4, color:'var(--ink-soft)'}}>
+              <i style={{display:'inline-block', width:10, height:10, background: CAT_GROUP_COLOR[g], borderRadius:2}} />
+              {g}
+            </span>
+          ))}
         </span>
       </div>
-      {stats.rows.length === 0 ? (
-        <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
-          — no findings yet —
+
+      {rows.every(r => r.total === 0) ? (
+        <div className="muted" style={{padding:30, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+          — no findings in the last 24h —
         </div>
-      ) : stats.rows.map(([cat, row]) => {
-        const wRed  = row.red  / stats.max * 100;
-        const wWarn = row.warn / stats.max * 100;
-        const wSafe = row.safe / stats.max * 100;
-        return (
-          <div key={cat} style={{display:'grid', gridTemplateColumns:'200px 1fr 60px', gap:10, alignItems:'center', padding:'5px 0', borderBottom:'1px dashed var(--line-soft)', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5}}>
-            <span style={{color:'var(--ink-bright)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={cat}>{cat}</span>
-            <div style={{display:'flex', height:10, borderRadius:1, overflow:'hidden', border:'1px solid var(--line)', background:'var(--bg-1)'}}>
-              {wRed  > 0 && <span style={{width: wRed  + '%', background:'var(--red)'}}  title={`${row.red} red`}  />}
-              {wWarn > 0 && <span style={{width: wWarn + '%', background:'var(--amber)'}} title={`${row.warn} warn`} />}
-              {wSafe > 0 && <span style={{width: wSafe + '%', background:'var(--safe)'}}  title={`${row.safe} safe`} />}
+      ) : (
+        <div style={{padding:'8px 0'}}>
+          {rows.map(row => (
+            <div key={row.group} style={{display:'grid', gridTemplateColumns:'90px 1fr 60px', alignItems:'center', gap:10, marginBottom:4}}>
+              <div style={{
+                fontFamily:"'JetBrains Mono', monospace",
+                fontSize:11,
+                fontWeight:600,
+                color: CAT_GROUP_COLOR[row.group],
+              }}>
+                {row.group}
+              </div>
+              <div style={{display:'flex', gap:1, height:14}}>
+                {row.buckets.map((v, i) => {
+                  const opacity = v === 0 ? 0.08 : Math.max(0.12, v / maxCell);
+                  return (
+                    <div
+                      key={i}
+                      title={`${v} finding${v === 1 ? '' : 's'} in hour bucket ${i}`}
+                      style={{
+                        flex: 1,
+                        background: CAT_GROUP_COLOR[row.group],
+                        opacity,
+                        borderRadius: 1,
+                      }}
+                    />
+                  );
+                })}
+              </div>
+              <div className="mono" style={{textAlign:'right', fontSize:11.5, color: row.total > 0 ? 'var(--ink)' : 'var(--ink-dim)'}}>
+                {row.total}
+              </div>
             </div>
-            <span className="mono" style={{textAlign:'right'}}>{row.total}</span>
+          ))}
+          {/* Hour axis */}
+          <div style={{display:'grid', gridTemplateColumns:'90px 1fr 60px', alignItems:'center', gap:10, marginTop:8}}>
+            <div />
+            <div style={{display:'flex', gap:1, fontFamily:"'JetBrains Mono', monospace", fontSize:9, color:'var(--ink-dim)'}}>
+              {Array.from({length: BUCKETS}).map((_, i) => (
+                <span key={i} style={{flex:1, textAlign:'center'}}>
+                  {i % 6 === 0 ? i + ':00' : '·'}
+                </span>
+              ))}
+            </div>
+            <div />
           </div>
-        );
-      })}
+        </div>
+      )}
     </div>
   );
 }
