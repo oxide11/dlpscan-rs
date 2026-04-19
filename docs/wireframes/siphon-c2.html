@@ -12628,6 +12628,10 @@ function LiveScan() {
     catch { return 'http://127.0.0.1:8080'; }
   })();
   const [apiUrl, setApiUrl] = React.useState(defaultUrl);
+  // Phase 4.5d: per-session FS URL so file-mode can target a specific
+  // registered siphon-fs without changing the global default.
+  const [fsUrl, setFsUrl] = React.useState(() => window.SIPHON_FS_URL());
+  const podRegistry = window.usePodRegistry ? window.usePodRegistry() : [];
   // Accept a preloaded text blob from the finding-detail / FP-queue
   // hand-off and clear it so reloads don't keep re-seeding.
   const initialText = React.useMemo(() => {
@@ -12718,8 +12722,8 @@ function LiveScan() {
     try {
       const form = new FormData();
       form.append('file', file, file.name);
-      const fsUrl = window.SIPHON_FS_URL().replace(/\/$/, '');
-      const r = await fetch(fsUrl + '/scan', { method: 'POST', body: form });
+      const target = fsUrl.replace(/\/$/, '');
+      const r = await fetch(target + '/scan', { method: 'POST', body: form });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
       setResult({
@@ -12814,7 +12818,54 @@ function LiveScan() {
       </div>
 
       <div className="box" style={{marginBottom:'var(--gap)'}}>
-        <div className="box-title"><span className="t">Endpoint</span><span className="k">POST {mode === 'file' ? window.SIPHON_FS_URL() + '/scan · multipart' : '/scan'}</span></div>
+        <div className="box-title"><span className="t">Endpoint</span><span className="k">POST {mode === 'file' ? fsUrl + '/scan · multipart' : '/scan'}</span></div>
+
+        {/* Pod picker (Phase 4.5d). Selects which registered pod this
+            scan routes to. Changes apiUrl (text) or fsUrl (file)
+            state for THIS Live Scan session only — doesn't touch the
+            global c2:apiUrl / c2:fsUrl defaults. Edit the URL field
+            below for ad-hoc destinations not in the registry. */}
+        {podRegistry && podRegistry.length > 0 && (
+          <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:8, fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+            <span className="label">Target pod</span>
+            <select
+              value={mode === 'file' ? fsUrl : apiUrl}
+              onChange={e => (mode === 'file' ? setFsUrl : setApiUrl)(e.target.value)}
+              style={{
+                flex:1, padding:'6px 8px', fontSize:12,
+                fontFamily:"'JetBrains Mono', monospace",
+                background:'var(--bg-1)', color:'var(--ink)',
+                border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+              }}>
+              {/* Keep the current value visible as an option even when
+                  it's not in the registry (e.g. analyst typed ad-hoc). */}
+              {(() => {
+                const selected = mode === 'file' ? fsUrl : apiUrl;
+                const roleFilter = mode === 'file' ? 'fs' : 'api';
+                const fleet = podRegistry.filter(p =>
+                  !p.disabled && (p.role === roleFilter || p.role === 'auto')
+                );
+                const hasSelected = fleet.some(p => p.url === selected);
+                return (
+                  <>
+                    {!hasSelected && selected && (
+                      <option value={selected}>{selected} · ad-hoc</option>
+                    )}
+                    {fleet.map(p => (
+                      <option key={p.url} value={p.url}>
+                        {p.url}{p.label ? ` · ${p.label}` : ''}{p.role !== 'auto' ? ` · ${p.role}` : ''}
+                      </option>
+                    ))}
+                  </>
+                );
+              })()}
+            </select>
+            <span className="muted" style={{fontSize:10.5}}>
+              {mode === 'file' ? 'siphon-fs' : 'siphon-api'} pods in registry
+            </span>
+          </div>
+        )}
+
         <div style={{display:'grid', gridTemplateColumns:'auto 1fr auto auto auto', gap:10, alignItems:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12, opacity: mode === 'file' ? 0.55 : 1}}>
           <span className="label">API URL</span>
           <input
@@ -12855,7 +12906,7 @@ function LiveScan() {
         </div>
         {mode === 'file' && (
           <div className="muted" style={{fontSize:11, marginTop:8, lineHeight:1.6}}>
-            File mode hits <span className="mono">{window.SIPHON_FS_URL()}/scan</span> — options above
+            File mode hits <span className="mono">{fsUrl}/scan</span> — options above
             don't apply yet (siphon-fs runs with default <span className="mono">ScanConfig</span>).
             Plumbing options + trace through siphon-fs lands in a follow-up.
           </div>
@@ -12970,7 +13021,7 @@ function LiveScan() {
               <b>Error:</b> {error}<br/>
               <span className="muted" style={{fontSize:11}}>
                 {mode === 'file'
-                  ? <>Check siphon-fs is running at <span className="mono">{window.SIPHON_FS_URL()}</span> and CORS is open for this origin.</>
+                  ? <>Check siphon-fs is running at <span className="mono">{fsUrl}</span> and CORS is open for this origin.</>
                   : <>Check siphon-api is running and CORS is open for this origin.</>}
               </span>
             </div>
@@ -13516,7 +13567,11 @@ function ApiExplorer() {
   const [result, setResult] = React.useState(null);
 
   const ep = API_ENDPOINTS.find(e => e.id === selectedId) || API_ENDPOINTS[0];
-  const apiUrl = window.SIPHON_API_URL();
+  // Phase 4.5d: per-session target pod so the analyst can fire
+  // requests against a specific registered siphon-api without
+  // changing the global default.
+  const podRegistry = window.usePodRegistry ? window.usePodRegistry() : [];
+  const [apiUrl, setApiUrl] = React.useState(() => window.SIPHON_API_URL());
 
   // Reset query inputs when endpoint changes
   React.useEffect(() => { setQueryParams({}); setResult(null); }, [selectedId]);
@@ -13581,7 +13636,42 @@ function ApiExplorer() {
           <h1>API Explorer <HelpIcon topic="api" title="API reference" size={18} /></h1>
         </div>
         <div className="actions">
-          <span className="muted mono" style={{fontSize:11}}>target: {apiUrl}</span>
+          {/* Phase 4.5d: per-session pod picker. Falls back to the
+              global SIPHON_API_URL display when no pods are
+              registered yet. Picking DOES NOT mutate the global
+              c2:apiUrl default — it's scoped to this surface. */}
+          {podRegistry && podRegistry.length > 0 ? (
+            <select
+              value={apiUrl}
+              onChange={e => setApiUrl(e.target.value)}
+              title="pick which registered pod to target · add or disable pods under Settings → Deployment"
+              style={{
+                fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+                padding:'4px 8px', background:'var(--bg-1)', color:'var(--ink)',
+                border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+              }}>
+              {(() => {
+                const fleet = podRegistry.filter(p =>
+                  !p.disabled && (p.role === 'api' || p.role === 'auto')
+                );
+                const hasSelected = fleet.some(p => p.url === apiUrl);
+                return (
+                  <>
+                    {!hasSelected && apiUrl && (
+                      <option value={apiUrl}>{apiUrl} · ad-hoc</option>
+                    )}
+                    {fleet.map(p => (
+                      <option key={p.url} value={p.url}>
+                        {p.url}{p.label ? ` · ${p.label}` : ''}
+                      </option>
+                    ))}
+                  </>
+                );
+              })()}
+            </select>
+          ) : (
+            <span className="muted mono" style={{fontSize:11}}>target: {apiUrl}</span>
+          )}
           <button className="btn primary" onClick={run} disabled={running}>
             {running ? 'Running…' : '▶ Run'}
           </button>
