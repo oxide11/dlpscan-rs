@@ -95,6 +95,15 @@ struct AppState {
     started_at_iso: String,
     /// Monotonic startup mark for uptime calculation.
     started_at: Instant,
+    /// The raw PatternOverrides document this pod parsed at startup.
+    /// Served verbatim by GET /v1/overrides/current so the admin
+    /// console can diff 'what's loaded' against 'what's staged'. The
+    /// pre-computed derived views (disabled_patterns, runtime_patterns,
+    /// etc.) are what the scanner actually consults.
+    loaded_overrides: Arc<PatternOverrides>,
+    /// Path on disk to the overrides file. Apply + disk-read handlers
+    /// use this directly; no writes happen anywhere else.
+    overrides_path: Arc<std::path::PathBuf>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -950,6 +959,199 @@ async fn version() -> Json<VersionResponse> {
 }
 
 // ---------------------------------------------------------------------------
+// /v1/overrides — read what the pod is enforcing, read what's on disk,
+// apply new state. Phase 4.
+//
+// Sharp edge: "applied" means the file has been written atomically; it
+// does NOT mean the scanner sees the change. Pods load overrides once
+// at startup, so the admin console must trigger a rolling restart
+// (Phase 6 automates that via kube-rs; until then it's a manual step).
+// The response always carries restart_required + an honest note.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct OverridesStateResponse {
+    /// 'memory' when returning what the scanner is using; 'disk' when
+    /// returning a fresh read of the overrides file.
+    source: &'static str,
+    path: String,
+    summary: siphon_core::overrides::OverridesSummary,
+    overrides: siphon_core::overrides::PatternOverrides,
+}
+
+async fn overrides_current(State(state): State<Arc<AppState>>) -> Json<OverridesStateResponse> {
+    let loaded = (*state.loaded_overrides).clone();
+    Json(OverridesStateResponse {
+        source: "memory",
+        path: state.overrides_path.display().to_string(),
+        summary: loaded.summary(),
+        overrides: loaded,
+    })
+}
+
+async fn overrides_disk(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<OverridesStateResponse>, (StatusCode, Json<ErrorResponse>)> {
+    use siphon_core::overrides::{LoadError, PatternOverrides};
+    match PatternOverrides::from_file(state.overrides_path.as_path()) {
+        Ok(o) => Ok(Json(OverridesStateResponse {
+            source: "disk",
+            path: state.overrides_path.display().to_string(),
+            summary: o.summary(),
+            overrides: o,
+        })),
+        // Missing file → empty document, not an error. Matches the
+        // "overrides are additive" principle from the Phase 3 loader.
+        Err(LoadError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            let empty = PatternOverrides::empty();
+            Ok(Json(OverridesStateResponse {
+                source: "disk",
+                path: state.overrides_path.display().to_string(),
+                summary: empty.summary(),
+                overrides: empty,
+            }))
+        }
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("read failed: {e}"),
+            }),
+        )),
+    }
+}
+
+#[derive(Serialize)]
+struct ApplyResponse {
+    status: &'static str,
+    written_path: String,
+    /// Path of the backup of the PREVIOUS overrides (so an analyst
+    /// can roll back manually if something goes wrong before Phase 7
+    /// ships). `None` when no prior file existed.
+    backup_path: Option<String>,
+    summary: siphon_core::overrides::OverridesSummary,
+    /// Always true after a successful apply. Until Phase 6's auto-roll
+    /// is wired, a human or orchestrator has to restart detection pods
+    /// to pick up the new state.
+    restart_required: bool,
+    note: &'static str,
+}
+
+/// POST /v1/overrides/apply — body is a PatternOverrides document.
+/// Validates version + serialises + atomically writes to the
+/// configured overrides path, keeping a timestamped backup of the
+/// previous contents (if any). Does NOT hot-reload the scanner.
+async fn overrides_apply(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(new_overrides): Json<siphon_core::overrides::PatternOverrides>,
+) -> Result<Json<ApplyResponse>, (StatusCode, Json<ErrorResponse>)> {
+    use siphon_core::overrides::CURRENT_VERSION;
+
+    if new_overrides.version != CURRENT_VERSION {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!(
+                    "schema version {} not supported (expected {CURRENT_VERSION})",
+                    new_overrides.version
+                ),
+            }),
+        ));
+    }
+
+    let payload = serde_json::to_vec_pretty(&new_overrides).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("serialize failed: {e}"),
+            }),
+        )
+    })?;
+
+    let path = state.overrides_path.as_path();
+
+    // Backup the previous file if one exists. Name carries a nanosecond
+    // timestamp so concurrent applies (unlikely, but possible) don't
+    // clobber each other's backups. Phase 7 (history) will index these.
+    let backup_path = if path.exists() {
+        let ts_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let backup = path.with_extension(format!("v{ts_ns}.bak"));
+        match std::fs::copy(path, &backup) {
+            Ok(_) => Some(backup.display().to_string()),
+            Err(e) => {
+                // Continue with the apply even if backup fails — losing
+                // a backup is worse than losing the apply. Logged.
+                tracing::warn!(error = %e, path = %path.display(), "overrides apply: backup copy failed");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Atomic write: write temp + rename. If rename fails we leave the
+    // previous file intact.
+    let tmp = path.with_extension("tmp.apply");
+    std::fs::write(&tmp, &payload).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("temp write failed: {e}"),
+            }),
+        )
+    })?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("atomic rename failed: {e}"),
+            }),
+        )
+    })?;
+
+    let summary = new_overrides.summary();
+    tracing::info!(
+        path = %path.display(),
+        source_ip = %addr.ip(),
+        disabled = summary.disabled_patterns,
+        field_overrides = summary.pattern_overrides,
+        custom_categories = summary.custom_categories,
+        "overrides applied"
+    );
+
+    if let Ok(event) = AuditEvent::new("CONFIG") {
+        emit_audit(
+            event
+                .with_action("overrides_apply")
+                .with_outcome("applied")
+                .with_source_ip(&addr.ip().to_string())
+                .with_metadata("disabled_patterns", serde_json::json!(summary.disabled_patterns))
+                .with_metadata(
+                    "pattern_overrides",
+                    serde_json::json!(summary.pattern_overrides),
+                )
+                .with_metadata(
+                    "custom_categories",
+                    serde_json::json!(summary.custom_categories),
+                ),
+        );
+    }
+
+    Ok(Json(ApplyResponse {
+        status: "applied",
+        written_path: path.display().to_string(),
+        backup_path,
+        summary,
+        restart_required: true,
+        note: "overrides written to disk · restart detection pods to pick up the changes (Phase 6 will auto-roll)",
+    }))
+}
+
+// ---------------------------------------------------------------------------
 // Bundled documentation — every markdown file in docs/ (plus README) is
 // baked into the binary at compile time. The admin console renders
 // these via GET /v1/docs (index) and GET /v1/docs/content?path=... .
@@ -1569,6 +1771,8 @@ async fn main() {
     let pod_id = Arc::new(uuid::Uuid::new_v4().to_string());
     let started_at = Instant::now();
     let started_at_iso = siphon_core::audit::iso8601_now();
+    let overrides_path_arc = Arc::new(std::path::PathBuf::from(&overrides_path));
+    let loaded_overrides = Arc::new(overrides.clone());
 
     let state = Arc::new(AppState {
         api_key_hash,
@@ -1587,6 +1791,8 @@ async fn main() {
         pod_id: pod_id.clone(),
         started_at_iso,
         started_at,
+        loaded_overrides,
+        overrides_path: overrides_path_arc,
     });
 
     let app = Router::new()
@@ -1609,6 +1815,9 @@ async fn main() {
         .route("/v1/lsh", get(list_lsh_vaults))
         .route("/v1/findings", get(list_findings))
         .route("/v1/version", get(version))
+        .route("/v1/overrides/current", get(overrides_current))
+        .route("/v1/overrides/disk", get(overrides_disk))
+        .route("/v1/overrides/apply", post(overrides_apply))
         .route("/v1/docs", get(docs_index))
         .route("/v1/docs/content", get(docs_content))
         .route("/v1/docs/changelog", get(doc_changelog))
