@@ -5868,15 +5868,74 @@ function FindingDetail({ id, back }) {
   const sev = f.severity;
   const others = list.filter(x => x.category === f.category && x.id !== f.id).slice(0, 5);
   const sameReq = list.filter(x => x.request_id === f.request_id && x.id !== f.id);
+
+  // Prev/Next navigation. Finds the index of the current finding in
+  // the newest-first ring and moves the sub-route forward/backward.
+  // Arrow keys bound at window level for analyst speed.
+  const idx = list.findIndex(x => x.id === id);
+  const prev = idx > 0 ? list[idx - 1] : null;
+  const next = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
+  const gotoFinding = (fid) => window.__c2_go && window.__c2_go('stream', 'finding:' + fid);
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      if (e.key === 'j' || e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        if (next) gotoFinding(next.id);
+      } else if (e.key === 'k' || e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        if (prev) gotoFinding(prev.id);
+      } else if (e.key === 'Escape') {
+        back && back();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [prev, next, back]);
+
   return (
     <div>
       <PageBar
         crumbs={['Operate', 'Findings', f.id]}
-        title={`${f.category} match · ${f.id}`}
-        subtitle={`source ${f.source_ip} · request ${f.request_id} · ${f.ts}`}
+        title={<>
+          <span className="mono" style={{color:'var(--ink-bright)'}}>{f.id}</span>
+          <span className="muted" style={{marginLeft:10, fontSize:14}}>·</span>
+          <span style={{marginLeft:10, fontFamily:"'Space Grotesk', sans-serif"}}>{f.category}</span>
+          <span className={`chip chip--${sev}`} style={{marginLeft:12, fontSize:10, verticalAlign:'middle'}}>{sev.toUpperCase()}</span>
+          <HelpIcon topic="finding_detail" title="Finding anatomy" size={16} />
+        </>}
+        subtitle={<>
+          <span className="mono">source {f.source_ip}</span>
+          <span className="muted"> · req </span>
+          <span className="mono">{(f.request_id || '').split('-')[0]}</span>
+          <span className="muted"> · </span>
+          <span className="mono">{f.ts}</span>
+          {idx >= 0 && (
+            <>
+              <span className="muted"> · </span>
+              <span className="mono">{idx + 1} of {list.length} in ring</span>
+            </>
+          )}
+        </>}
         actions={<>
           <window.LivePill source={fx.source} onClick={fx.refetch} />
-          <button className="btn ghost" onClick={back}>‹ Back to console</button>
+          <div style={{display:'flex', gap:2, border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', overflow:'hidden'}}>
+            <button
+              className="btn ghost"
+              onClick={() => prev && gotoFinding(prev.id)}
+              disabled={!prev}
+              title={prev ? `newer · ${prev.id} · k / ← / ↑` : 'no newer finding in ring'}
+              style={{border:'none', borderRight:'1px solid var(--line-strong)', padding:'5px 10px', opacity: prev ? 1 : 0.4, cursor: prev ? 'pointer' : 'not-allowed'}}>
+              ‹ Prev
+            </button>
+            <button
+              className="btn ghost"
+              onClick={() => next && gotoFinding(next.id)}
+              disabled={!next}
+              title={next ? `older · ${next.id} · j / → / ↓` : 'no older finding in ring'}
+              style={{border:'none', padding:'5px 10px', opacity: next ? 1 : 0.4, cursor: next ? 'pointer' : 'not-allowed'}}>
+              Next ›
+            </button>
+          </div>
+          <button className="btn ghost" onClick={back} title="Esc">‹ Back</button>
           <button className="btn">Mark FP</button>
           <button className="btn primary">Acknowledge</button>
         </>}
