@@ -2193,6 +2193,8 @@ const SURFACES = [
   // ── ENGINEERING ─────────────────────────────────────────────
   { id: 'livescan',       workspace: 'engineering', icon: '⌁',  title: 'Live Scan',      sub: 'POST /scan' },
   { id: 'corpusrun',      workspace: 'engineering', icon: '⎔',  title: 'Corpus Runner',  sub: 'batch /scan' },
+  { id: 'scandiff',       workspace: 'engineering', icon: '⇌',  title: 'Scan Diff',      sub: 'A/B compare' },
+  { id: 'apiex',          workspace: 'engineering', icon: '⟁',  title: 'API Explorer',   sub: 'every /v1 endpoint' },
 ];
 
 // Find workspace id for a given surface id
@@ -7769,6 +7771,409 @@ Object.assign(window, { LiveScan, CorpusRunner });
 </script>
 
 <script type="text/babel" data-presets="react">
+/* ===== surfaces/apiexplorer.jsx ===== */
+// API Explorer — self-documenting sandbox for every siphon-api endpoint.
+// Pick an endpoint, tweak params/body, hit Run, see raw JSON + timing +
+// generated cURL. No abstractions: this is the "am I talking to the right
+// server?" diagnostic tool.
+
+const API_ENDPOINTS = [
+  { id: 'health',       method: 'GET',  path: '/health',                     tag: 'meta',  desc: 'Liveness probe' },
+  { id: 'metrics',      method: 'GET',  path: '/v1/metrics',                 tag: 'meta',  desc: 'Process metrics + config counts' },
+  { id: 'categories',   method: 'GET',  path: '/v1/categories',              tag: 'detect', desc: 'List of all pattern categories' },
+  { id: 'patterns',     method: 'GET',  path: '/v1/patterns',                tag: 'detect', desc: 'Enumerate patterns',
+    query: [
+      { key: 'category', placeholder: 'Credit Card Numbers' },
+      { key: 'limit',    placeholder: '50' },
+    ] },
+  { id: 'profiles',     method: 'GET',  path: '/v1/profiles',                tag: 'detect', desc: 'Masking profiles' },
+  { id: 'policies',     method: 'GET',  path: '/v1/policies',                tag: 'admin',  desc: 'Loaded TOML policies (SIPHON_POLICIES_DIR)' },
+  { id: 'roles',        method: 'GET',  path: '/v1/roles',                   tag: 'admin',  desc: 'RBAC roles × permissions' },
+  { id: 'frameworks',   method: 'GET',  path: '/v1/compliance/frameworks',   tag: 'assure', desc: 'Compliance frameworks + fail categories' },
+  { id: 'scan',         method: 'POST', path: '/scan',                       tag: 'detect', desc: 'Scan text for findings',
+    body: JSON.stringify({ text: 'contact me at support@example.com', options: {} }, null, 2) },
+];
+
+function ApiExplorer() {
+  const [selectedId, setSelectedId] = React.useState('health');
+  const [queryParams, setQueryParams] = React.useState({});
+  const [body, setBody] = React.useState(API_ENDPOINTS.find(e => e.id === 'scan').body);
+  const [running, setRunning] = React.useState(false);
+  const [result, setResult] = React.useState(null);
+
+  const ep = API_ENDPOINTS.find(e => e.id === selectedId) || API_ENDPOINTS[0];
+  const apiUrl = window.SIPHON_API_URL();
+
+  // Reset query inputs when endpoint changes
+  React.useEffect(() => { setQueryParams({}); setResult(null); }, [selectedId]);
+
+  const buildUrl = () => {
+    const base = apiUrl.replace(/\/$/, '') + ep.path;
+    if (ep.method !== 'GET' || !ep.query) return base;
+    const parts = Object.entries(queryParams).filter(([, v]) => v && v !== '');
+    return parts.length ? base + '?' + parts.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&') : base;
+  };
+
+  const buildCurl = () => {
+    const url = buildUrl();
+    if (ep.method === 'GET') return `curl -s '${url}'`;
+    return `curl -s -X ${ep.method} '${url}' \\\n  -H 'Content-Type: application/json' \\\n  -d '${(body || '').replace(/'/g, "'\\''")}'`;
+  };
+
+  const run = async () => {
+    setRunning(true); setResult(null);
+    const url = buildUrl();
+    const t0 = performance.now();
+    try {
+      const opts = { method: ep.method };
+      if (ep.method !== 'GET') {
+        opts.headers = { 'Content-Type': 'application/json' };
+        opts.body = body;
+      }
+      const r = await fetch(url, opts);
+      const ct = r.headers.get('content-type') || '';
+      const raw = await r.text();
+      let parsed = null;
+      if (ct.includes('application/json')) {
+        try { parsed = JSON.parse(raw); } catch {}
+      }
+      setResult({
+        ok: r.ok,
+        status: r.status,
+        statusText: r.statusText,
+        ms: Math.round(performance.now() - t0),
+        headers: Object.fromEntries([...r.headers.entries()]),
+        body: parsed,
+        raw,
+      });
+    } catch (e) {
+      setResult({
+        ok: false, status: 0, statusText: 'network error',
+        ms: Math.round(performance.now() - t0),
+        error: String(e.message || e),
+      });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const copy = (s) => { try { navigator.clipboard.writeText(s); } catch {} };
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Engineering · API Explorer</div>
+          <h1>API Explorer</h1>
+        </div>
+        <div className="actions">
+          <span className="muted mono" style={{fontSize:11}}>target: {apiUrl}</span>
+          <button className="btn primary" onClick={run} disabled={running}>
+            {running ? 'Running…' : '▶ Run'}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:'260px 1fr', gap:'var(--gap)'}}>
+        <div className="box" style={{padding:10}}>
+          <div className="label" style={{marginBottom:8}}>Endpoints · {API_ENDPOINTS.length}</div>
+          {API_ENDPOINTS.map(e => (
+            <div
+              key={e.id}
+              onClick={() => setSelectedId(e.id)}
+              style={{
+                padding:'6px 6px', borderBottom:'1px dashed var(--line-soft)', cursor:'pointer',
+                background: e.id === selectedId ? 'var(--bg-3)' : 'transparent',
+              }}>
+              <div style={{display:'flex', alignItems:'center', gap:6}}>
+                <span className={`chip chip--${e.method==='GET'?'teal':'warn'}`} style={{fontSize:9, minWidth:40, textAlign:'center'}}>{e.method}</span>
+                <span style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11, color: e.id === selectedId ? 'var(--accent)' : 'var(--ink-bright)'}}>
+                  {e.path}
+                </span>
+              </div>
+              <div className="muted" style={{fontSize:10.5, fontFamily:"'JetBrains Mono', monospace", marginTop:2, marginLeft:46}}>
+                {e.desc}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div>
+          <div className="box" style={{marginBottom:'var(--gap)'}}>
+            <div className="box-title">
+              <span className="t">
+                <span className={`chip chip--${ep.method==='GET'?'teal':'warn'}`} style={{marginRight:8}}>{ep.method}</span>
+                {ep.path}
+              </span>
+              <span className="k">{ep.desc}</span>
+            </div>
+
+            {ep.method === 'GET' && ep.query && ep.query.length > 0 && (
+              <div style={{marginBottom:12}}>
+                <div className="label" style={{marginBottom:6}}>Query parameters</div>
+                <div style={{display:'grid', gridTemplateColumns:'auto 1fr', gap:8}}>
+                  {ep.query.map(q => (
+                    <React.Fragment key={q.key}>
+                      <span style={{alignSelf:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12, color:'var(--cyan)'}}>{q.key}</span>
+                      <input
+                        placeholder={q.placeholder}
+                        value={queryParams[q.key] || ''}
+                        onChange={e => setQueryParams({ ...queryParams, [q.key]: e.target.value })}
+                        style={{
+                          fontFamily:"'JetBrains Mono', monospace", fontSize:12,
+                          padding:'6px 8px', background:'var(--bg-1)',
+                          color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                        }}
+                      />
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {ep.method === 'POST' && (
+              <div style={{marginBottom:12}}>
+                <div className="label" style={{marginBottom:6}}>Request body (JSON)</div>
+                <textarea
+                  value={body}
+                  onChange={e => setBody(e.target.value)}
+                  rows={10}
+                  spellCheck={false}
+                  style={{
+                    width:'100%', resize:'vertical',
+                    fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.6,
+                    padding:10, background:'var(--bg-1)',
+                    color:'var(--ink)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)',
+                  }}
+                />
+              </div>
+            )}
+
+            <div className="label" style={{marginBottom:6}}>Full URL</div>
+            <div style={{display:'grid', gridTemplateColumns:'1fr auto', gap:8, alignItems:'center'}}>
+              <div className="mono" style={{fontSize:12, padding:'6px 8px', background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)', color:'var(--accent)', overflow:'hidden', textOverflow:'ellipsis'}}>
+                {buildUrl()}
+              </div>
+              <button className="btn ghost" onClick={() => copy(buildUrl())}>Copy URL</button>
+            </div>
+
+            <div className="label" style={{marginTop:12, marginBottom:6}}>cURL</div>
+            <div style={{display:'grid', gridTemplateColumns:'1fr auto', gap:8, alignItems:'start'}}>
+              <pre className="mono" style={{fontSize:11, lineHeight:1.5, padding:'8px 10px', background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)', margin:0, whiteSpace:'pre-wrap', wordBreak:'break-all'}}>{buildCurl()}</pre>
+              <button className="btn ghost" onClick={() => copy(buildCurl())}>Copy cURL</button>
+            </div>
+          </div>
+
+          <div className="box">
+            <div className="box-title">
+              <span className="t">Response</span>
+              <span className="k">
+                {result
+                  ? <>
+                      <span className={`chip chip--${result.ok ? 'safe' : 'red'}`}>{result.status} {result.statusText}</span>
+                      {' '}<span className="mono">{result.ms}ms</span>
+                    </>
+                  : '— click Run —'}
+              </span>
+            </div>
+            {result && result.error && (
+              <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)'}}>
+                <b>Error:</b> {result.error}
+              </div>
+            )}
+            {result && !result.error && (
+              <>
+                <div className="label" style={{marginBottom:6}}>Headers</div>
+                <pre className="mono" style={{fontSize:10.5, lineHeight:1.5, padding:'6px 10px', background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)', margin:0, marginBottom:12, maxHeight:80, overflow:'auto'}}>
+{Object.entries(result.headers).map(([k, v]) => `${k}: ${v}`).join('\n')}
+                </pre>
+
+                <div className="label" style={{display:'flex', alignItems:'center', gap:8, marginBottom:6}}>
+                  <span>Body</span>
+                  <button className="btn ghost" onClick={() => copy(result.body ? JSON.stringify(result.body, null, 2) : result.raw)} style={{padding:'2px 8px', fontSize:9}}>Copy</button>
+                </div>
+                <pre className="mono" style={{fontSize:11, lineHeight:1.5, padding:'8px 10px', background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)', margin:0, maxHeight:480, overflow:'auto', whiteSpace:'pre-wrap', wordBreak:'break-word'}}>
+{result.body ? JSON.stringify(result.body, null, 2) : result.raw}
+                </pre>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/* ===== surfaces/scandiff.jsx ===== */
+// Scan Diff — paste two texts, scan both, see which findings are added,
+// removed, or shared. Regression test buddy: run this before and after
+// any pattern/policy change.
+
+const SD_SAMPLE_A = `Please charge visa 4532 0151 1283 0366, billing to billing@example.com.
+SSN on file: 123-45-6789. AWS key AKIAIOSFODNN7EXAMPLE.`;
+
+const SD_SAMPLE_B = `Please charge visa 4532-0151-1283-0366, billing to billing＠example.com.
+SSN on file: 123 45 6789. AWS key AKIAIOSFODNN7EXAMPLE.`;
+
+function ScanDiff() {
+  const apiUrl = window.SIPHON_API_URL();
+  const [a, setA] = React.useState(SD_SAMPLE_A);
+  const [b, setB] = React.useState(SD_SAMPLE_B);
+  const [ra, setRa] = React.useState(null);
+  const [rb, setRb] = React.useState(null);
+  const [running, setRunning] = React.useState(false);
+  const [error, setError] = React.useState(null);
+
+  const scan = async (text) => {
+    const r = await fetch(apiUrl.replace(/\/$/, '') + '/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, options: {} }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    return j;
+  };
+
+  const runBoth = async () => {
+    setRunning(true); setError(null); setRa(null); setRb(null);
+    try {
+      const [ja, jb] = await Promise.all([scan(a), scan(b)]);
+      setRa(ja); setRb(jb);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  // Key findings by "category:text" so we can set-diff. Not perfect but
+  // good enough for visual regression triage.
+  const keyOf = (f) => `${f.category}::${f.text}`;
+  const setA_ = new Set((ra && ra.findings || []).map(keyOf));
+  const setB_ = new Set((rb && rb.findings || []).map(keyOf));
+  const onlyA = (ra && ra.findings || []).filter(f => !setB_.has(keyOf(f)));
+  const onlyB = (rb && rb.findings || []).filter(f => !setA_.has(keyOf(f)));
+  const shared = (ra && ra.findings || []).filter(f => setB_.has(keyOf(f)));
+
+  const row = (f, color) => (
+    <div style={{display:'grid', gridTemplateColumns:'1.4fr 2fr 60px', gap:8, padding:'5px 0', borderBottom:'1px dashed var(--line-soft)', alignItems:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5}}>
+      <span style={{color}}>{f.category}</span>
+      <span style={{color:'var(--ink-bright)'}}>{f.text}</span>
+      <span className="muted">{f.confidence != null ? f.confidence.toFixed(2) : '—'}</span>
+    </div>
+  );
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Engineering · Scan Diff</div>
+          <h1>Scan Diff</h1>
+        </div>
+        <div className="actions">
+          <span className="muted mono" style={{fontSize:11}}>target: {apiUrl}</span>
+          <button className="btn ghost" onClick={() => { setA(SD_SAMPLE_A); setB(SD_SAMPLE_B); }}>Load sample</button>
+          <button className="btn ghost" onClick={() => { const t = a; setA(b); setB(t); }}>Swap A↔B</button>
+          <button className="btn primary" onClick={runBoth} disabled={running || !a.trim() || !b.trim()}>
+            {running ? 'Scanning…' : '▶ Scan both'}
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', marginBottom:'var(--gap)'}}>
+          <b>Error:</b> {error}
+        </div>
+      )}
+
+      <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
+        <div className="box"><div className="stat"><span className="s-label">A findings</span><span className="s-val">{ra ? ra.finding_count : '—'}</span><span className="s-delta">{ra ? ra.scan_duration_ms + 'ms' : ''}</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">B findings</span><span className="s-val">{rb ? rb.finding_count : '—'}</span><span className="s-delta">{rb ? rb.scan_duration_ms + 'ms' : ''}</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Only in A</span><span className="s-val" style={{color: onlyA.length ? 'var(--red)' : 'var(--ink-soft)'}}>{ra && rb ? onlyA.length : '—'}</span><span className="s-delta">lost</span></div></div>
+        <div className="box"><div className="stat"><span className="s-label">Only in B</span><span className="s-val" style={{color: onlyB.length ? 'var(--safe)' : 'var(--ink-soft)'}}>{ra && rb ? onlyB.length : '—'}</span><span className="s-delta">gained</span></div></div>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:'1fr 1fr', gap:'var(--gap)', marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title">
+            <span className="t">A</span>
+            <span className="k">{a.length} chars · {ra ? `${ra.finding_count} findings` : ''}</span>
+          </div>
+          <textarea
+            value={a}
+            onChange={e => setA(e.target.value)}
+            rows={8}
+            spellCheck={false}
+            style={{
+              width:'100%', resize:'vertical',
+              fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.6,
+              padding:10, background:'var(--bg-1)',
+              color:'var(--ink)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)',
+            }}
+          />
+        </div>
+        <div className="box">
+          <div className="box-title">
+            <span className="t">B</span>
+            <span className="k">{b.length} chars · {rb ? `${rb.finding_count} findings` : ''}</span>
+          </div>
+          <textarea
+            value={b}
+            onChange={e => setB(e.target.value)}
+            rows={8}
+            spellCheck={false}
+            style={{
+              width:'100%', resize:'vertical',
+              fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.6,
+              padding:10, background:'var(--bg-1)',
+              color:'var(--ink)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)',
+            }}
+          />
+        </div>
+      </div>
+
+      {ra && rb && (
+        <div className="grid" style={{gridTemplateColumns:'1fr 1fr 1fr', gap:'var(--gap)'}}>
+          <div className="box">
+            <div className="box-title">
+              <span className="t" style={{color:'var(--red)'}}>− Only in A</span>
+              <span className="k">{onlyA.length}</span>
+            </div>
+            {onlyA.length === 0
+              ? <div className="muted" style={{padding:14, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>— none lost —</div>
+              : onlyA.map((f, i) => <div key={i}>{row(f, 'var(--red)')}</div>)}
+          </div>
+          <div className="box">
+            <div className="box-title">
+              <span className="t" style={{color:'var(--safe)'}}>+ Only in B</span>
+              <span className="k">{onlyB.length}</span>
+            </div>
+            {onlyB.length === 0
+              ? <div className="muted" style={{padding:14, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>— none gained —</div>
+              : onlyB.map((f, i) => <div key={i}>{row(f, 'var(--safe)')}</div>)}
+          </div>
+          <div className="box">
+            <div className="box-title">
+              <span className="t">= Shared</span>
+              <span className="k">{shared.length}</span>
+            </div>
+            {shared.length === 0
+              ? <div className="muted" style={{padding:14, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>— none —</div>
+              : shared.map((f, i) => <div key={i}>{row(f, 'var(--cyan)')}</div>)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+Object.assign(window, { ApiExplorer, ScanDiff });
+</script>
+
+<script type="text/babel" data-presets="react">
 /* ===== app.jsx ===== */
 // Main app — shell + route + tweaks + editmode wiring
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -7825,7 +8230,7 @@ function App() {
   const { Dashboard, Stream, FindingDetail, Pods, Policy, Patterns, Models, Assets,
           Compliance, Testing, AssureOverview, DetectOverview, Settings, Logs, Topbar, WorkspaceBar, SurfaceBar, TweaksPanel,
           Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users,
-          LiveScan, CorpusRunner, Profiles } = window;
+          LiveScan, CorpusRunner, ApiExplorer, ScanDiff, Profiles } = window;
 
   // expose go() globally so nested surfaces (e.g. DetectOverview cards) can navigate.
   React.useEffect(() => { window.__c2_go = go; }, []);
@@ -7838,6 +8243,8 @@ function App() {
       dashboard:      <Dashboard variant={dashVariant} setVariant={setDashVariant} go={go} />,
       livescan:       <LiveScan />,
       corpusrun:      <CorpusRunner />,
+      scandiff:       <ScanDiff />,
+      apiex:          <ApiExplorer />,
       stream:         <Stream go={go} />,
       investigations: <Investigations />,
       pods:           <Pods />,
