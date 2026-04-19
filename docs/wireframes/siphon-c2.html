@@ -4128,6 +4128,102 @@ function StreamTable({ findings }) {
   );
 }
 
+// Availability · Coverage · Efficacy band — three executive-level
+// SLO numbers in one thin strip above the KPI tiles. Each value is
+// honest: derived from a real signal, or marked `—` when there's no
+// source available.
+function SloBand({ metrics, findings, source }) {
+  const m = metrics || {};
+  const f = findings || [];
+  const scans = m.scans_total || 0;
+  const errors = m.scan_errors_total || 0;
+
+  // ── Availability: share of scans that did NOT return an error.
+  // When the process has served scans, this is a real signal. When
+  // it hasn't, we can still report liveness from the source pill.
+  const availability = scans > 0 ? (1 - errors / scans) * 100 : (source === 'live' ? 100 : null);
+  const availColor = availability == null ? 'var(--ink-soft)'
+    : availability >= 99.9 ? 'var(--safe)'
+    : availability >= 99   ? 'var(--amber)'
+    : 'var(--red)';
+
+  // ── Coverage: unique categories that have actually fired in the
+  // ring vs the total categories loaded in siphon-core. Measures
+  // "how much of the pattern space is the current traffic exercising".
+  const seenCats = new Set(f.map(x => x.category).filter(Boolean));
+  const coverage = m.categories_loaded
+    ? (seenCats.size / m.categories_loaded) * 100
+    : null;
+
+  // ── Efficacy: recall against a labelled corpus. We don't persist
+  // corpus-run results server-side yet so this is intentionally
+  // blank with a deep-link to Corpus Runner where you can measure
+  // it manually. Honest > fabricated.
+  return (
+    <div style={{
+      display:'grid',
+      gridTemplateColumns:'1.2fr 1.2fr 1.6fr auto',
+      gap: 40,
+      padding:'14px 20px',
+      marginBottom:'var(--gap)',
+      background:'var(--bg-panel)',
+      border:'1px solid var(--line)',
+      borderLeft:'3px solid var(--accent)',
+      borderRadius:'var(--radius)',
+      alignItems:'center',
+    }}>
+      <div>
+        <span className="label" style={{marginRight:10}}>AVAILABILITY</span>
+        <span style={{
+          fontFamily:"'Space Grotesk', sans-serif",
+          fontWeight:600, fontSize:24, letterSpacing:'-0.01em',
+          color: availColor,
+        }}>
+          {availability == null ? '—' : availability.toFixed(3) + '%'}
+        </span>
+        <span className="muted mono" style={{marginLeft:8, fontSize:11}}>
+          {scans > 0 ? errors + ' err / ' + scans + ' scans' : 'no scans yet'}
+        </span>
+      </div>
+      <div>
+        <span className="label" style={{marginRight:10}}>COVERAGE</span>
+        <span style={{
+          fontFamily:"'Space Grotesk', sans-serif",
+          fontWeight:600, fontSize:24, letterSpacing:'-0.01em',
+          color: coverage == null ? 'var(--ink-soft)' : 'var(--cyan)',
+        }}>
+          {coverage == null ? '—' : coverage.toFixed(1) + '%'}
+        </span>
+        <span className="muted mono" style={{marginLeft:8, fontSize:11}}>
+          {seenCats.size} / {m.categories_loaded != null ? m.categories_loaded : '—'} categories observed
+        </span>
+      </div>
+      <div>
+        <span className="label" style={{marginRight:10}}>EFFICACY</span>
+        <span style={{
+          fontFamily:"'Space Grotesk', sans-serif",
+          fontWeight:600, fontSize:24, letterSpacing:'-0.01em',
+          color:'var(--ink-soft)',
+        }}>—</span>
+        <span className="muted mono" style={{marginLeft:8, fontSize:11}}>
+          recall needs a corpus run ·{' '}
+          <a onClick={() => window.__c2_go && window.__c2_go('corpusrun')}
+             style={{color:'var(--accent)', cursor:'pointer', textDecoration:'underline'}}>
+            open Corpus Runner
+          </a>
+        </span>
+      </div>
+      <button
+        className="btn ghost"
+        onClick={() => window.openHelp && window.openHelp('docs/enterprise/observability.md', { title: 'SLOs & observability' })}
+        title="what these three mean"
+        style={{whiteSpace:'nowrap'}}>
+        SLO help →
+      </button>
+    </div>
+  );
+}
+
 function KpiTile({ label, value, series, delta, color, formatDelta }) {
   const up = typeof delta === 'number' ? delta > 0 : (delta || '').toString().trim().startsWith('+');
   const down = typeof delta === 'number' ? delta < 0 : (delta || '').toString().trim().startsWith('-') || (delta || '').toString().trim().startsWith('−');
@@ -4135,15 +4231,25 @@ function KpiTile({ label, value, series, delta, color, formatDelta }) {
     ? formatDelta(delta)
     : (typeof delta === 'number' ? (delta > 0 ? '+' : '') + delta.toFixed(1) + '%' : delta || '—');
   return (
-    <div className="box" style={{padding:'14px 16px'}}>
-      <div className="s-label" style={{marginBottom:8}}>{label}</div>
-      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:10}}>
-        <div className="s-val" style={{color: color || 'var(--ink-bright)'}}>{value}</div>
+    <div className="box" style={{padding:'16px 18px'}}>
+      <div className="s-label" style={{marginBottom:10}}>{label}</div>
+      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:12}}>
+        <div style={{
+          color: color || 'var(--ink-bright)',
+          fontFamily: "'Space Grotesk', 'JetBrains Mono', sans-serif",
+          fontWeight: 600,
+          fontSize: 42,
+          lineHeight: 1,
+          letterSpacing: '-0.02em',
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+        }}>{value}</div>
         <div style={{flex:'0 0 110px'}}>
-          <MiniSpark data={series} height={28} color={color || 'var(--accent)'} />
+          <MiniSpark data={series} height={34} color={color || 'var(--accent)'} />
         </div>
       </div>
-      <div className="s-delta" style={{marginTop:6, color: up ? 'var(--safe)' : down ? 'var(--red)' : 'var(--ink-soft)'}}>
+      <div className="s-delta" style={{marginTop:8, color: up ? 'var(--safe)' : down ? 'var(--red)' : 'var(--ink-soft)'}}>
         {deltaText}
       </div>
     </div>
@@ -4221,6 +4327,9 @@ function DashV1_Ops_Local() {
           {window.SIPHON_API_URL()} · {autorefresh ? 'polls every 5s' : 'manual refresh (dashboard_autorefresh=off)'}
         </span>
       </div>
+
+      {/* ── SLO band (Availability · Coverage · Efficacy) ────── */}
+      <SloBand metrics={m} findings={findings} source={overall} />
 
       {/* ── 1 · KPI strip ─────────────────────────────────────── */}
       <div className="grid grid-4" style={{marginBottom: 'var(--gap)'}}>
