@@ -7760,6 +7760,250 @@ function NewPatternModal({ open, category, onClose, onSaved }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────
+// PendingChangesBanner — diffs the localStorage-staged overrides
+// (today: custom categories from the NewCategoryModal + NewPatternModal
+// flow) against /v1/overrides/current, and offers an Apply button
+// that POSTs the full document to /v1/overrides/apply.
+//
+// Phase 4b keeps scope tight: only custom_categories are staged in
+// the UI today, so disabled_patterns + pattern_overrides are read
+// from /current and passed through unchanged. Phase 4c will detect
+// the pod roll so the banner dismisses itself when the scanner
+// actually picks up the new rules.
+// ─────────────────────────────────────────────────────────────────
+
+// Strip client-only fields (id, createdAt, denormalised category) so
+// what we serialise matches the Rust PatternOverrides schema.
+function __siphonCustomCatsForWire(staged) {
+  return (staged || []).map(c => ({
+    name: c.name,
+    group: c.group || 'OTHER',
+    description: c.description || '',
+    patterns: (c.patterns || []).map(p => ({
+      sub_category: p.sub_category,
+      regex: p.regex,
+      specificity: typeof p.specificity === 'number' ? p.specificity : 0.5,
+      context_required: !!p.context_required,
+      case_insensitive: p.case_insensitive !== false,
+      context_keywords: Array.isArray(p.context_keywords) ? p.context_keywords : [],
+      proximity_chars: typeof p.proximity_chars === 'number' ? p.proximity_chars : 50,
+    })),
+  }));
+}
+
+function __siphonCatsEqual(a, b) {
+  // Simple structural compare — JSON.stringify on the wire-shape.
+  // Orderings matter; that's fine because both sides produce the
+  // same ordering (source-of-truth = this fn).
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// localStorage hand-off for the post-apply restart-required state so
+// reloading the page doesn't lose the fact that a roll is pending.
+// Keyed by pod URL so the same browser talking to multiple pods
+// (Phase 4.5) can track them independently.
+const APPLY_PENDING_KEY = 'c2:apply-pending';
+function readApplyPending() {
+  try { return JSON.parse(localStorage.getItem(APPLY_PENDING_KEY) || '{}'); }
+  catch { return {}; }
+}
+function writeApplyPending(state) {
+  try {
+    if (state) localStorage.setItem(APPLY_PENDING_KEY, JSON.stringify(state));
+    else localStorage.removeItem(APPLY_PENDING_KEY);
+  } catch {}
+}
+
+function PendingChangesBanner({ customCategories }) {
+  const current = window.useSiphonApi('/v1/overrides/current');
+  const health  = window.useSiphonApi('/health');
+  const [apply, setApply] = React.useState({ loading: false, error: null, success: null });
+  // Restart-pending bookkeeping persisted across reloads. Key by pod
+  // URL so multiple pods (Phase 4.5) don't trample each other.
+  const podUrl = window.SIPHON_API_URL();
+  const allPending = readApplyPending();
+  const podPending = allPending[podUrl] || null;
+  const [, force] = React.useState(0);
+  const bump = () => force(x => x + 1);
+
+  const currentOverrides = (current.data && current.data.overrides) || {};
+  const stagedWire = __siphonCustomCatsForWire(customCategories);
+  const currentWire = __siphonCustomCatsForWire(currentOverrides.custom_categories);
+  const dirty = !__siphonCatsEqual(stagedWire, currentWire);
+
+  // Roll detection: if the pod's started_at moved past the apply
+  // timestamp (or away from the pre-apply baseline), the pod has
+  // restarted and /current should now reflect the applied state.
+  // Clear the pending flag so the banner stops bugging the analyst.
+  const rolled = (
+    podPending
+    && health.data
+    && health.data.started_at
+    && health.data.started_at !== podPending.prior_started_at
+  );
+  React.useEffect(() => {
+    if (rolled) {
+      const next = { ...readApplyPending() };
+      delete next[podUrl];
+      writeApplyPending(Object.keys(next).length ? next : null);
+      current.refetch();
+      bump();
+    }
+  }, [rolled, podUrl]);
+
+  // Show nothing when nothing's staged, nothing was just applied,
+  // and no pod roll is pending.
+  if (!dirty && !apply.success && !apply.error && !podPending) return null;
+
+  const doApply = async () => {
+    setApply({ loading: true, error: null, success: null });
+    const doc = {
+      version: 0,
+      disabled_patterns: currentOverrides.disabled_patterns || [],
+      pattern_overrides: currentOverrides.pattern_overrides || {},
+      custom_categories: stagedWire,
+    };
+    try {
+      const url = window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/overrides/apply';
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(doc),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      setApply({ loading: false, error: null, success: j });
+      // Stash the pre-apply startup timestamp so the banner can
+      // detect when the pod has actually rolled (Phase 4c). Keyed by
+      // pod URL so multi-pod (Phase 4.5) stays clean.
+      const priorStart = health.data && health.data.started_at;
+      if (priorStart) {
+        const pending = readApplyPending();
+        pending[podUrl] = {
+          apply_time: new Date().toISOString(),
+          prior_started_at: priorStart,
+          prior_pod_id: health.data.pod_id,
+          written_path: j.written_path,
+          backup_path: j.backup_path || null,
+        };
+        writeApplyPending(pending);
+      }
+      current.refetch();
+      bump();
+    } catch (e) {
+      setApply({ loading: false, error: String(e.message || e), success: null });
+    }
+  };
+
+  const catCount = stagedWire.length;
+  const patCount = stagedWire.reduce((a, c) => a + (c.patterns || []).length, 0);
+
+  // Restart-required branch: an apply has landed on disk but the
+  // pod hasn't restarted yet, so the scanner is still using the old
+  // rules. Poll /health in the background (useSiphonApi already
+  // re-fetches); when started_at moves, we auto-dismiss above.
+  if (podPending && !rolled) {
+    const samePod = health.data && health.data.pod_id === podPending.prior_pod_id;
+    return (
+      <div className="note" style={{
+        borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)',
+        marginBottom:'var(--gap)', fontSize:12.5, lineHeight:1.6,
+      }}>
+        <div style={{display:'flex', alignItems:'center', gap:12, flexWrap:'wrap'}}>
+          <div style={{flex:1, minWidth:280}}>
+            <b>⏳ Restart required.</b> Overrides written to <span className="mono">{podPending.written_path}</span>
+            {podPending.backup_path && <> · backup: <span className="mono">{podPending.backup_path}</span></>}
+            . The pod at <span className="mono">{podUrl}</span> is still running
+            on rules from <span className="mono">{podPending.prior_started_at}</span> — it needs to
+            restart to pick up the new ruleset. Phase 6's kube-rs auto-roll will handle this
+            automatically; until then, roll the pod yourself:
+            <div className="mono" style={{fontSize:11, marginTop:6, padding:'6px 10px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:2, lineHeight:1.6}}>
+              kubectl -n siphon-lab rollout restart deployment/siphon-api deployment/siphon-fs<br/>
+              <span className="muted"># or in local dev:</span><br/>
+              pkill siphon-api; cargo run -p siphon-api
+            </div>
+          </div>
+          <button
+            className="btn"
+            onClick={() => { health.refetch(); current.refetch(); bump(); }}
+            title="re-check pod startup time">
+            Check status
+          </button>
+          <button
+            className="btn ghost"
+            onClick={() => {
+              const next = { ...readApplyPending() };
+              delete next[podUrl];
+              writeApplyPending(Object.keys(next).length ? next : null);
+              bump();
+            }}
+            title="stop showing this banner without verifying the roll">
+            Dismiss
+          </button>
+        </div>
+        {samePod && (
+          <div className="muted" style={{fontSize:11, marginTop:6}}>
+            pod_id still <span className="mono">{podPending.prior_pod_id ? podPending.prior_pod_id.slice(0, 8) : '—'}</span> — same instance, hasn't cycled yet
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Recent-apply success banner — shows briefly after the pod rolls
+  // (picked up by the rolled useEffect above) until dirty flips back
+  // to false. Once /current reflects the applied state, dirty is
+  // false, so this branch disappears on the next render.
+  if (apply.success && !dirty && !podPending) {
+    return (
+      <div className="note" style={{
+        borderColor:'var(--safe)', background:'var(--accent-wash)', color:'var(--ink)',
+        marginBottom:'var(--gap)', fontSize:12.5, lineHeight:1.6,
+      }}>
+        <b>✓ Applied and live.</b> Overrides written to <span className="mono">{apply.success.written_path}</span>
+        {apply.success.backup_path && <> · previous file backed up to <span className="mono">{apply.success.backup_path}</span></>}
+        {health.data && health.data.started_at && (
+          <> · picked up by pod at <span className="mono">{health.data.started_at}</span></>
+        )}
+        .
+      </div>
+    );
+  }
+
+  return (
+    <div className="note" style={{
+      borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)',
+      marginBottom:'var(--gap)', fontSize:12.5, lineHeight:1.6,
+    }}>
+      <div style={{display:'flex', alignItems:'center', gap:12, flexWrap:'wrap'}}>
+        <div style={{flex:1, minWidth:240}}>
+          {dirty ? (
+            <>
+              <b>Pending changes</b> · {catCount} custom categor{catCount === 1 ? 'y' : 'ies'} · {patCount} pattern{patCount === 1 ? '' : 's'} staged locally.
+              Nothing has been written to <span className="mono">SIPHON_OVERRIDES_PATH</span> yet.
+            </>
+          ) : (
+            <><b>Staged state matches live overrides.</b> Nothing to apply.</>
+          )}
+        </div>
+        <button
+          className="btn primary"
+          onClick={doApply}
+          disabled={!dirty || apply.loading}
+          title={dirty ? 'Write staged overrides to SIPHON_OVERRIDES_PATH' : 'no pending changes'}>
+          {apply.loading ? 'Applying…' : '⇪ Apply'}
+        </button>
+      </div>
+      {apply.error && (
+        <div style={{marginTop:8, color:'var(--red)', fontSize:12}}>
+          <b>Apply failed:</b> {apply.error} · is the API key set / are you hitting the right pod?
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Patterns() {
   const [selected, setSelected] = React.useState(null);
   const [filter, setFilter] = React.useState('');
@@ -7910,6 +8154,8 @@ function Patterns() {
           <b>Error:</b> {cats.error} · is siphon-api running at {window.SIPHON_API_URL()}?
         </div>
       )}
+
+      <PendingChangesBanner customCategories={customCategories} />
 
       <div className="grid" style={{gridTemplateColumns:'260px 1fr', gap:'var(--gap)'}}>
         <div className="box" style={{padding:10, maxHeight:680, overflowY:'auto'}}>
