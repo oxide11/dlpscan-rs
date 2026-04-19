@@ -30,8 +30,9 @@ use siphon_core::audit::iso8601_now;
 use siphon_core::findings_ring::{
     filter_findings, severity_for, FindingRecord, FindingsRing,
 };
+use siphon_core::overrides::PatternOverrides;
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -46,9 +47,15 @@ const FINDINGS_RING_CAP: usize = 500;
 // its own local ring. Multi-replica convergence (e.g. gossiping
 // findings across replicas) is beyond the Phase 0 lab; the admin
 // console queries the Service IP which load-balances across replicas.
+//
+// `disabled_patterns` is the pre-computed HashSet from the loaded
+// PatternOverrides file. Built once at startup and shared via Arc
+// across every scan request. A k8s rolling restart (Phase 6) is what
+// picks up overrides edits — no live reload here.
 #[derive(Clone)]
 struct AppState {
     findings: Arc<FindingsRing>,
+    disabled_patterns: Arc<HashSet<(String, String)>>,
 }
 
 // ─── health + readiness ──────────────────────────────────────────
@@ -204,7 +211,10 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
         }
     };
 
-    let config = ScanConfig::default();
+    let config = ScanConfig {
+        disabled_patterns: Some(state.disabled_patterns.clone()),
+        ..Default::default()
+    };
     let matches = match scan_text_with_config(&extract.text, &config) {
         Ok(m) => m,
         Err(e) => {
@@ -355,8 +365,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind = std::env::var("SIPHON_FS_BIND").unwrap_or_else(|_| "0.0.0.0:8081".to_string());
     let addr: SocketAddr = bind.parse()?;
 
+    // Load deployable overrides from the path k8s mounts the
+    // siphon-overrides ConfigMap into (default /etc/siphon/overrides.json).
+    // Missing file → empty (compile-time defaults). Parse error → empty +
+    // logged. A failed override file does NOT prevent serving — Phase 3b
+    // chooses operational continuity over hard-fail. Phase 6's auto-roll
+    // gates on /ready and /ready will gate on a clean parse before then.
+    let overrides_path = std::env::var("SIPHON_OVERRIDES_PATH")
+        .unwrap_or_else(|_| "/etc/siphon/overrides.json".to_string());
+    let overrides = PatternOverrides::from_file_or_empty(&overrides_path);
+    let summary = overrides.summary();
+    let disabled_patterns = Arc::new(overrides.disabled_set());
+
     let state = AppState {
         findings: Arc::new(FindingsRing::new(FINDINGS_RING_CAP)),
+        disabled_patterns,
     };
     let app = build_router(state);
 
@@ -365,6 +388,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         version = env!("CARGO_PKG_VERSION"),
         core = siphon_core::VERSION,
         ring_cap = FINDINGS_RING_CAP,
+        overrides_path = %overrides_path,
+        overrides_disabled = summary.disabled_patterns,
+        overrides_field = summary.pattern_overrides,
+        overrides_custom_cats = summary.custom_categories,
         bind = %addr,
         "siphon-fs starting"
     );

@@ -117,6 +117,12 @@ pub struct ScanConfig {
     /// emit). Used by the admin console's FP Troubleshooter and Live
     /// Scan trace view. `None` (default) disables tracing entirely.
     pub trace: TraceSink,
+    /// Optional set of `(category, sub_category)` pairs the scanner
+    /// must not emit. Built once at startup from the deployable
+    /// PatternOverrides file (`crate::overrides::PatternOverrides`)
+    /// and consulted at the end of every scan. `None` (default) means
+    /// no overrides are applied — every compile-time pattern is live.
+    pub disabled_patterns: Option<Arc<HashSet<(String, String)>>>,
 }
 
 /// Entropy scanning mode.
@@ -148,6 +154,7 @@ impl Default for ScanConfig {
             edm: None,
             lsh: None,
             trace: None,
+            disabled_patterns: None,
         }
     }
 }
@@ -860,6 +867,20 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
         }
     }
 
+    // PatternOverrides: drop any match whose (category, sub_category)
+    // is on the disabled list. Filter at the very end so every other
+    // pipeline stage stays oblivious to overrides — overrides are a
+    // policy layer, not a detection-engine concern. Trace events
+    // recorded earlier still show what the scanner attempted, which
+    // helps the admin console explain WHY a pattern didn't fire.
+    if let Some(disabled) = config.disabled_patterns.as_ref() {
+        if !disabled.is_empty() {
+            matches.retain(|m| {
+                !disabled.contains(&(m.category.clone(), m.sub_category.clone()))
+            });
+        }
+    }
+
     Ok(matches)
 }
 
@@ -1163,6 +1184,36 @@ mod tests {
     fn test_scan_email() {
         let result = scan_text("Contact us at test@example.com for info.").unwrap();
         assert!(result.iter().any(|m| m.sub_category == "Email Address"));
+    }
+
+    #[test]
+    fn disabled_pattern_is_filtered_out() {
+        // Pick the (category, sub_category) tuple that the email scan
+        // emits, then prove a config carrying that tuple in
+        // disabled_patterns suppresses it.
+        let baseline =
+            scan_text_with_config("Contact us at test@example.com for info.", &ScanConfig::default())
+                .unwrap();
+        let email = baseline
+            .iter()
+            .find(|m| m.sub_category == "Email Address")
+            .expect("email pattern should fire on baseline");
+
+        let mut disabled = HashSet::new();
+        disabled.insert((email.category.clone(), email.sub_category.clone()));
+        let cfg = ScanConfig {
+            disabled_patterns: Some(Arc::new(disabled)),
+            ..Default::default()
+        };
+        let filtered = scan_text_with_config(
+            "Contact us at test@example.com for info.",
+            &cfg,
+        )
+        .unwrap();
+        assert!(
+            !filtered.iter().any(|m| m.sub_category == "Email Address"),
+            "disabled email pattern should not appear in results"
+        );
     }
 
     #[test]
