@@ -6105,19 +6105,38 @@ function FindingDetail({ id, back }) {
               <button
                 className="btn"
                 onClick={() => {
+                  try {
+                    localStorage.setItem('c2:scandiff-a', f.text || '');
+                    // seed side B with a minimally redacted variant so the diff
+                    // is non-trivial on first paint. Analyst can overwrite.
+                    const masked = (f.text || '').replace(/[A-Za-z0-9]/g, '*');
+                    localStorage.setItem('c2:scandiff-b', masked);
+                  } catch {}
+                  window.__c2_go && window.__c2_go('scandiff');
+                }}
+                title="compare this match against a mitigated variant">
+                Send to Scan Diff ⇌
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  try { localStorage.setItem('c2:livescan-text', f.text || ''); } catch {}
+                  window.__c2_go && window.__c2_go('livescan');
+                }}
+                title="open this match's text in Live Scan for re-analysis">
+                Send to Live Scan ▶
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
                   try { navigator.clipboard.writeText(JSON.stringify(f, null, 2)); } catch {}
                 }}>
                 Copy record as JSON
               </button>
               <button
-                className="btn"
+                className="btn ghost"
                 onClick={() => window.__c2_go && window.__c2_go('patterns')}>
                 Open in Patterns browser
-              </button>
-              <button
-                className="btn ghost"
-                onClick={() => window.__c2_go && window.__c2_go('livescan')}>
-                Open in Live Scan
               </button>
             </div>
           </div>
@@ -9705,7 +9724,16 @@ function LiveScan() {
     catch { return 'http://127.0.0.1:8080'; }
   })();
   const [apiUrl, setApiUrl] = React.useState(defaultUrl);
-  const [text, setText] = React.useState(LS_SAMPLE);
+  // Accept a preloaded text blob from the finding-detail / FP-queue
+  // hand-off and clear it so reloads don't keep re-seeding.
+  const initialText = React.useMemo(() => {
+    try {
+      const v = localStorage.getItem('c2:livescan-text');
+      if (v != null) { localStorage.removeItem('c2:livescan-text'); return v; }
+    } catch {}
+    return LS_SAMPLE;
+  }, []);
+  const [text, setText] = React.useState(initialText);
   const [minConf, setMinConf] = React.useState(0);
   const [requireCtx, setRequireCtx] = React.useState(false);
   const [dedupe, setDedupe] = React.useState(true);
@@ -10609,8 +10637,25 @@ SSN on file: 123 45 6789. AWS key AKIAIOSFODNN7EXAMPLE.`;
 
 function ScanDiff() {
   const apiUrl = window.SIPHON_API_URL();
-  const [a, setA] = React.useState(SD_SAMPLE_A);
-  const [b, setB] = React.useState(SD_SAMPLE_B);
+  // Finding-detail + FP-queue hand-off: if a preload blob is in
+  // localStorage, use it to seed side A (and optionally B) and then
+  // clear so a reload doesn't keep re-seeding.
+  const initialA = React.useMemo(() => {
+    try {
+      const v = localStorage.getItem('c2:scandiff-a');
+      if (v != null) { localStorage.removeItem('c2:scandiff-a'); return v; }
+    } catch {}
+    return SD_SAMPLE_A;
+  }, []);
+  const initialB = React.useMemo(() => {
+    try {
+      const v = localStorage.getItem('c2:scandiff-b');
+      if (v != null) { localStorage.removeItem('c2:scandiff-b'); return v; }
+    } catch {}
+    return SD_SAMPLE_B;
+  }, []);
+  const [a, setA] = React.useState(initialA);
+  const [b, setB] = React.useState(initialB);
   const [ra, setRa] = React.useState(null);
   const [rb, setRb] = React.useState(null);
   const [running, setRunning] = React.useState(false);
