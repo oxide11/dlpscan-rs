@@ -134,6 +134,11 @@ pub struct ScanConfig {
     /// consults this at scoring + context-gating time.
     pub pattern_field_overrides:
         Option<Arc<HashMap<(String, String), crate::overrides::PatternOverride>>>,
+    /// Optional runtime patterns compiled from the deployable
+    /// PatternOverrides file's `custom_categories`. Evaluated AFTER
+    /// the static loop on every scan. Built once per pod startup;
+    /// each scan clones the Arc into its ScanConfig.
+    pub runtime_patterns: Option<Arc<Vec<crate::overrides::RuntimePattern>>>,
 }
 
 /// Entropy scanning mode.
@@ -167,6 +172,7 @@ impl Default for ScanConfig {
             trace: None,
             disabled_patterns: None,
             pattern_field_overrides: None,
+            runtime_patterns: None,
         }
     }
 }
@@ -204,6 +210,48 @@ fn effective_context_required(
         }
     }
     crate::models::is_context_required(sub_category)
+}
+
+/// Substring-search context check for runtime (custom) patterns.
+/// Static patterns use the global Aho-Corasick matcher built from
+/// CONTEXT_KEYWORDS at startup; runtime patterns can't participate in
+/// that build (their keywords aren't in the static table) so we do a
+/// per-pattern lowercase substring scan in a `±proximity_chars`
+/// window. Linear scan stays cheap because custom patterns typically
+/// declare a handful of keywords — building a per-pattern AC matcher
+/// would cost more than it saves at that volume.
+fn runtime_context_hit(
+    text: &str,
+    match_span: (usize, usize),
+    keywords: &[String],
+    proximity_chars: usize,
+) -> bool {
+    if keywords.is_empty() {
+        return false;
+    }
+    // Window is byte-indexed; proximity_chars is approximate. For
+    // ASCII text chars≈bytes; for multi-byte text we may scan a
+    // slightly smaller window than declared (errs strict).
+    let start = match_span.0.saturating_sub(proximity_chars);
+    let end = match_span.1.saturating_add(proximity_chars).min(text.len());
+
+    // Walk to nearest char boundaries so the slice is valid UTF-8.
+    let mut s = start;
+    while s > 0 && !text.is_char_boundary(s) {
+        s -= 1;
+    }
+    let mut e = end;
+    while e < text.len() && !text.is_char_boundary(e) {
+        e += 1;
+    }
+
+    let window = text[s..e].to_lowercase();
+    for kw in keywords {
+        if window.contains(&kw.to_lowercase()) {
+            return true;
+        }
+    }
+    false
 }
 
 impl std::fmt::Debug for ScanConfig {
@@ -936,6 +984,87 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
         }
     }
 
+    // PatternOverrides: runtime patterns compiled from
+    // custom_categories. Evaluated AFTER the static loop so the
+    // compile-time path stays untouched. Each runtime pattern runs
+    // its regex against the original text (no normalisation pass —
+    // custom regexes are author-controlled and shouldn't depend on
+    // siphon-core's NFKC behaviour). Context proximity, when the
+    // pattern declares keywords, is a simple ASCII-case-insensitive
+    // substring scan in a ±proximity_chars window — small enough
+    // for the keyword counts a custom pattern typically carries
+    // (single-digit) that an Aho-Corasick build per pattern would
+    // be more expensive than the linear scan.
+    if let Some(rps) = config.runtime_patterns.as_ref() {
+        for rp in rps.iter() {
+            for mat in rp.regex.find_iter(text) {
+                if matches.len() >= config.max_matches {
+                    break;
+                }
+                let span = (mat.start(), mat.end());
+                let matched_text = mat.as_str();
+
+                let has_context = if rp.context_keywords.is_empty() {
+                    false
+                } else {
+                    runtime_context_hit(
+                        text,
+                        span,
+                        &rp.context_keywords,
+                        rp.proximity_chars,
+                    )
+                };
+
+                if rp.context_required && !has_context {
+                    emit_trace(
+                        &config.trace, "runtime", "ctx_required", "drop",
+                        &rp.category, &rp.sub_category, span, matched_text,
+                        None, Some("custom pattern requires a keyword nearby; none found"),
+                    );
+                    continue;
+                }
+                if config.require_context && !has_context {
+                    emit_trace(
+                        &config.trace, "runtime", "require_context", "drop",
+                        &rp.category, &rp.sub_category, span, matched_text,
+                        None, Some("caller set require_context=true and no context keyword was found"),
+                    );
+                    continue;
+                }
+
+                let confidence = crate::scoring::compute_confidence_with(
+                    rp.specificity,
+                    has_context,
+                    rp.context_required,
+                );
+                if confidence < config.min_confidence {
+                    emit_trace(
+                        &config.trace, "runtime", "min_confidence", "drop",
+                        &rp.category, &rp.sub_category, span, matched_text,
+                        Some(confidence), Some("below caller min_confidence threshold"),
+                    );
+                    continue;
+                }
+
+                emit_trace(
+                    &config.trace, "runtime", "emit", "emit",
+                    &rp.category, &rp.sub_category, span, matched_text,
+                    Some(confidence), Some("custom pattern emitted"),
+                );
+
+                matches.push(Match::new(
+                    matched_text.to_string(),
+                    rp.category.clone(),
+                    rp.sub_category.clone(),
+                    has_context,
+                    confidence,
+                    span,
+                    rp.context_required,
+                ));
+            }
+        }
+    }
+
     // PatternOverrides: drop any match whose (category, sub_category)
     // is on the disabled list. Filter at the very end so every other
     // pipeline stage stays oblivious to overrides — overrides are a
@@ -1350,6 +1479,96 @@ mod tests {
             !gated.iter().any(|m| m.sub_category == "Email Address"),
             "context_required override should suppress emit when no keyword is in range"
         );
+    }
+
+    #[test]
+    fn custom_category_pattern_fires_at_runtime() {
+        use crate::overrides::PatternOverrides;
+
+        let json = r#"{
+            "version":0,
+            "custom_categories":[{
+                "name":"MYORG_SECRETS",
+                "group":"SECRET",
+                "patterns":[{
+                    "sub_category":"emp.id.v1",
+                    "regex":"\\bEMP-\\d{6}\\b",
+                    "specificity":0.85,
+                    "case_insensitive":true,
+                    "context_required":false,
+                    "context_keywords":[],
+                    "proximity_chars":50
+                }]
+            }]
+        }"#;
+        let overrides = PatternOverrides::from_bytes(json.as_bytes()).unwrap();
+        let runtime = Arc::new(overrides.compile_runtime_patterns());
+        assert_eq!(runtime.len(), 1);
+
+        let cfg = ScanConfig {
+            runtime_patterns: Some(runtime),
+            ..Default::default()
+        };
+        let result = scan_text_with_config(
+            "Reach out to EMP-123456 for access · plus stale emp-654321 record.",
+            &cfg,
+        )
+        .unwrap();
+
+        let custom: Vec<&Match> = result
+            .iter()
+            .filter(|m| m.category == "MYORG_SECRETS")
+            .collect();
+        assert_eq!(custom.len(), 2, "both EMP- ids should fire (case-insensitive)");
+        assert!(custom.iter().any(|m| m.text == "EMP-123456"));
+        assert!(custom.iter().any(|m| m.text == "emp-654321"));
+        // Specificity 0.85, no context → confidence is 0.85 unchanged
+        assert!((custom[0].confidence - 0.85).abs() < 0.001);
+    }
+
+    #[test]
+    fn custom_pattern_context_required_drops_without_keyword() {
+        use crate::overrides::PatternOverrides;
+
+        let json = r#"{
+            "version":0,
+            "custom_categories":[{
+                "name":"MYORG_SECRETS",
+                "group":"SECRET",
+                "patterns":[{
+                    "sub_category":"emp.id.v1",
+                    "regex":"\\bEMP-\\d{6}\\b",
+                    "specificity":0.85,
+                    "case_insensitive":true,
+                    "context_required":true,
+                    "context_keywords":["employee","staff"],
+                    "proximity_chars":40
+                }]
+            }]
+        }"#;
+        let overrides = PatternOverrides::from_bytes(json.as_bytes()).unwrap();
+        let runtime = Arc::new(overrides.compile_runtime_patterns());
+        let cfg = ScanConfig {
+            runtime_patterns: Some(runtime),
+            ..Default::default()
+        };
+
+        // No keyword in window — drop.
+        let plain = scan_text_with_config("Random ID EMP-123456 in the wild", &cfg).unwrap();
+        assert!(
+            !plain.iter().any(|m| m.category == "MYORG_SECRETS"),
+            "context_required should drop the match when no keyword is in range"
+        );
+
+        // Keyword in window — emit.
+        let with_ctx =
+            scan_text_with_config("Employee EMP-123456 last seen Tuesday", &cfg).unwrap();
+        let hits: Vec<&Match> = with_ctx
+            .iter()
+            .filter(|m| m.category == "MYORG_SECRETS")
+            .collect();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].has_context);
     }
 
     #[test]

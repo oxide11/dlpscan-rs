@@ -18,6 +18,7 @@
 //! restorable by deleting the relevant entry. Removing the file
 //! entirely returns the engine to its compile-time defaults.
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -279,6 +280,81 @@ pub struct OverridesSummary {
     pub version: u32,
 }
 
+// ─── Runtime patterns (compiled at startup from custom_categories) ──
+//
+// The compile-time PATTERNS slice is the source of truth for the
+// vendored detection library. Custom categories declared in the
+// overrides file get compiled into RuntimePattern entries at startup
+// and run AFTER the static loop on every scan. This keeps the static
+// path lock-free and zero-allocation while still letting analysts
+// add org-specific rules without rebuilding any crate.
+//
+// Validation hooks (Luhn / IBAN / etc.) don't apply to runtime
+// patterns yet — those are dispatched by category name in the
+// validation module which only knows about compile-time categories.
+// Custom patterns rely on regex + optional keyword context for now.
+
+/// One compiled custom pattern, ready to be evaluated against a scan
+/// input. The `Regex` is compiled with the right (?i) prefix when
+/// `case_insensitive` is true, mirroring the static path.
+pub struct RuntimePattern {
+    pub category: String,
+    pub sub_category: String,
+    pub regex: Regex,
+    pub specificity: f64,
+    pub context_required: bool,
+    pub context_keywords: Vec<String>,
+    /// Char window either side of the match for keyword proximity
+    /// checks. Stored as `usize` ready for `saturating_sub` / `min`.
+    pub proximity_chars: usize,
+}
+
+impl PatternOverrides {
+    /// Compile every `custom_categories[*].patterns[*]` entry into a
+    /// `RuntimePattern`. Patterns whose regex fails to compile are
+    /// skipped with a stderr warning — operational continuity beats
+    /// hard-fail (a single bad regex shouldn't take the pod offline).
+    /// Cost is paid once per pod startup; subsequent scans just clone
+    /// the resulting `Arc<Vec<RuntimePattern>>` into ScanConfig.
+    pub fn compile_runtime_patterns(&self) -> Vec<RuntimePattern> {
+        let mut out = Vec::new();
+        for cat in &self.custom_categories {
+            for cp in &cat.patterns {
+                if cp.sub_category.is_empty() || cp.regex.is_empty() {
+                    eprintln!(
+                        "siphon overrides: custom pattern in '{}' has empty regex or sub_category, skipping",
+                        cat.name
+                    );
+                    continue;
+                }
+                let regex_str = if cp.case_insensitive {
+                    format!("(?i){}", cp.regex)
+                } else {
+                    cp.regex.clone()
+                };
+                match Regex::new(&regex_str) {
+                    Ok(re) => out.push(RuntimePattern {
+                        category: cat.name.clone(),
+                        sub_category: cp.sub_category.clone(),
+                        regex: re,
+                        specificity: cp.specificity,
+                        context_required: cp.context_required,
+                        context_keywords: cp.context_keywords.clone(),
+                        proximity_chars: cp.proximity_chars as usize,
+                    }),
+                    Err(e) => {
+                        eprintln!(
+                            "siphon overrides: custom pattern '{}/{}' regex failed to compile — {} · skipping",
+                            cat.name, cp.sub_category, e
+                        );
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,5 +438,29 @@ mod tests {
     fn missing_file_falls_back_to_empty() {
         let o = PatternOverrides::from_file_or_empty("/nonexistent/path/x.json");
         assert_eq!(o.summary().disabled_patterns, 0);
+    }
+
+    #[test]
+    fn compile_runtime_patterns_skips_bad_regex_keeps_good() {
+        let json = r#"{
+            "version":0,
+            "custom_categories":[{
+                "name":"MYORG",
+                "group":"SECRET",
+                "patterns":[
+                    {"sub_category":"emp.id","regex":"\\bEMP-\\d{4,}\\b","specificity":0.7,"case_insensitive":true},
+                    {"sub_category":"bad","regex":"[unterminated"},
+                    {"sub_category":"empty_skipped","regex":""}
+                ]
+            }]
+        }"#;
+        let o = PatternOverrides::from_bytes(json.as_bytes()).unwrap();
+        let runtime = o.compile_runtime_patterns();
+        assert_eq!(runtime.len(), 1);
+        assert_eq!(runtime[0].category, "MYORG");
+        assert_eq!(runtime[0].sub_category, "emp.id");
+        assert!(runtime[0].regex.is_match("EMP-12345"));
+        // case_insensitive baked into the compiled regex
+        assert!(runtime[0].regex.is_match("emp-12345"));
     }
 }
