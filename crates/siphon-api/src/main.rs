@@ -20,6 +20,9 @@
 //!                                    across process restarts; requires key)
 //!   SIPHON_POLICIES_DIR              Optional directory of *.toml policies
 //!                                    exposed read-only via GET /v1/policies
+//!   SIPHON_ALLOWLIST_PATH            Optional JSON file {texts,patterns,paths}
+//!                                    exposed read-only via GET /v1/allowlist
+//!   SIPHON_AUDIT_RING_CAP            In-memory audit ring capacity (default: 500)
 
 use axum::{
     body::Body,
@@ -32,15 +35,16 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use siphon::allowlist::Allowlist;
 use siphon::policy::{load_policies_from_dir, Policy};
 use siphon::profiles::{get_profile, list_profiles};
 use siphon::rbac::{role_has_permission, Permission, Role};
 use siphon_core::audit::{
-    audit_event, set_audit_logger, AuditEvent, AuditLogger, FileAuditHandler,
+    audit_event, set_audit_logger, AuditEvent, AuditHandler, AuditLogger, FileAuditHandler,
     RotatingFileAuditHandler,
 };
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -59,6 +63,35 @@ struct AppState {
     rate_limit: u32,
     policies: Arc<Vec<Policy>>,
     metrics: Arc<ApiMetrics>,
+    audit_ring: Arc<Mutex<VecDeque<AuditEvent>>>,
+    audit_ring_cap: usize,
+    allowlist: Arc<Allowlist>,
+}
+
+// ---------------------------------------------------------------------------
+// Ring-buffer audit handler — keeps last N events in memory so /v1/audit
+// can surface them without re-reading the rotating log files.
+// ---------------------------------------------------------------------------
+
+struct RingBufferAuditHandler {
+    buf: Arc<Mutex<VecDeque<AuditEvent>>>,
+    cap: usize,
+}
+
+impl RingBufferAuditHandler {
+    fn new(buf: Arc<Mutex<VecDeque<AuditEvent>>>, cap: usize) -> Self {
+        Self { buf, cap }
+    }
+}
+
+impl AuditHandler for RingBufferAuditHandler {
+    fn handle(&self, event: &AuditEvent) {
+        let mut guard = self.buf.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.len() >= self.cap {
+            guard.pop_front();
+        }
+        guard.push_back(event.clone());
+    }
 }
 
 /// Process-local counters surfaced by GET /v1/metrics.
@@ -120,6 +153,12 @@ impl RateLimiter {
         }
         timestamps.push(now);
         true
+    }
+
+    /// Snapshot of current rate-limiter state — used by GET /v1/ratelimit.
+    fn snapshot(&self) -> (usize, usize) {
+        let total_slots: usize = self.windows.values().map(|v| v.len()).sum();
+        (self.windows.len(), total_slots)
     }
 }
 
@@ -743,6 +782,215 @@ async fn metrics_snapshot(State(state): State<Arc<AppState>>) -> Json<MetricsRes
 }
 
 // ---------------------------------------------------------------------------
+// Tier 2 — process-state endpoints
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct AuditQuery {
+    limit: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct AuditResponse {
+    total: usize,
+    returned: usize,
+    capacity: usize,
+    events: Vec<AuditEvent>,
+}
+
+async fn list_audit_events(
+    Query(q): Query<AuditQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Json<AuditResponse> {
+    let guard = state.audit_ring.lock().unwrap_or_else(|e| e.into_inner());
+    let total = guard.len();
+    let cap = q.limit.unwrap_or(200).min(state.audit_ring_cap);
+    // newest last in the ring; return newest-first
+    let events: Vec<AuditEvent> = guard.iter().rev().take(cap).cloned().collect();
+    let returned = events.len();
+    Json(AuditResponse {
+        total,
+        returned,
+        capacity: state.audit_ring_cap,
+        events,
+    })
+}
+
+#[derive(Serialize)]
+struct CacheStatsResponse {
+    enabled: bool,
+    hits: u64,
+    misses: u64,
+    size: usize,
+    hit_rate: f64,
+}
+
+async fn cache_stats() -> Json<CacheStatsResponse> {
+    let cell = siphon::cache::get_default_cache();
+    let guard = cell.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(cache) = guard.as_ref() {
+        let s = cache.stats();
+        let total = s.hits + s.misses;
+        let hit_rate = if total == 0 { 0.0 } else { s.hits as f64 / total as f64 };
+        Json(CacheStatsResponse {
+            enabled: true,
+            hits: s.hits,
+            misses: s.misses,
+            size: s.size,
+            hit_rate,
+        })
+    } else {
+        Json(CacheStatsResponse {
+            enabled: false,
+            hits: 0,
+            misses: 0,
+            size: 0,
+            hit_rate: 0.0,
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct RateLimitResponse {
+    window_secs: u64,
+    per_ip_limit: u32,
+    max_buckets: usize,
+    active_buckets: usize,
+    total_recent_requests: usize,
+}
+
+async fn rate_limit_status(State(state): State<Arc<AppState>>) -> Json<RateLimitResponse> {
+    let guard = state.rate_limiter.lock().unwrap_or_else(|e| e.into_inner());
+    let (active, slots) = guard.snapshot();
+    Json(RateLimitResponse {
+        window_secs: 60,
+        per_ip_limit: state.rate_limit,
+        max_buckets: 100_000,
+        active_buckets: active,
+        total_recent_requests: slots,
+    })
+}
+
+#[derive(Serialize)]
+struct TokenizeStatusResponse {
+    global_vault: bool,
+    note: &'static str,
+}
+
+async fn tokenize_status() -> Json<TokenizeStatusResponse> {
+    // TokenVault is constructed per-scanner, not held globally in
+    // siphon-api. We surface that honestly rather than faking a vault.
+    Json(TokenizeStatusResponse {
+        global_vault: false,
+        note: "TokenVault is per-ScanConfig; siphon-api does not currently hold a shared vault.",
+    })
+}
+
+#[derive(Serialize)]
+struct IntegrationItem {
+    kind: String,
+    configured: bool,
+    target: Option<String>,
+}
+
+#[derive(Serialize)]
+struct IntegrationsResponse {
+    total: usize,
+    configured: usize,
+    integrations: Vec<IntegrationItem>,
+}
+
+async fn list_integrations() -> Json<IntegrationsResponse> {
+    // Honest read of env vars that siem.rs inspects. We don't try to
+    // instantiate the adapters here (that lives in create_siem_from_env).
+    let siem_type = std::env::var("DLPSCAN_SIEM_TYPE").ok();
+    let url = std::env::var("DLPSCAN_SIEM_URL").ok();
+    let host = std::env::var("DLPSCAN_SIEM_HOST").ok();
+    let all: Vec<(&str, fn() -> Option<String>)> = vec![
+        ("splunk",        || std::env::var("DLPSCAN_SIEM_URL").ok()),
+        ("elasticsearch", || std::env::var("DLPSCAN_SIEM_URL").ok()),
+        ("syslog",        || std::env::var("DLPSCAN_SIEM_HOST").ok()),
+        ("webhook",       || std::env::var("DLPSCAN_SIEM_URL").ok()),
+        ("datadog",       || std::env::var("DLPSCAN_SIEM_SITE").ok()),
+    ];
+    let active = siem_type.as_deref();
+    let integrations: Vec<IntegrationItem> = all
+        .iter()
+        .map(|(kind, tgt)| IntegrationItem {
+            kind: kind.to_string(),
+            configured: active == Some(kind),
+            target: if active == Some(kind) { tgt() } else { None },
+        })
+        .collect();
+    let configured = integrations.iter().filter(|i| i.configured).count();
+    // keep url/host used so rustc doesn't warn; they're intentionally
+    // referenced above via closures.
+    let _ = (url, host);
+    Json(IntegrationsResponse {
+        total: integrations.len(),
+        configured,
+        integrations,
+    })
+}
+
+#[derive(Serialize)]
+struct AllowlistResponse {
+    loaded_from: Option<String>,
+    text_count: usize,
+    pattern_count: usize,
+    path_count: usize,
+    entries: AllowlistEntries,
+}
+
+#[derive(Serialize)]
+struct AllowlistEntries {
+    texts: Vec<String>,
+    patterns: Vec<String>,
+    paths: Vec<String>,
+}
+
+async fn list_allowlist(State(state): State<Arc<AppState>>) -> Json<AllowlistResponse> {
+    let a = &state.allowlist;
+    Json(AllowlistResponse {
+        loaded_from: std::env::var("SIPHON_ALLOWLIST_PATH").ok(),
+        text_count: a.texts().len(),
+        pattern_count: a.patterns().len(),
+        path_count: a.paths().len(),
+        entries: AllowlistEntries {
+            texts: a.texts().to_vec(),
+            patterns: a.patterns().to_vec(),
+            paths: a.paths().to_vec(),
+        },
+    })
+}
+
+#[derive(Serialize)]
+struct VaultStubResponse {
+    loaded: bool,
+    vaults: Vec<&'static str>,
+    note: &'static str,
+}
+
+async fn list_edm_vaults() -> Json<VaultStubResponse> {
+    // ExactDataMatcher is constructed per ScanConfig. Surface that
+    // honestly so the UI can show "not globally loaded" instead of
+    // fabricating a list.
+    Json(VaultStubResponse {
+        loaded: false,
+        vaults: vec![],
+        note: "ExactDataMatcher is per-ScanConfig; no global EDM registry in siphon-api yet.",
+    })
+}
+
+async fn list_lsh_vaults() -> Json<VaultStubResponse> {
+    Json(VaultStubResponse {
+        loaded: false,
+        vaults: vec![],
+        note: "DocumentVault is per-ScanConfig; no global LSH registry in siphon-api yet.",
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -787,16 +1035,75 @@ async fn main() {
     let tls_cert = std::env::var("SIPHON_TLS_CERT").ok();
     let tls_key = std::env::var("SIPHON_TLS_KEY").ok();
 
-    // Install the global audit logger (no-op when SIPHON_AUDIT_LOG_PATH
-    // is unset). Done before the router is built so every emitted event
-    // — including any from startup itself — has a handler to dispatch to.
-    if let Some(logger) = build_audit_logger(
+    // In-memory ring buffer for /v1/audit. Always installed so the UI
+    // has something to show even when no SIPHON_AUDIT_LOG_PATH is set.
+    let audit_ring_cap: usize = std::env::var("SIPHON_AUDIT_RING_CAP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(500);
+    let audit_ring: Arc<Mutex<VecDeque<AuditEvent>>> =
+        Arc::new(Mutex::new(VecDeque::with_capacity(audit_ring_cap)));
+
+    // Install the global audit logger with the ring handler always, and
+    // the rotating-file handler if SIPHON_AUDIT_LOG_PATH is set.
+    let ring_handler: Box<dyn AuditHandler> = Box::new(
+        RingBufferAuditHandler::new(audit_ring.clone(), audit_ring_cap),
+    );
+    let logger = match build_audit_logger(
         std::env::var("SIPHON_AUDIT_LOG_PATH").ok().as_deref(),
         std::env::var("SIPHON_AUDIT_SIGNING_KEY_HEX").ok().as_deref(),
         std::env::var("SIPHON_AUDIT_TAIL_PATH").ok().as_deref(),
     ) {
-        set_audit_logger(logger);
-    }
+        Some(mut l) => {
+            l.add_handler(ring_handler);
+            l
+        }
+        None => AuditLogger::new().with_handler(ring_handler),
+    };
+    set_audit_logger(logger);
+
+    // Optional allowlist — a JSON file with { texts, patterns, paths }.
+    // Exposed read-only via GET /v1/allowlist.
+    let allowlist: Allowlist = match std::env::var("SIPHON_ALLOWLIST_PATH") {
+        Ok(path) if !path.is_empty() => match std::fs::read_to_string(&path) {
+            Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+                Ok(v) => {
+                    let texts = v.get("texts").and_then(|x| x.as_array())
+                        .map(|arr| arr.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                        .unwrap_or_default();
+                    let patterns = v.get("patterns").and_then(|x| x.as_array())
+                        .map(|arr| arr.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                        .unwrap_or_default();
+                    let paths = v.get("paths").and_then(|x| x.as_array())
+                        .map(|arr| arr.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                        .unwrap_or_default();
+                    let texts: Vec<String> = texts;
+                    let patterns: Vec<String> = patterns;
+                    let paths: Vec<String> = paths;
+                    tracing::info!(
+                        path = %path,
+                        texts = texts.len(),
+                        patterns = patterns.len(),
+                        paths_n = paths.len(),
+                        "allowlist loaded"
+                    );
+                    Allowlist::new()
+                        .with_texts(texts)
+                        .with_patterns(patterns)
+                        .with_paths(paths)
+                }
+                Err(e) => {
+                    tracing::error!(path = %path, error = %e, "allowlist parse failed");
+                    Allowlist::new()
+                }
+            },
+            Err(e) => {
+                tracing::error!(path = %path, error = %e, "allowlist read failed");
+                Allowlist::new()
+            }
+        },
+        _ => Allowlist::new(),
+    };
 
     let cors = match std::env::var("SIPHON_CORS_ORIGINS") {
         Ok(origins) if !origins.is_empty() => {
@@ -847,6 +1154,9 @@ async fn main() {
         rate_limit,
         policies: Arc::new(policies),
         metrics: Arc::new(ApiMetrics::new()),
+        audit_ring,
+        audit_ring_cap,
+        allowlist: Arc::new(allowlist),
     });
 
     let app = Router::new()
@@ -859,6 +1169,14 @@ async fn main() {
         .route("/v1/roles", get(list_roles))
         .route("/v1/compliance/frameworks", get(list_frameworks))
         .route("/v1/metrics", get(metrics_snapshot))
+        .route("/v1/audit", get(list_audit_events))
+        .route("/v1/cache/stats", get(cache_stats))
+        .route("/v1/ratelimit", get(rate_limit_status))
+        .route("/v1/tokenize/status", get(tokenize_status))
+        .route("/v1/integrations", get(list_integrations))
+        .route("/v1/allowlist", get(list_allowlist))
+        .route("/v1/edm", get(list_edm_vaults))
+        .route("/v1/lsh", get(list_lsh_vaults))
         .layer(middleware::from_fn(security_headers))
         .layer(middleware::from_fn_with_state(
             state.clone(),

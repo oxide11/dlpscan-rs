@@ -37,6 +37,21 @@ impl Allowlist {
         self
     }
 
+    /// Read-only access to the exact-text entries (introspection only).
+    pub fn texts(&self) -> &[String] {
+        &self.texts
+    }
+
+    /// Read-only access to the sub-category patterns (introspection only).
+    pub fn patterns(&self) -> &[String] {
+        &self.patterns
+    }
+
+    /// Read-only access to the path globs (introspection only).
+    pub fn paths(&self) -> &[String] {
+        &self.paths
+    }
+
     /// Check if a match should be suppressed.
     pub fn is_suppressed(&self, m: &Match) -> bool {
         // Check exact text matches
