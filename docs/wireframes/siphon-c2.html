@@ -3483,6 +3483,93 @@ window.SIPHON_FS_URL = function() {
   return 'http://127.0.0.1:8081';
 };
 
+// ─── Pod registry ────────────────────────────────────────────────
+// Phase 4.5a: the C2 historically treated SIPHON_API_URL as a single
+// destination. Real deployments run many pods (multiple siphon-api
+// replicas + one or more siphon-fs instances + future siphon-* pods).
+// The registry is a flat list of {url, label, role?, disabled?}
+// persisted to c2:pods. Auto-seeded on first load from SIPHON_API_URL
+// + SIPHON_FS_URL so existing setups keep working without any UI
+// change. `role` is 'auto' by default — the consumer hits /health
+// and learns the real pod_type from there.
+const POD_REGISTRY_KEY = 'c2:pods';
+window.__pod_registry_listeners = window.__pod_registry_listeners || new Set();
+
+function __podReadRaw() {
+  try { return JSON.parse(localStorage.getItem(POD_REGISTRY_KEY) || '[]'); }
+  catch { return []; }
+}
+function __podWriteRaw(list) {
+  try { localStorage.setItem(POD_REGISTRY_KEY, JSON.stringify(list)); } catch {}
+  window.__pod_registry_listeners.forEach(fn => { try { fn(); } catch {} });
+}
+// Strip trailing slash + lowercase the origin to deduplicate entries
+// that only differ in trivial formatting.
+function __podNormalise(url) {
+  try {
+    const u = new URL(url.trim());
+    const path = u.pathname.replace(/\/$/, '');
+    return u.origin + path;
+  } catch {
+    return (url || '').trim().replace(/\/$/, '');
+  }
+}
+function __podSeedIfEmpty() {
+  const list = __podReadRaw();
+  if (list.length) return;
+  const seed = [
+    { url: __podNormalise(window.SIPHON_API_URL()), role: 'api', label: 'primary-api', added_at: new Date().toISOString() },
+    { url: __podNormalise(window.SIPHON_FS_URL()),  role: 'fs',  label: 'primary-fs',  added_at: new Date().toISOString() },
+  ].filter((p, i, arr) => p.url && arr.findIndex(q => q.url === p.url) === i);
+  if (seed.length) __podWriteRaw(seed);
+}
+
+window.c2PodAdd = function (entry) {
+  const list = __podReadRaw();
+  const url = __podNormalise(entry.url);
+  if (!url) return false;
+  if (list.some(p => p.url === url)) return false; // already present
+  list.push({
+    url,
+    role: entry.role || 'auto',
+    label: entry.label || '',
+    disabled: !!entry.disabled,
+    added_at: new Date().toISOString(),
+  });
+  __podWriteRaw(list);
+  return true;
+};
+window.c2PodRemove = function (url) {
+  const norm = __podNormalise(url);
+  __podWriteRaw(__podReadRaw().filter(p => p.url !== norm));
+};
+window.c2PodUpdate = function (url, patch) {
+  const norm = __podNormalise(url);
+  const list = __podReadRaw().map(p => p.url === norm ? { ...p, ...patch } : p);
+  __podWriteRaw(list);
+};
+
+// React hook — reactive list of registered pods. Seeds once on first
+// call so clean browsers and existing users both converge on the
+// same default set without needing a migration step.
+window.usePodRegistry = function () {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    __podSeedIfEmpty();
+    const fn = () => setTick(t => t + 1);
+    window.__pod_registry_listeners.add(fn);
+    const onStorage = (e) => { if (e.key === POD_REGISTRY_KEY) fn(); };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.__pod_registry_listeners.delete(fn);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+  // Re-read on every render so addAt/removeAt called outside a
+  // listener still propagates correctly.
+  return __podReadRaw();
+};
+
 // React hook. Returns { loading, data, error, refetch, source }.
 // `source` is 'live' | 'offline' | 'loading' — useful for the live chip.
 window.useSiphonApi = function(path, deps) {
@@ -10493,6 +10580,10 @@ function DeploymentTab() {
 
       <div className="v-gap" />
 
+      <PodRegistryPanel />
+
+      <div className="v-gap" />
+
       <div className="box">
         <div className="box-title">
           <span className="t">What each mode affects</span>
@@ -10588,6 +10679,179 @@ function FsUrlControl() {
         Empty → auto-derive · lab pattern swaps <span className="mono">/api → /fs</span> on the same origin · direct-dev pattern bumps port 8080 → 8081.
       </div>
     </>
+  );
+}
+
+// ─── Pod registry panel (Settings → Deployment) ─────────────────
+// Live view + CRUD over the c2:pods registry. Each row polls
+// /health on its pod URL so the analyst sees which ones are
+// reachable + what each one reports as its pod_type / version /
+// pod_id. Disable toggle hides a pod from the union fan-outs
+// (Phase 4.5b+) without removing it from the registry.
+
+function PodHealthRow({ pod, onToggle, onRemove, isSeed }) {
+  // Per-row /health probe. Manual refetch via the state chip; poll
+  // isn't worth the noise for a settings screen that sits idle most
+  // of the time.
+  const [state, setState] = React.useState({ loading: true, data: null, error: null });
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    let cancelled = false;
+    setState(s => ({ ...s, loading: true, error: null }));
+    const url = pod.url.replace(/\/$/, '') + '/health';
+    fetch(url, { method: 'GET' })
+      .then(async r => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(data => { if (!cancelled) setState({ loading: false, data, error: null }); })
+      .catch(e => { if (!cancelled) setState({ loading: false, data: null, error: String(e.message || e) }); });
+    return () => { cancelled = true; };
+  }, [pod.url, tick]);
+
+  const h = state.data || {};
+  const chip = pod.disabled ? 'ghost'
+             : state.loading ? 'warn'
+             : state.error ? 'red'
+             : 'safe';
+  const chipText = pod.disabled ? 'DISABLED'
+                 : state.loading ? 'CHECKING…'
+                 : state.error ? 'UNREACHABLE'
+                 : (h.pod_type || 'LIVE').toUpperCase();
+
+  return (
+    <div style={{
+      display:'grid',
+      gridTemplateColumns:'auto minmax(220px, 1fr) 110px 120px auto auto',
+      gap:8, alignItems:'center', padding:'6px 0',
+      borderBottom:'1px dashed var(--line-soft)', fontSize:12,
+      opacity: pod.disabled ? 0.55 : 1,
+    }}>
+      <span className={`chip chip--${chip}`} style={{fontSize:9, padding:'2px 6px'}}>{chipText}</span>
+      <span style={{display:'flex', flexDirection:'column', minWidth:0}}>
+        <span className="mono" style={{color:'var(--ink-bright)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+          {pod.url}
+        </span>
+        {pod.label && <span className="muted" style={{fontSize:10.5}}>{pod.label}{isSeed ? ' · seed' : ''}</span>}
+      </span>
+      <span className="mono" style={{fontSize:10.5, color:'var(--ink-soft)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+            title={h.pod_id}>
+        {h.pod_id ? h.pod_id.slice(0, 8) : state.error ? '—' : '…'}
+      </span>
+      <span className="mono" style={{fontSize:10.5, color:'var(--ink-soft)'}}>
+        {h.version ? `v${h.version}` : state.error ? '—' : ''}
+        {h.uptime_secs != null && <span className="muted"> · up {h.uptime_secs}s</span>}
+      </span>
+      <button className="btn ghost"
+              onClick={() => setTick(t => t + 1)}
+              title="re-check /health">↺</button>
+      <span style={{display:'flex', gap:4}}>
+        <button className="btn ghost"
+                onClick={onToggle}
+                title={pod.disabled ? 'enable this pod' : 'disable without removing'}>
+          {pod.disabled ? 'enable' : 'disable'}
+        </button>
+        <button className="btn ghost"
+                onClick={onRemove}
+                title="remove from registry"
+                style={{color:'var(--red)'}}>✕</button>
+      </span>
+    </div>
+  );
+}
+
+function PodRegistryPanel() {
+  const pods = window.usePodRegistry();
+  const [newUrl, setNewUrl] = React.useState('');
+  const [newLabel, setNewLabel] = React.useState('');
+  const [newRole, setNewRole] = React.useState('auto');
+  const [err, setErr] = React.useState('');
+
+  // Seed URLs — so the UI can label the auto-seeded entries so the
+  // analyst knows why they appeared.
+  const seedUrls = new Set([
+    (window.SIPHON_API_URL && window.SIPHON_API_URL()) || '',
+    (window.SIPHON_FS_URL  && window.SIPHON_FS_URL())  || '',
+  ].filter(Boolean).map(u => u.replace(/\/$/, '')));
+
+  const submit = (e) => {
+    if (e) e.preventDefault();
+    setErr('');
+    const url = newUrl.trim();
+    if (!/^https?:\/\/.+/i.test(url)) {
+      setErr("Pod URL must start with http:// or https://");
+      return;
+    }
+    const ok = window.c2PodAdd({ url, label: newLabel.trim() || undefined, role: newRole });
+    if (!ok) { setErr('That URL is already registered.'); return; }
+    setNewUrl(''); setNewLabel(''); setNewRole('auto');
+  };
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Pod registry</span>
+        <span className="k">
+          {pods.length} pod{pods.length === 1 ? '' : 's'} known · fan-out target for the C2
+        </span>
+      </div>
+
+      <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:11.5, lineHeight:1.6, marginBottom:10}}>
+        The C2 historically hit one API URL + one FS URL. The registry lets you point at many
+        pods at once — useful for multi-replica clusters, ad-hoc dev boxes, or side-by-side
+        comparisons. Entries auto-seed from the two URL controls above on first load.
+        Phase 4.5b migrates the Findings union to consume this registry;
+        Live Scan / API Explorer pod-pickers follow in 4.5c.
+      </div>
+
+      {pods.length === 0 ? (
+        <div className="muted mono" style={{padding:'8px 0', fontSize:11.5}}>
+          — registry empty · add a pod below to get started —
+        </div>
+      ) : (
+        <div>
+          {pods.map(p => (
+            <PodHealthRow
+              key={p.url}
+              pod={p}
+              isSeed={seedUrls.has(p.url)}
+              onToggle={() => window.c2PodUpdate(p.url, { disabled: !p.disabled })}
+              onRemove={() => {
+                if (confirm(`Remove ${p.url} from the pod registry? (Does not stop or affect the pod itself.)`)) {
+                  window.c2PodRemove(p.url);
+                }
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      <form onSubmit={submit} style={{
+        display:'grid',
+        gridTemplateColumns:'minmax(200px, 2fr) 1fr 110px auto',
+        gap:8, alignItems:'center', marginTop:14,
+      }}>
+        <input type="text" value={newUrl} onChange={e => setNewUrl(e.target.value)}
+               placeholder="http://host:port"
+               style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}} />
+        <input type="text" value={newLabel} onChange={e => setNewLabel(e.target.value)}
+               placeholder="label (optional)"
+               style={{fontSize:12, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}} />
+        <select value={newRole} onChange={e => setNewRole(e.target.value)}
+                title="role hint — 'auto' learns pod_type from /health on first reach"
+                style={{fontSize:12, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}>
+          <option value="auto">auto (via /health)</option>
+          <option value="api">siphon-api</option>
+          <option value="fs">siphon-fs</option>
+        </select>
+        <button className="btn primary" type="submit">+ Add pod</button>
+      </form>
+      {err && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', fontSize:11.5, marginTop:8}}>
+          {err}
+        </div>
+      )}
+    </div>
   );
 }
 
