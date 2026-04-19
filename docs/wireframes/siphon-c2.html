@@ -3484,6 +3484,18 @@ window.SIPHON_FS_URL = function() {
   return 'http://127.0.0.1:8081';
 };
 
+// siphon-launcher URL (local-dev process manager, Phase 8.5).
+// Defaults to the launcher's own default bind so the common case
+// 'I just ran cargo run -p siphon-launcher' works with zero config.
+// Override via c2:launcherUrl in localStorage.
+window.SIPHON_LAUNCHER_URL = function () {
+  try {
+    const v = localStorage.getItem('c2:launcherUrl');
+    if (v) return v;
+  } catch {}
+  return 'http://127.0.0.1:8090';
+};
+
 // ─── Pod registry ────────────────────────────────────────────────
 // Phase 4.5a: the C2 historically treated SIPHON_API_URL as a single
 // destination. Real deployments run many pods (multiple siphon-api
@@ -11298,6 +11310,10 @@ function DeploymentTab() {
 
       <div className="v-gap" />
 
+      <LocalLauncherPanel />
+
+      <div className="v-gap" />
+
       <div className="box">
         <div className="box-title">
           <span className="t">What each mode affects</span>
@@ -11577,6 +11593,237 @@ function PodHealthRow({ pod, onToggle, onRemove, isSeed }) {
         )}
       </div>
     )}
+    </div>
+  );
+}
+
+// ─── Local launcher panel (Phase 8.5c) ──────────────────────────
+// Drives siphon-launcher from Settings → Deployment. Start spawns a
+// siphon-api / siphon-fs subprocess and auto-adds it to the pod
+// registry so the rest of the console (Findings union, topology,
+// Live Scan picker) sees it immediately.
+
+function LocalLauncherPanel() {
+  // Launcher URL + health poll. Default the URL input from the
+  // global helper so a freshly-booted launcher is 'just works'.
+  const [urlDraft, setUrlDraft] = React.useState(() => {
+    try { return localStorage.getItem('c2:launcherUrl') || 'http://127.0.0.1:8090'; }
+    catch { return 'http://127.0.0.1:8090'; }
+  });
+  const [urlSaved, setUrlSaved] = React.useState(false);
+
+  // List / status. Polls every 3s while the panel is mounted so
+  // status chips reflect reality without the analyst refreshing.
+  const [status, setStatus] = React.useState({ loading: true, ok: false, data: null, error: null });
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    let cancelled = false;
+    const baseUrl = window.SIPHON_LAUNCHER_URL().replace(/\/$/, '');
+    const fetchOnce = async () => {
+      try {
+        const h = await fetch(baseUrl + '/health');
+        if (!h.ok) throw new Error('HTTP ' + h.status);
+        const l = await fetch(baseUrl + '/v1/manage/list');
+        const ld = await l.json();
+        if (!cancelled) setStatus({ loading: false, ok: true, data: ld, error: null });
+      } catch (e) {
+        if (!cancelled) setStatus({ loading: false, ok: false, data: null, error: String(e.message || e) });
+      }
+    };
+    fetchOnce();
+    const t = setInterval(fetchOnce, 3000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [tick]);
+
+  // Start form state.
+  const [kind, setKind] = React.useState('siphon-api');
+  const [bind, setBind] = React.useState('127.0.0.1:8080');
+  const [starting, setStarting] = React.useState(false);
+  const [note, setNote] = React.useState(null);
+  const [err, setErr] = React.useState(null);
+
+  // Default bind per kind — flip when the selector changes.
+  React.useEffect(() => {
+    setBind(kind === 'siphon-fs' ? '127.0.0.1:8081' : '127.0.0.1:8080');
+  }, [kind]);
+
+  const saveUrl = () => {
+    try {
+      if (urlDraft.trim()) localStorage.setItem('c2:launcherUrl', urlDraft.trim());
+      else localStorage.removeItem('c2:launcherUrl');
+    } catch {}
+    setUrlSaved(true);
+    setTimeout(() => setUrlSaved(false), 1500);
+    setTick(t => t + 1);
+  };
+
+  const onStart = async () => {
+    setStarting(true); setErr(null); setNote(null);
+    try {
+      const baseUrl = window.SIPHON_LAUNCHER_URL().replace(/\/$/, '');
+      const r = await fetch(baseUrl + '/v1/manage/start', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ kind, bind }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      // Auto-register the spawned pod in c2:pods so the rest of
+      // the console picks it up. Use http://<bind> as the url.
+      const role = kind === 'siphon-fs' ? 'fs' : 'api';
+      const podUrl = 'http://' + bind;
+      if (window.c2PodAdd) {
+        window.c2PodAdd({ url: podUrl, role, label: j.id || kind });
+      }
+      setNote(`Started ${j.kind} (pid ${j.pid}, id ${j.id}) · registered ${podUrl} into the pod registry`);
+      setTick(t => t + 1);
+    } catch (e) {
+      setErr(String(e.message || e));
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const onStop = async (id, force) => {
+    if (!force && !confirm(`Stop ${id}? Sends SIGTERM and waits up to 60s for graceful drain.`)) return;
+    try {
+      const baseUrl = window.SIPHON_LAUNCHER_URL().replace(/\/$/, '');
+      const r = await fetch(baseUrl + '/v1/manage/stop', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id, force: !!force }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      setNote(`Stopped ${id} · signal ${j.signal}${j.graceful ? ' (graceful)' : ' (force)'} · ${j.waited_ms}ms`);
+      setTick(t => t + 1);
+    } catch (e) {
+      setErr(String(e.message || e));
+    }
+  };
+
+  const processes = (status.data && status.data.processes) || [];
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Local launcher</span>
+        <span className="k">
+          {status.loading ? 'loading…'
+            : status.ok ? <>live · {processes.length} process{processes.length === 1 ? '' : 'es'}</>
+            : 'unreachable'}
+          {' · '}
+          <a onClick={(e) => { e.stopPropagation(); setTick(t => t + 1); }}
+             style={{color:'var(--accent)', cursor:'pointer'}}>refetch</a>
+        </span>
+      </div>
+
+      <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:11.5, lineHeight:1.7, marginBottom:10}}>
+        Local-dev convenience. Run <span className="mono">cargo run -p siphon-launcher</span> in a
+        background terminal once; this panel spawns siphon-api / siphon-fs subprocesses and
+        auto-registers them in the Pod registry above.
+        k8s users: stick with <span className="mono">./scripts/lab-up.sh</span> — the launcher is
+        not for cluster-backed deployments.
+      </div>
+
+      <div style={{marginBottom:10}}>
+        <div className="label" style={{marginBottom:4}}>Launcher URL</div>
+        <div style={{display:'flex', gap:8, alignItems:'center'}}>
+          <input
+            type="text"
+            value={urlDraft}
+            onChange={e => setUrlDraft(e.target.value)}
+            style={{flex:1, fontFamily:"'JetBrains Mono', monospace", fontSize:12, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}
+          />
+          <button className="btn" onClick={saveUrl}>{urlSaved ? 'Saved' : 'Save'}</button>
+        </div>
+      </div>
+
+      {!status.ok && !status.loading && (
+        <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:12, lineHeight:1.6, marginBottom:10}}>
+          <b>Launcher unreachable</b> at <span className="mono">{window.SIPHON_LAUNCHER_URL()}</span>.{' '}
+          Start it with <span className="mono">cargo run -p siphon-launcher</span> (or{' '}
+          <span className="mono">./target/debug/siphon-launcher</span> if already built) and
+          re-check.
+          {status.error && <div className="muted" style={{fontSize:11, marginTop:4}}>error: {status.error}</div>}
+        </div>
+      )}
+
+      {status.ok && (
+        <>
+          {/* Managed process list */}
+          {processes.length === 0 ? (
+            <div className="muted mono" style={{padding:'6px 0', fontSize:11}}>
+              — no processes under management — use the form below to spawn one —
+            </div>
+          ) : (
+            <div style={{marginBottom:10}}>
+              <div style={{display:'grid', gridTemplateColumns:'auto minmax(180px, 1fr) 110px 150px 60px auto', gap:8, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+                <span className="label">Status</span>
+                <span className="label">Id · kind</span>
+                <span className="label">Pid</span>
+                <span className="label">Bind</span>
+                <span></span>
+                <span className="label">Action</span>
+              </div>
+              {processes.map(p => (
+                <div key={p.id} style={{display:'grid', gridTemplateColumns:'auto minmax(180px, 1fr) 110px 150px 60px auto', gap:8, padding:'6px 0', borderBottom:'1px dashed var(--line-soft)', fontSize:12, alignItems:'center'}}>
+                  <span className={`chip chip--${p.status === 'running' ? 'safe' : 'ghost'}`} style={{fontSize:9, padding:'2px 6px'}}>
+                    {p.status}
+                  </span>
+                  <span className="mono" style={{fontSize:11, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                    <span style={{color:'var(--ink-bright)'}}>{p.id}</span>
+                    <span className="muted"> · {p.kind}</span>
+                  </span>
+                  <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{p.pid}</span>
+                  <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{p.bind}</span>
+                  <span></span>
+                  <span style={{display:'flex', gap:4}}>
+                    <button className="btn ghost"
+                            onClick={() => onStop(p.id, false)}
+                            disabled={p.status !== 'running'}
+                            title="SIGTERM + 60s drain">stop</button>
+                    <button className="btn ghost"
+                            onClick={() => onStop(p.id, true)}
+                            disabled={p.status !== 'running'}
+                            title="SIGKILL immediately"
+                            style={{color:'var(--red)'}}>force</button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Start form */}
+          <div style={{marginTop:10, paddingTop:10, borderTop:'1px dashed var(--line-soft)'}}>
+            <div className="label" style={{marginBottom:4}}>Start a pod</div>
+            <div style={{display:'grid', gridTemplateColumns:'140px minmax(180px, 1fr) auto', gap:8, alignItems:'center'}}>
+              <select value={kind} onChange={e => setKind(e.target.value)}
+                      style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}>
+                <option value="siphon-api">siphon-api</option>
+                <option value="siphon-fs">siphon-fs</option>
+              </select>
+              <input type="text" value={bind} onChange={e => setBind(e.target.value)}
+                     placeholder="127.0.0.1:8080"
+                     style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}} />
+              <button className="btn primary" onClick={onStart} disabled={starting}>
+                {starting ? 'Starting…' : '▶ Start'}
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {note && (
+        <div className="note" style={{borderColor:'var(--safe)', background:'var(--accent-wash)', color:'var(--ink)', fontSize:12, marginTop:10}}>
+          {note}
+        </div>
+      )}
+      {err && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', fontSize:12, marginTop:10}}>
+          <b>Launcher error:</b> {err}
+        </div>
+      )}
     </div>
   );
 }
