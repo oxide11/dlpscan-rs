@@ -5266,94 +5266,6 @@ Object.assign(window, { Dashboard });
 // Findings-density histogram — bucketed per-minute counts with a severity
 // stack (red / warn / safe). Drawn as an inline SVG so there's no chart
 // library dependency. Window defaults to 10 minutes but is adjustable.
-function FindingsDensity({ findings, windowMin, buckets }) {
-  const [minutes, setMinutes] = React.useState(windowMin || 15);
-  const n = buckets || 30;
-
-  const stats = React.useMemo(() => {
-    const now = Date.now();
-    const bucketMs = (minutes * 60 * 1000) / n;
-    const rows = Array.from({length: n}, () => ({ red: 0, warn: 0, safe: 0, total: 0 }));
-    let inWindow = 0, red = 0;
-    findings.forEach(f => {
-      const t = new Date(f.ts).getTime();
-      if (isNaN(t)) return;
-      const delta = now - t;
-      if (delta < 0 || delta > minutes * 60 * 1000) return;
-      inWindow++;
-      if (f.severity === 'red') red++;
-      const idx = n - 1 - Math.floor(delta / bucketMs);
-      if (idx >= 0 && idx < n) {
-        const key = f.severity === 'red' ? 'red' : f.severity === 'warn' ? 'warn' : 'safe';
-        rows[idx][key]++;
-        rows[idx].total++;
-      }
-    });
-    const max = Math.max(1, ...rows.map(r => r.total));
-    return { rows, max, inWindow, red, bucketMs };
-  }, [findings, minutes, n]);
-
-  const width = 100; // percent viewport
-  const height = 64;
-  const colW = width / n;
-
-  return (
-    <div className="box" style={{marginBottom:'var(--gap)'}}>
-      <div className="box-title">
-        <span className="t">Findings density</span>
-        <span className="k">
-          {stats.inWindow} in last {minutes}m · {stats.red} red · 1 bucket = {Math.round(stats.bucketMs/1000)}s
-        </span>
-      </div>
-      <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
-        <span className="label">Window</span>
-        {[5, 15, 60, 240].map(m => (
-          <button key={m}
-                  onClick={() => setMinutes(m)}
-                  className="btn ghost"
-                  style={{
-                    padding:'2px 10px', fontSize:10,
-                    background: minutes === m ? 'var(--accent)' : 'transparent',
-                    color: minutes === m ? 'var(--bg-0)' : 'var(--ink)',
-                    borderColor: minutes === m ? 'var(--accent)' : 'var(--line)',
-                  }}>{m < 60 ? m + 'm' : (m/60) + 'h'}</button>
-        ))}
-        <span className="right" style={{marginLeft:'auto', display:'flex', gap:10, fontFamily:"'JetBrains Mono', monospace", fontSize:10, color:'var(--ink-soft)'}}>
-          <span><i style={{display:'inline-block', width:8, height:8, background:'var(--red)', borderRadius:1, marginRight:4}} />red</span>
-          <span><i style={{display:'inline-block', width:8, height:8, background:'var(--amber)', borderRadius:1, marginRight:4}} />warn</span>
-          <span><i style={{display:'inline-block', width:8, height:8, background:'var(--safe)', borderRadius:1, marginRight:4}} />safe</span>
-        </span>
-      </div>
-      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{width:'100%', height:height+16, display:'block', borderBottom:'1px dashed var(--line-soft)'}}>
-        {/* grid: quarter lines */}
-        {[0.25, 0.5, 0.75].map(f => (
-          <line key={f} x1="0" y1={height*f} x2={width} y2={height*f} stroke="var(--line-soft)" strokeWidth="0.2" strokeDasharray="1 2"/>
-        ))}
-        {stats.rows.map((r, i) => {
-          const bar = stats.max ? (r.total / stats.max) * height : 0;
-          if (r.total === 0) return null;
-          const x = i * colW;
-          const rh = r.red  / r.total * bar;
-          const wh = r.warn / r.total * bar;
-          const sh = r.safe / r.total * bar;
-          return (
-            <g key={i}>
-              <title>{`${r.total} finding${r.total===1?'':'s'} · red ${r.red} warn ${r.warn} safe ${r.safe}`}</title>
-              <rect x={x+0.2} y={height - rh} width={colW - 0.4} height={rh} fill="var(--red)"/>
-              <rect x={x+0.2} y={height - rh - wh} width={colW - 0.4} height={wh} fill="var(--amber)"/>
-              <rect x={x+0.2} y={height - rh - wh - sh} width={colW - 0.4} height={sh} fill="var(--safe)"/>
-            </g>
-          );
-        })}
-      </svg>
-      <div style={{display:'flex', justifyContent:'space-between', fontFamily:"'JetBrains Mono', monospace", fontSize:10, color:'var(--ink-faint)', marginTop:4}}>
-        <span>−{minutes}m</span>
-        <span>now</span>
-      </div>
-    </div>
-  );
-}
-
 // Display-only helper — pull HH:MM:SS out of an ISO timestamp, or the raw
 // string if it doesn't parse.
 function fmtWallClock(iso) {
@@ -5432,8 +5344,6 @@ function Stream({ go }) {
           <b>Error:</b> {fx.error}
         </div>
       )}
-
-      <FindingsDensity findings={all} />
 
       {/* severity + category quick filters pulled from real data */}
       <div className="row" style={{marginBottom: 'var(--gap)', flexWrap:'wrap'}}>
