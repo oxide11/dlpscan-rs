@@ -3987,36 +3987,52 @@ function MiniSpark({ data, height, color }) {
 }
 
 function DashV1_Ops_Local() {
-  // === Variant A, Local Only mode: live /v1/metrics, /v1/findings, /v1/audit ===
+  // === The single Operations dashboard for siphon-c2.html ===
+  //
+  // Layout (top → bottom):
+  //   1. metrics strip (scans / findings / errors / uptime)
+  //   2. full-width Recent findings list
+  //   3. Inputs → Detection → Outputs topology
+  //   4. Detection histogram (by category · live)
+  //
+  // Everything is derived from /v1/metrics + /v1/findings +
+  // /v1/integrations. No audit panel, no fleet, no tenants.
   const mx = window.useSiphonApi('/v1/metrics');
   const fx = window.useSiphonApi('/v1/findings?limit=500');
-  const ax = window.useSiphonApi('/v1/audit?limit=10');
+  const ix = window.useSiphonApi('/v1/integrations');
 
+  const autorefresh = window.useFeatureFlag ? window.useFeatureFlag('dashboard_autorefresh') : true;
   React.useEffect(() => {
-    const t = setInterval(() => { mx.refetch(); fx.refetch(); ax.refetch(); }, 5000);
+    if (!autorefresh) return;
+    const t = setInterval(() => { mx.refetch(); fx.refetch(); ix.refetch(); }, 5000);
     return () => clearInterval(t);
-  }, []);
+  }, [autorefresh]);
 
   const m = mx.data || {};
   const findings = (fx.data && fx.data.findings) || [];
-  const events = (ax.data && ax.data.events) || [];
-  const byCategory = aggregateByKey(findings, 'category').slice(0, 6);
-  const bySeverity = aggregateByKey(findings, 'severity');
-  const maxCatCount = byCategory.length ? byCategory[0][1] : 1;
   const sparkData = findingsSparkline(findings, 20, 10);
 
-  const overall = [mx.source, fx.source, ax.source].includes('offline') ? 'offline'
-    : [mx.source, fx.source, ax.source].every(s => s === 'live') ? 'live' : 'loading';
+  const overall = [mx.source, fx.source, ix.source].includes('offline') ? 'offline'
+    : [mx.source, fx.source, ix.source].every(s => s === 'live') ? 'live' : 'loading';
+
+  // ── Inputs: aggregate findings by source_ip to figure out who's
+  // actually calling this siphon-api right now. Top 5.
+  const bySource = aggregateByKey(findings, 'source_ip').slice(0, 5);
+
+  // ── Outputs: configured SIEM integrations from /v1/integrations.
+  const configuredIntegrations = ((ix.data && ix.data.integrations) || []).filter(i => i.configured);
 
   return (
     <div className="variant-body">
+      {/* ── Live indicator row ───────────────────────────────── */}
       <div style={{marginBottom: 'var(--gap)', display:'flex', gap:8, alignItems:'center'}}>
-        <window.LivePill source={overall} onClick={() => { mx.refetch(); fx.refetch(); ax.refetch(); }} />
+        <window.LivePill source={overall} onClick={() => { mx.refetch(); fx.refetch(); ix.refetch(); }} />
         <span className="muted mono" style={{fontSize:11}}>
-          {window.SIPHON_API_URL()} · polls every 5s
+          {window.SIPHON_API_URL()} · {autorefresh ? 'polls every 5s' : 'manual refresh (dashboard_autorefresh=off)'}
         </span>
       </div>
 
+      {/* ── 1 · Top metrics strip ─────────────────────────────── */}
       <div className="grid grid-4" style={{marginBottom: 'var(--gap)'}}>
         <div className="box"><div className="stat">
           <span className="s-label">Scans total</span>
@@ -4035,109 +4051,256 @@ function DashV1_Ops_Local() {
           <span className="s-val" style={{color: (m.scan_errors_total || 0) > 0 ? 'var(--red)' : 'var(--ink-bright)'}}>
             {m.scan_errors_total != null ? m.scan_errors_total : '—'}
           </span>
-          <span className="s-delta">scan 5xx</span>
+          <span className="s-delta">
+            {m.scans_total ? ((m.scan_errors_total || 0) / m.scans_total * 100).toFixed(2) + '% rate' : '—'}
+          </span>
           <div style={{marginTop:6, height:28}} />
         </div></div>
         <div className="box"><div className="stat">
           <span className="s-label">Uptime</span>
           <span className="s-val">{fmtUptime(m.uptime_secs)}</span>
-          <span className="s-delta">{m.patterns_loaded != null ? `${m.patterns_loaded} patterns` : ''}</span>
+          <span className="s-delta">{m.patterns_loaded != null ? `${m.patterns_loaded} patterns · ${m.categories_loaded} cats` : ''}</span>
           <div style={{marginTop:6, height:28}} />
         </div></div>
       </div>
 
-      <div className="grid" style={{gridTemplateColumns: '1.3fr 1fr', gap:'var(--gap)', marginBottom:'var(--gap)'}}>
-        <div className="box">
-          <div className="box-title">
-            <span className="t">Recent findings</span>
-            <span className="k">last 6 from /v1/findings · <a onClick={() => window.__c2_go && window.__c2_go('stream')} style={{color:'var(--accent)', cursor:'pointer'}}>open full console ›</a></span>
+      {/* ── 2 · Recent findings · full width ──────────────────── */}
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title">
+          <span className="t">Recent findings</span>
+          <span className="k">
+            newest first · <a onClick={() => window.__c2_go && window.__c2_go('stream')} style={{color:'var(--accent)', cursor:'pointer'}}>open full console ›</a>
+          </span>
+        </div>
+        {findings.length === 0 ? (
+          <div className="muted" style={{padding:30, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+            — ring empty · run a scan from <a onClick={() => window.__c2_go && window.__c2_go('livescan')} style={{color:'var(--accent)', cursor:'pointer'}}>Engineering → Live Scan</a> —
           </div>
-          {findings.length === 0 ? (
-            <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
-              — ring empty · scan something —
+        ) : (
+          <>
+            <div className="find-row label" style={{borderBottom:'1.5px solid var(--line)'}}>
+              <span>TS</span>
+              <span>Source IP</span>
+              <span>Match</span>
+              <span>Category</span>
+              <span>Conf</span>
+              <span>Sev</span>
+              <span></span>
             </div>
-          ) : findings.slice(0, 6).map((f, i) => (
-            <div key={i} className="find-row" onClick={() => window.__c2_go && window.__c2_go('stream', 'finding:' + f.id)}>
-              <span className="ts" title={f.ts}>{fmtWallClock(f.ts)}</span>
-              <span className="src">{f.source_ip || '—'}</span>
-              <span className="tx">… {f.text} …</span>
-              <span className={`chip chip--${f.severity}`} title={f.category}>{f.sub_category || f.category}</span>
-              <span className="mono" style={{fontSize:11, color:'var(--ink-faint)'}}>{f.confidence != null ? f.confidence.toFixed(2) : '—'}</span>
-              <span className="chip">{f.severity}</span>
-              <span className="arrow">›</span>
+            {findings.slice(0, 12).map((f, i) => (
+              <div key={i} className="find-row" onClick={() => window.__c2_go && window.__c2_go('stream', 'finding:' + f.id)}>
+                <span className="ts" title={f.ts}>{fmtWallClock(f.ts)}</span>
+                <span className="src">{f.source_ip || '—'}</span>
+                <span className="tx">… {f.text} …</span>
+                <span className={`chip chip--${f.severity}`} title={f.category}>{f.sub_category || f.category}</span>
+                <span className="mono" style={{fontSize:11, color:'var(--ink-faint)'}}>{f.confidence != null ? f.confidence.toFixed(2) : '—'}</span>
+                <span className="chip">{f.severity}</span>
+                <span className="arrow">›</span>
+              </div>
+            ))}
+            {findings.length > 12 && (
+              <div style={{padding:'8px 4px', fontFamily:"'JetBrains Mono', monospace", color:'var(--ink-soft)', fontSize:11.5}}>
+                … +{findings.length - 12} more in the ring · <a onClick={() => window.__c2_go && window.__c2_go('stream')} style={{color:'var(--accent)', cursor:'pointer'}}>open full console ›</a>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ── 3 · Inputs → Detection → Outputs live topology ───── */}
+      <TopologyStrip
+        bySource={bySource}
+        metrics={m}
+        sparkData={sparkData}
+        integrations={configuredIntegrations}
+        live={overall === 'live'}
+      />
+
+      {/* ── 4 · Detection histogram (by category, live) ──────── */}
+      <DetectionHistogram findings={findings} />
+    </div>
+  );
+}
+
+// Inputs (source_ip → counts)  ──→  siphon-api (detection)  ──→  Outputs
+// (configured SIEM integrations). Uses simple absolute-positioned nodes +
+// an SVG overlay for the connectors so the layout is readable without a
+// chart library.
+function TopologyStrip({ bySource, metrics, sparkData, integrations, live }) {
+  const m = metrics || {};
+  const sources = (bySource || []).length
+    ? bySource
+    : [['— no callers yet —', 0]];
+  const outs = (integrations || []).length
+    ? integrations
+    : [{ kind: 'no SIEM configured', target: 'DLPSCAN_SIEM_TYPE unset' }];
+  return (
+    <div className="box" style={{marginBottom:'var(--gap)', overflow:'hidden'}}>
+      <div className="box-title">
+        <span className="t">Inputs → Detection → Outputs</span>
+        <span className="k">live · wired to /v1/findings · /v1/metrics · /v1/integrations</span>
+      </div>
+      <div style={{
+        position:'relative', minHeight: 220, marginTop: 6,
+        backgroundImage:'radial-gradient(var(--line-soft) 1px, transparent 1.5px)',
+        backgroundSize:'22px 22px',
+      }}>
+        {/* Section headers */}
+        <div style={{position:'absolute', top:4, left:10, fontFamily:"'JetBrains Mono', monospace", fontSize:10, letterSpacing:'0.14em', color:'var(--ink-faint)', textTransform:'uppercase'}}>INPUTS</div>
+        <div style={{position:'absolute', top:4, left:'50%', transform:'translateX(-50%)', fontFamily:"'JetBrains Mono', monospace", fontSize:10, letterSpacing:'0.14em', color:'var(--ink-faint)', textTransform:'uppercase'}}>DETECTION</div>
+        <div style={{position:'absolute', top:4, right:10, fontFamily:"'JetBrains Mono', monospace", fontSize:10, letterSpacing:'0.14em', color:'var(--ink-faint)', textTransform:'uppercase'}}>OUTPUTS</div>
+
+        {/* Inputs column */}
+        <div style={{position:'absolute', left:10, top:28, width:220, display:'flex', flexDirection:'column', gap:6}}>
+          {sources.slice(0, 5).map(([ip, count], i) => (
+            <div key={i} style={{
+              background:'var(--bg-2)',
+              border:'1px solid var(--line-strong)',
+              borderRadius:'var(--radius)',
+              padding:'7px 10px',
+              fontFamily:"'JetBrains Mono', monospace",
+              fontSize:11,
+            }}>
+              <div style={{color:'var(--ink-bright)'}}>{ip}</div>
+              {count > 0 && (
+                <div className="muted" style={{fontSize:10, marginTop:2}}>
+                  {count} finding{count === 1 ? '' : 's'} · HTTP /scan
+                </div>
+              )}
             </div>
           ))}
         </div>
 
-        <div className="box">
-          <div className="box-title">
-            <span className="t">Categories · in ring</span>
-            <span className="k">{byCategory.length} distinct</span>
+        {/* Detector in the center */}
+        <div style={{
+          position:'absolute', top:60, left:'50%', transform:'translateX(-50%)', width:220,
+          background: live ? 'var(--accent-wash)' : 'var(--bg-2)',
+          border: '2px solid ' + (live ? 'var(--accent)' : 'var(--line-strong)'),
+          borderRadius:'var(--radius)',
+          padding:'12px 14px',
+          textAlign:'center',
+        }}>
+          <div style={{fontFamily:"'Space Grotesk', sans-serif", fontSize:15, fontWeight:600, color:'var(--ink-bright)'}}>
+            siphon-api
           </div>
-          {byCategory.length === 0 ? (
-            <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>— no findings yet —</div>
-          ) : byCategory.map(([cat, n], i) => (
-            <div key={i} className="bar-row">
-              <span className="hand-b" style={{fontSize:12}}>{cat}</span>
-              <span className="b"><i style={{width:(n/maxCatCount*100)+'%', background:'var(--accent)'}}/></span>
-              <span className="n">{n}</span>
+          <div className="muted" style={{fontSize:10.5, fontFamily:"'JetBrains Mono', monospace", marginTop:2}}>
+            {window.SIPHON_API_URL ? window.SIPHON_API_URL() : ''}
+          </div>
+          <div style={{marginTop:10, display:'grid', gridTemplateColumns:'1fr 1fr', gap:6, fontSize:11, fontFamily:"'JetBrains Mono', monospace"}}>
+            <div>
+              <div className="muted" style={{fontSize:9, textTransform:'uppercase', letterSpacing:'0.12em'}}>scans</div>
+              <div style={{color: live ? 'var(--accent)' : 'var(--ink-soft)', fontWeight:600}}>{m.scans_total != null ? m.scans_total.toLocaleString() : '—'}</div>
+            </div>
+            <div>
+              <div className="muted" style={{fontSize:9, textTransform:'uppercase', letterSpacing:'0.12em'}}>findings</div>
+              <div style={{color: live ? 'var(--accent)' : 'var(--ink-soft)', fontWeight:600}}>{m.findings_total != null ? m.findings_total.toLocaleString() : '—'}</div>
+            </div>
+          </div>
+          <div style={{marginTop:8}}>
+            <MiniSpark data={sparkData} height={22} color={live ? 'var(--accent)' : 'var(--ink-dim)'} />
+          </div>
+          <div className="muted" style={{fontSize:10, marginTop:4}}>
+            {m.patterns_loaded != null ? `${m.patterns_loaded} patterns / ${m.categories_loaded} cats` : ''}
+          </div>
+        </div>
+
+        {/* Outputs column */}
+        <div style={{position:'absolute', right:10, top:28, width:220, display:'flex', flexDirection:'column', gap:6}}>
+          {outs.slice(0, 5).map((o, i) => (
+            <div key={i} style={{
+              background: o.target ? 'var(--amber-wash)' : 'var(--bg-2)',
+              border: '1px solid ' + (o.target ? 'var(--amber)' : 'var(--line-strong)'),
+              borderStyle: o.target ? 'solid' : 'dashed',
+              borderRadius:'var(--radius)',
+              padding:'7px 10px',
+              fontFamily:"'JetBrains Mono', monospace",
+              fontSize:11,
+            }}>
+              <div style={{color: o.target ? 'var(--ink-bright)' : 'var(--ink-soft)'}}>{o.kind}</div>
+              {o.target && (
+                <div className="muted" style={{fontSize:10, marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={o.target}>
+                  {o.target}
+                </div>
+              )}
             </div>
           ))}
-          {bySeverity.length > 0 && (
-            <>
-              <hr className="sep" />
-              <div className="label" style={{marginBottom:6}}>By severity</div>
-              <div style={{display:'flex', gap:6, flexWrap:'wrap'}}>
-                {bySeverity.map(([sev, n]) => (
-                  <span key={sev} className={`chip chip--${sev}`} style={{fontSize:10}}>{sev} · {n}</span>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="grid grid-2">
-        <div className="box">
-          <div className="box-title">
-            <span className="t">Component health</span>
-            <span className="k">from /v1/metrics</span>
-          </div>
-          <div className="kv" style={{fontSize:12}}>
-            <span className="k">siphon-api</span>   <span className="v"><span className={`chip chip--${overall==='live'?'safe':overall==='offline'?'red':'warn'}`}>{overall==='live' ? 'live' : overall==='offline' ? 'unreachable' : 'loading'}</span></span>
-            <span className="k">siphon-core</span>  <span className="v"><span className="chip chip--teal">{m.patterns_loaded != null ? `${m.patterns_loaded} patterns / ${m.categories_loaded} cats` : 'linked'}</span></span>
-            <span className="k">Policies</span>     <span className="v"><span className={`chip chip--${m.policies_loaded > 0 ? 'safe' : 'ghost'}`}>{m.policies_loaded != null ? m.policies_loaded : '—'} loaded</span></span>
-            <span className="k">Ring usage</span>   <span className="v mono">{fx.data ? `${fx.data.total} / ${fx.data.capacity}` : '—'}</span>
-            <span className="k">Error rate</span>   <span className="v mono">{m.scans_total ? ((m.scan_errors_total || 0) / m.scans_total * 100).toFixed(2) + '%' : '—'}</span>
-            <span className="k">Avg findings/scan</span><span className="v mono">{m.scans_total ? (m.findings_total / m.scans_total).toFixed(2) : '—'}</span>
-          </div>
         </div>
 
-        <div className="box">
-          <div className="box-title">
-            <span className="t">Recent audit events</span>
-            <span className="k">from /v1/audit · <a onClick={() => window.__c2_go && window.__c2_go('audit')} style={{color:'var(--accent)', cursor:'pointer'}}>full log ›</a></span>
-          </div>
-          {events.length === 0 ? (
-            <div className="muted" style={{padding:14, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>— ring empty —</div>
-          ) : events.slice(0, 6).map((e, i) => {
-            const outcome = e.outcome || (e.is_clean ? 'clean' : 'flagged');
-            const oColor = outcome === 'error' ? 'red' : outcome === 'flagged' || outcome === 'findings_detected' ? 'warn' : 'safe';
-            return (
-              <div key={i} style={{display:'grid', gridTemplateColumns:'80px 80px 1fr 80px', gap:8, padding:'5px 0', borderBottom:'1px dashed var(--line-soft)', fontSize:11.5, fontFamily:"'JetBrains Mono', monospace", alignItems:'center'}}>
-                <span className="muted" title={e.timestamp}>{fmtWallClock(e.timestamp)}</span>
-                <span style={{color:'var(--cyan)'}}>{e.event_type}</span>
-                <span style={{color:'var(--ink-bright)'}} title={e.request_id}>
-                  {e.categories_found && e.categories_found.length
-                    ? e.categories_found.join(', ')
-                    : e.action || '—'}
-                </span>
-                <span><span className={`chip chip--${oColor}`} style={{fontSize:9}}>{outcome}</span></span>
-              </div>
-            );
-          })}
-        </div>
+        {/* Connectors */}
+        <svg style={{position:'absolute', inset:0, width:'100%', height:'100%', pointerEvents:'none'}}>
+          <defs>
+            <marker id="tarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ink-soft)"/>
+            </marker>
+          </defs>
+          <g stroke="var(--ink-soft)" strokeWidth="1.1" fill="none" markerEnd="url(#tarr)">
+            {/* inputs → detector (flowing right) */}
+            <path d="M 230 80  C 300 80,  340 110, 380 120" />
+            <path d="M 230 110 C 300 110, 340 125, 380 130" />
+            <path d="M 230 140 C 300 140, 340 135, 380 135" />
+            {/* detector → outputs (flowing right) */}
+            <path d="M 620 120 C 680 120, 710 95,  760 80"  strokeDasharray={outs[0] && outs[0].target ? '0' : '4 4'} />
+            <path d="M 620 135 C 680 135, 710 125, 760 120" strokeDasharray={outs[1] && outs[1].target ? '0' : '4 4'} />
+            <path d="M 620 155 C 680 155, 710 150, 760 140" strokeDasharray={outs[2] && outs[2].target ? '0' : '4 4'} />
+          </g>
+        </svg>
       </div>
+    </div>
+  );
+}
+
+// Detection histogram — distribution of findings by category, updated
+// live. Stacks severity within each category bar so red/warn/safe are
+// visible at a glance.
+function DetectionHistogram({ findings }) {
+  const stats = React.useMemo(() => {
+    const by = {};
+    (findings || []).forEach(f => {
+      const k = f.category || '(uncategorised)';
+      if (!by[k]) by[k] = { red: 0, warn: 0, safe: 0, total: 0 };
+      const sev = f.severity === 'red' ? 'red' : f.severity === 'warn' ? 'warn' : 'safe';
+      by[k][sev]++;
+      by[k].total++;
+    });
+    const rows = Object.entries(by).sort((a, b) => b[1].total - a[1].total);
+    const max = rows.length ? rows[0][1].total : 1;
+    return { rows, max };
+  }, [findings]);
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Detection histogram</span>
+        <span className="k">
+          findings by category · {(findings || []).length} in ring
+          {' '}
+          <span style={{marginLeft:8, fontFamily:"'JetBrains Mono', monospace", fontSize:10}}>
+            <i style={{display:'inline-block', width:8, height:8, background:'var(--red)', borderRadius:1, marginRight:4}} />red
+            <i style={{display:'inline-block', width:8, height:8, background:'var(--amber)', borderRadius:1, margin:'0 4px 0 10px'}} />warn
+            <i style={{display:'inline-block', width:8, height:8, background:'var(--safe)', borderRadius:1, margin:'0 4px 0 10px'}} />safe
+          </span>
+        </span>
+      </div>
+      {stats.rows.length === 0 ? (
+        <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+          — no findings yet —
+        </div>
+      ) : stats.rows.map(([cat, row]) => {
+        const wRed  = row.red  / stats.max * 100;
+        const wWarn = row.warn / stats.max * 100;
+        const wSafe = row.safe / stats.max * 100;
+        return (
+          <div key={cat} style={{display:'grid', gridTemplateColumns:'200px 1fr 60px', gap:10, alignItems:'center', padding:'5px 0', borderBottom:'1px dashed var(--line-soft)', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5}}>
+            <span style={{color:'var(--ink-bright)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={cat}>{cat}</span>
+            <div style={{display:'flex', height:10, borderRadius:1, overflow:'hidden', border:'1px solid var(--line)', background:'var(--bg-1)'}}>
+              {wRed  > 0 && <span style={{width: wRed  + '%', background:'var(--red)'}}  title={`${row.red} red`}  />}
+              {wWarn > 0 && <span style={{width: wWarn + '%', background:'var(--amber)'}} title={`${row.warn} warn`} />}
+              {wSafe > 0 && <span style={{width: wSafe + '%', background:'var(--safe)'}}  title={`${row.safe} safe`} />}
+            </div>
+            <span className="mono" style={{textAlign:'right'}}>{row.total}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -4681,46 +4844,25 @@ function LiveMetricsStrip() {
   );
 }
 
-function Dashboard({ variant, setVariant }) {
-  const tabs = [
-    ['ops',     'A · Operational overview',    'Pods first. Fleet table dominates. NOC feel.'],
-    ['stream',  'B · Stream-first',            'Half the screen is the live findings console.'],
-    ['posture', 'C · Posture / CISO',          'Compliance scorecards + trend lines up top.'],
-    ['canvas',  'D · Topology canvas',         'Big pod graph, inverted from tables.'],
-  ];
-  const active = tabs.find(t => t[0] === variant) || tabs[0];
+// Real console Dashboard — a single focused operational view. The
+// four-variant wireframe (Ops / Stream-first / Posture / Canvas)
+// lives in demo.html; here we just render the Ops view since the
+// other three were either redundant with dedicated surfaces
+// (Findings Console, Compliance) or cluster-shaped (fleet topology).
+function Dashboard() {
   return (
     <div>
       <div className="page-head">
         <div>
-          <div className="crumbs">Overview · Dashboard</div>
+          <div className="crumbs">Operate · Dashboard</div>
           <h1>Dashboard <HelpIcon topic="architecture" title="Architecture overview" size={18} /></h1>
         </div>
         <div className="actions">
-          <button className="btn ghost">Export</button>
-          <button className="btn">Time range · 24h</button>
-          <button className="btn primary">New scan</button>
+          <button className="btn ghost" onClick={() => window.__c2_go && window.__c2_go('stream')}>Open Findings</button>
+          <button className="btn primary" onClick={() => window.__c2_go && window.__c2_go('livescan')}>New scan</button>
         </div>
       </div>
-      <LiveMetricsStrip />
-      <div className="variant-tabs">
-        {tabs.map(([id, label]) => (
-          <button
-            key={id}
-            className={variant === id ? 'active' : ''}
-            onClick={() => setVariant(id)}>
-            {label}
-          </button>
-        ))}
-      </div>
-      <div className="label" style={{marginTop:-6, marginBottom:14, color:'var(--ink-faint)'}}>
-        {active[2]}
-      </div>
-
-      {variant === 'ops' && <DashV1_Ops />}
-      {variant === 'stream' && <DashV2_Stream />}
-      {variant === 'posture' && <DashV3_Posture />}
-      {variant === 'canvas' && <DashV4_Canvas />}
+      <DashV1_Ops_Local />
     </div>
   );
 }
