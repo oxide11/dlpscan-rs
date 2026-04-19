@@ -6179,6 +6179,155 @@ function PolicyThatFired({ finding }) {
   );
 }
 
+// RelatedFindings — clusters neighbouring findings by four axes:
+//   · same request_id     (found in the same scan)
+//   · same source_ip      (same caller, different scan)
+//   · same category       (same detection type, anywhere in ring)
+//   · temporal proximity  (within ±5 min of this finding)
+// A finding can hit multiple axes — we surface the strongest signal
+// first and render smaller chips for the rest.
+function RelatedFindings({ finding, onJump }) {
+  const fx = window.useSiphonApi('/v1/findings?limit=500');
+  const list = (fx.data && fx.data.findings) || [];
+  const selfTs = new Date(finding.ts).getTime();
+  const WINDOW_MS = 5 * 60 * 1000;
+
+  const axes = React.useMemo(() => {
+    const out = { request: [], source: [], category: [], temporal: [] };
+    for (const r of list) {
+      if (r.id === finding.id) continue;
+      if (r.request_id && r.request_id === finding.request_id) out.request.push(r);
+      if (r.source_ip && r.source_ip === finding.source_ip) out.source.push(r);
+      if (r.category && r.category === finding.category) out.category.push(r);
+      const rt = new Date(r.ts).getTime();
+      if (!isNaN(rt) && Math.abs(rt - selfTs) <= WINDOW_MS) out.temporal.push(r);
+    }
+    return out;
+  }, [list, finding]);
+
+  // Build a scored/deduped union: each finding carries which axes it hit
+  // so the render can show badges.
+  const clustered = React.useMemo(() => {
+    const map = new Map();
+    const tag = (arr, axis, weight) => {
+      for (const r of arr) {
+        const e = map.get(r.id) || { finding: r, axes: new Set(), score: 0 };
+        if (!e.axes.has(axis)) {
+          e.axes.add(axis);
+          e.score += weight;
+        }
+        map.set(r.id, e);
+      }
+    };
+    // weight order mirrors analyst intent: same-scan is always
+    // strongest, then same-caller, then same-category, then windowed.
+    tag(axes.request, 'request', 8);
+    tag(axes.source, 'source', 4);
+    tag(axes.category, 'category', 2);
+    tag(axes.temporal, 'temporal', 1);
+    return Array.from(map.values()).sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return new Date(b.finding.ts).getTime() - new Date(a.finding.ts).getTime();
+    });
+  }, [axes]);
+
+  const AXIS_META = {
+    request:  { label: 'same scan',     color: 'var(--accent)',  hint: 'same request_id' },
+    source:   { label: 'same source',   color: 'var(--cyan)',    hint: 'same source_ip' },
+    category: { label: 'same category', color: 'var(--amber)',   hint: 'same category' },
+    temporal: { label: '±5 min',        color: 'var(--ink-soft)',hint: 'within ±5 min' },
+  };
+
+  const counts = {
+    request:  axes.request.length,
+    source:   axes.source.length,
+    category: axes.category.length,
+    temporal: axes.temporal.length,
+  };
+
+  const offsetLabel = (ts) => {
+    const ms = new Date(ts).getTime() - selfTs;
+    if (isNaN(ms)) return '—';
+    const abs = Math.abs(ms);
+    const sign = ms >= 0 ? '+' : '−';
+    if (abs < 1000) return sign + abs + 'ms';
+    if (abs < 60000) return sign + (abs / 1000).toFixed(1) + 's';
+    if (abs < 3600000) return sign + Math.round(abs / 60000) + 'm';
+    return sign + Math.round(abs / 3600000) + 'h';
+  };
+
+  if (fx.loading && clustered.length === 0) {
+    return (
+      <div className="box">
+        <div className="box-title"><span className="t">Related findings</span><span className="k">loading…</span></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Related findings</span>
+        <span className="k">
+          {clustered.length} in ring · scan <b>{counts.request}</b> · source <b>{counts.source}</b> · category <b>{counts.category}</b> · ±5m <b>{counts.temporal}</b>
+        </span>
+      </div>
+
+      {clustered.length === 0 ? (
+        <div className="muted mono" style={{fontSize:11.5, padding:'6px 0', lineHeight:1.7}}>
+          No other findings in <span className="mono">/v1/findings</span> share this finding's scan, source, category, or ±5 min window.
+        </div>
+      ) : (
+        <div style={{display:'grid', gridTemplateColumns:'auto auto 1fr auto', rowGap:6, columnGap:10, alignItems:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5}}>
+          {clustered.slice(0, 12).map(({ finding: r, axes: hits }) => (
+            <React.Fragment key={r.id}>
+              <span className={`chip chip--${r.severity}`} style={{fontSize:9, padding:'2px 6px'}}>{r.severity}</span>
+              <span style={{color:'var(--ink-bright)', fontWeight:600}}>
+                <a href="#" onClick={(e) => { e.preventDefault(); onJump && onJump(r.id); }}
+                   style={{color:'inherit', textDecoration:'none', borderBottom:'1px dashed var(--line-strong)'}}>
+                  {r.id}
+                </a>
+              </span>
+              <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', minWidth:0}}>
+                <span style={{color:'var(--cyan)'}}>{r.category}</span>
+                {r.sub_category && <span className="muted"> / {r.sub_category}</span>}
+                <span className="muted"> · </span>
+                <span style={{color:'var(--ink)'}}>{r.text}</span>
+              </span>
+              <span style={{display:'flex', gap:3, alignItems:'center'}}>
+                {[...hits].map(a => (
+                  <span key={a}
+                        title={AXIS_META[a].hint}
+                        style={{
+                          fontSize:9, padding:'1px 5px',
+                          border:`1px solid ${AXIS_META[a].color}`,
+                          color: AXIS_META[a].color,
+                          borderRadius:2, letterSpacing:0.5,
+                        }}>
+                    {AXIS_META[a].label}
+                  </span>
+                ))}
+                <span className="muted" style={{fontSize:10, marginLeft:4}} title={r.ts}>
+                  {offsetLabel(r.ts)}
+                </span>
+              </span>
+            </React.Fragment>
+          ))}
+          {clustered.length > 12 && (
+            <div className="muted" style={{gridColumn:'1 / -1', fontSize:11, paddingTop:4}}>
+              … {clustered.length - 12} more hidden. Narrow the filter on the Findings Console to see them.
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="margin-note" style={{marginTop:8}}>
+        ring is bounded ({fx.data ? fx.data.capacity : '—'}) — only findings still in-memory are considered. User-behavioural joins across pods will come later.
+      </div>
+    </div>
+  );
+}
+
 // DetectionPipeline — re-runs /scan with trace:true against the
 // finding's matched text so the analyst can see every stage in the
 // scanner pipeline and the exact moment this match was either
@@ -6583,6 +6732,12 @@ function FindingDetail({ id, back }) {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Related findings — full-width below the hero grid. Jump-to
+          is wired through the sub-route hand-off used by Next/Prev. */}
+      <div style={{marginTop:'var(--gap)'}}>
+        <RelatedFindings finding={f} onJump={gotoFinding} />
       </div>
     </div>
   );
