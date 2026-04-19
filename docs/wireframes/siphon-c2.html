@@ -6391,7 +6391,7 @@ function DetectionPipeline({ finding }) {
   const dropEvt = events.find(e => e.outcome === 'drop');
 
   return (
-    <div className="box" style={{marginBottom:'var(--gap)'}}>
+    <div className="box">
       <div className="box-title">
         <span className="t">Detection pipeline</span>
         <span className="k">
@@ -6609,11 +6609,17 @@ function FindingDetail({ id, back }) {
         </>}
       />
 
-      {/* Detection pipeline — full width above the hero grid */}
-      <DetectionPipeline finding={f} />
-
-      {/* Source → Destination — full-width under the pipeline */}
-      <div style={{marginTop:'var(--gap)'}}>
+      {/* Detection pipeline + Source→Destination — side-by-side above
+          the detail grid. minmax(0,1fr) so the DetectionPipeline chips
+          and the SVG can shrink cleanly at narrower widths instead of
+          forcing horizontal overflow. */}
+      <div style={{
+             display:'grid',
+             gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)',
+             gap:'var(--gap)',
+             alignItems:'stretch',
+           }}>
+        <DetectionPipeline finding={f} />
         <SourceDestination finding={f} />
       </div>
 
