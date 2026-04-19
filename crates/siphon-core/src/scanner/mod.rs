@@ -139,6 +139,13 @@ pub struct ScanConfig {
     /// the static loop on every scan. Built once per pod startup;
     /// each scan clones the Arc into its ScanConfig.
     pub runtime_patterns: Option<Arc<Vec<crate::overrides::RuntimePattern>>>,
+    /// Optional per-pattern regex overrides keyed by `(category,
+    /// sub_category)`. When present, the static scan loop swaps the
+    /// compile-time regex for the override (case_insensitive baked in
+    /// at compile time per the override's flag). Other static-pattern
+    /// fields (specificity, context_required) are handled separately
+    /// via `pattern_field_overrides`. Phase 3d.2.
+    pub pattern_regex_overrides: Option<Arc<HashMap<(String, String), regex::Regex>>>,
 }
 
 /// Entropy scanning mode.
@@ -173,6 +180,7 @@ impl Default for ScanConfig {
             disabled_patterns: None,
             pattern_field_overrides: None,
             runtime_patterns: None,
+            pattern_regex_overrides: None,
         }
     }
 }
@@ -624,7 +632,21 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
             let mut local_matches = Vec::new();
             const MAX_MATCHES_PER_PATTERN: usize = 10_000;
 
-            for mat in cp.regex.find_iter(&normalized) {
+            // Phase 3d.2: pattern_regex_overrides — swap the static
+            // compiled regex for the analyst-supplied one when present.
+            // Cheap reference-only path (no clone of Regex) when no
+            // override exists. The compile-time AC prefilter membership
+            // and category/sub_category metadata stay the same; only
+            // the bytes the regex matches change.
+            let active_regex: &Regex = config
+                .pattern_regex_overrides
+                .as_ref()
+                .and_then(|map| {
+                    map.get(&(pat.category.to_string(), pat.sub_category.to_string()))
+                })
+                .unwrap_or(&cp.regex);
+
+            for mat in active_regex.find_iter(&normalized) {
                 if local_matches.len() >= MAX_MATCHES_PER_PATTERN {
                     break;
                 }
@@ -861,7 +883,18 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     continue;
                 }
 
-                for mat in cp.regex.find_iter(&alt_norm) {
+                // Apply pattern_regex_overrides on the alt path too so
+                // an analyst tightening a pattern in the overrides file
+                // doesn't get bypassed via base32/base64/ROT13 decoding.
+                let alt_active_regex: &Regex = config
+                    .pattern_regex_overrides
+                    .as_ref()
+                    .and_then(|map| {
+                        map.get(&(cp.def.category.to_string(), cp.def.sub_category.to_string()))
+                    })
+                    .unwrap_or(&cp.regex);
+
+                for mat in alt_active_regex.find_iter(&alt_norm) {
                     let matched_text = mat.as_str();
                     let alt_span = (mat.start(), mat.end());
 
@@ -1478,6 +1511,62 @@ mod tests {
         assert!(
             !gated.iter().any(|m| m.sub_category == "Email Address"),
             "context_required override should suppress emit when no keyword is in range"
+        );
+    }
+
+    #[test]
+    fn pattern_regex_override_swaps_static_regex() {
+        use crate::overrides::PatternOverrides;
+
+        // Baseline: scan finds the email candidate via the static
+        // Email Address regex.
+        let baseline =
+            scan_text_with_config("Reach me at j@x.io anytime.", &ScanConfig::default()).unwrap();
+        let baseline_email = baseline
+            .iter()
+            .find(|m| m.sub_category == "Email Address");
+        assert!(baseline_email.is_some(), "static email pattern fires");
+        let baseline_cat = baseline_email.unwrap().category.clone();
+
+        // Override the Email Address regex with one that requires
+        // ≥3 chars in the local part. 'j@x.io' should no longer match.
+        let json = format!(
+            r#"{{
+                "version":0,
+                "pattern_overrides":{{
+                    "{cat}/Email Address":{{"regex":"\\b[\\w.+-]{{3,}}@[\\w.-]+\\.[A-Za-z]{{2,}}\\b"}}
+                }}
+            }}"#,
+            cat = baseline_cat
+        );
+        let overrides = PatternOverrides::from_bytes(json.as_bytes()).unwrap();
+        let regex_overrides = Arc::new(overrides.compile_pattern_regex_overrides());
+        assert_eq!(regex_overrides.len(), 1);
+
+        let cfg = ScanConfig {
+            pattern_regex_overrides: Some(regex_overrides),
+            ..Default::default()
+        };
+        let overridden =
+            scan_text_with_config("Reach me at j@x.io anytime.", &cfg).unwrap();
+        let leftovers: Vec<&Match> = overridden
+            .iter()
+            .filter(|m| m.sub_category == "Email Address")
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "override regex (≥3-char local) should suppress 'j@x.io', got {} leftover: {:?}",
+            leftovers.len(),
+            leftovers.iter().map(|m| (m.category.clone(), m.text.clone())).collect::<Vec<_>>()
+        );
+
+        // The same override against an address with a long enough
+        // local part should still fire.
+        let still_fires =
+            scan_text_with_config("Reach me at jane@x.io anytime.", &cfg).unwrap();
+        assert!(
+            still_fires.iter().any(|m| m.sub_category == "Email Address"),
+            "override regex should still match 'jane@x.io'"
         );
     }
 

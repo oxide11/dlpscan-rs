@@ -18,7 +18,10 @@
 //! restorable by deleting the relevant entry. Removing the file
 //! entirely returns the engine to its compile-time defaults.
 
-use regex::Regex;
+// Re-exported so siphon-api and siphon-fs can store the compiled
+// override map in their AppState without taking a direct dep on
+// `regex` themselves.
+pub use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -310,6 +313,58 @@ pub struct RuntimePattern {
 }
 
 impl PatternOverrides {
+    /// Compile any `pattern_overrides.<key>.regex` entries into a
+    /// per-pattern `Regex` keyed by `(category, sub_category)`. The
+    /// scanner swaps the static compiled regex for an entry from this
+    /// map whenever one exists — letting analysts tighten or loosen a
+    /// baked-in pattern's regex without touching siphon-core. Same
+    /// case_insensitive handling as the static path (prepends `(?i)`
+    /// when the override sets it true; falls back to the static
+    /// pattern's own case_insensitive when the override leaves it
+    /// unset). Bad regexes are skipped with a stderr warning rather
+    /// than failing the pod — operational continuity beats strictness.
+    ///
+    /// Note: `pattern_overrides.<key>.context_keywords` and
+    /// `proximity_chars` for compile-time patterns are NOT yet
+    /// honoured — those would require rebuilding the static
+    /// Aho-Corasick context matcher in `crate::context`. Disable +
+    /// custom-category-clone is the workaround today.
+    pub fn compile_pattern_regex_overrides(
+        &self,
+    ) -> HashMap<(String, String), Regex> {
+        let mut out = HashMap::new();
+        for (wire_key, po) in &self.pattern_overrides {
+            let Some((cat, sub)) = wire_key.split_once('/') else {
+                eprintln!(
+                    "siphon overrides: pattern_overrides key '{wire_key}' is not '<cat>/<sub>', skipping"
+                );
+                continue;
+            };
+            let Some(regex_str) = po.regex.as_ref() else {
+                continue; // override exists but no regex change
+            };
+            // Apply case_insensitive override if set; otherwise the
+            // static path's flag will continue to apply because the
+            // scanner only swaps the regex, not other fields.
+            let prepared = if po.case_insensitive.unwrap_or(false) {
+                format!("(?i){regex_str}")
+            } else {
+                regex_str.clone()
+            };
+            match Regex::new(&prepared) {
+                Ok(re) => {
+                    out.insert((cat.to_string(), sub.to_string()), re);
+                }
+                Err(e) => {
+                    eprintln!(
+                        "siphon overrides: regex for '{wire_key}' failed to compile — {e} · skipping override (static pattern still applies)"
+                    );
+                }
+            }
+        }
+        out
+    }
+
     /// Compile every `custom_categories[*].patterns[*]` entry into a
     /// `RuntimePattern`. Patterns whose regex fails to compile are
     /// skipped with a stderr warning — operational continuity beats
@@ -438,6 +493,26 @@ mod tests {
     fn missing_file_falls_back_to_empty() {
         let o = PatternOverrides::from_file_or_empty("/nonexistent/path/x.json");
         assert_eq!(o.summary().disabled_patterns, 0);
+    }
+
+    #[test]
+    fn compile_pattern_regex_overrides_round_trips() {
+        let json = r#"{
+            "version":0,
+            "pattern_overrides":{
+                "PCI/visa.v3":{"regex":"\\b4\\d{15}\\b"},
+                "PII/email":{"regex":"[unterminated"},
+                "PHI/no_regex":{"specificity":0.5},
+                "malformed_key":{"regex":"."}
+            }
+        }"#;
+        let o = PatternOverrides::from_bytes(json.as_bytes()).unwrap();
+        let map = o.compile_pattern_regex_overrides();
+        // Only the well-formed override with a regex compiles in.
+        assert_eq!(map.len(), 1);
+        let re = map.get(&("PCI".to_string(), "visa.v3".to_string())).unwrap();
+        assert!(re.is_match("4111111111111111"));
+        assert!(!re.is_match("411111111"));
     }
 
     #[test]

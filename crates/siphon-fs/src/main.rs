@@ -30,7 +30,7 @@ use siphon_core::audit::iso8601_now;
 use siphon_core::findings_ring::{
     filter_findings, severity_for, FindingRecord, FindingsRing,
 };
-use siphon_core::overrides::{PatternOverride, PatternOverrides, RuntimePattern};
+use siphon_core::overrides::{PatternOverride, PatternOverrides, Regex, RuntimePattern};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -63,6 +63,10 @@ struct AppState {
     /// Compiled runtime patterns from custom_categories. Evaluated
     /// after the static scan loop (Phase 3d.1).
     runtime_patterns: Arc<Vec<RuntimePattern>>,
+    /// Compiled per-pattern regex overrides for compile-time
+    /// patterns. Scanner swaps the static regex for an entry from
+    /// this map when present (Phase 3d.2).
+    pattern_regex_overrides: Arc<HashMap<(String, String), Regex>>,
 }
 
 // ─── health + readiness ──────────────────────────────────────────
@@ -222,6 +226,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
         disabled_patterns: Some(state.disabled_patterns.clone()),
         pattern_field_overrides: Some(state.pattern_field_overrides.clone()),
         runtime_patterns: Some(state.runtime_patterns.clone()),
+        pattern_regex_overrides: Some(state.pattern_regex_overrides.clone()),
         ..Default::default()
     };
     let matches = match scan_text_with_config(&extract.text, &config) {
@@ -388,12 +393,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pattern_field_overrides = Arc::new(overrides.override_lookup());
     let runtime_patterns = Arc::new(overrides.compile_runtime_patterns());
     let runtime_pattern_count = runtime_patterns.len();
+    let pattern_regex_overrides = Arc::new(overrides.compile_pattern_regex_overrides());
+    let regex_override_count = pattern_regex_overrides.len();
 
     let state = AppState {
         findings: Arc::new(FindingsRing::new(FINDINGS_RING_CAP)),
         disabled_patterns,
         pattern_field_overrides,
         runtime_patterns,
+        pattern_regex_overrides,
     };
     let app = build_router(state);
 
@@ -407,6 +415,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         overrides_field = summary.pattern_overrides,
         overrides_custom_cats = summary.custom_categories,
         overrides_runtime_patterns_compiled = runtime_pattern_count,
+        overrides_regex_swaps_compiled = regex_override_count,
         bind = %addr,
         "siphon-fs starting"
     );
