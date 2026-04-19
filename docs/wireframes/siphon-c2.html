@@ -5883,6 +5883,302 @@ function StreamRow({ f, onOpen, cellPad }) {
 // Finding Detail — full page, drilled in from the stream.
 // Fetches the same /v1/findings list and looks up by id so a fresh deep
 // link works even without prior stream state in memory.
+// SourceDestination — the repurposed "pod path" view. Shows how the
+// finding entered the system (HTTP POST /scan from a source IP, Kafka
+// event, email, etc.) and where any configured integrations would
+// route it. All three swim-lanes are derived from real data:
+//
+//   - source:   finding.source_ip (who called POST /scan)
+//   - channel:  always "http · POST /scan" today; future ingest shapes
+//               (email, kafka, s3 upload) would set this differently
+//   - detector: siphon-api · siphon-core
+//   - outputs:  /v1/integrations → the configured SIEM kinds
+//
+// No fabrication — fields that don't exist in the current runtime are
+// rendered as "not configured" dashed boxes.
+function SourceDestination({ finding }) {
+  const ix = window.useSiphonApi('/v1/integrations');
+  const outs = ((ix.data && ix.data.integrations) || []).filter(i => i.configured);
+  const apiUrl = window.SIPHON_API_URL ? window.SIPHON_API_URL() : '';
+  return (
+    <div className="box">
+      <div className="box-title"><span className="t">Source → Destination</span><span className="k">how the scan arrived · where it was routed</span></div>
+      <svg viewBox="0 0 520 170" style={{width:'100%', height:200, display:'block', background:'var(--bg-1)', borderRadius:'var(--radius)', border:'1px solid var(--line-soft)'}}>
+        <defs>
+          <marker id="sdArr" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--ink-soft)" />
+          </marker>
+          <marker id="sdArrAmber" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--amber)" />
+          </marker>
+        </defs>
+
+        {/* SOURCE */}
+        <g>
+          <text x="12" y="16" fontFamily="JetBrains Mono, monospace" fontSize="9"
+                letterSpacing="1.5" fill="var(--ink-dim)">SOURCE</text>
+          <rect x="10" y="32" width="140" height="54" rx="3"
+                fill="var(--bg-2)" stroke="var(--line-strong)" />
+          <text x="18" y="50" fontFamily="JetBrains Mono" fontSize="11" fontWeight="600" fill="var(--ink)">
+            {finding.source_ip || '—'}
+          </text>
+          <text x="18" y="64" fontFamily="JetBrains Mono" fontSize="9.5" fill="var(--ink-soft)">
+            caller · http client
+          </text>
+          <text x="18" y="78" fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-faint)">
+            req {(finding.request_id || '').slice(0, 8)}…
+          </text>
+        </g>
+
+        {/* CHANNEL */}
+        <g>
+          <text x="180" y="16" fontFamily="JetBrains Mono, monospace" fontSize="9"
+                letterSpacing="1.5" fill="var(--ink-dim)">CHANNEL</text>
+          <rect x="178" y="32" width="130" height="54" rx="3"
+                fill="var(--bg-2)" stroke="var(--cyan)" />
+          <text x="186" y="50" fontFamily="JetBrains Mono" fontSize="11" fontWeight="600" fill="var(--cyan)">
+            http · /scan
+          </text>
+          <text x="186" y="64" fontFamily="JetBrains Mono" fontSize="9.5" fill="var(--ink-soft)">
+            POST · JSON body
+          </text>
+          <text x="186" y="78" fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-faint)">
+            {new Date(finding.ts).toLocaleTimeString()}
+          </text>
+        </g>
+
+        {/* DETECTOR */}
+        <g>
+          <text x="334" y="16" fontFamily="JetBrains Mono, monospace" fontSize="9"
+                letterSpacing="1.5" fill="var(--ink-dim)">DETECTOR</text>
+          <rect x="332" y="32" width="160" height="54" rx="3"
+                fill="var(--accent-wash)" stroke="var(--accent)" strokeWidth="1.4" />
+          <text x="340" y="50" fontFamily="Space Grotesk" fontWeight="700" fontSize="12" fill="var(--accent)" letterSpacing="1">
+            siphon-api
+          </text>
+          <text x="340" y="64" fontFamily="JetBrains Mono" fontSize="9.5" fill="var(--ink)">
+            siphon-core · {finding.category}
+          </text>
+          <text x="340" y="78" fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-soft)">
+            {apiUrl}
+          </text>
+        </g>
+
+        {/* arrows: source → channel → detector */}
+        <path d="M 150 59 L 178 59" stroke="var(--ink-soft)" strokeWidth="1.2" fill="none" markerEnd="url(#sdArr)" />
+        <path d="M 308 59 L 332 59" stroke="var(--ink-soft)" strokeWidth="1.2" fill="none" markerEnd="url(#sdArr)" />
+
+        {/* OUTPUTS row along the bottom */}
+        <g>
+          <text x="12" y="112" fontFamily="JetBrains Mono, monospace" fontSize="9"
+                letterSpacing="1.5" fill="var(--ink-dim)">OUTPUTS</text>
+          {(outs.length ? outs : [null, null]).slice(0, 4).map((o, i) => {
+            const x = 80 + i * 110;
+            if (!o) {
+              return (
+                <g key={i}>
+                  <rect x={x} y="128" width="100" height="30" rx="3"
+                        fill="var(--bg-2)" stroke="var(--line-soft)" strokeDasharray="3 3" />
+                  <text x={x + 8} y="146" fontFamily="JetBrains Mono" fontSize="9.5" fill="var(--ink-dim)">
+                    — no output —
+                  </text>
+                </g>
+              );
+            }
+            return (
+              <g key={i}>
+                <path d={`M 412 86 C 412 110, ${x + 50} 118, ${x + 50} 128`}
+                      fill="none" stroke="var(--amber)" strokeWidth="1.3" opacity="0.75"
+                      strokeDasharray="3 5" markerEnd="url(#sdArrAmber)" />
+                <rect x={x} y="128" width="100" height="30" rx="3"
+                      fill="var(--amber-wash)" stroke="var(--amber)" />
+                <text x={x + 8} y="143" fontFamily="JetBrains Mono" fontSize="10.5" fontWeight="600" fill="var(--ink)">
+                  {(o.kind || '').slice(0, 12)}
+                </text>
+                <text x={x + 8} y="153" fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-soft)">
+                  {(o.target || '').slice(0, 18)}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+
+        {/* back-arrow label on the right for HTTP response */}
+        <text x="412" y="104" fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-faint)" textAnchor="middle">
+          200 OK ↩ response
+        </text>
+      </svg>
+      <div className="margin-note" style={{marginTop:6}}>
+        ingress shape is HTTP today · other channel kinds (email, kafka, s3, mq) will populate this box when those ingest modes are wired in siphon-api
+      </div>
+    </div>
+  );
+}
+
+// Timeline — derived from the finding itself: request_id tells us
+// when the scan was accepted, ts marks detection, neighbouring
+// findings in the same request share the pipeline, and the audit
+// event (if present in /v1/audit) closes it out.
+function FindingTimeline({ finding, sameReq }) {
+  const ax = window.useSiphonApi('/v1/audit?limit=200');
+  const events = (ax.data && ax.data.events) || [];
+  const auditEvt = events.find(e => e.request_id === finding.request_id);
+
+  const baseMs = auditEvt ? new Date(finding.ts).getTime() - ((auditEvt.duration_ms || 0) | 0) : new Date(finding.ts).getTime();
+  const fmt = (ts) => fmtWallClock(ts) + (ts ? '.' + new Date(ts).getMilliseconds().toString().padStart(3, '0') : '');
+  const offset = (ts) => {
+    const ms = new Date(ts).getTime() - baseMs;
+    const sign = ms >= 0 ? '+' : '-';
+    return sign + Math.abs(ms) + 'ms';
+  };
+
+  const steps = [];
+  steps.push({
+    ts: new Date(baseMs).toISOString(),
+    label: 'request accepted',
+    detail: <>source <span className="mono">{finding.source_ip || '—'}</span> · POST /scan · req <span className="mono">{(finding.request_id || '').slice(0, 8)}</span></>,
+    marker: 'dim',
+  });
+  steps.push({
+    ts: finding.ts,
+    label: 'match detected',
+    detail: <>pattern <span className="mono">{finding.sub_category || finding.category}</span> · span {finding.span ? finding.span.join('..') : '—'} · conf <b>{finding.confidence != null ? finding.confidence.toFixed(3) : '—'}</b></>,
+    marker: 'accent',
+  });
+  (sameReq || []).forEach(r => {
+    steps.push({
+      ts: r.ts,
+      label: 'also in same scan',
+      detail: <><span className="mono">{r.sub_category || r.category}</span> · <span style={{color:'var(--accent)'}}>{r.text}</span> · conf {r.confidence != null ? r.confidence.toFixed(2) : '—'}</>,
+      marker: 'dim',
+    });
+  });
+  if (auditEvt) {
+    steps.push({
+      ts: auditEvt.timestamp,
+      label: 'audit event emitted',
+      detail: <>outcome <b>{auditEvt.outcome || '—'}</b> · {auditEvt.finding_count} finding{auditEvt.finding_count === 1 ? '' : 's'} total · duration {auditEvt.duration_ms != null ? Math.round(auditEvt.duration_ms) + 'ms' : '—'}</>,
+      marker: 'accent',
+    });
+  }
+  steps.push({
+    ts: new Date().toISOString(),
+    label: 'you are here',
+    detail: <>awaiting analyst decision · <i>Acknowledge</i> or <i>Mark as FP</i></>,
+    marker: 'live',
+  });
+
+  return (
+    <div className="box">
+      <div className="box-title"><span className="t">Timeline</span><span className="k">detection → audit → you are here</span></div>
+      <div style={{display:'grid', gridTemplateColumns:'100px 16px 1fr', rowGap:8, fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, marginTop:4}}>
+        {steps.map((s, i) => {
+          const markerColor = s.marker === 'accent' ? 'var(--accent)'
+                            : s.marker === 'live'   ? 'var(--red)'
+                            : 'var(--ink-faint)';
+          return (
+            <React.Fragment key={i}>
+              <div className="muted mono" style={{fontSize:10.5}} title={s.ts + ' (' + offset(s.ts) + ')'}>
+                {fmt(s.ts)}
+              </div>
+              <div style={{display:'flex', justifyContent:'center', alignItems:'center', position:'relative'}}>
+                <span style={{
+                  display:'inline-block', width: s.marker === 'live' ? 10 : 8, height: s.marker === 'live' ? 10 : 8,
+                  borderRadius:'50%', background: markerColor,
+                  boxShadow: s.marker === 'live' ? '0 0 0 2px var(--bg-1), 0 0 8px ' + markerColor : 'none',
+                }} />
+                {i < steps.length - 1 && (
+                  <span style={{
+                    position:'absolute', top:'calc(50% + 6px)', bottom:'-8px',
+                    width:1, background:'var(--line)',
+                  }} />
+                )}
+              </div>
+              <div>
+                <div style={{color:'var(--ink-bright)', fontWeight:600}}>{s.label}</div>
+                <div className="muted" style={{fontSize:11, marginTop:2, lineHeight:1.5}}>{s.detail}</div>
+              </div>
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// PolicyThatFired — walks /v1/policies (loaded from SIPHON_POLICIES_DIR)
+// and surfaces any policy whose scan config could have applied to
+// this finding's category. Policies are TOML-declared; we can't
+// actually evaluate them server-side since siphon-api doesn't run
+// the rule engine on /scan — this is a best-match view.
+function PolicyThatFired({ finding }) {
+  const px = window.useSiphonApi('/v1/policies');
+  const policies = (px.data && px.data.policies) || [];
+  const loaded = px.data && px.data.loaded;
+
+  const matches = React.useMemo(() => {
+    if (!policies.length) return [];
+    const cat = (finding.category || '').toLowerCase();
+    return policies
+      .map(p => {
+        const scope = (p.scan && p.scan.categories) || [];
+        const hits = scope.filter(c => cat.includes(c.toLowerCase()) || c.toLowerCase().includes(cat));
+        return { policy: p, hits };
+      })
+      .filter(m => m.hits.length > 0);
+  }, [policies, finding]);
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Policy that fired</span>
+        <span className="k">
+          {loaded
+            ? <>{matches.length} match · /v1/policies has {policies.length} loaded</>
+            : <span className="chip chip--ghost">no policies loaded · set SIPHON_POLICIES_DIR</span>}
+        </span>
+      </div>
+
+      {!loaded && (
+        <div className="muted mono" style={{padding:'6px 0', fontSize:11.5, lineHeight:1.7}}>
+          Start siphon-api with <span style={{color:'var(--cyan)'}}>SIPHON_POLICIES_DIR</span> pointing at a directory of <span className="mono">*.toml</span> policy files to populate this panel.
+          siphon-api serves them read-only via <span className="mono">/v1/policies</span>.
+        </div>
+      )}
+
+      {loaded && matches.length === 0 && (
+        <div className="muted mono" style={{padding:'6px 0', fontSize:11.5}}>
+          No policy in <span className="mono">/v1/policies</span> declares a <span className="mono">scan.categories</span> that includes <span style={{color:'var(--accent)'}}>{finding.category}</span>.
+        </div>
+      )}
+
+      {matches.map((m, i) => (
+        <div key={i} style={{padding:'8px 0', borderBottom: i < matches.length - 1 ? '1px dashed var(--line-soft)' : 'none'}}>
+          <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:3, flexWrap:'wrap'}}>
+            <span style={{fontFamily:"'Space Grotesk', sans-serif", fontWeight:600, color:'var(--ink-bright)', fontSize:13}}>{m.policy.name}</span>
+            <span className="muted mono" style={{fontSize:11}}>v{m.policy.version}</span>
+            {m.policy.scan && m.policy.scan.action && (
+              <span className={`chip chip--${m.policy.scan.action === 'block' ? 'red' : m.policy.scan.action === 'redact' ? 'warn' : 'safe'}`} style={{fontSize:9}}>
+                {m.policy.scan.action.toUpperCase()}
+              </span>
+            )}
+            {m.policy.scan && m.policy.scan.min_confidence > 0 && (
+              <span className="muted mono" style={{fontSize:10.5}}>min conf {m.policy.scan.min_confidence}</span>
+            )}
+          </div>
+          {m.policy.description && (
+            <div className="muted" style={{fontSize:11.5, marginBottom:3}}>{m.policy.description}</div>
+          )}
+          <div className="mono" style={{fontSize:10.5, color:'var(--ink-soft)'}}>
+            scope: {m.hits.map(h => <span key={h} style={{color:'var(--accent)'}}>{h}</span>).reduce((acc, el, idx) => idx === 0 ? [el] : [...acc, ', ', el], [])}
+            {m.policy.rules && m.policy.rules.length > 0 && <> · {m.policy.rules.length} rule{m.policy.rules.length === 1 ? '' : 's'}</>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // DetectionPipeline — re-runs /scan with trace:true against the
 // finding's matched text so the analyst can see every stage in the
 // scanner pipeline and the exact moment this match was either
@@ -6059,7 +6355,6 @@ function FindingDetail({ id, back }) {
   }
 
   const sev = f.severity;
-  const others = list.filter(x => x.category === f.category && x.id !== f.id).slice(0, 5);
   const sameReq = list.filter(x => x.request_id === f.request_id && x.id !== f.id);
 
   const fpQueue = window.useFpQueue();
@@ -6148,94 +6443,69 @@ function FindingDetail({ id, back }) {
       {/* Detection pipeline — full width above the hero grid */}
       <DetectionPipeline finding={f} />
 
-      <div className="finding-hero">
-        <div className="box">
-          <div className="box-title"><span className="t">Match &amp; context</span><span className="k">from /v1/findings</span></div>
+      {/* Source → Destination — full-width under the pipeline */}
+      <div style={{marginTop:'var(--gap)'}}>
+        <SourceDestination finding={f} />
+      </div>
 
-          <div className="label" style={{marginBottom:4}}>Matched value</div>
-          <div className="mono" style={{
-            fontSize:14, padding:'8px 10px',
-            background: 'var(--amber-wash)',
-            border:'1.5px solid var(--amber)',
-            borderRadius:2, marginBottom:12
-          }}>{f.text}</div>
+      <div className="finding-hero" style={{marginTop:'var(--gap)'}}>
+        <div style={{display:'flex', flexDirection:'column', gap:'var(--gap)'}}>
+          <div className="box">
+            <div className="box-title"><span className="t">Match &amp; context</span><span className="k">from /v1/findings</span></div>
 
-          <div className="label" style={{marginBottom:4}}>Span</div>
-          <div className="mono" style={{fontSize:12, lineHeight:1.7, padding:'10px 12px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:2, marginBottom:12}}>
-            offset {f.span ? f.span[0] : '—'} → {f.span ? f.span[1] : '—'} ({f.span ? (f.span[1] - f.span[0]) : 0} chars)
-          </div>
+            <div className="label" style={{marginBottom:4}}>Matched value</div>
+            <div className="mono" style={{
+              fontSize:14, padding:'8px 10px',
+              background: 'var(--amber-wash)',
+              border:'1.5px solid var(--amber)',
+              borderRadius:2, marginBottom:12
+            }}>{f.text}</div>
 
-          <div className="label" style={{marginTop:14, marginBottom:6}}>Signals (from scanner)</div>
-          <div style={{fontSize:13, lineHeight:1.9}}>
-            <div className="tick">Category <span className="mono">{f.category}</span>{f.sub_category ? <> · sub <span className="mono">{f.sub_category}</span></> : null}</div>
-            <div className="tick">Confidence <span className="mono">{f.confidence != null ? f.confidence.toFixed(3) : '—'}</span></div>
-            <div className={f.has_context ? 'tick' : 'cross'}>Context {f.has_context ? 'matched' : 'not matched'}</div>
-            <div className="tick">Severity <span className="mono">{f.severity}</span> (derived)</div>
-          </div>
-
-          {f.metadata && Object.keys(f.metadata).length > 0 && (
-            <>
-              <div className="label" style={{marginTop:14, marginBottom:6}}>Metadata (from pattern match)</div>
-              <div className="mono" style={{fontSize:11, lineHeight:1.8, background:'var(--bg-1)', padding:10, border:'1px dashed var(--line-soft)'}}>
-                {Object.entries(f.metadata).map(([k, v]) => (
-                  <div key={k}><span style={{color:'var(--cyan)'}}>{k}</span> = <span style={{color:'var(--accent)'}}>{String(v)}</span></div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {sameReq.length > 0 && (
-            <>
-              <div className="label" style={{marginTop:14, marginBottom:6}}>Other findings in the same scan</div>
-              <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8}}>
-                {sameReq.map(r => (
-                  <div key={r.id}>
-                    <span className={`chip chip--${r.severity}`} style={{fontSize:9}}>{r.severity}</span>{' '}
-                    <span style={{color:'var(--cyan)'}}>{r.category}</span> / {r.sub_category}{' '}
-                    · <span style={{color:'var(--ink-bright)'}}>{r.text}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-
-        <div>
-          <div className="box" style={{marginBottom: 'var(--gap)'}}>
-            <div className="box-title"><span className="t">Record</span><span className="k">raw shape</span></div>
-            <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:8}}>
-              <span className={`chip chip--${sev}`} style={{fontSize:12, padding:'4px 12px'}}>{f.severity.toUpperCase()}</span>
-              <span className="chip">{f.category}</span>
+            <div className="label" style={{marginBottom:4}}>Span</div>
+            <div className="mono" style={{fontSize:12, lineHeight:1.7, padding:'10px 12px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:2, marginBottom:12}}>
+              offset {f.span ? f.span[0] : '—'} → {f.span ? f.span[1] : '—'} ({f.span ? (f.span[1] - f.span[0]) : 0} chars)
             </div>
-            <div className="kv">
-              <span className="k">Finding id</span>      <span className="v mono">{f.id}</span>
-              <span className="k">Request id</span>      <span className="v mono">{f.request_id}</span>
-              <span className="k">Timestamp</span>       <span className="v mono">{f.ts}</span>
-              <span className="k">Source IP</span>       <span className="v mono">{f.source_ip}</span>
-              <span className="k">Category</span>        <span className="v">{f.category}</span>
-              <span className="k">Sub-category</span>    <span className="v">{f.sub_category || '—'}</span>
-              <span className="k">Confidence</span>      <span className="v mono">{f.confidence != null ? f.confidence.toFixed(3) : '—'}</span>
-              <span className="k">Context matched</span> <span className="v">{f.has_context ? 'yes' : 'no'}</span>
-              <span className="k">Span</span>            <span className="v mono">{f.span ? f.span.join('..') : '—'}</span>
-              <span className="k">Severity</span>        <span className="v">{f.severity}</span>
-            </div>
-          </div>
 
-          <div className="box" style={{marginBottom: 'var(--gap)'}}>
-            <div className="box-title"><span className="t">Related · same category</span><span className="k">{others.length} in ring</span></div>
-            {others.length === 0 ? (
-              <div className="muted" style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, padding:'6px 0'}}>none</div>
-            ) : (
-              <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.8}}>
-                {others.map(r => (
-                  <div key={r.id}>
-                    <span className="muted" title={r.ts}>{fmtWallClock(r.ts)}</span>{' '}
-                    <span style={{color:'var(--ink-bright)'}}>{r.text}</span>
-                  </div>
-                ))}
-              </div>
+            <div className="label" style={{marginTop:14, marginBottom:6}}>Signals (from scanner)</div>
+            <div style={{fontSize:13, lineHeight:1.9}}>
+              <div className="tick">Category <span className="mono">{f.category}</span>{f.sub_category ? <> · sub <span className="mono">{f.sub_category}</span></> : null}</div>
+              <div className="tick">Confidence <span className="mono">{f.confidence != null ? f.confidence.toFixed(3) : '—'}</span></div>
+              <div className={f.has_context ? 'tick' : 'cross'}>Context {f.has_context ? 'matched' : 'not matched'}</div>
+              <div className="tick">Severity <span className="mono">{f.severity}</span> (derived)</div>
+            </div>
+
+            {f.metadata && Object.keys(f.metadata).length > 0 && (
+              <>
+                <div className="label" style={{marginTop:14, marginBottom:6}}>Metadata (from pattern match)</div>
+                <div className="mono" style={{fontSize:11, lineHeight:1.8, background:'var(--bg-1)', padding:10, border:'1px dashed var(--line-soft)'}}>
+                  {Object.entries(f.metadata).map(([k, v]) => (
+                    <div key={k}><span style={{color:'var(--cyan)'}}>{k}</span> = <span style={{color:'var(--accent)'}}>{String(v)}</span></div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {sameReq.length > 0 && (
+              <>
+                <div className="label" style={{marginTop:14, marginBottom:6}}>Other findings in the same scan</div>
+                <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8}}>
+                  {sameReq.map(r => (
+                    <div key={r.id}>
+                      <span className={`chip chip--${r.severity}`} style={{fontSize:9}}>{r.severity}</span>{' '}
+                      <span style={{color:'var(--cyan)'}}>{r.category}</span> / {r.sub_category}{' '}
+                      · <span style={{color:'var(--ink-bright)'}}>{r.text}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
+
+          <FindingTimeline finding={f} sameReq={sameReq} />
+        </div>
+
+        <div style={{display:'flex', flexDirection:'column', gap:'var(--gap)'}}>
+          <PolicyThatFired finding={f} />
 
           <div className="box">
             <div className="box-title"><span className="t">Actions</span><span className="k">this finding</span></div>
@@ -6290,6 +6560,26 @@ function FindingDetail({ id, back }) {
                 onClick={() => window.__c2_go && window.__c2_go('patterns')}>
                 Open in Patterns browser
               </button>
+            </div>
+          </div>
+
+          <div className="box">
+            <div className="box-title"><span className="t">Record</span><span className="k">raw shape</span></div>
+            <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:8}}>
+              <span className={`chip chip--${sev}`} style={{fontSize:12, padding:'4px 12px'}}>{f.severity.toUpperCase()}</span>
+              <span className="chip">{f.category}</span>
+            </div>
+            <div className="kv">
+              <span className="k">Finding id</span>      <span className="v mono">{f.id}</span>
+              <span className="k">Request id</span>      <span className="v mono">{f.request_id}</span>
+              <span className="k">Timestamp</span>       <span className="v mono">{f.ts}</span>
+              <span className="k">Source IP</span>       <span className="v mono">{f.source_ip}</span>
+              <span className="k">Category</span>        <span className="v">{f.category}</span>
+              <span className="k">Sub-category</span>    <span className="v">{f.sub_category || '—'}</span>
+              <span className="k">Confidence</span>      <span className="v mono">{f.confidence != null ? f.confidence.toFixed(3) : '—'}</span>
+              <span className="k">Context matched</span> <span className="v">{f.has_context ? 'yes' : 'no'}</span>
+              <span className="k">Span</span>            <span className="v mono">{f.span ? f.span.join('..') : '—'}</span>
+              <span className="k">Severity</span>        <span className="v">{f.severity}</span>
             </div>
           </div>
         </div>
