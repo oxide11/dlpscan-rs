@@ -1,0 +1,25 @@
+# Shared pattern-overrides ConfigMap. Both siphon-api and siphon-fs
+# mount it at /etc/siphon/overrides.json. Phase 3 teaches the scanner
+# to layer this on top of the compiled-in patterns; until then it's
+# just a parsed-at-startup sanity check.
+#
+# When the admin console commits an overrides change (Phase 4), the
+# apply endpoint writes to this ConfigMap and triggers a rolling
+# restart of both Deployments so every detection pod picks up the
+# new rules in lock-step.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: siphon-overrides
+  namespace: siphon-lab
+  labels:
+    app.kubernetes.io/part-of: siphon
+    siphon-overrides/version: "0"
+data:
+  overrides.json: |
+    {
+      "version": 0,
+      "disabled_patterns": [],
+      "pattern_overrides": {},
+      "custom_categories": []
+    }
