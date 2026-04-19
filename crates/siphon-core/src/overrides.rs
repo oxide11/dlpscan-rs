@@ -492,6 +492,124 @@ impl PatternOverrides {
     }
 }
 
+// ─── Compiled list matcher (Phase 4.7c.1) ───────────────────────
+//
+// MatchList is declarative data — `CompiledList` is what the scanner
+// actually consults at emit time. Per-kind matcher semantics live
+// here so the scanner stays oblivious to list interpretation.
+//
+// Matchers are intentionally naive (linear scans, simple string ops)
+// because lists are expected to be short — a handful of partner
+// domains, a curated block-list of hashes, etc. If a list grows to
+// thousands of entries, swap the matcher for an Aho-Corasick / hash
+// set / IP tree without changing the caller surface.
+
+/// Compiled form of a MatchList. Keeps entries lowercased where
+/// appropriate so matching is allocation-free at scan time.
+#[derive(Debug, Clone)]
+pub struct CompiledList {
+    pub id: String,
+    pub name: String,
+    pub kind: ListKind,
+    /// Entries pre-normalised for the list's kind (lowercase for
+    /// string-ish kinds, whitespace-trimmed, etc.).
+    entries: Vec<String>,
+}
+
+impl CompiledList {
+    pub fn from_list(list: &MatchList) -> Self {
+        let entries: Vec<String> = list
+            .entries
+            .iter()
+            .map(|e| {
+                let trimmed = e.trim();
+                match list.kind {
+                    // String-ish kinds normalise to lowercase.
+                    ListKind::Keyword
+                    | ListKind::Domain
+                    | ListKind::Email
+                    | ListKind::Url
+                    | ListKind::Path
+                    | ListKind::Other => trimmed.to_lowercase(),
+                    // Hashes normalise to lowercase hex too — matches
+                    // the usual convention and lets analysts paste
+                    // hashes in any casing.
+                    ListKind::Hash => trimmed.to_lowercase(),
+                    // IPs/CIDRs: keep verbatim for now; proper CIDR
+                    // parsing lands in a follow-up (requires the
+                    // ipnetwork crate). Falls back to exact string
+                    // match until then.
+                    ListKind::Ip => trimmed.to_string(),
+                }
+            })
+            .filter(|e| !e.is_empty())
+            .collect();
+        Self {
+            id: list.id.clone(),
+            name: list.name.clone(),
+            kind: list.kind,
+            entries,
+        }
+    }
+
+    /// Returns true if `text` (the finding's matched span or the
+    /// scan context it's being evaluated against) satisfies this
+    /// list's matcher.
+    ///
+    /// Interpretations:
+    ///   · Keyword: case-insensitive substring
+    ///   · Domain:  case-insensitive suffix; `example.com` matches
+    ///              `foo.example.com` AND a bare `example.com`
+    ///   · Email:   leading `@` = domain-suffix; else exact
+    ///   · Hash:    exact (lowercased)
+    ///   · Url:     case-insensitive prefix
+    ///   · Path:    naive — substring today; proper glob in follow-up
+    ///   · Ip:      case-insensitive exact today (string); CIDR
+    ///              containment in a follow-up
+    ///   · Other:   case-insensitive exact
+    pub fn matches(&self, text: &str) -> bool {
+        if self.entries.is_empty() {
+            return false;
+        }
+        let lower = text.trim().to_lowercase();
+        match self.kind {
+            ListKind::Keyword => self.entries.iter().any(|e| lower.contains(e)),
+            ListKind::Domain => self.entries.iter().any(|e| {
+                lower == *e || lower.ends_with(&format!(".{e}"))
+            }),
+            ListKind::Email => self.entries.iter().any(|e| {
+                if let Some(dom) = e.strip_prefix('@') {
+                    lower.ends_with(&format!("@{dom}"))
+                } else {
+                    lower == *e
+                }
+            }),
+            ListKind::Url => self.entries.iter().any(|e| lower.starts_with(e)),
+            ListKind::Path => self.entries.iter().any(|e| lower.contains(e)),
+            ListKind::Hash | ListKind::Ip | ListKind::Other => {
+                self.entries.iter().any(|e| lower == *e)
+            }
+        }
+    }
+
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+impl PatternOverrides {
+    /// Compile every list into a `(list_id -> CompiledList)` lookup.
+    /// Called once at pod startup; the lookup lives alongside the
+    /// rest of the derived overrides state on the pod's AppState.
+    pub fn compile_lists(&self) -> HashMap<String, CompiledList> {
+        self.lists
+            .iter()
+            .filter(|l| !l.id.is_empty())
+            .map(|l| (l.id.clone(), CompiledList::from_list(l)))
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -630,6 +748,75 @@ mod tests {
         }"#;
         let err = PatternOverrides::from_bytes(json.as_bytes()).unwrap_err();
         assert!(matches!(err, LoadError::Parse(_)));
+    }
+
+    #[test]
+    fn compiled_list_keyword_substring_case_insensitive() {
+        let list = MatchList {
+            id: "x".into(), kind: ListKind::Keyword,
+            entries: vec!["Project Icarus".into(), "shell access".into()],
+            ..Default::default()
+        };
+        let c = CompiledList::from_list(&list);
+        assert!(c.matches("See PROJECT ICARUS doc"));
+        assert!(c.matches("requested shell access yesterday"));
+        assert!(!c.matches("no keyword here"));
+    }
+
+    #[test]
+    fn compiled_list_domain_suffix_match() {
+        let list = MatchList {
+            id: "p".into(), kind: ListKind::Domain,
+            entries: vec!["example.com".into(), "globex.eu".into()],
+            ..Default::default()
+        };
+        let c = CompiledList::from_list(&list);
+        assert!(c.matches("example.com"));
+        assert!(c.matches("Foo.Example.COM"));          // case-insensitive
+        assert!(c.matches("mail.globex.eu"));            // subdomain
+        assert!(!c.matches("notexample.com"));            // no false suffix
+    }
+
+    #[test]
+    fn compiled_list_email_with_domain_fallback() {
+        let list = MatchList {
+            id: "e".into(), kind: ListKind::Email,
+            entries: vec!["alice@corp.com".into(), "@partner.io".into()],
+            ..Default::default()
+        };
+        let c = CompiledList::from_list(&list);
+        assert!(c.matches("alice@corp.com"));
+        assert!(c.matches("ALICE@CORP.com"));
+        assert!(c.matches("anyone@partner.io"));         // domain fallback
+        assert!(!c.matches("alice@other.com"));
+    }
+
+    #[test]
+    fn compiled_list_hash_exact_lowercased() {
+        let list = MatchList {
+            id: "h".into(), kind: ListKind::Hash,
+            entries: vec!["5d41402ABC4b2a76B9719D911017c592".into()],
+            ..Default::default()
+        };
+        let c = CompiledList::from_list(&list);
+        assert!(c.matches("5d41402abc4b2a76b9719d911017c592"));  // upper/lower round-trip
+        assert!(!c.matches("deadbeef"));
+    }
+
+    #[test]
+    fn compile_lists_round_trips_through_overrides() {
+        let json = r#"{
+            "version":0,
+            "lists":[
+                {"id":"ml_p","name":"Partners","kind":"domain","entries":["acme.com"]},
+                {"id":"","name":"Skip empty-id","kind":"keyword","entries":["x"]}
+            ]
+        }"#;
+        let o = PatternOverrides::from_bytes(json.as_bytes()).unwrap();
+        let map = o.compile_lists();
+        assert_eq!(map.len(), 1);
+        assert!(map.contains_key("ml_p"));
+        assert!(map.get("ml_p").unwrap().matches("node.acme.com"));
     }
 
     #[test]
