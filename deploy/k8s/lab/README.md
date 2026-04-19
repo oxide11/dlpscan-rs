@@ -54,6 +54,7 @@ location.reload();
 deploy/k8s/lab/
 ├── 00-namespace.yaml            siphon-lab
 ├── 10-configmap-overrides.yaml  shared pattern-overrides ConfigMap
+├── 15-rbac-roller.yaml          SA + Role + RoleBinding for auto-roll
 ├── 20-siphon-api.yaml           Deployment (2) + Service
 ├── 30-siphon-fs.yaml            Deployment (1) + Service
 ├── 40-ingress.yaml              nginx-ingress: /api/*, /fs/*
@@ -63,8 +64,23 @@ deploy/k8s/lab/
 Both Deployments mount the same `siphon-overrides` ConfigMap at
 `/etc/siphon/overrides.json`. Phase 3 teaches the scanner to layer
 that file on top of the compile-time patterns; Phase 4 adds the
-admin-console "Apply" flow that writes the ConfigMap and triggers
-a rolling restart of both Deployments in lock-step.
+admin-console "Apply" flow that writes the ConfigMap; Phase 6's
+auto-roll (`POST /v1/overrides/roll`) patches each Deployment's
+annotations to trigger a rolling restart so the new overrides take
+effect without `kubectl` access.
+
+### Auto-roll RBAC
+
+`15-rbac-roller.yaml` creates a `siphon-api` ServiceAccount + a
+namespace-scoped Role that grants `get`/`patch` on the two
+Deployments by name. The siphon-api Deployment pins
+`serviceAccountName: siphon-api` so the pod's in-cluster client
+picks up the mounted token. The roller cannot touch anything else:
+different namespace, different Deployment, different resource kind
+all return 403.
+
+The `Dockerfile.api` enables `--features k8s-roll` so the endpoint
+ships compiled in. Without the feature the endpoint responds 501.
 
 ## Tear it down
 

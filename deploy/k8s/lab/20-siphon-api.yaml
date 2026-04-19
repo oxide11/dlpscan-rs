@@ -25,6 +25,10 @@ spec:
         app.kubernetes.io/name: siphon-api
         app.kubernetes.io/part-of: siphon
     spec:
+      # Non-default ServiceAccount so the Phase 6 auto-roll endpoint
+      # can patch Deployment annotations. Scope is the siphon-lab
+      # namespace + the two Deployments listed in 15-rbac-roller.yaml.
+      serviceAccountName: siphon-api
       terminationGracePeriodSeconds: 45  # headroom for SIGTERM drain (Phase 5)
       containers:
         - name: siphon-api

@@ -6,7 +6,11 @@ COPY Cargo.toml Cargo.lock* ./
 COPY crates/ crates/
 COPY src/ src/
 
-RUN cargo build --release -p siphon-api --locked
+# --features k8s-roll pulls in kube + k8s-openapi so /v1/overrides/roll
+# can patch Deployment annotations from inside the cluster. Omit the
+# flag for a non-k8s build — the endpoint responds 501 with a
+# kubectl-style fallback.
+RUN cargo build --release -p siphon-api --features k8s-roll --locked
 
 FROM debian:bookworm-slim
 

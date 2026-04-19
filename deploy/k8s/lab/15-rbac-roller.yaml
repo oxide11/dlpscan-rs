@@ -1,0 +1,54 @@
+# RBAC for siphon-api's Phase 6 auto-roll.
+#
+# The siphon-api pod patches `spec.template.metadata.annotations` on
+# both Deployments (siphon-api + siphon-fs) to trigger a rolling
+# restart — the standard kubectl-style approach for picking up a
+# ConfigMap change. That requires a ServiceAccount with enough
+# permission to `get` + `patch` Deployments in the siphon-lab
+# namespace, and nothing beyond it.
+#
+# Scoped as a Role (not ClusterRole) so the pod can't touch
+# Deployments in any other namespace. The Role lists both specific
+# Deployment names in resourceNames to further narrow the blast
+# radius: even a compromised siphon-api pod can only poke the two
+# Deployments it knows about.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: siphon-api
+  namespace: siphon-lab
+  labels:
+    app.kubernetes.io/name: siphon-api
+    app.kubernetes.io/part-of: siphon
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: siphon-api-roller
+  namespace: siphon-lab
+  labels:
+    app.kubernetes.io/part-of: siphon
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    # Narrow to the exact two Deployments the roller pokes.
+    # Adding a third (e.g. siphon-ds) means editing this list +
+    # the default deployments[] in /v1/overrides/roll.
+    resourceNames: ["siphon-api", "siphon-fs"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: siphon-api-roller
+  namespace: siphon-lab
+  labels:
+    app.kubernetes.io/part-of: siphon
+subjects:
+  - kind: ServiceAccount
+    name: siphon-api
+    namespace: siphon-lab
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: siphon-api-roller
