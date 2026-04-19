@@ -6619,14 +6619,15 @@ function FindingDetail({ id, back }) {
 
       {/* 3-row detail grid. Boxes flow left-to-right into equal-width
           columns: Match&Ctx|Actions, Timeline|Record, Related|Policy.
-          alignItems:start so a short Actions cell doesn't stretch to
-          match Match&Ctx. minmax(0,1fr) keeps long mono strings from
-          blowing out column widths. */}
+          alignItems:stretch so both cells in a row match heights —
+          analysts read the layout as an aligned grid, not a ragged
+          masonry. minmax(0,1fr) keeps long mono strings from blowing
+          out column widths. */}
       <div className="finding-hero"
            style={{
              marginTop:'var(--gap)',
              gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)',
-             alignItems:'start',
+             alignItems:'stretch',
            }}>
         {/* row 1 · left: Match & context */}
         <div className="box">
