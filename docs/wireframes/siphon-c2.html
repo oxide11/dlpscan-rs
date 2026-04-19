@@ -7971,6 +7971,21 @@ function NewPatternModal({ open, category, onClose, onSaved }) {
 // actually picks up the new rules.
 // ─────────────────────────────────────────────────────────────────
 
+// Wire-shape helper for MatchList (Phase 4.7a.3). Maps camelCase
+// client fields to snake_case Rust fields + fills in defaults so a
+// partially-filled list still round-trips through /v1/overrides.
+function __siphonListsForWire(staged) {
+  return (staged || []).map(l => ({
+    id: l.id,
+    name: l.name || '',
+    description: l.description || '',
+    kind: l.kind || 'keyword',
+    entries: Array.isArray(l.entries) ? l.entries.filter(Boolean) : [],
+    created_at: l.createdAt || l.created_at || '',
+    updated_at: l.updatedAt || l.updated_at || '',
+  }));
+}
+
 // Strip client-only fields (id, createdAt, denormalised category) so
 // what we serialise matches the Rust PatternOverrides schema.
 function __siphonCustomCatsForWire(staged) {
@@ -8013,9 +8028,16 @@ function writeApplyPending(state) {
   } catch {}
 }
 
-function PendingChangesBanner({ customCategories }) {
+function PendingChangesBanner({ customCategories: customCategoriesProp }) {
   const current = window.useSiphonApi('/v1/overrides/current');
   const health  = window.useSiphonApi('/health');
+  // Read both staged sources internally so the banner can mount on
+  // any surface (Patterns, Match Lists, future Policies) without
+  // prop-drilling. Accept a prop override so the Patterns surface's
+  // existing wiring continues to work.
+  const customCategoriesFromHook = window.useCustomCategories ? window.useCustomCategories() : [];
+  const customCategories = customCategoriesProp || customCategoriesFromHook;
+  const matchLists = window.useMatchLists ? window.useMatchLists() : [];
   const [apply, setApply] = React.useState({ loading: false, error: null, success: null });
   // Restart-pending bookkeeping persisted across reloads. Key by pod
   // URL so multiple pods (Phase 4.5) don't trample each other.
@@ -8026,9 +8048,13 @@ function PendingChangesBanner({ customCategories }) {
   const bump = () => force(x => x + 1);
 
   const currentOverrides = (current.data && current.data.overrides) || {};
-  const stagedWire = __siphonCustomCatsForWire(customCategories);
-  const currentWire = __siphonCustomCatsForWire(currentOverrides.custom_categories);
-  const dirty = !__siphonCatsEqual(stagedWire, currentWire);
+  const stagedCatsWire  = __siphonCustomCatsForWire(customCategories);
+  const currentCatsWire = __siphonCustomCatsForWire(currentOverrides.custom_categories);
+  const stagedListsWire  = __siphonListsForWire(matchLists);
+  const currentListsWire = __siphonListsForWire(currentOverrides.lists);
+  const dirtyCats  = !__siphonCatsEqual(stagedCatsWire,  currentCatsWire);
+  const dirtyLists = !__siphonCatsEqual(stagedListsWire, currentListsWire);
+  const dirty = dirtyCats || dirtyLists;
 
   // Roll detection: if the pod's started_at moved past the apply
   // timestamp (or away from the pre-apply baseline), the pod has
@@ -8060,7 +8086,8 @@ function PendingChangesBanner({ customCategories }) {
       version: 0,
       disabled_patterns: currentOverrides.disabled_patterns || [],
       pattern_overrides: currentOverrides.pattern_overrides || {},
-      custom_categories: stagedWire,
+      custom_categories: stagedCatsWire,
+      lists: stagedListsWire,
     };
     try {
       const url = window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/overrides/apply';
@@ -8094,8 +8121,10 @@ function PendingChangesBanner({ customCategories }) {
     }
   };
 
-  const catCount = stagedWire.length;
-  const patCount = stagedWire.reduce((a, c) => a + (c.patterns || []).length, 0);
+  const catCount = stagedCatsWire.length;
+  const patCount = stagedCatsWire.reduce((a, c) => a + (c.patterns || []).length, 0);
+  const listCount = stagedListsWire.length;
+  const listEntryCount = stagedListsWire.reduce((a, l) => a + (l.entries || []).length, 0);
 
   // Restart-required branch: an apply has landed on disk but the
   // pod hasn't restarted yet, so the scanner is still using the old
@@ -8178,8 +8207,15 @@ function PendingChangesBanner({ customCategories }) {
         <div style={{flex:1, minWidth:240}}>
           {dirty ? (
             <>
-              <b>Pending changes</b> · {catCount} custom categor{catCount === 1 ? 'y' : 'ies'} · {patCount} pattern{patCount === 1 ? '' : 's'} staged locally.
-              Nothing has been written to <span className="mono">SIPHON_OVERRIDES_PATH</span> yet.
+              <b>Pending changes</b> staged locally ·{' '}
+              {dirtyCats && (
+                <>{catCount} custom categor{catCount === 1 ? 'y' : 'ies'} / {patCount} pattern{patCount === 1 ? '' : 's'}</>
+              )}
+              {dirtyCats && dirtyLists && ' · '}
+              {dirtyLists && (
+                <>{listCount} list{listCount === 1 ? '' : 's'} / {listEntryCount} entr{listEntryCount === 1 ? 'y' : 'ies'}</>
+              )}
+              . Nothing has been written to <span className="mono">SIPHON_OVERRIDES_PATH</span> yet.
             </>
           ) : (
             <><b>Staged state matches live overrides.</b> Nothing to apply.</>
@@ -9458,12 +9494,14 @@ function MatchLists() {
         </>}
       />
 
-      <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:12, lineHeight:1.6, marginBottom:'var(--gap)'}}>
-        <b>Staged locally.</b> Lists live in <span className="mono">localStorage</span> until you Apply
-        them via the Patterns surface — Apply writes them into the shared overrides file alongside
-        custom categories. Phase 4.7b wires Policies to attach lists with actions; Phase 4.7c adds
+      <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:12, lineHeight:1.6, marginBottom:'var(--gap)'}}>
+        <b>Staged locally.</b> Lists live in <span className="mono">localStorage</span> until you Apply —
+        Apply writes them into the shared overrides file alongside custom categories, and a restart
+        picks them up. Phase 4.7b wires Policies to attach lists with actions; Phase 4.7c adds
         scanner-time enforcement.
       </div>
+
+      <PendingChangesBanner />
 
       <div className="grid" style={{gridTemplateColumns:'280px 1fr', gap:'var(--gap)'}}>
         {/* Left rail — all lists + filter */}
