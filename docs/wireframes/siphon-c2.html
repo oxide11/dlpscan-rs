@@ -9408,20 +9408,59 @@ function PatternSimulator({ pattern, findings }) {
 }
 
 
-function PatternThresholdStub() {
+function PatternThresholdBox({ pattern }) {
+  // Reads /v1/overrides/current and surfaces the threshold (if any)
+  // that applies to this specific (category, sub_category). The
+  // scanner tags breaches with metadata.unique_count_breach +
+  // action=block — visible on the finding record's metadata fields.
+  const cur = window.useSiphonApi('/v1/overrides/current');
+  const map = (cur.data && cur.data.overrides && cur.data.overrides.max_unique_per_subcategory) || {};
+  const key = `${pattern.category}/${pattern.sub_category}`;
+  const limit = map[key];
+  const total = Object.keys(map).length;
+  const inScope = limit != null;
+
   return (
     <div className="box">
       <div className="box-title">
         <span className="t">Unique-count threshold</span>
-        <span className="k">Phase 9 · belongs in policies, not patterns</span>
+        <span className="k">
+          {cur.loading
+            ? 'loading /v1/overrides/current…'
+            : inScope
+              ? <>live · this pattern is capped at <b>{limit}</b> distinct match{limit === 1 ? '' : 'es'}</>
+              : <>no cap for this pattern · {total} threshold{total === 1 ? '' : 's'} declared globally</>}
+        </span>
       </div>
-      <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:12, lineHeight:1.7}}>
-        A threshold like "1 SIN is fine, 2 distinct SINs = block" is a policy concern, not a pattern
-        property — one pattern can be tolerated or blocked depending on which policy picks it up.
-        <br/>
-        <b>Phase 9</b> adds <span className="mono">scan.max_unique_count</span> to the Policy schema and enforcement in the scanner.
-        This box becomes a read-only cross-link to the policies that apply a threshold to this pattern.
-      </div>
+
+      {inScope ? (
+        <div style={{padding:'4px 0 8px'}}>
+          <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:8}}>
+            <span className="mono" style={{fontSize:22, color:'var(--accent)', minWidth:70}}>≤ {limit}</span>
+            <span className="muted mono" style={{fontSize:11}}>distinct match{limit === 1 ? '' : 'es'} per scan</span>
+          </div>
+          <div className="margin-note" style={{marginTop:0}}>
+            When a single scan produces more than <span className="mono">{limit}</span> distinct
+            match{limit === 1 ? '' : 'es'} for <span className="mono">{pattern.category}</span> /
+            <span className="mono"> {pattern.sub_category}</span>, every affected finding is tagged with
+            <span className="mono"> metadata.unique_count_breach = true</span> +
+            <span className="mono"> metadata.action = "block"</span>. Scanner doesn't drop them — the
+            router / SIEM escalates based on the metadata.
+          </div>
+        </div>
+      ) : (
+        <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:12, lineHeight:1.7}}>
+          No <span className="mono">max_unique_per_subcategory</span> entry for
+          <span className="mono"> {pattern.category}/{pattern.sub_category}</span> in the active overrides.
+          Edit the overrides JSON directly to add one:
+          <pre style={{margin:'8px 0 0', padding:'8px 10px', background:'var(--bg-2)', border:'1px dashed var(--line-soft)', borderRadius:2, fontSize:11, lineHeight:1.6, overflow:'auto'}}>
+{`"max_unique_per_subcategory": {
+  "${pattern.category}/${pattern.sub_category}": 2
+}`}
+          </pre>
+          Then Apply and Roll so the scanner picks up the new limit.
+        </div>
+      )}
     </div>
   );
 }
@@ -9589,7 +9628,7 @@ function PatternDetail({ category, sub_category, back }) {
         <PatternSpecificityBox pattern={p} />
         {/* row 3: simulator + threshold (test + policy tie-in) */}
         <PatternSimulator pattern={p} findings={findings} />
-        <PatternThresholdStub />
+        <PatternThresholdBox pattern={p} />
         {/* row 4: change history — full-width, it'll host diffs later */}
         <div className="box" style={{gridColumn:'1 / -1'}}>
           <div className="box-title">
