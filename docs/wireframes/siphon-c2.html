@@ -3455,6 +3455,29 @@ window.SIPHON_API_URL = function() {
   catch { return 'http://127.0.0.1:8080'; }
 };
 
+// siphon-fs URL — file-scanner pod. Defaults auto-derive from the
+// API URL so analysts running the kind lab (apiUrl = http://localhost/api)
+// pick up http://localhost/fs for free. Direct-dev users (apiUrl =
+// http://127.0.0.1:8080) get http://127.0.0.1:8081 (the default
+// SIPHON_FS_BIND of the siphon-fs binary). Overridable via the
+// c2:fsUrl localStorage key from the Deployment settings tab.
+window.SIPHON_FS_URL = function() {
+  try {
+    const explicit = localStorage.getItem('c2:fsUrl');
+    if (explicit) return explicit;
+  } catch {}
+  const api = window.SIPHON_API_URL();
+  // Lab pattern: ingress-fronted → same origin, swap /api for /fs.
+  if (/\/api\/?$/.test(api)) return api.replace(/\/api\/?$/, '/fs');
+  // Direct pattern: sibling port. Works for the common case where
+  // siphon-api runs on :8080 and siphon-fs on :8081.
+  try {
+    const u = new URL(api);
+    if (u.port === '8080') { u.port = '8081'; return u.origin; }
+  } catch {}
+  return 'http://127.0.0.1:8081';
+};
+
 // React hook. Returns { loading, data, error, refetch, source }.
 // `source` is 'live' | 'offline' | 'loading' — useful for the live chip.
 window.useSiphonApi = function(path, deps) {
@@ -9846,6 +9869,10 @@ function DeploymentTab() {
         <hr className="sep" />
         <div className="label" style={{marginBottom:6}}>Change the API URL</div>
         <ApiUrlControl />
+        <div className="label" style={{marginTop:12, marginBottom:6}}>
+          siphon-fs URL <span className="muted" style={{textTransform:'none', letterSpacing:0}}>— file-scanner pod, used by Live Scan file-mode</span>
+        </div>
+        <FsUrlControl />
       </div>
 
       <div className="v-gap" />
@@ -9896,6 +9923,53 @@ function DeploymentTab() {
           <span><span className="chip chip--safe">live</span> env-detected</span>
           <span><span className="chip chip--safe">live</span> env-detected</span>
         </div>
+      </div>
+    </>
+  );
+}
+
+// Small editable siphon-fs URL control. Empty value clears the
+// localStorage override so SIPHON_FS_URL() goes back to auto-derive
+// from the API URL (lab = same origin /fs; direct = port 8081).
+function FsUrlControl() {
+  const [url, setUrl] = React.useState(() => {
+    try { return localStorage.getItem('c2:fsUrl') || ''; }
+    catch { return ''; }
+  });
+  const [saved, setSaved] = React.useState(false);
+  const save = () => {
+    try {
+      if (url.trim()) localStorage.setItem('c2:fsUrl', url.trim());
+      else localStorage.removeItem('c2:fsUrl');
+    } catch {}
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  };
+  const derived = window.SIPHON_FS_URL();
+  return (
+    <>
+      <div style={{display:'flex', gap:8, alignItems:'center'}}>
+        <input
+          type="text"
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          placeholder={`auto · ${derived}`}
+          style={{
+            flex:1,
+            fontFamily:"'JetBrains Mono', monospace", fontSize:12,
+            padding:'6px 8px', background:'var(--bg-1)',
+            color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+          }}
+        />
+        <button className="btn" onClick={save}>{saved ? 'Saved' : 'Save'}</button>
+        <button className="btn ghost"
+                onClick={() => { setUrl(''); try { localStorage.removeItem('c2:fsUrl'); } catch {} }}
+                title="Clear override — revert to auto-derive from the API URL">
+          Auto
+        </button>
+      </div>
+      <div className="muted" style={{fontSize:10.5, marginTop:4}}>
+        Empty → auto-derive · lab pattern swaps <span className="mono">/api → /fs</span> on the same origin · direct-dev pattern bumps port 8080 → 8081.
       </div>
     </>
   );
