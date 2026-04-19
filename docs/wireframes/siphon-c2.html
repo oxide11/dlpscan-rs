@@ -5266,94 +5266,6 @@ Object.assign(window, { Dashboard });
 // Findings-density histogram — bucketed per-minute counts with a severity
 // stack (red / warn / safe). Drawn as an inline SVG so there's no chart
 // library dependency. Window defaults to 10 minutes but is adjustable.
-function FindingsDensity({ findings, windowMin, buckets }) {
-  const [minutes, setMinutes] = React.useState(windowMin || 15);
-  const n = buckets || 30;
-
-  const stats = React.useMemo(() => {
-    const now = Date.now();
-    const bucketMs = (minutes * 60 * 1000) / n;
-    const rows = Array.from({length: n}, () => ({ red: 0, warn: 0, safe: 0, total: 0 }));
-    let inWindow = 0, red = 0;
-    findings.forEach(f => {
-      const t = new Date(f.ts).getTime();
-      if (isNaN(t)) return;
-      const delta = now - t;
-      if (delta < 0 || delta > minutes * 60 * 1000) return;
-      inWindow++;
-      if (f.severity === 'red') red++;
-      const idx = n - 1 - Math.floor(delta / bucketMs);
-      if (idx >= 0 && idx < n) {
-        const key = f.severity === 'red' ? 'red' : f.severity === 'warn' ? 'warn' : 'safe';
-        rows[idx][key]++;
-        rows[idx].total++;
-      }
-    });
-    const max = Math.max(1, ...rows.map(r => r.total));
-    return { rows, max, inWindow, red, bucketMs };
-  }, [findings, minutes, n]);
-
-  const width = 100; // percent viewport
-  const height = 64;
-  const colW = width / n;
-
-  return (
-    <div className="box" style={{marginBottom:'var(--gap)'}}>
-      <div className="box-title">
-        <span className="t">Findings density</span>
-        <span className="k">
-          {stats.inWindow} in last {minutes}m · {stats.red} red · 1 bucket = {Math.round(stats.bucketMs/1000)}s
-        </span>
-      </div>
-      <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
-        <span className="label">Window</span>
-        {[5, 15, 60, 240].map(m => (
-          <button key={m}
-                  onClick={() => setMinutes(m)}
-                  className="btn ghost"
-                  style={{
-                    padding:'2px 10px', fontSize:10,
-                    background: minutes === m ? 'var(--accent)' : 'transparent',
-                    color: minutes === m ? 'var(--bg-0)' : 'var(--ink)',
-                    borderColor: minutes === m ? 'var(--accent)' : 'var(--line)',
-                  }}>{m < 60 ? m + 'm' : (m/60) + 'h'}</button>
-        ))}
-        <span className="right" style={{marginLeft:'auto', display:'flex', gap:10, fontFamily:"'JetBrains Mono', monospace", fontSize:10, color:'var(--ink-soft)'}}>
-          <span><i style={{display:'inline-block', width:8, height:8, background:'var(--red)', borderRadius:1, marginRight:4}} />red</span>
-          <span><i style={{display:'inline-block', width:8, height:8, background:'var(--amber)', borderRadius:1, marginRight:4}} />warn</span>
-          <span><i style={{display:'inline-block', width:8, height:8, background:'var(--safe)', borderRadius:1, marginRight:4}} />safe</span>
-        </span>
-      </div>
-      <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{width:'100%', height:height+16, display:'block', borderBottom:'1px dashed var(--line-soft)'}}>
-        {/* grid: quarter lines */}
-        {[0.25, 0.5, 0.75].map(f => (
-          <line key={f} x1="0" y1={height*f} x2={width} y2={height*f} stroke="var(--line-soft)" strokeWidth="0.2" strokeDasharray="1 2"/>
-        ))}
-        {stats.rows.map((r, i) => {
-          const bar = stats.max ? (r.total / stats.max) * height : 0;
-          if (r.total === 0) return null;
-          const x = i * colW;
-          const rh = r.red  / r.total * bar;
-          const wh = r.warn / r.total * bar;
-          const sh = r.safe / r.total * bar;
-          return (
-            <g key={i}>
-              <title>{`${r.total} finding${r.total===1?'':'s'} · red ${r.red} warn ${r.warn} safe ${r.safe}`}</title>
-              <rect x={x+0.2} y={height - rh} width={colW - 0.4} height={rh} fill="var(--red)"/>
-              <rect x={x+0.2} y={height - rh - wh} width={colW - 0.4} height={wh} fill="var(--amber)"/>
-              <rect x={x+0.2} y={height - rh - wh - sh} width={colW - 0.4} height={sh} fill="var(--safe)"/>
-            </g>
-          );
-        })}
-      </svg>
-      <div style={{display:'flex', justifyContent:'space-between', fontFamily:"'JetBrains Mono', monospace", fontSize:10, color:'var(--ink-faint)', marginTop:4}}>
-        <span>−{minutes}m</span>
-        <span>now</span>
-      </div>
-    </div>
-  );
-}
-
 // Display-only helper — pull HH:MM:SS out of an ISO timestamp, or the raw
 // string if it doesn't parse.
 function fmtWallClock(iso) {
@@ -5365,12 +5277,180 @@ function fmtWallClock(iso) {
        + String(d.getSeconds()).padStart(2,'0');
 }
 
+// Reusable select styled to match the mock. options = [[value, label]] or [value]
+function FilterSelect({ label, value, setValue, options }) {
+  const opts = options.map(o => Array.isArray(o) ? o : [o, o]);
+  return (
+    <label style={{display:'flex', alignItems:'center', gap:6}}>
+      <span className="label" style={{whiteSpace:'nowrap'}}>{label}</span>
+      <div style={{
+        display:'inline-flex', alignItems:'center', gap:4,
+        background:'var(--bg-1)',
+        border:'1px solid var(--line-strong)',
+        borderRadius:'var(--radius)',
+        padding:'3px 8px',
+        fontFamily:"'JetBrains Mono', monospace",
+        fontSize:11,
+      }}>
+        <select value={value} onChange={e => setValue(e.target.value)}
+                style={{
+                  appearance:'none', background:'transparent',
+                  border:'none', outline:'none',
+                  color: value === 'any' ? 'var(--ink-soft)' : 'var(--ink-bright)',
+                  fontFamily:'inherit', fontSize:11, paddingRight:4, cursor:'pointer',
+                }}>
+          {opts.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        <span style={{color:'var(--ink-faint)', fontSize:9}}>▾</span>
+      </div>
+    </label>
+  );
+}
+
+// Combined filter row: severity / category / sub-category / source /
+// action / group-by, all as proper dropdowns populated from the
+// actual data currently in the ring.
+function FilterRow({
+  severity, setSeverity,
+  category, setCategory, categories,
+  subCategory, setSubCategory,
+  source, setSource,
+  groupBy, setGroupBy,
+  findings,
+}) {
+  // Filter options derived from the live data so we never offer a
+  // choice that produces zero rows.
+  const subCats = Array.from(new Set((findings || []).map(f => f.sub_category).filter(Boolean))).sort();
+  const sources = Array.from(new Set((findings || []).map(f => f.source_ip).filter(Boolean))).sort();
+
+  return (
+    <div className="box" style={{marginBottom:'var(--gap)', padding:'10px 14px'}}>
+      <div style={{display:'flex', gap:18, flexWrap:'wrap', alignItems:'center'}}>
+        <FilterSelect
+          label="SEVERITY"
+          value={severity} setValue={setSeverity}
+          options={[['any','any'], ['red','red'], ['warn','warn'], ['safe','safe']]}
+        />
+        <FilterSelect
+          label="CATEGORY"
+          value={category} setValue={setCategory}
+          options={[['any','any'], ...categories.map(c => [c, c.length > 28 ? c.slice(0, 28) + '…' : c])]}
+        />
+        <FilterSelect
+          label="SUB-CATEGORY"
+          value={subCategory} setValue={setSubCategory}
+          options={[['any','any'], ...subCats.map(s => [s, s])]}
+        />
+        <FilterSelect
+          label="SOURCE"
+          value={source} setValue={setSource}
+          options={[['any','any'], ...sources.map(s => [s, s])]}
+        />
+        <FilterSelect
+          label="GROUP BY"
+          value={groupBy} setValue={setGroupBy}
+          options={[['none','none'], ['category','category'], ['severity','severity'], ['sub_category','sub-category'], ['source_ip','source']]}
+        />
+      </div>
+    </div>
+  );
+}
+
+// Advanced search parser.
+// Supports space-separated tokens, each of which is either:
+//   - free text        → substring match across text, category,
+//                        sub_category, source_ip, id, request_id
+//   - `id:XYZ`         → id contains XYZ (case-insensitive)
+//   - `sev:red`        → severity is red|warn|safe
+//   - `cat:PCI`        → category group (PCI, PII, CRED, PHI, SECRET,
+//                        CLASSIFIED, OTHER) — uses catGroup()
+//   - `sub:visa`       → sub_category contains visa (case-insens.)
+//   - `source:1.2.3.4` → source_ip contains
+//   - `conf:>0.9`      → confidence > 0.9 (also <, >=, <=, =)
+//   - `conf:0.7..0.95` → inclusive range
+// Returns a function f → boolean.
+function parseFindingQuery(raw) {
+  const q = (raw || '').trim();
+  if (!q) return () => true;
+  const tokens = q.match(/"[^"]*"|\S+/g) || [];
+  const predicates = [];
+  const cmpNum = (op, lhs, rhs) => {
+    switch (op) {
+      case '>':  return lhs > rhs;
+      case '<':  return lhs < rhs;
+      case '>=': return lhs >= rhs;
+      case '<=': return lhs <= rhs;
+      case '=':  return lhs === rhs;
+      default:   return false;
+    }
+  };
+  for (const rawTok of tokens) {
+    const tok = rawTok.replace(/^"(.*)"$/, '$1');
+    const colon = tok.indexOf(':');
+    if (colon > 0) {
+      const key = tok.slice(0, colon).toLowerCase();
+      const val = tok.slice(colon + 1);
+      if (key === 'id')         predicates.push(f => (f.id || '').toLowerCase().includes(val.toLowerCase()));
+      else if (key === 'sev')   predicates.push(f => (f.severity || '') === val.toLowerCase());
+      else if (key === 'cat')   predicates.push(f => catGroup(f.category) === val.toUpperCase());
+      else if (key === 'sub')   predicates.push(f => (f.sub_category || '').toLowerCase().includes(val.toLowerCase()));
+      else if (key === 'source') predicates.push(f => (f.source_ip || '').toLowerCase().includes(val.toLowerCase()));
+      else if (key === 'req')   predicates.push(f => (f.request_id || '').toLowerCase().includes(val.toLowerCase()));
+      else if (key === 'conf') {
+        const range = val.match(/^([0-9]*\.?[0-9]+)\.\.([0-9]*\.?[0-9]+)$/);
+        if (range) {
+          const lo = parseFloat(range[1]), hi = parseFloat(range[2]);
+          predicates.push(f => typeof f.confidence === 'number' && f.confidence >= lo && f.confidence <= hi);
+        } else {
+          const m = val.match(/^(>=|<=|>|<|=)?([0-9]*\.?[0-9]+)$/);
+          if (m) {
+            const op = m[1] || '=';
+            const n = parseFloat(m[2]);
+            predicates.push(f => typeof f.confidence === 'number' && cmpNum(op, f.confidence, n));
+          }
+        }
+      } else {
+        // unknown prefix → fall back to substring match across the whole token
+        const needle = tok.toLowerCase();
+        predicates.push(f => (f.text + ' ' + (f.category || '') + ' ' + (f.sub_category || '') + ' ' + (f.source_ip || '') + ' ' + (f.id || ''))
+          .toLowerCase().includes(needle));
+      }
+    } else {
+      const needle = tok.toLowerCase();
+      predicates.push(f => (f.text + ' ' + (f.category || '') + ' ' + (f.sub_category || '') + ' ' + (f.source_ip || '') + ' ' + (f.id || '') + ' ' + (f.request_id || ''))
+        .toLowerCase().includes(needle));
+    }
+  }
+  return (f) => predicates.every(p => p(f));
+}
+
+// Timeframes for the stream console header. `ms: null` means "no
+// window constraint" — i.e. show everything in the ring regardless of
+// age. Custom timeframes are not yet wired.
+const STREAM_TIMEFRAMES = [
+  { id: '15m', label: '15m', ms: 15 * 60 * 1000 },
+  { id: '1h',  label: '1h',  ms: 60 * 60 * 1000 },
+  { id: '24h', label: '24h', ms: 24 * 60 * 60 * 1000 },
+  { id: '7d',  label: '7d',  ms: 7 * 24 * 60 * 60 * 1000 },
+  { id: '30d', label: '30d', ms: 30 * 24 * 60 * 60 * 1000 },
+  { id: 'all', label: 'All', ms: null },
+];
+
 function Stream({ go }) {
   const [search, setSearch] = React.useState('');
   const [severity, setSeverity] = React.useState('any');
   const [category, setCategory] = React.useState('any');
+  const [subCategory, setSubCategory] = React.useState('any');
+  const [source, setSource] = React.useState('any');
   const [groupBy, setGroupBy] = React.useState('none');
   const [paused, setPaused] = React.useState(false);
+  const [tf, setTf] = React.useState('24h');
+  const [advOpen, setAdvOpen] = React.useState(false);
+  const [page, setPage] = React.useState(0);
+  const [pageSize, setPageSize] = React.useState(25);
+
+  // Reset to the first page whenever the effective filter changes.
+  React.useEffect(() => { setPage(0); }, [search, severity, category, subCategory, source, groupBy, tf, pageSize]);
 
   const fx = window.useSiphonApi('/v1/findings?limit=500');
   // Live tail — refetch every 2s unless paused.
@@ -5381,16 +5461,54 @@ function Stream({ go }) {
   }, [paused]);
 
   const all = (fx.data && fx.data.findings) || [];
+  const tfMeta = STREAM_TIMEFRAMES.find(x => x.id === tf) || STREAM_TIMEFRAMES[2];
 
-  const filtered = all.filter(f =>
+  const inWindow = React.useMemo(() => {
+    if (tfMeta.ms == null) return all;
+    const cutoff = Date.now() - tfMeta.ms;
+    return all.filter(f => {
+      const t = new Date(f.ts).getTime();
+      return isNaN(t) || t >= cutoff;
+    });
+  }, [all, tfMeta]);
+
+  const queryPredicate = React.useMemo(() => parseFindingQuery(search), [search]);
+  const filtered = inWindow.filter(f =>
     (severity === 'any' || f.severity === severity) &&
     (category === 'any' || f.category === category) &&
-    (!search || (f.text + ' ' + f.category + ' ' + (f.sub_category || '') + ' ' + (f.source_ip || ''))
-      .toLowerCase().includes(search.toLowerCase()))
+    (subCategory === 'any' || f.sub_category === subCategory) &&
+    (source === 'any' || f.source_ip === source) &&
+    queryPredicate(f)
   );
 
+  // Sparkline for the header — matching-count per bucket over the
+  // active timeframe. 30 buckets.
+  const headerSpark = React.useMemo(() => {
+    const buckets = 30;
+    const windowMs = tfMeta.ms || (24 * 60 * 60 * 1000);
+    const now = Date.now();
+    const bucketMs = windowMs / buckets;
+    const out = new Array(buckets).fill(0);
+    filtered.forEach(f => {
+      const t = new Date(f.ts).getTime();
+      if (isNaN(t)) return;
+      const delta = now - t;
+      if (delta < 0 || delta > windowMs) return;
+      const idx = buckets - 1 - Math.floor(delta / bucketMs);
+      if (idx >= 0 && idx < buckets) out[idx]++;
+    });
+    return out;
+  }, [filtered, tfMeta]);
+
+  // Pagination — only active when group-by is 'none'. Grouped views
+  // show every group's rows inline so paging doesn't make sense there.
+  const paginated = groupBy === 'none'
+    ? filtered.slice(page * pageSize, page * pageSize + pageSize)
+    : filtered;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+
   const groups = (() => {
-    if (groupBy === 'none') return [['', filtered]];
+    if (groupBy === 'none') return [['', paginated]];
     const by = {};
     filtered.forEach(f => {
       const k = f[groupBy] || '(none)';
@@ -5401,31 +5519,60 @@ function Stream({ go }) {
 
   // Derive filter options from what's actually in the ring.
   const categories = Array.from(new Set(all.map(f => f.category))).sort();
-  const { PageBar } = window;
+
+  const clearFilters = () => {
+    setSearch(''); setSeverity('any'); setCategory('any');
+    setSubCategory('any'); setSource('any');
+    setGroupBy('none'); setTf('24h');
+  };
+  const exportJson = () => {
+    try {
+      const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `findings-${new Date().toISOString().replace(/[:.]/g,'-')}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {}
+  };
 
   return (
     <div>
-      <PageBar
-        crumbs={['Operate', 'Findings']}
-        title={<>Findings Console <HelpIcon topic="findings" title="Findings pipeline" size={16} /></>}
-        subtitle={fx.data
-          ? `${filtered.length.toLocaleString()} / ${fx.data.total} in ring (cap ${fx.data.capacity}) · ${paused ? 'paused' : 'tail -f'}`
-          : 'loading…'}
-        search={search} setSearch={setSearch}
-        filters={[
-          { label: 'Severity', value: severity },
-          { label: 'Category', value: category === 'any' ? 'any' : category },
-          { label: 'Time',     value: 'in-ring' },
-        ]}
-        groupBy={groupBy}
-        setGroupBy={setGroupBy}
-        groupByOptions
-        actions={<>
-          <window.LivePill source={fx.source} onClick={fx.refetch} title={fx.error || ''} />
-          <button className="btn ghost" onClick={() => setPaused(p => !p)}>{paused ? '▶ Resume' : '⏸ Pause'}</button>
-          <button className="btn">Export</button>
-        </>}
-      />
+      {/* ── Header ─────────────────────────────────────────────── */}
+      <div className="page-head" style={{alignItems:'flex-start'}}>
+        <div style={{flex:1}}>
+          <div className="crumbs">Operate · Findings</div>
+          <h1 style={{display:'flex', alignItems:'center', gap:12, margin:'3px 0 0'}}>
+            Findings stream
+            <window.LivePill source={paused ? 'loading' : fx.source} onClick={fx.refetch} title={fx.error || ''} />
+            <HelpIcon topic="findings" title="Findings pipeline" size={16} />
+          </h1>
+          <div className="page-sub mono" style={{fontSize:12, color:'var(--ink-soft)', marginTop:6}}>
+            window <b style={{color:'var(--ink-bright)'}}>{tfMeta.label}</b>
+            {' · '}
+            <b style={{color:'var(--ink-bright)'}}>{filtered.length.toLocaleString()}</b>
+            {' of '}
+            <b style={{color:'var(--ink-bright)'}}>{inWindow.length.toLocaleString()}</b>
+            {' findings match'}
+            {fx.data && (
+              <>
+                {' · ring '}
+                <span style={{color:'var(--ink-faint)'}}>{fx.data.total}/{fx.data.capacity}</span>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="actions" style={{alignItems:'center'}}>
+          <button
+            className={paused ? 'btn' : 'btn primary'}
+            onClick={() => setPaused(p => !p)}>
+            {paused ? '▶ Resume' : '❙❙ Pause'}
+          </button>
+          <button className="btn ghost" onClick={clearFilters} title="reset search + filters + timeframe">Clear</button>
+          <button className="btn" onClick={exportJson} title="download visible findings as JSON">Export</button>
+        </div>
+      </div>
 
       {fx.error && (
         <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', marginBottom:'var(--gap)'}}>
@@ -5433,100 +5580,259 @@ function Stream({ go }) {
         </div>
       )}
 
-      <FindingsDensity findings={all} />
-
-      {/* severity + category quick filters pulled from real data */}
-      <div className="row" style={{marginBottom: 'var(--gap)', flexWrap:'wrap'}}>
-        <span className="label" style={{alignSelf:'center'}}>Sev</span>
-        {['any','red','warn','safe'].map(s => (
-          <button key={s}
-            onClick={() => setSeverity(s)}
+      {/* ── Search row + timeframe tabs + header sparkline ───── */}
+      <div className="box" style={{marginBottom:'var(--gap)', padding:'10px 14px'}}>
+        <div style={{display:'grid', gridTemplateColumns:'1fr auto auto auto', gap:14, alignItems:'center'}}>
+          <div className="tb-search" style={{minWidth: 'auto', flex:'none', width:'100%'}}>
+            <span className="mag">⌕</span>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="search match, doc, id, hash, ip   ·   id:F- · sev:red · cat:PCI · conf:>0.9" />
+            <span className="kbd">/</span>
+          </div>
+          <div style={{display:'flex', alignItems:'center', gap:10}}>
+            <span className="label">TIMEFRAME</span>
+            <div style={{display:'flex', gap:1, border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', overflow:'hidden'}}>
+              {STREAM_TIMEFRAMES.map(t => (
+                <button key={t.id}
+                  onClick={() => setTf(t.id)}
+                  style={{
+                    padding:'5px 12px', fontSize:11,
+                    fontFamily:"'JetBrains Mono', monospace",
+                    border:'none',
+                    background: tf === t.id ? 'var(--accent)' : 'transparent',
+                    color: tf === t.id ? 'var(--bg-0)' : 'var(--ink)',
+                    cursor:'pointer',
+                  }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button
             className="btn ghost"
+            onClick={() => setAdvOpen(v => !v)}
+            title="show advanced search syntax"
             style={{
-              padding:'3px 10px', fontSize:10,
-              background: severity === s ? 'var(--accent)' : 'transparent',
-              color: severity === s ? 'var(--bg-0)' : 'var(--ink)',
-              borderColor: severity === s ? 'var(--accent)' : 'var(--line)'
-            }}>{s}</button>
-        ))}
-        <span className="right label" style={{alignSelf:'center'}}>Group by</span>
-        {['none','category','severity'].map(g => (
-          <button key={g}
-            onClick={() => setGroupBy(g)}
-            className="btn ghost"
-            style={{
-              padding:'3px 10px', fontSize:10,
-              background: groupBy === g ? 'var(--accent)' : 'transparent',
-              color: groupBy === g ? 'var(--bg-0)' : 'var(--ink)',
-              borderColor: groupBy === g ? 'var(--accent)' : 'var(--line)'
-            }}>{g}</button>
-        ))}
-      </div>
-
-      {categories.length > 0 && (
-        <div className="row" style={{marginBottom: 'var(--gap)', flexWrap:'wrap'}}>
-          <span className="label" style={{alignSelf:'center'}}>Cat</span>
-          <button onClick={() => setCategory('any')}
-            className="btn ghost"
-            style={{padding:'3px 10px', fontSize:10,
-              background: category === 'any' ? 'var(--accent)' : 'transparent',
-              color: category === 'any' ? 'var(--bg-0)' : 'var(--ink)',
-              borderColor: category === 'any' ? 'var(--accent)' : 'var(--line)'}}>any</button>
-          {categories.slice(0, 8).map(c => (
-            <button key={c}
-              onClick={() => setCategory(c)}
-              className="btn ghost"
-              style={{padding:'3px 10px', fontSize:10,
-                background: category === c ? 'var(--accent)' : 'transparent',
-                color: category === c ? 'var(--bg-0)' : 'var(--ink)',
-                borderColor: category === c ? 'var(--accent)' : 'var(--line)'}}>{c}</button>
-          ))}
-        </div>
-      )}
-
-      <div className="box">
-        <div className="find-row label" style={{borderBottom:'1.5px solid var(--line)'}}>
-          <span>TS</span><span>Source IP</span><span>Match</span><span>Category</span><span>Conf</span><span>Sev</span><span></span>
+              borderStyle:'dashed',
+              color: advOpen ? 'var(--accent)' : 'var(--ink)',
+              borderColor: advOpen ? 'var(--accent)' : 'var(--line)',
+            }}>
+            + Advanced search
+          </button>
+          <div style={{display:'flex', alignItems:'center', gap:8, minWidth:180}}>
+            <div style={{flex:1}}>
+              <MiniSpark data={headerSpark} height={24} color="var(--accent)" />
+            </div>
+            <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, whiteSpace:'nowrap'}}>
+              <span style={{color:'var(--accent)', fontWeight:600}}>{filtered.length}</span>
+              <span className="muted"> / {inWindow.length}</span>
+            </div>
+          </div>
         </div>
 
-        {fx.loading && all.length === 0 && (
-          <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>loading…</div>
-        )}
-        {!fx.loading && all.length === 0 && !fx.error && (
-          <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
-            — ring empty · run a scan from <b>Engineering → Live Scan</b> or <b>Corpus Runner</b> —
+        {advOpen && (
+          <div style={{marginTop:12, paddingTop:12, borderTop:'1px dashed var(--line-soft)', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8}}>
+            <div className="label" style={{marginBottom:6}}>Advanced search — combine tokens with spaces</div>
+            <div style={{display:'grid', gridTemplateColumns:'repeat(2, 1fr)', gap:'2px 24px'}}>
+              <div><span style={{color:'var(--cyan)'}}>id:</span>F- <span className="muted">— match finding id prefix/substring</span></div>
+              <div><span style={{color:'var(--cyan)'}}>sev:</span>red <span className="muted">— red · warn · safe</span></div>
+              <div><span style={{color:'var(--cyan)'}}>cat:</span>PCI <span className="muted">— PCI · PII · CRED · PHI · SECRET · CLASSIFIED · OTHER</span></div>
+              <div><span style={{color:'var(--cyan)'}}>sub:</span>visa <span className="muted">— sub-category contains</span></div>
+              <div><span style={{color:'var(--cyan)'}}>source:</span>127.0.0.1 <span className="muted">— source_ip contains</span></div>
+              <div><span style={{color:'var(--cyan)'}}>req:</span>a1b2 <span className="muted">— request_id contains</span></div>
+              <div><span style={{color:'var(--cyan)'}}>conf:</span>&gt;0.9 <span className="muted">— &gt; &lt; &gt;= &lt;= = accepted</span></div>
+              <div><span style={{color:'var(--cyan)'}}>conf:</span>0.7..0.95 <span className="muted">— inclusive range</span></div>
+            </div>
+            <div className="muted" style={{marginTop:8, fontSize:11}}>
+              e.g. <span style={{color:'var(--accent)'}}>cat:PCI sev:red conf:&gt;0.85</span> — all high-confidence PCI reds
+            </div>
           </div>
         )}
-
-        {groups.map(([gname, rows], gi) => (
-          <React.Fragment key={gi}>
-            {groupBy !== 'none' && (
-              <div className="find-group">
-                <span>{gname}</span>
-                <span className="gc">{rows.length} findings</span>
-              </div>
-            )}
-            {rows.slice(0, 40).map((f, i) => (
-              <div key={f.id + i} className="find-row"
-                   onClick={() => go('stream', 'finding:' + f.id)}>
-                <span className="ts" title={f.ts}>{fmtWallClock(f.ts)}</span>
-                <span className="src">{f.source_ip || '—'}</span>
-                <span className="tx">… {f.text} …</span>
-                <span className={`chip chip--${f.severity}`} title={f.category}>{f.sub_category || f.category}</span>
-                <span className="mono" style={{fontSize:11, color:'var(--ink-faint)'}}>{f.confidence != null ? f.confidence.toFixed(2) : '—'}</span>
-                <span className="chip">{f.severity}</span>
-                <span className="arrow">›</span>
-              </div>
-            ))}
-            {rows.length > 40 && (
-              <div style={{padding:'8px 4px', fontFamily:"'JetBrains Mono', monospace", color:'var(--ink-soft)', fontSize:13}}>
-                … +{rows.length - 40} more in this group
-              </div>
-            )}
-          </React.Fragment>
-        ))}
       </div>
+
+      {/* ── Filter row ─────────────────────────────────────────── */}
+      <FilterRow
+        severity={severity} setSeverity={setSeverity}
+        category={category} setCategory={setCategory}
+        subCategory={subCategory} setSubCategory={setSubCategory}
+        source={source} setSource={setSource}
+        categories={categories}
+        groupBy={groupBy} setGroupBy={setGroupBy}
+        findings={all}
+      />
+
+      <StreamTableBig
+        groups={groups}
+        groupBy={groupBy}
+        loading={fx.loading && all.length === 0}
+        empty={!fx.loading && all.length === 0 && !fx.error}
+        onOpen={(fid) => go('stream', 'finding:' + fid)}
+      />
+
+      {groupBy === 'none' && filtered.length > 0 && (
+        <Pagination
+          page={page} setPage={setPage}
+          pageSize={pageSize} setPageSize={setPageSize}
+          total={filtered.length} totalPages={totalPages}
+        />
+      )}
+      {groupBy !== 'none' && filtered.length > 0 && (
+        <div className="muted mono" style={{textAlign:'center', padding:'8px 0', fontSize:11}}>
+          pagination disabled while grouping · set GROUP BY to none to page through
+        </div>
+      )}
     </div>
+  );
+}
+
+function Pagination({ page, setPage, pageSize, setPageSize, total, totalPages }) {
+  const first = page * pageSize + 1;
+  const last = Math.min(total, (page + 1) * pageSize);
+  const btn = (label, disabled, onClick, width) => (
+    <button
+      onClick={onClick} disabled={disabled}
+      className="btn ghost"
+      style={{
+        padding: '5px 12px', fontSize: 11,
+        opacity: disabled ? 0.4 : 1,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        minWidth: width || undefined,
+      }}>{label}</button>
+  );
+  return (
+    <div style={{
+      display:'flex', alignItems:'center', gap:12, padding:'10px 14px', marginTop:'var(--gap)',
+      background:'var(--bg-2)', border:'1px solid var(--line)', borderRadius:'var(--radius)',
+      fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+    }}>
+      <span className="mono">
+        <span style={{color:'var(--ink-bright)'}}>{first.toLocaleString()}–{last.toLocaleString()}</span>
+        {' '}<span className="muted">of {total.toLocaleString()}</span>
+      </span>
+      <span style={{flex:1}} />
+      <span className="muted">page {page + 1} / {totalPages}</span>
+      {btn('‹‹ First', page === 0, () => setPage(0))}
+      {btn('‹ Prev',  page === 0, () => setPage(p => Math.max(0, p - 1)))}
+      {btn('Next ›',  page >= totalPages - 1, () => setPage(p => Math.min(totalPages - 1, p + 1)))}
+      {btn('Last ››', page >= totalPages - 1, () => setPage(totalPages - 1))}
+      <span style={{display:'flex', alignItems:'center', gap:6}}>
+        <span className="label">PAGE SIZE</span>
+        <select
+          value={pageSize}
+          onChange={e => setPageSize(parseInt(e.target.value, 10))}
+          style={{
+            background:'var(--bg-1)', color:'var(--ink)',
+            border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+            padding:'3px 6px',
+            fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+            cursor:'pointer',
+          }}>
+          {[10, 25, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
+      </span>
+    </div>
+  );
+}
+
+// Rich HTML stream table — ID is the first column (user-requested),
+// severity tints the left edge. Row click opens the Finding Detail.
+// Columns adapted to what /v1/findings actually returns so we never
+// fabricate tenant / channel / policy-action.
+function StreamTableBig({ groups, groupBy, loading, empty, onOpen }) {
+  const cellPad = '7px 10px';
+  return (
+    <div className="box" style={{padding:0, overflow:'hidden'}}>
+      {loading && (
+        <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>loading…</div>
+      )}
+      {empty && (
+        <div className="muted" style={{padding:30, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+          — ring empty · run a scan from <b>Engineering → Live Scan</b> or <b>Corpus Runner</b> —
+        </div>
+      )}
+      {!loading && !empty && (
+        <div style={{overflow:'auto'}}>
+          <table style={{width:'100%', borderCollapse:'collapse', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5}}>
+            <thead>
+              <tr style={{borderBottom:'1px solid var(--line-strong)', background:'var(--bg-2)'}}>
+                {['ID','TIME','SEV','CATEGORY','SUB-CATEGORY','SOURCE','MATCH','REQUEST','CONF',''].map((h, i) => (
+                  <th key={i} className="label" style={{
+                    textAlign:'left', padding:cellPad,
+                    fontWeight:600, color:'var(--ink-faint)', whiteSpace:'nowrap',
+                    position:'sticky', top:0, background:'var(--bg-2)',
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map(([gname, rows], gi) => (
+                <React.Fragment key={gi}>
+                  {groupBy !== 'none' && (
+                    <tr>
+                      <td colSpan={10} style={{
+                        padding:'6px 12px',
+                        background:'var(--bg-3)',
+                        borderTop:'1px solid var(--line-strong)',
+                        borderBottom:'1px solid var(--line-strong)',
+                        fontWeight:700, color:'var(--ink-bright)', fontSize:10.5,
+                        letterSpacing:'0.14em', textTransform:'uppercase',
+                      }}>
+                        {gname || '(none)'} <span className="muted" style={{fontWeight:400, marginLeft:8, fontSize:10}}>{rows.length} findings</span>
+                      </td>
+                    </tr>
+                  )}
+                  {rows.map((f, i) => <StreamRow key={(f.id || '') + '-' + i} f={f} onOpen={onOpen} cellPad={cellPad} />)}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StreamRow({ f, onOpen, cellPad }) {
+  const gid = catGroup(f.category);
+  const sevShade = f.severity === 'red' ? 'var(--red)' : f.severity === 'warn' ? 'var(--amber)' : 'var(--accent-dim)';
+  const shortReq = (f.request_id || '').split('-')[0] || '—';
+  return (
+    <tr
+      onClick={() => onOpen && onOpen(f.id)}
+      style={{cursor:'pointer', borderBottom:'1px solid var(--line-soft)', boxShadow:'inset 3px 0 0 ' + sevShade}}
+      onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-3)'}
+      onMouseLeave={(e) => e.currentTarget.style.background = ''}
+    >
+      <td style={{padding:cellPad, color:'var(--ink-dim)', whiteSpace:'nowrap'}}>{(f.id || '').slice(-8) || '—'}</td>
+      <td style={{padding:cellPad, color:'var(--ink-soft)', whiteSpace:'nowrap'}} title={f.ts}>{fmtWallClock(f.ts)}</td>
+      <td style={{padding:cellPad}}>
+        <span className={`chip chip--${f.severity}`} style={{fontSize:9, padding:'2px 7px'}}>{f.severity}</span>
+      </td>
+      <td style={{padding:cellPad}}>
+        <span style={{
+          fontSize:10, padding:'2px 6px',
+          border:'1px solid ' + CAT_GROUP_COLOR[gid],
+          color: CAT_GROUP_COLOR[gid],
+          borderRadius:'var(--radius)',
+          letterSpacing:'0.06em',
+          fontWeight:600,
+        }}>{gid}</span>
+      </td>
+      <td style={{padding:cellPad, color:'var(--ink)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:200}} title={f.category + ' / ' + (f.sub_category || '')}>
+        {f.sub_category || '—'}
+      </td>
+      <td style={{padding:cellPad, color:'var(--ink-soft)', whiteSpace:'nowrap'}}>{f.source_ip || '—'}</td>
+      <td style={{padding:cellPad, color:'var(--ink-bright)', maxWidth:360, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={f.text}>
+        {f.text}
+      </td>
+      <td style={{padding:cellPad, color:'var(--ink-faint)', whiteSpace:'nowrap', fontSize:10.5}} title={f.request_id}>{shortReq}</td>
+      <td style={{padding:cellPad, color:'var(--ink)', textAlign:'right', whiteSpace:'nowrap'}}>
+        {f.confidence != null ? f.confidence.toFixed(2) : '—'}
+      </td>
+      <td style={{padding:cellPad, color:'var(--accent)', textAlign:'right', fontWeight:700}}>›</td>
+    </tr>
   );
 }
 
