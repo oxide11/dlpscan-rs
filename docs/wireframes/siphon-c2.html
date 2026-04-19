@@ -7760,6 +7760,134 @@ function NewPatternModal({ open, category, onClose, onSaved }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────
+// PendingChangesBanner — diffs the localStorage-staged overrides
+// (today: custom categories from the NewCategoryModal + NewPatternModal
+// flow) against /v1/overrides/current, and offers an Apply button
+// that POSTs the full document to /v1/overrides/apply.
+//
+// Phase 4b keeps scope tight: only custom_categories are staged in
+// the UI today, so disabled_patterns + pattern_overrides are read
+// from /current and passed through unchanged. Phase 4c will detect
+// the pod roll so the banner dismisses itself when the scanner
+// actually picks up the new rules.
+// ─────────────────────────────────────────────────────────────────
+
+// Strip client-only fields (id, createdAt, denormalised category) so
+// what we serialise matches the Rust PatternOverrides schema.
+function __siphonCustomCatsForWire(staged) {
+  return (staged || []).map(c => ({
+    name: c.name,
+    group: c.group || 'OTHER',
+    description: c.description || '',
+    patterns: (c.patterns || []).map(p => ({
+      sub_category: p.sub_category,
+      regex: p.regex,
+      specificity: typeof p.specificity === 'number' ? p.specificity : 0.5,
+      context_required: !!p.context_required,
+      case_insensitive: p.case_insensitive !== false,
+      context_keywords: Array.isArray(p.context_keywords) ? p.context_keywords : [],
+      proximity_chars: typeof p.proximity_chars === 'number' ? p.proximity_chars : 50,
+    })),
+  }));
+}
+
+function __siphonCatsEqual(a, b) {
+  // Simple structural compare — JSON.stringify on the wire-shape.
+  // Orderings matter; that's fine because both sides produce the
+  // same ordering (source-of-truth = this fn).
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function PendingChangesBanner({ customCategories }) {
+  const current = window.useSiphonApi('/v1/overrides/current');
+  const [apply, setApply] = React.useState({ loading: false, error: null, success: null });
+
+  const currentOverrides = (current.data && current.data.overrides) || {};
+  const stagedWire = __siphonCustomCatsForWire(customCategories);
+  const currentWire = __siphonCustomCatsForWire(currentOverrides.custom_categories);
+  const dirty = !__siphonCatsEqual(stagedWire, currentWire);
+
+  // Show nothing when nothing's staged and nothing was just applied.
+  if (!dirty && !apply.success && !apply.error) return null;
+
+  const doApply = async () => {
+    setApply({ loading: true, error: null, success: null });
+    const doc = {
+      version: 0,
+      disabled_patterns: currentOverrides.disabled_patterns || [],
+      pattern_overrides: currentOverrides.pattern_overrides || {},
+      custom_categories: stagedWire,
+    };
+    try {
+      const url = window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/overrides/apply';
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(doc),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      setApply({ loading: false, error: null, success: j });
+      current.refetch();
+    } catch (e) {
+      setApply({ loading: false, error: String(e.message || e), success: null });
+    }
+  };
+
+  const catCount = stagedWire.length;
+  const patCount = stagedWire.reduce((a, c) => a + (c.patterns || []).length, 0);
+
+  // Recent-apply success banner — stays until dirty flips back to
+  // false (which happens automatically after /v1/overrides/current
+  // reflects the written state).
+  if (apply.success && !dirty) {
+    return (
+      <div className="note" style={{
+        borderColor:'var(--safe)', background:'var(--accent-wash)', color:'var(--ink)',
+        marginBottom:'var(--gap)', fontSize:12.5, lineHeight:1.6,
+      }}>
+        <b>Applied.</b> Overrides written to <span className="mono">{apply.success.written_path}</span>
+        {apply.success.backup_path && <> · previous file backed up to <span className="mono">{apply.success.backup_path}</span></>}
+        . <b>Restart required</b> — detection pods must be restarted to pick up the new rules
+        (Phase 6 will auto-roll). Refresh this view after the roll and the /current state will catch up.
+      </div>
+    );
+  }
+
+  return (
+    <div className="note" style={{
+      borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)',
+      marginBottom:'var(--gap)', fontSize:12.5, lineHeight:1.6,
+    }}>
+      <div style={{display:'flex', alignItems:'center', gap:12, flexWrap:'wrap'}}>
+        <div style={{flex:1, minWidth:240}}>
+          {dirty ? (
+            <>
+              <b>Pending changes</b> · {catCount} custom categor{catCount === 1 ? 'y' : 'ies'} · {patCount} pattern{patCount === 1 ? '' : 's'} staged locally.
+              Nothing has been written to <span className="mono">SIPHON_OVERRIDES_PATH</span> yet.
+            </>
+          ) : (
+            <><b>Staged state matches live overrides.</b> Nothing to apply.</>
+          )}
+        </div>
+        <button
+          className="btn primary"
+          onClick={doApply}
+          disabled={!dirty || apply.loading}
+          title={dirty ? 'Write staged overrides to SIPHON_OVERRIDES_PATH' : 'no pending changes'}>
+          {apply.loading ? 'Applying…' : '⇪ Apply'}
+        </button>
+      </div>
+      {apply.error && (
+        <div style={{marginTop:8, color:'var(--red)', fontSize:12}}>
+          <b>Apply failed:</b> {apply.error} · is the API key set / are you hitting the right pod?
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Patterns() {
   const [selected, setSelected] = React.useState(null);
   const [filter, setFilter] = React.useState('');
@@ -7910,6 +8038,8 @@ function Patterns() {
           <b>Error:</b> {cats.error} · is siphon-api running at {window.SIPHON_API_URL()}?
         </div>
       )}
+
+      <PendingChangesBanner customCategories={customCategories} />
 
       <div className="grid" style={{gridTemplateColumns:'260px 1fr', gap:'var(--gap)'}}>
         <div className="box" style={{padding:10, maxHeight:680, overflowY:'auto'}}>
