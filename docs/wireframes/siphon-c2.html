@@ -4530,6 +4530,18 @@ function DashV1_Ops_Local() {
 // colour (SIEM flag, tokenize vault, block/drop).
 function TopologyStrip({ bySource, metrics, findings, integrations, live }) {
   const m = metrics || {};
+  // Pod identity for the INSPECT label — pulled from /health so the
+  // topology updates when an analyst points the C2 at a different
+  // siphon-api or after a Phase 6 roll. Falls back to fixture-y
+  // labels when /health is unreachable so the SVG never goes blank.
+  const hx = window.useSiphonApi('/health');
+  const h = (hx.data) || {};
+  const podLabel    = h.pod_type || 'INSPECT';
+  const podVersion  = h.version  ? `v${h.version}` : '';
+  const podShortId  = h.pod_id   ? h.pod_id.slice(0, 8) : '';
+  const podTitle    = h.pod_id
+    ? `${h.pod_type} · v${h.version} · core v${h.core_version}\npod_id ${h.pod_id}\nstarted ${h.started_at} (uptime ${h.uptime_secs}s)`
+    : 'pod identity unavailable — /health did not respond';
 
   // Build a fixed 4-slot input list — pad with placeholders so the
   // layout stays symmetrical even when only one caller is active.
@@ -4633,19 +4645,31 @@ function TopologyStrip({ bySource, metrics, findings, integrations, live }) {
           );
         })}
 
-        {/* INSPECT node */}
+        {/* INSPECT node — labelled by the live /health pod identity
+            so the topology adapts to whichever pod the C2 is pointed
+            at. Hover the box for full pod_id + uptime. */}
         <g>
+          <title>{podTitle}</title>
           <rect x={INSPECT_X} y={INSPECT_Y} width={INSPECT_W} height={INSPECT_H}
                 rx="4" fill="var(--bg-2)"
                 stroke={live ? 'var(--accent)' : 'var(--line-strong)'} strokeWidth="1.4" />
-          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 22}
-                fontFamily="Space Grotesk" fontSize="13" fontWeight="700"
-                fill={live ? 'var(--accent)' : 'var(--ink-soft)'} textAnchor="middle" letterSpacing="1.5">INSPECT</text>
-          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 38}
+          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 18}
+                fontFamily="Space Grotesk" fontSize="12" fontWeight="700"
+                fill={live ? 'var(--accent)' : 'var(--ink-soft)'} textAnchor="middle" letterSpacing="1.2">
+            {podLabel}
+          </text>
+          {podVersion && (
+            <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 30}
+                  fontFamily="JetBrains Mono" fontSize="8.5" fill="var(--ink-soft)" textAnchor="middle">
+              {podVersion}
+              {podShortId ? <tspan fill="var(--ink-faint)"> · {podShortId}</tspan> : null}
+            </text>
+          )}
+          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 44}
                 fontFamily="JetBrains Mono" fontSize="10" fill="var(--ink)" textAnchor="middle">
             {scansPerSec > 0 ? scansPerSec.toFixed(2) + '/s' : '0/s'}
           </text>
-          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 50}
+          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 54}
                 fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-soft)" textAnchor="middle">
             {m.patterns_loaded != null ? m.patterns_loaded + ' patterns' : 'loading…'}
           </text>
