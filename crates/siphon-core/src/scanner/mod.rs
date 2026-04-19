@@ -146,6 +146,14 @@ pub struct ScanConfig {
     /// fields (specificity, context_required) are handled separately
     /// via `pattern_field_overrides`. Phase 3d.2.
     pub pattern_regex_overrides: Option<Arc<HashMap<(String, String), regex::Regex>>>,
+    /// Active match-list bindings (Phase 4.7c.2). Each entry is
+    /// `(action, CompiledList)`. Scanner consults these at the end
+    /// of the pipeline: `allow` drops the finding; `block` / `mask` /
+    /// `tag` annotate the finding's metadata with
+    /// `list_action=<action>` + `list_matched=<list_id>`. Precedence
+    /// (block > allow > mask > tag) is applied per-finding when
+    /// multiple lists match the same text.
+    pub list_bindings: Option<Arc<Vec<(String, crate::overrides::CompiledList)>>>,
 }
 
 /// Entropy scanning mode.
@@ -181,8 +189,47 @@ impl Default for ScanConfig {
             pattern_field_overrides: None,
             runtime_patterns: None,
             pattern_regex_overrides: None,
+            list_bindings: None,
         }
     }
+}
+
+// ─── List binding verdict (Phase 4.7c.2) ─────────────────────────
+// Walk every active binding, collect actions for lists that match
+// the finding text, then apply precedence. Returns None when no list
+// binding matched (finding passes through unchanged).
+//
+// Precedence: block > allow > mask > tag. Rationale:
+//   · block ALWAYS wins — analyst-declared hard stop on known-bad.
+//   · allow beats mask/tag — 'this is a known exception, skip all
+//     further handling' is the point of allow-lists.
+//   · mask beats tag — redaction is more consequential than audit
+//     annotation.
+fn resolve_list_verdict(
+    text: &str,
+    bindings: &[(String, crate::overrides::CompiledList)],
+) -> Option<(&'static str, String)> {
+    let mut block: Option<String> = None;
+    let mut allow: Option<String> = None;
+    let mut mask: Option<String> = None;
+    let mut tag: Option<String> = None;
+    for (action, list) in bindings {
+        if !list.matches(text) {
+            continue;
+        }
+        match action.as_str() {
+            "block" if block.is_none() => block = Some(list.id.clone()),
+            "allow" if allow.is_none() => allow = Some(list.id.clone()),
+            "mask" if mask.is_none() => mask = Some(list.id.clone()),
+            "tag" if tag.is_none() => tag = Some(list.id.clone()),
+            _ => {}
+        }
+    }
+    if let Some(id) = block { return Some(("block", id)); }
+    if let Some(id) = allow { return Some(("allow", id)); }
+    if let Some(id) = mask  { return Some(("mask",  id)); }
+    if let Some(id) = tag   { return Some(("tag",   id)); }
+    None
 }
 
 // ─── PatternOverrides field-level helpers ─────────────────────────
@@ -1098,6 +1145,30 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
         }
     }
 
+    // PatternOverrides list bindings (Phase 4.7c.2): consult each
+    // active binding against the finding's matched text. `allow`
+    // drops the match (exception path); other actions annotate
+    // metadata so downstream routers/forwarders can honour them.
+    // Precedence (block > allow > mask > tag) is applied per-match.
+    if let Some(bindings) = config.list_bindings.as_ref() {
+        if !bindings.is_empty() {
+            matches.retain_mut(|m| {
+                let Some((action, list_id)) = resolve_list_verdict(&m.text, bindings) else {
+                    return true;
+                };
+                if action == "allow" {
+                    // Drop — analyst-declared exception.
+                    return false;
+                }
+                // Annotate for downstream consumers. metadata is
+                // HashMap<String,String> — trivial inserts.
+                m.metadata.insert("list_action".to_string(), action.to_string());
+                m.metadata.insert("list_matched".to_string(), list_id);
+                true
+            });
+        }
+    }
+
     // PatternOverrides: drop any match whose (category, sub_category)
     // is on the disabled list. Filter at the very end so every other
     // pipeline stage stays oblivious to overrides — overrides are a
@@ -1658,6 +1729,90 @@ mod tests {
             .collect();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].has_context);
+    }
+
+    #[test]
+    fn list_binding_allow_drops_the_finding() {
+        use crate::overrides::{CompiledList, ListKind, MatchList};
+
+        let allow_list = MatchList {
+            id: "ml_partners".into(),
+            name: "Partners".into(),
+            kind: ListKind::Domain,
+            entries: vec!["example.com".into()],
+            ..Default::default()
+        };
+        let compiled = CompiledList::from_list(&allow_list);
+        let bindings = Arc::new(vec![("allow".to_string(), compiled)]);
+        let cfg = ScanConfig {
+            list_bindings: Some(bindings),
+            ..Default::default()
+        };
+        // Email with a partner domain → scanner emits the candidate,
+        // list binding matches on the finding's text (full email),
+        // allow verdict → drop.
+        let res = scan_text_with_config("Contact test@example.com for info", &cfg).unwrap();
+        assert!(
+            !res.iter().any(|m| m.sub_category == "Email Address"),
+            "allow-listed partner-domain email should be dropped"
+        );
+    }
+
+    #[test]
+    fn list_binding_block_tags_metadata() {
+        use crate::overrides::{CompiledList, ListKind, MatchList};
+
+        let block_list = MatchList {
+            id: "ml_bad".into(),
+            name: "Bad actors".into(),
+            kind: ListKind::Email,
+            entries: vec!["bad@example.com".into()],
+            ..Default::default()
+        };
+        let compiled = CompiledList::from_list(&block_list);
+        let bindings = Arc::new(vec![("block".to_string(), compiled)]);
+        let cfg = ScanConfig {
+            list_bindings: Some(bindings),
+            ..Default::default()
+        };
+        let res = scan_text_with_config("Email: bad@example.com", &cfg).unwrap();
+        let email = res
+            .iter()
+            .find(|m| m.sub_category == "Email Address")
+            .expect("email fires");
+        assert_eq!(email.metadata.get("list_action"), Some(&"block".to_string()));
+        assert_eq!(email.metadata.get("list_matched"), Some(&"ml_bad".to_string()));
+    }
+
+    #[test]
+    fn list_binding_precedence_block_beats_allow() {
+        use crate::overrides::{CompiledList, ListKind, MatchList};
+
+        let allow_list = CompiledList::from_list(&MatchList {
+            id: "ml_partners".into(), kind: ListKind::Domain,
+            entries: vec!["example.com".into()],
+            ..Default::default()
+        });
+        let block_list = CompiledList::from_list(&MatchList {
+            id: "ml_leaked".into(), kind: ListKind::Email,
+            entries: vec!["known@example.com".into()],
+            ..Default::default()
+        });
+        let bindings = Arc::new(vec![
+            ("allow".to_string(), allow_list),
+            ("block".to_string(), block_list),
+        ]);
+        let cfg = ScanConfig {
+            list_bindings: Some(bindings),
+            ..Default::default()
+        };
+        // Email matches BOTH lists. Precedence says block wins.
+        let res = scan_text_with_config("contact known@example.com", &cfg).unwrap();
+        let email = res
+            .iter()
+            .find(|m| m.sub_category == "Email Address")
+            .expect("email survives despite allow match because block wins");
+        assert_eq!(email.metadata.get("list_action"), Some(&"block".to_string()));
     }
 
     #[test]

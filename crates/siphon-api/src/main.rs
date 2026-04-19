@@ -47,7 +47,7 @@ use siphon_core::audit::{
 use siphon_core::findings_ring::{
     filter_findings, severity_for, FindingRecord, FindingsRing,
 };
-use siphon_core::overrides::{PatternOverride, PatternOverrides, Regex, RuntimePattern};
+use siphon_core::overrides::{CompiledList, PatternOverride, PatternOverrides, Regex, RuntimePattern};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
@@ -87,6 +87,11 @@ struct AppState {
     /// Compiled per-pattern regex overrides for compile-time
     /// patterns. Phase 3d.2.
     pattern_regex_overrides: Arc<HashMap<(String, String), Regex>>,
+    /// Scanner-active list bindings resolved from
+    /// PatternOverrides::active_list_bindings at startup
+    /// (Phase 4.7c.3). Consulted at emit time: allow drops, block /
+    /// mask / tag annotate metadata.
+    list_bindings: Arc<Vec<(String, CompiledList)>>,
     /// Stable identifier for this pod instance. Generated once at
     /// startup; surfaced via /health so the C2 can deduplicate
     /// replicas of the same Service.
@@ -547,6 +552,7 @@ async fn scan(
         pattern_field_overrides: Some(state.pattern_field_overrides.clone()),
         runtime_patterns: Some(state.runtime_patterns.clone()),
         pattern_regex_overrides: Some(state.pattern_regex_overrides.clone()),
+        list_bindings: Some(state.list_bindings.clone()),
         ..Default::default()
     };
 
@@ -1757,6 +1763,8 @@ async fn main() {
     let runtime_pattern_count = runtime_patterns.len();
     let pattern_regex_overrides = Arc::new(overrides.compile_pattern_regex_overrides());
     let regex_override_count = pattern_regex_overrides.len();
+    let list_bindings = Arc::new(overrides.compile_active_list_bindings());
+    let list_binding_count = list_bindings.len();
     tracing::info!(
         path = %overrides_path,
         version = overrides_summary.version,
@@ -1765,6 +1773,7 @@ async fn main() {
         custom_categories = overrides_summary.custom_categories,
         runtime_patterns_compiled = runtime_pattern_count,
         regex_swaps_compiled = regex_override_count,
+        list_bindings_active = list_binding_count,
         "PatternOverrides loaded"
     );
 
@@ -1788,6 +1797,7 @@ async fn main() {
         pattern_field_overrides,
         runtime_patterns,
         pattern_regex_overrides,
+        list_bindings,
         pod_id: pod_id.clone(),
         started_at_iso,
         started_at,

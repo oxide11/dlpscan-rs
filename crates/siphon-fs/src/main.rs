@@ -30,7 +30,7 @@ use siphon_core::audit::iso8601_now;
 use siphon_core::findings_ring::{
     filter_findings, severity_for, FindingRecord, FindingsRing,
 };
-use siphon_core::overrides::{PatternOverride, PatternOverrides, Regex, RuntimePattern};
+use siphon_core::overrides::{CompiledList, PatternOverride, PatternOverrides, Regex, RuntimePattern};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -67,6 +67,11 @@ struct AppState {
     /// patterns. Scanner swaps the static regex for an entry from
     /// this map when present (Phase 3d.2).
     pattern_regex_overrides: Arc<HashMap<(String, String), Regex>>,
+    /// Scanner-active list bindings resolved from
+    /// PatternOverrides::active_list_bindings at startup (Phase 4.7c.3).
+    /// Each (action, CompiledList) tuple is consulted at emit time;
+    /// allow drops, others annotate metadata.
+    list_bindings: Arc<Vec<(String, CompiledList)>>,
     /// Stable identifier for this pod instance (uuidv4, generated at
     /// startup). Returned by /health so the C2 can deduplicate
     /// replicas of the same Service.
@@ -248,6 +253,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
         pattern_field_overrides: Some(state.pattern_field_overrides.clone()),
         runtime_patterns: Some(state.runtime_patterns.clone()),
         pattern_regex_overrides: Some(state.pattern_regex_overrides.clone()),
+        list_bindings: Some(state.list_bindings.clone()),
         ..Default::default()
     };
     let matches = match scan_text_with_config(&extract.text, &config) {
@@ -416,6 +422,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime_pattern_count = runtime_patterns.len();
     let pattern_regex_overrides = Arc::new(overrides.compile_pattern_regex_overrides());
     let regex_override_count = pattern_regex_overrides.len();
+    let list_bindings = Arc::new(overrides.compile_active_list_bindings());
+    let list_binding_count = list_bindings.len();
 
     let pod_id = Arc::new(uuid::Uuid::new_v4().to_string());
     let started_at = Instant::now();
@@ -427,6 +435,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pattern_field_overrides,
         runtime_patterns,
         pattern_regex_overrides,
+        list_bindings,
         pod_id: pod_id.clone(),
         started_at_iso,
         started_at,
@@ -444,6 +453,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         overrides_custom_cats = summary.custom_categories,
         overrides_runtime_patterns_compiled = runtime_pattern_count,
         overrides_regex_swaps_compiled = regex_override_count,
+        overrides_list_bindings_active = list_binding_count,
         bind = %addr,
         "siphon-fs starting"
     );
