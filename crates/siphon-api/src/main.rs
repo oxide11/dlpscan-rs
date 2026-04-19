@@ -459,6 +459,11 @@ struct ScanOptions {
     require_context: Option<bool>,
     baseline_only: Option<bool>,
     deduplicate: Option<bool>,
+    /// When true, the response includes a `trace` array — a per-stage
+    /// log of every candidate that touched the pipeline (regex hits,
+    /// validation results, context checks, confidence decisions, emit
+    /// events). Used by the admin console's Live Scan trace view.
+    trace: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -468,6 +473,8 @@ struct ScanResponse {
     findings: Vec<Finding>,
     finding_count: usize,
     scan_duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trace: Option<Vec<siphon_core::scanner::StageEvent>>,
 }
 
 #[derive(Serialize)]
@@ -529,12 +536,20 @@ async fn scan(
         ));
     }
 
+    let trace_requested = req.options.trace.unwrap_or(false);
+    let trace_sink: Option<Arc<Mutex<Vec<siphon_core::scanner::StageEvent>>>> = if trace_requested {
+        Some(Arc::new(Mutex::new(Vec::new())))
+    } else {
+        None
+    };
+
     let config = ScanConfig {
         min_confidence: req.options.min_confidence.unwrap_or(0.0),
         categories: req.options.categories.map(|c| c.into_iter().collect::<HashSet<_>>()),
         require_context: req.options.require_context.unwrap_or(false),
         baseline_only: req.options.baseline_only.unwrap_or(false),
         deduplicate: req.options.deduplicate.unwrap_or(true),
+        trace: trace_sink.clone(),
         ..Default::default()
     };
 
@@ -635,12 +650,19 @@ async fn scan(
         );
     }
 
+    // Drain the trace sink (if tracing was requested). Cloning out of
+    // the Arc<Mutex> keeps the response owned.
+    let trace = trace_sink.as_ref().and_then(|s| {
+        s.lock().ok().map(|g| g.clone())
+    });
+
     Ok(Json(ScanResponse {
         source_pod: "siphon-api",
         request_id,
         findings,
         finding_count: count,
         scan_duration_ms: duration_ms as u64,
+        trace,
     }))
 }
 

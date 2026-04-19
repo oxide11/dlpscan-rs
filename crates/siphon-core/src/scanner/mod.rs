@@ -6,8 +6,9 @@
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::context;
@@ -16,6 +17,70 @@ use crate::normalize;
 use crate::patterns::PATTERNS;
 use crate::scoring::{compute_confidence, deduplicate_overlapping};
 use crate::validation::validate_text_input;
+
+// ---------------------------------------------------------------------------
+// StageEvent — optional per-candidate trace emitted by the scanner when a
+// trace sink is attached to ScanConfig. Each event describes one transition
+// in the pipeline (regex → validation → context → confidence → dedup →
+// emit). Events are keyed by (category, sub_category, span) so the UI can
+// regroup them into a per-candidate timeline.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StageEvent {
+    /// Which stage this event is about.
+    /// One of: "regex", "validation", "context", "ctx_required",
+    /// "require_context", "min_confidence", "emit", "alt_regex",
+    /// "alt_validation", "alt_ctx_required", "alt_confidence", "alt_emit".
+    pub stage: String,
+    /// "pass" | "drop" | "emit".
+    pub outcome: String,
+    pub category: String,
+    pub sub_category: String,
+    pub span: (usize, usize),
+    pub text: String,
+    /// Present when the stage computed or checked a confidence value.
+    pub confidence: Option<f64>,
+    /// Human-readable explanation of why a candidate was dropped.
+    pub reason: Option<String>,
+    /// Pass number: "primary" or "alt". Useful when the UI wants to
+    /// group events by pipeline phase.
+    pub pass: String,
+}
+
+/// Thread-safe sink for stage events. `None` means tracing is disabled —
+/// the scanner skips emission entirely so there's no cost to callers that
+/// don't opt in.
+pub type TraceSink = Option<Arc<Mutex<Vec<StageEvent>>>>;
+
+fn emit_trace(
+    sink: &TraceSink,
+    pass: &str,
+    stage: &str,
+    outcome: &str,
+    cat: &str,
+    sub: &str,
+    span: (usize, usize),
+    text: &str,
+    confidence: Option<f64>,
+    reason: Option<&str>,
+) {
+    if let Some(s) = sink {
+        if let Ok(mut g) = s.lock() {
+            g.push(StageEvent {
+                stage: stage.to_string(),
+                outcome: outcome.to_string(),
+                category: cat.to_string(),
+                sub_category: sub.to_string(),
+                span,
+                text: text.to_string(),
+                confidence,
+                reason: reason.map(|s| s.to_string()),
+                pass: pass.to_string(),
+            });
+        }
+    }
+}
 
 /// Maximum number of matches returned per scan.
 pub const MAX_MATCHES: usize = 50_000;
@@ -46,6 +111,12 @@ pub struct ScanConfig {
     pub edm: Option<Arc<crate::edm::ExactDataMatcher>>,
     /// Optional LSH (Locality-Sensitive Hashing) vault for document similarity.
     pub lsh: Option<Arc<crate::lsh::DocumentVault>>,
+    /// Optional per-pipeline-stage trace sink. When `Some`, the scanner
+    /// records a [`StageEvent`] every time a candidate passes through
+    /// or is dropped by a stage (regex, validation, context, confidence,
+    /// emit). Used by the admin console's FP Troubleshooter and Live
+    /// Scan trace view. `None` (default) disables tracing entirely.
+    pub trace: TraceSink,
 }
 
 /// Entropy scanning mode.
@@ -76,6 +147,7 @@ impl Default for ScanConfig {
             entropy_scan: EntropyMode::Off,
             edm: None,
             lsh: None,
+            trace: None,
         }
     }
 }
@@ -453,12 +525,30 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 let norm_start = mat.start();
                 let norm_end = mat.end();
                 let matched_text = mat.as_str();
+                let cand_span = (norm_start, norm_end);
+
+                // Stage 1 — regex hit.
+                emit_trace(
+                    &config.trace, "primary", "regex", "pass",
+                    pat.category, pat.sub_category, cand_span, matched_text,
+                    None, None,
+                );
 
                 // Structural validation (Luhn, SWIFT, CUSIP, SEDOL, TFN, SSN)
                 if !crate::validation::validate_match(pat.category, pat.sub_category, matched_text)
                 {
+                    emit_trace(
+                        &config.trace, "primary", "validation", "drop",
+                        pat.category, pat.sub_category, cand_span, matched_text,
+                        None, Some("structural validation failed (Luhn / checksum / format)"),
+                    );
                     continue;
                 }
+                emit_trace(
+                    &config.trace, "primary", "validation", "pass",
+                    pat.category, pat.sub_category, cand_span, matched_text,
+                    None, None,
+                );
 
                 // Context checking
                 let has_context = context::check_context(
@@ -473,14 +563,36 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 let ctx_required = is_context_required(pat.sub_category);
 
                 if ctx_required && !has_context {
+                    emit_trace(
+                        &config.trace, "primary", "ctx_required", "drop",
+                        pat.category, pat.sub_category, cand_span, matched_text,
+                        None, Some("pattern requires a context keyword nearby; none found"),
+                    );
                     continue;
                 }
                 if config.require_context && !has_context {
+                    emit_trace(
+                        &config.trace, "primary", "require_context", "drop",
+                        pat.category, pat.sub_category, cand_span, matched_text,
+                        None, Some("caller set require_context=true and no context keyword was found"),
+                    );
                     continue;
                 }
+                emit_trace(
+                    &config.trace, "primary", "context", "pass",
+                    pat.category, pat.sub_category, cand_span, matched_text,
+                    None,
+                    Some(if has_context { "context keyword matched" } else { "no context required" }),
+                );
 
                 let confidence = compute_confidence(pat.sub_category, has_context, ctx_required);
                 if confidence < config.min_confidence {
+                    emit_trace(
+                        &config.trace, "primary", "min_confidence", "drop",
+                        pat.category, pat.sub_category, cand_span, matched_text,
+                        Some(confidence),
+                        Some("below caller min_confidence threshold"),
+                    );
                     continue;
                 }
 
@@ -551,6 +663,11 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     }
                 }
 
+                emit_trace(
+                    &config.trace, "primary", "emit", "emit",
+                    pat.category, pat.sub_category, cand_span, matched_text,
+                    Some(m.confidence), Some("match emitted to primary result set"),
+                );
                 local_matches.push(m);
             }
 
@@ -627,17 +744,40 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
 
                 for mat in cp.regex.find_iter(&alt_norm) {
                     let matched_text = mat.as_str();
+                    let alt_span = (mat.start(), mat.end());
+
+                    emit_trace(
+                        &config.trace, "alt", "alt_regex", "pass",
+                        cp.def.category, cp.def.sub_category, alt_span, matched_text,
+                        None, Some("regex fired against an alternative decoding (base32/64 / ROT13 / reversed)"),
+                    );
+
                     if !crate::validation::validate_match(
                         cp.def.category,
                         cp.def.sub_category,
                         matched_text,
                     ) {
+                        emit_trace(
+                            &config.trace, "alt", "alt_validation", "drop",
+                            cp.def.category, cp.def.sub_category, alt_span, matched_text,
+                            None, Some("structural validation failed on alt decoding"),
+                        );
                         continue;
                     }
                     let confidence = compute_confidence(cp.def.sub_category, false, false);
                     if confidence < config.min_confidence {
+                        emit_trace(
+                            &config.trace, "alt", "alt_confidence", "drop",
+                            cp.def.category, cp.def.sub_category, alt_span, matched_text,
+                            Some(confidence), Some("below caller min_confidence threshold"),
+                        );
                         continue;
                     }
+                    emit_trace(
+                        &config.trace, "alt", "alt_emit", "emit",
+                        cp.def.category, cp.def.sub_category, alt_span, matched_text,
+                        Some(confidence * 0.9), Some("alt decoding match emitted (confidence multiplied by 0.9)"),
+                    );
                     matches.push(Match::new(
                         matched_text.to_string(),
                         cp.def.category.to_string(),

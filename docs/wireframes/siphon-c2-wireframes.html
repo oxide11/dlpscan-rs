@@ -2213,6 +2213,7 @@ function Topbar({ tweaks, setTweak }) {
         <span className="c2">· C2</span>
       </div>
       <span className="env">PROD · us-east</span>
+      <DeploymentChip />
       <span className="spacer" />
       <button className="tb-theme" onClick={() => {
         const order = ['phosphor','amber','ice','light'];
@@ -2225,6 +2226,40 @@ function Topbar({ tweaks, setTweak }) {
       <span className="tb-item">🔔 3</span>
       <span className="tb-user">R. Solanki · admin</span>
     </div>
+  );
+}
+
+// Always-visible mode indicator + one-click toggle. Sits in the topbar
+// so the user can instantly see whether the dashboard is pulling from
+// the local siphon-api or rendering cluster-mode fixtures.
+function DeploymentChip() {
+  const mode = window.useDeploymentMode();
+  const toggle = () => {
+    const next = mode === 'local' ? 'cluster' : 'local';
+    try { localStorage.setItem('c2:deployment', next); } catch {}
+  };
+  const isLocal = mode === 'local';
+  return (
+    <span
+      onClick={toggle}
+      title={isLocal
+        ? 'Local Only — dashboard is live from siphon-api. Click to switch to Cluster-mode preview.'
+        : 'Cluster-mode preview — dashboard is showing design fixtures. Click to switch to Local Only (live data).'}
+      style={{
+        cursor: 'pointer',
+        padding: '2px 8px',
+        fontSize: 10,
+        fontFamily: "'JetBrains Mono', monospace",
+        letterSpacing: '0.12em',
+        fontWeight: 700,
+        textTransform: 'uppercase',
+        border: '1px solid ' + (isLocal ? 'var(--accent)' : 'var(--amber)'),
+        color: isLocal ? 'var(--accent)' : 'var(--amber)',
+        background: isLocal ? 'var(--accent-wash)' : 'var(--amber-wash)',
+        borderRadius: 'var(--radius)',
+      }}>
+      {isLocal ? 'MODE · LOCAL' : 'MODE · CLUSTER'}
+    </span>
   );
 }
 
@@ -8279,6 +8314,7 @@ function LiveScan() {
   const [minConf, setMinConf] = React.useState(0);
   const [requireCtx, setRequireCtx] = React.useState(false);
   const [dedupe, setDedupe] = React.useState(true);
+  const [traceOn, setTraceOn] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [health, setHealth] = React.useState('unknown');
   const [result, setResult] = React.useState(null);
@@ -8310,6 +8346,7 @@ function LiveScan() {
         min_confidence: minConf || undefined,
         require_context: requireCtx || undefined,
         deduplicate:     dedupe || undefined,
+        trace:           traceOn || undefined,
       },
     };
     try {
@@ -8392,6 +8429,11 @@ function LiveScan() {
           <label style={{display:'inline-flex', alignItems:'center', gap:6}}>
             <input type="checkbox" checked={dedupe} onChange={e => setDedupe(e.target.checked)} />
             <span className="label">deduplicate</span>
+          </label>
+          <label style={{display:'inline-flex', alignItems:'center', gap:6}}
+                 title="when on, the server records every candidate's trip through the pipeline so you can see where a detection was accepted or dropped">
+            <input type="checkbox" checked={traceOn} onChange={e => setTraceOn(e.target.checked)} />
+            <span className="label" style={{color: traceOn ? 'var(--accent)' : undefined}}>trace pipeline</span>
           </label>
           <label style={{display:'inline-flex', alignItems:'center', gap:6}}>
             <span className="label">min-conf</span>
@@ -8481,6 +8523,177 @@ function LiveScan() {
           </>
         )}
       </div>
+
+      {result && result.trace && <TracePanel trace={result.trace} />}
+    </div>
+  );
+}
+
+// Pipeline trace panel — groups raw StageEvents by (category · sub_category
+// · span) so each would-be match becomes one row, with a horizontal strip
+// showing which stages it passed and where it got dropped. The order of
+// stages mirrors scan_text_with_config: regex → validation → context →
+// min_confidence → emit. Alt-decoding candidates get their own pass.
+const TRACE_STAGES = [
+  { key: 'regex',            label: 'regex',      desc: 'pattern matched bytes' },
+  { key: 'validation',       label: 'validate',   desc: 'Luhn / checksum / format' },
+  { key: 'context',          label: 'context',    desc: 'keyword proximity' },
+  { key: 'ctx_required',     label: 'ctx-gate',   desc: 'pattern requires nearby keyword' },
+  { key: 'require_context',  label: 'req-ctx',    desc: 'caller-imposed context gate' },
+  { key: 'min_confidence',   label: 'min-conf',   desc: 'caller-imposed confidence floor' },
+  { key: 'emit',             label: 'emit',       desc: 'added to result set' },
+];
+const TRACE_ALT_STAGES = [
+  { key: 'alt_regex',        label: 'alt regex',    desc: 'pattern fired on base32/64/ROT13 decoding' },
+  { key: 'alt_validation',   label: 'alt validate', desc: 'Luhn / checksum on alt' },
+  { key: 'alt_ctx_required', label: 'alt ctx-gate', desc: 'ctx-required patterns cannot fire through alt path' },
+  { key: 'alt_confidence',   label: 'alt min-conf', desc: 'caller-imposed confidence floor' },
+  { key: 'alt_emit',         label: 'alt emit',     desc: 'added to result set (confidence × 0.9)' },
+];
+
+function TracePanel({ trace }) {
+  // Group by (pass, cat::sub::span). The span for primary events is in
+  // NORMALIZED byte coordinates; for alt events it's in alt-text
+  // coordinates. Either way equality within a group identifies the
+  // same candidate.
+  const groups = React.useMemo(() => {
+    const by = new Map();
+    trace.forEach(e => {
+      const key = `${e.pass}::${e.category}::${e.sub_category}::${e.span[0]}::${e.span[1]}::${e.text}`;
+      if (!by.has(key)) {
+        by.set(key, {
+          pass: e.pass, category: e.category, sub_category: e.sub_category,
+          span: e.span, text: e.text, events: [],
+        });
+      }
+      by.get(key).events.push(e);
+    });
+    // sort: emit-first, then drops by stage order, then passes
+    const order = [...TRACE_STAGES, ...TRACE_ALT_STAGES].reduce((acc, s, i) => {
+      acc[s.key] = i; return acc;
+    }, {});
+    const outcomeRank = { emit: 0, drop: 1, pass: 2 };
+    return Array.from(by.values()).sort((a, b) => {
+      const aFinal = a.events[a.events.length - 1];
+      const bFinal = b.events[b.events.length - 1];
+      const ao = outcomeRank[aFinal.outcome] ?? 3;
+      const bo = outcomeRank[bFinal.outcome] ?? 3;
+      if (ao !== bo) return ao - bo;
+      return (order[aFinal.stage] || 0) - (order[bFinal.stage] || 0);
+    });
+  }, [trace]);
+
+  const emitCount = groups.filter(g => g.events.some(e => e.outcome === 'emit')).length;
+  const dropCount = groups.filter(g => g.events.some(e => e.outcome === 'drop')).length;
+
+  return (
+    <div className="box" style={{marginTop: 'var(--gap)'}}>
+      <div className="box-title">
+        <span className="t">Pipeline trace</span>
+        <span className="k">
+          {groups.length} candidate{groups.length === 1 ? '' : 's'} ·{' '}
+          <span style={{color:'var(--safe)'}}>{emitCount} emitted</span> ·{' '}
+          <span style={{color:'var(--red)'}}>{dropCount} dropped</span>
+        </span>
+      </div>
+
+      {/* Legend */}
+      <div style={{display:'flex', flexWrap:'wrap', gap:12, padding:'8px 0 12px', borderBottom:'1px dashed var(--line-soft)', marginBottom:10, fontFamily:"'JetBrains Mono', monospace", fontSize:10.5}}>
+        <span style={{color:'var(--ink-soft)'}}>stages:</span>
+        {TRACE_STAGES.map(s => (
+          <span key={s.key} className="muted" title={s.desc}>{s.label}</span>
+        ))}
+        <span className="muted">·</span>
+        {TRACE_ALT_STAGES.map(s => (
+          <span key={s.key} className="muted" title={s.desc} style={{color:'var(--violet)'}}>{s.label}</span>
+        ))}
+        <span className="right" style={{marginLeft:'auto'}}>
+          <span className="chip chip--safe" style={{fontSize:9, marginRight:4}}>pass</span>
+          <span className="chip chip--red" style={{fontSize:9, marginRight:4}}>drop</span>
+          <span className="chip chip--teal" style={{fontSize:9}}>emit</span>
+        </span>
+      </div>
+
+      {groups.length === 0 && (
+        <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+          — no stage events — (did scanner find any regex hits?) —
+        </div>
+      )}
+
+      {groups.map((g, i) => {
+        const stages = g.pass === 'alt' ? TRACE_ALT_STAGES : TRACE_STAGES;
+        const byStage = {};
+        g.events.forEach(e => { byStage[e.stage] = e; });
+        const finalEvt = g.events[g.events.length - 1];
+        const wasEmitted = g.events.some(e => e.outcome === 'emit');
+        const wasDropped = g.events.some(e => e.outcome === 'drop');
+        return (
+          <div key={i} style={{padding:'10px 0', borderBottom:'1px solid var(--line-soft)'}}>
+            <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6, fontFamily:"'JetBrains Mono', monospace", fontSize:12, flexWrap:'wrap'}}>
+              <span className={`chip chip--${wasEmitted ? 'safe' : wasDropped ? 'red' : 'warn'}`} style={{fontSize:9, minWidth:50, textAlign:'center'}}>
+                {wasEmitted ? 'EMIT' : wasDropped ? 'DROP' : 'PASS'}
+              </span>
+              {g.pass === 'alt' && <span className="chip chip--teal" style={{fontSize:9, color:'var(--violet)', borderColor:'var(--violet)'}}>ALT-DECODE</span>}
+              <span style={{color:'var(--ink-bright)'}}>{g.category}</span>
+              <span className="muted">/</span>
+              <span style={{color:'var(--cyan)'}}>{g.sub_category}</span>
+              <span className="muted">·</span>
+              <span style={{color:'var(--accent)', maxWidth:300, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                {g.text}
+              </span>
+              <span className="muted" style={{marginLeft:'auto', fontSize:10.5}}>span {g.span[0]}..{g.span[1]}</span>
+            </div>
+
+            <div style={{display:'flex', gap:2, marginBottom:6, flexWrap:'wrap'}}>
+              {stages.map((s, si) => {
+                const e = byStage[s.key];
+                const color = !e
+                  ? { bg: 'var(--bg-3)', fg: 'var(--ink-dim)', border: 'var(--line)' }
+                  : e.outcome === 'emit'
+                    ? { bg: 'var(--accent-wash)', fg: 'var(--accent)', border: 'var(--accent)' }
+                    : e.outcome === 'drop'
+                      ? { bg: 'var(--red-wash)', fg: 'var(--red)', border: 'var(--red)' }
+                      : { bg: 'var(--amber-wash)', fg: 'var(--amber)', border: 'var(--amber)' };
+                return (
+                  <React.Fragment key={si}>
+                    <span
+                      title={e ? `${s.label} · ${e.outcome}${e.confidence != null ? ' · conf ' + e.confidence.toFixed(3) : ''}${e.reason ? '\n' + e.reason : ''}` : `${s.label} · not reached`}
+                      style={{
+                        padding:'3px 9px',
+                        fontFamily:"'JetBrains Mono', monospace",
+                        fontSize:10,
+                        fontWeight: 600,
+                        letterSpacing:'0.06em',
+                        textTransform:'uppercase',
+                        border:'1px solid ' + color.border,
+                        color: color.fg,
+                        background: color.bg,
+                        borderRadius:'var(--radius)',
+                        borderStyle: e ? 'solid' : 'dashed',
+                      }}>
+                      {s.label}
+                    </span>
+                    {si < stages.length - 1 && (
+                      <span style={{alignSelf:'center', color: e && e.outcome !== 'drop' ? 'var(--accent)' : 'var(--line)', fontSize:12}}>→</span>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+
+            {finalEvt && finalEvt.reason && (
+              <div className="margin-note" style={{
+                color: finalEvt.outcome === 'drop' ? 'var(--red)' : 'var(--ink-soft)',
+                marginTop:4, fontSize:11,
+              }}>
+                {finalEvt.outcome === 'drop' ? `dropped at ${finalEvt.stage}: ` : `${finalEvt.stage}: `}
+                {finalEvt.reason}
+                {finalEvt.confidence != null && ` · confidence ${finalEvt.confidence.toFixed(3)}`}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
