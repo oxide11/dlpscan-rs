@@ -60,6 +60,12 @@ const STOP_GRACE_SECS: u64 = 60;
 struct AppState {
     registry: Arc<Mutex<HashMap<String, TrackedProcess>>>,
     bin_dir: Arc<PathBuf>,
+    /// Optional workspace root — the first ancestor of bin_dir whose
+    /// Cargo.toml declares `[workspace]`. When a spawnable binary
+    /// is missing from bin_dir, start_process falls back to
+    /// `cargo run -p <kind>` from this directory so the launcher
+    /// 'just works' from a fresh clone without a pre-build step.
+    workspace_root: Option<Arc<PathBuf>>,
 }
 
 struct TrackedProcess {
@@ -196,17 +202,6 @@ async fn start_process(State(state): State<AppState>, Json(req): Json<StartReque
         );
     }
 
-    let bin_path = state.bin_dir.join(&req.kind);
-    if !bin_path.exists() {
-        return err(
-            StatusCode::NOT_FOUND,
-            format!(
-                "binary not found: {} — set SIPHON_BIN_DIR to the directory holding siphon-api / siphon-fs",
-                bin_path.display()
-            ),
-        );
-    }
-
     // Default bind per kind — analyst can override in the request.
     let default_bind = match req.kind.as_str() {
         "siphon-api" => "127.0.0.1:8080",
@@ -215,7 +210,48 @@ async fn start_process(State(state): State<AppState>, Json(req): Json<StartReque
     };
     let bind = req.bind.unwrap_or_else(|| default_bind.to_string());
 
-    let mut cmd = Command::new(&bin_path);
+    // Pick the spawn strategy:
+    //   1. Prebuilt binary in SIPHON_BIN_DIR — fastest start, normal
+    //      workflow when the analyst has already run `cargo build`.
+    //   2. `cargo run -p <kind>` from the detected workspace root —
+    //      first start is slow (full compile) but zero-setup for a
+    //      fresh clone. Stdio is inherited so the analyst sees the
+    //      compile progress in the launcher terminal.
+    //   3. Neither available → helpful error pointing at both fixes.
+    let bin_path = state.bin_dir.join(&req.kind);
+    let binary_display;
+    let mut cmd = if bin_path.exists() {
+        binary_display = bin_path.display().to_string();
+        Command::new(&bin_path)
+    } else if let Some(root) = state.workspace_root.as_ref() {
+        binary_display = format!("cargo run -p {} (from {})", req.kind, root.display());
+        info!(
+            kind = %req.kind,
+            workspace_root = %root.display(),
+            "binary missing in bin_dir; falling back to `cargo run` — first start compiles"
+        );
+        let mut c = Command::new("cargo");
+        c.current_dir(root.as_ref())
+            .arg("run")
+            .arg("-p")
+            .arg(&req.kind)
+            .arg("--");
+        c
+    } else {
+        return err(
+            StatusCode::NOT_FOUND,
+            format!(
+                "binary not found: {}\n\
+                 no cargo workspace detected above the launcher either.\n\
+                 Fix one of:\n\
+                 · run `cargo build -p {}` and retry\n\
+                 · set SIPHON_BIN_DIR to the directory holding the siphon-* binaries\n\
+                 · run the launcher from within a cargo workspace so it can fall back to `cargo run`",
+                bin_path.display(),
+                req.kind,
+            ),
+        );
+    };
     // Wire bind into the kind's env convention. siphon-api uses
     // SIPHON_BIND / SIPHON_PORT; siphon-fs uses the single
     // SIPHON_FS_BIND.
@@ -278,7 +314,7 @@ async fn start_process(State(state): State<AppState>, Json(req): Json<StartReque
         kind = %req.kind,
         pid,
         bind = %bind,
-        binary = %bin_path.display(),
+        binary = %binary_display,
         "spawned"
     );
 
@@ -288,7 +324,7 @@ async fn start_process(State(state): State<AppState>, Json(req): Json<StartReque
         pid,
         bind,
         started_at,
-        binary: bin_path.display().to_string(),
+        binary: binary_display,
     })
     .into_response()
 }
@@ -443,9 +479,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .unwrap_or_else(|| PathBuf::from("."));
 
+    // Walk up from bin_dir looking for a Cargo.toml that declares
+    // [workspace]. Typically bin_dir = <repo>/target/{debug,release},
+    // so the root is 2 parents up — but make no assumptions. Covers
+    // the fresh-clone case where binaries don't exist yet; start_process
+    // falls back to `cargo run` from there.
+    let workspace_root = find_workspace_root(&bin_dir);
+
     let state = AppState {
         registry: Arc::new(Mutex::new(HashMap::new())),
         bin_dir: Arc::new(bin_dir.clone()),
+        workspace_root: workspace_root.clone().map(Arc::new),
     };
     let app = build_router(state);
 
@@ -454,6 +498,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         version = env!("CARGO_PKG_VERSION"),
         bind = %addr,
         bin_dir = %bin_dir.display(),
+        workspace_root = ?workspace_root.as_ref().map(|p| p.display().to_string()),
         grace_secs = STOP_GRACE_SECS,
         allowed_kinds = ?ALLOWED_KINDS,
         "siphon-launcher starting"
@@ -468,3 +513,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 // doesn't clash with axum::response::Json (used for owned
 // responses) earlier.
 use axum::Json;
+
+/// Walk up from `start` looking for a Cargo.toml whose contents
+/// contain `[workspace]`. Stops at the filesystem root. Used to
+/// enable the `cargo run -p <kind>` fallback in start_process when
+/// the prebuilt binary is missing.
+///
+/// Deliberately string-matches `[workspace]` instead of TOML-parsing
+/// to keep the launcher dep-light — false positives (a comment
+/// containing `[workspace]` in a non-workspace crate) would be rare
+/// and harmless (cargo run would fail with its own error).
+fn find_workspace_root(start: &std::path::Path) -> Option<PathBuf> {
+    let mut current: Option<&std::path::Path> = Some(start);
+    while let Some(p) = current {
+        let candidate = p.join("Cargo.toml");
+        if candidate.is_file() {
+            if let Ok(bytes) = std::fs::read_to_string(&candidate) {
+                if bytes.contains("[workspace]") {
+                    return Some(p.to_path_buf());
+                }
+            }
+        }
+        current = p.parent();
+    }
+    None
+}
