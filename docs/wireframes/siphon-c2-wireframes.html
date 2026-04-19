@@ -8650,11 +8650,11 @@ then
   );
 }
 
-Object.assign(window, {
-  Dashboard: DashboardHF,
-  Stream: StreamHF,
-  FindingDetail: FindingDetailHF,
-});
+// Legacy HI-FI versions (DashboardHF / StreamHF / FindingDetailHF) are
+// kept in-file as design-reference fixtures but are NOT registered —
+// they would overwrite the live, mode-dispatching Dashboard / Stream /
+// FindingDetail that actually read /v1/metrics + /v1/findings. If you
+// want to see the hi-fi look again, expose them under different names.
 </script>
 
 <script type="text/babel" data-presets="react">
