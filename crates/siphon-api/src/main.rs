@@ -47,7 +47,7 @@ use siphon_core::audit::{
 use siphon_core::findings_ring::{
     filter_findings, severity_for, FindingRecord, FindingsRing,
 };
-use siphon_core::overrides::{PatternOverride, PatternOverrides, RuntimePattern};
+use siphon_core::overrides::{PatternOverride, PatternOverrides, Regex, RuntimePattern};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
@@ -84,6 +84,9 @@ struct AppState {
     /// Compiled runtime patterns from custom_categories. Evaluated
     /// after the static scan loop (Phase 3d.1).
     runtime_patterns: Arc<Vec<RuntimePattern>>,
+    /// Compiled per-pattern regex overrides for compile-time
+    /// patterns. Phase 3d.2.
+    pattern_regex_overrides: Arc<HashMap<(String, String), Regex>>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -508,6 +511,7 @@ async fn scan(
         disabled_patterns: Some(state.disabled_patterns.clone()),
         pattern_field_overrides: Some(state.pattern_field_overrides.clone()),
         runtime_patterns: Some(state.runtime_patterns.clone()),
+        pattern_regex_overrides: Some(state.pattern_regex_overrides.clone()),
         ..Default::default()
     };
 
@@ -1523,6 +1527,8 @@ async fn main() {
     let pattern_field_overrides = Arc::new(overrides.override_lookup());
     let runtime_patterns = Arc::new(overrides.compile_runtime_patterns());
     let runtime_pattern_count = runtime_patterns.len();
+    let pattern_regex_overrides = Arc::new(overrides.compile_pattern_regex_overrides());
+    let regex_override_count = pattern_regex_overrides.len();
     tracing::info!(
         path = %overrides_path,
         version = overrides_summary.version,
@@ -1530,6 +1536,7 @@ async fn main() {
         field_overrides = overrides_summary.pattern_overrides,
         custom_categories = overrides_summary.custom_categories,
         runtime_patterns_compiled = runtime_pattern_count,
+        regex_swaps_compiled = regex_override_count,
         "PatternOverrides loaded"
     );
 
@@ -1546,6 +1553,7 @@ async fn main() {
         disabled_patterns,
         pattern_field_overrides,
         runtime_patterns,
+        pattern_regex_overrides,
     });
 
     let app = Router::new()
