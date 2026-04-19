@@ -3615,17 +3615,34 @@ window.useSiphonApi = function(path, deps) {
 window.useFindingsUnion = function(qs, deps) {
   const [tick, setTick] = React.useState(0);
   const [state, setState] = React.useState({
-    loading: true, data: null, error: null,
-    perPod: { api: { ok: false, error: null, data: null },
-              fs:  { ok: false, error: null, data: null } },
+    loading: true, data: null, error: null, perPod: [],
   });
+  // Phase 4.5b: fan out across every enabled pod in the registry
+  // rather than the old two-URL pattern. usePodRegistry re-renders
+  // on add/remove/disable so the effect below picks up the new set
+  // automatically via its deps array.
+  const rawPods = window.usePodRegistry ? window.usePodRegistry() : null;
+  const pods = rawPods ? rawPods.filter(p => !p.disabled) : null;
+  // Trust the registry when it's loaded — even when empty, that's a
+  // legitimate 'user disabled everything' state. Only fall back to
+  // the two-URL pattern when the registry module literally isn't
+  // present (early paint before the settings block evaluated).
+  const effectivePods = pods !== null
+    ? pods
+    : [
+        { url: window.SIPHON_API_URL(), role: 'api', label: 'api' },
+        { url: window.SIPHON_FS_URL(),  role: 'fs',  label: 'fs'  },
+      ];
+  // Serialise the pod list into a dep-stable string so the effect
+  // re-runs exactly when the reachable pod set changes.
+  const podsKey = effectivePods.map(p => p.url).join('|');
 
   React.useEffect(() => {
     let cancelled = false;
     setState(s => ({ ...s, loading: true, error: null }));
 
-    const fetchFrom = (baseUrl, pod) => {
-      const url = baseUrl.replace(/\/$/, '') + '/v1/findings' + (qs || '');
+    const fetchFrom = (pod) => {
+      const url = pod.url.replace(/\/$/, '') + '/v1/findings' + (qs || '');
       return fetch(url, { method: 'GET' })
         .then(async r => {
           if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
@@ -3635,49 +3652,59 @@ window.useFindingsUnion = function(qs, deps) {
         .catch(e => ({ pod, ok: false, data: null, error: String(e.message || e) }));
     };
 
-    const apiUrl = window.SIPHON_API_URL();
-    const fsUrl  = window.SIPHON_FS_URL();
+    Promise.all(effectivePods.map(fetchFrom)).then((results) => {
+      if (cancelled) return;
 
-    Promise.all([ fetchFrom(apiUrl, 'api'), fetchFrom(fsUrl, 'fs') ])
-      .then(([api, fs]) => {
-        if (cancelled) return;
-        const findings = []
-          .concat((api.data && api.data.findings) || [])
-          .concat((fs.data  && fs.data.findings)  || [])
-          .sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+      const findings = results
+        .flatMap(r => (r.data && r.data.findings) || [])
+        .sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
 
-        // Trim to the caller's limit if qs carried one so we don't
-        // over-return when both pods had the same cap.
-        const m = (qs || '').match(/[?&]limit=(\d+)/);
-        const limit = m ? parseInt(m[1], 10) : findings.length;
-        const trimmed = findings.slice(0, limit);
+      // Trim to the caller's limit if qs carried one so we don't
+      // over-return when every pod replied with its own page of
+      // `limit` records.
+      const m = (qs || '').match(/[?&]limit=(\d+)/);
+      const limit = m ? parseInt(m[1], 10) : findings.length;
+      const trimmed = findings.slice(0, limit);
 
-        const total = ((api.data && api.data.total) || 0) + ((fs.data && fs.data.total) || 0);
-        const capacity = ((api.data && api.data.capacity) || 0) + ((fs.data && fs.data.capacity) || 0);
+      const total    = results.reduce((a, r) => a + ((r.data && r.data.total)    || 0), 0);
+      const capacity = results.reduce((a, r) => a + ((r.data && r.data.capacity) || 0), 0);
 
-        const perPod = {
-          api: { ok: api.ok, error: api.error, data: api.data },
-          fs:  { ok: fs.ok,  error: fs.error,  data: fs.data  },
-        };
-        const bothDown = !api.ok && !fs.ok;
-        setState({
-          loading: false,
-          data: { total, returned: trimmed.length, capacity, findings: trimmed },
-          error: bothDown ? (api.error || fs.error) : null,
-          perPod,
-        });
+      const perPod = results.map(r => ({
+        url: r.pod.url, label: r.pod.label || '', role: r.pod.role || 'auto',
+        ok: r.ok, error: r.error, data: r.data,
+      }));
+      // source semantics stay consistent with LivePill's chip map:
+      //   no pods configured → offline (honest — nothing to query)
+      //   every pod errored  → offline
+      //   every pod ok       → live
+      //   mixed              → partial
+      let source;
+      if (perPod.length === 0) {
+        source = 'offline';
+      } else if (perPod.every(p => p.ok)) {
+        source = 'live';
+      } else if (perPod.some(p => p.ok)) {
+        source = 'partial';
+      } else {
+        source = 'offline';
+      }
+      setState({
+        loading: false,
+        data: { total, returned: trimmed.length, capacity, findings: trimmed },
+        error: source === 'offline'
+          ? (perPod.length === 0 ? 'no pods in registry (enable one under Settings → Deployment)' : (perPod[0] && perPod[0].error) || 'no pods reachable')
+          : null,
+        perPod,
+        source,
       });
+    });
 
     return () => { cancelled = true; };
-  }, [...(deps || []), qs, tick]);
+  }, [...(deps || []), qs, tick, podsKey]);
 
   const source = state.loading
     ? 'loading'
-    : (!state.perPod.api.ok && !state.perPod.fs.ok)
-      ? 'offline'
-      : (state.perPod.api.ok && state.perPod.fs.ok)
-        ? 'live'
-        : 'partial';
+    : state.source || (state.data ? 'live' : 'offline');
 
   return { ...state, source, refetch: () => setTick(t => t + 1) };
 };
