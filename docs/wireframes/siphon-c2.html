@@ -4896,6 +4896,89 @@ function TopologyStrip({ bySource, metrics, findings, integrations, live }) {
           <text x="180" y="222" fill="var(--ink-soft)">block</text>
         </g>
       </svg>
+
+      <PodFleetStrip />
+    </div>
+  );
+}
+
+// Compact status strip listing every registered pod under the
+// topology SVG. Each row hits /health once and renders a chip +
+// short URL + pod_type + pod_id prefix + version + uptime. Keeps the
+// SVG layout as-is for the single-pod-primary case while surfacing
+// the real fleet size for multi-pod deployments (Phase 4.5c).
+function PodFleetChip({ pod }) {
+  const [state, setState] = React.useState({ loading: true, data: null, error: null });
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    let cancelled = false;
+    const url = pod.url.replace(/\/$/, '') + '/health';
+    fetch(url)
+      .then(async r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(d => { if (!cancelled) setState({ loading: false, data: d, error: null }); })
+      .catch(e => { if (!cancelled) setState({ loading: false, data: null, error: String(e.message || e) }); });
+    return () => { cancelled = true; };
+  }, [pod.url, tick]);
+
+  const h = state.data || {};
+  const chip = pod.disabled ? 'ghost'
+             : state.loading ? 'warn'
+             : state.error ? 'red'
+             : 'safe';
+  const label = pod.disabled ? 'off'
+              : state.loading ? '…'
+              : state.error ? 'down'
+              : (h.pod_type || 'live');
+  // Short URL: origin only if the registered URL has no meaningful path.
+  const short = (() => {
+    try {
+      const u = new URL(pod.url);
+      const path = u.pathname.replace(/\/$/, '');
+      return path ? u.host + path : u.host;
+    } catch { return pod.url; }
+  })();
+  return (
+    <div
+      onClick={() => setTick(t => t + 1)}
+      title={pod.url + (h.pod_id ? '\npod_id ' + h.pod_id : '') + (h.started_at ? '\nstarted ' + h.started_at : '') + (state.error ? '\nerror: ' + state.error : '')}
+      style={{
+        display:'inline-flex', alignItems:'center', gap:6,
+        padding:'4px 8px', marginRight:6, marginBottom:6,
+        border:'1px solid var(--line)', borderRadius:'var(--radius)',
+        background:'var(--bg-1)', cursor:'pointer',
+        fontFamily:"'JetBrains Mono', monospace", fontSize:10.5,
+        opacity: pod.disabled ? 0.55 : 1,
+      }}>
+      <span className={`chip chip--${chip}`} style={{fontSize:8.5, padding:'1px 5px', letterSpacing:0.5}}>{label}</span>
+      <span style={{color:'var(--ink-bright)'}}>{short}</span>
+      {h.version && <span className="muted">v{h.version}</span>}
+      {h.pod_id && <span style={{color:'var(--ink-faint)'}}>{h.pod_id.slice(0, 6)}</span>}
+      {h.uptime_secs != null && <span className="muted">up {h.uptime_secs}s</span>}
+    </div>
+  );
+}
+
+function PodFleetStrip() {
+  const pods = window.usePodRegistry ? window.usePodRegistry() : [];
+  if (!pods || pods.length === 0) {
+    return (
+      <div className="muted mono" style={{padding:'10px 4px 0', fontSize:11}}>
+        — no pods registered · add one under Settings → Deployment —
+      </div>
+    );
+  }
+  const enabled = pods.filter(p => !p.disabled).length;
+  return (
+    <div style={{paddingTop:10, borderTop:'1px dashed var(--line-soft)', marginTop:10}}>
+      <div style={{display:'flex', alignItems:'center', marginBottom:6}}>
+        <span className="label" style={{flex:1}}>Pod fleet</span>
+        <span className="muted mono" style={{fontSize:10.5}}>
+          {enabled} enabled · {pods.length} registered · click a chip to re-check /health
+        </span>
+      </div>
+      <div style={{display:'flex', flexWrap:'wrap'}}>
+        {pods.map(p => <PodFleetChip key={p.url} pod={p} />)}
+      </div>
     </div>
   );
 }
