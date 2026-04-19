@@ -5900,6 +5900,14 @@ function SourceDestination({ finding }) {
   const ix = window.useSiphonApi('/v1/integrations');
   const outs = ((ix.data && ix.data.integrations) || []).filter(i => i.configured);
   const apiUrl = window.SIPHON_API_URL ? window.SIPHON_API_URL() : '';
+  // SVG text can't wrap, so we truncate values to fit the inner width of
+  // each box at the given font size. Char budgets below are measured for
+  // JetBrains Mono — tweak only if font-size changes.
+  const trunc = (s, n) => {
+    const str = String(s || '—');
+    return str.length > n ? str.slice(0, Math.max(0, n - 1)) + '…' : str;
+  };
+  const apiDisplay = apiUrl.replace(/^https?:\/\//, '');
   return (
     <div className="box">
       <div className="box-title"><span className="t">Source → Destination</span><span className="k">how the scan arrived · where it was routed</span></div>
@@ -5920,13 +5928,15 @@ function SourceDestination({ finding }) {
           <rect x="10" y="32" width="140" height="54" rx="3"
                 fill="var(--bg-2)" stroke="var(--line-strong)" />
           <text x="18" y="50" fontFamily="JetBrains Mono" fontSize="11" fontWeight="600" fill="var(--ink)">
-            {finding.source_ip || '—'}
+            {trunc(finding.source_ip, 19)}
+            <title>{finding.source_ip || '—'}</title>
           </text>
           <text x="18" y="64" fontFamily="JetBrains Mono" fontSize="9.5" fill="var(--ink-soft)">
             caller · http client
           </text>
           <text x="18" y="78" fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-faint)">
-            req {(finding.request_id || '').slice(0, 8)}…
+            req {trunc((finding.request_id || '').slice(0, 8) + '…', 20)}
+            <title>{finding.request_id || '—'}</title>
           </text>
         </g>
 
@@ -5957,10 +5967,12 @@ function SourceDestination({ finding }) {
             siphon-api
           </text>
           <text x="340" y="64" fontFamily="JetBrains Mono" fontSize="9.5" fill="var(--ink)">
-            siphon-core · {finding.category}
+            siphon-core · {trunc(finding.category, 12)}
+            <title>siphon-core · {finding.category}</title>
           </text>
           <text x="340" y="78" fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-soft)">
-            {apiUrl}
+            {trunc(apiDisplay, 24)}
+            <title>{apiUrl || '—'}</title>
           </text>
         </g>
 
@@ -5993,10 +6005,12 @@ function SourceDestination({ finding }) {
                 <rect x={x} y="128" width="100" height="30" rx="3"
                       fill="var(--amber-wash)" stroke="var(--amber)" />
                 <text x={x + 8} y="143" fontFamily="JetBrains Mono" fontSize="10.5" fontWeight="600" fill="var(--ink)">
-                  {(o.kind || '').slice(0, 12)}
+                  {trunc(o.kind, 13)}
+                  <title>{o.kind || '—'}</title>
                 </text>
                 <text x={x + 8} y="153" fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-soft)">
-                  {(o.target || '').slice(0, 18)}
+                  {trunc(o.target, 15)}
+                  <title>{o.target || '—'}</title>
                 </text>
               </g>
             );
@@ -6603,147 +6617,157 @@ function FindingDetail({ id, back }) {
         <SourceDestination finding={f} />
       </div>
 
-      <div className="finding-hero" style={{marginTop:'var(--gap)'}}>
-        <div style={{display:'flex', flexDirection:'column', gap:'var(--gap)'}}>
-          <div className="box">
-            <div className="box-title"><span className="t">Match &amp; context</span><span className="k">from /v1/findings</span></div>
+      {/* 3-row detail grid. Boxes flow left-to-right into equal-width
+          columns: Match&Ctx|Actions, Timeline|Record, Related|Policy.
+          alignItems:start so a short Actions cell doesn't stretch to
+          match Match&Ctx. minmax(0,1fr) keeps long mono strings from
+          blowing out column widths. */}
+      <div className="finding-hero"
+           style={{
+             marginTop:'var(--gap)',
+             gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)',
+             alignItems:'start',
+           }}>
+        {/* row 1 · left: Match & context */}
+        <div className="box">
+          <div className="box-title"><span className="t">Match &amp; context</span><span className="k">from /v1/findings</span></div>
 
-            <div className="label" style={{marginBottom:4}}>Matched value</div>
-            <div className="mono" style={{
-              fontSize:14, padding:'8px 10px',
-              background: 'var(--amber-wash)',
-              border:'1.5px solid var(--amber)',
-              borderRadius:2, marginBottom:12
-            }}>{f.text}</div>
+          <div className="label" style={{marginBottom:4}}>Matched value</div>
+          <div className="mono" style={{
+            fontSize:14, padding:'8px 10px',
+            background: 'var(--amber-wash)',
+            border:'1.5px solid var(--amber)',
+            borderRadius:2, marginBottom:12,
+            wordBreak:'break-all',
+          }}>{f.text}</div>
 
-            <div className="label" style={{marginBottom:4}}>Span</div>
-            <div className="mono" style={{fontSize:12, lineHeight:1.7, padding:'10px 12px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:2, marginBottom:12}}>
-              offset {f.span ? f.span[0] : '—'} → {f.span ? f.span[1] : '—'} ({f.span ? (f.span[1] - f.span[0]) : 0} chars)
-            </div>
-
-            <div className="label" style={{marginTop:14, marginBottom:6}}>Signals (from scanner)</div>
-            <div style={{fontSize:13, lineHeight:1.9}}>
-              <div className="tick">Category <span className="mono">{f.category}</span>{f.sub_category ? <> · sub <span className="mono">{f.sub_category}</span></> : null}</div>
-              <div className="tick">Confidence <span className="mono">{f.confidence != null ? f.confidence.toFixed(3) : '—'}</span></div>
-              <div className={f.has_context ? 'tick' : 'cross'}>Context {f.has_context ? 'matched' : 'not matched'}</div>
-              <div className="tick">Severity <span className="mono">{f.severity}</span> (derived)</div>
-            </div>
-
-            {f.metadata && Object.keys(f.metadata).length > 0 && (
-              <>
-                <div className="label" style={{marginTop:14, marginBottom:6}}>Metadata (from pattern match)</div>
-                <div className="mono" style={{fontSize:11, lineHeight:1.8, background:'var(--bg-1)', padding:10, border:'1px dashed var(--line-soft)'}}>
-                  {Object.entries(f.metadata).map(([k, v]) => (
-                    <div key={k}><span style={{color:'var(--cyan)'}}>{k}</span> = <span style={{color:'var(--accent)'}}>{String(v)}</span></div>
-                  ))}
-                </div>
-              </>
-            )}
-
-            {sameReq.length > 0 && (
-              <>
-                <div className="label" style={{marginTop:14, marginBottom:6}}>Other findings in the same scan</div>
-                <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8}}>
-                  {sameReq.map(r => (
-                    <div key={r.id}>
-                      <span className={`chip chip--${r.severity}`} style={{fontSize:9}}>{r.severity}</span>{' '}
-                      <span style={{color:'var(--cyan)'}}>{r.category}</span> / {r.sub_category}{' '}
-                      · <span style={{color:'var(--ink-bright)'}}>{r.text}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
+          <div className="label" style={{marginBottom:4}}>Span</div>
+          <div className="mono" style={{fontSize:12, lineHeight:1.7, padding:'10px 12px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:2, marginBottom:12}}>
+            offset {f.span ? f.span[0] : '—'} → {f.span ? f.span[1] : '—'} ({f.span ? (f.span[1] - f.span[0]) : 0} chars)
           </div>
 
-          <FindingTimeline finding={f} sameReq={sameReq} />
+          <div className="label" style={{marginTop:14, marginBottom:6}}>Signals (from scanner)</div>
+          <div style={{fontSize:13, lineHeight:1.9}}>
+            <div className="tick">Category <span className="mono">{f.category}</span>{f.sub_category ? <> · sub <span className="mono">{f.sub_category}</span></> : null}</div>
+            <div className="tick">Confidence <span className="mono">{f.confidence != null ? f.confidence.toFixed(3) : '—'}</span></div>
+            <div className={f.has_context ? 'tick' : 'cross'}>Context {f.has_context ? 'matched' : 'not matched'}</div>
+            <div className="tick">Severity <span className="mono">{f.severity}</span> (derived)</div>
+          </div>
+
+          {f.metadata && Object.keys(f.metadata).length > 0 && (
+            <>
+              <div className="label" style={{marginTop:14, marginBottom:6}}>Metadata (from pattern match)</div>
+              <div className="mono" style={{fontSize:11, lineHeight:1.8, background:'var(--bg-1)', padding:10, border:'1px dashed var(--line-soft)'}}>
+                {Object.entries(f.metadata).map(([k, v]) => (
+                  <div key={k}><span style={{color:'var(--cyan)'}}>{k}</span> = <span style={{color:'var(--accent)'}}>{String(v)}</span></div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {sameReq.length > 0 && (
+            <>
+              <div className="label" style={{marginTop:14, marginBottom:6}}>Other findings in the same scan</div>
+              <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8}}>
+                {sameReq.map(r => (
+                  <div key={r.id}>
+                    <span className={`chip chip--${r.severity}`} style={{fontSize:9}}>{r.severity}</span>{' '}
+                    <span style={{color:'var(--cyan)'}}>{r.category}</span> / {r.sub_category}{' '}
+                    · <span style={{color:'var(--ink-bright)'}}>{r.text}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
-        <div style={{display:'flex', flexDirection:'column', gap:'var(--gap)'}}>
-          <PolicyThatFired finding={f} />
-
-          <div className="box">
-            <div className="box-title"><span className="t">Actions</span><span className="k">this finding</span></div>
-            <div style={{display:'flex', flexDirection:'column', gap:6}}>
-              {inFpQueue ? (
-                <button className="btn" onClick={unflagFp} style={{color:'var(--amber)', borderColor:'var(--amber)'}}>
-                  ⚑ Remove from FP queue
-                </button>
-              ) : (
-                <button className="btn primary" onClick={flagFp}>
-                  ⚑ Flag as false positive…
-                </button>
-              )}
-              <button
-                className="btn ghost"
-                onClick={() => window.__c2_go && window.__c2_go('fpqueue')}>
-                Open FP queue ({fpQueue.length})
+        {/* row 1 · right: Actions */}
+        <div className="box">
+          <div className="box-title"><span className="t">Actions</span><span className="k">this finding</span></div>
+          <div style={{display:'flex', flexDirection:'column', gap:6}}>
+            {inFpQueue ? (
+              <button className="btn" onClick={unflagFp} style={{color:'var(--amber)', borderColor:'var(--amber)'}}>
+                ⚑ Remove from FP queue
               </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  try {
-                    localStorage.setItem('c2:scandiff-a', f.text || '');
-                    // seed side B with a minimally redacted variant so the diff
-                    // is non-trivial on first paint. Analyst can overwrite.
-                    const masked = (f.text || '').replace(/[A-Za-z0-9]/g, '*');
-                    localStorage.setItem('c2:scandiff-b', masked);
-                  } catch {}
-                  window.__c2_go && window.__c2_go('scandiff');
-                }}
-                title="compare this match against a mitigated variant">
-                Send to Scan Diff ⇌
+            ) : (
+              <button className="btn primary" onClick={flagFp}>
+                ⚑ Flag as false positive…
               </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  try { localStorage.setItem('c2:livescan-text', f.text || ''); } catch {}
-                  window.__c2_go && window.__c2_go('livescan');
-                }}
-                title="open this match's text in Live Scan for re-analysis">
-                Send to Live Scan ▶
-              </button>
-              <button
-                className="btn"
-                onClick={() => {
-                  try { navigator.clipboard.writeText(JSON.stringify(f, null, 2)); } catch {}
-                }}>
-                Copy record as JSON
-              </button>
-              <button
-                className="btn ghost"
-                onClick={() => window.__c2_go && window.__c2_go('patterns')}>
-                Open in Patterns browser
-              </button>
-            </div>
-          </div>
-
-          <div className="box">
-            <div className="box-title"><span className="t">Record</span><span className="k">raw shape</span></div>
-            <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:8}}>
-              <span className={`chip chip--${sev}`} style={{fontSize:12, padding:'4px 12px'}}>{f.severity.toUpperCase()}</span>
-              <span className="chip">{f.category}</span>
-            </div>
-            <div className="kv">
-              <span className="k">Finding id</span>      <span className="v mono">{f.id}</span>
-              <span className="k">Request id</span>      <span className="v mono">{f.request_id}</span>
-              <span className="k">Timestamp</span>       <span className="v mono">{f.ts}</span>
-              <span className="k">Source IP</span>       <span className="v mono">{f.source_ip}</span>
-              <span className="k">Category</span>        <span className="v">{f.category}</span>
-              <span className="k">Sub-category</span>    <span className="v">{f.sub_category || '—'}</span>
-              <span className="k">Confidence</span>      <span className="v mono">{f.confidence != null ? f.confidence.toFixed(3) : '—'}</span>
-              <span className="k">Context matched</span> <span className="v">{f.has_context ? 'yes' : 'no'}</span>
-              <span className="k">Span</span>            <span className="v mono">{f.span ? f.span.join('..') : '—'}</span>
-              <span className="k">Severity</span>        <span className="v">{f.severity}</span>
-            </div>
+            )}
+            <button
+              className="btn ghost"
+              onClick={() => window.__c2_go && window.__c2_go('fpqueue')}>
+              Open FP queue ({fpQueue.length})
+            </button>
+            <button
+              className="btn"
+              onClick={() => {
+                try {
+                  localStorage.setItem('c2:scandiff-a', f.text || '');
+                  // seed side B with a minimally redacted variant so the diff
+                  // is non-trivial on first paint. Analyst can overwrite.
+                  const masked = (f.text || '').replace(/[A-Za-z0-9]/g, '*');
+                  localStorage.setItem('c2:scandiff-b', masked);
+                } catch {}
+                window.__c2_go && window.__c2_go('scandiff');
+              }}
+              title="compare this match against a mitigated variant">
+              Send to Scan Diff ⇌
+            </button>
+            <button
+              className="btn"
+              onClick={() => {
+                try { localStorage.setItem('c2:livescan-text', f.text || ''); } catch {}
+                window.__c2_go && window.__c2_go('livescan');
+              }}
+              title="open this match's text in Live Scan for re-analysis">
+              Send to Live Scan ▶
+            </button>
+            <button
+              className="btn"
+              onClick={() => {
+                try { navigator.clipboard.writeText(JSON.stringify(f, null, 2)); } catch {}
+              }}>
+              Copy record as JSON
+            </button>
+            <button
+              className="btn ghost"
+              onClick={() => window.__c2_go && window.__c2_go('patterns')}>
+              Open in Patterns browser
+            </button>
           </div>
         </div>
-      </div>
 
-      {/* Related findings — full-width below the hero grid. Jump-to
-          is wired through the sub-route hand-off used by Next/Prev. */}
-      <div style={{marginTop:'var(--gap)'}}>
+        {/* row 2 · left: Timeline */}
+        <FindingTimeline finding={f} sameReq={sameReq} />
+
+        {/* row 2 · right: Record */}
+        <div className="box">
+          <div className="box-title"><span className="t">Record</span><span className="k">raw shape</span></div>
+          <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:8}}>
+            <span className={`chip chip--${sev}`} style={{fontSize:12, padding:'4px 12px'}}>{f.severity.toUpperCase()}</span>
+            <span className="chip">{f.category}</span>
+          </div>
+          <div className="kv">
+            <span className="k">Finding id</span>      <span className="v mono">{f.id}</span>
+            <span className="k">Request id</span>      <span className="v mono">{f.request_id}</span>
+            <span className="k">Timestamp</span>       <span className="v mono">{f.ts}</span>
+            <span className="k">Source IP</span>       <span className="v mono">{f.source_ip}</span>
+            <span className="k">Category</span>        <span className="v">{f.category}</span>
+            <span className="k">Sub-category</span>    <span className="v">{f.sub_category || '—'}</span>
+            <span className="k">Confidence</span>      <span className="v mono">{f.confidence != null ? f.confidence.toFixed(3) : '—'}</span>
+            <span className="k">Context matched</span> <span className="v">{f.has_context ? 'yes' : 'no'}</span>
+            <span className="k">Span</span>            <span className="v mono">{f.span ? f.span.join('..') : '—'}</span>
+            <span className="k">Severity</span>        <span className="v">{f.severity}</span>
+          </div>
+        </div>
+
+        {/* row 3 · left: Related findings (onJump hops via gotoFinding
+            so j/k shortcuts stay consistent) */}
         <RelatedFindings finding={f} onJump={gotoFinding} />
+
+        {/* row 3 · right: Policy that fired */}
+        <PolicyThatFired finding={f} />
       </div>
     </div>
   );
