@@ -1,0 +1,26 @@
+[package]
+name = "siphon-launcher"
+version = "2.1.0"
+edition = "2021"
+description = "Polygon Siphon launcher — local-dev process manager for siphon-api / siphon-fs"
+license = "MIT"
+rust-version = "1.75"
+
+[[bin]]
+name = "siphon-launcher"
+path = "src/main.rs"
+
+[dependencies]
+# HTTP server — lean, same stack as the pods.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "time", "process"] }
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
