@@ -7,15 +7,20 @@ use once_cell::sync::Lazy;
 use rayon::prelude::*;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use crate::context;
-use crate::models::{is_context_required, pattern_specificity, Match, PatternDef};
+// pattern_specificity + is_context_required are accessed via the
+// effective_specificity / effective_context_required helpers below
+// so the override layer is consistently applied. Direct imports
+// dropped intentionally — anyone tempted to use them directly should
+// reach for the helpers instead.
+use crate::models::{Match, PatternDef};
 use crate::normalize;
 use crate::patterns::PATTERNS;
-use crate::scoring::{compute_confidence, deduplicate_overlapping};
+use crate::scoring::deduplicate_overlapping;
 use crate::validation::validate_text_input;
 
 // ---------------------------------------------------------------------------
@@ -123,6 +128,12 @@ pub struct ScanConfig {
     /// and consulted at the end of every scan. `None` (default) means
     /// no overrides are applied — every compile-time pattern is live.
     pub disabled_patterns: Option<Arc<HashSet<(String, String)>>>,
+    /// Optional per-pattern field overrides (specificity, context_required)
+    /// keyed by `(category, sub_category)`. Built from
+    /// `PatternOverrides::override_lookup()` at startup. The scanner
+    /// consults this at scoring + context-gating time.
+    pub pattern_field_overrides:
+        Option<Arc<HashMap<(String, String), crate::overrides::PatternOverride>>>,
 }
 
 /// Entropy scanning mode.
@@ -155,8 +166,44 @@ impl Default for ScanConfig {
             lsh: None,
             trace: None,
             disabled_patterns: None,
+            pattern_field_overrides: None,
         }
     }
+}
+
+// ─── PatternOverrides field-level helpers ─────────────────────────
+// Wrap pattern_specificity() and is_context_required() so their
+// callers don't need to know whether the (category, sub_category)
+// they're looking at has an override applied. Both helpers fall
+// through to the compile-time defaults when no override is present.
+fn effective_specificity(
+    category: &str,
+    sub_category: &str,
+    overrides: Option<&Arc<HashMap<(String, String), crate::overrides::PatternOverride>>>,
+) -> f64 {
+    if let Some(map) = overrides {
+        if let Some(po) = map.get(&(category.to_string(), sub_category.to_string())) {
+            if let Some(s) = po.specificity {
+                return s;
+            }
+        }
+    }
+    crate::models::pattern_specificity(sub_category)
+}
+
+fn effective_context_required(
+    category: &str,
+    sub_category: &str,
+    overrides: Option<&Arc<HashMap<(String, String), crate::overrides::PatternOverride>>>,
+) -> bool {
+    if let Some(map) = overrides {
+        if let Some(po) = map.get(&(category.to_string(), sub_category.to_string())) {
+            if let Some(c) = po.context_required {
+                return c;
+            }
+        }
+    }
+    crate::models::is_context_required(sub_category)
 }
 
 impl std::fmt::Debug for ScanConfig {
@@ -440,7 +487,11 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
 /// added or removed entries from the authoritative list. Using this
 /// function directly prevents that drift class.
 pub fn is_always_run(sub_category: &str) -> bool {
-    let spec = pattern_specificity(sub_category);
+    // is_always_run is a static, build-time decision about whether a
+    // pattern bypasses the AC prefilter — overrides don't apply here
+    // (overrides are about scoring, not prefilter membership). Use the
+    // raw module function rather than the override-aware helper.
+    let spec = crate::models::pattern_specificity(sub_category);
     spec >= SPECIFICITY_THRESHOLD || CRITICAL_ALWAYS_RUN.contains(sub_category)
 }
 
@@ -567,7 +618,11 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     hit_index.as_ref(),
                 );
 
-                let ctx_required = is_context_required(pat.sub_category);
+                let ctx_required = effective_context_required(
+                    pat.category,
+                    pat.sub_category,
+                    config.pattern_field_overrides.as_ref(),
+                );
 
                 if ctx_required && !has_context {
                     emit_trace(
@@ -592,7 +647,12 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     Some(if has_context { "context keyword matched" } else { "no context required" }),
                 );
 
-                let confidence = compute_confidence(pat.sub_category, has_context, ctx_required);
+                let spec = effective_specificity(
+                    pat.category,
+                    pat.sub_category,
+                    config.pattern_field_overrides.as_ref(),
+                );
+                let confidence = crate::scoring::compute_confidence_with(spec, has_context, ctx_required);
                 if confidence < config.min_confidence {
                     emit_trace(
                         &config.trace, "primary", "min_confidence", "drop",
@@ -745,7 +805,11 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 // IMEISV false-positive class — IMEISV was context-
                 // required but firing through alt because the check
                 // was missing entirely.
-                if is_context_required(cp.def.sub_category) {
+                if effective_context_required(
+                    cp.def.category,
+                    cp.def.sub_category,
+                    config.pattern_field_overrides.as_ref(),
+                ) {
                     continue;
                 }
 
@@ -771,7 +835,12 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                         );
                         continue;
                     }
-                    let confidence = compute_confidence(cp.def.sub_category, false, false);
+                    let alt_spec = effective_specificity(
+                        cp.def.category,
+                        cp.def.sub_category,
+                        config.pattern_field_overrides.as_ref(),
+                    );
+                    let confidence = crate::scoring::compute_confidence_with(alt_spec, false, false);
                     if confidence < config.min_confidence {
                         emit_trace(
                             &config.trace, "alt", "alt_confidence", "drop",
@@ -1184,6 +1253,103 @@ mod tests {
     fn test_scan_email() {
         let result = scan_text("Contact us at test@example.com for info.").unwrap();
         assert!(result.iter().any(|m| m.sub_category == "Email Address"));
+    }
+
+    #[test]
+    fn specificity_override_lifts_confidence() {
+        use crate::overrides::PatternOverride;
+
+        // Baseline: scan without overrides, capture the email
+        // finding's confidence value.
+        let baseline =
+            scan_text_with_config("Contact us at test@example.com for info.", &ScanConfig::default())
+                .unwrap();
+        let email_baseline = baseline
+            .iter()
+            .find(|m| m.sub_category == "Email Address")
+            .expect("email pattern should fire on baseline");
+
+        // Bump specificity to 1.0 via override. With context already
+        // matched ('Contact'), confidence formula clamps to 1.0 — but
+        // it'll do so by hitting the cap from above rather than the
+        // baseline boost. Pick a deliberately distinct value to make
+        // the assertion meaningful: 0.05 (low). Confidence formula
+        // becomes 0.05 + 0.20 = 0.25, which is below the baseline
+        // (0.95 + 0.20 -> 1.0). If override is honoured, conf drops.
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            (
+                email_baseline.category.clone(),
+                email_baseline.sub_category.clone(),
+            ),
+            PatternOverride {
+                specificity: Some(0.05),
+                ..Default::default()
+            },
+        );
+        let cfg = ScanConfig {
+            pattern_field_overrides: Some(Arc::new(overrides)),
+            ..Default::default()
+        };
+        let overridden =
+            scan_text_with_config("Contact us at test@example.com for info.", &cfg)
+                .unwrap();
+        let email_overridden = overridden
+            .iter()
+            .find(|m| m.sub_category == "Email Address")
+            .expect("email pattern should still fire");
+        assert!(
+            email_overridden.confidence < email_baseline.confidence,
+            "specificity override (0.05) should drop confidence below baseline (was {}, now {})",
+            email_baseline.confidence,
+            email_overridden.confidence
+        );
+        assert!(
+            email_overridden.confidence < 0.30,
+            "expected ~0.25 (0.05 + 0.20 context boost), got {}",
+            email_overridden.confidence
+        );
+    }
+
+    #[test]
+    fn context_required_override_drops_match_when_no_keyword() {
+        use crate::overrides::PatternOverride;
+
+        // Plain text with NO context keyword nearby — the pattern fires
+        // on the baseline because Email Address is not context-gated by
+        // default.
+        let baseline = scan_text_with_config(
+            "Just an address: solo@example.com appears here",
+            &ScanConfig::default(),
+        )
+        .unwrap();
+        assert!(
+            baseline.iter().any(|m| m.sub_category == "Email Address"),
+            "baseline should emit the email"
+        );
+
+        // Force context_required=true via override. The text has no
+        // typical email context keyword (no 'email', 'contact', 'reach'…)
+        // so the gate now drops the candidate.
+        let mut overrides = HashMap::new();
+        overrides.insert(
+            ("Contact Information".to_string(), "Email Address".to_string()),
+            PatternOverride {
+                context_required: Some(true),
+                ..Default::default()
+            },
+        );
+        let cfg = ScanConfig {
+            pattern_field_overrides: Some(Arc::new(overrides)),
+            ..Default::default()
+        };
+        let gated =
+            scan_text_with_config("Just an address: solo@example.com appears here", &cfg)
+                .unwrap();
+        assert!(
+            !gated.iter().any(|m| m.sub_category == "Email Address"),
+            "context_required override should suppress emit when no keyword is in range"
+        );
     }
 
     #[test]
