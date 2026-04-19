@@ -3940,10 +3940,12 @@ function findingsSparkline(findings, buckets = 20, windowMinutes = 10) {
 }
 
 // Tiny inline sparkline renderer — emits an SVG polyline.
-function Spark({ data, height, color }) {
-  const max = Math.max(1, ...data);
+// Renamed to avoid colliding with the HI-FI Spark defined later.
+function MiniSpark({ data, height, color }) {
+  const safe = Array.isArray(data) && data.length ? data : [0];
+  const max = Math.max(1, ...safe);
   const h = height || 30;
-  const points = data.map((v, i) => `${(i / (data.length - 1)) * 100},${h - (v / max) * h}`).join(' ');
+  const points = safe.map((v, i) => `${(i / Math.max(1, safe.length - 1)) * 100},${h - (v / max) * h}`).join(' ');
   const fill = color || 'var(--accent)';
   return (
     <svg viewBox={`0 0 100 ${h}`} preserveAspectRatio="none" style={{width:'100%', height:h, display:'block'}}>
@@ -3988,7 +3990,7 @@ function DashV1_Ops_Local() {
           <span className="s-label">Scans total</span>
           <span className="s-val">{m.scans_total != null ? m.scans_total.toLocaleString() : '—'}</span>
           <span className="s-delta">since boot</span>
-          <div style={{marginTop:6}}><Spark data={sparkData} height={28} color="var(--accent)" /></div>
+          <div style={{marginTop:6}}><MiniSpark data={sparkData} height={28} color="var(--accent)" /></div>
         </div></div>
         <div className="box"><div className="stat">
           <span className="s-label">Findings total</span>
@@ -4142,7 +4144,7 @@ function DashV2_Stream_Local() {
               <span className="s-label">Scans total</span>
               <span className="s-val">{m.scans_total != null ? m.scans_total.toLocaleString() : '—'}</span>
               <span className="s-delta">{fmtUptime(m.uptime_secs)}</span>
-              <div style={{marginTop:6}}><Spark data={sparkData} height={24} /></div>
+              <div style={{marginTop:6}}><MiniSpark data={sparkData} height={24} /></div>
             </div></div>
             <div className="box"><div className="stat">
               <span className="s-label">Red · in ring</span>
