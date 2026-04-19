@@ -7560,6 +7560,44 @@ function PatternKeywordsBox({ pattern }) {
   );
 }
 
+function PatternProximityBox({ pattern }) {
+  // Proximity = how close (in characters, by default) a context keyword
+  // must appear to the matched span for it to count as 'context matched'.
+  // Today the scanner uses a single compile-time default from
+  // crates/siphon-core/src/context/mod.rs; per-pattern override ships in
+  // Phase 5 alongside keyword add/remove.
+  const DEFAULT_WINDOW_CHARS = 40;
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Proximity</span>
+        <span className="k">context match window · tune ships in Phase 5</span>
+      </div>
+      <div style={{padding:'4px 0 8px'}}>
+        <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:8}}>
+          <span className="mono" style={{fontSize:18, color:'var(--accent)', minWidth:60}}>±{DEFAULT_WINDOW_CHARS}</span>
+          <span className="muted mono" style={{fontSize:11}}>chars around the match</span>
+        </div>
+        {/* visual: matched span centre with the proximity window either side */}
+        <div style={{position:'relative', background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:2, height:26, overflow:'hidden'}}>
+          <div style={{position:'absolute', left:'20%', right:'20%', top:0, bottom:0, background:'var(--accent-wash)', borderLeft:'1px dashed var(--accent)', borderRight:'1px dashed var(--accent)'}} />
+          <div style={{position:'absolute', left:'calc(50% - 40px)', width:80, top:3, bottom:3, background:'var(--amber-wash)', border:'1.5px solid var(--amber)', borderRadius:2}} />
+          <div style={{position:'absolute', inset:0, display:'flex', alignItems:'center', justifyContent:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:10, color:'var(--ink-soft)'}}>
+            <span style={{position:'absolute', left:6}}>keyword zone</span>
+            <span style={{color:'var(--ink-bright)', zIndex:1}}>match</span>
+            <span style={{position:'absolute', right:6}}>keyword zone</span>
+          </div>
+        </div>
+        <div className="margin-note" style={{marginTop:8}}>
+          Compile-time default is <span className="mono">{DEFAULT_WINDOW_CHARS} chars</span> on either side of the match span.
+          Per-pattern override + unit switch (chars vs tokens vs lines) lands with the overrides layer
+          (<b>Phase 5</b>). Change history (<b>Phase 7</b>) will record proximity changes alongside regex/keyword edits.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PatternValidatorsBox({ pattern }) {
   // Validators today are compile-time Rust fns applied per category
   // (Luhn for PCI, IBAN checksums, BIN lookups, etc.). They're not
@@ -7800,20 +7838,29 @@ function PatternDetail({ category, sub_category, back }) {
              gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)',
              alignItems:'stretch',
            }}>
+        {/* row 1: context keywords + proximity (they go together — */}
+        {/* keywords are the what, proximity is the how-close) */}
         <PatternKeywordsBox pattern={p} />
+        <PatternProximityBox pattern={p} />
+        {/* row 2: validators + specificity (scoring + gating knobs) */}
         <PatternValidatorsBox pattern={p} />
         <PatternSpecificityBox pattern={p} />
+        {/* row 3: simulator + threshold (test + policy tie-in) */}
         <PatternSimulatorStub />
         <PatternThresholdStub />
-        <div className="box">
+        {/* row 4: change history — full-width, it'll host diffs later */}
+        <div className="box" style={{gridColumn:'1 / -1'}}>
           <div className="box-title">
             <span className="t">Change history</span>
-            <span className="k">Phase 7</span>
+            <span className="k">Phase 7 · diff + revert per version</span>
           </div>
           <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:12, lineHeight:1.7}}>
             Once the overrides layer is wired (Phase 3-4) every edit writes a versioned entry here,
             with diff view and a <i>Revert to version N</i> / <i>Revert to default</i> action.
             Base patterns always remain restorable — the overrides file is additive.
+            <br/>
+            Editable fields that'll flow through this history: regex, context keywords, proximity window,
+            specificity, validator opt-in/out, enable/disable state.
           </div>
         </div>
       </div>
