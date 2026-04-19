@@ -47,6 +47,7 @@ use siphon_core::audit::{
 use siphon_core::findings_ring::{
     filter_findings, severity_for, FindingRecord, FindingsRing,
 };
+use siphon_core::overrides::PatternOverrides;
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
@@ -71,6 +72,11 @@ struct AppState {
     audit_ring_cap: usize,
     allowlist: Arc<Allowlist>,
     findings: Arc<FindingsRing>,
+    /// Pre-computed disabled-patterns set from the loaded
+    /// PatternOverrides file. Each /scan request clones the Arc into
+    /// its ScanConfig. Built once at startup; refreshing means a roll
+    /// (Phase 6).
+    disabled_patterns: Arc<HashSet<(String, String)>>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -490,6 +496,9 @@ async fn scan(
         baseline_only: req.options.baseline_only.unwrap_or(false),
         deduplicate: req.options.deduplicate.unwrap_or(true),
         trace: trace_sink.clone(),
+        // Apply the pod-loaded overrides on every scan. Cheap clone —
+        // it's an Arc, not the underlying HashSet.
+        disabled_patterns: Some(state.disabled_patterns.clone()),
         ..Default::default()
     };
 
@@ -1492,6 +1501,25 @@ async fn main() {
         .unwrap_or(1000);
     let findings = Arc::new(FindingsRing::new(findings_cap));
 
+    // Load deployable PatternOverrides from the file k8s mounts the
+    // siphon-overrides ConfigMap into. Missing → empty (compile-time
+    // defaults); parse error → empty + logged. Phase 6's auto-roll
+    // will reject overrides that don't parse before they reach this
+    // path by gating on /ready.
+    let overrides_path = std::env::var("SIPHON_OVERRIDES_PATH")
+        .unwrap_or_else(|_| "/etc/siphon/overrides.json".to_string());
+    let overrides = PatternOverrides::from_file_or_empty(&overrides_path);
+    let overrides_summary = overrides.summary();
+    let disabled_patterns = Arc::new(overrides.disabled_set());
+    tracing::info!(
+        path = %overrides_path,
+        version = overrides_summary.version,
+        disabled = overrides_summary.disabled_patterns,
+        field_overrides = overrides_summary.pattern_overrides,
+        custom_categories = overrides_summary.custom_categories,
+        "PatternOverrides loaded"
+    );
+
     let state = Arc::new(AppState {
         api_key_hash,
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
@@ -1502,6 +1530,7 @@ async fn main() {
         audit_ring_cap,
         allowlist: Arc::new(allowlist),
         findings,
+        disabled_patterns,
     });
 
     let app = Router::new()
