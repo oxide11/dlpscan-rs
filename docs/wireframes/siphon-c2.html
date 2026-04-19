@@ -3501,10 +3501,102 @@ window.useSiphonApi = function(path, deps) {
   return { ...state, source, refetch: () => setTick(t => t + 1) };
 };
 
+// Fan-out hook for /v1/findings — queries both siphon-api and
+// siphon-fs in parallel and merges their rings client-side. Each pod
+// owns an independent FindingsRing (Phase 2c) so either can be down
+// and the union still returns whatever the reachable pod has.
+//
+// `qs` is the query string (e.g. '?limit=500' or '?limit=500&category=X'),
+// forwarded verbatim to both pods. Response keeps the same shape as
+// useSiphonApi('/v1/findings'): data = { total, returned, capacity,
+// findings } with findings sorted newest-first across both rings.
+//
+// source semantics for the LivePill:
+//   'live'     → both pods responded
+//   'partial'  → one pod responded, the other errored or isn't
+//                configured (useful signal that something's off)
+//   'offline'  → both pods errored
+//   'loading'  → initial load
+//
+// perPod exposes per-endpoint state for surfaces that want to show
+// which ring contributed what (e.g. the FindingsConsole stats strip).
+window.useFindingsUnion = function(qs, deps) {
+  const [tick, setTick] = React.useState(0);
+  const [state, setState] = React.useState({
+    loading: true, data: null, error: null,
+    perPod: { api: { ok: false, error: null, data: null },
+              fs:  { ok: false, error: null, data: null } },
+  });
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setState(s => ({ ...s, loading: true, error: null }));
+
+    const fetchFrom = (baseUrl, pod) => {
+      const url = baseUrl.replace(/\/$/, '') + '/v1/findings' + (qs || '');
+      return fetch(url, { method: 'GET' })
+        .then(async r => {
+          if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+          return r.json();
+        })
+        .then(data => ({ pod, ok: true, data, error: null }))
+        .catch(e => ({ pod, ok: false, data: null, error: String(e.message || e) }));
+    };
+
+    const apiUrl = window.SIPHON_API_URL();
+    const fsUrl  = window.SIPHON_FS_URL();
+
+    Promise.all([ fetchFrom(apiUrl, 'api'), fetchFrom(fsUrl, 'fs') ])
+      .then(([api, fs]) => {
+        if (cancelled) return;
+        const findings = []
+          .concat((api.data && api.data.findings) || [])
+          .concat((fs.data  && fs.data.findings)  || [])
+          .sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+
+        // Trim to the caller's limit if qs carried one so we don't
+        // over-return when both pods had the same cap.
+        const m = (qs || '').match(/[?&]limit=(\d+)/);
+        const limit = m ? parseInt(m[1], 10) : findings.length;
+        const trimmed = findings.slice(0, limit);
+
+        const total = ((api.data && api.data.total) || 0) + ((fs.data && fs.data.total) || 0);
+        const capacity = ((api.data && api.data.capacity) || 0) + ((fs.data && fs.data.capacity) || 0);
+
+        const perPod = {
+          api: { ok: api.ok, error: api.error, data: api.data },
+          fs:  { ok: fs.ok,  error: fs.error,  data: fs.data  },
+        };
+        const bothDown = !api.ok && !fs.ok;
+        setState({
+          loading: false,
+          data: { total, returned: trimmed.length, capacity, findings: trimmed },
+          error: bothDown ? (api.error || fs.error) : null,
+          perPod,
+        });
+      });
+
+    return () => { cancelled = true; };
+  }, [...(deps || []), qs, tick]);
+
+  const source = state.loading
+    ? 'loading'
+    : (!state.perPod.api.ok && !state.perPod.fs.ok)
+      ? 'offline'
+      : (state.perPod.api.ok && state.perPod.fs.ok)
+        ? 'live'
+        : 'partial';
+
+  return { ...state, source, refetch: () => setTick(t => t + 1) };
+};
+
 // Small chip rendered in page-head actions to signal live vs. fixture data.
+// 'partial' covers the union case where one pod responded and the other
+// didn't — useful so the operator knows something's off without the
+// whole surface claiming 'offline' when it's only half down.
 window.LivePill = function LivePill({ source, onClick, title }) {
-  const map = { live:'safe', offline:'red', loading:'warn', fixture:'ghost' };
-  const label = { live:'LIVE', offline:'OFFLINE', loading:'LOADING…', fixture:'FIXTURE' }[source] || source;
+  const map = { live:'safe', offline:'red', loading:'warn', fixture:'ghost', partial:'warn' };
+  const label = { live:'LIVE', offline:'OFFLINE', loading:'LOADING…', fixture:'FIXTURE', partial:'PARTIAL' }[source] || source;
   return (
     <span
       className={`chip chip--${map[source] || 'ghost'}`}
@@ -4305,7 +4397,7 @@ function DashV1_Ops_Local() {
   // Everything is derived from /v1/metrics + /v1/findings +
   // /v1/integrations. No audit panel, no fleet, no tenants.
   const mx = window.useSiphonApi('/v1/metrics');
-  const fx = window.useSiphonApi('/v1/findings?limit=500');
+  const fx = window.useFindingsUnion('?limit=500');
   const ix = window.useSiphonApi('/v1/integrations');
 
   const autorefresh = window.useFeatureFlag ? window.useFeatureFlag('dashboard_autorefresh') : true;
@@ -4733,7 +4825,7 @@ function DetectionHistogram({ findings }) {
 function DashV2_Stream_Local() {
   // === Variant B, Local Only mode: condensed live tail + metric shoulder ===
   const mx = window.useSiphonApi('/v1/metrics');
-  const fx = window.useSiphonApi('/v1/findings?limit=500');
+  const fx = window.useFindingsUnion('?limit=500');
 
   React.useEffect(() => {
     const t = setInterval(() => { mx.refetch(); fx.refetch(); }, 3000);
@@ -4833,7 +4925,7 @@ function DashV2_Stream_Local() {
 function DashV3_Posture_Local() {
   // === Variant C, Local Only mode: live compliance frameworks + derived system posture ===
   const mx = window.useSiphonApi('/v1/metrics');
-  const fx = window.useSiphonApi('/v1/findings?limit=500');
+  const fx = window.useFindingsUnion('?limit=500');
   const cf = window.useSiphonApi('/v1/compliance/frameworks');
   const ix = window.useSiphonApi('/v1/integrations');
 
@@ -4981,7 +5073,7 @@ function DashV4_Canvas() {
   const ix   = window.useSiphonApi('/v1/integrations');
   const al   = window.useSiphonApi('/v1/allowlist');
   const pol  = window.useSiphonApi('/v1/policies');
-  const find = window.useSiphonApi('/v1/findings?limit=10');
+  const find = window.useFindingsUnion('?limit=10');
 
   React.useEffect(() => {
     const t = setInterval(() => {
@@ -5533,7 +5625,7 @@ function Stream({ go }) {
   // Reset to the first page whenever the effective filter changes.
   React.useEffect(() => { setPage(0); }, [search, severity, category, subCategory, source, groupBy, tf, pageSize]);
 
-  const fx = window.useSiphonApi('/v1/findings?limit=500');
+  const fx = window.useFindingsUnion('?limit=500');
   // Live tail — refetch every 2s unless paused.
   React.useEffect(() => {
     if (paused) return;
@@ -6238,7 +6330,7 @@ function PolicyThatFired({ finding }) {
 // A finding can hit multiple axes — we surface the strongest signal
 // first and render smaller chips for the rest.
 function RelatedFindings({ finding, onJump }) {
-  const fx = window.useSiphonApi('/v1/findings?limit=500');
+  const fx = window.useFindingsUnion('?limit=500');
   const list = (fx.data && fx.data.findings) || [];
   const selfTs = new Date(finding.ts).getTime();
   const WINDOW_MS = 5 * 60 * 1000;
@@ -6533,7 +6625,7 @@ function FindingDetail({ id, back }) {
   // come AFTER the hook block, otherwise React throws
   // 'Rendered more hooks than during the previous render' once the
   // first /v1/findings response lands.
-  const fx = window.useSiphonApi('/v1/findings?limit=500');
+  const fx = window.useFindingsUnion('?limit=500');
   const fpQueue = window.useFpQueue();
   // Escalation state is keyed by `id` (the route param), not `f` — so
   // this hook can run before the ring has loaded the full finding.
@@ -8324,7 +8416,7 @@ function PatternDetail({ category, sub_category, back }) {
   const pats = window.useSiphonApi(
     category ? `/v1/patterns?category=${encodeURIComponent(category)}&limit=500` : '/v1/patterns?limit=0'
   );
-  const fx = window.useSiphonApi('/v1/findings?limit=500');
+  const fx = window.useFindingsUnion('?limit=500');
   const fpQueue = window.useFpQueue();
   const { PageBar } = window;
 
