@@ -47,7 +47,7 @@ use siphon_core::audit::{
 use siphon_core::findings_ring::{
     filter_findings, severity_for, FindingRecord, FindingsRing,
 };
-use siphon_core::overrides::{PatternOverride, PatternOverrides};
+use siphon_core::overrides::{PatternOverride, PatternOverrides, RuntimePattern};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
@@ -79,8 +79,11 @@ struct AppState {
     disabled_patterns: Arc<HashSet<(String, String)>>,
     /// Pre-computed (category, sub_category) → PatternOverride map
     /// from PatternOverrides::override_lookup(). Phase 3c honours
-    /// specificity + context_required; remaining fields land in 3d.
+    /// specificity + context_required.
     pattern_field_overrides: Arc<HashMap<(String, String), PatternOverride>>,
+    /// Compiled runtime patterns from custom_categories. Evaluated
+    /// after the static scan loop (Phase 3d.1).
+    runtime_patterns: Arc<Vec<RuntimePattern>>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -501,9 +504,10 @@ async fn scan(
         deduplicate: req.options.deduplicate.unwrap_or(true),
         trace: trace_sink.clone(),
         // Apply the pod-loaded overrides on every scan. Cheap clones —
-        // both fields are Arcs, not the underlying collections.
+        // each field is an Arc, not the underlying collection.
         disabled_patterns: Some(state.disabled_patterns.clone()),
         pattern_field_overrides: Some(state.pattern_field_overrides.clone()),
+        runtime_patterns: Some(state.runtime_patterns.clone()),
         ..Default::default()
     };
 
@@ -1517,12 +1521,15 @@ async fn main() {
     let overrides_summary = overrides.summary();
     let disabled_patterns = Arc::new(overrides.disabled_set());
     let pattern_field_overrides = Arc::new(overrides.override_lookup());
+    let runtime_patterns = Arc::new(overrides.compile_runtime_patterns());
+    let runtime_pattern_count = runtime_patterns.len();
     tracing::info!(
         path = %overrides_path,
         version = overrides_summary.version,
         disabled = overrides_summary.disabled_patterns,
         field_overrides = overrides_summary.pattern_overrides,
         custom_categories = overrides_summary.custom_categories,
+        runtime_patterns_compiled = runtime_pattern_count,
         "PatternOverrides loaded"
     );
 
@@ -1538,6 +1545,7 @@ async fn main() {
         findings,
         disabled_patterns,
         pattern_field_overrides,
+        runtime_patterns,
     });
 
     let app = Router::new()
