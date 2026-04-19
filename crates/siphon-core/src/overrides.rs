@@ -180,6 +180,29 @@ impl Default for ListKind {
     }
 }
 
+/// An attachment of a match list to an action, scoped globally —
+/// the scanner honours every entry in `active_list_bindings` at
+/// emit time regardless of which policy originally declared it.
+///
+/// Policies author their own bindings (see `siphon::policy::ListBinding`)
+/// for documentation and audit; the admin-console Apply flow can
+/// optionally merge policy bindings into `active_list_bindings` so
+/// they actually influence scans. Keeping the scanner-active set
+/// explicit + separate from policies means:
+///   · pods don't need to load policies to enforce lists
+///   · the operator sees a single "what's actually being enforced"
+///     surface (the overrides file) without chasing per-policy TOML
+///   · conflicting bindings from overlapping policies are resolved
+///     once, at Apply time, instead of per-scan
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ListAttachment {
+    pub list_id: String,
+    /// "allow" | "block" | "mask" | "tag"
+    pub action: String,
+    pub note: String,
+}
+
 /// An analyst-authored list. `id` is stable across edits so policies
 /// can reference it without risking rename drift. Timestamps are
 /// strings (ISO8601) for wire-file readability; the scanner doesn't
@@ -217,9 +240,15 @@ pub struct PatternOverrides {
     /// Analyst-authored categories with their own patterns.
     pub custom_categories: Vec<CustomCategory>,
     /// Reusable match lists (Phase 4.7). Policies reference these by
-    /// id; the scanner consults them at emit time when Phase 4.7c
-    /// wires list-aware allow/block/mask actions.
+    /// id; the scanner consults them at emit time via
+    /// `active_list_bindings` (Phase 4.7c).
     pub lists: Vec<MatchList>,
+    /// Scanner-active list bindings. Each entry is a (list_id, action,
+    /// note) attachment that the scanner honours at emit time. Empty
+    /// by default so policies' declarative list_bindings don't
+    /// silently take effect — operators opt in by merging the ones
+    /// they actually want enforced into this field.
+    pub active_list_bindings: Vec<ListAttachment>,
 }
 
 /// Errors surfaced by the loader. Kept simple — the caller logs and
@@ -611,6 +640,36 @@ impl PatternOverrides {
             .iter()
             .filter(|l| !l.id.is_empty())
             .map(|l| (l.id.clone(), CompiledList::from_list(l)))
+            .collect()
+    }
+
+    /// Resolve `active_list_bindings` into the scanner-ready
+    /// `(action, CompiledList)` vector. Bindings pointing at
+    /// missing list ids are skipped with a stderr warning — keeps a
+    /// typo from taking the pod offline while making the problem
+    /// visible in the logs.
+    pub fn compile_active_list_bindings(&self) -> Vec<(String, CompiledList)> {
+        if self.active_list_bindings.is_empty() {
+            return Vec::new();
+        }
+        let lists = self.compile_lists();
+        self.active_list_bindings
+            .iter()
+            .filter_map(|b| {
+                if b.list_id.is_empty() || b.action.is_empty() {
+                    return None;
+                }
+                match lists.get(&b.list_id) {
+                    Some(cl) => Some((b.action.clone(), cl.clone())),
+                    None => {
+                        eprintln!(
+                            "siphon overrides: active_list_bindings references unknown list '{}' — skipping",
+                            b.list_id
+                        );
+                        None
+                    }
+                }
+            })
             .collect()
     }
 }
