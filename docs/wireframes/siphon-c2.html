@@ -2341,8 +2341,13 @@ function SurfaceBar({ current, go }) {
         return nodes;
       })}
       <div className="utility">
-        <a title="Docs & runbooks"><span className="icn">?</span><span className="t">Docs</span></a>
-        <a title="Sign out"><span className="icn">⎋</span></a>
+        <a title="Docs & runbooks"
+           onClick={() => go('docs')}
+           className={current === 'docs' ? 'active' : ''}
+           style={{cursor:'pointer'}}>
+          <span className="icn">?</span><span className="t">Docs</span>
+        </a>
+        <a title="Sign out · placeholder" style={{cursor:'pointer'}}><span className="icn">⎋</span></a>
       </div>
     </nav>
   );
