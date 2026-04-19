@@ -964,6 +964,83 @@ async fn version() -> Json<VersionResponse> {
     })
 }
 
+// ─── /v1/capabilities (Phase 5b.1) ──────────────────────────────
+//
+// Every pod answers the same capability question: "what can you
+// actually do?". The admin console polls this to:
+//   · surface a per-pod detail view in the pod-registry panel
+//   · detect capability skew between replicas (e.g. one pod was
+//     rebuilt with different features)
+//   · decide which pods to target for a specific scan (Phase 5b.3)
+//
+// Shape is deliberately shared between siphon-api and siphon-fs —
+// Optional fields cover the two disjoint feature sets (api has
+// policies_loaded; fs has supported_extensions). Serde skips None
+// so the wire stays clean.
+
+#[derive(Serialize)]
+struct CapabilitiesResponse {
+    // Identity (duplicates /health so a single call answers 'who are
+    // you and what can you do').
+    pod_type: &'static str,
+    pod_id: String,
+    version: &'static str,
+    core_version: &'static str,
+    // Pipeline facts.
+    scanner_pipeline: Vec<&'static str>,
+    entropy_modes: Vec<&'static str>,
+    overrides_features: Vec<&'static str>,
+    // Quantitative snapshot.
+    patterns_loaded: usize,
+    categories_loaded: usize,
+    findings_ring_capacity: usize,
+    overrides_summary: siphon_core::overrides::OverridesSummary,
+    // siphon-api specific.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    policies_loaded: Option<usize>,
+    // siphon-fs specific.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supported_extensions: Option<Vec<String>>,
+}
+
+async fn capabilities(State(state): State<Arc<AppState>>) -> Json<CapabilitiesResponse> {
+    Json(CapabilitiesResponse {
+        pod_type: "siphon-api",
+        pod_id: state.pod_id.to_string(),
+        version: env!("CARGO_PKG_VERSION"),
+        core_version: siphon_core::VERSION,
+        // Pipeline stages in the order a candidate traverses them.
+        // Matches PS_STAGES in the admin-console simulator so the UI
+        // can line them up without a mapping table.
+        scanner_pipeline: vec![
+            "regex",
+            "validation",
+            "context",
+            "ctx_required",
+            "require_context",
+            "min_confidence",
+            "emit",
+        ],
+        entropy_modes: vec!["off", "gated", "assignment", "all"],
+        // Which overrides axes this build understands + enforces.
+        // Lines up with PatternOverrides fields that actually flow
+        // into the scanner today.
+        overrides_features: vec![
+            "disabled_patterns",
+            "pattern_overrides",
+            "custom_categories",
+            "regex_overrides",
+            "list_bindings",
+        ],
+        patterns_loaded: siphon_core::patterns::PATTERNS.len(),
+        categories_loaded: siphon_core::patterns::categories().len(),
+        findings_ring_capacity: state.findings.capacity(),
+        overrides_summary: state.loaded_overrides.summary(),
+        policies_loaded: Some(state.policies.len()),
+        supported_extensions: None,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // /v1/overrides — read what the pod is enforcing, read what's on disk,
 // apply new state. Phase 4.
@@ -2147,6 +2224,7 @@ async fn main() {
         .route("/v1/lsh", get(list_lsh_vaults))
         .route("/v1/findings", get(list_findings))
         .route("/v1/version", get(version))
+        .route("/v1/capabilities", get(capabilities))
         .route("/v1/overrides/current", get(overrides_current))
         .route("/v1/overrides/disk", get(overrides_disk))
         .route("/v1/overrides/apply", post(overrides_apply))
