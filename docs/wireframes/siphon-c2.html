@@ -4896,6 +4896,89 @@ function TopologyStrip({ bySource, metrics, findings, integrations, live }) {
           <text x="180" y="222" fill="var(--ink-soft)">block</text>
         </g>
       </svg>
+
+      <PodFleetStrip />
+    </div>
+  );
+}
+
+// Compact status strip listing every registered pod under the
+// topology SVG. Each row hits /health once and renders a chip +
+// short URL + pod_type + pod_id prefix + version + uptime. Keeps the
+// SVG layout as-is for the single-pod-primary case while surfacing
+// the real fleet size for multi-pod deployments (Phase 4.5c).
+function PodFleetChip({ pod }) {
+  const [state, setState] = React.useState({ loading: true, data: null, error: null });
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    let cancelled = false;
+    const url = pod.url.replace(/\/$/, '') + '/health';
+    fetch(url)
+      .then(async r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(d => { if (!cancelled) setState({ loading: false, data: d, error: null }); })
+      .catch(e => { if (!cancelled) setState({ loading: false, data: null, error: String(e.message || e) }); });
+    return () => { cancelled = true; };
+  }, [pod.url, tick]);
+
+  const h = state.data || {};
+  const chip = pod.disabled ? 'ghost'
+             : state.loading ? 'warn'
+             : state.error ? 'red'
+             : 'safe';
+  const label = pod.disabled ? 'off'
+              : state.loading ? '…'
+              : state.error ? 'down'
+              : (h.pod_type || 'live');
+  // Short URL: origin only if the registered URL has no meaningful path.
+  const short = (() => {
+    try {
+      const u = new URL(pod.url);
+      const path = u.pathname.replace(/\/$/, '');
+      return path ? u.host + path : u.host;
+    } catch { return pod.url; }
+  })();
+  return (
+    <div
+      onClick={() => setTick(t => t + 1)}
+      title={pod.url + (h.pod_id ? '\npod_id ' + h.pod_id : '') + (h.started_at ? '\nstarted ' + h.started_at : '') + (state.error ? '\nerror: ' + state.error : '')}
+      style={{
+        display:'inline-flex', alignItems:'center', gap:6,
+        padding:'4px 8px', marginRight:6, marginBottom:6,
+        border:'1px solid var(--line)', borderRadius:'var(--radius)',
+        background:'var(--bg-1)', cursor:'pointer',
+        fontFamily:"'JetBrains Mono', monospace", fontSize:10.5,
+        opacity: pod.disabled ? 0.55 : 1,
+      }}>
+      <span className={`chip chip--${chip}`} style={{fontSize:8.5, padding:'1px 5px', letterSpacing:0.5}}>{label}</span>
+      <span style={{color:'var(--ink-bright)'}}>{short}</span>
+      {h.version && <span className="muted">v{h.version}</span>}
+      {h.pod_id && <span style={{color:'var(--ink-faint)'}}>{h.pod_id.slice(0, 6)}</span>}
+      {h.uptime_secs != null && <span className="muted">up {h.uptime_secs}s</span>}
+    </div>
+  );
+}
+
+function PodFleetStrip() {
+  const pods = window.usePodRegistry ? window.usePodRegistry() : [];
+  if (!pods || pods.length === 0) {
+    return (
+      <div className="muted mono" style={{padding:'10px 4px 0', fontSize:11}}>
+        — no pods registered · add one under Settings → Deployment —
+      </div>
+    );
+  }
+  const enabled = pods.filter(p => !p.disabled).length;
+  return (
+    <div style={{paddingTop:10, borderTop:'1px dashed var(--line-soft)', marginTop:10}}>
+      <div style={{display:'flex', alignItems:'center', marginBottom:6}}>
+        <span className="label" style={{flex:1}}>Pod fleet</span>
+        <span className="muted mono" style={{fontSize:10.5}}>
+          {enabled} enabled · {pods.length} registered · click a chip to re-check /health
+        </span>
+      </div>
+      <div style={{display:'flex', flexWrap:'wrap'}}>
+        {pods.map(p => <PodFleetChip key={p.url} pod={p} />)}
+      </div>
     </div>
   );
 }
@@ -12545,6 +12628,10 @@ function LiveScan() {
     catch { return 'http://127.0.0.1:8080'; }
   })();
   const [apiUrl, setApiUrl] = React.useState(defaultUrl);
+  // Phase 4.5d: per-session FS URL so file-mode can target a specific
+  // registered siphon-fs without changing the global default.
+  const [fsUrl, setFsUrl] = React.useState(() => window.SIPHON_FS_URL());
+  const podRegistry = window.usePodRegistry ? window.usePodRegistry() : [];
   // Accept a preloaded text blob from the finding-detail / FP-queue
   // hand-off and clear it so reloads don't keep re-seeding.
   const initialText = React.useMemo(() => {
@@ -12635,8 +12722,8 @@ function LiveScan() {
     try {
       const form = new FormData();
       form.append('file', file, file.name);
-      const fsUrl = window.SIPHON_FS_URL().replace(/\/$/, '');
-      const r = await fetch(fsUrl + '/scan', { method: 'POST', body: form });
+      const target = fsUrl.replace(/\/$/, '');
+      const r = await fetch(target + '/scan', { method: 'POST', body: form });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
       setResult({
@@ -12731,7 +12818,54 @@ function LiveScan() {
       </div>
 
       <div className="box" style={{marginBottom:'var(--gap)'}}>
-        <div className="box-title"><span className="t">Endpoint</span><span className="k">POST {mode === 'file' ? window.SIPHON_FS_URL() + '/scan · multipart' : '/scan'}</span></div>
+        <div className="box-title"><span className="t">Endpoint</span><span className="k">POST {mode === 'file' ? fsUrl + '/scan · multipart' : '/scan'}</span></div>
+
+        {/* Pod picker (Phase 4.5d). Selects which registered pod this
+            scan routes to. Changes apiUrl (text) or fsUrl (file)
+            state for THIS Live Scan session only — doesn't touch the
+            global c2:apiUrl / c2:fsUrl defaults. Edit the URL field
+            below for ad-hoc destinations not in the registry. */}
+        {podRegistry && podRegistry.length > 0 && (
+          <div style={{display:'flex', alignItems:'center', gap:8, marginBottom:8, fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+            <span className="label">Target pod</span>
+            <select
+              value={mode === 'file' ? fsUrl : apiUrl}
+              onChange={e => (mode === 'file' ? setFsUrl : setApiUrl)(e.target.value)}
+              style={{
+                flex:1, padding:'6px 8px', fontSize:12,
+                fontFamily:"'JetBrains Mono', monospace",
+                background:'var(--bg-1)', color:'var(--ink)',
+                border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+              }}>
+              {/* Keep the current value visible as an option even when
+                  it's not in the registry (e.g. analyst typed ad-hoc). */}
+              {(() => {
+                const selected = mode === 'file' ? fsUrl : apiUrl;
+                const roleFilter = mode === 'file' ? 'fs' : 'api';
+                const fleet = podRegistry.filter(p =>
+                  !p.disabled && (p.role === roleFilter || p.role === 'auto')
+                );
+                const hasSelected = fleet.some(p => p.url === selected);
+                return (
+                  <>
+                    {!hasSelected && selected && (
+                      <option value={selected}>{selected} · ad-hoc</option>
+                    )}
+                    {fleet.map(p => (
+                      <option key={p.url} value={p.url}>
+                        {p.url}{p.label ? ` · ${p.label}` : ''}{p.role !== 'auto' ? ` · ${p.role}` : ''}
+                      </option>
+                    ))}
+                  </>
+                );
+              })()}
+            </select>
+            <span className="muted" style={{fontSize:10.5}}>
+              {mode === 'file' ? 'siphon-fs' : 'siphon-api'} pods in registry
+            </span>
+          </div>
+        )}
+
         <div style={{display:'grid', gridTemplateColumns:'auto 1fr auto auto auto', gap:10, alignItems:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12, opacity: mode === 'file' ? 0.55 : 1}}>
           <span className="label">API URL</span>
           <input
@@ -12772,7 +12906,7 @@ function LiveScan() {
         </div>
         {mode === 'file' && (
           <div className="muted" style={{fontSize:11, marginTop:8, lineHeight:1.6}}>
-            File mode hits <span className="mono">{window.SIPHON_FS_URL()}/scan</span> — options above
+            File mode hits <span className="mono">{fsUrl}/scan</span> — options above
             don't apply yet (siphon-fs runs with default <span className="mono">ScanConfig</span>).
             Plumbing options + trace through siphon-fs lands in a follow-up.
           </div>
@@ -12887,7 +13021,7 @@ function LiveScan() {
               <b>Error:</b> {error}<br/>
               <span className="muted" style={{fontSize:11}}>
                 {mode === 'file'
-                  ? <>Check siphon-fs is running at <span className="mono">{window.SIPHON_FS_URL()}</span> and CORS is open for this origin.</>
+                  ? <>Check siphon-fs is running at <span className="mono">{fsUrl}</span> and CORS is open for this origin.</>
                   : <>Check siphon-api is running and CORS is open for this origin.</>}
               </span>
             </div>
@@ -13433,7 +13567,11 @@ function ApiExplorer() {
   const [result, setResult] = React.useState(null);
 
   const ep = API_ENDPOINTS.find(e => e.id === selectedId) || API_ENDPOINTS[0];
-  const apiUrl = window.SIPHON_API_URL();
+  // Phase 4.5d: per-session target pod so the analyst can fire
+  // requests against a specific registered siphon-api without
+  // changing the global default.
+  const podRegistry = window.usePodRegistry ? window.usePodRegistry() : [];
+  const [apiUrl, setApiUrl] = React.useState(() => window.SIPHON_API_URL());
 
   // Reset query inputs when endpoint changes
   React.useEffect(() => { setQueryParams({}); setResult(null); }, [selectedId]);
@@ -13498,7 +13636,42 @@ function ApiExplorer() {
           <h1>API Explorer <HelpIcon topic="api" title="API reference" size={18} /></h1>
         </div>
         <div className="actions">
-          <span className="muted mono" style={{fontSize:11}}>target: {apiUrl}</span>
+          {/* Phase 4.5d: per-session pod picker. Falls back to the
+              global SIPHON_API_URL display when no pods are
+              registered yet. Picking DOES NOT mutate the global
+              c2:apiUrl default — it's scoped to this surface. */}
+          {podRegistry && podRegistry.length > 0 ? (
+            <select
+              value={apiUrl}
+              onChange={e => setApiUrl(e.target.value)}
+              title="pick which registered pod to target · add or disable pods under Settings → Deployment"
+              style={{
+                fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+                padding:'4px 8px', background:'var(--bg-1)', color:'var(--ink)',
+                border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+              }}>
+              {(() => {
+                const fleet = podRegistry.filter(p =>
+                  !p.disabled && (p.role === 'api' || p.role === 'auto')
+                );
+                const hasSelected = fleet.some(p => p.url === apiUrl);
+                return (
+                  <>
+                    {!hasSelected && apiUrl && (
+                      <option value={apiUrl}>{apiUrl} · ad-hoc</option>
+                    )}
+                    {fleet.map(p => (
+                      <option key={p.url} value={p.url}>
+                        {p.url}{p.label ? ` · ${p.label}` : ''}
+                      </option>
+                    ))}
+                  </>
+                );
+              })()}
+            </select>
+          ) : (
+            <span className="muted mono" style={{fontSize:11}}>target: {apiUrl}</span>
+          )}
           <button className="btn primary" onClick={run} disabled={running}>
             {running ? 'Running…' : '▶ Run'}
           </button>
