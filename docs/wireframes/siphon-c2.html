@@ -3967,6 +3967,30 @@ function findingsSparkline(findings, buckets = 20, windowMinutes = 10) {
   return data;
 }
 
+// Bucket findings into N buckets covering `windowMin` minutes back
+// from now. For each bucket returns { count, confSum, red, warn, safe }.
+// Used by the KPI sparklines and the density heatmap.
+function bucketFindings(findings, buckets, windowMin) {
+  const now = Date.now();
+  const windowMs = windowMin * 60 * 1000;
+  const bucketMs = windowMs / buckets;
+  const out = Array.from({ length: buckets }, () => ({ count: 0, confSum: 0, red: 0, warn: 0, safe: 0 }));
+  (findings || []).forEach(f => {
+    const t = new Date(f.ts).getTime();
+    if (isNaN(t)) return;
+    const delta = now - t;
+    if (delta < 0 || delta > windowMs) return;
+    const idx = buckets - 1 - Math.floor(delta / bucketMs);
+    if (idx < 0 || idx >= buckets) return;
+    const b = out[idx];
+    b.count++;
+    b.confSum += (f.confidence || 0);
+    const sev = f.severity === 'red' ? 'red' : f.severity === 'warn' ? 'warn' : 'safe';
+    b[sev]++;
+  });
+  return out;
+}
+
 // Tiny inline sparkline renderer — emits an SVG polyline.
 // Named MiniSpark (not Spark) to avoid colliding with the richer
 // HI-FI Spark component later in the file which takes { series } as
@@ -3983,6 +4007,146 @@ function MiniSpark({ data, height, color }) {
     <svg viewBox={`0 0 100 ${h}`} preserveAspectRatio="none" style={{width:'100%', height:h, display:'block'}}>
       <polyline points={points} fill="none" stroke={fill} strokeWidth="1.5"/>
     </svg>
+  );
+}
+
+// KPI tile — big value, sparkline on the right, delta below. The
+// caller supplies everything pre-computed so the tile stays dumb.
+// Bucket the 127 real categories into the 6 high-level groups the
+// hi-fi dashboard renders (PCI · PII · CRED · PHI · SECRET ·
+// CLASSIFIED). Anything that doesn't match falls through to OTHER.
+const CAT_GROUPS = ['PCI','PII','CRED','PHI','SECRET','CLASSIFIED','OTHER'];
+const CAT_GROUP_COLOR = {
+  PCI:        'var(--red)',
+  PII:        'var(--cyan)',
+  CRED:       'var(--amber)',
+  PHI:        'var(--violet)',
+  SECRET:     'var(--magenta)',
+  CLASSIFIED: 'var(--ink-bright)',
+  OTHER:      'var(--ink-soft)',
+};
+function catGroup(category) {
+  const c = (category || '').toLowerCase();
+  if (c.includes('credit card') || c.includes('primary account') || c.includes('iban') || c.includes('bank')) return 'PCI';
+  if (c.includes('medical') || c.includes('health') || c.includes('phi')) return 'PHI';
+  if (c.includes('cloud provider secret') || c.includes('code platform secret')) return 'CRED';
+  if (c.includes('generic secret') || c.includes('private key') || c.includes('token')) return 'SECRET';
+  if (c.includes('classif') || c.includes('marking')) return 'CLASSIFIED';
+  if (c.includes('personal') || c.includes('contact') || c.includes('national id') || c.includes('identifier')) return 'PII';
+  return 'OTHER';
+}
+
+// Rich live findings table. Columns are adapted to what /v1/findings
+// actually returns — tenant / channel / file-type / route / policy-
+// action don't exist in the ring (those are cluster-mode concepts),
+// so we surface the data that is real: timestamp, severity,
+// category, sub-category, source IP, match text, confidence, id.
+function StreamTable({ findings }) {
+  if (!findings || findings.length === 0) {
+    return (
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title">
+          <span className="t">Recent findings</span>
+          <span className="k">newest first · <a onClick={() => window.__c2_go && window.__c2_go('stream')} style={{color:'var(--accent)', cursor:'pointer'}}>open full console ›</a></span>
+        </div>
+        <div className="muted" style={{padding:30, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+          — ring empty · run a scan from <a onClick={() => window.__c2_go && window.__c2_go('livescan')} style={{color:'var(--accent)', cursor:'pointer'}}>Engineering → Live Scan</a> —
+        </div>
+      </div>
+    );
+  }
+  const rows = findings.slice(0, 15);
+  const cellPad = '7px 10px';
+  const borderBottom = '1px solid var(--line-soft)';
+  return (
+    <div className="box" style={{marginBottom:'var(--gap)', padding:0, overflow:'hidden'}}>
+      <div className="box-title" style={{padding:'10px 14px', margin:0, borderBottom:'1px solid var(--line-strong)'}}>
+        <span className="t">Recent findings</span>
+        <span className="k">
+          showing {rows.length} of {findings.length} in ring · <a onClick={() => window.__c2_go && window.__c2_go('stream')} style={{color:'var(--accent)', cursor:'pointer'}}>open full console ›</a>
+        </span>
+      </div>
+      <div style={{overflow:'auto'}}>
+        <table style={{width:'100%', borderCollapse:'collapse', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5}}>
+          <thead>
+            <tr style={{borderBottom:'1px solid var(--line-strong)'}}>
+              {['TIME','SEV','CATEGORY','SUB-CATEGORY','SOURCE IP','MATCH','CONF','ID',''].map((h, i) => (
+                <th key={i} className="label" style={{textAlign:'left', padding:cellPad, borderBottom, fontWeight:600, color:'var(--ink-faint)'}}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((f, i) => {
+              const gid = catGroup(f.category);
+              const sevShade = f.severity === 'red' ? 'var(--red)' : f.severity === 'warn' ? 'var(--amber)' : 'var(--accent-dim)';
+              return (
+                <tr
+                  key={f.id || i}
+                  onClick={() => window.__c2_go && window.__c2_go('stream', 'finding:' + f.id)}
+                  style={{cursor:'pointer', borderBottom, boxShadow: 'inset 2px 0 0 ' + sevShade}}
+                  onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-3)'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = ''}
+                >
+                  <td style={{padding:cellPad, color:'var(--ink-soft)', whiteSpace:'nowrap'}} title={f.ts}>{fmtWallClock(f.ts)}</td>
+                  <td style={{padding:cellPad}}>
+                    <span className={`chip chip--${f.severity}`} style={{fontSize:9, padding:'2px 7px'}}>{f.severity}</span>
+                  </td>
+                  <td style={{padding:cellPad}}>
+                    <span style={{
+                      fontSize:10, padding:'2px 6px',
+                      border:'1px solid ' + CAT_GROUP_COLOR[gid],
+                      color: CAT_GROUP_COLOR[gid],
+                      borderRadius:'var(--radius)',
+                      letterSpacing:'0.06em',
+                      fontWeight:600,
+                    }}>{gid}</span>
+                  </td>
+                  <td style={{padding:cellPad, color:'var(--ink)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', maxWidth:200}} title={f.category + ' / ' + (f.sub_category || '')}>
+                    {f.sub_category || '—'}
+                  </td>
+                  <td style={{padding:cellPad, color:'var(--ink-soft)', whiteSpace:'nowrap'}}>{f.source_ip || '—'}</td>
+                  <td style={{padding:cellPad, color:'var(--ink-bright)', maxWidth:320, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={f.text}>
+                    {f.text}
+                  </td>
+                  <td style={{padding:cellPad, color:'var(--ink)', textAlign:'right', whiteSpace:'nowrap'}}>
+                    {f.confidence != null ? f.confidence.toFixed(2) : '—'}
+                  </td>
+                  <td style={{padding:cellPad, color:'var(--ink-dim)', whiteSpace:'nowrap'}}>{(f.id || '').slice(-8)}</td>
+                  <td style={{padding:cellPad, color:'var(--accent)', textAlign:'right', fontWeight:700}}>›</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {findings.length > rows.length && (
+        <div style={{padding:'8px 14px', fontSize:11.5, color:'var(--ink-soft)', fontFamily:"'JetBrains Mono', monospace", borderTop:'1px dashed var(--line-soft)'}}>
+          … +{findings.length - rows.length} more in the ring · <a onClick={() => window.__c2_go && window.__c2_go('stream')} style={{color:'var(--accent)', cursor:'pointer'}}>open full console ›</a>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KpiTile({ label, value, series, delta, color, formatDelta }) {
+  const up = typeof delta === 'number' ? delta > 0 : (delta || '').toString().trim().startsWith('+');
+  const down = typeof delta === 'number' ? delta < 0 : (delta || '').toString().trim().startsWith('-') || (delta || '').toString().trim().startsWith('−');
+  const deltaText = formatDelta
+    ? formatDelta(delta)
+    : (typeof delta === 'number' ? (delta > 0 ? '+' : '') + delta.toFixed(1) + '%' : delta || '—');
+  return (
+    <div className="box" style={{padding:'14px 16px'}}>
+      <div className="s-label" style={{marginBottom:8}}>{label}</div>
+      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:10}}>
+        <div className="s-val" style={{color: color || 'var(--ink-bright)'}}>{value}</div>
+        <div style={{flex:'0 0 110px'}}>
+          <MiniSpark data={series} height={28} color={color || 'var(--accent)'} />
+        </div>
+      </div>
+      <div className="s-delta" style={{marginTop:6, color: up ? 'var(--safe)' : down ? 'var(--red)' : 'var(--ink-soft)'}}>
+        {deltaText}
+      </div>
+    </div>
   );
 }
 
@@ -4012,6 +4176,32 @@ function DashV1_Ops_Local() {
   const findings = (fx.data && fx.data.findings) || [];
   const sparkData = findingsSparkline(findings, 20, 10);
 
+  // ── KPI strip values ──────────────────────────────────────────
+  // Findings/min: buckets of 20s each for 20 minutes, the last 3
+  // buckets (=60s) summed gives the per-minute rate.
+  const fpmBuckets = bucketFindings(findings, 20, 20);
+  const fpmSeries = fpmBuckets.map(b => b.count);
+  const findingsPerMin = fpmSeries.slice(-3).reduce((a, b) => a + b, 0); // last 60s
+  const fpmPrev = fpmSeries.slice(-6, -3).reduce((a, b) => a + b, 0);
+  const fpmDelta = fpmPrev > 0 ? ((findingsPerMin - fpmPrev) / fpmPrev) * 100 : 0;
+
+  // Mean confidence: avg over the ring, plus per-bucket for sparkline.
+  const mcBuckets = bucketFindings(findings, 20, 20);
+  const mcSeries = mcBuckets.map(b => b.count ? (b.confSum / b.count) * 100 : 0);
+  const meanConf = findings.length
+    ? (findings.reduce((a, f) => a + (f.confidence || 0), 0) / findings.length) * 100
+    : 0;
+  const mcPrev = mcSeries.slice(-6, -3).filter(v => v > 0);
+  const mcPrevAvg = mcPrev.length ? mcPrev.reduce((a, b) => a + b, 0) / mcPrev.length : 0;
+  const mcCur = mcSeries.slice(-3).filter(v => v > 0);
+  const mcCurAvg = mcCur.length ? mcCur.reduce((a, b) => a + b, 0) / mcCur.length : meanConf;
+  const mcDelta = mcPrevAvg ? (mcCurAvg - mcPrevAvg) : 0;
+
+  // Scans/sec: derived from total counters + uptime. Rolling delta
+  // between polls would be more accurate but needs state we don't
+  // currently keep in this component.
+  const scansPerSec = m.uptime_secs ? (m.scans_total || 0) / m.uptime_secs : 0;
+
   const overall = [mx.source, fx.source, ix.source].includes('offline') ? 'offline'
     : [mx.source, fx.source, ix.source].every(s => s === 'live') ? 'live' : 'loading';
 
@@ -4032,86 +4222,50 @@ function DashV1_Ops_Local() {
         </span>
       </div>
 
-      {/* ── 1 · Top metrics strip ─────────────────────────────── */}
+      {/* ── 1 · KPI strip ─────────────────────────────────────── */}
       <div className="grid grid-4" style={{marginBottom: 'var(--gap)'}}>
-        <div className="box"><div className="stat">
-          <span className="s-label">Scans total</span>
-          <span className="s-val">{m.scans_total != null ? m.scans_total.toLocaleString() : '—'}</span>
-          <span className="s-delta">since boot</span>
-          <div style={{marginTop:6}}><MiniSpark data={sparkData} height={28} color="var(--accent)" /></div>
-        </div></div>
-        <div className="box"><div className="stat">
-          <span className="s-label">Findings total</span>
-          <span className="s-val">{m.findings_total != null ? m.findings_total.toLocaleString() : '—'}</span>
-          <span className="s-delta">{findings.length} in ring</span>
-          <div style={{marginTop:6, height:28}} />
-        </div></div>
-        <div className="box"><div className="stat">
-          <span className="s-label">Errors</span>
-          <span className="s-val" style={{color: (m.scan_errors_total || 0) > 0 ? 'var(--red)' : 'var(--ink-bright)'}}>
-            {m.scan_errors_total != null ? m.scan_errors_total : '—'}
-          </span>
-          <span className="s-delta">
-            {m.scans_total ? ((m.scan_errors_total || 0) / m.scans_total * 100).toFixed(2) + '% rate' : '—'}
-          </span>
-          <div style={{marginTop:6, height:28}} />
-        </div></div>
-        <div className="box"><div className="stat">
-          <span className="s-label">Uptime</span>
-          <span className="s-val">{fmtUptime(m.uptime_secs)}</span>
-          <span className="s-delta">{m.patterns_loaded != null ? `${m.patterns_loaded} patterns · ${m.categories_loaded} cats` : ''}</span>
-          <div style={{marginTop:6, height:28}} />
-        </div></div>
+        <KpiTile
+          label="Findings / min"
+          value={findingsPerMin}
+          series={fpmSeries}
+          delta={fpmDelta}
+          color="var(--accent)"
+        />
+        <KpiTile
+          label="Errors · total"
+          value={m.scan_errors_total != null ? m.scan_errors_total : '—'}
+          series={[0, 0, 0, 0]}
+          delta={m.scans_total ? ((m.scan_errors_total || 0) / m.scans_total * 100).toFixed(2) + '% rate' : '—'}
+          color="var(--red)"
+          formatDelta={(d) => d}
+        />
+        <KpiTile
+          label="Mean confidence"
+          value={findings.length ? meanConf.toFixed(1) + '%' : '—'}
+          series={mcSeries}
+          delta={mcDelta}
+          color="var(--cyan)"
+          formatDelta={(d) => d > 0 ? '+' + d.toFixed(1) + ' pp' : d < 0 ? d.toFixed(1) + ' pp' : '— steady'}
+        />
+        <KpiTile
+          label="Scans / sec"
+          value={scansPerSec > 0 ? scansPerSec.toFixed(2) : '—'}
+          series={fpmSeries}
+          delta={`uptime ${fmtUptime(m.uptime_secs)} · ${m.scans_total != null ? m.scans_total.toLocaleString() : '—'} total`}
+          color="var(--violet)"
+          formatDelta={(d) => d}
+        />
       </div>
 
-      {/* ── 2 · Recent findings · full width ──────────────────── */}
-      <div className="box" style={{marginBottom:'var(--gap)'}}>
-        <div className="box-title">
-          <span className="t">Recent findings</span>
-          <span className="k">
-            newest first · <a onClick={() => window.__c2_go && window.__c2_go('stream')} style={{color:'var(--accent)', cursor:'pointer'}}>open full console ›</a>
-          </span>
-        </div>
-        {findings.length === 0 ? (
-          <div className="muted" style={{padding:30, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
-            — ring empty · run a scan from <a onClick={() => window.__c2_go && window.__c2_go('livescan')} style={{color:'var(--accent)', cursor:'pointer'}}>Engineering → Live Scan</a> —
-          </div>
-        ) : (
-          <>
-            <div className="find-row label" style={{borderBottom:'1.5px solid var(--line)'}}>
-              <span>TS</span>
-              <span>Source IP</span>
-              <span>Match</span>
-              <span>Category</span>
-              <span>Conf</span>
-              <span>Sev</span>
-              <span></span>
-            </div>
-            {findings.slice(0, 12).map((f, i) => (
-              <div key={i} className="find-row" onClick={() => window.__c2_go && window.__c2_go('stream', 'finding:' + f.id)}>
-                <span className="ts" title={f.ts}>{fmtWallClock(f.ts)}</span>
-                <span className="src">{f.source_ip || '—'}</span>
-                <span className="tx">… {f.text} …</span>
-                <span className={`chip chip--${f.severity}`} title={f.category}>{f.sub_category || f.category}</span>
-                <span className="mono" style={{fontSize:11, color:'var(--ink-faint)'}}>{f.confidence != null ? f.confidence.toFixed(2) : '—'}</span>
-                <span className="chip">{f.severity}</span>
-                <span className="arrow">›</span>
-              </div>
-            ))}
-            {findings.length > 12 && (
-              <div style={{padding:'8px 4px', fontFamily:"'JetBrains Mono', monospace", color:'var(--ink-soft)', fontSize:11.5}}>
-                … +{findings.length - 12} more in the ring · <a onClick={() => window.__c2_go && window.__c2_go('stream')} style={{color:'var(--accent)', cursor:'pointer'}}>open full console ›</a>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+      {/* ── 2 · Rich stream table · full width ────────────────── */}
+      <StreamTable findings={findings} />
 
-      {/* ── 3 · Inputs → Detection → Outputs live topology ───── */}
+
+      {/* ── 3 · Ingress → Inspect → Route SVG topology ───────── */}
       <TopologyStrip
         bySource={bySource}
         metrics={m}
-        sparkData={sparkData}
+        findings={findings}
         integrations={configuredIntegrations}
         live={overall === 'live'}
       />
@@ -4122,185 +4276,309 @@ function DashV1_Ops_Local() {
   );
 }
 
-// Inputs (source_ip → counts)  ──→  siphon-api (detection)  ──→  Outputs
-// (configured SIEM integrations). Uses simple absolute-positioned nodes +
-// an SVG overlay for the connectors so the layout is readable without a
-// chart library.
-function TopologyStrip({ bySource, metrics, sparkData, integrations, live }) {
+// Ingress → INSPECT → Route topology. Modelled on the demo's HfTopology
+// SVG so the layout scales cleanly and the connectors flow properly.
+//
+// Inputs are the top source_ips aggregated from /v1/findings.
+// The centre INSPECT node is the siphon-api process (live scan rate
+// + p95 derived from /v1/metrics). Outputs are configured SIEM
+// destinations from /v1/integrations, with per-destination action
+// colour (SIEM flag, tokenize vault, block/drop).
+function TopologyStrip({ bySource, metrics, findings, integrations, live }) {
   const m = metrics || {};
-  const sources = (bySource || []).length
-    ? bySource
-    : [['— no callers yet —', 0]];
-  const outs = (integrations || []).length
-    ? integrations
-    : [{ kind: 'no SIEM configured', target: 'DLPSCAN_SIEM_TYPE unset' }];
+
+  // Build a fixed 4-slot input list — pad with placeholders so the
+  // layout stays symmetrical even when only one caller is active.
+  const inputRaw = (bySource && bySource.length) ? bySource.slice(0, 4) : [];
+  while (inputRaw.length < 4) inputRaw.push(null);
+
+  // Same pad treatment for outputs.
+  const outRaw = ((integrations && integrations.length) ? integrations : []).slice(0, 4);
+  while (outRaw.length < 4) outRaw.push(null);
+
+  // Route actions are derived from integration kind. siphon-api doesn't
+  // execute policies on scans so we can't surface a real "action" per
+  // finding; we label the route by what the destination would do.
+  const kindAction = (kind) => {
+    const k = (kind || '').toLowerCase();
+    if (!kind) return null;
+    if (k.includes('syslog') || k.includes('splunk') || k.includes('elastic') || k.includes('datadog')) return 'flag';
+    if (k.includes('webhook') || k.includes('slack')) return 'flag';
+    return 'flag';
+  };
+  const actColor = { flag: 'var(--cyan)', tokenize: 'var(--violet)', block: 'var(--red)' };
+
+  // Compute per-input rate label. findings-per-second derived from ring
+  // density over the last 60s if the ip is top of list. Rough, but
+  // honest.
+  const rateLabel = (count) => count > 0 ? (count >= 1000 ? (count/1000).toFixed(1) + 'k' : count) + '/r' : '—';
+
+  // SVG layout constants
+  const VBW = 480, VBH = 240;
+  const inBoxW = 112, inBoxH = 30, inBoxX = 14;
+  const outBoxW = 118, outBoxH = 30, outBoxX = VBW - outBoxW - 14;
+  const INSPECT_X = 180, INSPECT_Y = 110, INSPECT_W = 108, INSPECT_H = 58;
+  const inspectL = INSPECT_X, inspectR = INSPECT_X + INSPECT_W;
+  const inspectCy = INSPECT_Y + INSPECT_H / 2;
+
+  const scansPerSec = m.uptime_secs ? (m.scans_total || 0) / m.uptime_secs : 0;
+
   return (
-    <div className="box" style={{marginBottom:'var(--gap)', overflow:'hidden'}}>
+    <div className="box" style={{marginBottom:'var(--gap)'}}>
       <div className="box-title">
-        <span className="t">Inputs → Detection → Outputs</span>
-        <span className="k">live · wired to /v1/findings · /v1/metrics · /v1/integrations</span>
+        <span className="t">Topology</span>
+        <span className="k">INGRESS → INSPECT → ROUTE · live</span>
       </div>
-      <div style={{
-        position:'relative', minHeight: 220, marginTop: 6,
-        backgroundImage:'radial-gradient(var(--line-soft) 1px, transparent 1.5px)',
-        backgroundSize:'22px 22px',
-      }}>
-        {/* Section headers */}
-        <div style={{position:'absolute', top:4, left:10, fontFamily:"'JetBrains Mono', monospace", fontSize:10, letterSpacing:'0.14em', color:'var(--ink-faint)', textTransform:'uppercase'}}>INPUTS</div>
-        <div style={{position:'absolute', top:4, left:'50%', transform:'translateX(-50%)', fontFamily:"'JetBrains Mono', monospace", fontSize:10, letterSpacing:'0.14em', color:'var(--ink-faint)', textTransform:'uppercase'}}>DETECTION</div>
-        <div style={{position:'absolute', top:4, right:10, fontFamily:"'JetBrains Mono', monospace", fontSize:10, letterSpacing:'0.14em', color:'var(--ink-faint)', textTransform:'uppercase'}}>OUTPUTS</div>
+      <svg viewBox={`0 0 ${VBW} ${VBH}`} style={{width:'100%', height:260, display:'block', background:'var(--bg-1)', borderRadius:'var(--radius)', border:'1px solid var(--line-soft)'}}>
+        <defs>
+          <marker id="c2ArrDim"    markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--ink-soft)" />
+          </marker>
+          <marker id="c2ArrFlag"   markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--cyan)" />
+          </marker>
+          <marker id="c2ArrVault"  markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--violet)" />
+          </marker>
+          <marker id="c2ArrBlock"  markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+            <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--red)" />
+          </marker>
+        </defs>
 
-        {/* Inputs column */}
-        <div style={{position:'absolute', left:10, top:28, width:220, display:'flex', flexDirection:'column', gap:6}}>
-          {sources.slice(0, 5).map(([ip, count], i) => (
-            <div key={i} style={{
-              background:'var(--bg-2)',
-              border:'1px solid var(--line-strong)',
-              borderRadius:'var(--radius)',
-              padding:'7px 10px',
-              fontFamily:"'JetBrains Mono', monospace",
-              fontSize:11,
-            }}>
-              <div style={{color:'var(--ink-bright)'}}>{ip}</div>
-              {count > 0 && (
-                <div className="muted" style={{fontSize:10, marginTop:2}}>
-                  {count} finding{count === 1 ? '' : 's'} · HTTP /scan
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        {/* Column headers */}
+        <g fontFamily="JetBrains Mono, monospace" fontSize="9" fill="var(--ink-dim)" letterSpacing="1.8">
+          <text x="14"  y="18">INPUTS →</text>
+          <text x={INSPECT_X + 12} y="18">INSPECT</text>
+          <text x={outBoxX - 12} y="18">→ OUTPUTS</text>
+        </g>
 
-        {/* Detector in the center */}
-        <div style={{
-          position:'absolute', top:60, left:'50%', transform:'translateX(-50%)', width:220,
-          background: live ? 'var(--accent-wash)' : 'var(--bg-2)',
-          border: '2px solid ' + (live ? 'var(--accent)' : 'var(--line-strong)'),
-          borderRadius:'var(--radius)',
-          padding:'12px 14px',
-          textAlign:'center',
-        }}>
-          <div style={{fontFamily:"'Space Grotesk', sans-serif", fontSize:15, fontWeight:600, color:'var(--ink-bright)'}}>
-            siphon-api
-          </div>
-          <div className="muted" style={{fontSize:10.5, fontFamily:"'JetBrains Mono', monospace", marginTop:2}}>
-            {window.SIPHON_API_URL ? window.SIPHON_API_URL() : ''}
-          </div>
-          <div style={{marginTop:10, display:'grid', gridTemplateColumns:'1fr 1fr', gap:6, fontSize:11, fontFamily:"'JetBrains Mono', monospace"}}>
-            <div>
-              <div className="muted" style={{fontSize:9, textTransform:'uppercase', letterSpacing:'0.12em'}}>scans</div>
-              <div style={{color: live ? 'var(--accent)' : 'var(--ink-soft)', fontWeight:600}}>{m.scans_total != null ? m.scans_total.toLocaleString() : '—'}</div>
-            </div>
-            <div>
-              <div className="muted" style={{fontSize:9, textTransform:'uppercase', letterSpacing:'0.12em'}}>findings</div>
-              <div style={{color: live ? 'var(--accent)' : 'var(--ink-soft)', fontWeight:600}}>{m.findings_total != null ? m.findings_total.toLocaleString() : '—'}</div>
-            </div>
-          </div>
-          <div style={{marginTop:8}}>
-            <MiniSpark data={sparkData} height={22} color={live ? 'var(--accent)' : 'var(--ink-dim)'} />
-          </div>
-          <div className="muted" style={{fontSize:10, marginTop:4}}>
-            {m.patterns_loaded != null ? `${m.patterns_loaded} patterns / ${m.categories_loaded} cats` : ''}
-          </div>
-        </div>
+        {/* Input boxes + flows to inspect */}
+        {inputRaw.map((entry, i) => {
+          const y = 42 + i * 42;
+          if (!entry) {
+            return (
+              <g key={'in-ph-' + i}>
+                <rect x={inBoxX} y={y} width={inBoxW} height={inBoxH} rx="3"
+                      fill="var(--bg-2)" stroke="var(--line-soft)" strokeDasharray="3 3" />
+                <text x={inBoxX + 8} y={y + inBoxH / 2 + 3}
+                      fontFamily="JetBrains Mono" fontSize="9.5" fill="var(--ink-dim)">— idle slot —</text>
+              </g>
+            );
+          }
+          const [ip, count] = entry;
+          return (
+            <g key={'in-' + i}>
+              <rect x={inBoxX} y={y} width={inBoxW} height={inBoxH} rx="3"
+                    fill="var(--bg-2)" stroke="var(--line-strong)" />
+              <text x={inBoxX + 8} y={y + 14}
+                    fontFamily="JetBrains Mono" fontSize="10.5" fontWeight="600" fill="var(--ink)">
+                {ip.length > 13 ? ip.slice(0, 13) + '…' : ip}
+              </text>
+              <text x={inBoxX + 8} y={y + 25}
+                    fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-soft)">
+                http · {rateLabel(count)}
+              </text>
+              <path d={`M ${inBoxX + inBoxW} ${y + inBoxH / 2} C ${inBoxX + inBoxW + 30} ${y + inBoxH / 2}, ${inspectL - 30} ${inspectCy}, ${inspectL} ${inspectCy}`}
+                    fill="none" stroke="var(--ink-soft)" strokeWidth="1.1" opacity="0.55"
+                    strokeDasharray="3 5" markerEnd="url(#c2ArrDim)">
+                {live && (
+                  <animate attributeName="stroke-dashoffset" from="0" to="-16" dur="1.4s" repeatCount="indefinite" />
+                )}
+              </path>
+            </g>
+          );
+        })}
 
-        {/* Outputs column */}
-        <div style={{position:'absolute', right:10, top:28, width:220, display:'flex', flexDirection:'column', gap:6}}>
-          {outs.slice(0, 5).map((o, i) => (
-            <div key={i} style={{
-              background: o.target ? 'var(--amber-wash)' : 'var(--bg-2)',
-              border: '1px solid ' + (o.target ? 'var(--amber)' : 'var(--line-strong)'),
-              borderStyle: o.target ? 'solid' : 'dashed',
-              borderRadius:'var(--radius)',
-              padding:'7px 10px',
-              fontFamily:"'JetBrains Mono', monospace",
-              fontSize:11,
-            }}>
-              <div style={{color: o.target ? 'var(--ink-bright)' : 'var(--ink-soft)'}}>{o.kind}</div>
-              {o.target && (
-                <div className="muted" style={{fontSize:10, marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={o.target}>
-                  {o.target}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        {/* INSPECT node */}
+        <g>
+          <rect x={INSPECT_X} y={INSPECT_Y} width={INSPECT_W} height={INSPECT_H}
+                rx="4" fill="var(--bg-2)"
+                stroke={live ? 'var(--accent)' : 'var(--line-strong)'} strokeWidth="1.4" />
+          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 22}
+                fontFamily="Space Grotesk" fontSize="13" fontWeight="700"
+                fill={live ? 'var(--accent)' : 'var(--ink-soft)'} textAnchor="middle" letterSpacing="1.5">INSPECT</text>
+          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 38}
+                fontFamily="JetBrains Mono" fontSize="10" fill="var(--ink)" textAnchor="middle">
+            {scansPerSec > 0 ? scansPerSec.toFixed(2) + '/s' : '0/s'}
+          </text>
+          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 50}
+                fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-soft)" textAnchor="middle">
+            {m.patterns_loaded != null ? m.patterns_loaded + ' patterns' : 'loading…'}
+          </text>
+          {live && (
+            <circle cx={INSPECT_X + INSPECT_W / 2} cy={inspectCy} r="50"
+                    fill="none" stroke="var(--accent)" strokeWidth="0.6" opacity="0.4">
+              <animate attributeName="r" values="50;72;50" dur="2.6s" repeatCount="indefinite" />
+              <animate attributeName="opacity" values="0.4;0;0.4" dur="2.6s" repeatCount="indefinite" />
+            </circle>
+          )}
+        </g>
 
-        {/* Connectors */}
-        <svg style={{position:'absolute', inset:0, width:'100%', height:'100%', pointerEvents:'none'}}>
-          <defs>
-            <marker id="tarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-              <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ink-soft)"/>
-            </marker>
-          </defs>
-          <g stroke="var(--ink-soft)" strokeWidth="1.1" fill="none" markerEnd="url(#tarr)">
-            {/* inputs → detector (flowing right) */}
-            <path d="M 230 80  C 300 80,  340 110, 380 120" />
-            <path d="M 230 110 C 300 110, 340 125, 380 130" />
-            <path d="M 230 140 C 300 140, 340 135, 380 135" />
-            {/* detector → outputs (flowing right) */}
-            <path d="M 620 120 C 680 120, 710 95,  760 80"  strokeDasharray={outs[0] && outs[0].target ? '0' : '4 4'} />
-            <path d="M 620 135 C 680 135, 710 125, 760 120" strokeDasharray={outs[1] && outs[1].target ? '0' : '4 4'} />
-            <path d="M 620 155 C 680 155, 710 150, 760 140" strokeDasharray={outs[2] && outs[2].target ? '0' : '4 4'} />
-          </g>
-        </svg>
-      </div>
+        {/* Output boxes + flows from inspect, colour-coded by action */}
+        {outRaw.map((o, i) => {
+          const y = 42 + i * 42;
+          if (!o) {
+            return (
+              <g key={'out-ph-' + i}>
+                <rect x={outBoxX} y={y} width={outBoxW} height={outBoxH} rx="3"
+                      fill="var(--bg-2)" stroke="var(--line-soft)" strokeDasharray="3 3" />
+                <text x={outBoxX + 8} y={y + outBoxH / 2 + 3}
+                      fontFamily="JetBrains Mono" fontSize="9.5" fill="var(--ink-dim)">— none configured —</text>
+                <path d={`M ${inspectR} ${inspectCy} C ${inspectR + 30} ${inspectCy}, ${outBoxX - 30} ${y + outBoxH / 2}, ${outBoxX} ${y + outBoxH / 2}`}
+                      fill="none" stroke="var(--ink-dim)" strokeWidth="1" opacity="0.35" strokeDasharray="4 4" />
+              </g>
+            );
+          }
+          const act = kindAction(o.kind);
+          const col = actColor[act] || 'var(--ink-soft)';
+          const markerId = act === 'block' ? 'c2ArrBlock' : act === 'tokenize' ? 'c2ArrVault' : 'c2ArrFlag';
+          return (
+            <g key={'out-' + i}>
+              <path d={`M ${inspectR} ${inspectCy} C ${inspectR + 30} ${inspectCy}, ${outBoxX - 30} ${y + outBoxH / 2}, ${outBoxX} ${y + outBoxH / 2}`}
+                    fill="none" stroke={col} strokeWidth="1.4" opacity="0.8"
+                    strokeDasharray="3 5" markerEnd={`url(#${markerId})`}>
+                {live && (
+                  <animate attributeName="stroke-dashoffset" from="0" to="-16" dur="1.2s" repeatCount="indefinite" />
+                )}
+              </path>
+              <rect x={outBoxX} y={y} width={outBoxW} height={outBoxH} rx="3"
+                    fill="var(--bg-2)" stroke={col} strokeWidth="1" />
+              <text x={outBoxX + 8} y={y + 14}
+                    fontFamily="JetBrains Mono" fontSize="10.5" fontWeight="600" fill="var(--ink)">
+                {(o.kind || '').slice(0, 14)}
+              </text>
+              <text x={outBoxX + 8} y={y + 25}
+                    fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-soft)">
+                {(o.target || 'configured').slice(0, 22)}
+              </text>
+              <rect x={outBoxX + outBoxW - 46} y={y - 15} width="46" height="13" rx="2"
+                    fill="var(--bg-panel)" stroke={col} />
+              <text x={outBoxX + outBoxW - 23} y={y - 5}
+                    fontFamily="JetBrains Mono" fontSize="8.5" fontWeight="700"
+                    fill={col} textAnchor="middle" letterSpacing="1">
+                {act.toUpperCase()}
+              </text>
+            </g>
+          );
+        })}
+
+        {/* Legend */}
+        <g fontFamily="JetBrains Mono, monospace" fontSize="9" letterSpacing="0.5">
+          <rect x="14"  y="218" width="10" height="2" fill="var(--cyan)" />
+          <text x="28"  y="222" fill="var(--ink-soft)">flag/route</text>
+          <rect x="92"  y="218" width="10" height="2" fill="var(--violet)" />
+          <text x="106" y="222" fill="var(--ink-soft)">tokenize</text>
+          <rect x="166" y="218" width="10" height="2" fill="var(--red)" />
+          <text x="180" y="222" fill="var(--ink-soft)">block</text>
+        </g>
+      </svg>
     </div>
   );
 }
 
-// Detection histogram — distribution of findings by category, updated
-// live. Stacks severity within each category bar so red/warn/safe are
-// visible at a glance.
+// Finding density — 24-hour × 1-hour-bucket heatmap per category
+// group (PCI · PII · CRED · PHI · SECRET · CLASSIFIED). One row per
+// group, one cell per hour, opacity scaled by density. Reproduces
+// the demo's hf-heat layout but reads live /v1/findings.
 function DetectionHistogram({ findings }) {
-  const stats = React.useMemo(() => {
-    const by = {};
+  const BUCKETS = 24;
+  const WINDOW_MIN = 24 * 60;
+
+  const rows = React.useMemo(() => {
+    // Pre-build an empty per-group × per-bucket matrix so every
+    // defined group appears in the heatmap even when idle.
+    const zeros = () => Array.from({ length: BUCKETS }, () => 0);
+    const matrix = {};
+    CAT_GROUPS.forEach(g => { matrix[g] = zeros(); });
+
+    const now = Date.now();
+    const bucketMs = (WINDOW_MIN * 60 * 1000) / BUCKETS;
     (findings || []).forEach(f => {
-      const k = f.category || '(uncategorised)';
-      if (!by[k]) by[k] = { red: 0, warn: 0, safe: 0, total: 0 };
-      const sev = f.severity === 'red' ? 'red' : f.severity === 'warn' ? 'warn' : 'safe';
-      by[k][sev]++;
-      by[k].total++;
+      const t = new Date(f.ts).getTime();
+      if (isNaN(t)) return;
+      const delta = now - t;
+      if (delta < 0 || delta > WINDOW_MIN * 60 * 1000) return;
+      const idx = BUCKETS - 1 - Math.floor(delta / bucketMs);
+      if (idx < 0 || idx >= BUCKETS) return;
+      const g = catGroup(f.category);
+      matrix[g][idx]++;
     });
-    const rows = Object.entries(by).sort((a, b) => b[1].total - a[1].total);
-    const max = rows.length ? rows[0][1].total : 1;
-    return { rows, max };
+    return CAT_GROUPS.map(g => ({
+      group: g,
+      buckets: matrix[g],
+      total: matrix[g].reduce((a, b) => a + b, 0),
+    }));
   }, [findings]);
+
+  const maxCell = Math.max(1, ...rows.flatMap(r => r.buckets));
 
   return (
     <div className="box">
       <div className="box-title">
-        <span className="t">Detection histogram</span>
-        <span className="k">
-          findings by category · {(findings || []).length} in ring
-          {' '}
-          <span style={{marginLeft:8, fontFamily:"'JetBrains Mono', monospace", fontSize:10}}>
-            <i style={{display:'inline-block', width:8, height:8, background:'var(--red)', borderRadius:1, marginRight:4}} />red
-            <i style={{display:'inline-block', width:8, height:8, background:'var(--amber)', borderRadius:1, margin:'0 4px 0 10px'}} />warn
-            <i style={{display:'inline-block', width:8, height:8, background:'var(--safe)', borderRadius:1, margin:'0 4px 0 10px'}} />safe
-          </span>
+        <span className="t">Finding density</span>
+        <span className="k">by category · last 24h · 1h buckets · {(findings || []).length} in ring</span>
+        <span style={{marginLeft:'auto', display:'flex', gap:8, flexWrap:'wrap', fontFamily:"'JetBrains Mono', monospace", fontSize:10}}>
+          {CAT_GROUPS.filter(g => g !== 'OTHER').map(g => (
+            <span key={g} style={{display:'inline-flex', alignItems:'center', gap:4, color:'var(--ink-soft)'}}>
+              <i style={{display:'inline-block', width:10, height:10, background: CAT_GROUP_COLOR[g], borderRadius:2}} />
+              {g}
+            </span>
+          ))}
         </span>
       </div>
-      {stats.rows.length === 0 ? (
-        <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
-          — no findings yet —
+
+      {rows.every(r => r.total === 0) ? (
+        <div className="muted" style={{padding:30, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+          — no findings in the last 24h —
         </div>
-      ) : stats.rows.map(([cat, row]) => {
-        const wRed  = row.red  / stats.max * 100;
-        const wWarn = row.warn / stats.max * 100;
-        const wSafe = row.safe / stats.max * 100;
-        return (
-          <div key={cat} style={{display:'grid', gridTemplateColumns:'200px 1fr 60px', gap:10, alignItems:'center', padding:'5px 0', borderBottom:'1px dashed var(--line-soft)', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5}}>
-            <span style={{color:'var(--ink-bright)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={cat}>{cat}</span>
-            <div style={{display:'flex', height:10, borderRadius:1, overflow:'hidden', border:'1px solid var(--line)', background:'var(--bg-1)'}}>
-              {wRed  > 0 && <span style={{width: wRed  + '%', background:'var(--red)'}}  title={`${row.red} red`}  />}
-              {wWarn > 0 && <span style={{width: wWarn + '%', background:'var(--amber)'}} title={`${row.warn} warn`} />}
-              {wSafe > 0 && <span style={{width: wSafe + '%', background:'var(--safe)'}}  title={`${row.safe} safe`} />}
+      ) : (
+        <div style={{padding:'8px 0'}}>
+          {rows.map(row => (
+            <div key={row.group} style={{display:'grid', gridTemplateColumns:'90px 1fr 60px', alignItems:'center', gap:10, marginBottom:4}}>
+              <div style={{
+                fontFamily:"'JetBrains Mono', monospace",
+                fontSize:11,
+                fontWeight:600,
+                color: CAT_GROUP_COLOR[row.group],
+              }}>
+                {row.group}
+              </div>
+              <div style={{display:'flex', gap:1, height:14}}>
+                {row.buckets.map((v, i) => {
+                  const opacity = v === 0 ? 0.08 : Math.max(0.12, v / maxCell);
+                  return (
+                    <div
+                      key={i}
+                      title={`${v} finding${v === 1 ? '' : 's'} in hour bucket ${i}`}
+                      style={{
+                        flex: 1,
+                        background: CAT_GROUP_COLOR[row.group],
+                        opacity,
+                        borderRadius: 1,
+                      }}
+                    />
+                  );
+                })}
+              </div>
+              <div className="mono" style={{textAlign:'right', fontSize:11.5, color: row.total > 0 ? 'var(--ink)' : 'var(--ink-dim)'}}>
+                {row.total}
+              </div>
             </div>
-            <span className="mono" style={{textAlign:'right'}}>{row.total}</span>
+          ))}
+          {/* Hour axis */}
+          <div style={{display:'grid', gridTemplateColumns:'90px 1fr 60px', alignItems:'center', gap:10, marginTop:8}}>
+            <div />
+            <div style={{display:'flex', gap:1, fontFamily:"'JetBrains Mono', monospace", fontSize:9, color:'var(--ink-dim)'}}>
+              {Array.from({length: BUCKETS}).map((_, i) => (
+                <span key={i} style={{flex:1, textAlign:'center'}}>
+                  {i % 6 === 0 ? i + ':00' : '·'}
+                </span>
+              ))}
+            </div>
+            <div />
           </div>
-        );
-      })}
+        </div>
+      )}
     </div>
   );
 }
