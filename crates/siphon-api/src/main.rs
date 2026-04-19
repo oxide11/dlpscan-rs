@@ -47,7 +47,7 @@ use siphon_core::audit::{
 use siphon_core::findings_ring::{
     filter_findings, severity_for, FindingRecord, FindingsRing,
 };
-use siphon_core::overrides::PatternOverrides;
+use siphon_core::overrides::{PatternOverride, PatternOverrides};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
@@ -77,6 +77,10 @@ struct AppState {
     /// its ScanConfig. Built once at startup; refreshing means a roll
     /// (Phase 6).
     disabled_patterns: Arc<HashSet<(String, String)>>,
+    /// Pre-computed (category, sub_category) → PatternOverride map
+    /// from PatternOverrides::override_lookup(). Phase 3c honours
+    /// specificity + context_required; remaining fields land in 3d.
+    pattern_field_overrides: Arc<HashMap<(String, String), PatternOverride>>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -496,9 +500,10 @@ async fn scan(
         baseline_only: req.options.baseline_only.unwrap_or(false),
         deduplicate: req.options.deduplicate.unwrap_or(true),
         trace: trace_sink.clone(),
-        // Apply the pod-loaded overrides on every scan. Cheap clone —
-        // it's an Arc, not the underlying HashSet.
+        // Apply the pod-loaded overrides on every scan. Cheap clones —
+        // both fields are Arcs, not the underlying collections.
         disabled_patterns: Some(state.disabled_patterns.clone()),
+        pattern_field_overrides: Some(state.pattern_field_overrides.clone()),
         ..Default::default()
     };
 
@@ -1511,6 +1516,7 @@ async fn main() {
     let overrides = PatternOverrides::from_file_or_empty(&overrides_path);
     let overrides_summary = overrides.summary();
     let disabled_patterns = Arc::new(overrides.disabled_set());
+    let pattern_field_overrides = Arc::new(overrides.override_lookup());
     tracing::info!(
         path = %overrides_path,
         version = overrides_summary.version,
@@ -1531,6 +1537,7 @@ async fn main() {
         allowlist: Arc::new(allowlist),
         findings,
         disabled_patterns,
+        pattern_field_overrides,
     });
 
     let app = Router::new()

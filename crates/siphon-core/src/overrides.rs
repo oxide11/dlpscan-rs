@@ -60,8 +60,19 @@ impl PatternKey {
 
 /// Per-pattern field overrides. Every field is Optional so a partial
 /// override (e.g. just bumping `specificity`) can sit alongside the
-/// compile-time defaults for everything else. Phase 3c wires the
-/// scanner to honour these.
+/// compile-time defaults for everything else.
+///
+/// Honoured by the scanner today (Phase 3c):
+///   · specificity        — replaces pattern_specificity() at scoring time
+///   · context_required   — replaces is_context_required() at gating time
+///
+/// Loaded but not yet applied (lands in Phase 3d alongside custom
+/// categories, since they share the runtime regex/AC compilation
+/// machinery):
+///   · regex              — runtime regex recompilation
+///   · case_insensitive   — same compilation path
+///   · context_keywords   — runtime AC matcher rebuild
+///   · proximity_chars    — context distance lookup
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PatternOverride {
@@ -227,6 +238,19 @@ impl PatternOverrides {
     pub fn override_for(&self, category: &str, sub_category: &str) -> Option<&PatternOverride> {
         let key = format!("{category}/{sub_category}");
         self.pattern_overrides.get(&key)
+    }
+
+    /// Pre-compute a `(category, sub_category) → PatternOverride` map
+    /// that the scanner consults on every match. Built once at startup
+    /// when overrides are loaded; cloned via Arc on each scan.
+    pub fn override_lookup(&self) -> HashMap<(String, String), PatternOverride> {
+        self.pattern_overrides
+            .iter()
+            .filter_map(|(k, v)| {
+                let (cat, sub) = k.split_once('/')?;
+                Some(((cat.to_string(), sub.to_string()), v.clone()))
+            })
+            .collect()
     }
 
     /// Counts surfaced via /v1/version + the admin console for an

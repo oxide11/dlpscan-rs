@@ -2,21 +2,28 @@
 
 use crate::models::{pattern_specificity, Match};
 
-/// Compute a 0.0–1.0 confidence score for a match.
+/// Compute a 0.0–1.0 confidence score for a match using the
+/// compile-time specificity for `sub_category`. Equivalent to
+/// `compute_confidence_with(pattern_specificity(sub_category), ...)`.
 ///
 /// Factors:
 /// - Base specificity of the pattern (how unique the regex is)
 /// - Context keyword presence (boosts by 0.20)
 /// - Context required but missing (caps at base * 0.3)
 pub fn compute_confidence(sub_category: &str, has_context: bool, context_required: bool) -> f64 {
-    let base = pattern_specificity(sub_category);
+    compute_confidence_with(pattern_specificity(sub_category), has_context, context_required)
+}
 
+/// Same scoring formula as `compute_confidence`, but the caller
+/// supplies the base specificity. Used by the scanner when
+/// PatternOverrides has bumped a pattern's specificity at runtime.
+pub fn compute_confidence_with(specificity: f64, has_context: bool, context_required: bool) -> f64 {
     let confidence = if has_context {
-        (base + 0.20).min(1.0)
+        (specificity + 0.20).min(1.0)
     } else if context_required {
-        base * 0.3
+        specificity * 0.3
     } else {
-        base
+        specificity
     };
 
     (confidence * 100.0).round() / 100.0

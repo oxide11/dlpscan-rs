@@ -30,7 +30,7 @@ use siphon_core::audit::iso8601_now;
 use siphon_core::findings_ring::{
     filter_findings, severity_for, FindingRecord, FindingsRing,
 };
-use siphon_core::overrides::PatternOverrides;
+use siphon_core::overrides::{PatternOverride, PatternOverrides};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -56,6 +56,12 @@ const FINDINGS_RING_CAP: usize = 500;
 struct AppState {
     findings: Arc<FindingsRing>,
     disabled_patterns: Arc<HashSet<(String, String)>>,
+    /// Pre-computed (category, sub_category) → PatternOverride map
+    /// from PatternOverrides::override_lookup(). Scanner consults
+    /// this at scoring + context-gating time. Phase 3c honours
+    /// specificity + context_required; regex/keywords/proximity are
+    /// loaded but not yet applied (Phase 3d).
+    pattern_field_overrides: Arc<HashMap<(String, String), PatternOverride>>,
 }
 
 // ─── health + readiness ──────────────────────────────────────────
@@ -213,6 +219,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
 
     let config = ScanConfig {
         disabled_patterns: Some(state.disabled_patterns.clone()),
+        pattern_field_overrides: Some(state.pattern_field_overrides.clone()),
         ..Default::default()
     };
     let matches = match scan_text_with_config(&extract.text, &config) {
@@ -376,10 +383,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let overrides = PatternOverrides::from_file_or_empty(&overrides_path);
     let summary = overrides.summary();
     let disabled_patterns = Arc::new(overrides.disabled_set());
+    let pattern_field_overrides = Arc::new(overrides.override_lookup());
 
     let state = AppState {
         findings: Arc::new(FindingsRing::new(FINDINGS_RING_CAP)),
         disabled_patterns,
+        pattern_field_overrides,
     };
     let app = build_router(state);
 
