@@ -5446,6 +5446,11 @@ function Stream({ go }) {
   const [paused, setPaused] = React.useState(false);
   const [tf, setTf] = React.useState('24h');
   const [advOpen, setAdvOpen] = React.useState(false);
+  const [page, setPage] = React.useState(0);
+  const [pageSize, setPageSize] = React.useState(25);
+
+  // Reset to the first page whenever the effective filter changes.
+  React.useEffect(() => { setPage(0); }, [search, severity, category, subCategory, source, groupBy, tf, pageSize]);
 
   const fx = window.useSiphonApi('/v1/findings?limit=500');
   // Live tail — refetch every 2s unless paused.
@@ -5495,8 +5500,15 @@ function Stream({ go }) {
     return out;
   }, [filtered, tfMeta]);
 
+  // Pagination — only active when group-by is 'none'. Grouped views
+  // show every group's rows inline so paging doesn't make sense there.
+  const paginated = groupBy === 'none'
+    ? filtered.slice(page * pageSize, page * pageSize + pageSize)
+    : filtered;
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+
   const groups = (() => {
-    if (groupBy === 'none') return [['', filtered]];
+    if (groupBy === 'none') return [['', paginated]];
     const by = {};
     filtered.forEach(f => {
       const k = f[groupBy] || '(none)';
@@ -5658,6 +5670,68 @@ function Stream({ go }) {
         empty={!fx.loading && all.length === 0 && !fx.error}
         onOpen={(fid) => go('stream', 'finding:' + fid)}
       />
+
+      {groupBy === 'none' && filtered.length > 0 && (
+        <Pagination
+          page={page} setPage={setPage}
+          pageSize={pageSize} setPageSize={setPageSize}
+          total={filtered.length} totalPages={totalPages}
+        />
+      )}
+      {groupBy !== 'none' && filtered.length > 0 && (
+        <div className="muted mono" style={{textAlign:'center', padding:'8px 0', fontSize:11}}>
+          pagination disabled while grouping · set GROUP BY to none to page through
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Pagination({ page, setPage, pageSize, setPageSize, total, totalPages }) {
+  const first = page * pageSize + 1;
+  const last = Math.min(total, (page + 1) * pageSize);
+  const btn = (label, disabled, onClick, width) => (
+    <button
+      onClick={onClick} disabled={disabled}
+      className="btn ghost"
+      style={{
+        padding: '5px 12px', fontSize: 11,
+        opacity: disabled ? 0.4 : 1,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        minWidth: width || undefined,
+      }}>{label}</button>
+  );
+  return (
+    <div style={{
+      display:'flex', alignItems:'center', gap:12, padding:'10px 14px', marginTop:'var(--gap)',
+      background:'var(--bg-2)', border:'1px solid var(--line)', borderRadius:'var(--radius)',
+      fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+    }}>
+      <span className="mono">
+        <span style={{color:'var(--ink-bright)'}}>{first.toLocaleString()}–{last.toLocaleString()}</span>
+        {' '}<span className="muted">of {total.toLocaleString()}</span>
+      </span>
+      <span style={{flex:1}} />
+      <span className="muted">page {page + 1} / {totalPages}</span>
+      {btn('‹‹ First', page === 0, () => setPage(0))}
+      {btn('‹ Prev',  page === 0, () => setPage(p => Math.max(0, p - 1)))}
+      {btn('Next ›',  page >= totalPages - 1, () => setPage(p => Math.min(totalPages - 1, p + 1)))}
+      {btn('Last ››', page >= totalPages - 1, () => setPage(totalPages - 1))}
+      <span style={{display:'flex', alignItems:'center', gap:6}}>
+        <span className="label">PAGE SIZE</span>
+        <select
+          value={pageSize}
+          onChange={e => setPageSize(parseInt(e.target.value, 10))}
+          style={{
+            background:'var(--bg-1)', color:'var(--ink)',
+            border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+            padding:'3px 6px',
+            fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+            cursor:'pointer',
+          }}>
+          {[10, 25, 50, 100, 200].map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
+      </span>
     </div>
   );
 }
