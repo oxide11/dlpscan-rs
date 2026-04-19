@@ -919,12 +919,67 @@ async fn version() -> Json<VersionResponse> {
     })
 }
 
-// Small, bounded set of docs bundled at compile time. Phase-2 will
-// generalise this into a full docs browser; for now the UI needs one
-// well-known file (the changelog) surfaced in Settings.
-const CHANGELOG_MD: &str = include_str!("../../../docs/CHANGELOG.md");
-const ARCHITECTURE_MD: &str = include_str!("../../../docs/ARCHITECTURE.md");
-const README_MD: &str = include_str!("../../../README.md");
+// ---------------------------------------------------------------------------
+// Bundled documentation — every markdown file in docs/ (plus README) is
+// baked into the binary at compile time. The admin console renders
+// these via GET /v1/docs (index) and GET /v1/docs/content?path=... .
+// ---------------------------------------------------------------------------
+
+const DOCS_INDEX: &[(&str, &str)] = &[
+    ("README.md", include_str!("../../../README.md")),
+    ("docs/ARCHITECTURE.md", include_str!("../../../docs/ARCHITECTURE.md")),
+    ("docs/BENCHMARKS.md", include_str!("../../../docs/BENCHMARKS.md")),
+    ("docs/CHANGELOG.md", include_str!("../../../docs/CHANGELOG.md")),
+    ("docs/KEYWORDS.md", include_str!("../../../docs/KEYWORDS.md")),
+    ("docs/PATTERNS.md", include_str!("../../../docs/PATTERNS.md")),
+    ("docs/advanced_techniques.md", include_str!("../../../docs/advanced_techniques.md")),
+    ("docs/api-reference.md", include_str!("../../../docs/api-reference.md")),
+    ("docs/architecture/context-matching.md", include_str!("../../../docs/architecture/context-matching.md")),
+    ("docs/architecture/extending.md", include_str!("../../../docs/architecture/extending.md")),
+    ("docs/architecture/microservices.md", include_str!("../../../docs/architecture/microservices.md")),
+    ("docs/architecture/normalization.md", include_str!("../../../docs/architecture/normalization.md")),
+    ("docs/architecture/pipeline.md", include_str!("../../../docs/architecture/pipeline.md")),
+    ("docs/architecture/validation.md", include_str!("../../../docs/architecture/validation.md")),
+    ("docs/architecture/zero-trust.md", include_str!("../../../docs/architecture/zero-trust.md")),
+    ("docs/baselines/ABOUT-BASELINES.md", include_str!("../../../docs/baselines/ABOUT-BASELINES.md")),
+    ("docs/baselines/BASELINE-CONFIGURATION-REFERENCE.md", include_str!("../../../docs/baselines/BASELINE-CONFIGURATION-REFERENCE.md")),
+    ("docs/baselines/confidential-documents.md", include_str!("../../../docs/baselines/confidential-documents.md")),
+    ("docs/baselines/index.md", include_str!("../../../docs/baselines/index.md")),
+    ("docs/baselines/internal-financial.md", include_str!("../../../docs/baselines/internal-financial.md")),
+    ("docs/baselines/pci.md", include_str!("../../../docs/baselines/pci.md")),
+    ("docs/baselines/phi-keywords.md", include_str!("../../../docs/baselines/phi-keywords.md")),
+    ("docs/baselines/phi-patterns.md", include_str!("../../../docs/baselines/phi-patterns.md")),
+    ("docs/baselines/phi.md", include_str!("../../../docs/baselines/phi.md")),
+    ("docs/baselines/pii-keywords.md", include_str!("../../../docs/baselines/pii-keywords.md")),
+    ("docs/baselines/pii-patterns.md", include_str!("../../../docs/baselines/pii-patterns.md")),
+    ("docs/baselines/pii.md", include_str!("../../../docs/baselines/pii.md")),
+    ("docs/baselines/source-code-secrets.md", include_str!("../../../docs/baselines/source-code-secrets.md")),
+    ("docs/deployment/cicd.md", include_str!("../../../docs/deployment/cicd.md")),
+    ("docs/deployment/docker.md", include_str!("../../../docs/deployment/docker.md")),
+    ("docs/deployment/pre-commit.md", include_str!("../../../docs/deployment/pre-commit.md")),
+    ("docs/deployment/pypi.md", include_str!("../../../docs/deployment/pypi.md")),
+    ("docs/enterprise/api.md", include_str!("../../../docs/enterprise/api.md")),
+    ("docs/enterprise/audit.md", include_str!("../../../docs/enterprise/audit.md")),
+    ("docs/enterprise/batch.md", include_str!("../../../docs/enterprise/batch.md")),
+    ("docs/enterprise/classification.md", include_str!("../../../docs/enterprise/classification.md")),
+    ("docs/enterprise/compliance.md", include_str!("../../../docs/enterprise/compliance.md")),
+    ("docs/enterprise/env-config.md", include_str!("../../../docs/enterprise/env-config.md")),
+    ("docs/enterprise/observability.md", include_str!("../../../docs/enterprise/observability.md")),
+    ("docs/enterprise/rate-limiting.md", include_str!("../../../docs/enterprise/rate-limiting.md")),
+    ("docs/enterprise/rbac.md", include_str!("../../../docs/enterprise/rbac.md")),
+    ("docs/enterprise/security.md", include_str!("../../../docs/enterprise/security.md")),
+    ("docs/enterprise/siem.md", include_str!("../../../docs/enterprise/siem.md")),
+    ("docs/evasion_defenses.md", include_str!("../../../docs/evasion_defenses.md")),
+    ("docs/evasion_techniques.md", include_str!("../../../docs/evasion_techniques.md")),
+    ("docs/getting-started/concepts.md", include_str!("../../../docs/getting-started/concepts.md")),
+    ("docs/getting-started/configuration.md", include_str!("../../../docs/getting-started/configuration.md")),
+    ("docs/getting-started/installation.md", include_str!("../../../docs/getting-started/installation.md")),
+    ("docs/getting-started/quickstart.md", include_str!("../../../docs/getting-started/quickstart.md")),
+];
+
+fn doc_by_path(path: &str) -> Option<&'static str> {
+    DOCS_INDEX.iter().find(|(p, _)| *p == path).map(|(_, c)| *c)
+}
 
 #[derive(Serialize)]
 struct DocResponse {
@@ -934,14 +989,108 @@ struct DocResponse {
     bytes: usize,
 }
 
+/// Pull the first `#` heading out of a markdown document as a human title,
+/// falling back to the basename when no heading is found.
+fn doc_title(content: &str, path: &str) -> String {
+    for line in content.lines().take(30) {
+        let t = line.trim_start();
+        if let Some(rest) = t.strip_prefix('#') {
+            // swallow leading '#' chars
+            let rest = rest.trim_start_matches('#').trim();
+            if !rest.is_empty() {
+                return rest.to_string();
+            }
+        }
+    }
+    path.rsplit('/').next().unwrap_or(path).to_string()
+}
+
+fn doc_section(path: &str) -> &'static str {
+    if path == "README.md" { return "root"; }
+    let rest = path.strip_prefix("docs/").unwrap_or(path);
+    if let Some(slash) = rest.find('/') {
+        match &rest[..slash] {
+            "architecture" => "architecture",
+            "baselines"    => "baselines",
+            "deployment"   => "deployment",
+            "enterprise"   => "enterprise",
+            "getting-started" => "getting-started",
+            _ => "other",
+        }
+    } else {
+        "top"
+    }
+}
+
+#[derive(Serialize)]
+struct DocIndexEntry {
+    path: String,
+    title: String,
+    section: &'static str,
+    bytes: usize,
+}
+
+#[derive(Serialize)]
+struct DocIndexResponse {
+    total: usize,
+    entries: Vec<DocIndexEntry>,
+}
+
+async fn docs_index() -> Json<DocIndexResponse> {
+    let entries: Vec<DocIndexEntry> = DOCS_INDEX
+        .iter()
+        .map(|(path, content)| DocIndexEntry {
+            path: (*path).to_string(),
+            title: doc_title(content, path),
+            section: doc_section(path),
+            bytes: content.len(),
+        })
+        .collect();
+    Json(DocIndexResponse {
+        total: entries.len(),
+        entries,
+    })
+}
+
+#[derive(Deserialize)]
+struct DocContentQuery {
+    path: String,
+}
+
+async fn docs_content(
+    Query(q): Query<DocContentQuery>,
+) -> Result<Json<DocResponse>, (StatusCode, Json<ErrorResponse>)> {
+    match doc_by_path(&q.path) {
+        Some(content) => Ok(Json(DocResponse {
+            path: match DOCS_INDEX.iter().find(|(p, _)| *p == q.path) {
+                Some((p, _)) => p,
+                None => "",
+            },
+            format: "markdown",
+            content,
+            bytes: content.len(),
+        })),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("doc not bundled: {}", q.path),
+            }),
+        )),
+    }
+}
+
+// Legacy shortcut handlers — kept so older UI callers don't break.
 async fn doc_changelog() -> Json<DocResponse> {
-    Json(DocResponse { path: "docs/CHANGELOG.md", format: "markdown", content: CHANGELOG_MD, bytes: CHANGELOG_MD.len() })
+    let c = doc_by_path("docs/CHANGELOG.md").unwrap_or("");
+    Json(DocResponse { path: "docs/CHANGELOG.md", format: "markdown", content: c, bytes: c.len() })
 }
 async fn doc_architecture() -> Json<DocResponse> {
-    Json(DocResponse { path: "docs/ARCHITECTURE.md", format: "markdown", content: ARCHITECTURE_MD, bytes: ARCHITECTURE_MD.len() })
+    let c = doc_by_path("docs/ARCHITECTURE.md").unwrap_or("");
+    Json(DocResponse { path: "docs/ARCHITECTURE.md", format: "markdown", content: c, bytes: c.len() })
 }
 async fn doc_readme() -> Json<DocResponse> {
-    Json(DocResponse { path: "README.md", format: "markdown", content: README_MD, bytes: README_MD.len() })
+    let c = doc_by_path("README.md").unwrap_or("");
+    Json(DocResponse { path: "README.md", format: "markdown", content: c, bytes: c.len() })
 }
 
 // ---------------------------------------------------------------------------
@@ -1400,6 +1549,8 @@ async fn main() {
         .route("/v1/lsh", get(list_lsh_vaults))
         .route("/v1/findings", get(list_findings))
         .route("/v1/version", get(version))
+        .route("/v1/docs", get(docs_index))
+        .route("/v1/docs/content", get(docs_content))
         .route("/v1/docs/changelog", get(doc_changelog))
         .route("/v1/docs/architecture", get(doc_architecture))
         .route("/v1/docs/readme", get(doc_readme))
