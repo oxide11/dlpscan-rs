@@ -3488,6 +3488,35 @@ window.FixtureWrap = function FixtureWrap({ reason, children }) {
 // Dashboard — 4 distinct takes (variants)
 
 // Shared fake data
+// ── Deployment mode ──────────────────────────────────────────────
+// Two intended deployment shapes:
+//   - 'local'   : just siphon-api on this host (no k8s, no fleet)
+//   - 'cluster' : k8s / docker swarm with multiple pods, agents, SIEM
+// The dashboard (and a couple of other surfaces) branch on this so
+// local users aren't staring at fictional fleet data, and cluster
+// users get the richer design preview until the cluster-data path
+// exists server-side. Persisted in localStorage ('c2:deployment')
+// so the toggle in Settings survives reloads.
+window.c2DeploymentMode = function() {
+  try { return localStorage.getItem('c2:deployment') || 'local'; }
+  catch { return 'local'; }
+};
+window.useDeploymentMode = function() {
+  const [mode, setMode] = React.useState(window.c2DeploymentMode());
+  React.useEffect(() => {
+    const h = (e) => { if (e.key === 'c2:deployment') setMode(e.newValue || 'local'); };
+    window.addEventListener('storage', h);
+    // poll every 1s so in-tab changes (from Settings) are picked up
+    const t = setInterval(() => setMode(window.c2DeploymentMode()), 1000);
+    return () => { window.removeEventListener('storage', h); clearInterval(t); };
+  }, []);
+  return mode;
+};
+
+// ── Cluster-mode fixtures ────────────────────────────────────────
+// These describe the fleet a full k8s deployment will surface. Real
+// cluster-side data isn't wired yet — labelled as FIXTURE when in
+// cluster mode so it's clear these are previews, not live numbers.
 const PODS_MINI = [
   ['siphon-fs',       'ok',   18, 12],
   ['siphon-api',      'ok',   42, 28],
@@ -3512,12 +3541,11 @@ const PENDING = [
   ['EDM vault · medical-ids-2026Q1',      'Hash build pending',  'J. Lee',     'warn'],
 ];
 
-const DashV1_Ops = () => (
-  // === Variant A: Operational Overview — fleet-first, NOC-feeling ===
+const DashV1_Ops_Cluster = () => (
   <div className="variant-body">
     <div style={{marginBottom: 'var(--gap)', display:'flex', gap:8, alignItems:'center'}}>
-      <window.FixtureBadge reason="variant A is design-only — variant D (Topology) is live" />
-      <span className="muted mono" style={{fontSize:11}}>all tiles and pod list are fictional</span>
+      <window.FixtureBadge reason="cluster-mode preview — k8s integration TBD" />
+      <span className="muted mono" style={{fontSize:11}}>switch to Local Only in Settings for live data</span>
     </div>
     <div className="grid grid-4" style={{marginBottom: 'var(--gap)'}}>
       <div className="box"><div className="stat">
@@ -3548,7 +3576,7 @@ const DashV1_Ops = () => (
 
     <div className="grid" style={{gridTemplateColumns: '1.5fr 1fr', marginBottom:'var(--gap)'}}>
       <div className="box">
-        <div className="box-title"><span className="t">Pod fleet · live</span><span className="k">gRPC health · 2s poll</span></div>
+        <div className="box-title"><span className="t">Pod fleet</span><span className="k">gRPC health · 2s poll</span></div>
         {PODS_MINI.map(([name, status, rep, ready], i) => (
           <div key={i} className="pod-row">
             <span className={`dot-k ${status}`} />
@@ -3562,26 +3590,13 @@ const DashV1_Ops = () => (
             <span className="arrow">→</span>
           </div>
         ))}
-        <div className="legend" style={{marginTop:10}}>
-          <span><i style={{background:'var(--safe)'}} /> healthy</span>
-          <span><i style={{background:'var(--amber)'}} /> degraded</span>
-          <span><i style={{background:'var(--red)'}} /> down</span>
-          <span className="right muted">click any pod → drill-down</span>
-        </div>
       </div>
-
       <div className="box">
         <div className="box-title"><span className="t">Findings rate · 6h</span><span className="k">by category</span></div>
         <div style={{height: 180, position:'relative'}} className="hatch--teal">
           <span style={{position:'absolute', top:8, left:8, fontFamily:"'JetBrains Mono', monospace", fontSize:13, color:'var(--cyan)'}}>
             stacked area chart
           </span>
-        </div>
-        <div className="legend" style={{marginTop:8, flexWrap:'wrap'}}>
-          <span><i style={{background:'var(--cyan)'}} /> Credentials</span>
-          <span><i style={{background:'var(--safe)'}} /> PCI</span>
-          <span><i style={{background:'var(--amber)'}} /> PII</span>
-          <span><i style={{background:'var(--red)'}} /> PHI</span>
         </div>
       </div>
     </div>
@@ -3599,7 +3614,6 @@ const DashV1_Ops = () => (
             <span className="n">{d}</span>
           </div>
         ))}
-        <div className="muted scribble" style={{marginTop:8, fontSize:14}}>→ clicking opens tenant drill-down with per-pod breakdown</div>
       </div>
       <div className="box">
         <div className="box-title"><span className="t">Pending changes · queue</span><span className="k">review &amp; approve</span></div>
@@ -3617,12 +3631,11 @@ const DashV1_Ops = () => (
   </div>
 );
 
-const DashV2_Stream = () => (
-  // === Variant B: Stream-first (SOC analyst) — half screen is live findings ===
+const DashV2_Stream_Cluster = () => (
   <div className="variant-body">
     <div style={{marginBottom: 'var(--gap)', display:'flex', gap:8, alignItems:'center'}}>
-      <window.FixtureBadge reason="variant B is design-only — the real findings stream is Operate → Findings" />
-      <span className="muted mono" style={{fontSize:11}}>open the real console at Operate → Findings</span>
+      <window.FixtureBadge reason="cluster-mode preview — k8s integration TBD" />
+      <span className="muted mono" style={{fontSize:11}}>switch to Local Only in Settings for live data</span>
     </div>
     <div className="grid" style={{gridTemplateColumns:'1fr 1.3fr', gap:'var(--gap)'}}>
       <div>
@@ -3638,23 +3651,6 @@ const DashV2_Stream = () => (
             <span className="s-delta down">▲ 11 vs prev</span>
           </div></div>
         </div>
-        <div className="box" style={{marginBottom:'var(--gap)'}}>
-          <div className="box-title"><span className="t">Fleet glance</span><span className="k">94/102 healthy</span></div>
-          <div className="grid" style={{gridTemplateColumns:'repeat(7, 1fr)', gap:6}}>
-            {PODS_MINI.map(([n, s], i) => (
-              <div key={i} style={{
-                padding:'8px 4px',
-                border:'1.5px solid var(--line)',
-                borderRadius:3,
-                background: s === 'ok' ? '#e3efe7' : s === 'warn' ? '#f7eecd' : '#f5dcda',
-                textAlign:'center',
-                fontFamily:"'JetBrains Mono', monospace", fontSize:11,
-              }}>
-                {n.replace('siphon-','')}
-              </div>
-            ))}
-          </div>
-        </div>
         <div className="box">
           <div className="box-title"><span className="t">Tenant spikes</span><span className="k">sorted by Δ</span></div>
           {TENANT_SPIKES.map(([t, d, reason], i) => (
@@ -3669,8 +3665,8 @@ const DashV2_Stream = () => (
 
       <div className="box stream-dark">
         <div className="box-title">
-          <span className="t" style={{color:'#e8efe6'}}>Live findings · dark console</span>
-          <span className="k" style={{color:'#6a8597'}}>⏸ pause · tail -f</span>
+          <span className="t" style={{color:'var(--ink-bright)'}}>Live findings · dark console</span>
+          <span className="k" style={{color:'var(--ink-soft)'}}>⏸ pause · tail -f</span>
         </div>
         {Array.from({length: 14}).map((_, i) => {
           const cats = ['PCI','PII','CRED','PHI','SECRET','PII','PCI'];
@@ -3684,7 +3680,7 @@ const DashV2_Stream = () => (
               <span className="src">{pods[idx]}</span>
               <span className="tx">… {subs[idx]} …… found in doc_{1200-i}.pdf</span>
               <span className={`chip chip--${sevs[idx]}`}>{cats[idx]}</span>
-              <span className="mono" style={{color:'#6a8597'}}>t{(i%4)+1}</span>
+              <span className="mono" style={{color:'var(--ink-faint)'}}>t{(i%4)+1}</span>
               <span className="chip">flag</span>
             </div>
           );
@@ -3694,12 +3690,11 @@ const DashV2_Stream = () => (
   </div>
 );
 
-const DashV3_Posture = () => (
-  // === Variant C: Posture/CISO — big-picture scorecards, trend-forward ===
+const DashV3_Posture_Cluster = () => (
   <div className="variant-body">
     <div style={{marginBottom: 'var(--gap)', display:'flex', gap:8, alignItems:'center'}}>
-      <window.FixtureBadge reason="posture scores need an availability/coverage/efficacy pipeline" />
-      <span className="muted mono" style={{fontSize:11}}>real framework data is on Assure → Compliance</span>
+      <window.FixtureBadge reason="cluster-mode preview — k8s integration TBD" />
+      <span className="muted mono" style={{fontSize:11}}>switch to Local Only in Settings for live data</span>
     </div>
     <div className="grid grid-3" style={{marginBottom: 'var(--gap)'}}>
       {[
@@ -3724,27 +3719,7 @@ const DashV3_Posture = () => (
         </div>
       ))}
     </div>
-
-    <div className="grid" style={{gridTemplateColumns:'1fr 1fr', gap:'var(--gap)', marginBottom:'var(--gap)'}}>
-      <div className="box">
-        <div className="box-title"><span className="t">Findings — 30 day trend</span><span className="k">line + rolling avg</span></div>
-        <div style={{height:220, position:'relative', border:'1.5px dashed var(--line-soft)', padding:10}}>
-          <svg viewBox="0 0 300 180" style={{width:'100%', height:'100%'}}>
-            <defs>
-              <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
-                <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#dbe1e2" strokeWidth="0.5"/>
-              </pattern>
-            </defs>
-            <rect width="300" height="180" fill="url(#grid)"/>
-            <polyline fill="none" stroke="#27444f" strokeWidth="2"
-              points="0,120 20,115 40,105 60,110 80,95 100,100 120,85 140,75 160,82 180,65 200,70 220,55 240,48 260,60 280,42 300,50"/>
-            <polyline fill="none" stroke="#b3342e" strokeWidth="1.5" strokeDasharray="4 3"
-              points="0,145 30,142 60,140 90,135 120,130 150,128 180,122 210,118 240,115 270,112 300,108"/>
-            <text x="8" y="20" fontFamily="Kalam" fontSize="11" fill="#27444f">total findings</text>
-            <text x="8" y="160" fontFamily="Kalam" fontSize="11" fill="#b3342e">high-severity only</text>
-          </svg>
-        </div>
-      </div>
+    <div className="grid grid-2">
       <div className="box">
         <div className="box-title"><span className="t">Top categories · today</span><span className="k">by count</span></div>
         {[
@@ -3753,7 +3728,6 @@ const DashV3_Posture = () => (
           ['API Keys & Secrets',   58],
           ['Health Records',       34],
           ['Email / Contact',      22],
-          ['Crypto Addresses',     11],
         ].map(([c,n],i) => (
           <div key={i} className="bar-row">
             <span className="hand-b" style={{fontSize:13}}>{c}</span>
@@ -3761,26 +3735,6 @@ const DashV3_Posture = () => (
             <span className="n">{(n*102).toLocaleString()}</span>
           </div>
         ))}
-      </div>
-    </div>
-
-    <div className="grid grid-3">
-      <div className="box">
-        <div className="box-title"><span className="t">Global · findings by region</span><span className="k">24h</span></div>
-        <div className="worldmap">map placeholder · geo heat</div>
-      </div>
-      <div className="box">
-        <div className="box-title"><span className="t">FP rate · labeled corpus</span><span className="k">auto-rerun nightly</span></div>
-        <div style={{display:'flex', gap:8, alignItems:'baseline'}}>
-          <span className="hand-b" style={{fontSize:40}}>0.08%</span>
-          <span className="chip chip--safe">well under 0.5% SLA</span>
-        </div>
-        <div className="spike" style={{marginTop:14}}>
-          {[20,16,22,18,14,12,15,10,11,9,8,7,9,8,6].map((h,i) => (
-            <i key={i} style={{height: h+'px'}} />
-          ))}
-        </div>
-        <div className="muted" style={{fontSize:12, marginTop:4}}>last 15 nights</div>
       </div>
       <div className="box">
         <div className="box-title"><span className="t">Pending changes</span><span className="k">your queue</span></div>
@@ -3794,6 +3748,470 @@ const DashV3_Posture = () => (
     </div>
   </div>
 );
+
+// ── Mode-dispatching wrappers ────────────────────────────────────
+function DashV1_Ops() {
+  const mode = window.useDeploymentMode();
+  return mode === 'local' ? <DashV1_Ops_Local /> : <DashV1_Ops_Cluster />;
+}
+function DashV2_Stream() {
+  const mode = window.useDeploymentMode();
+  return mode === 'local' ? <DashV2_Stream_Local /> : <DashV2_Stream_Cluster />;
+}
+function DashV3_Posture() {
+  const mode = window.useDeploymentMode();
+  return mode === 'local' ? <DashV3_Posture_Local /> : <DashV3_Posture_Cluster />;
+}
+
+// Shared helpers for the live dashboard variants. Each variant polls
+// siphon-api directly — there's no local fleet/tenant/pod fiction.
+
+function fmtUptime(s) {
+  if (s == null) return '—';
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm';
+  if (s < 86400) return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+  return Math.floor(s/86400) + 'd ' + Math.floor((s%86400)/3600) + 'h';
+}
+
+// Aggregate findings by a string key (category / sub_category / severity).
+function aggregateByKey(findings, key) {
+  const by = {};
+  findings.forEach(f => {
+    const k = f[key] || '(none)';
+    by[k] = (by[k] || 0) + 1;
+  });
+  return Object.entries(by).sort((a, b) => b[1] - a[1]);
+}
+
+// Derive a per-minute findings sparkline from the ring. Returns an
+// array of 10 buckets ending at "now", newest last.
+function findingsSparkline(findings, buckets = 20, windowMinutes = 10) {
+  const now = Date.now();
+  const bucketMs = (windowMinutes * 60 * 1000) / buckets;
+  const data = new Array(buckets).fill(0);
+  findings.forEach(f => {
+    const t = new Date(f.ts).getTime();
+    if (isNaN(t)) return;
+    const delta = now - t;
+    if (delta < 0 || delta > windowMinutes * 60 * 1000) return;
+    const idx = buckets - 1 - Math.floor(delta / bucketMs);
+    if (idx >= 0 && idx < buckets) data[idx]++;
+  });
+  return data;
+}
+
+// Tiny inline sparkline renderer — emits an SVG polyline.
+function Spark({ data, height, color }) {
+  const max = Math.max(1, ...data);
+  const h = height || 30;
+  const points = data.map((v, i) => `${(i / (data.length - 1)) * 100},${h - (v / max) * h}`).join(' ');
+  const fill = color || 'var(--accent)';
+  return (
+    <svg viewBox={`0 0 100 ${h}`} preserveAspectRatio="none" style={{width:'100%', height:h, display:'block'}}>
+      <polyline points={points} fill="none" stroke={fill} strokeWidth="1.5"/>
+    </svg>
+  );
+}
+
+function DashV1_Ops_Local() {
+  // === Variant A, Local Only mode: live /v1/metrics, /v1/findings, /v1/audit ===
+  const mx = window.useSiphonApi('/v1/metrics');
+  const fx = window.useSiphonApi('/v1/findings?limit=500');
+  const ax = window.useSiphonApi('/v1/audit?limit=10');
+
+  React.useEffect(() => {
+    const t = setInterval(() => { mx.refetch(); fx.refetch(); ax.refetch(); }, 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  const m = mx.data || {};
+  const findings = (fx.data && fx.data.findings) || [];
+  const events = (ax.data && ax.data.events) || [];
+  const byCategory = aggregateByKey(findings, 'category').slice(0, 6);
+  const bySeverity = aggregateByKey(findings, 'severity');
+  const maxCatCount = byCategory.length ? byCategory[0][1] : 1;
+  const sparkData = findingsSparkline(findings, 20, 10);
+
+  const overall = [mx.source, fx.source, ax.source].includes('offline') ? 'offline'
+    : [mx.source, fx.source, ax.source].every(s => s === 'live') ? 'live' : 'loading';
+
+  return (
+    <div className="variant-body">
+      <div style={{marginBottom: 'var(--gap)', display:'flex', gap:8, alignItems:'center'}}>
+        <window.LivePill source={overall} onClick={() => { mx.refetch(); fx.refetch(); ax.refetch(); }} />
+        <span className="muted mono" style={{fontSize:11}}>
+          {window.SIPHON_API_URL()} · polls every 5s
+        </span>
+      </div>
+
+      <div className="grid grid-4" style={{marginBottom: 'var(--gap)'}}>
+        <div className="box"><div className="stat">
+          <span className="s-label">Scans total</span>
+          <span className="s-val">{m.scans_total != null ? m.scans_total.toLocaleString() : '—'}</span>
+          <span className="s-delta">since boot</span>
+          <div style={{marginTop:6}}><Spark data={sparkData} height={28} color="var(--accent)" /></div>
+        </div></div>
+        <div className="box"><div className="stat">
+          <span className="s-label">Findings total</span>
+          <span className="s-val">{m.findings_total != null ? m.findings_total.toLocaleString() : '—'}</span>
+          <span className="s-delta">{findings.length} in ring</span>
+          <div style={{marginTop:6, height:28}} />
+        </div></div>
+        <div className="box"><div className="stat">
+          <span className="s-label">Errors</span>
+          <span className="s-val" style={{color: (m.scan_errors_total || 0) > 0 ? 'var(--red)' : 'var(--ink-bright)'}}>
+            {m.scan_errors_total != null ? m.scan_errors_total : '—'}
+          </span>
+          <span className="s-delta">scan 5xx</span>
+          <div style={{marginTop:6, height:28}} />
+        </div></div>
+        <div className="box"><div className="stat">
+          <span className="s-label">Uptime</span>
+          <span className="s-val">{fmtUptime(m.uptime_secs)}</span>
+          <span className="s-delta">{m.patterns_loaded != null ? `${m.patterns_loaded} patterns` : ''}</span>
+          <div style={{marginTop:6, height:28}} />
+        </div></div>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns: '1.3fr 1fr', gap:'var(--gap)', marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Recent findings</span>
+            <span className="k">last 6 from /v1/findings · <a onClick={() => window.__c2_go && window.__c2_go('stream')} style={{color:'var(--accent)', cursor:'pointer'}}>open full console ›</a></span>
+          </div>
+          {findings.length === 0 ? (
+            <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+              — ring empty · scan something —
+            </div>
+          ) : findings.slice(0, 6).map((f, i) => (
+            <div key={i} className="find-row" onClick={() => window.__c2_go && window.__c2_go('stream', 'finding:' + f.id)}>
+              <span className="ts" title={f.ts}>{fmtWallClock(f.ts)}</span>
+              <span className="src">{f.source_ip || '—'}</span>
+              <span className="tx">… {f.text} …</span>
+              <span className={`chip chip--${f.severity}`} title={f.category}>{f.sub_category || f.category}</span>
+              <span className="mono" style={{fontSize:11, color:'var(--ink-faint)'}}>{f.confidence != null ? f.confidence.toFixed(2) : '—'}</span>
+              <span className="chip">{f.severity}</span>
+              <span className="arrow">›</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Categories · in ring</span>
+            <span className="k">{byCategory.length} distinct</span>
+          </div>
+          {byCategory.length === 0 ? (
+            <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>— no findings yet —</div>
+          ) : byCategory.map(([cat, n], i) => (
+            <div key={i} className="bar-row">
+              <span className="hand-b" style={{fontSize:12}}>{cat}</span>
+              <span className="b"><i style={{width:(n/maxCatCount*100)+'%', background:'var(--accent)'}}/></span>
+              <span className="n">{n}</span>
+            </div>
+          ))}
+          {bySeverity.length > 0 && (
+            <>
+              <hr className="sep" />
+              <div className="label" style={{marginBottom:6}}>By severity</div>
+              <div style={{display:'flex', gap:6, flexWrap:'wrap'}}>
+                {bySeverity.map(([sev, n]) => (
+                  <span key={sev} className={`chip chip--${sev}`} style={{fontSize:10}}>{sev} · {n}</span>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-2">
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Component health</span>
+            <span className="k">from /v1/metrics</span>
+          </div>
+          <div className="kv" style={{fontSize:12}}>
+            <span className="k">siphon-api</span>   <span className="v"><span className={`chip chip--${overall==='live'?'safe':overall==='offline'?'red':'warn'}`}>{overall==='live' ? 'live' : overall==='offline' ? 'unreachable' : 'loading'}</span></span>
+            <span className="k">siphon-core</span>  <span className="v"><span className="chip chip--teal">{m.patterns_loaded != null ? `${m.patterns_loaded} patterns / ${m.categories_loaded} cats` : 'linked'}</span></span>
+            <span className="k">Policies</span>     <span className="v"><span className={`chip chip--${m.policies_loaded > 0 ? 'safe' : 'ghost'}`}>{m.policies_loaded != null ? m.policies_loaded : '—'} loaded</span></span>
+            <span className="k">Ring usage</span>   <span className="v mono">{fx.data ? `${fx.data.total} / ${fx.data.capacity}` : '—'}</span>
+            <span className="k">Error rate</span>   <span className="v mono">{m.scans_total ? ((m.scan_errors_total || 0) / m.scans_total * 100).toFixed(2) + '%' : '—'}</span>
+            <span className="k">Avg findings/scan</span><span className="v mono">{m.scans_total ? (m.findings_total / m.scans_total).toFixed(2) : '—'}</span>
+          </div>
+        </div>
+
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Recent audit events</span>
+            <span className="k">from /v1/audit · <a onClick={() => window.__c2_go && window.__c2_go('audit')} style={{color:'var(--accent)', cursor:'pointer'}}>full log ›</a></span>
+          </div>
+          {events.length === 0 ? (
+            <div className="muted" style={{padding:14, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>— ring empty —</div>
+          ) : events.slice(0, 6).map((e, i) => {
+            const outcome = e.outcome || (e.is_clean ? 'clean' : 'flagged');
+            const oColor = outcome === 'error' ? 'red' : outcome === 'flagged' || outcome === 'findings_detected' ? 'warn' : 'safe';
+            return (
+              <div key={i} style={{display:'grid', gridTemplateColumns:'80px 80px 1fr 80px', gap:8, padding:'5px 0', borderBottom:'1px dashed var(--line-soft)', fontSize:11.5, fontFamily:"'JetBrains Mono', monospace", alignItems:'center'}}>
+                <span className="muted" title={e.timestamp}>{fmtWallClock(e.timestamp)}</span>
+                <span style={{color:'var(--cyan)'}}>{e.event_type}</span>
+                <span style={{color:'var(--ink-bright)'}} title={e.request_id}>
+                  {e.categories_found && e.categories_found.length
+                    ? e.categories_found.join(', ')
+                    : e.action || '—'}
+                </span>
+                <span><span className={`chip chip--${oColor}`} style={{fontSize:9}}>{outcome}</span></span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DashV2_Stream_Local() {
+  // === Variant B, Local Only mode: condensed live tail + metric shoulder ===
+  const mx = window.useSiphonApi('/v1/metrics');
+  const fx = window.useSiphonApi('/v1/findings?limit=500');
+
+  React.useEffect(() => {
+    const t = setInterval(() => { mx.refetch(); fx.refetch(); }, 3000);
+    return () => clearInterval(t);
+  }, []);
+
+  const m = mx.data || {};
+  const findings = (fx.data && fx.data.findings) || [];
+  const byCategory = aggregateByKey(findings, 'category').slice(0, 8);
+  const maxCatCount = byCategory.length ? byCategory[0][1] : 1;
+  const sparkData = findingsSparkline(findings, 20, 10);
+  const redCount = findings.filter(f => f.severity === 'red').length;
+
+  const overall = [mx.source, fx.source].includes('offline') ? 'offline'
+    : [mx.source, fx.source].every(s => s === 'live') ? 'live' : 'loading';
+
+  return (
+    <div className="variant-body">
+      <div style={{marginBottom: 'var(--gap)', display:'flex', gap:8, alignItems:'center'}}>
+        <window.LivePill source={overall} onClick={() => { mx.refetch(); fx.refetch(); }} />
+        <span className="muted mono" style={{fontSize:11}}>3s refresh · full console at Operate → Findings</span>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:'1fr 1.5fr', gap:'var(--gap)'}}>
+        <div>
+          <div className="grid grid-2" style={{marginBottom:'var(--gap)'}}>
+            <div className="box"><div className="stat">
+              <span className="s-label">Scans total</span>
+              <span className="s-val">{m.scans_total != null ? m.scans_total.toLocaleString() : '—'}</span>
+              <span className="s-delta">{fmtUptime(m.uptime_secs)}</span>
+              <div style={{marginTop:6}}><Spark data={sparkData} height={24} /></div>
+            </div></div>
+            <div className="box"><div className="stat">
+              <span className="s-label">Red · in ring</span>
+              <span className="s-val" style={{color: redCount > 0 ? 'var(--red)' : 'var(--ink-bright)'}}>{redCount}</span>
+              <span className="s-delta">of {findings.length}</span>
+              <div style={{marginTop:6, height:24}} />
+            </div></div>
+          </div>
+
+          <div className="box" style={{marginBottom:'var(--gap)'}}>
+            <div className="box-title">
+              <span className="t">Components</span>
+              <span className="k">what's actually up</span>
+            </div>
+            <div className="kv" style={{fontSize:12}}>
+              <span className="k">siphon-api</span>   <span className="v"><span className={`chip chip--${overall==='live'?'safe':overall==='offline'?'red':'warn'}`}>{overall==='live'?'live':overall==='offline'?'down':'loading'}</span></span>
+              <span className="k">siphon-core</span>  <span className="v mono">{m.patterns_loaded != null ? `${m.patterns_loaded} patterns` : '—'}</span>
+              <span className="k">policies</span>     <span className="v mono">{m.policies_loaded != null ? m.policies_loaded : '—'}</span>
+              <span className="k">ring</span>         <span className="v mono">{fx.data ? `${fx.data.total}/${fx.data.capacity}` : '—'}</span>
+            </div>
+          </div>
+
+          <div className="box">
+            <div className="box-title">
+              <span className="t">Categories · ring</span>
+              <span className="k">sorted by count</span>
+            </div>
+            {byCategory.length === 0 ? (
+              <div className="muted" style={{padding:12, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>— empty —</div>
+            ) : byCategory.map(([c, n], i) => (
+              <div key={i} className="bar-row">
+                <span className="hand-b" style={{fontSize:11}}>{c}</span>
+                <span className="b"><i style={{width:(n/maxCatCount*100)+'%', background:'var(--cyan)'}}/></span>
+                <span className="n">{n}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="box stream-dark">
+          <div className="box-title">
+            <span className="t" style={{color:'var(--ink-bright)'}}>Live findings · {findings.length}</span>
+            <span className="k">tail · newest first</span>
+          </div>
+          {findings.length === 0 ? (
+            <div className="muted" style={{padding:30, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+              — ring empty —<br/>
+              <span style={{fontSize:11}}>run a scan from Engineering → Live Scan</span>
+            </div>
+          ) : findings.slice(0, 20).map((f, i) => (
+            <div key={i} className="find-row" onClick={() => window.__c2_go && window.__c2_go('stream', 'finding:' + f.id)}>
+              <span className="ts" title={f.ts}>{fmtWallClock(f.ts)}</span>
+              <span className="src">{f.source_ip || '—'}</span>
+              <span className="tx">… {f.text} …</span>
+              <span className={`chip chip--${f.severity}`} title={f.category}>{f.sub_category || f.category}</span>
+              <span className="mono" style={{color:'var(--ink-faint)'}}>{f.confidence != null ? f.confidence.toFixed(2) : '—'}</span>
+              <span className="chip">{f.severity}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DashV3_Posture_Local() {
+  // === Variant C, Local Only mode: live compliance frameworks + derived system posture ===
+  const mx = window.useSiphonApi('/v1/metrics');
+  const fx = window.useSiphonApi('/v1/findings?limit=500');
+  const cf = window.useSiphonApi('/v1/compliance/frameworks');
+  const ix = window.useSiphonApi('/v1/integrations');
+
+  React.useEffect(() => {
+    const t = setInterval(() => { mx.refetch(); fx.refetch(); cf.refetch(); ix.refetch(); }, 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  const m = mx.data || {};
+  const findings = (fx.data && fx.data.findings) || [];
+  const frameworks = (cf.data && cf.data.frameworks) || [];
+  const configuredIntegrations = ((ix.data && ix.data.integrations) || []).filter(i => i.configured);
+  const byCategory = aggregateByKey(findings, 'category').slice(0, 6);
+  const maxCatCount = byCategory.length ? byCategory[0][1] : 1;
+
+  // Map ring categories to frameworks by substring match against the
+  // framework's failing_categories. For each framework, how many ring
+  // findings currently land in one of its fail-triggering categories.
+  const fwHits = frameworks.map(fw => {
+    const failSet = (fw.failing_categories || []).map(s => s.toLowerCase());
+    const hits = findings.filter(f => failSet.some(s => f.category.toLowerCase().includes(s) || s.includes(f.category.toLowerCase())));
+    return { ...fw, hits: hits.length };
+  });
+
+  // Derived system posture (honest, not fabricated):
+  //   availability   — uptime (no downtime telemetry yet)
+  //   error rate     — scan_errors_total / scans_total
+  //   pattern density — patterns / category (ratio)
+  const errorRate = m.scans_total ? (m.scan_errors_total || 0) / m.scans_total : 0;
+  const patternDensity = m.categories_loaded ? (m.patterns_loaded || 0) / m.categories_loaded : 0;
+
+  const overall = [mx.source, fx.source, cf.source, ix.source].includes('offline') ? 'offline'
+    : [mx.source, fx.source, cf.source, ix.source].every(s => s === 'live') ? 'live' : 'loading';
+
+  return (
+    <div className="variant-body">
+      <div style={{marginBottom: 'var(--gap)', display:'flex', gap:8, alignItems:'center'}}>
+        <window.LivePill source={overall} onClick={() => { mx.refetch(); fx.refetch(); cf.refetch(); ix.refetch(); }} />
+        <span className="muted mono" style={{fontSize:11}}>derived from /v1/metrics + /v1/compliance · honest (no forecasts)</span>
+      </div>
+
+      <div className="grid grid-3" style={{marginBottom:'var(--gap)'}}>
+        <div className="box" style={{padding:'18px 20px'}}>
+          <div className="label">Availability</div>
+          <div style={{display:'flex', alignItems:'baseline', gap:12, marginTop:6}}>
+            <div className="hand-b" style={{fontSize:40, lineHeight:1}}>{fmtUptime(m.uptime_secs)}</div>
+            <span className="chip chip--safe">up</span>
+          </div>
+          <div className="muted" style={{marginTop:8, fontSize:11}}>process uptime since boot · siphon-api on {window.SIPHON_API_URL()}</div>
+        </div>
+        <div className="box" style={{padding:'18px 20px'}}>
+          <div className="label">Error rate</div>
+          <div style={{display:'flex', alignItems:'baseline', gap:12, marginTop:6}}>
+            <div className="hand-b" style={{fontSize:40, lineHeight:1, color: errorRate > 0.01 ? 'var(--amber)' : 'var(--safe)'}}>
+              {(errorRate * 100).toFixed(2)}%
+            </div>
+            <span className={`chip chip--${errorRate > 0.01 ? 'warn' : 'safe'}`}>{errorRate > 0.01 ? 'monitor' : 'clean'}</span>
+          </div>
+          <div className="muted" style={{marginTop:8, fontSize:11}}>
+            {m.scan_errors_total != null ? m.scan_errors_total : '—'} errors / {m.scans_total != null ? m.scans_total : '—'} scans
+          </div>
+        </div>
+        <div className="box" style={{padding:'18px 20px'}}>
+          <div className="label">Pattern density</div>
+          <div style={{display:'flex', alignItems:'baseline', gap:12, marginTop:6}}>
+            <div className="hand-b" style={{fontSize:40, lineHeight:1}}>{patternDensity.toFixed(1)}</div>
+            <span className="muted hand">per category</span>
+          </div>
+          <div className="muted" style={{marginTop:8, fontSize:11}}>
+            {m.patterns_loaded != null ? m.patterns_loaded : '—'} patterns · {m.categories_loaded != null ? m.categories_loaded : '—'} categories
+          </div>
+        </div>
+      </div>
+
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title">
+          <span className="t">Compliance frameworks</span>
+          <span className="k">from /v1/compliance/frameworks · hits = ring matches</span>
+        </div>
+        {fwHits.length === 0 ? (
+          <div className="muted" style={{padding:16, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>loading…</div>
+        ) : (
+          <div className="grid grid-4">
+            {fwHits.map((fw, i) => (
+              <div key={i} style={{padding:14, border:'1px solid var(--line)', borderRadius:'var(--radius)', background:'var(--bg-2)'}}>
+                <div className="label">{fw.name}</div>
+                <div style={{display:'flex', alignItems:'baseline', gap:8, marginTop:6}}>
+                  <div className="hand-b" style={{fontSize:32, lineHeight:1, color: fw.hits > 0 ? 'var(--amber)' : 'var(--safe)'}}>
+                    {fw.hits}
+                  </div>
+                  <span className="muted hand">ring hits</span>
+                </div>
+                <div className="muted" style={{fontSize:10.5, marginTop:6}}>
+                  watches: {fw.failing_categories.slice(0, 2).join(', ')}{fw.failing_categories.length > 2 ? '…' : ''}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-2">
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Top categories · ring</span>
+            <span className="k">live aggregate</span>
+          </div>
+          {byCategory.length === 0 ? (
+            <div className="muted" style={{padding:14, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>— no findings yet —</div>
+          ) : byCategory.map(([c, n], i) => (
+            <div key={i} className="bar-row">
+              <span className="hand-b" style={{fontSize:13}}>{c}</span>
+              <span className="b"><i style={{width:(n/maxCatCount*100)+'%', background:'var(--cyan)'}}/></span>
+              <span className="n">{n}</span>
+            </div>
+          ))}
+        </div>
+        <div className="box">
+          <div className="box-title">
+            <span className="t">SIEM integrations</span>
+            <span className="k">env-configured</span>
+          </div>
+          {configuredIntegrations.length === 0 ? (
+            <div className="muted" style={{padding:14, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+              — none · set DLPSCAN_SIEM_TYPE to enable —
+            </div>
+          ) : configuredIntegrations.map((i, idx) => (
+            <div key={idx} style={{display:'grid', gridTemplateColumns:'16px 130px 1fr', gap:8, padding:'7px 0', borderBottom:'1px dashed var(--line-soft)', alignItems:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+              <span className="dot-k ok" />
+              <span style={{color:'var(--ink-bright)'}}>{i.kind}</span>
+              <span className="muted" style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={i.target || ''}>{i.target || ''}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Real topology — shows what is actually connected and integrated in this
 // installation. Driven entirely from live endpoints: /v1/metrics,
@@ -6385,10 +6803,11 @@ Object.assign(window, { Compliance });
 // not a panel.
 
 function Settings() {
-  const [tab, setTab] = React.useState('general');
+  const [tab, setTab] = React.useState('deployment');
   const { PageBar } = window;
 
   const tabs = [
+    ['Deployment',  'deployment'],
     ['General',     'general'],
     ['Appearance',  'appearance'],
     ['Users',       'users'],
@@ -6405,9 +6824,8 @@ function Settings() {
       <PageBar
         crumbs={['Admin', 'Settings']}
         title="Settings"
-        subtitle="Account, identity, and platform configuration"
+        subtitle="Platform, identity, and account configuration"
         actions={<>
-          <window.FixtureBadge reason="settings are env-var driven today — see Topology → 'How to extend'" />
           <button className="btn ghost">Docs</button>
           <button className="btn">Changelog</button>
         </>}
@@ -6415,21 +6833,26 @@ function Settings() {
 
       <div className="settings-wrap">
         <aside className="settings-tabs">
+          <div className="section-l">Platform</div>
+          {tabs.filter(([, k]) => k === 'deployment').map(([l,k]) => (
+            <a key={k} className={tab===k?'active':''} onClick={() => setTab(k)}>{l}</a>
+          ))}
           <div className="section-l">Account</div>
-          {tabs.slice(0,2).map(([l,k]) => (
+          {tabs.filter(([, k]) => k === 'general' || k === 'appearance').map(([l,k]) => (
             <a key={k} className={tab===k?'active':''} onClick={() => setTab(k)}>{l}</a>
           ))}
           <div className="section-l">Identity &amp; access</div>
-          {tabs.slice(2,6).map(([l,k]) => (
+          {tabs.filter(([, k]) => ['users','roles','keys','sso'].includes(k)).map(([l,k]) => (
             <a key={k} className={tab===k?'active':''} onClick={() => setTab(k)}>{l}</a>
           ))}
-          <div className="section-l">Platform</div>
-          {tabs.slice(6).map(([l,k]) => (
+          <div className="section-l">Other platform</div>
+          {tabs.filter(([, k]) => ['audit','retention','integrations'].includes(k)).map(([l,k]) => (
             <a key={k} className={tab===k?'active':''} onClick={() => setTab(k)}>{l}</a>
           ))}
         </aside>
 
         <div>
+          {tab === 'deployment' && <DeploymentTab />}
           {tab === 'general' && <GeneralTab />}
           {tab === 'appearance' && <AppearanceTab />}
           {tab === 'users' && <UsersTab />}
@@ -6441,6 +6864,173 @@ function Settings() {
           {tab === 'integrations' && <IntegrationsTab />}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Deployment tab — LIVE. Persists to localStorage and is read by the
+// dashboard variants (and any other surface that branches on mode).
+function DeploymentTab() {
+  const [mode, setModeState] = React.useState(window.c2DeploymentMode());
+  const setMode = (m) => {
+    try { localStorage.setItem('c2:deployment', m); } catch {}
+    setModeState(m);
+  };
+  const mx = window.useSiphonApi('/v1/metrics');
+  const health = window.useSiphonApi('/health');
+  const apiUrl = window.SIPHON_API_URL();
+  const m = mx.data || {};
+
+  return (
+    <>
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Deployment mode</span>
+          <span className="k">how this console sources its data · persisted locally</span>
+        </div>
+        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'var(--gap)', marginTop:10}}>
+          <div
+            onClick={() => setMode('local')}
+            style={{
+              padding:14,
+              border: mode === 'local' ? '2px solid var(--accent)' : '1px solid var(--line-strong)',
+              background: mode === 'local' ? 'var(--accent-wash)' : 'transparent',
+              borderRadius:'var(--radius)',
+              cursor:'pointer',
+            }}>
+            <div style={{display:'flex', alignItems:'center', gap:8}}>
+              <span className={`chip chip--${mode === 'local' ? 'safe' : 'ghost'}`}>{mode === 'local' ? 'SELECTED' : 'select'}</span>
+              <b style={{fontSize:15, color:'var(--ink-bright)'}}>Local Only</b>
+            </div>
+            <div className="muted" style={{marginTop:8, fontSize:12, lineHeight:1.6}}>
+              A single <span className="mono">siphon-api</span> process on this host (no k8s, no agent fleet).
+              Every surface in the console pulls live data from the <span className="mono">/v1</span>
+              endpoints of that one instance. The dashboard stops pretending there's a fleet.
+            </div>
+          </div>
+          <div
+            onClick={() => setMode('cluster')}
+            style={{
+              padding:14,
+              border: mode === 'cluster' ? '2px solid var(--accent)' : '1px solid var(--line-strong)',
+              background: mode === 'cluster' ? 'var(--accent-wash)' : 'transparent',
+              borderRadius:'var(--radius)',
+              cursor:'pointer',
+            }}>
+            <div style={{display:'flex', alignItems:'center', gap:8}}>
+              <span className={`chip chip--${mode === 'cluster' ? 'safe' : 'ghost'}`}>{mode === 'cluster' ? 'SELECTED' : 'select'}</span>
+              <b style={{fontSize:15, color:'var(--ink-bright)'}}>Cluster (k8s / Docker)</b>
+            </div>
+            <div className="muted" style={{marginTop:8, fontSize:12, lineHeight:1.6}}>
+              Production-shape deployment with multiple pods, agents, and SIEM push. The dashboard shows
+              the cluster-wide view. Today those cluster-side feeds are <b>design previews</b> — they'll
+              turn live when the k8s / docker aggregator is wired up.
+            </div>
+          </div>
+        </div>
+        <div className="margin-note" style={{marginTop:10}}>
+          change takes effect immediately · reload not required
+        </div>
+      </div>
+
+      <div className="v-gap" />
+
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Current local deployment</span>
+          <span className="k">what Local Only mode is talking to</span>
+        </div>
+        <div className="kv">
+          <span className="k">API URL</span>         <span className="v mono">{apiUrl}</span>
+          <span className="k">Reachable</span>       <span className="v"><span className={`chip chip--${health.source === 'live' ? 'safe' : 'red'}`}>{health.source === 'live' ? 'yes' : health.source === 'offline' ? 'no' : '…'}</span></span>
+          <span className="k">Uptime</span>          <span className="v mono">{fmtUptime(m.uptime_secs)}</span>
+          <span className="k">Scans served</span>    <span className="v mono">{m.scans_total != null ? m.scans_total.toLocaleString() : '—'}</span>
+          <span className="k">Findings in ring</span><span className="v mono">{m.findings_total != null ? m.findings_total.toLocaleString() : '—'}</span>
+          <span className="k">Patterns loaded</span> <span className="v mono">{m.patterns_loaded != null ? m.patterns_loaded : '—'}</span>
+          <span className="k">Policies loaded</span> <span className="v mono">{m.policies_loaded != null ? m.policies_loaded : '—'}</span>
+        </div>
+        <hr className="sep" />
+        <div className="label" style={{marginBottom:6}}>Change the API URL</div>
+        <ApiUrlControl />
+      </div>
+
+      <div className="v-gap" />
+
+      <div className="box">
+        <div className="box-title">
+          <span className="t">What each mode affects</span>
+          <span className="k">today's coverage</span>
+        </div>
+        <div style={{display:'grid', gridTemplateColumns:'200px 1fr 1fr', gap:10, fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+          <span className="label">Surface</span>
+          <span className="label">Local Only</span>
+          <span className="label">Cluster</span>
+
+          <span>Dashboard · Ops</span>
+          <span><span className="chip chip--safe">live</span> /v1/metrics + /v1/findings + /v1/audit</span>
+          <span><span className="chip chip--warn">fixture</span> cluster fleet preview</span>
+
+          <span>Dashboard · Stream</span>
+          <span><span className="chip chip--safe">live</span> condensed /v1/findings tail</span>
+          <span><span className="chip chip--warn">fixture</span> cluster tail preview</span>
+
+          <span>Dashboard · Posture</span>
+          <span><span className="chip chip--safe">live</span> /v1/compliance + derived posture</span>
+          <span><span className="chip chip--warn">fixture</span> cluster scorecards preview</span>
+
+          <span>Dashboard · Topology</span>
+          <span><span className="chip chip--safe">live</span> siphon-c2 → siphon-api → siphon-core</span>
+          <span><span className="chip chip--safe">live</span> (plus future cluster links)</span>
+
+          <span>Operate · Findings</span>
+          <span><span className="chip chip--safe">live</span> /v1/findings</span>
+          <span><span className="chip chip--safe">live</span> /v1/findings</span>
+
+          <span>Operate · Pods / Logs</span>
+          <span className="muted">fixture (no fleet to show)</span>
+          <span><span className="chip chip--warn">fixture</span> cluster fleet preview</span>
+
+          <span>Detect · Patterns / Profiles</span>
+          <span><span className="chip chip--safe">live</span> /v1/patterns + /v1/profiles</span>
+          <span><span className="chip chip--safe">live</span> /v1/patterns + /v1/profiles</span>
+
+          <span>Assure · Compliance / Audit</span>
+          <span><span className="chip chip--safe">live</span> /v1/compliance + /v1/audit</span>
+          <span><span className="chip chip--safe">live</span> /v1/compliance + /v1/audit</span>
+
+          <span>Admin · Integrations / Allowlist</span>
+          <span><span className="chip chip--safe">live</span> env-detected</span>
+          <span><span className="chip chip--safe">live</span> env-detected</span>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// Small editable API-URL control used inside DeploymentTab.
+function ApiUrlControl() {
+  const [url, setUrl] = React.useState(window.SIPHON_API_URL());
+  const [saved, setSaved] = React.useState(false);
+  const save = () => {
+    try { localStorage.setItem('c2:apiUrl', url); } catch {}
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1500);
+  };
+  return (
+    <div style={{display:'flex', gap:8, alignItems:'center'}}>
+      <input
+        type="text"
+        value={url}
+        onChange={e => setUrl(e.target.value)}
+        style={{
+          flex:1,
+          fontFamily:"'JetBrains Mono', monospace", fontSize:12,
+          padding:'6px 8px', background:'var(--bg-1)',
+          color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+        }}
+      />
+      <button className="btn" onClick={save}>{saved ? 'Saved' : 'Save'}</button>
+      <button className="btn ghost" onClick={() => { setUrl('http://127.0.0.1:8080'); }}>Reset</button>
     </div>
   );
 }
