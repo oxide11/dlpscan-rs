@@ -4272,9 +4272,12 @@ function DashV1_Ops_Local() {
   //
   // Layout (top → bottom):
   //   1. metrics strip (scans / findings / errors / uptime)
-  //   2. full-width Recent findings list
-  //   3. Inputs → Detection → Outputs topology
-  //   4. Detection histogram (by category · live)
+  //   2. Inputs → Detection → Outputs topology
+  //   3. Detection histogram (by category · live)
+  //
+  // Recent-findings stream used to live between (1) and (2) but the
+  // dedicated Findings Console (Operate · Findings) does that job
+  // better — dashboard stays a summary, not a secondary log.
   //
   // Everything is derived from /v1/metrics + /v1/findings +
   // /v1/integrations. No audit panel, no fleet, no tenants.
@@ -4377,11 +4380,12 @@ function DashV1_Ops_Local() {
         />
       </div>
 
-      {/* ── 2 · Rich stream table · full width ────────────────── */}
-      <StreamTable findings={findings} />
+      {/* Recent findings lived here — removed in favour of the
+          dedicated Findings Console. The KPI strip + topology +
+          histogram below already give the at-a-glance view; the
+          console is one click away from the Operate workspace. */}
 
-
-      {/* ── 3 · Ingress → Inspect → Route SVG topology ───────── */}
+      {/* ── 2 · Ingress → Inspect → Route SVG topology ───────── */}
       <TopologyStrip
         bySource={bySource}
         metrics={m}
@@ -4390,7 +4394,7 @@ function DashV1_Ops_Local() {
         live={overall === 'live'}
       />
 
-      {/* ── 4 · Detection histogram (by category, live) ──────── */}
+      {/* ── 3 · Detection histogram (by category, live) ──────── */}
       <DetectionHistogram findings={findings} />
     </div>
   );
@@ -6814,7 +6818,7 @@ function FindingDetail({ id, back }) {
   );
 }
 
-Object.assign(window, { Stream, FindingDetail, fmtWallClock });
+Object.assign(window, { Stream, FindingDetail, fmtWallClock, catGroup, CAT_GROUPS, CAT_GROUP_COLOR });
 
 </script>
 
@@ -7226,15 +7230,382 @@ Object.assign(window, { Policy });
 
 <script type="text/babel" data-presets="react">
 /* ===== surfaces/patterns.jsx ===== */
-// Patterns — browse + live tester
+// ─────────────────────────────────────────────────────────────────
+// Custom categories — staged in localStorage until the overrides
+// layer (Phase 3-5) wires them into the detection engine. Shape:
+//   { id, name, group, description, patterns: [...], createdAt }
+// The UI treats them like first-class categories but flags them
+// with a 'custom' chip and refuses to promise they'll actually run
+// scans until the overrides pipeline lands. Pattern authoring inside
+// a custom category ships in a follow-up commit.
+// ─────────────────────────────────────────────────────────────────
+const CC_STORAGE_KEY = 'c2:custom-categories';
+window.__cc_listeners = window.__cc_listeners || new Set();
+function ccRead() {
+  try { return JSON.parse(localStorage.getItem(CC_STORAGE_KEY) || '[]'); }
+  catch { return []; }
+}
+function ccWrite(list) {
+  try { localStorage.setItem(CC_STORAGE_KEY, JSON.stringify(list)); } catch {}
+  window.__cc_listeners.forEach(fn => { try { fn(); } catch {} });
+}
+window.c2CustomCategoryAdd = (cat) => {
+  const list = ccRead();
+  list.push({
+    id: 'cc_' + Date.now().toString(36),
+    name: cat.name,
+    group: cat.group || 'OTHER',
+    description: cat.description || '',
+    patterns: [],
+    createdAt: new Date().toISOString(),
+  });
+  ccWrite(list);
+};
+window.c2CustomCategoryRemove = (id) => ccWrite(ccRead().filter(c => c.id !== id));
+window.c2CustomPatternAdd = (categoryId, pattern) => {
+  const list = ccRead();
+  const cat = list.find(c => c.id === categoryId);
+  if (!cat) return false;
+  cat.patterns = cat.patterns || [];
+  cat.patterns.push(pattern);
+  ccWrite(list);
+  return true;
+};
+window.c2CustomPatternRemove = (categoryId, subCategory) => {
+  const list = ccRead();
+  const cat = list.find(c => c.id === categoryId);
+  if (!cat) return false;
+  cat.patterns = (cat.patterns || []).filter(p => p.sub_category !== subCategory);
+  ccWrite(list);
+  return true;
+};
+window.useCustomCategories = function () {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const fn = () => setTick(t => t + 1);
+    window.__cc_listeners.add(fn);
+    // cross-tab sync
+    const onStorage = (e) => { if (e.key === CC_STORAGE_KEY) fn(); };
+    window.addEventListener('storage', onStorage);
+    return () => { window.__cc_listeners.delete(fn); window.removeEventListener('storage', onStorage); };
+  }, []);
+  return ccRead();
+};
+
+function NewCategoryModal({ open, onClose, onSaved }) {
+  const [name, setName] = React.useState('');
+  const [group, setGroup] = React.useState('OTHER');
+  const [desc, setDesc] = React.useState('');
+  const [err, setErr] = React.useState('');
+  React.useEffect(() => {
+    if (open) { setName(''); setGroup('OTHER'); setDesc(''); setErr(''); }
+  }, [open]);
+  if (!open) return null;
+  const submit = (e) => {
+    if (e) e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed) { setErr('Category name is required'); return; }
+    if (!/^[A-Z0-9_\- ]{2,60}$/i.test(trimmed)) {
+      setErr('Name: letters, numbers, dash, underscore, space · 2–60 chars');
+      return;
+    }
+    // Uppercase + snake so it reads like the built-in categories.
+    const normalized = trimmed.toUpperCase().replace(/[\s-]+/g, '_');
+    const existing = ccRead();
+    if (existing.some(c => c.name === normalized)) {
+      setErr('A custom category with that name already exists'); return;
+    }
+    window.c2CustomCategoryAdd({ name: normalized, group, description: desc.trim() });
+    onSaved && onSaved(normalized);
+    onClose && onClose();
+  };
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position:'fixed', inset:0, background:'rgba(0,0,0,0.5)',
+        display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000,
+      }}>
+      <form
+        onClick={e => e.stopPropagation()}
+        onSubmit={submit}
+        style={{
+          background:'var(--bg-2)', border:'1px solid var(--line-strong)',
+          borderRadius:'var(--radius)', padding:20, width:480, maxWidth:'94vw',
+          boxShadow:'0 8px 32px rgba(0,0,0,0.4)',
+        }}>
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10}}>
+          <div style={{fontFamily:"'Space Grotesk', sans-serif", fontWeight:600, fontSize:15, color:'var(--ink-bright)'}}>
+            New custom category
+          </div>
+          <button type="button" onClick={onClose} className="btn ghost" style={{padding:'2px 8px'}}>✕</button>
+        </div>
+        <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:11.5, lineHeight:1.6, marginBottom:12}}>
+          <b>Staged locally.</b> Custom categories + their patterns live in this browser's
+          <span className="mono"> localStorage</span> until the overrides pipeline
+          (Phase 3-5) wires them into <span className="mono">siphon-api</span>. They
+          show up in this UI for drafting / review but won't affect live
+          <span className="mono"> /scan</span> traffic yet.
+        </div>
+        <div style={{marginBottom:10}}>
+          <div className="label" style={{marginBottom:4}}>Name</div>
+          <input
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="MY_ORG_SECRETS"
+            style={{width:'100%', padding:'6px 10px', fontFamily:"'JetBrains Mono', monospace", fontSize:13, background:'var(--bg-1)', color:'var(--ink-bright)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}
+            autoFocus
+          />
+        </div>
+        <div style={{marginBottom:10}}>
+          <div className="label" style={{marginBottom:4}}>Region group</div>
+          <select
+            value={group}
+            onChange={e => setGroup(e.target.value)}
+            style={{width:'100%', padding:'6px 10px', fontFamily:"'JetBrains Mono', monospace", fontSize:12, background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}>
+            {window.CAT_GROUPS.map(g => <option key={g} value={g}>{g}</option>)}
+          </select>
+          <div className="muted" style={{fontSize:10.5, marginTop:3}}>
+            Controls where the category nests in the left rail. Pick whichever group matches intent; can be changed later.
+          </div>
+        </div>
+        <div style={{marginBottom:12}}>
+          <div className="label" style={{marginBottom:4}}>Description (optional)</div>
+          <textarea
+            value={desc}
+            onChange={e => setDesc(e.target.value)}
+            placeholder="what this category detects and why"
+            rows={3}
+            style={{width:'100%', padding:'6px 10px', fontSize:12, background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', fontFamily:"inherit", resize:'vertical'}}
+          />
+        </div>
+        {err && (
+          <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', fontSize:11.5, marginBottom:10}}>
+            {err}
+          </div>
+        )}
+        <div style={{display:'flex', justifyContent:'flex-end', gap:8}}>
+          <button type="button" onClick={onClose} className="btn ghost">Cancel</button>
+          <button type="submit" className="btn primary">Create</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// NewPatternModal — authoring form for a pattern inside a custom
+// category. Stays aligned with the PatternItem shape so the eventual
+// overrides pipeline (Phase 3-5) can read these back into siphon-api
+// without a migration. Validator opt-in is deferred to Phase 5 — same
+// place the base-pattern validator surface lights up.
+function NewPatternModal({ open, category, onClose, onSaved }) {
+  const [subCat, setSubCat] = React.useState('');
+  const [regex, setRegex] = React.useState('');
+  const [spec, setSpec] = React.useState(0.5);
+  const [ctxReq, setCtxReq] = React.useState(false);
+  const [caseI, setCaseI] = React.useState(true);
+  const [kwText, setKwText] = React.useState('');
+  const [prox, setProx] = React.useState(50);
+  const [err, setErr] = React.useState('');
+
+  React.useEffect(() => {
+    if (open) {
+      setSubCat(''); setRegex(''); setSpec(0.5);
+      setCtxReq(false); setCaseI(true); setKwText(''); setProx(50); setErr('');
+    }
+  }, [open]);
+
+  if (!open || !category) return null;
+
+  const submit = (e) => {
+    if (e) e.preventDefault();
+    const sTrim = subCat.trim();
+    if (!sTrim) { setErr('Sub-category is required'); return; }
+    if (!/^[a-z0-9._-]{2,80}$/i.test(sTrim)) {
+      setErr('Sub-category: letters, numbers, dot, dash, underscore · 2–80 chars');
+      return;
+    }
+    if (!regex.trim()) { setErr('Regex is required'); return; }
+    // Sanity-check the regex compiles. We can't fully validate Rust's
+    // regex flavour from JS, but catching JS-level syntax errors gives
+    // a decent first line of defence.
+    try { new RegExp(regex, caseI ? 'i' : ''); }
+    catch (e) { setErr('Regex does not compile: ' + e.message); return; }
+    const existing = (category.patterns || []).find(p => p.sub_category === sTrim);
+    if (existing) { setErr('Sub-category already exists in this category'); return; }
+    const keywords = kwText.split(/[,\n]/).map(k => k.trim()).filter(Boolean);
+    const pat = {
+      sub_category: sTrim,
+      regex: regex,
+      specificity: Number(spec),
+      context_required: !!ctxReq,
+      case_insensitive: !!caseI,
+      context_keywords: keywords,
+      proximity_chars: Math.max(0, Math.min(500, parseInt(prox, 10) || 50)),
+      category: category.name,   // denormalised for drill-in navigation
+      createdAt: new Date().toISOString(),
+    };
+    window.c2CustomPatternAdd(category.id, pat);
+    onSaved && onSaved(pat);
+    onClose && onClose();
+  };
+
+  const fldStyle = {
+    width:'100%', padding:'6px 10px',
+    fontFamily:"'JetBrains Mono', monospace", fontSize:12,
+    background:'var(--bg-1)', color:'var(--ink-bright)',
+    border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+  };
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position:'fixed', inset:0, background:'rgba(0,0,0,0.5)',
+        display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000,
+      }}>
+      <form
+        onClick={e => e.stopPropagation()}
+        onSubmit={submit}
+        style={{
+          background:'var(--bg-2)', border:'1px solid var(--line-strong)',
+          borderRadius:'var(--radius)', padding:20, width:560, maxWidth:'94vw',
+          maxHeight:'90vh', overflowY:'auto',
+          boxShadow:'0 8px 32px rgba(0,0,0,0.4)',
+        }}>
+        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10}}>
+          <div style={{fontFamily:"'Space Grotesk', sans-serif", fontWeight:600, fontSize:15, color:'var(--ink-bright)'}}>
+            New pattern in <span className="mono">{category.name}</span>
+          </div>
+          <button type="button" onClick={onClose} className="btn ghost" style={{padding:'2px 8px'}}>✕</button>
+        </div>
+
+        <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:11.5, lineHeight:1.6, marginBottom:12}}>
+          <b>Staged locally.</b> Regex + keywords + validators entered here live in
+          <span className="mono"> localStorage</span> only. They won't run in the
+          detection engine until the overrides pipeline (Phase 3-5) wires them
+          into <span className="mono">siphon-api</span> via a ConfigMap-backed
+          overrides file + rolling restart of detection pods.
+        </div>
+
+        <div style={{marginBottom:10}}>
+          <div className="label" style={{marginBottom:4}}>Sub-category name</div>
+          <input value={subCat} onChange={e => setSubCat(e.target.value)}
+                 placeholder="myorg.employee_id.v1"
+                 style={fldStyle} autoFocus />
+        </div>
+
+        <div style={{marginBottom:10}}>
+          <div className="label" style={{marginBottom:4}}>Regex</div>
+          <textarea value={regex} onChange={e => setRegex(e.target.value)}
+                    placeholder="\\bEMP-\\d{6}\\b"
+                    rows={2}
+                    style={{...fldStyle, resize:'vertical'}} />
+          <div className="muted" style={{fontSize:10.5, marginTop:3}}>
+            Rust <span className="mono">regex</span> crate flavour · non-backtracking.
+            Anchors like <span className="mono">\b</span>, <span className="mono">(?i)</span> supported.
+          </div>
+        </div>
+
+        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10}}>
+          <div>
+            <div className="label" style={{marginBottom:4}}>Specificity · {Number(spec).toFixed(2)}</div>
+            <input type="range" min="0" max="1" step="0.05" value={spec}
+                   onChange={e => setSpec(e.target.value)}
+                   style={{width:'100%'}} />
+            <div className="muted" style={{fontSize:10.5}}>
+              Higher = bigger confidence boost when this pattern fires.
+            </div>
+          </div>
+          <div>
+            <div className="label" style={{marginBottom:4}}>Proximity (chars)</div>
+            <input type="number" min="0" max="500" value={prox}
+                   onChange={e => setProx(e.target.value)}
+                   style={fldStyle} />
+            <div className="muted" style={{fontSize:10.5}}>Window a keyword must appear within.</div>
+          </div>
+        </div>
+
+        <div style={{display:'flex', gap:18, marginBottom:10, padding:'6px 0'}}>
+          <label style={{display:'flex', alignItems:'center', gap:6, cursor:'pointer', fontSize:12}}>
+            <input type="checkbox" checked={caseI} onChange={e => setCaseI(e.target.checked)} />
+            case-insensitive
+          </label>
+          <label style={{display:'flex', alignItems:'center', gap:6, cursor:'pointer', fontSize:12}}>
+            <input type="checkbox" checked={ctxReq} onChange={e => setCtxReq(e.target.checked)} />
+            context required (at least one keyword must hit in-window)
+          </label>
+        </div>
+
+        <div style={{marginBottom:10}}>
+          <div className="label" style={{marginBottom:4}}>Context keywords</div>
+          <textarea value={kwText} onChange={e => setKwText(e.target.value)}
+                    placeholder="employee id, emp id, staff number"
+                    rows={2}
+                    style={{...fldStyle, resize:'vertical', fontFamily:"inherit"}} />
+          <div className="muted" style={{fontSize:10.5, marginTop:3}}>
+            Comma- or newline-separated. Matched case-insensitively via Aho-Corasick.
+          </div>
+        </div>
+
+        <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:11.5, lineHeight:1.6, marginBottom:10}}>
+          <b>Validators</b> (Luhn / IBAN / BIN / etc.) are Rust fns in
+          <span className="mono"> siphon-core/src/validation/</span>. Opt-in/opt-out
+          per pattern lands with <b>Phase 5</b> — the overrides schema will carry a
+          validator whitelist alongside the fields above.
+        </div>
+
+        {err && (
+          <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', fontSize:11.5, marginBottom:10}}>
+            {err}
+          </div>
+        )}
+
+        <div style={{display:'flex', justifyContent:'flex-end', gap:8}}>
+          <button type="button" onClick={onClose} className="btn ghost">Cancel</button>
+          <button type="submit" className="btn primary">Add pattern</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function Patterns() {
   const [selected, setSelected] = React.useState(null);
   const [filter, setFilter] = React.useState('');
+  const [newCatOpen, setNewCatOpen] = React.useState(false);
+  const [newPatOpen, setNewPatOpen] = React.useState(false);
+  const customCategories = window.useCustomCategories();
+  // Expanded-group state, persisted so the left rail remembers which
+  // regions the analyst had open between visits.
+  const [expandedGroups, setExpandedGroups] = React.useState(() => {
+    try {
+      const raw = localStorage.getItem('c2:patterns-expanded-groups');
+      return raw ? new Set(JSON.parse(raw)) : new Set(['PCI']);
+    } catch { return new Set(['PCI']); }
+  });
+  const toggleGroup = (g) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(g)) next.delete(g); else next.add(g);
+      try { localStorage.setItem('c2:patterns-expanded-groups', JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
   const cats = window.useSiphonApi('/v1/categories');
-  // default-select the first category once categories arrive
+  // default-select the first category once categories arrive, and
+  // make sure its region group is expanded so the analyst can see it.
   React.useEffect(() => {
     if (!selected && cats.data && cats.data.categories && cats.data.categories.length) {
-      setSelected(cats.data.categories[0].category);
+      const first = cats.data.categories[0].category;
+      setSelected(first);
+      const g = window.catGroup(first);
+      setExpandedGroups(prev => {
+        if (prev.has(g)) return prev;
+        const next = new Set(prev); next.add(g);
+        try { localStorage.setItem('c2:patterns-expanded-groups', JSON.stringify([...next])); } catch {}
+        return next;
+      });
     }
   }, [cats.data, selected]);
 
@@ -7248,11 +7619,57 @@ function Patterns() {
     return list.reduce((a, b) => a + (b.specificity || 0), 0) / list.length;
   };
 
-  const catList = (cats.data && cats.data.categories) || [];
-  const catFiltered = filter
-    ? catList.filter(c => c.category.toLowerCase().includes(filter.toLowerCase()))
-    : catList;
+  // Merge built-in + custom categories so the rail treats them
+  // uniformly. Custom entries carry isCustom so the row can render
+  // a badge, and their pattern_count is the length of their staged
+  // patterns array (0 until 3b authoring lands).
+  const builtinCats = (cats.data && cats.data.categories) || [];
+  const customAsCats = customCategories.map(cc => ({
+    category: cc.name,
+    pattern_count: (cc.patterns || []).length,
+    sub_categories: (cc.patterns || []).map(p => p.sub_category || ''),
+    isCustom: true,
+    customId: cc.id,
+    customGroup: cc.group,
+  }));
+  const catList = [...builtinCats, ...customAsCats];
+  // Filter matches category name, region name, or any sub-category
+  // under the category. Typing 'pci' surfaces the whole PCI group;
+  // typing 'visa' narrows to the category containing that sub-cat.
+  // Multiple whitespace-separated terms must ALL match somewhere in
+  // the haystack (AND semantics) so 'pci visa' still works.
+  const terms = filter.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const catFiltered = terms.length === 0 ? catList : catList.filter(c => {
+    const subs = (c.sub_categories || []).join(' ');
+    const haystack = (c.category + ' ' + window.catGroup(c.category) + ' ' + subs).toLowerCase();
+    return terms.every(t => haystack.includes(t));
+  });
+  // Bucket the filtered categories by region group (PCI / PII / CRED /
+  // PHI / SECRET / CLASSIFIED / OTHER). Custom categories use the group
+  // the analyst picked at creation time; built-ins use catGroup().
+  const grouped = React.useMemo(() => {
+    const by = Object.fromEntries(window.CAT_GROUPS.map(g => [g, []]));
+    for (const c of catFiltered) {
+      const g = c.isCustom ? (c.customGroup || 'OTHER') : window.catGroup(c.category);
+      (by[g] || by.OTHER).push(c);
+    }
+    return window.CAT_GROUPS
+      .map(g => [g, by[g]])
+      .filter(([, items]) => items.length > 0);
+  }, [catFiltered]);
+  // When the analyst is typing, auto-expand every group with a match
+  // so the filter feels responsive instead of silently dropping items
+  // behind collapsed sections.
+  const effectiveExpanded = terms.length
+    ? new Set(grouped.map(([g]) => g))
+    : expandedGroups;
   const patList = (pats.data && pats.data.patterns) || [];
+  // Detect if the analyst is looking at a custom category — the
+  // right-hand panel diverges: staged banner + local pattern list
+  // from localStorage (empty until 3b pattern authoring ships).
+  const selectedCustom = selected
+    ? customCategories.find(c => c.name === selected)
+    : null;
 
   return (
     <div>
@@ -7264,9 +7681,39 @@ function Patterns() {
         <div className="actions">
           <window.LivePill source={cats.source} onClick={cats.refetch} title={cats.error || 'click to refetch'} />
           <button className="btn ghost">Import ruleset</button>
-          <button className="btn primary">New pattern</button>
+          <button
+            className="btn"
+            onClick={() => setNewCatOpen(true)}
+            title="Create a custom category for your organisation (staged locally until Phase 3-5 wires overrides)">
+            + New category
+          </button>
+          <button className="btn primary" disabled title="Pattern authoring ships with the next commit (3b)" style={{opacity:0.5, cursor:'not-allowed'}}>
+            New pattern
+          </button>
         </div>
       </div>
+
+      <NewCategoryModal
+        open={newCatOpen}
+        onClose={() => setNewCatOpen(false)}
+        onSaved={(name) => {
+          setSelected(name);
+          // make sure the group is expanded so the new category is visible
+          const newCat = ccRead().find(c => c.name === name);
+          if (newCat) setExpandedGroups(prev => {
+            if (prev.has(newCat.group)) return prev;
+            const next = new Set(prev); next.add(newCat.group);
+            try { localStorage.setItem('c2:patterns-expanded-groups', JSON.stringify([...next])); } catch {}
+            return next;
+          });
+        }}
+      />
+
+      <NewPatternModal
+        open={newPatOpen}
+        category={selectedCustom}
+        onClose={() => setNewPatOpen(false)}
+      />
 
       {cats.error && (
         <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', marginBottom:'var(--gap)'}}>
@@ -7290,25 +7737,152 @@ function Patterns() {
               border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'
             }}
           />
-          {catFiltered.map((c, i) => (
-            <div
-              key={i}
-              onClick={() => setSelected(c.category)}
-              style={{
-                display:'flex', justifyContent:'space-between', padding:'4px 6px',
-                fontSize:12, borderBottom:'1px dashed var(--line-soft)', cursor:'pointer',
-                background: c.category === selected ? 'var(--bg-3)' : 'transparent',
-                color: c.category === selected ? 'var(--accent)' : 'var(--ink)',
-              }}>
-              <span style={{fontFamily:"'JetBrains Mono', monospace"}}>{c.category}</span>
-              <span className="mono" style={{fontSize:11, color:'var(--ink-faint)'}}>{c.pattern_count}</span>
-            </div>
-          ))}
-          {!cats.loading && catFiltered.length === 0 && (
+          {grouped.map(([g, items]) => {
+            const open = effectiveExpanded.has(g);
+            const totalPats = items.reduce((a, c) => a + (c.pattern_count || 0), 0);
+            const gColor = window.CAT_GROUP_COLOR[g] || 'var(--ink-soft)';
+            return (
+              <div key={g} style={{marginBottom:4}}>
+                <div
+                  onClick={() => toggleGroup(g)}
+                  title={open ? 'collapse region' : 'expand region'}
+                  style={{
+                    display:'flex', justifyContent:'space-between', alignItems:'center',
+                    padding:'5px 6px', cursor:'pointer', userSelect:'none',
+                    borderBottom:'1px solid var(--line)',
+                    background:'var(--bg-1)',
+                  }}>
+                  <span style={{display:'flex', alignItems:'center', gap:6}}>
+                    <span className="mono" style={{fontSize:10, color:'var(--ink-soft)', width:10, display:'inline-block'}}>{open ? '▼' : '▶'}</span>
+                    <span style={{width:6, height:6, borderRadius:'50%', background:gColor, display:'inline-block'}} />
+                    <span style={{fontFamily:"'Space Grotesk', sans-serif", fontWeight:600, letterSpacing:'0.08em', fontSize:11, color:'var(--ink-bright)'}}>{g}</span>
+                    <span className="muted mono" style={{fontSize:10}}>{items.length} cat</span>
+                  </span>
+                  <span className="mono" style={{fontSize:10, color:'var(--ink-faint)'}}>{totalPats}</span>
+                </div>
+                {open && items.map((c, i) => (
+                  <div
+                    key={g + ':' + i}
+                    onClick={() => setSelected(c.category)}
+                    style={{
+                      display:'flex', justifyContent:'space-between', alignItems:'center',
+                      padding:'3px 6px 3px 22px',
+                      fontSize:12, borderBottom:'1px dashed var(--line-soft)', cursor:'pointer',
+                      background: c.category === selected ? 'var(--bg-3)' : 'transparent',
+                      color: c.category === selected ? 'var(--accent)' : 'var(--ink)',
+                    }}>
+                    <span style={{display:'flex', alignItems:'center', gap:6, overflow:'hidden', minWidth:0}}>
+                      <span style={{fontFamily:"'JetBrains Mono', monospace", overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{c.category}</span>
+                      {c.isCustom && (
+                        <span className="chip chip--teal" style={{fontSize:8.5, padding:'1px 4px', letterSpacing:0.5, flexShrink:0}}>custom</span>
+                      )}
+                    </span>
+                    <span className="mono" style={{fontSize:11, color:'var(--ink-faint)', flexShrink:0, marginLeft:6}}>{c.pattern_count}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+          {!cats.loading && grouped.length === 0 && (
             <div className="muted" style={{padding:10, fontSize:11, textAlign:'center'}}>— no matches —</div>
           )}
         </div>
 
+        {selectedCustom ? (
+          <div className="box">
+            <div className="box-title">
+              <span className="t">
+                <span className="mono" style={{color:'var(--ink-bright)'}}>{selectedCustom.name}</span>
+                <span className="chip chip--teal" style={{marginLeft:8, fontSize:9, padding:'1px 6px', letterSpacing:0.5}}>custom</span>
+                <span className="chip chip--ghost" style={{marginLeft:4, fontSize:9, padding:'1px 6px'}}>{selectedCustom.group}</span>
+              </span>
+              <span className="k">
+                {(selectedCustom.patterns || []).length} pattern{(selectedCustom.patterns || []).length === 1 ? '' : 's'} · created {window.fmtWallClock ? window.fmtWallClock(selectedCustom.createdAt) : selectedCustom.createdAt}
+              </span>
+            </div>
+            <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:12, lineHeight:1.7}}>
+              <b>Staged locally.</b> This custom category lives in the browser's
+              <span className="mono"> localStorage</span> and does not affect live
+              <span className="mono"> /scan</span> traffic yet. The overrides pipeline
+              (Phase 3-5) will promote it into <span className="mono">siphon-api</span>
+              via a ConfigMap-backed overrides file + rolling restart.
+            </div>
+            {selectedCustom.description && (
+              <div style={{padding:'8px 0', fontSize:13, lineHeight:1.7, color:'var(--ink-soft)'}}>
+                {selectedCustom.description}
+              </div>
+            )}
+            {(selectedCustom.patterns || []).length === 0 ? (
+              <div style={{marginTop:10, padding:14, background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:'var(--radius)', textAlign:'center'}}>
+                <div className="muted mono" style={{fontSize:12, marginBottom:8}}>
+                  No patterns yet · add one to start drafting the ruleset
+                </div>
+                <button
+                  className="btn primary"
+                  onClick={() => setNewPatOpen(true)}>
+                  + Add pattern
+                </button>
+              </div>
+            ) : (
+              <div style={{marginTop:10}}>
+                <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8}}>
+                  <div className="label">
+                    {selectedCustom.patterns.length} pattern{selectedCustom.patterns.length === 1 ? '' : 's'}
+                  </div>
+                  <button className="btn" onClick={() => setNewPatOpen(true)}>+ Add pattern</button>
+                </div>
+                <div className="pat-row label" style={{borderBottom:'1.5px solid var(--line)'}}>
+                  <span></span><span>Sub-category · regex</span><span>Specificity</span><span>Ctx</span><span>Case</span><span></span>
+                </div>
+                {selectedCustom.patterns.map((p, i) => (
+                  <div key={i} className="pat-row"
+                       onClick={(e) => {
+                         if (e.target && e.target.tagName === 'INPUT') return;
+                         if (e.target && e.target.getAttribute('data-action') === 'delete') return;
+                         window.__c2_go && window.__c2_go('patterns', 'pattern:' + selectedCustom.name + '/' + p.sub_category);
+                       }}
+                       style={{cursor:'pointer'}}
+                       title={`open ${p.sub_category}`}>
+                    <input type="checkbox" defaultChecked onClick={(e) => e.stopPropagation()} />
+                    <span>
+                      <div className="pn">{p.sub_category}</div>
+                      <div className="pr" style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:600}} title={p.regex}>{p.regex}</div>
+                    </span>
+                    <span className="mono">{Number(p.specificity).toFixed(2)}</span>
+                    <span>{p.context_required ? <span className="chip chip--teal">req</span> : <span className="chip chip--ghost">—</span>}</span>
+                    <span>{p.case_insensitive ? <span className="chip">/i</span> : <span className="chip chip--ghost">—</span>}</span>
+                    <span>
+                      <button
+                        data-action="delete"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm(`Remove pattern '${p.sub_category}' from '${selectedCustom.name}'?`)) {
+                            window.c2CustomPatternRemove(selectedCustom.id, p.sub_category);
+                          }
+                        }}
+                        title="Remove pattern"
+                        style={{background:'transparent', border:'none', color:'var(--red)', cursor:'pointer', fontSize:14, padding:'0 4px'}}>✕</button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div style={{marginTop:10, display:'flex', justifyContent:'flex-end', gap:6}}>
+              <button
+                className="btn"
+                onClick={() => {
+                  if (confirm(`Delete custom category '${selectedCustom.name}'? Patterns staged inside it will be lost.`)) {
+                    window.c2CustomCategoryRemove(selectedCustom.id);
+                    setSelected(null);
+                  }
+                }}
+                title="Remove this custom category from local storage"
+                style={{color:'var(--red)', borderColor:'var(--red)'}}>
+                Delete category
+              </button>
+            </div>
+          </div>
+        ) : (
         <div className="box">
           <div className="box-title">
             <span className="t">{selected || (cats.loading ? 'loading…' : 'select a category')}</span>
@@ -7353,6 +7927,7 @@ function Patterns() {
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   );
