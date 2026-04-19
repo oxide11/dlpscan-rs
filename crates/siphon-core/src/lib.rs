@@ -14,6 +14,7 @@ pub mod classification;
 pub mod context;
 pub mod edm;
 pub mod errors;
+pub mod findings_ring;
 pub mod lsh;
 pub mod models;
 pub mod normalize;

@@ -5,30 +5,51 @@
 //! pods depend on siphon-core for the detection engine, so the regex
 //! + keyword + validator stack stays single-source-of-truth.
 //!
-//! Phase 0b scope (this file):
-//!   · GET  /health    — liveness probe
-//!   · GET  /ready     — readiness probe (Phase 3 gates on overrides)
-//!   · POST /scan      — multipart upload of a single file; bytes
-//!                       are decoded as UTF-8 and run through
-//!                       siphon-core::scanner::scan_text_with_config.
-//!                       PDF/DOCX/archive parsing via siphon-core's
-//!                       ingest layer lands in Phase 0c.
+//! Endpoints:
+//!   · GET  /health      — liveness probe (immediate 200)
+//!   · GET  /ready       — readiness probe (Phase 3 gates on overrides)
+//!   · POST /scan        — multipart file upload → extractor → scanner.
+//!                         Each emitted finding is also pushed into
+//!                         this pod's FindingsRing so it shows up in
+//!                         /v1/findings independently of siphon-api.
+//!   · GET  /v1/findings — recent findings from THIS pod's ring.
+//!                         Shape matches siphon-api's /v1/findings so
+//!                         the admin console can union the two.
 //!
 //! Graceful shutdown on SIGTERM lands in Phase 5.
 
 use axum::{
-    extract::{DefaultBodyLimit, Multipart},
+    extract::{DefaultBodyLimit, Multipart, Query, State},
     http::StatusCode,
     response::{IntoResponse, Json as JsonResponse, Response},
     routing::{get, post},
     Router,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use siphon_core::audit::iso8601_now;
+use siphon_core::findings_ring::{
+    filter_findings, severity_for, FindingRecord, FindingsRing,
+};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Instant;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{info, warn};
+
+const POD_NAME: &str = "siphon-fs";
+const FINDINGS_RING_CAP: usize = 500;
+
+// ─── shared app state ────────────────────────────────────────────
+// FindingsRing is owned by this pod — each siphon-fs replica keeps
+// its own local ring. Multi-replica convergence (e.g. gossiping
+// findings across replicas) is beyond the Phase 0 lab; the admin
+// console queries the Service IP which load-balances across replicas.
+#[derive(Clone)]
+struct AppState {
+    findings: Arc<FindingsRing>,
+}
 
 // ─── health + readiness ──────────────────────────────────────────
 #[derive(Serialize)]
@@ -41,7 +62,7 @@ struct HealthResponse {
 async fn health() -> JsonResponse<HealthResponse> {
     JsonResponse(HealthResponse {
         status: "ok",
-        service: "siphon-fs",
+        service: POD_NAME,
         version: env!("CARGO_PKG_VERSION"),
     })
 }
@@ -52,17 +73,12 @@ async fn ready() -> JsonResponse<HealthResponse> {
     // can target /ready today without refactoring.
     JsonResponse(HealthResponse {
         status: "ready",
-        service: "siphon-fs",
+        service: POD_NAME,
         version: env!("CARGO_PKG_VERSION"),
     })
 }
 
 // ─── /scan response shape ────────────────────────────────────────
-// Shape matches siphon_core::Match fields that serialise cleanly.
-// String (not &'static str) because Match owns its fields. Severity
-// derivation lives in siphon-api today — siphon-fs stays minimal and
-// lets the Phase 2c forward-to-/v1/findings/ingest path decide how
-// severities are reconciled.
 #[derive(Serialize)]
 struct ScanFinding {
     category: String,
@@ -80,12 +96,7 @@ struct ScanResponse {
     content_type: Option<String>,
     bytes: usize,
     duration_ms: f64,
-    // Format reported by siphon::extractors (pdf / docx / plain /
-    // rtf / eml / etc.) — the actual extractor that ran.
     parsed_as: String,
-    // Warnings surfaced by the extractor (e.g. 'OCR skipped', 'zip
-    // bomb heuristic tripped for entry X'). Passed through verbatim
-    // so the UI can surface them.
     warnings: Vec<String>,
     findings: Vec<ScanFinding>,
 }
@@ -100,7 +111,7 @@ fn err(code: StatusCode, msg: impl Into<String>) -> Response {
 }
 
 // ─── /scan handler ───────────────────────────────────────────────
-async fn scan(mut multipart: Multipart) -> Response {
+async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Response {
     let request_id = uuid::Uuid::new_v4().to_string();
     let start = Instant::now();
 
@@ -125,9 +136,8 @@ async fn scan(mut multipart: Multipart) -> Response {
                         }
                     }
                 } else {
-                    // Phase 0b ignores non-'file' fields. An 'options'
-                    // JSON blob (min_confidence, categories, etc.) gets
-                    // wired in Phase 0c alongside the ingest layer.
+                    // 'options' JSON (min_confidence, categories, etc.) wiring
+                    // is a post-Phase-0 follow-up; for now drain the field.
                     let _ = field.bytes().await;
                 }
             }
@@ -150,9 +160,8 @@ async fn scan(mut multipart: Multipart) -> Response {
     let file_len = bytes.len();
 
     // Write the multipart bytes to a temp file so siphon's extractor
-    // registry can dispatch on extension. If the client didn't give us
-    // a filename we default to '.bin' — the registry falls back to
-    // plain-text extraction for unknown extensions.
+    // registry can dispatch on extension. Unknown extensions fall
+    // through to plain-text extraction.
     let suffix = filename
         .as_deref()
         .and_then(|f| std::path::Path::new(f).extension())
@@ -184,8 +193,7 @@ async fn scan(mut multipart: Multipart) -> Response {
     // siphon's extractor registry covers text, RTF, EML, PDF, Office
     // (xlsx/docx/pptx), archives (zip/7z/rar/tar), data formats
     // (parquet/csv/sqlite), barcodes, and falls back to plain-text
-    // for anything unrecognised. Everything happens inside a
-    // 100MB-per-file / 500MB-per-archive cap.
+    // for anything unrecognised. 100MB-per-file / 500MB-per-archive caps.
     let extract = match siphon::extractors::extract_text(&tmp_path) {
         Ok(r) => r,
         Err(e) => {
@@ -207,6 +215,36 @@ async fn scan(mut multipart: Multipart) -> Response {
             );
         }
     };
+
+    // Push each finding into this pod's ring BEFORE building the
+    // response — that way even if the caller drops the connection
+    // the findings are queryable via /v1/findings.
+    let ts_now = iso8601_now();
+    let short_req = request_id.split('-').next().unwrap_or(&request_id);
+    // Use the uploaded filename as the 'source_ip' field. It's not
+    // actually an IP, but it's the most useful provenance signal for
+    // a file scan (which client sent which file). The admin console
+    // already renders source_ip as a provenance label.
+    let source_label = filename
+        .clone()
+        .unwrap_or_else(|| "<anon-upload>".to_string());
+    for (idx, m) in matches.iter().enumerate() {
+        state.findings.push(FindingRecord {
+            id: format!("f-{short_req}-{idx:02x}"),
+            ts: ts_now.clone(),
+            request_id: request_id.clone(),
+            source_ip: source_label.clone(),
+            source_pod: POD_NAME.to_string(),
+            category: m.category.to_string(),
+            sub_category: m.sub_category.to_string(),
+            text: m.text.clone(),
+            confidence: m.confidence,
+            has_context: m.has_context,
+            span: (m.span.0, m.span.1),
+            metadata: HashMap::new(),
+            severity: severity_for(&m.category, m.confidence),
+        });
+    }
 
     let findings: Vec<ScanFinding> = matches
         .into_iter()
@@ -245,11 +283,60 @@ async fn scan(mut multipart: Multipart) -> Response {
     .into_response()
 }
 
-fn build_router() -> Router {
+// ─── /v1/findings handler ────────────────────────────────────────
+// Mirrors siphon-api's /v1/findings so the admin console can fan-out
+// to both pods and union the rings.
+#[derive(Deserialize)]
+struct FindingsQuery {
+    limit: Option<usize>,
+    category: Option<String>,
+    severity: Option<String>,
+    contains: Option<String>,
+    since: Option<String>,
+}
+
+#[derive(Serialize)]
+struct FindingsResponse {
+    total: usize,
+    returned: usize,
+    capacity: usize,
+    findings: Vec<FindingRecord>,
+}
+
+async fn list_findings(
+    State(state): State<AppState>,
+    Query(q): Query<FindingsQuery>,
+) -> JsonResponse<FindingsResponse> {
+    let snapshot = state.findings.snapshot();
+    let total = snapshot.len();
+    let capacity = state.findings.capacity();
+
+    let filtered = filter_findings(
+        &snapshot,
+        q.category.as_deref(),
+        q.severity.as_deref(),
+        q.contains.as_deref(),
+        q.since.as_deref(),
+    );
+
+    let cap = q.limit.unwrap_or(200).min(capacity);
+    let findings: Vec<FindingRecord> = filtered.into_iter().take(cap).cloned().collect();
+    let returned = findings.len();
+    JsonResponse(FindingsResponse {
+        total,
+        returned,
+        capacity,
+        findings,
+    })
+}
+
+fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/scan", post(scan))
+        .route("/v1/findings", get(list_findings))
+        .with_state(state)
         // 64MB upload cap — overridable once we decide on real limits.
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         .layer(CorsLayer::permissive())
@@ -267,12 +354,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bind = std::env::var("SIPHON_FS_BIND").unwrap_or_else(|_| "0.0.0.0:8081".to_string());
     let addr: SocketAddr = bind.parse()?;
-    let app = build_router();
+
+    let state = AppState {
+        findings: Arc::new(FindingsRing::new(FINDINGS_RING_CAP)),
+    };
+    let app = build_router(state);
 
     info!(
-        service = "siphon-fs",
+        service = POD_NAME,
         version = env!("CARGO_PKG_VERSION"),
         core = siphon_core::VERSION,
+        ring_cap = FINDINGS_RING_CAP,
         bind = %addr,
         "siphon-fs starting"
     );
