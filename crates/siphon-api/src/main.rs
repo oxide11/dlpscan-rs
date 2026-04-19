@@ -44,6 +44,9 @@ use siphon_core::audit::{
     audit_event, iso8601_now, set_audit_logger, AuditEvent, AuditHandler, AuditLogger,
     FileAuditHandler, RotatingFileAuditHandler,
 };
+use siphon_core::findings_ring::{
+    filter_findings, severity_for, FindingRecord, FindingsRing,
+};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
@@ -70,74 +73,11 @@ struct AppState {
     findings: Arc<FindingsRing>,
 }
 
-// ---------------------------------------------------------------------------
-// FindingsRing — in-memory buffer of recent finding records so the console
-// can tail them without persisting to disk. Each scan push-flushes every
-// returned finding with a scan-scoped id and the originating request_id.
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Serialize)]
-struct FindingRecord {
-    id: String,
-    ts: String,
-    request_id: String,
-    source_ip: String,
-    category: String,
-    sub_category: String,
-    text: String,
-    confidence: f64,
-    has_context: bool,
-    span: (usize, usize),
-    metadata: HashMap<String, String>,
-    severity: &'static str,
-}
-
-/// Derive a coarse severity bucket from the finding category and confidence.
-/// Keeping this on the server means every client sees the same classification.
-fn severity_for(category: &str, confidence: f64) -> &'static str {
-    let c = category.to_ascii_lowercase();
-    let critical = c.contains("credit card")
-        || c.contains("primary account")
-        || c.contains("secret")
-        || c.contains("medical identifier");
-    if critical && confidence >= 0.80 {
-        return "red";
-    }
-    if confidence >= 0.90 {
-        return "red";
-    }
-    if confidence >= 0.70 {
-        return "warn";
-    }
-    "safe"
-}
-
-struct FindingsRing {
-    buf: Mutex<VecDeque<FindingRecord>>,
-    cap: usize,
-}
-
-impl FindingsRing {
-    fn new(cap: usize) -> Self {
-        Self {
-            buf: Mutex::new(VecDeque::with_capacity(cap)),
-            cap,
-        }
-    }
-
-    fn push(&self, rec: FindingRecord) {
-        let mut guard = self.buf.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.len() >= self.cap {
-            guard.pop_front();
-        }
-        guard.push_back(rec);
-    }
-
-    fn snapshot(&self) -> Vec<FindingRecord> {
-        let guard = self.buf.lock().unwrap_or_else(|e| e.into_inner());
-        guard.iter().rev().cloned().collect()
-    }
-}
+// FindingsRing + FindingRecord + severity_for now live in
+// siphon_core::findings_ring so siphon-fs can keep its own
+// independent ring with identical shape. Phase 2c moves findings
+// from 'siphon-api is the aggregator' to 'each pod owns its ring +
+// admin console unions client-side'.
 
 // ---------------------------------------------------------------------------
 // Ring-buffer audit handler — keeps last N events in memory so /v1/audit
@@ -608,6 +548,7 @@ async fn scan(
             ts: ts_now.clone(),
             request_id: request_id.clone(),
             source_ip: source_ip.clone(),
+            source_pod: "siphon-api".to_string(),
             category: f.category.clone(),
             sub_category: f.sub_category.clone(),
             text: f.text.clone(),
@@ -1364,32 +1305,25 @@ async fn list_findings(
     Query(q): Query<FindingsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<FindingsResponse> {
-    let all = state.findings.snapshot();
-    let total = all.len();
-    let cat = q.category.as_deref();
-    let sev = q.severity.as_deref();
-    let needle = q.contains.as_deref().map(|s| s.to_ascii_lowercase());
-    let since = q.since.as_deref();
+    let snapshot = state.findings.snapshot();
+    let total = snapshot.len();
+    let capacity = state.findings.capacity();
 
-    let filtered: Vec<FindingRecord> = all
-        .into_iter()
-        .filter(|f| cat.map_or(true, |c| f.category == c))
-        .filter(|f| sev.map_or(true, |s| f.severity == s))
-        .filter(|f| needle.as_deref().map_or(true, |n| {
-            f.text.to_ascii_lowercase().contains(n)
-                || f.category.to_ascii_lowercase().contains(n)
-                || f.sub_category.to_ascii_lowercase().contains(n)
-        }))
-        .filter(|f| since.map_or(true, |s| f.ts.as_str() > s))
-        .collect();
+    let filtered = filter_findings(
+        &snapshot,
+        q.category.as_deref(),
+        q.severity.as_deref(),
+        q.contains.as_deref(),
+        q.since.as_deref(),
+    );
 
-    let cap = q.limit.unwrap_or(200).min(state.findings.cap);
-    let findings: Vec<FindingRecord> = filtered.into_iter().take(cap).collect();
+    let cap = q.limit.unwrap_or(200).min(capacity);
+    let findings: Vec<FindingRecord> = filtered.into_iter().take(cap).cloned().collect();
     let returned = findings.len();
     Json(FindingsResponse {
         total,
         returned,
-        capacity: state.findings.cap,
+        capacity,
         findings,
     })
 }
