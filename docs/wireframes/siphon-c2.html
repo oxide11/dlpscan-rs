@@ -5277,12 +5277,25 @@ function fmtWallClock(iso) {
        + String(d.getSeconds()).padStart(2,'0');
 }
 
+// Timeframes for the stream console header. `ms: null` means "no
+// window constraint" — i.e. show everything in the ring regardless of
+// age. Custom timeframes are not yet wired.
+const STREAM_TIMEFRAMES = [
+  { id: '15m', label: '15m', ms: 15 * 60 * 1000 },
+  { id: '1h',  label: '1h',  ms: 60 * 60 * 1000 },
+  { id: '24h', label: '24h', ms: 24 * 60 * 60 * 1000 },
+  { id: '7d',  label: '7d',  ms: 7 * 24 * 60 * 60 * 1000 },
+  { id: '30d', label: '30d', ms: 30 * 24 * 60 * 60 * 1000 },
+  { id: 'all', label: 'All', ms: null },
+];
+
 function Stream({ go }) {
   const [search, setSearch] = React.useState('');
   const [severity, setSeverity] = React.useState('any');
   const [category, setCategory] = React.useState('any');
   const [groupBy, setGroupBy] = React.useState('none');
   const [paused, setPaused] = React.useState(false);
+  const [tf, setTf] = React.useState('24h');
 
   const fx = window.useSiphonApi('/v1/findings?limit=500');
   // Live tail — refetch every 2s unless paused.
@@ -5293,13 +5306,42 @@ function Stream({ go }) {
   }, [paused]);
 
   const all = (fx.data && fx.data.findings) || [];
+  const tfMeta = STREAM_TIMEFRAMES.find(x => x.id === tf) || STREAM_TIMEFRAMES[2];
 
-  const filtered = all.filter(f =>
+  const inWindow = React.useMemo(() => {
+    if (tfMeta.ms == null) return all;
+    const cutoff = Date.now() - tfMeta.ms;
+    return all.filter(f => {
+      const t = new Date(f.ts).getTime();
+      return isNaN(t) || t >= cutoff;
+    });
+  }, [all, tfMeta]);
+
+  const filtered = inWindow.filter(f =>
     (severity === 'any' || f.severity === severity) &&
     (category === 'any' || f.category === category) &&
-    (!search || (f.text + ' ' + f.category + ' ' + (f.sub_category || '') + ' ' + (f.source_ip || ''))
+    (!search || (f.text + ' ' + f.category + ' ' + (f.sub_category || '') + ' ' + (f.source_ip || '') + ' ' + (f.id || ''))
       .toLowerCase().includes(search.toLowerCase()))
   );
+
+  // Sparkline for the header — matching-count per bucket over the
+  // active timeframe. 30 buckets.
+  const headerSpark = React.useMemo(() => {
+    const buckets = 30;
+    const windowMs = tfMeta.ms || (24 * 60 * 60 * 1000);
+    const now = Date.now();
+    const bucketMs = windowMs / buckets;
+    const out = new Array(buckets).fill(0);
+    filtered.forEach(f => {
+      const t = new Date(f.ts).getTime();
+      if (isNaN(t)) return;
+      const delta = now - t;
+      if (delta < 0 || delta > windowMs) return;
+      const idx = buckets - 1 - Math.floor(delta / bucketMs);
+      if (idx >= 0 && idx < buckets) out[idx]++;
+    });
+    return out;
+  }, [filtered, tfMeta]);
 
   const groups = (() => {
     if (groupBy === 'none') return [['', filtered]];
@@ -5313,37 +5355,106 @@ function Stream({ go }) {
 
   // Derive filter options from what's actually in the ring.
   const categories = Array.from(new Set(all.map(f => f.category))).sort();
-  const { PageBar } = window;
+
+  const clearFilters = () => {
+    setSearch(''); setSeverity('any'); setCategory('any'); setGroupBy('none'); setTf('24h');
+  };
+  const exportJson = () => {
+    try {
+      const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `findings-${new Date().toISOString().replace(/[:.]/g,'-')}.json`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {}
+  };
 
   return (
     <div>
-      <PageBar
-        crumbs={['Operate', 'Findings']}
-        title={<>Findings Console <HelpIcon topic="findings" title="Findings pipeline" size={16} /></>}
-        subtitle={fx.data
-          ? `${filtered.length.toLocaleString()} / ${fx.data.total} in ring (cap ${fx.data.capacity}) · ${paused ? 'paused' : 'tail -f'}`
-          : 'loading…'}
-        search={search} setSearch={setSearch}
-        filters={[
-          { label: 'Severity', value: severity },
-          { label: 'Category', value: category === 'any' ? 'any' : category },
-          { label: 'Time',     value: 'in-ring' },
-        ]}
-        groupBy={groupBy}
-        setGroupBy={setGroupBy}
-        groupByOptions
-        actions={<>
-          <window.LivePill source={fx.source} onClick={fx.refetch} title={fx.error || ''} />
-          <button className="btn ghost" onClick={() => setPaused(p => !p)}>{paused ? '▶ Resume' : '⏸ Pause'}</button>
-          <button className="btn">Export</button>
-        </>}
-      />
+      {/* ── Header ─────────────────────────────────────────────── */}
+      <div className="page-head" style={{alignItems:'flex-start'}}>
+        <div style={{flex:1}}>
+          <div className="crumbs">Operate · Findings</div>
+          <h1 style={{display:'flex', alignItems:'center', gap:12, margin:'3px 0 0'}}>
+            Findings stream
+            <window.LivePill source={paused ? 'loading' : fx.source} onClick={fx.refetch} title={fx.error || ''} />
+            <HelpIcon topic="findings" title="Findings pipeline" size={16} />
+          </h1>
+          <div className="page-sub mono" style={{fontSize:12, color:'var(--ink-soft)', marginTop:6}}>
+            window <b style={{color:'var(--ink-bright)'}}>{tfMeta.label}</b>
+            {' · '}
+            <b style={{color:'var(--ink-bright)'}}>{filtered.length.toLocaleString()}</b>
+            {' of '}
+            <b style={{color:'var(--ink-bright)'}}>{inWindow.length.toLocaleString()}</b>
+            {' findings match'}
+            {fx.data && (
+              <>
+                {' · ring '}
+                <span style={{color:'var(--ink-faint)'}}>{fx.data.total}/{fx.data.capacity}</span>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="actions" style={{alignItems:'center'}}>
+          <button
+            className={paused ? 'btn' : 'btn primary'}
+            onClick={() => setPaused(p => !p)}>
+            {paused ? '▶ Resume' : '❙❙ Pause'}
+          </button>
+          <button className="btn ghost" onClick={clearFilters} title="reset search + filters + timeframe">Clear</button>
+          <button className="btn" onClick={exportJson} title="download visible findings as JSON">Export</button>
+        </div>
+      </div>
 
       {fx.error && (
         <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', marginBottom:'var(--gap)'}}>
           <b>Error:</b> {fx.error}
         </div>
       )}
+
+      {/* ── Search row + timeframe tabs + header sparkline ───── */}
+      <div className="box" style={{marginBottom:'var(--gap)', padding:'10px 14px'}}>
+        <div style={{display:'grid', gridTemplateColumns:'1fr auto auto', gap:14, alignItems:'center'}}>
+          <div className="tb-search" style={{minWidth: 'auto', flex:'none', width:'100%'}}>
+            <span className="mag">⌕</span>
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="search match, doc, id, hash, ip" />
+            <span className="kbd">/</span>
+          </div>
+          <div style={{display:'flex', alignItems:'center', gap:10}}>
+            <span className="label">TIMEFRAME</span>
+            <div style={{display:'flex', gap:1, border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', overflow:'hidden'}}>
+              {STREAM_TIMEFRAMES.map(t => (
+                <button key={t.id}
+                  onClick={() => setTf(t.id)}
+                  style={{
+                    padding:'5px 12px', fontSize:11,
+                    fontFamily:"'JetBrains Mono', monospace",
+                    border:'none',
+                    background: tf === t.id ? 'var(--accent)' : 'transparent',
+                    color: tf === t.id ? 'var(--bg-0)' : 'var(--ink)',
+                    cursor:'pointer',
+                  }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div style={{display:'flex', alignItems:'center', gap:8, minWidth:180}}>
+            <div style={{flex:1}}>
+              <MiniSpark data={headerSpark} height={24} color="var(--accent)" />
+            </div>
+            <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, whiteSpace:'nowrap'}}>
+              <span style={{color:'var(--accent)', fontWeight:600}}>{filtered.length}</span>
+              <span className="muted"> / {inWindow.length}</span>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* severity + category quick filters pulled from real data */}
       <div className="row" style={{marginBottom: 'var(--gap)', flexWrap:'wrap'}}>
