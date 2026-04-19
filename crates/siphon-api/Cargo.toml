@@ -40,5 +40,18 @@ hex = "0.4"
 # Misc
 uuid = { version = "1", features = ["v4"] }
 
+# Phase 6 — kube-rs for auto-roll. Feature-gated so non-k8s builds
+# stay lean. When the feature is off, /v1/overrides/roll responds
+# with 501 and a helpful note pointing at the feature + manual
+# `kubectl rollout restart` fallback.
+kube = { version = "0.88", optional = true, default-features = false, features = ["client", "rustls-tls"] }
+k8s-openapi = { version = "0.21", optional = true, features = ["latest"] }
+
+[features]
+default = []
+# Enable POST /v1/overrides/roll end-to-end — includes the kube +
+# k8s-openapi deps required to patch Deployment annotations.
+k8s-roll = ["dep:kube", "dep:k8s-openapi"]
+
 [dev-dependencies]
 tempfile = "3"
