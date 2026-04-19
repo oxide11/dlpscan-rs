@@ -11285,6 +11285,11 @@ function PodHealthRow({ pod, onToggle, onRemove, isSeed }) {
   // of the time.
   const [state, setState] = React.useState({ loading: true, data: null, error: null });
   const [tick, setTick] = React.useState(0);
+  // Phase 5b.2: capabilities drill-in. Fetched lazily when the row
+  // is first expanded; refetched on every '↺' poke alongside
+  // /health.
+  const [expanded, setExpanded] = React.useState(false);
+  const [caps, setCaps] = React.useState({ loading: false, data: null, error: null });
   React.useEffect(() => {
     let cancelled = false;
     setState(s => ({ ...s, loading: true, error: null }));
@@ -11298,6 +11303,17 @@ function PodHealthRow({ pod, onToggle, onRemove, isSeed }) {
       .catch(e => { if (!cancelled) setState({ loading: false, data: null, error: String(e.message || e) }); });
     return () => { cancelled = true; };
   }, [pod.url, tick]);
+  React.useEffect(() => {
+    if (!expanded) return;
+    let cancelled = false;
+    setCaps(c => ({ ...c, loading: true, error: null }));
+    const url = pod.url.replace(/\/$/, '') + '/v1/capabilities';
+    fetch(url)
+      .then(async r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+      .then(data => { if (!cancelled) setCaps({ loading: false, data, error: null }); })
+      .catch(e => { if (!cancelled) setCaps({ loading: false, data: null, error: String(e.message || e) }); });
+    return () => { cancelled = true; };
+  }, [expanded, pod.url, tick]);
 
   const h = state.data || {};
   const chip = pod.disabled ? 'ghost'
@@ -11309,14 +11325,26 @@ function PodHealthRow({ pod, onToggle, onRemove, isSeed }) {
                  : state.error ? 'UNREACHABLE'
                  : (h.pod_type || 'LIVE').toUpperCase();
 
+  const c = caps.data || null;
   return (
+    <div style={{borderBottom:'1px dashed var(--line-soft)', opacity: pod.disabled ? 0.55 : 1}}>
     <div style={{
       display:'grid',
-      gridTemplateColumns:'auto minmax(220px, 1fr) 110px 120px auto auto',
+      gridTemplateColumns:'auto auto minmax(220px, 1fr) 110px 120px auto auto',
       gap:8, alignItems:'center', padding:'6px 0',
-      borderBottom:'1px dashed var(--line-soft)', fontSize:12,
-      opacity: pod.disabled ? 0.55 : 1,
+      fontSize:12,
     }}>
+      <button
+        onClick={() => setExpanded(e => !e)}
+        title={expanded ? 'collapse capabilities' : 'expand capabilities'}
+        style={{
+          background:'transparent', border:'1px solid var(--line-soft)',
+          color:'var(--ink-soft)', cursor:'pointer',
+          padding:'2px 6px', fontFamily:"'JetBrains Mono', monospace", fontSize:10,
+          borderRadius:'var(--radius)',
+        }}>
+        {expanded ? '▼' : '▶'}
+      </button>
       <span className={`chip chip--${chip}`} style={{fontSize:9, padding:'2px 6px'}}>{chipText}</span>
       <span style={{display:'flex', flexDirection:'column', minWidth:0}}>
         <span className="mono" style={{color:'var(--ink-bright)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
@@ -11334,7 +11362,7 @@ function PodHealthRow({ pod, onToggle, onRemove, isSeed }) {
       </span>
       <button className="btn ghost"
               onClick={() => setTick(t => t + 1)}
-              title="re-check /health">↺</button>
+              title="re-check /health (and capabilities if expanded)">↺</button>
       <span style={{display:'flex', gap:4}}>
         <button className="btn ghost"
                 onClick={onToggle}
@@ -11346,6 +11374,85 @@ function PodHealthRow({ pod, onToggle, onRemove, isSeed }) {
                 title="remove from registry"
                 style={{color:'var(--red)'}}>✕</button>
       </span>
+    </div>
+    {expanded && (
+      <div style={{padding:'10px 14px 12px 36px', background:'var(--bg-1)', fontSize:12}}>
+        {caps.loading && (
+          <div className="muted mono" style={{fontSize:11}}>loading /v1/capabilities…</div>
+        )}
+        {caps.error && (
+          <div className="mono" style={{fontSize:11, color:'var(--red)'}}>
+            /v1/capabilities error: {caps.error}
+          </div>
+        )}
+        {c && (
+          <div style={{display:'grid', gridTemplateColumns:'140px 1fr', gap:'6px 12px', fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>
+            <span className="muted">pod type</span>
+            <span>{c.pod_type}</span>
+
+            <span className="muted">scanner pipeline</span>
+            <span style={{display:'flex', flexWrap:'wrap', gap:4}}>
+              {c.scanner_pipeline.map(s => (
+                <span key={s} className="chip" style={{fontSize:9, padding:'1px 5px'}}>{s}</span>
+              ))}
+            </span>
+
+            <span className="muted">entropy modes</span>
+            <span style={{display:'flex', flexWrap:'wrap', gap:4}}>
+              {c.entropy_modes.map(s => (
+                <span key={s} className="chip chip--ghost" style={{fontSize:9, padding:'1px 5px'}}>{s}</span>
+              ))}
+            </span>
+
+            <span className="muted">overrides features</span>
+            <span style={{display:'flex', flexWrap:'wrap', gap:4}}>
+              {c.overrides_features.map(s => (
+                <span key={s} className="chip chip--teal" style={{fontSize:9, padding:'1px 5px'}}>{s}</span>
+              ))}
+            </span>
+
+            <span className="muted">patterns</span>
+            <span>{c.patterns_loaded} · {c.categories_loaded} categories</span>
+
+            <span className="muted">findings ring cap</span>
+            <span>{c.findings_ring_capacity}</span>
+
+            <span className="muted">overrides loaded</span>
+            <span>
+              {(() => {
+                const s = c.overrides_summary || {};
+                const bits = [];
+                if (s.disabled_patterns)  bits.push(`${s.disabled_patterns} disabled`);
+                if (s.pattern_overrides)  bits.push(`${s.pattern_overrides} field ov`);
+                if (s.custom_categories)  bits.push(`${s.custom_categories} cat / ${s.custom_patterns || 0} pat`);
+                if (s.lists)              bits.push(`${s.lists} list / ${s.list_entries || 0} entry`);
+                return bits.length ? bits.join(' · ') : <span className="muted">— empty / compile-time defaults —</span>;
+              })()}
+            </span>
+
+            {c.policies_loaded != null && (
+              <>
+                <span className="muted">policies loaded</span>
+                <span>{c.policies_loaded}</span>
+              </>
+            )}
+
+            {c.supported_extensions != null && (
+              <>
+                <span className="muted">file extensions</span>
+                <span title={c.supported_extensions.join(', ')}>
+                  {c.supported_extensions.length} supported · sample{' '}
+                  <span className="mono" style={{color:'var(--ink)'}}>
+                    {c.supported_extensions.slice(0, 10).join(', ')}
+                    {c.supported_extensions.length > 10 ? '…' : ''}
+                  </span>
+                </span>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    )}
     </div>
   );
 }

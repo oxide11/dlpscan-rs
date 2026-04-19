@@ -122,6 +122,68 @@ async fn ready(State(state): State<AppState>) -> JsonResponse<HealthResponse> {
     build_health(&state, "ready")
 }
 
+// ─── /v1/capabilities (Phase 5b.1) ──────────────────────────────
+// Mirrors siphon-api's capabilities response. Shared wire shape so
+// the admin console can treat both pod types uniformly; disjoint
+// fields (policies_loaded / supported_extensions) serde-skip when
+// None.
+#[derive(Serialize)]
+struct CapabilitiesResponse {
+    pod_type: &'static str,
+    pod_id: String,
+    version: &'static str,
+    core_version: &'static str,
+    scanner_pipeline: Vec<&'static str>,
+    entropy_modes: Vec<&'static str>,
+    overrides_features: Vec<&'static str>,
+    patterns_loaded: usize,
+    categories_loaded: usize,
+    findings_ring_capacity: usize,
+    overrides_summary: siphon_core::overrides::OverridesSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    policies_loaded: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    supported_extensions: Option<Vec<String>>,
+}
+
+async fn capabilities(State(state): State<AppState>) -> JsonResponse<CapabilitiesResponse> {
+    // Pull the runtime extractor map so the response stays in sync
+    // with what's actually in the binary (features can be compiled
+    // out via cargo build flags).
+    let mut exts = siphon::extractors::supported_extensions();
+    exts.sort_unstable();
+    exts.dedup();
+
+    // Re-parse overrides on demand so the summary reflects whatever
+    // is current (this is rare, admin-console-triggered; cheap).
+    let overrides_path = std::env::var("SIPHON_OVERRIDES_PATH")
+        .unwrap_or_else(|_| "/etc/siphon/overrides.json".to_string());
+    let overrides = PatternOverrides::from_file_or_empty(&overrides_path);
+
+    JsonResponse(CapabilitiesResponse {
+        pod_type: POD_NAME,
+        pod_id: state.pod_id.to_string(),
+        version: env!("CARGO_PKG_VERSION"),
+        core_version: siphon_core::VERSION,
+        scanner_pipeline: vec![
+            "regex", "validation", "context",
+            "ctx_required", "require_context",
+            "min_confidence", "emit",
+        ],
+        entropy_modes: vec!["off", "gated", "assignment", "all"],
+        overrides_features: vec![
+            "disabled_patterns", "pattern_overrides",
+            "custom_categories", "regex_overrides", "list_bindings",
+        ],
+        patterns_loaded: siphon_core::patterns::PATTERNS.len(),
+        categories_loaded: siphon_core::patterns::categories().len(),
+        findings_ring_capacity: state.findings.capacity(),
+        overrides_summary: overrides.summary(),
+        policies_loaded: None,
+        supported_extensions: Some(exts),
+    })
+}
+
 // ─── /scan response shape ────────────────────────────────────────
 #[derive(Serialize)]
 struct ScanFinding {
@@ -387,6 +449,7 @@ fn build_router(state: AppState) -> Router {
         .route("/ready", get(ready))
         .route("/scan", post(scan))
         .route("/v1/findings", get(list_findings))
+        .route("/v1/capabilities", get(capabilities))
         .with_state(state)
         // 64MB upload cap — overridable once we decide on real limits.
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
