@@ -12,6 +12,14 @@ path = "src/main.rs"
 
 [dependencies]
 siphon-core = { path = "../siphon-core" }
+# Pull the root siphon crate for its extractors (PDF, DOCX, RTF,
+# archives, etc.). Default features already enable PDF + Office +
+# archives + data-formats so siphon-fs has the same ingest coverage
+# as the CLI.
+siphon = { path = "../.." }
+# Temp files for extractor calls — extractors take file paths; the
+# handler drops bytes into a NamedTempFile then passes the path in.
+tempfile = "3"
 
 # HTTP server — same axum/tokio stack as siphon-api so the two pods
 # share observability patterns and it's easy to crib fixes across.

@@ -80,7 +80,13 @@ struct ScanResponse {
     content_type: Option<String>,
     bytes: usize,
     duration_ms: f64,
-    parsed_as: &'static str,
+    // Format reported by siphon::extractors (pdf / docx / plain /
+    // rtf / eml / etc.) — the actual extractor that ran.
+    parsed_as: String,
+    // Warnings surfaced by the extractor (e.g. 'OCR skipped', 'zip
+    // bomb heuristic tripped for entry X'). Passed through verbatim
+    // so the UI can surface them.
+    warnings: Vec<String>,
     findings: Vec<ScanFinding>,
 }
 
@@ -143,22 +149,55 @@ async fn scan(mut multipart: Multipart) -> Response {
     };
     let file_len = bytes.len();
 
-    // Phase 0b: UTF-8 text only. Phase 0c swaps to siphon-core's
-    // ingest layer which dispatches on mime type (PDF, DOCX, archives,
-    // OCR, barcodes).
-    let text = match std::str::from_utf8(&bytes) {
-        Ok(s) => s.to_string(),
-        Err(_) => {
+    // Write the multipart bytes to a temp file so siphon's extractor
+    // registry can dispatch on extension. If the client didn't give us
+    // a filename we default to '.bin' — the registry falls back to
+    // plain-text extraction for unknown extensions.
+    let suffix = filename
+        .as_deref()
+        .and_then(|f| std::path::Path::new(f).extension())
+        .and_then(|s| s.to_str())
+        .map(|s| format!(".{s}"))
+        .unwrap_or_else(|| ".bin".to_string());
+
+    let mut tmp = match tempfile::Builder::new()
+        .prefix("siphon-fs-")
+        .suffix(&suffix)
+        .tempfile()
+    {
+        Ok(t) => t,
+        Err(e) => {
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("tempfile create failed: {e}"),
+            );
+        }
+    };
+    if let Err(e) = std::io::Write::write_all(&mut tmp, &bytes) {
+        return err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("tempfile write failed: {e}"),
+        );
+    }
+    let tmp_path = tmp.path().to_string_lossy().into_owned();
+
+    // siphon's extractor registry covers text, RTF, EML, PDF, Office
+    // (xlsx/docx/pptx), archives (zip/7z/rar/tar), data formats
+    // (parquet/csv/sqlite), barcodes, and falls back to plain-text
+    // for anything unrecognised. Everything happens inside a
+    // 100MB-per-file / 500MB-per-archive cap.
+    let extract = match siphon::extractors::extract_text(&tmp_path) {
+        Ok(r) => r,
+        Err(e) => {
             return err(
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                "file bytes are not valid UTF-8 · PDF/DOCX/binary parsing ships in Phase 0c"
-                    .to_string(),
+                format!("extraction failed: {e}"),
             );
         }
     };
 
     let config = ScanConfig::default();
-    let matches = match scan_text_with_config(&text, &config) {
+    let matches = match scan_text_with_config(&extract.text, &config) {
         Ok(m) => m,
         Err(e) => {
             warn!(request_id = %request_id, error = %e, "scan failed");
@@ -187,6 +226,7 @@ async fn scan(mut multipart: Multipart) -> Response {
         request_id = %request_id,
         filename = %filename.clone().unwrap_or_else(|| "<none>".into()),
         bytes = file_len,
+        parsed_as = %extract.format,
         findings = findings.len(),
         duration_ms = %format!("{duration_ms:.2}"),
         "scan ok"
@@ -198,7 +238,8 @@ async fn scan(mut multipart: Multipart) -> Response {
         content_type,
         bytes: file_len,
         duration_ms,
-        parsed_as: "utf8_text",
+        parsed_as: extract.format,
+        warnings: extract.warnings,
         findings,
     })
     .into_response()
