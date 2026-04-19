@@ -8373,25 +8373,211 @@ function PatternSpecificityBox({ pattern }) {
   );
 }
 
-function PatternSimulatorStub() {
+// Stage list mirrored from siphon-core's scanner/scanner pipeline.
+// Same labels FD_STAGES uses in the FindingDetail's DetectionPipeline,
+// duplicated here so the patterns block doesn't depend on the
+// stream block's internal constants.
+const PS_STAGES = [
+  { key: 'regex',           label: 'regex' },
+  { key: 'validation',      label: 'validate' },
+  { key: 'context',         label: 'context' },
+  { key: 'ctx_required',    label: 'ctx-gate' },
+  { key: 'require_context', label: 'req-ctx' },
+  { key: 'min_confidence',  label: 'min-conf' },
+  { key: 'emit',            label: 'emit' },
+];
+
+function PatternSimulator({ pattern, findings }) {
+  const [text, setText] = React.useState('');
+  const [state, setState] = React.useState({
+    loading: false, trace: null, error: null, scannedLen: 0,
+  });
+  // Optional 'use last hit' seed — only available when the findings
+  // ring already has a record for this exact (category, sub_category).
+  const lastHit = React.useMemo(() => {
+    return (findings || []).find(f =>
+      f.category === pattern.category &&
+      f.sub_category === pattern.sub_category &&
+      f.text
+    );
+  }, [findings, pattern]);
+
+  const runScan = async () => {
+    if (!text.trim()) return;
+    setState({ loading: true, trace: null, error: null, scannedLen: text.length });
+    const url = (window.SIPHON_API_URL ? window.SIPHON_API_URL() : 'http://127.0.0.1:8080')
+      .replace(/\/$/, '') + '/scan';
+    try {
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, options: { trace: true } }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      setState({ loading: false, trace: j.trace || [], error: null, scannedLen: text.length });
+    } catch (e) {
+      setState({ loading: false, trace: null, error: String(e.message || e), scannedLen: text.length });
+    }
+  };
+
+  // Filter trace events to JUST this pattern. Other patterns may
+  // co-fire on the same text — the simulator answers the question
+  // "what happened to THIS pattern" only.
+  const events = React.useMemo(() => (state.trace || []).filter(e =>
+    e.category === pattern.category &&
+    (!pattern.sub_category || e.sub_category === pattern.sub_category)
+  ), [state.trace, pattern.category, pattern.sub_category]);
+  const byStage = {};
+  events.forEach(e => { byStage[e.stage] = e; });
+  const wasEmitted = events.some(e => e.outcome === 'emit');
+  const dropEvt    = events.find(e => e.outcome === 'drop');
+  const noEvents   = state.trace !== null && events.length === 0 && !state.error;
+
+  // Verdict — three buckets the analyst cares about.
+  const verdict = state.error ? null
+                : noEvents     ? { kind: 'miss',  label: 'NOT MATCHED', tone: 'ghost' }
+                : wasEmitted   ? { kind: 'emit',  label: 'EMITTED',     tone: 'safe'  }
+                : dropEvt      ? { kind: 'drop',  label: 'DROPPED · ' + dropEvt.stage, tone: 'red' }
+                :                { kind: 'pass',  label: 'PASSED',      tone: 'warn'  };
+
   return (
     <div className="box">
       <div className="box-title">
         <span className="t">Simulator</span>
-        <span className="k">Phase 2 · reuses /scan?trace=true</span>
+        <span className="k">re-runs <span className="mono">POST /scan</span> with <span className="mono">trace:true</span> · filters trace to this pattern</span>
       </div>
-      <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:12, lineHeight:1.7}}>
-        The pattern simulator will let you paste or pick text from the findings ring and re-run
-        just this pattern through the scanner pipeline with <span className="mono">trace:true</span>,
-        showing which stages it passed / was dropped at.
-        <br/>
-        Historical-data mode will loop through recent findings that fired this pattern so you can
-        see how a regex or keyword change would affect them retroactively. File-mode simulation
-        goes through <b>siphon-fs</b> (Phase 2b).
+
+      <textarea
+        value={text}
+        onChange={e => setText(e.target.value)}
+        rows={5}
+        placeholder={`paste text containing a candidate ${pattern.sub_category || pattern.category} match…`}
+        style={{
+          width:'100%', resize:'vertical',
+          fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.55,
+          padding:'8px 10px', background:'var(--bg-1)', color:'var(--ink)',
+          border:'1px solid var(--line-soft)', borderRadius:'var(--radius)',
+          marginBottom:8,
+        }}
+      />
+
+      <div style={{display:'flex', gap:6, alignItems:'center', flexWrap:'wrap', marginBottom:10}}>
+        <button className="btn primary" onClick={runScan}
+                disabled={state.loading || !text.trim()}>
+          {state.loading ? 'Scanning…' : '▶ Run scan'}
+        </button>
+        {lastHit && (
+          <button className="btn ghost"
+                  onClick={() => setText(lastHit.text)}
+                  title={`seed from a recent ring entry · ${lastHit.id}`}>
+            Use last hit
+          </button>
+        )}
+        <button className="btn ghost"
+                onClick={() => { setText(''); setState({ loading:false, trace:null, error:null, scannedLen:0 }); }}>
+          Clear
+        </button>
+        {state.scannedLen > 0 && state.trace && (
+          <span className="muted mono" style={{marginLeft:'auto', fontSize:10.5}}>
+            {state.scannedLen} chars · {events.length} stage event{events.length === 1 ? '' : 's'}
+          </span>
+        )}
       </div>
+
+      {state.error && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', fontSize:12}}>
+          <b>Error:</b> {state.error}
+        </div>
+      )}
+
+      {/* Verdict + stage strip — only show after a scan has happened */}
+      {state.trace !== null && !state.error && (
+        <>
+          {verdict && (
+            <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:10, flexWrap:'wrap'}}>
+              <span className={`chip chip--${verdict.tone}`} style={{fontSize:10, padding:'3px 10px', letterSpacing:0.5}}>
+                {verdict.label}
+              </span>
+              {verdict.kind === 'miss' && (
+                <span className="muted mono" style={{fontSize:11}}>
+                  no event recorded for this pattern · regex didn't match the text
+                </span>
+              )}
+              {wasEmitted && byStage.emit && byStage.emit.confidence != null && (
+                <span className="muted mono" style={{fontSize:11}}>
+                  conf {byStage.emit.confidence.toFixed(3)}
+                </span>
+              )}
+              {wasEmitted && byStage.emit && byStage.emit.text && (
+                <span className="mono" style={{fontSize:11.5, color:'var(--accent)', maxWidth:300, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                  matched: {byStage.emit.text}
+                </span>
+              )}
+            </div>
+          )}
+
+          <div style={{display:'flex', gap:2, flexWrap:'wrap', marginBottom:6}}>
+            {PS_STAGES.map((s, si) => {
+              const e = byStage[s.key];
+              const color = !e
+                ? { bg:'var(--bg-3)', fg:'var(--ink-dim)', border:'var(--line)' }
+                : e.outcome === 'emit'
+                  ? { bg:'var(--accent-wash)', fg:'var(--accent)', border:'var(--accent)' }
+                  : e.outcome === 'drop'
+                    ? { bg:'var(--red-wash)', fg:'var(--red)', border:'var(--red)' }
+                    : { bg:'var(--amber-wash)', fg:'var(--amber)', border:'var(--amber)' };
+              return (
+                <React.Fragment key={si}>
+                  <span
+                    title={e
+                      ? `${s.label} · ${e.outcome}${e.confidence != null ? ' · conf ' + e.confidence.toFixed(3) : ''}${e.reason ? '\n' + e.reason : ''}`
+                      : `${s.label} · not reached`}
+                    style={{
+                      padding:'4px 9px',
+                      fontFamily:"'JetBrains Mono', monospace",
+                      fontSize:10,
+                      fontWeight:600,
+                      letterSpacing:'0.08em',
+                      textTransform:'uppercase',
+                      border:'1px solid ' + color.border,
+                      color: color.fg, background: color.bg,
+                      borderRadius:'var(--radius)',
+                      borderStyle: e ? 'solid' : 'dashed',
+                    }}>
+                    {s.label}
+                  </span>
+                  {si < PS_STAGES.length - 1 && (
+                    <span style={{alignSelf:'center', color: e && e.outcome !== 'drop' ? 'var(--accent)' : 'var(--line)', fontSize:12}}>→</span>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </div>
+
+          {dropEvt && (
+            <div className="margin-note red" style={{marginTop:6}}>
+              dropped at <b>{dropEvt.stage}</b>: {dropEvt.reason}
+              {dropEvt.confidence != null && <> · confidence {dropEvt.confidence.toFixed(3)}</>}
+            </div>
+          )}
+          {!dropEvt && wasEmitted && byStage.emit && byStage.emit.confidence != null && (
+            <div className="margin-note" style={{marginTop:6}}>
+              emitted at confidence <b>{byStage.emit.confidence.toFixed(3)}</b>
+            </div>
+          )}
+        </>
+      )}
+
+      {state.trace === null && !state.error && !state.loading && (
+        <div className="muted mono" style={{fontSize:11, padding:'10px 0', textAlign:'center'}}>
+          ─ no scan yet — paste test text and hit Run ─
+        </div>
+      )}
     </div>
   );
 }
+
 
 function PatternThresholdStub() {
   return (
@@ -8573,7 +8759,7 @@ function PatternDetail({ category, sub_category, back }) {
         <PatternValidatorsBox pattern={p} />
         <PatternSpecificityBox pattern={p} />
         {/* row 3: simulator + threshold (test + policy tie-in) */}
-        <PatternSimulatorStub />
+        <PatternSimulator pattern={p} findings={findings} />
         <PatternThresholdStub />
         {/* row 4: change history — full-width, it'll host diffs later */}
         <div className="box" style={{gridColumn:'1 / -1'}}>
