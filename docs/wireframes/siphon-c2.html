@@ -2198,6 +2198,7 @@ const SURFACES = [
   { id: 'apiex',          workspace: 'engineering', icon: '⟁',  title: 'API Explorer',   sub: 'every /v1 endpoint' },
   { id: 'procstate',      workspace: 'engineering', icon: '⌬',  title: 'Process State',  sub: 'cache · rate · vault' },
   { id: 'fptool',         workspace: 'engineering', icon: '⚑',  title: 'FP Troubleshooter', sub: 'allowlist + rescan' },
+  { id: 'fpqueue',        workspace: 'engineering', icon: '⚐',  title: 'FP Queue',     sub: 'review queue' },
   // ── DOCS ────────────────────────────────────────────────────
   { id: 'docs',           workspace: 'docs',        icon: '❖',  title: 'Browse',       sub: 'all bundled docs' },
 ];
@@ -5356,6 +5357,49 @@ function FilterRow({
   );
 }
 
+// ── FP queue ─────────────────────────────────────────────────
+// Findings that an analyst flagged as potential false positives are
+// stored in localStorage.c2:fp-queue so they're reviewable in one
+// place and survive reloads. Each entry is { finding, flaggedAt,
+// status, note }.
+window.c2FpQueue = function() {
+  try { return JSON.parse(localStorage.getItem('c2:fp-queue') || '[]'); }
+  catch { return []; }
+};
+window.useFpQueue = function() {
+  const [q, setQ] = React.useState(window.c2FpQueue());
+  React.useEffect(() => {
+    const poll = setInterval(() => setQ(window.c2FpQueue()), 500);
+    const h = (e) => { if (e.key === 'c2:fp-queue') setQ(window.c2FpQueue()); };
+    window.addEventListener('storage', h);
+    return () => { clearInterval(poll); window.removeEventListener('storage', h); };
+  }, []);
+  return q;
+};
+window.c2FpQueueAdd = function(finding, note) {
+  const q = window.c2FpQueue();
+  // Dedup by finding id — re-flagging bumps the entry's flaggedAt.
+  const filtered = q.filter(e => !e.finding || e.finding.id !== finding.id);
+  filtered.unshift({
+    finding,
+    flaggedAt: new Date().toISOString(),
+    status: 'open',
+    note: note || '',
+  });
+  try { localStorage.setItem('c2:fp-queue', JSON.stringify(filtered.slice(0, 200))); } catch {}
+};
+window.c2FpQueueRemove = function(findingId) {
+  const q = window.c2FpQueue().filter(e => !e.finding || e.finding.id !== findingId);
+  try { localStorage.setItem('c2:fp-queue', JSON.stringify(q)); } catch {}
+};
+window.c2FpQueueSetStatus = function(findingId, status, note) {
+  const q = window.c2FpQueue().map(e => {
+    if (!e.finding || e.finding.id !== findingId) return e;
+    return { ...e, status, note: note != null ? note : e.note };
+  });
+  try { localStorage.setItem('c2:fp-queue', JSON.stringify(q)); } catch {}
+};
+
 // Advanced search parser.
 // Supports space-separated tokens, each of which is either:
 //   - free text        → substring match across text, category,
@@ -5869,6 +5913,15 @@ function FindingDetail({ id, back }) {
   const others = list.filter(x => x.category === f.category && x.id !== f.id).slice(0, 5);
   const sameReq = list.filter(x => x.request_id === f.request_id && x.id !== f.id);
 
+  const fpQueue = window.useFpQueue();
+  const inFpQueue = fpQueue.some(e => e.finding && e.finding.id === f.id);
+  const flagFp = () => {
+    window.c2FpQueueAdd(f);
+    try { localStorage.setItem('c2:fp-finding', JSON.stringify(f)); } catch {}
+    window.__c2_go && window.__c2_go('fptool');
+  };
+  const unflagFp = () => window.c2FpQueueRemove(f.id);
+
   // Prev/Next navigation. Finds the index of the current finding in
   // the newest-first ring and moves the sub-route forward/backward.
   // Arrow keys bound at window level for analyst speed.
@@ -5936,7 +5989,9 @@ function FindingDetail({ id, back }) {
             </button>
           </div>
           <button className="btn ghost" onClick={back} title="Esc">‹ Back</button>
-          <button className="btn">Mark FP</button>
+          {inFpQueue
+            ? <button className="btn" onClick={unflagFp} title="finding is in the FP queue · click to remove" style={{color:'var(--amber)', borderColor:'var(--amber)'}}>⚑ In FP queue</button>
+            : <button className="btn" onClick={flagFp} title="add to the FP review queue + open in FP Troubleshooter">⚑ Mark as FP</button>}
           <button className="btn primary">Acknowledge</button>
         </>}
       />
@@ -6033,13 +6088,19 @@ function FindingDetail({ id, back }) {
           <div className="box">
             <div className="box-title"><span className="t">Actions</span><span className="k">this finding</span></div>
             <div style={{display:'flex', flexDirection:'column', gap:6}}>
+              {inFpQueue ? (
+                <button className="btn" onClick={unflagFp} style={{color:'var(--amber)', borderColor:'var(--amber)'}}>
+                  ⚑ Remove from FP queue
+                </button>
+              ) : (
+                <button className="btn primary" onClick={flagFp}>
+                  ⚑ Flag as false positive…
+                </button>
+              )}
               <button
-                className="btn primary"
-                onClick={() => {
-                  try { localStorage.setItem('c2:fp-finding', JSON.stringify(f)); } catch {}
-                  window.__c2_go && window.__c2_go('fptool');
-                }}>
-                ⚑ Flag as false positive…
+                className="btn ghost"
+                onClick={() => window.__c2_go && window.__c2_go('fpqueue')}>
+                Open FP queue ({fpQueue.length})
               </button>
               <button
                 className="btn"
@@ -11491,7 +11552,176 @@ const HELP_MAP = {
 };
 window.HELP_MAP = HELP_MAP;
 
-Object.assign(window, { ApiExplorer, ScanDiff, ProcessState, FPTool, DocsSurface, HelpIcon, HelpModal });
+// FP Queue — a persisted review list of findings the analyst flagged
+// as suspected false positives. Stored in localStorage.c2:fp-queue via
+// window.c2FpQueue*(). Each entry has { finding, flaggedAt, status,
+// note }. The queue is the central pivot for the FP-Troubleshooting
+// workflow: from here you dispatch to FP Troubleshooter, Scan Diff,
+// or Live Scan.
+function FpQueue() {
+  const queue = window.useFpQueue();
+  const [filter, setFilter] = React.useState('open');
+  const statuses = ['open', 'investigating', 'confirmed', 'dismissed'];
+  const statusColor = {
+    open:          'var(--amber)',
+    investigating: 'var(--cyan)',
+    confirmed:     'var(--safe)',
+    dismissed:     'var(--ink-faint)',
+  };
+  const filtered = filter === 'all' ? queue : queue.filter(e => (e.status || 'open') === filter);
+
+  const openInTroubleshooter = (entry) => {
+    try { localStorage.setItem('c2:fp-finding', JSON.stringify(entry.finding)); } catch {}
+    window.__c2_go && window.__c2_go('fptool');
+  };
+  const openInLiveScan = (entry) => {
+    try { localStorage.setItem('c2:livescan-text', entry.finding.text || ''); } catch {}
+    window.__c2_go && window.__c2_go('livescan');
+  };
+  const openInScanDiff = (entry) => {
+    try { localStorage.setItem('c2:scandiff-a', entry.finding.text || ''); } catch {}
+    window.__c2_go && window.__c2_go('scandiff');
+  };
+  const clearAll = () => {
+    if (confirm('Clear every entry from the FP queue?')) {
+      try { localStorage.setItem('c2:fp-queue', '[]'); } catch {}
+    }
+  };
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Engineering · FP Queue</div>
+          <h1>FP Queue <HelpIcon topic="patterns" title="FP workflow" size={18} /></h1>
+        </div>
+        <div className="actions">
+          <span className="muted mono" style={{fontSize:11}}>
+            {queue.length} total · {queue.filter(e => (e.status || 'open') === 'open').length} open
+          </span>
+          <button className="btn ghost" onClick={clearAll}>Clear all</button>
+        </div>
+      </div>
+
+      {/* FP Troubleshooting toolset overview */}
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title"><span className="t">FP troubleshooting toolset</span><span className="k">workflow</span></div>
+        <div style={{display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:10, marginTop:8}}>
+          {[
+            { id:'fptool',   label:'1 · FP Troubleshooter', desc:'Allowlist-merge preview, rescan-with-mitigation, pattern-culprit spotlight.' },
+            { id:'scandiff', label:'2 · Scan Diff',         desc:'A/B compare two inputs — see which finding a variant loses or gains.' },
+            { id:'livescan', label:'3 · Live Scan',         desc:'Free-form scan with optional pipeline trace.' },
+          ].map(t => (
+            <div key={t.id}
+                 onClick={() => window.__c2_go && window.__c2_go(t.id)}
+                 style={{
+                   padding:'10px 12px', cursor:'pointer',
+                   border:'1px solid var(--line-strong)',
+                   borderRadius:'var(--radius)',
+                   background:'var(--bg-2)',
+                 }}>
+              <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, fontWeight:600, color:'var(--ink-bright)'}}>{t.label}</div>
+              <div className="muted" style={{fontSize:11, marginTop:4}}>{t.desc}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Status filter chips */}
+      <div style={{display:'flex', gap:6, marginBottom:'var(--gap)', alignItems:'center'}}>
+        <span className="label">STATUS</span>
+        {['all', ...statuses].map(s => {
+          const n = s === 'all' ? queue.length : queue.filter(e => (e.status || 'open') === s).length;
+          return (
+            <button key={s}
+              onClick={() => setFilter(s)}
+              className="btn ghost"
+              style={{
+                padding:'3px 10px', fontSize:10,
+                background: filter === s ? 'var(--accent)' : 'transparent',
+                color: filter === s ? 'var(--bg-0)' : 'var(--ink)',
+                borderColor: filter === s ? 'var(--accent)' : 'var(--line)',
+              }}>{s} · {n}</button>
+          );
+        })}
+      </div>
+
+      <div className="box" style={{padding:0, overflow:'hidden'}}>
+        {filtered.length === 0 ? (
+          <div className="muted" style={{padding:30, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+            — no entries · flag a finding from <b>Operate → Findings → [detail]</b> with <b>Mark as FP</b> —
+          </div>
+        ) : (
+          <table style={{width:'100%', borderCollapse:'collapse', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5}}>
+            <thead>
+              <tr style={{background:'var(--bg-2)', borderBottom:'1px solid var(--line-strong)'}}>
+                {['FLAGGED','STATUS','ID','SEV','CATEGORY','SUB-CATEGORY','MATCH','ACTIONS'].map((h, i) => (
+                  <th key={i} className="label" style={{textAlign:'left', padding:'7px 10px', fontWeight:600, color:'var(--ink-faint)', whiteSpace:'nowrap'}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((entry, i) => {
+                const f = entry.finding || {};
+                const st = entry.status || 'open';
+                return (
+                  <tr key={i} style={{borderBottom:'1px solid var(--line-soft)'}}>
+                    <td style={{padding:'7px 10px', color:'var(--ink-soft)', whiteSpace:'nowrap'}} title={entry.flaggedAt}>
+                      {fmtWallClock(entry.flaggedAt)}
+                    </td>
+                    <td style={{padding:'7px 10px'}}>
+                      <select value={st}
+                        onChange={(e) => window.c2FpQueueSetStatus(f.id, e.target.value)}
+                        style={{
+                          background:'var(--bg-1)',
+                          color: statusColor[st] || 'var(--ink)',
+                          border:'1px solid ' + (statusColor[st] || 'var(--line-strong)'),
+                          borderRadius:'var(--radius)',
+                          padding:'2px 6px',
+                          fontFamily:"'JetBrains Mono', monospace", fontSize:10.5,
+                          fontWeight:600,
+                          cursor:'pointer',
+                        }}>
+                        {statuses.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </td>
+                    <td style={{padding:'7px 10px', color:'var(--ink-dim)', whiteSpace:'nowrap'}}>{(f.id || '').slice(-8)}</td>
+                    <td style={{padding:'7px 10px'}}>
+                      <span className={`chip chip--${f.severity || 'ghost'}`} style={{fontSize:9}}>{f.severity || '—'}</span>
+                    </td>
+                    <td style={{padding:'7px 10px'}}>
+                      <span style={{fontSize:10, padding:'2px 6px', border:'1px solid ' + CAT_GROUP_COLOR[catGroup(f.category)], color: CAT_GROUP_COLOR[catGroup(f.category)], borderRadius:'var(--radius)', fontWeight:600}}>
+                        {catGroup(f.category)}
+                      </span>
+                    </td>
+                    <td style={{padding:'7px 10px', color:'var(--ink)', maxWidth:180, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={f.category + ' / ' + (f.sub_category || '')}>
+                      {f.sub_category || '—'}
+                    </td>
+                    <td style={{padding:'7px 10px', color:'var(--ink-bright)', maxWidth:260, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={f.text}>
+                      {f.text}
+                    </td>
+                    <td style={{padding:'7px 10px', whiteSpace:'nowrap'}}>
+                      <button className="btn ghost" onClick={() => openInTroubleshooter(entry)} title="FP Troubleshooter"
+                              style={{padding:'2px 8px', fontSize:9, marginRight:4}}>FP Tool</button>
+                      <button className="btn ghost" onClick={() => openInScanDiff(entry)} title="Scan Diff · A/B"
+                              style={{padding:'2px 8px', fontSize:9, marginRight:4}}>Diff</button>
+                      <button className="btn ghost" onClick={() => openInLiveScan(entry)} title="Live Scan · rerun"
+                              style={{padding:'2px 8px', fontSize:9, marginRight:4}}>Scan</button>
+                      <button className="btn ghost" onClick={() => window.c2FpQueueRemove(f.id)} title="remove from queue"
+                              style={{padding:'2px 8px', fontSize:9, color:'var(--red)', borderColor:'var(--red)'}}>×</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { ApiExplorer, ScanDiff, ProcessState, FPTool, FpQueue, DocsSurface, HelpIcon, HelpModal });
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -11586,7 +11816,7 @@ function App() {
   const { Dashboard, Stream, FindingDetail, Pods, Policy, Patterns, Models, Assets,
           Compliance, Testing, AssureOverview, DetectOverview, Settings, Logs, Topbar, WorkspaceBar, SurfaceBar, TweaksPanel,
           Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users,
-          LiveScan, CorpusRunner, ApiExplorer, ScanDiff, ProcessState, FPTool, Profiles,
+          LiveScan, CorpusRunner, ApiExplorer, ScanDiff, ProcessState, FPTool, FpQueue, Profiles,
           DocsSurface, HelpModal } = window;
 
   // expose go() globally so nested surfaces (e.g. DetectOverview cards) can navigate.
@@ -11604,6 +11834,7 @@ function App() {
       apiex:          <ApiExplorer />,
       procstate:      <ProcessState />,
       fptool:         <FPTool />,
+      fpqueue:        <FpQueue />,
       stream:         <Stream go={go} />,
       investigations: <Investigations />,
       pods:           <Pods />,
