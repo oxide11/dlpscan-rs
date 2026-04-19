@@ -2341,8 +2341,13 @@ function SurfaceBar({ current, go }) {
         return nodes;
       })}
       <div className="utility">
-        <a title="Docs & runbooks"><span className="icn">?</span><span className="t">Docs</span></a>
-        <a title="Sign out"><span className="icn">⎋</span></a>
+        <a title="Docs & runbooks"
+           onClick={() => go('docs')}
+           className={current === 'docs' ? 'active' : ''}
+           style={{cursor:'pointer'}}>
+          <span className="icn">?</span><span className="t">Docs</span>
+        </a>
+        <a title="Sign out · placeholder" style={{cursor:'pointer'}}><span className="icn">⎋</span></a>
       </div>
     </nav>
   );
@@ -4141,8 +4146,30 @@ function MiniSpark({ data, height, color }) {
 // Bucket the 127 real categories into the 6 high-level groups the
 // hi-fi dashboard renders (PCI · PII · CRED · PHI · SECRET ·
 // CLASSIFIED). Anything that doesn't match falls through to OTHER.
-const CAT_GROUPS = ['PCI','PII','CRED','PHI','SECRET','CLASSIFIED','OTHER'];
+// Geographic regions taken straight from the pattern catalogue —
+// categories shaped like '<Region> - <Country>' (e.g. 'North America
+// - Canada', 'Europe - Germany') get bucketed by their region prefix
+// instead of the substring-derived PCI/PII/CRED/etc. axis. Keeps the
+// regional country categories together so an analyst hunting 'all the
+// EU stuff' doesn't have to chase them across multiple buckets.
+const REGION_GROUPS = [
+  'North America', 'Europe', 'Asia-Pacific',
+  'Latin America', 'Middle East', 'Africa',
+];
+const CAT_GROUPS = [
+  ...REGION_GROUPS,
+  'PCI', 'PII', 'CRED', 'PHI', 'SECRET', 'CLASSIFIED', 'OTHER',
+];
 const CAT_GROUP_COLOR = {
+  // Regions — slightly desaturated so the substantive axis (PCI etc.)
+  // still pops; analysts learn the region tier as a softer band.
+  'North America':  'var(--cyan)',
+  'Europe':         'var(--violet)',
+  'Asia-Pacific':   'var(--amber)',
+  'Latin America':  'var(--magenta)',
+  'Middle East':    'var(--accent)',
+  'Africa':         'var(--ink-bright)',
+  // Substantive groups (unchanged)
   PCI:        'var(--red)',
   PII:        'var(--cyan)',
   CRED:       'var(--amber)',
@@ -4151,7 +4178,27 @@ const CAT_GROUP_COLOR = {
   CLASSIFIED: 'var(--ink-bright)',
   OTHER:      'var(--ink-soft)',
 };
+// Strip the '<Region> - ' prefix off a category for compact rendering
+// inside a region group. Returns the original string unchanged when
+// no region prefix is present.
+function categoryDisplayName(category) {
+  if (!category) return '';
+  const dash = category.indexOf(' - ');
+  if (dash <= 0) return category;
+  const region = category.slice(0, dash);
+  if (REGION_GROUPS.includes(region)) {
+    return category.slice(dash + 3);
+  }
+  return category;
+}
 function catGroup(category) {
+  // Region prefix wins when present — those categories are otherwise
+  // hard to find in the existing PCI/PII/etc. taxonomy.
+  const dash = (category || '').indexOf(' - ');
+  if (dash > 0) {
+    const region = category.slice(0, dash);
+    if (REGION_GROUPS.includes(region)) return region;
+  }
   const c = (category || '').toLowerCase();
   if (c.includes('credit card') || c.includes('primary account') || c.includes('iban') || c.includes('bank')) return 'PCI';
   if (c.includes('medical') || c.includes('health') || c.includes('phi')) return 'PHI';
@@ -4525,6 +4572,18 @@ function DashV1_Ops_Local() {
 // colour (SIEM flag, tokenize vault, block/drop).
 function TopologyStrip({ bySource, metrics, findings, integrations, live }) {
   const m = metrics || {};
+  // Pod identity for the INSPECT label — pulled from /health so the
+  // topology updates when an analyst points the C2 at a different
+  // siphon-api or after a Phase 6 roll. Falls back to fixture-y
+  // labels when /health is unreachable so the SVG never goes blank.
+  const hx = window.useSiphonApi('/health');
+  const h = (hx.data) || {};
+  const podLabel    = h.pod_type || 'INSPECT';
+  const podVersion  = h.version  ? `v${h.version}` : '';
+  const podShortId  = h.pod_id   ? h.pod_id.slice(0, 8) : '';
+  const podTitle    = h.pod_id
+    ? `${h.pod_type} · v${h.version} · core v${h.core_version}\npod_id ${h.pod_id}\nstarted ${h.started_at} (uptime ${h.uptime_secs}s)`
+    : 'pod identity unavailable — /health did not respond';
 
   // Build a fixed 4-slot input list — pad with placeholders so the
   // layout stays symmetrical even when only one caller is active.
@@ -4628,19 +4687,31 @@ function TopologyStrip({ bySource, metrics, findings, integrations, live }) {
           );
         })}
 
-        {/* INSPECT node */}
+        {/* INSPECT node — labelled by the live /health pod identity
+            so the topology adapts to whichever pod the C2 is pointed
+            at. Hover the box for full pod_id + uptime. */}
         <g>
+          <title>{podTitle}</title>
           <rect x={INSPECT_X} y={INSPECT_Y} width={INSPECT_W} height={INSPECT_H}
                 rx="4" fill="var(--bg-2)"
                 stroke={live ? 'var(--accent)' : 'var(--line-strong)'} strokeWidth="1.4" />
-          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 22}
-                fontFamily="Space Grotesk" fontSize="13" fontWeight="700"
-                fill={live ? 'var(--accent)' : 'var(--ink-soft)'} textAnchor="middle" letterSpacing="1.5">INSPECT</text>
-          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 38}
+          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 18}
+                fontFamily="Space Grotesk" fontSize="12" fontWeight="700"
+                fill={live ? 'var(--accent)' : 'var(--ink-soft)'} textAnchor="middle" letterSpacing="1.2">
+            {podLabel}
+          </text>
+          {podVersion && (
+            <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 30}
+                  fontFamily="JetBrains Mono" fontSize="8.5" fill="var(--ink-soft)" textAnchor="middle">
+              {podVersion}
+              {podShortId ? <tspan fill="var(--ink-faint)"> · {podShortId}</tspan> : null}
+            </text>
+          )}
+          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 44}
                 fontFamily="JetBrains Mono" fontSize="10" fill="var(--ink)" textAnchor="middle">
             {scansPerSec > 0 ? scansPerSec.toFixed(2) + '/s' : '0/s'}
           </text>
-          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 50}
+          <text x={INSPECT_X + INSPECT_W / 2} y={INSPECT_Y + 54}
                 fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-soft)" textAnchor="middle">
             {m.patterns_loaded != null ? m.patterns_loaded + ' patterns' : 'loading…'}
           </text>
@@ -6933,7 +7004,11 @@ function FindingDetail({ id, back }) {
   );
 }
 
-Object.assign(window, { Stream, FindingDetail, fmtWallClock, catGroup, CAT_GROUPS, CAT_GROUP_COLOR });
+Object.assign(window, {
+  Stream, FindingDetail, fmtWallClock,
+  catGroup, CAT_GROUPS, CAT_GROUP_COLOR,
+  REGION_GROUPS, categoryDisplayName,
+});
 
 </script>
 
@@ -7887,7 +7962,13 @@ function Patterns() {
                       color: c.category === selected ? 'var(--accent)' : 'var(--ink)',
                     }}>
                     <span style={{display:'flex', alignItems:'center', gap:6, overflow:'hidden', minWidth:0}}>
-                      <span style={{fontFamily:"'JetBrains Mono', monospace", overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{c.category}</span>
+                      <span style={{fontFamily:"'JetBrains Mono', monospace", overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+                            title={c.category}>
+                        {/* Strip the '<Region> - ' prefix when the
+                            row is rendered inside a region group;
+                            full category name on hover. */}
+                        {window.categoryDisplayName ? window.categoryDisplayName(c.category) : c.category}
+                      </span>
                       {c.isCustom && (
                         <span className="chip chip--teal" style={{fontSize:8.5, padding:'1px 4px', letterSpacing:0.5, flexShrink:0}}>custom</span>
                       )}
@@ -7949,8 +8030,12 @@ function Patterns() {
                 <div className="pat-row label" style={{borderBottom:'1.5px solid var(--line)'}}>
                   <span></span><span>Sub-category · regex</span><span>Specificity</span><span>Ctx</span><span>Case</span><span></span>
                 </div>
-                {selectedCustom.patterns.map((p, i) => (
-                  <div key={i} className="pat-row"
+                {selectedCustom.patterns.map((p) => (
+                  // Stable key by sub_category — same fix as the
+                  // built-in list above. Avoids the cross-category
+                  // checkbox cascade when reused DOM nodes carry
+                  // uncontrolled `defaultChecked` state.
+                  <div key={`${selectedCustom.name}/${p.sub_category}`} className="pat-row"
                        onClick={(e) => {
                          if (e.target && e.target.tagName === 'INPUT') return;
                          if (e.target && e.target.getAttribute('data-action') === 'delete') return;
@@ -8014,8 +8099,15 @@ function Patterns() {
           {!pats.loading && patList.length === 0 && (
             <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>— no patterns —</div>
           )}
-          {patList.map((p, i) => (
-            <div key={i} className="pat-row"
+          {patList.map((p) => (
+            // Stable key based on identity, not array index. Without
+            // this, switching categories caused React to reuse DOM
+            // nodes between unrelated patterns; the uncontrolled
+            // `defaultChecked` state stayed glued to the reused node,
+            // so unchecking the first row in category A made the
+            // first row in category B look unchecked too. Identity-
+            // based keys force a fresh mount per pattern.
+            <div key={`${p.category}/${p.sub_category}`} className="pat-row"
                  onClick={(e) => {
                    // checkbox clicks shouldn't navigate — they'll
                    // toggle enable/disable in Phase 4. Stop the event
