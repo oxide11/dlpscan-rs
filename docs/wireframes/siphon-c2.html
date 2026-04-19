@@ -2164,7 +2164,10 @@ const WORKSPACES = [
   // now that the gear icon in the Topbar is the primary entry.
   { id: 'admin',       label: 'Settings',    hint: 'users · system · integrations',  glyph: '⚙', hidden: true },
   { id: 'engineering', label: 'Engineering', hint: 'dev tools · live API',           glyph: '⌁' },
-  { id: 'docs',        label: 'Docs',        hint: 'architecture · guides · reference', glyph: '❖' },
+  // Docs is reachable via the HelpIcon popovers and the Settings →
+  // Docs button; hidden from the top workspace bar to keep primary
+  // navigation focused on Operate / Detect / Assure / Engineering.
+  { id: 'docs',        label: 'Docs',        hint: 'architecture · guides · reference', glyph: '❖', hidden: true },
 ];
 
 const SURFACES = [
