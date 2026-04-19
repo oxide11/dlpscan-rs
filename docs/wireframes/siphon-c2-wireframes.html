@@ -2196,6 +2196,7 @@ const SURFACES = [
   { id: 'scandiff',       workspace: 'engineering', icon: '⇌',  title: 'Scan Diff',      sub: 'A/B compare' },
   { id: 'apiex',          workspace: 'engineering', icon: '⟁',  title: 'API Explorer',   sub: 'every /v1 endpoint' },
   { id: 'procstate',      workspace: 'engineering', icon: '⌬',  title: 'Process State',  sub: 'cache · rate · vault' },
+  { id: 'fptool',         workspace: 'engineering', icon: '⚑',  title: 'FP Troubleshooter', sub: 'allowlist + rescan' },
 ];
 
 // Find workspace id for a given surface id
@@ -3722,135 +3723,253 @@ const DashV3_Posture = () => (
   </div>
 );
 
-const DashV4_Canvas = () => (
-  // === Variant D: Inverted · Big World Canvas — map + topology as the page ===
-  <div className="variant-body">
-    <div className="box" style={{padding:0, overflow:'hidden'}}>
-      <div style={{
-        padding: 14,
-        borderBottom:'1.5px solid var(--line)',
-        display:'flex', gap:10, alignItems:'center',
-        background:'var(--accent)', color:'#e8efe6'
-      }}>
-        <span className="label" style={{color:'#c8d6c2'}}>Live Topology</span>
-        <span className="mono" style={{fontSize:11, color:'#c8d6c2'}}>· auto-refresh 2s</span>
-        <span className="right" />
-        <span className="chip chip--safe">94 healthy</span>
-        <span className="chip chip--warn">6 degraded</span>
-        <span className="chip chip--red">2 down</span>
+// Real topology — shows what is actually connected and integrated in this
+// installation. Driven entirely from live endpoints: /v1/metrics,
+// /v1/integrations, /v1/allowlist, /v1/policies.
+function DashV4_Canvas() {
+  const mx   = window.useSiphonApi('/v1/metrics');
+  const ix   = window.useSiphonApi('/v1/integrations');
+  const al   = window.useSiphonApi('/v1/allowlist');
+  const pol  = window.useSiphonApi('/v1/policies');
+  const find = window.useSiphonApi('/v1/findings?limit=10');
+
+  React.useEffect(() => {
+    const t = setInterval(() => {
+      mx.refetch(); ix.refetch(); al.refetch(); pol.refetch(); find.refetch();
+    }, 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  const apiUrl = window.SIPHON_API_URL();
+  const m = mx.data || {};
+  const apiLive = mx.source === 'live';
+  const configuredIntegrations = ((ix.data && ix.data.integrations) || []).filter(i => i.configured);
+  const allowLoaded = al.data && al.data.loaded_from;
+  const policiesLoaded = pol.data && pol.data.total > 0;
+  const recentFindings = (find.data && find.data.findings) || [];
+
+  const overallSource = [mx.source, ix.source, al.source, pol.source, find.source].includes('offline')
+    ? 'offline'
+    : [mx.source, ix.source, al.source, pol.source, find.source].every(s => s === 'live')
+      ? 'live' : 'loading';
+
+  // Node renderer — stable positions so connectors can be drawn reliably.
+  const node = (opts) => (
+    <div className="node" style={{
+      position:'absolute', minWidth: opts.width || 180,
+      padding: '10px 12px',
+      ...opts.pos,
+      ...(opts.style || {}),
+    }}>
+      <span className="nt">{opts.kind}</span>
+      <b>{opts.title}</b>
+      {opts.lines && opts.lines.map((l, i) => (
+        <div key={i} className="mono" style={{fontSize:10, color: l.color || 'var(--ink-soft)'}}>{l.text}</div>
+      ))}
+      {opts.chip && <div style={{marginTop:4}}>{opts.chip}</div>}
+    </div>
+  );
+
+  return (
+    <div className="variant-body">
+      <div className="box" style={{padding:0, overflow:'hidden'}}>
+        <div style={{
+          padding:'10px 14px', borderBottom:'1.5px solid var(--line)',
+          display:'flex', gap:10, alignItems:'center',
+          background:'var(--bg-2)', color:'var(--ink)'
+        }}>
+          <span className="label">Live Topology</span>
+          <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>· this deployment · refresh 5s</span>
+          <span className="right" style={{marginLeft:'auto'}} />
+          <window.LivePill source={overallSource} onClick={() => { mx.refetch(); ix.refetch(); al.refetch(); pol.refetch(); find.refetch(); }} />
+        </div>
+
+        <div style={{
+          position:'relative', height:440,
+          background:
+            'radial-gradient(ellipse at 50% 40%, rgba(94,243,140,0.04), transparent 70%), var(--bg-1)',
+          backgroundImage:
+            'radial-gradient(var(--line-soft) 1px, transparent 1.5px)',
+          backgroundSize: '22px 22px',
+        }}>
+
+          {/* siphon-c2 (this browser) */}
+          {node({
+            kind: 'browser · you',
+            title: 'siphon-c2',
+            pos: { left: 40, top: 40 },
+            width: 190,
+            style: { borderColor: 'var(--accent)', background: 'var(--accent-wash)' },
+            lines: [
+              { text: typeof navigator !== 'undefined' ? (navigator.userAgent || '').split(') ')[0].slice(0, 34) + '…' : '' },
+              { text: 'wireframes.html · React 18 + Babel' },
+            ],
+          })}
+
+          {/* siphon-api */}
+          {node({
+            kind: apiLive ? 'http server · live' : mx.source === 'offline' ? 'http server · unreachable' : 'http server · loading',
+            title: 'siphon-api',
+            pos: { left: 360, top: 40 },
+            width: 220,
+            style: {
+              borderColor: apiLive ? 'var(--safe)' : mx.source === 'offline' ? 'var(--red)' : 'var(--line-strong)',
+              background: apiLive ? 'var(--accent-wash)' : mx.source === 'offline' ? 'var(--red-wash)' : 'var(--bg-2)',
+            },
+            lines: [
+              { text: apiUrl },
+              { text: m.uptime_secs != null ? `uptime ${m.uptime_secs}s · ${m.scans_total != null ? m.scans_total : '—'} scans` : 'uptime —' },
+              { text: m.scan_errors_total != null && m.scan_errors_total > 0 ? `errors ${m.scan_errors_total}` : 'errors 0' },
+            ],
+          })}
+
+          {/* siphon-core (library inside siphon-api) */}
+          {node({
+            kind: 'linked library',
+            title: 'siphon-core',
+            pos: { left: 710, top: 40 },
+            width: 180,
+            style: { borderColor: 'var(--cyan)', background: 'var(--cyan-wash)' },
+            lines: [
+              { text: m.patterns_loaded != null ? `${m.patterns_loaded} patterns` : 'patterns —' },
+              { text: m.categories_loaded != null ? `${m.categories_loaded} categories` : 'categories —' },
+              { text: 'crate: siphon-core' },
+            ],
+          })}
+
+          {/* Config sources (loaded at startup) */}
+          {node({
+            kind: allowLoaded ? 'allowlist · loaded' : 'allowlist · unset',
+            title: allowLoaded ? (al.data.loaded_from.split('/').pop()) : 'SIPHON_ALLOWLIST_PATH',
+            pos: { left: 40, top: 220 },
+            width: 220,
+            style: {
+              borderColor: allowLoaded ? 'var(--accent)' : 'var(--line-strong)',
+              background: allowLoaded ? 'var(--accent-wash)' : 'transparent',
+              borderStyle: allowLoaded ? 'solid' : 'dashed',
+            },
+            lines: allowLoaded
+              ? [
+                  { text: `${al.data.text_count} texts · ${al.data.pattern_count} patterns` },
+                  { text: `${al.data.path_count} paths` },
+                ]
+              : [{ text: 'not configured', color: 'var(--ink-faint)' }],
+          })}
+
+          {node({
+            kind: policiesLoaded ? 'policies · loaded' : 'policies · unset',
+            title: policiesLoaded ? `${pol.data.total} TOML polic${pol.data.total===1?'y':'ies'}` : 'SIPHON_POLICIES_DIR',
+            pos: { left: 280, top: 220 },
+            width: 220,
+            style: {
+              borderColor: policiesLoaded ? 'var(--accent)' : 'var(--line-strong)',
+              background: policiesLoaded ? 'var(--accent-wash)' : 'transparent',
+              borderStyle: policiesLoaded ? 'solid' : 'dashed',
+            },
+            lines: policiesLoaded
+              ? [{ text: pol.data.source || '' }]
+              : [{ text: 'not configured', color: 'var(--ink-faint)' }],
+          })}
+
+          {/* Integrations (outbound) */}
+          {configuredIntegrations.length > 0 ? (
+            configuredIntegrations.slice(0, 2).map((integ, i) => node({
+              kind: 'SIEM · push',
+              title: integ.kind,
+              pos: { left: 540 + (i * 180), top: 220 },
+              width: 170,
+              style: { borderColor: 'var(--amber)', background: 'var(--amber-wash)' },
+              lines: [
+                { text: integ.target || '' },
+                { text: 'DLPSCAN_SIEM_TYPE' },
+              ],
+            }))
+          ) : (
+            node({
+              kind: 'integrations · none',
+              title: 'no SIEM',
+              pos: { left: 540, top: 220 },
+              width: 220,
+              style: { borderColor: 'var(--line-strong)', borderStyle: 'dashed' },
+              lines: [
+                { text: 'DLPSCAN_SIEM_TYPE unset', color: 'var(--ink-faint)' },
+              ],
+            })
+          )}
+
+          {/* Connectors — SVG overlay */}
+          <svg style={{position:'absolute', inset:0, width:'100%', height:'100%', pointerEvents:'none'}}>
+            <defs>
+              <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--ink-soft)"/>
+              </marker>
+            </defs>
+            <g stroke="var(--ink-soft)" strokeWidth="1.3" fill="none" markerEnd="url(#arr)">
+              {/* c2 -> api */}
+              <path d="M 230 78 L 360 78" />
+              {/* api -> core */}
+              <path d="M 580 78 L 710 78" />
+              {/* api -> allowlist (dotted if not loaded) */}
+              <path d="M 450 135 L 160 218" strokeDasharray={allowLoaded ? '0' : '4 4'} />
+              {/* api -> policies */}
+              <path d="M 470 135 L 390 218" strokeDasharray={policiesLoaded ? '0' : '4 4'} />
+              {/* api -> SIEM */}
+              <path d="M 510 135 L 620 218" strokeDasharray={configuredIntegrations.length ? '0' : '4 4'} />
+            </g>
+          </svg>
+
+          <div className="margin-note" style={{position:'absolute', left: 245, top: 60}}>HTTP · JSON</div>
+          <div className="margin-note" style={{position:'absolute', left: 592, top: 60}}>static link</div>
+          {mx.source === 'offline' && (
+            <div className="margin-note red" style={{position:'absolute', right: 16, top: 8}}>
+              ⚠ siphon-api unreachable — check it's running at {apiUrl}
+            </div>
+          )}
+        </div>
       </div>
 
-      <div style={{
-        position:'relative', height:460,
-        background:
-          'radial-gradient(ellipse at 50% 50%, rgba(39,68,79,0.08), transparent 70%), var(--bg-1)',
-        backgroundImage:
-          'radial-gradient(var(--line-soft) 1px, transparent 1.5px)',
-        backgroundSize: '22px 22px',
-      }}>
-        {/* Center: Core */}
-        <div style={{position:'absolute', left:'50%', top:'50%', transform:'translate(-50%,-50%)'}}>
-          <div className="node" style={{background:'var(--accent)', color:'#e8efe6', borderColor:'#000'}}>
-            <span className="nt" style={{color:'var(--safe)'}}>library</span>
-            <b>siphon-core</b>
-            <div className="mono" style={{fontSize:10, color:'#c8d6c2'}}>v1.8.2 · 561 patterns</div>
+      <div className="grid grid-3" style={{marginTop:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title"><span className="t">Components summary</span><span className="k">what's wired</span></div>
+          <div className="kv" style={{fontSize:12}}>
+            <span className="k">siphon-c2</span>    <span className="v"><span className="chip chip--safe">this browser</span></span>
+            <span className="k">siphon-api</span>   <span className="v"><span className={`chip chip--${apiLive ? 'safe' : mx.source === 'offline' ? 'red' : 'warn'}`}>{apiLive ? 'live' : mx.source === 'offline' ? 'unreachable' : 'loading'}</span></span>
+            <span className="k">siphon-core</span>  <span className="v"><span className="chip chip--teal">{m.patterns_loaded != null ? `${m.patterns_loaded} patterns` : 'linked'}</span></span>
+            <span className="k">Allowlist</span>    <span className="v">{allowLoaded ? <span className="chip chip--safe">loaded</span> : <span className="chip chip--ghost">unset</span>}</span>
+            <span className="k">Policies</span>     <span className="v">{policiesLoaded ? <span className="chip chip--safe">{pol.data.total}</span> : <span className="chip chip--ghost">unset</span>}</span>
+            <span className="k">SIEM</span>         <span className="v">{configuredIntegrations.length ? <span className="chip chip--warn">{configuredIntegrations.map(c => c.kind).join(', ')}</span> : <span className="chip chip--ghost">none</span>}</span>
           </div>
         </div>
-        {/* Ingestion ring */}
-        <div className="node" style={{left:60,  top:80,  position:'absolute', minWidth: 110}}>
-          <span className="nt">ingest</span>
-          <b>siphon-fs</b>
-          <div className="mono" style={{fontSize:10}}>18 pods · 12 rd</div>
-          <div className="spark hatch--sage" style={{height:20, marginTop:4}} />
+
+        <div className="box">
+          <div className="box-title"><span className="t">Recent scans</span><span className="k">from /v1/findings</span></div>
+          {recentFindings.length === 0
+            ? <div className="muted" style={{padding:'10px 0', fontFamily:"'JetBrains Mono', monospace", fontSize:11, textAlign:'center'}}>— ring empty —</div>
+            : recentFindings.slice(0, 5).map((f, i) => (
+                <div key={i} style={{fontSize:11, fontFamily:"'JetBrains Mono', monospace", padding:'4px 0', borderBottom:'1px dashed var(--line-soft)'}}>
+                  <span className="muted">{fmtWallClock(f.ts)}</span>{' '}
+                  <span className={`chip chip--${f.severity}`} style={{fontSize:9}}>{f.severity}</span>{' '}
+                  <span style={{color:'var(--ink-bright)'}}>{f.category}</span>
+                  {' · '}<span>{f.text}</span>
+                </div>
+              ))
+          }
         </div>
-        <div className="node" style={{left:60, top:320, position:'absolute', minWidth: 110}}>
-          <span className="nt">ingest</span>
-          <b>siphon-api</b>
-          <div className="mono" style={{fontSize:10}}>42 pods · 28 rd</div>
-          <div className="spark hatch--sage" style={{height:20, marginTop:4}} />
-        </div>
-        <div className="node" style={{right: 60, top:80, position:'absolute', minWidth:110, borderColor:'var(--amber)', background:'#f7eecd'}}>
-          <span className="nt">ingest</span>
-          <b>siphon-ds</b>
-          <div className="mono" style={{fontSize:10}}>9 · consumer lag ⚠</div>
-          <div className="spark hatch" style={{height:20, marginTop:4}} />
-        </div>
-        <div className="node" style={{right: 60, top:320, position:'absolute', minWidth:110}}>
-          <span className="nt">ingest</span>
-          <b>siphon-gw</b>
-          <div className="mono" style={{fontSize:10}}>12 pods · 8 rd</div>
-          <div className="spark hatch--sage" style={{height:20, marginTop:4}} />
-        </div>
-        {/* Detectors */}
-        <div className="node" style={{left: 300, top: 30, position:'absolute'}}>
-          <span className="nt">detector</span>
-          <b>siphon-ml</b>
-          <div className="mono" style={{fontSize:10}}>GPU · 6 pods</div>
-        </div>
-        <div className="node" style={{right:300, top: 30, position:'absolute', background:'#f7eecd', borderColor:'var(--amber)'}}>
-          <span className="nt">detector</span>
-          <b>siphon-vision</b>
-          <div className="mono" style={{fontSize:10}}>OCR · queue 412 ⚠</div>
-        </div>
-        <div className="node" style={{left:'50%', bottom:20, transform:'translateX(-50%)', position:'absolute'}}>
-          <span className="nt">detector</span>
-          <b>siphon-classify</b>
-          <div className="mono" style={{fontSize:10}}>3 pods · 2 ready</div>
-        </div>
-        {/* Hand-drawn connectors */}
-        <svg style={{position:'absolute', inset:0, width:'100%', height:'100%', pointerEvents:'none'}}>
-          <g stroke="#2b3438" strokeWidth="1.5" fill="none" strokeDasharray="0">
-            <path d="M 180 110 Q 320 180 480 230" />
-            <path d="M 180 350 Q 320 280 480 230" />
-            <path d="M 820 110 Q 680 180 520 230" />
-            <path d="M 820 350 Q 680 280 520 230" />
-            <path d="M 360 75 Q 440 140 490 220" />
-            <path d="M 640 75 Q 560 140 510 220" />
-            <path d="M 500 420 Q 500 340 500 260" strokeDasharray="4 4" />
-          </g>
-        </svg>
-        <div className="margin-note" style={{position:'absolute', left: 440, top: 180, transform:'rotate(-4deg)'}}>
-          gRPC detector calls
-        </div>
-        <div className="margin-note red" style={{position:'absolute', right: 24, top: 170}}>
-          ⚠ vision queue backing up
+
+        <div className="box">
+          <div className="box-title"><span className="t">How to extend</span><span className="k">env-driven</span></div>
+          <div className="mono" style={{fontSize:11, lineHeight:1.8, color:'var(--ink-soft)'}}>
+            <div><span style={{color:'var(--cyan)'}}>SIPHON_POLICIES_DIR</span> — enable policies</div>
+            <div><span style={{color:'var(--cyan)'}}>SIPHON_ALLOWLIST_PATH</span> — enable allowlist</div>
+            <div><span style={{color:'var(--cyan)'}}>DLPSCAN_SIEM_TYPE</span> — push to SIEM</div>
+            <div><span style={{color:'var(--cyan)'}}>SIPHON_AUDIT_LOG_PATH</span> — persist audit</div>
+            <div><span style={{color:'var(--cyan)'}}>SIPHON_API_KEY</span> — require auth</div>
+          </div>
         </div>
       </div>
     </div>
-
-    <div className="grid grid-3" style={{marginTop:'var(--gap)'}}>
-      <div className="box">
-        <div className="box-title"><span className="t">Now scanning</span><span className="k">live · 5s</span></div>
-        <div className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
-          <div>[12:42:18] fs/3 · tenant=acme · extracting quarterly-report.pdf</div>
-          <div>[12:42:18] api/14 · tenant=globex · 12KB body · 3 findings</div>
-          <div>[12:42:19] gw/2 · tenant=initech · redact-and-forward · 1 finding</div>
-          <div>[12:42:19] ds/1 · fluent · lag=412 msgs ⚠</div>
-          <div>[12:42:20] fs/1 · tenant=stark · OCR siphon-vision → 2 findings</div>
-        </div>
-      </div>
-      <div className="box">
-        <div className="box-title"><span className="t">Tenant spikes</span><span className="k">z&gt;2.5</span></div>
-        {TENANT_SPIKES.map(([t, d], i) => (
-          <div key={i} className="bar-row">
-            <span className="hand-b">{t}</span>
-            <span className="b"><i style={{width:Math.min(95,Math.abs(parseInt(d)))+'%', background:'var(--cyan)'}} /></span>
-            <span className="n">{d}</span>
-          </div>
-        ))}
-      </div>
-      <div className="box">
-        <div className="box-title"><span className="t">Pending · 4</span><span className="k">queue</span></div>
-        {PENDING.slice(0,3).map(([t, status, who, chip], i) => (
-          <div key={i} style={{padding:'6px 0', borderBottom:'1px dashed var(--line-soft)'}}>
-            <div className="hand-b" style={{fontSize:13}}>{t}</div>
-            <div className="muted" style={{fontSize:11}}>{status} · {who}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  </div>
-);
+  );
+}
 
 function LiveMetricsStrip() {
   const mx = window.useSiphonApi('/v1/metrics');
@@ -3950,52 +4069,42 @@ Object.assign(window, { Dashboard });
 
 <script type="text/babel" data-presets="react">
 /* ===== surfaces/stream.jsx ===== */
-// Findings Console — topbar-style filters, search, group-by, drill-in.
-// Enforces the "max 2 panels" rule: only the findings list panel below the topbar.
+// Findings Console — lives off /v1/findings. Polls every 2s unless paused.
+// Drill-in to a finding populates the Finding Detail route with the id.
 
-const FINDINGS_FIXT = (() => {
-  const cats = ['PCI','PII','CRED','PHI','SECRET'];
-  const pods = ['siphon-gw','siphon-api','siphon-fs','siphon-ds','siphon-vision'];
-  const tenants = ['acme-corp','globex-eu','initech','stark-labs','wayne-ent'];
-  const acts = ['block','redact','flag','tokenize','allow'];
-  const matches = {
-    PCI: ['visa · 4532 **** **** 0366','mastercard · 5412 **** **** 8821','amex · 3782 ****** 41007'],
-    PII: ['ssn · 425-**-1904','email · j.doe@initech.com','sin · 046 **4 **3'],
-    CRED: ['aws · AKIAIOSFODNN7EXAMPLE','jwt · eyJhbGciOiJIUzI1…','gh_pat · ghp_x****'],
-    PHI: ['npi · 1234567890','icd-10 · E11.9','mrn · 00421847'],
-    SECRET: ['stripe · sk_live_****','slack · xoxb-****','private key · -----BEGIN'],
-  };
-  return Array.from({length: 64}).map((_, i) => {
-    const cat = cats[i % cats.length];
-    const sev = ['red','warn','red','warn','red','safe','warn','red'][i % 8];
-    return {
-      id: 'F-' + (0x4a92 + i).toString(16),
-      ts: `12:${String(42 - Math.floor(i/3)).padStart(2,'0')}:${String((i*7)%60).padStart(2,'0')}`,
-      pod: pods[i % pods.length],
-      tenant: tenants[i % tenants.length],
-      category: cat,
-      severity: sev,
-      action: acts[i % acts.length],
-      match: matches[cat][i % 3],
-      doc: `doc_${1200 - i}.pdf`,
-    };
-  });
-})();
+// Display-only helper — pull HH:MM:SS out of an ISO timestamp, or the raw
+// string if it doesn't parse.
+function fmtWallClock(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return String(d.getHours()).padStart(2,'0') + ':'
+       + String(d.getMinutes()).padStart(2,'0') + ':'
+       + String(d.getSeconds()).padStart(2,'0');
+}
 
 function Stream({ go }) {
   const [search, setSearch] = React.useState('');
   const [severity, setSeverity] = React.useState('any');
   const [category, setCategory] = React.useState('any');
-  const [tenant, setTenant] = React.useState('any');
-  const [pod, setPod] = React.useState('any');
   const [groupBy, setGroupBy] = React.useState('none');
+  const [paused, setPaused] = React.useState(false);
 
-  const filtered = FINDINGS_FIXT.filter(f =>
+  const fx = window.useSiphonApi('/v1/findings?limit=500');
+  // Live tail — refetch every 2s unless paused.
+  React.useEffect(() => {
+    if (paused) return;
+    const t = setInterval(() => fx.refetch(), 2000);
+    return () => clearInterval(t);
+  }, [paused]);
+
+  const all = (fx.data && fx.data.findings) || [];
+
+  const filtered = all.filter(f =>
     (severity === 'any' || f.severity === severity) &&
     (category === 'any' || f.category === category) &&
-    (tenant === 'any' || f.tenant === tenant) &&
-    (pod === 'any' || f.pod === pod) &&
-    (!search || (f.match + ' ' + f.doc + ' ' + f.pod).toLowerCase().includes(search.toLowerCase()))
+    (!search || (f.text + ' ' + f.category + ' ' + (f.sub_category || '') + ' ' + (f.source_ip || ''))
+      .toLowerCase().includes(search.toLowerCase()))
   );
 
   const groups = (() => {
@@ -4008,57 +4117,102 @@ function Stream({ go }) {
     return Object.entries(by).sort((a,b) => b[1].length - a[1].length);
   })();
 
+  // Derive filter options from what's actually in the ring.
+  const categories = Array.from(new Set(all.map(f => f.category))).sort();
   const { PageBar } = window;
 
   return (
     <div>
       <PageBar
-        crumbs={['Overview', 'Findings']}
+        crumbs={['Operate', 'Findings']}
         title="Findings Console"
-        subtitle={`${filtered.length.toLocaleString()} findings · last 5m · tail -f`}
+        subtitle={fx.data
+          ? `${filtered.length.toLocaleString()} / ${fx.data.total} in ring (cap ${fx.data.capacity}) · ${paused ? 'paused' : 'tail -f'}`
+          : 'loading…'}
         search={search} setSearch={setSearch}
         filters={[
           { label: 'Severity', value: severity },
-          { label: 'Category', value: category },
-          { label: 'Tenant',   value: tenant },
-          { label: 'Pod',      value: pod },
-          { label: 'Action',   value: 'any' },
-          { label: 'Time',     value: 'live · 5m' },
+          { label: 'Category', value: category === 'any' ? 'any' : category },
+          { label: 'Time',     value: 'in-ring' },
         ]}
         groupBy={groupBy}
         setGroupBy={setGroupBy}
         groupByOptions
         actions={<>
-          <button className="btn ghost">Saved filters</button>
+          <window.LivePill source={fx.source} onClick={fx.refetch} title={fx.error || ''} />
+          <button className="btn ghost" onClick={() => setPaused(p => !p)}>{paused ? '▶ Resume' : '⏸ Pause'}</button>
           <button className="btn">Export</button>
-          <button className="btn primary">⏸ Pause</button>
         </>}
       />
 
-      {/* quick filter cheatsheet — inline, below the topbar, not a panel */}
+      {fx.error && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', marginBottom:'var(--gap)'}}>
+          <b>Error:</b> {fx.error}
+        </div>
+      )}
+
+      {/* severity + category quick filters pulled from real data */}
       <div className="row" style={{marginBottom: 'var(--gap)', flexWrap:'wrap'}}>
-        <span className="label" style={{alignSelf:'center'}}>Quick</span>
-        {['Critical only','PCI · egress','Secrets · CI','acme-corp','Evasion attempts'].map((q,i) => (
-          <span key={i} className="chip" style={{cursor:'pointer'}}>{q}</span>
+        <span className="label" style={{alignSelf:'center'}}>Sev</span>
+        {['any','red','warn','safe'].map(s => (
+          <button key={s}
+            onClick={() => setSeverity(s)}
+            className="btn ghost"
+            style={{
+              padding:'3px 10px', fontSize:10,
+              background: severity === s ? 'var(--accent)' : 'transparent',
+              color: severity === s ? 'var(--bg-0)' : 'var(--ink)',
+              borderColor: severity === s ? 'var(--accent)' : 'var(--line)'
+            }}>{s}</button>
         ))}
         <span className="right label" style={{alignSelf:'center'}}>Group by</span>
-        {['none','category','severity','tenant','pod','action'].map(g => (
+        {['none','category','severity'].map(g => (
           <button key={g}
             onClick={() => setGroupBy(g)}
             className="btn ghost"
             style={{
               padding:'3px 10px', fontSize:10,
               background: groupBy === g ? 'var(--accent)' : 'transparent',
-              color: groupBy === g ? '#e8efe6' : 'var(--ink)',
+              color: groupBy === g ? 'var(--bg-0)' : 'var(--ink)',
               borderColor: groupBy === g ? 'var(--accent)' : 'var(--line)'
             }}>{g}</button>
         ))}
       </div>
 
+      {categories.length > 0 && (
+        <div className="row" style={{marginBottom: 'var(--gap)', flexWrap:'wrap'}}>
+          <span className="label" style={{alignSelf:'center'}}>Cat</span>
+          <button onClick={() => setCategory('any')}
+            className="btn ghost"
+            style={{padding:'3px 10px', fontSize:10,
+              background: category === 'any' ? 'var(--accent)' : 'transparent',
+              color: category === 'any' ? 'var(--bg-0)' : 'var(--ink)',
+              borderColor: category === 'any' ? 'var(--accent)' : 'var(--line)'}}>any</button>
+          {categories.slice(0, 8).map(c => (
+            <button key={c}
+              onClick={() => setCategory(c)}
+              className="btn ghost"
+              style={{padding:'3px 10px', fontSize:10,
+                background: category === c ? 'var(--accent)' : 'transparent',
+                color: category === c ? 'var(--bg-0)' : 'var(--ink)',
+                borderColor: category === c ? 'var(--accent)' : 'var(--line)'}}>{c}</button>
+          ))}
+        </div>
+      )}
+
       <div className="box">
         <div className="find-row label" style={{borderBottom:'1.5px solid var(--line)'}}>
-          <span>TS</span><span>Source pod</span><span>Match</span><span>Category</span><span>Tenant</span><span>Action</span><span></span>
+          <span>TS</span><span>Source IP</span><span>Match</span><span>Category</span><span>Conf</span><span>Sev</span><span></span>
         </div>
+
+        {fx.loading && all.length === 0 && (
+          <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>loading…</div>
+        )}
+        {!fx.loading && all.length === 0 && !fx.error && (
+          <div className="muted" style={{padding:20, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+            — ring empty · run a scan from <b>Engineering → Live Scan</b> or <b>Corpus Runner</b> —
+          </div>
+        )}
 
         {groups.map(([gname, rows], gi) => (
           <React.Fragment key={gi}>
@@ -4068,21 +4222,21 @@ function Stream({ go }) {
                 <span className="gc">{rows.length} findings</span>
               </div>
             )}
-            {rows.slice(0, 18).map((f, i) => (
+            {rows.slice(0, 40).map((f, i) => (
               <div key={f.id + i} className="find-row"
                    onClick={() => go('stream', 'finding:' + f.id)}>
-                <span className="ts">{f.ts}</span>
-                <span className="src">{f.pod}</span>
-                <span className="tx">… {f.match} … · {f.doc}</span>
-                <span className={`chip chip--${f.severity}`}>{f.category}</span>
-                <span className="mono" style={{fontSize:11, color:'var(--ink-faint)'}}>{f.tenant}</span>
-                <span className="chip">{f.action}</span>
+                <span className="ts" title={f.ts}>{fmtWallClock(f.ts)}</span>
+                <span className="src">{f.source_ip || '—'}</span>
+                <span className="tx">… {f.text} …</span>
+                <span className={`chip chip--${f.severity}`} title={f.category}>{f.sub_category || f.category}</span>
+                <span className="mono" style={{fontSize:11, color:'var(--ink-faint)'}}>{f.confidence != null ? f.confidence.toFixed(2) : '—'}</span>
+                <span className="chip">{f.severity}</span>
                 <span className="arrow">›</span>
               </div>
             ))}
-            {rows.length > 18 && (
+            {rows.length > 40 && (
               <div style={{padding:'8px 4px', fontFamily:"'JetBrains Mono', monospace", color:'var(--ink-soft)', fontSize:13}}>
-                … +{rows.length - 18} more in this group
+                … +{rows.length - 40} more in this group
               </div>
             )}
           </React.Fragment>
@@ -4092,108 +4246,169 @@ function Stream({ go }) {
   );
 }
 
-// Finding Detail — full page, drilled in from the stream
+// Finding Detail — full page, drilled in from the stream.
+// Fetches the same /v1/findings list and looks up by id so a fresh deep
+// link works even without prior stream state in memory.
 function FindingDetail({ id, back }) {
-  const f = FINDINGS_FIXT.find(x => x.id === id) || FINDINGS_FIXT[0];
+  const fx = window.useSiphonApi('/v1/findings?limit=500');
   const { PageBar } = window;
+  const list = (fx.data && fx.data.findings) || [];
+  const f = list.find(x => x.id === id);
+
+  if (!fx.loading && !f) {
+    return (
+      <div>
+        <PageBar
+          crumbs={['Operate', 'Findings', id]}
+          title="Finding not found"
+          subtitle="This finding is no longer in the ring buffer."
+          actions={<button className="btn ghost" onClick={back}>‹ Back to console</button>}
+        />
+        <div className="note" style={{borderColor:'var(--amber)', color:'var(--amber)', background:'var(--amber-wash)'}}>
+          Ring size is bounded ({fx.data ? fx.data.capacity : '—'}). Older
+          findings fall off as new ones arrive. Run a fresh scan to populate.
+        </div>
+      </div>
+    );
+  }
+  if (!f) {
+    return <div className="muted" style={{padding:30, textAlign:'center'}}>loading…</div>;
+  }
+
   const sev = f.severity;
+  const others = list.filter(x => x.category === f.category && x.id !== f.id).slice(0, 5);
+  const sameReq = list.filter(x => x.request_id === f.request_id && x.id !== f.id);
   return (
     <div>
       <PageBar
-        crumbs={['Overview', 'Findings', f.id]}
+        crumbs={['Operate', 'Findings', f.id]}
         title={`${f.category} match · ${f.id}`}
-        subtitle={`${f.pod} · tenant ${f.tenant} · ${f.ts}`}
+        subtitle={`source ${f.source_ip} · request ${f.request_id} · ${f.ts}`}
         actions={<>
+          <window.LivePill source={fx.source} onClick={fx.refetch} />
           <button className="btn ghost" onClick={back}>‹ Back to console</button>
           <button className="btn">Mark FP</button>
-          <button className="btn">Create issue</button>
           <button className="btn primary">Acknowledge</button>
         </>}
       />
 
       <div className="finding-hero">
         <div className="box">
-          <div className="box-title"><span className="t">Match &amp; context</span><span className="k">redacted for display</span></div>
+          <div className="box-title"><span className="t">Match &amp; context</span><span className="k">from /v1/findings</span></div>
 
-          <div className="label" style={{marginBottom:4}}>Matched value (HMAC · tokenized)</div>
+          <div className="label" style={{marginBottom:4}}>Matched value</div>
           <div className="mono" style={{
             fontSize:14, padding:'8px 10px',
             background: 'var(--amber-wash)',
             border:'1.5px solid var(--amber)',
             borderRadius:2, marginBottom:12
-          }}>{f.match}</div>
+          }}>{f.text}</div>
 
-          <div className="label" style={{marginBottom:4}}>Surrounding context (±120 chars)</div>
-          <div className="mono" style={{fontSize:12, lineHeight:1.7, padding:'10px 12px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:2}}>
-            Hi support team, please charge my company card <mark style={{background:'var(--accent-wash)', padding:'0 3px'}}>{f.match}</mark> exp 05/29 and send the invoice to billing@{f.tenant}.com. Reference order 4821-A. Apologies for the previous decline — the bank was asking for 3DS verification.
+          <div className="label" style={{marginBottom:4}}>Span</div>
+          <div className="mono" style={{fontSize:12, lineHeight:1.7, padding:'10px 12px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:2, marginBottom:12}}>
+            offset {f.span ? f.span[0] : '—'} → {f.span ? f.span[1] : '—'} ({f.span ? (f.span[1] - f.span[0]) : 0} chars)
           </div>
 
-          <div className="label" style={{marginTop:14, marginBottom:6}}>Detection signals</div>
+          <div className="label" style={{marginTop:14, marginBottom:6}}>Signals (from scanner)</div>
           <div style={{fontSize:13, lineHeight:1.9}}>
-            <div className="tick">Pattern <span className="mono">pci.visa.v3</span> → regex + Luhn ✓ · BIN = Visa US</div>
-            <div className="tick">Context classifier <span className="mono">invoice-intent</span> · 0.88</div>
-            <div className="tick">EDM vault <span className="mono">customer-ccs</span> · HMAC match</div>
-            <div className="cross">Allowlist check · not matched</div>
-            <div className="tick">NFKC normalized · no homoglyph evasion</div>
+            <div className="tick">Category <span className="mono">{f.category}</span>{f.sub_category ? <> · sub <span className="mono">{f.sub_category}</span></> : null}</div>
+            <div className="tick">Confidence <span className="mono">{f.confidence != null ? f.confidence.toFixed(3) : '—'}</span></div>
+            <div className={f.has_context ? 'tick' : 'cross'}>Context {f.has_context ? 'matched' : 'not matched'}</div>
+            <div className="tick">Severity <span className="mono">{f.severity}</span> (derived)</div>
           </div>
 
-          <div className="label" style={{marginTop:14, marginBottom:6}}>Audit · what happened</div>
-          <div className="mono" style={{fontSize:11, lineHeight:1.8, background:'var(--bg-1)', padding:10, border:'1px dashed var(--line-soft)'}}>
-            {f.ts}.142  ingest   · {f.pod}/pod-14 · bytes=2,812 mime=application/pdf<br/>
-            {f.ts}.189  parse    · pdf · 3 pages · 12,004 tokens<br/>
-            {f.ts}.201  patterns · 4 candidates (3 dropped by classifier)<br/>
-            {f.ts}.214  policy   · #12 block-pci-egress · ACTION=BLOCK<br/>
-            {f.ts}.218  forward  · splunk-hec · hmac-signed · 412B<br/>
-            {f.ts}.219  caller   · 403 blocked · reason=content-policy
-          </div>
+          {f.metadata && Object.keys(f.metadata).length > 0 && (
+            <>
+              <div className="label" style={{marginTop:14, marginBottom:6}}>Metadata (from pattern match)</div>
+              <div className="mono" style={{fontSize:11, lineHeight:1.8, background:'var(--bg-1)', padding:10, border:'1px dashed var(--line-soft)'}}>
+                {Object.entries(f.metadata).map(([k, v]) => (
+                  <div key={k}><span style={{color:'var(--cyan)'}}>{k}</span> = <span style={{color:'var(--accent)'}}>{String(v)}</span></div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {sameReq.length > 0 && (
+            <>
+              <div className="label" style={{marginTop:14, marginBottom:6}}>Other findings in the same scan</div>
+              <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, lineHeight:1.8}}>
+                {sameReq.map(r => (
+                  <div key={r.id}>
+                    <span className={`chip chip--${r.severity}`} style={{fontSize:9}}>{r.severity}</span>{' '}
+                    <span style={{color:'var(--cyan)'}}>{r.category}</span> / {r.sub_category}{' '}
+                    · <span style={{color:'var(--ink-bright)'}}>{r.text}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         <div>
           <div className="box" style={{marginBottom: 'var(--gap)'}}>
-            <div className="box-title"><span className="t">Verdict</span><span className="k">policy outcome</span></div>
+            <div className="box-title"><span className="t">Record</span><span className="k">raw shape</span></div>
             <div style={{display:'flex', gap:8, alignItems:'center', marginBottom:8}}>
-              <span className={`chip chip--${sev}`} style={{fontSize:12, padding:'4px 12px'}}>
-                {f.action.toUpperCase()}
-              </span>
-              <span className="chip chip--teal">policy #12</span>
+              <span className={`chip chip--${sev}`} style={{fontSize:12, padding:'4px 12px'}}>{f.severity.toUpperCase()}</span>
+              <span className="chip">{f.category}</span>
             </div>
             <div className="kv">
               <span className="k">Finding id</span>      <span className="v mono">{f.id}</span>
+              <span className="k">Request id</span>      <span className="v mono">{f.request_id}</span>
+              <span className="k">Timestamp</span>       <span className="v mono">{f.ts}</span>
+              <span className="k">Source IP</span>       <span className="v mono">{f.source_ip}</span>
               <span className="k">Category</span>        <span className="v">{f.category}</span>
+              <span className="k">Sub-category</span>    <span className="v">{f.sub_category || '—'}</span>
+              <span className="k">Confidence</span>      <span className="v mono">{f.confidence != null ? f.confidence.toFixed(3) : '—'}</span>
+              <span className="k">Context matched</span> <span className="v">{f.has_context ? 'yes' : 'no'}</span>
+              <span className="k">Span</span>            <span className="v mono">{f.span ? f.span.join('..') : '—'}</span>
               <span className="k">Severity</span>        <span className="v">{f.severity}</span>
-              <span className="k">Tenant</span>          <span className="v">{f.tenant}</span>
-              <span className="k">Pod</span>             <span className="v mono">{f.pod}/pod-14</span>
-              <span className="k">Region</span>          <span className="v">us-east</span>
-              <span className="k">Pipeline</span>        <span className="v">ingest → parse → detect → policy</span>
-              <span className="k">Latency</span>         <span className="v mono">76 ms</span>
-              <span className="k">Confidence</span>      <span className="v">0.91</span>
-              <span className="k">Model</span>           <span className="v mono">classify-v2.3.1</span>
-              <span className="k">Patterns hit</span>    <span className="v mono">pci.visa.v3, ctx.invoice</span>
-              <span className="k">Forwarded to</span>    <span className="v mono">splunk-hec · #secops</span>
-              <span className="k">Retention</span>       <span className="v">hash-only · 18 months</span>
             </div>
           </div>
 
           <div className="box" style={{marginBottom: 'var(--gap)'}}>
-            <div className="box-title"><span className="t">Related</span><span className="k">same signal cluster</span></div>
-            <div style={{fontSize:13, lineHeight:1.8}}>
-              <div className="hand-b">12:41:58 — same tenant · {f.tenant}</div>
-              <div className="muted" style={{fontSize:12}}>3 PCI findings in the last 10 min</div>
-              <div className="hand-b" style={{marginTop:6}}>Doc fingerprint match</div>
-              <div className="muted" style={{fontSize:12}}>2 earlier findings in {f.doc}</div>
-              <div className="hand-b" style={{marginTop:6}}>Pattern hot-streak</div>
-              <div className="muted" style={{fontSize:12}}>pci.visa.v3 · 38 hits · last 5 min</div>
-            </div>
+            <div className="box-title"><span className="t">Related · same category</span><span className="k">{others.length} in ring</span></div>
+            {others.length === 0 ? (
+              <div className="muted" style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, padding:'6px 0'}}>none</div>
+            ) : (
+              <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.8}}>
+                {others.map(r => (
+                  <div key={r.id}>
+                    <span className="muted" title={r.ts}>{fmtWallClock(r.ts)}</span>{' '}
+                    <span style={{color:'var(--ink-bright)'}}>{r.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="box">
             <div className="box-title"><span className="t">Actions</span><span className="k">this finding</span></div>
             <div style={{display:'flex', flexDirection:'column', gap:6}}>
-              <button className="btn">Re-run with updated policy</button>
-              <button className="btn">Add to allowlist…</button>
-              <button className="btn">Open in pattern tester</button>
-              <button className="btn">Export redacted JSON</button>
-              <button className="btn ghost">View raw policy eval trace</button>
+              <button
+                className="btn primary"
+                onClick={() => {
+                  try { localStorage.setItem('c2:fp-finding', JSON.stringify(f)); } catch {}
+                  window.__c2_go && window.__c2_go('fptool');
+                }}>
+                ⚑ Flag as false positive…
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  try { navigator.clipboard.writeText(JSON.stringify(f, null, 2)); } catch {}
+                }}>
+                Copy record as JSON
+              </button>
+              <button
+                className="btn"
+                onClick={() => window.__c2_go && window.__c2_go('patterns')}>
+                Open in Patterns browser
+              </button>
+              <button
+                className="btn ghost"
+                onClick={() => window.__c2_go && window.__c2_go('livescan')}>
+                Open in Live Scan
+              </button>
             </div>
           </div>
         </div>
@@ -4202,7 +4417,7 @@ function FindingDetail({ id, back }) {
   );
 }
 
-Object.assign(window, { Stream, FindingDetail, FINDINGS_FIXT });
+Object.assign(window, { Stream, FindingDetail });
 
 </script>
 
@@ -8427,7 +8642,332 @@ function ProcessState() {
   );
 }
 
-Object.assign(window, { ApiExplorer, ScanDiff, ProcessState });
+// ---------------------------------------------------------------------------
+
+/* ===== surfaces/fptool.jsx ===== */
+// FP Troubleshooter — given a finding that was flagged from Operate →
+// Findings → Detail, help the analyst decide: is this actually a false
+// positive, and if so what's the minimum change?
+//
+// Reads the finding from localStorage (`c2:fp-finding`, set by
+// FindingDetail). Fetches /v1/allowlist to show current suppression
+// rules, /v1/patterns to show which pattern in that category most
+// likely fired, and offers a side-by-side rescan after a proposed
+// mitigation (either redact the exact match or change the surrounding
+// context) to see if something else still fires.
+
+function FPTool() {
+  const [finding, setFinding] = React.useState(null);
+  const [mitigation, setMitigation] = React.useState('replace'); // replace | remove | context
+  const [replaceWith, setReplaceWith] = React.useState('[REDACTED]');
+  const [testText, setTestText] = React.useState('');
+  const [beforeScan, setBeforeScan] = React.useState(null);
+  const [afterScan, setAfterScan] = React.useState(null);
+  const [running, setRunning] = React.useState(false);
+  const [allowKind, setAllowKind] = React.useState('text'); // text | pattern | path
+
+  React.useEffect(() => {
+    try {
+      const raw = localStorage.getItem('c2:fp-finding');
+      if (raw) setFinding(JSON.parse(raw));
+    } catch {}
+  }, []);
+
+  const allow = window.useSiphonApi('/v1/allowlist');
+  const cats = window.useSiphonApi(
+    finding ? `/v1/patterns?category=${encodeURIComponent(finding.category)}&limit=50` : '/v1/patterns?limit=0',
+    [finding && finding.category]
+  );
+  const patternHits = (cats.data && cats.data.patterns) || [];
+
+  const alreadyAllowed = React.useMemo(() => {
+    if (!finding || !allow.data) return null;
+    const e = allow.data.entries || {};
+    if ((e.texts || []).includes(finding.text)) return 'text';
+    if ((e.patterns || []).some(p => finding.sub_category && p.toLowerCase() === finding.sub_category.toLowerCase())) return 'pattern';
+    return null;
+  }, [finding, allow.data]);
+
+  // Build a reconstructed "before" text — span isn't enough alone because we
+  // don't have the original document, only the matched slice. So we give
+  // the analyst a template they can paste the real context into.
+  React.useEffect(() => {
+    if (!finding || testText) return;
+    setTestText(`Paste the surrounding context here, around the matched value:\n\n  …${finding.text}…\n\nThe scan will tell you whether this context triggers anything beyond the original pattern.`);
+  }, [finding]);
+
+  const apiUrl = window.SIPHON_API_URL();
+
+  const scan = async (text) => {
+    const r = await fetch(apiUrl.replace(/\/$/, '') + '/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, options: {} }),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  };
+
+  const runBoth = async () => {
+    if (!finding) return;
+    setRunning(true); setBeforeScan(null); setAfterScan(null);
+    try {
+      const before = await scan(testText);
+      // apply mitigation
+      let after;
+      if (mitigation === 'replace') {
+        after = testText.split(finding.text).join(replaceWith);
+      } else if (mitigation === 'remove') {
+        after = testText.split(finding.text).join('');
+      } else {
+        after = testText; // context-only; same text, different analysis (not meaningful without backend support)
+      }
+      const afterJson = await scan(after);
+      setBeforeScan(before);
+      setAfterScan(afterJson);
+    } catch (e) {
+      setBeforeScan({ error: String(e.message || e) });
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const allowlistPayload = () => {
+    if (!finding) return '';
+    const key = allowKind === 'text' ? 'texts' : allowKind === 'pattern' ? 'patterns' : 'paths';
+    const val = allowKind === 'text' ? finding.text
+              : allowKind === 'pattern' ? (finding.sub_category || finding.category)
+              : '';
+    const existing = (allow.data && allow.data.entries) || { texts: [], patterns: [], paths: [] };
+    const merged = {
+      texts: [...existing.texts],
+      patterns: [...existing.patterns],
+      paths: [...existing.paths],
+    };
+    if (val && !merged[key].includes(val)) merged[key].push(val);
+    return JSON.stringify(merged, null, 2);
+  };
+
+  if (!finding) {
+    return (
+      <div>
+        <div className="page-head">
+          <div>
+            <div className="crumbs">Engineering · FP Troubleshooter</div>
+            <h1>FP Troubleshooter</h1>
+          </div>
+        </div>
+        <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)'}}>
+          <b>No finding loaded.</b> Open a finding from <b>Operate → Findings</b>,
+          click <b>⚑ Flag as false positive…</b> on the detail page, and you'll
+          land back here with the finding context pre-filled.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Engineering · FP Troubleshooter · {finding.id}</div>
+          <h1>FP Troubleshooter</h1>
+        </div>
+        <div className="actions">
+          <span className="muted mono" style={{fontSize:11}}>target: {apiUrl}</span>
+          <button className="btn ghost" onClick={() => { try { localStorage.removeItem('c2:fp-finding'); } catch {} setFinding(null); }}>
+            Clear
+          </button>
+        </div>
+      </div>
+
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title">
+          <span className="t">Finding under review</span>
+          <span className="k">
+            {alreadyAllowed
+              ? <span className="chip chip--warn">already allowlisted ({alreadyAllowed})</span>
+              : <span className="chip chip--ghost">not in allowlist</span>}
+          </span>
+        </div>
+        <div className="kv">
+          <span className="k">Matched text</span> <span className="v mono" style={{color:'var(--amber)'}}>{finding.text}</span>
+          <span className="k">Category</span>     <span className="v">{finding.category}</span>
+          <span className="k">Sub-category</span> <span className="v">{finding.sub_category || '—'}</span>
+          <span className="k">Confidence</span>   <span className="v mono">{finding.confidence != null ? finding.confidence.toFixed(3) : '—'}</span>
+          <span className="k">Severity</span>     <span className="v"><span className={`chip chip--${finding.severity}`}>{finding.severity}</span></span>
+          <span className="k">Request</span>      <span className="v mono">{finding.request_id}</span>
+          <span className="k">Observed at</span>  <span className="v mono">{finding.ts}</span>
+        </div>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:'1fr 1fr', gap:'var(--gap)', marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title">
+            <span className="t">① Add to allowlist</span>
+            <span className="k">
+              <window.LivePill source={allow.source} onClick={allow.refetch} />
+              {' '}{allow.data && allow.data.loaded_from ? allow.data.loaded_from : 'SIPHON_ALLOWLIST_PATH unset'}
+            </span>
+          </div>
+          <div className="label" style={{marginBottom:6}}>Suppression kind</div>
+          <div style={{display:'flex', gap:6, marginBottom:10}}>
+            {['text','pattern','path'].map(k => (
+              <button key={k}
+                className="btn ghost"
+                onClick={() => setAllowKind(k)}
+                style={{padding:'4px 12px', fontSize:10,
+                  background: allowKind === k ? 'var(--accent)' : 'transparent',
+                  color: allowKind === k ? 'var(--bg-0)' : 'var(--ink)',
+                  borderColor: allowKind === k ? 'var(--accent)' : 'var(--line)'}}>
+                {k}
+              </button>
+            ))}
+          </div>
+          <div className="label" style={{marginBottom:6}}>Allowlist file (merged preview)</div>
+          <pre className="mono" style={{fontSize:11, lineHeight:1.5, padding:10, background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)', maxHeight:220, overflow:'auto', margin:0}}>
+{allowlistPayload()}
+          </pre>
+          <div style={{display:'flex', gap:6, marginTop:10}}>
+            <button className="btn" onClick={() => { try { navigator.clipboard.writeText(allowlistPayload()); } catch {} }}>
+              Copy merged JSON
+            </button>
+            <button className="btn ghost" onClick={allow.refetch}>Re-fetch allowlist</button>
+          </div>
+          <div className="margin-note" style={{marginTop:8}}>
+            write this to <b>{allow.data && allow.data.loaded_from ? allow.data.loaded_from : '$SIPHON_ALLOWLIST_PATH'}</b> and restart <b>siphon-api</b> to take effect
+          </div>
+        </div>
+
+        <div className="box">
+          <div className="box-title"><span className="t">② Rescan with mitigation</span><span className="k">verify the FP goes away</span></div>
+          <div className="label" style={{marginBottom:6}}>Surrounding context</div>
+          <textarea
+            value={testText}
+            onChange={e => setTestText(e.target.value)}
+            rows={6}
+            spellCheck={false}
+            style={{
+              width:'100%', resize:'vertical',
+              fontFamily:"'JetBrains Mono', monospace", fontSize:12, lineHeight:1.6,
+              padding:10, background:'var(--bg-1)',
+              color:'var(--ink)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)',
+            }}
+          />
+          <div style={{display:'flex', gap:6, alignItems:'center', marginTop:10, flexWrap:'wrap'}}>
+            <span className="label">Mitigation</span>
+            {['replace','remove'].map(m => (
+              <button key={m}
+                className="btn ghost"
+                onClick={() => setMitigation(m)}
+                style={{padding:'4px 10px', fontSize:10,
+                  background: mitigation === m ? 'var(--accent)' : 'transparent',
+                  color: mitigation === m ? 'var(--bg-0)' : 'var(--ink)',
+                  borderColor: mitigation === m ? 'var(--accent)' : 'var(--line)'}}>
+                {m}
+              </button>
+            ))}
+            {mitigation === 'replace' && (
+              <input
+                value={replaceWith}
+                onChange={e => setReplaceWith(e.target.value)}
+                placeholder="[REDACTED]"
+                style={{
+                  fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+                  padding:'4px 6px', background:'var(--bg-1)', color:'var(--ink)',
+                  border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', width:140
+                }}
+              />
+            )}
+            <button className="btn primary" style={{marginLeft:'auto'}} onClick={runBoth} disabled={running || !testText.trim()}>
+              {running ? 'Scanning…' : '▶ Run both'}
+            </button>
+          </div>
+          <div className="grid" style={{gridTemplateColumns:'1fr 1fr', gap:8, marginTop:12}}>
+            <div>
+              <div className="label" style={{marginBottom:4}}>Before</div>
+              {beforeScan && beforeScan.error
+                ? <div style={{color:'var(--red)', fontSize:11}}>{beforeScan.error}</div>
+                : <div className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
+                    {beforeScan ? `${beforeScan.finding_count} findings` : '—'}
+                  </div>}
+              {beforeScan && (beforeScan.findings || []).map((x, i) => (
+                <div key={i} className="mono" style={{fontSize:10.5, color:'var(--ink)', marginTop:2}}>
+                  <span className={`chip chip--${severityJS(x.category, x.confidence)}`} style={{fontSize:8}}>
+                    {severityJS(x.category, x.confidence)}
+                  </span>{' '}
+                  {x.category} · {x.sub_category || '—'} · {x.text}
+                </div>
+              ))}
+            </div>
+            <div>
+              <div className="label" style={{marginBottom:4}}>After mitigation</div>
+              <div className="mono" style={{fontSize:11, color: afterScan && afterScan.finding_count === 0 ? 'var(--safe)' : 'var(--ink-soft)'}}>
+                {afterScan ? `${afterScan.finding_count} findings` : '—'}
+              </div>
+              {afterScan && (afterScan.findings || []).map((x, i) => (
+                <div key={i} className="mono" style={{fontSize:10.5, color:'var(--ink)', marginTop:2}}>
+                  <span className={`chip chip--${severityJS(x.category, x.confidence)}`} style={{fontSize:8}}>
+                    {severityJS(x.category, x.confidence)}
+                  </span>{' '}
+                  {x.category} · {x.sub_category || '—'} · {x.text}
+                </div>
+              ))}
+              {afterScan && afterScan.finding_count === 0 && (
+                <div className="margin-note" style={{marginTop:4, color:'var(--safe)'}}>
+                  clean — the mitigation removes this match
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="box">
+        <div className="box-title">
+          <span className="t">③ Patterns in category</span>
+          <span className="k">
+            <window.LivePill source={cats.source} onClick={cats.refetch} />
+            {' '}{cats.data ? `${cats.data.total} pattern${cats.data.total===1?'':'s'} in ${finding.category}` : 'loading…'}
+          </span>
+        </div>
+        <div style={{display:'grid', gridTemplateColumns:'1.4fr 2fr 80px 60px', gap:8, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+          <span className="label">Sub-category</span><span className="label">Regex</span><span className="label">Spec.</span><span className="label">Ctx</span>
+        </div>
+        {patternHits.map((p, i) => {
+          const isLikely = p.sub_category === finding.sub_category;
+          return (
+            <div key={i} style={{display:'grid', gridTemplateColumns:'1.4fr 2fr 80px 60px', gap:8, padding:'6px 0', borderBottom:'1px dashed var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace", background: isLikely ? 'var(--bg-3)' : 'transparent'}}>
+              <span style={{color: isLikely ? 'var(--accent)' : 'var(--ink-bright)'}}>
+                {isLikely ? '▸ ' : '  '}{p.sub_category}
+              </span>
+              <span className="muted" style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={p.regex}>{p.regex}</span>
+              <span className="mono">{p.specificity.toFixed(2)}</span>
+              <span>{p.context_required ? <span className="chip chip--teal" style={{fontSize:9}}>req</span> : <span className="chip chip--ghost" style={{fontSize:9}}>—</span>}</span>
+            </div>
+          );
+        })}
+        <div className="margin-note" style={{marginTop:8}}>
+          lowering a pattern's <b>specificity</b> or requiring <b>context</b> can reduce FPs without an allowlist entry. Edit at the pattern ruleset level.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Small client-side mirror of severity_for() so the before/after dots
+// don't need another network round-trip.
+function severityJS(category, confidence) {
+  const c = (category || '').toLowerCase();
+  const critical = c.includes('credit card') || c.includes('primary account')
+    || c.includes('secret') || c.includes('medical identifier');
+  if (critical && confidence >= 0.80) return 'red';
+  if (confidence >= 0.90) return 'red';
+  if (confidence >= 0.70) return 'warn';
+  return 'safe';
+}
+
+Object.assign(window, { ApiExplorer, ScanDiff, ProcessState, FPTool });
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -8487,7 +9027,7 @@ function App() {
   const { Dashboard, Stream, FindingDetail, Pods, Policy, Patterns, Models, Assets,
           Compliance, Testing, AssureOverview, DetectOverview, Settings, Logs, Topbar, WorkspaceBar, SurfaceBar, TweaksPanel,
           Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users,
-          LiveScan, CorpusRunner, ApiExplorer, ScanDiff, ProcessState, Profiles } = window;
+          LiveScan, CorpusRunner, ApiExplorer, ScanDiff, ProcessState, FPTool, Profiles } = window;
 
   // expose go() globally so nested surfaces (e.g. DetectOverview cards) can navigate.
   React.useEffect(() => { window.__c2_go = go; }, []);
@@ -8503,6 +9043,7 @@ function App() {
       scandiff:       <ScanDiff />,
       apiex:          <ApiExplorer />,
       procstate:      <ProcessState />,
+      fptool:         <FPTool />,
       stream:         <Stream go={go} />,
       investigations: <Investigations />,
       pods:           <Pods />,

@@ -235,7 +235,11 @@ impl AuditEvent {
 /// deduplication by (timestamp, action) becomes lossy. RFC 3339 /
 /// ISO 8601 explicitly allows a fractional-seconds component, so this
 /// format is still wire-compatible with SIEM consumers.
-fn iso8601_now() -> String {
+///
+/// Exposed publicly so downstream crates (notably `siphon-api`) can
+/// tag their own structured records with the same wire format the
+/// audit log uses.
+pub fn iso8601_now() -> String {
     let dur = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default();
