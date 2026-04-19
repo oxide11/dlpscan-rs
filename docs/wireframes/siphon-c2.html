@@ -7535,47 +7535,73 @@ function PatternRegexBox({ pattern }) {
 }
 
 function PatternKeywordsBox({ pattern }) {
-  // Context keywords for (category, sub_category) live in
-  // crates/siphon-core/src/context/keywords.rs and aren't returned by
-  // /v1/patterns today. Honest empty state until Phase 1b adds the
-  // 'context_keywords' field to the patterns response.
+  // Context keywords + proximity are served by /v1/patterns (Phase 1b).
+  // Toggles / add / remove land in Phase 5 via the overrides layer.
+  const kws = pattern.context_keywords || [];
   return (
     <div className="box">
       <div className="box-title">
         <span className="t">Context keywords</span>
         <span className="k">
+          {kws.length > 0
+            ? <>{kws.length} keyword{kws.length === 1 ? '' : 's'} · </>
+            : null}
           {pattern.context_required
-            ? <>requirement: <b>required</b> · at least one keyword must appear near the match</>
-            : <>requirement: <b>optional</b> · keywords boost confidence but aren't gating</>}
+            ? <>requirement: <b>required</b> · at least one must appear within the proximity window</>
+            : <>requirement: <b>optional</b> · boost confidence but don't gate emission</>}
         </span>
       </div>
-      <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:12, lineHeight:1.7}}>
-        Keyword list not exposed by <span className="mono">/v1/patterns</span> yet — the map lives in
-        <span className="mono"> crates/siphon-core/src/context/keywords.rs</span> keyed by <span className="mono">(category, sub_category)</span>.
-        <br/>
-        <b>Phase 1b</b> adds a <span className="mono">context_keywords</span> field to the response so we can render + toggle them here.
-        <b> Phase 5</b> enables add/remove and per-keyword enable/disable through the overrides layer.
-      </div>
+      {kws.length === 0 ? (
+        <div className="note" style={{borderColor:'var(--line-strong)', background:'var(--bg-1)', color:'var(--ink-soft)', fontSize:12, lineHeight:1.7}}>
+          No dedicated keyword list for <span className="mono">({pattern.category}, {pattern.sub_category})</span>.
+          {pattern.context_required
+            ? <> Context is marked <b>required</b> but the scanner falls through to category-level keywords when no sub-category entry exists.</>
+            : <> This pattern relies on the regex + validators; context keywords would be additive.</>}
+          <br/>
+          <b>Phase 5</b> enables adding a keyword set + per-keyword toggle for this pattern via the overrides layer.
+        </div>
+      ) : (
+        <>
+          <div style={{display:'flex', flexWrap:'wrap', gap:4, padding:'4px 0'}}>
+            {kws.map((kw, i) => (
+              <span key={i}
+                    className="chip chip--teal"
+                    title="read-only in Phase 1b · per-keyword toggle + add/remove ship in Phase 5"
+                    style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11, cursor:'default'}}>
+                {kw}
+              </span>
+            ))}
+          </div>
+          <div className="margin-note" style={{marginTop:8}}>
+            Keywords are matched case-insensitively via Aho-Corasick. Per-keyword enable/disable + add/remove + fuzzy-match toggle ship with the overrides layer (<b>Phase 5</b>).
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
 function PatternProximityBox({ pattern }) {
-  // Proximity = how close (in characters, by default) a context keyword
-  // must appear to the matched span for it to count as 'context matched'.
-  // Today the scanner uses a single compile-time default from
-  // crates/siphon-core/src/context/mod.rs; per-pattern override ships in
-  // Phase 5 alongside keyword add/remove.
-  const DEFAULT_WINDOW_CHARS = 40;
+  // Proximity is served by /v1/patterns (Phase 1b) — pulled from the
+  // ContextEntry.distance for this (category, sub_category). Falls
+  // back to siphon-core's DEFAULT_DISTANCE (50 chars) when the pattern
+  // has no dedicated keyword entry.
+  const windowChars = pattern.proximity_chars != null ? pattern.proximity_chars : 50;
+  const hasKeywords = (pattern.context_keywords || []).length > 0;
   return (
     <div className="box">
       <div className="box-title">
         <span className="t">Proximity</span>
-        <span className="k">context match window · tune ships in Phase 5</span>
+        <span className="k">
+          context match window ·{' '}
+          {hasKeywords
+            ? <>from <span className="mono">ContextEntry.distance</span></>
+            : <>siphon-core default · no dedicated entry</>}
+        </span>
       </div>
       <div style={{padding:'4px 0 8px'}}>
         <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:8}}>
-          <span className="mono" style={{fontSize:18, color:'var(--accent)', minWidth:60}}>±{DEFAULT_WINDOW_CHARS}</span>
+          <span className="mono" style={{fontSize:18, color:'var(--accent)', minWidth:60}}>±{windowChars}</span>
           <span className="muted mono" style={{fontSize:11}}>chars around the match</span>
         </div>
         {/* visual: matched span centre with the proximity window either side */}
@@ -7589,7 +7615,8 @@ function PatternProximityBox({ pattern }) {
           </div>
         </div>
         <div className="margin-note" style={{marginTop:8}}>
-          Compile-time default is <span className="mono">{DEFAULT_WINDOW_CHARS} chars</span> on either side of the match span.
+          The window expands <span className="mono">±{windowChars}</span> chars around the matched span;
+          context keywords must land inside it to satisfy the <i>context required</i> gate.
           Per-pattern override + unit switch (chars vs tokens vs lines) lands with the overrides layer
           (<b>Phase 5</b>). Change history (<b>Phase 7</b>) will record proximity changes alongside regex/keyword edits.
         </div>

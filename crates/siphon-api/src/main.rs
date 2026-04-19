@@ -685,6 +685,12 @@ struct PatternItem {
     case_insensitive: bool,
     specificity: f64,
     context_required: bool,
+    // Phase 1b: context keywords + proximity window, pulled from
+    // siphon_core::context::CONTEXT_KEYWORDS for the matching
+    // (category, sub_category) tuple. Empty Vec + default distance
+    // means no dedicated keyword list for this pattern.
+    context_keywords: Vec<&'static str>,
+    proximity_chars: usize,
 }
 
 #[derive(Serialize)]
@@ -702,16 +708,41 @@ async fn list_patterns(Query(q): Query<PatternsQuery>) -> Json<PatternsResponse>
     };
     let total = filtered.len();
     let cap = q.limit.unwrap_or(500).min(5_000);
+
+    // Build a (category, sub_category) → ContextEntry lookup once per
+    // request. Linear scan over CONTEXT_KEYWORDS for every pattern
+    // would be O(n²); this keeps it O(n). ContextEntry is Copy so the
+    // map value is owned.
+    let ctx_lookup: std::collections::HashMap<
+        (&'static str, &'static str),
+        siphon_core::context::ContextEntry,
+    > = siphon_core::context::CONTEXT_KEYWORDS
+        .iter()
+        .map(|&(cat, sub, entry)| ((cat, sub), entry))
+        .collect();
+    // Fallback proximity when a pattern has no dedicated keyword entry.
+    // Mirrors DEFAULT_DISTANCE in siphon_core::context.
+    const DEFAULT_PROXIMITY: usize = 50;
+
     let patterns: Vec<PatternItem> = filtered
         .into_iter()
         .take(cap)
-        .map(|p| PatternItem {
-            category: p.category,
-            sub_category: p.sub_category,
-            regex: p.regex,
-            case_insensitive: p.case_insensitive,
-            specificity: p.specificity,
-            context_required: p.context_required,
+        .map(|p| {
+            let (context_keywords, proximity_chars) =
+                match ctx_lookup.get(&(p.category, p.sub_category)) {
+                    Some(entry) => (entry.keywords.to_vec(), entry.distance),
+                    None => (Vec::new(), DEFAULT_PROXIMITY),
+                };
+            PatternItem {
+                category: p.category,
+                sub_category: p.sub_category,
+                regex: p.regex,
+                case_insensitive: p.case_insensitive,
+                specificity: p.specificity,
+                context_required: p.context_required,
+                context_keywords,
+                proximity_chars,
+            }
         })
         .collect();
     let returned = patterns.len();
