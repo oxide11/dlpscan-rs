@@ -72,6 +72,10 @@ struct AppState {
     /// Each (action, CompiledList) tuple is consulted at emit time;
     /// allow drops, others annotate metadata.
     list_bindings: Arc<Vec<(String, CompiledList)>>,
+    /// Per-(category, sub_category) distinct-value thresholds
+    /// (Phase 9). Built from PatternOverrides::compile_unique_thresholds()
+    /// at startup; scanner tags breaches with metadata.
+    unique_thresholds: Arc<HashMap<(String, String), usize>>,
     /// Stable identifier for this pod instance (uuidv4, generated at
     /// startup). Returned by /health so the C2 can deduplicate
     /// replicas of the same Service.
@@ -193,6 +197,11 @@ struct ScanFinding {
     confidence: f64,
     has_context: bool,
     span: (usize, usize),
+    /// Scanner-annotated metadata — includes list_action /
+    /// list_matched (Phase 4.7c) and unique_count / action=block
+    /// (Phase 9). Skipped when empty so the wire stays compact.
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    metadata: std::collections::HashMap<String, String>,
 }
 
 #[derive(Serialize)]
@@ -316,6 +325,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
         runtime_patterns: Some(state.runtime_patterns.clone()),
         pattern_regex_overrides: Some(state.pattern_regex_overrides.clone()),
         list_bindings: Some(state.list_bindings.clone()),
+        max_unique_per_subcategory: Some(state.unique_thresholds.clone()),
         ..Default::default()
     };
     let matches = match scan_text_with_config(&extract.text, &config) {
@@ -368,6 +378,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
             confidence: m.confidence,
             has_context: m.has_context,
             span: (m.span.0, m.span.1),
+            metadata: m.metadata,
         })
         .collect();
 
@@ -487,6 +498,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let regex_override_count = pattern_regex_overrides.len();
     let list_bindings = Arc::new(overrides.compile_active_list_bindings());
     let list_binding_count = list_bindings.len();
+    let unique_thresholds = Arc::new(overrides.compile_unique_thresholds());
+    let unique_threshold_count = unique_thresholds.len();
 
     let pod_id = Arc::new(uuid::Uuid::new_v4().to_string());
     let started_at = Instant::now();
@@ -499,6 +512,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime_patterns,
         pattern_regex_overrides,
         list_bindings,
+        unique_thresholds,
         pod_id: pod_id.clone(),
         started_at_iso,
         started_at,
@@ -517,6 +531,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         overrides_runtime_patterns_compiled = runtime_pattern_count,
         overrides_regex_swaps_compiled = regex_override_count,
         overrides_list_bindings_active = list_binding_count,
+        overrides_unique_thresholds = unique_threshold_count,
         bind = %addr,
         "siphon-fs starting"
     );
