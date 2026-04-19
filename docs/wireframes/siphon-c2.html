@@ -9177,7 +9177,10 @@ function Settings({ tweaks, setTweak }) {
         title="Settings"
         subtitle="Platform, identity, and account configuration"
         actions={<>
-          <button className="btn ghost" onClick={() => setTab('general')}>Docs</button>
+          <button
+            className="btn ghost"
+            onClick={() => window.__c2_go && window.__c2_go('docs')}
+            title="Open the full docs browser">Docs</button>
           <button className="btn" onClick={() => setTab('general')}>Changelog</button>
         </>}
       />
