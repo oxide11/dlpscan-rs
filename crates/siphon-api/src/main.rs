@@ -896,6 +896,54 @@ async fn metrics_snapshot(State(state): State<Arc<AppState>>) -> Json<MetricsRes
     })
 }
 
+#[derive(Serialize)]
+struct VersionResponse {
+    api_version: &'static str,
+    core_version: &'static str,
+    target_triple: &'static str,
+    rust_version: &'static str,
+    build_profile: &'static str,
+    patterns_loaded: usize,
+    categories_loaded: usize,
+}
+
+async fn version() -> Json<VersionResponse> {
+    Json(VersionResponse {
+        api_version: env!("CARGO_PKG_VERSION"),
+        core_version: siphon_core::VERSION,
+        target_triple: option_env!("TARGET").unwrap_or("unknown"),
+        rust_version: option_env!("RUSTC_VERSION").unwrap_or(env!("CARGO_PKG_RUST_VERSION")),
+        build_profile: if cfg!(debug_assertions) { "debug" } else { "release" },
+        patterns_loaded: siphon_core::patterns::PATTERNS.len(),
+        categories_loaded: siphon_core::patterns::categories().len(),
+    })
+}
+
+// Small, bounded set of docs bundled at compile time. Phase-2 will
+// generalise this into a full docs browser; for now the UI needs one
+// well-known file (the changelog) surfaced in Settings.
+const CHANGELOG_MD: &str = include_str!("../../../docs/CHANGELOG.md");
+const ARCHITECTURE_MD: &str = include_str!("../../../docs/ARCHITECTURE.md");
+const README_MD: &str = include_str!("../../../README.md");
+
+#[derive(Serialize)]
+struct DocResponse {
+    path: &'static str,
+    format: &'static str,
+    content: &'static str,
+    bytes: usize,
+}
+
+async fn doc_changelog() -> Json<DocResponse> {
+    Json(DocResponse { path: "docs/CHANGELOG.md", format: "markdown", content: CHANGELOG_MD, bytes: CHANGELOG_MD.len() })
+}
+async fn doc_architecture() -> Json<DocResponse> {
+    Json(DocResponse { path: "docs/ARCHITECTURE.md", format: "markdown", content: ARCHITECTURE_MD, bytes: ARCHITECTURE_MD.len() })
+}
+async fn doc_readme() -> Json<DocResponse> {
+    Json(DocResponse { path: "README.md", format: "markdown", content: README_MD, bytes: README_MD.len() })
+}
+
 // ---------------------------------------------------------------------------
 // Tier 2 — process-state endpoints
 // ---------------------------------------------------------------------------
@@ -1351,6 +1399,10 @@ async fn main() {
         .route("/v1/edm", get(list_edm_vaults))
         .route("/v1/lsh", get(list_lsh_vaults))
         .route("/v1/findings", get(list_findings))
+        .route("/v1/version", get(version))
+        .route("/v1/docs/changelog", get(doc_changelog))
+        .route("/v1/docs/architecture", get(doc_architecture))
+        .route("/v1/docs/readme", get(doc_readme))
         .layer(middleware::from_fn(security_headers))
         .layer(middleware::from_fn_with_state(
             state.clone(),
