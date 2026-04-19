@@ -1,0 +1,45 @@
+# Ingress — fronts both services on a single host so the admin
+# console (siphon-c2.html) can talk to them with one base URL. Path
+# shape:
+#   /api/v1/*  → siphon-api (for the admin console's existing
+#                 window.SIPHON_API_URL() wiring)
+#   /api/scan  → siphon-api POST /scan for text
+#   /api/*     → siphon-api fallback
+#   /fs/scan   → siphon-fs POST /scan for file uploads
+#   /fs/*      → siphon-fs (health, ready)
+#
+# Requires nginx-ingress-controller in the cluster. The lab-up script
+# installs it via the standard kind manifest.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: siphon-lab
+  namespace: siphon-lab
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    # Headroom for the extractor — must be >= DefaultBodyLimit in
+    # siphon-fs (64MB) or uploads get rejected at the ingress.
+    nginx.ingress.kubernetes.io/proxy-body-size: "64m"
+    # File parsers (PDF, archives) can be slow — give the proxy
+    # enough time before it declares a 504.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
+    # Strip /api or /fs prefix before proxying.
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /api(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: siphon-api
+                port: { number: 8080 }
+          - path: /fs(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: siphon-fs
+                port: { number: 8081 }

@@ -1,0 +1,85 @@
+# siphon-api — text /scan service. 2 replicas to exercise rolling
+# restart behaviour once Phase 6 auto-roll lands. For single-replica
+# dev, scale to 1 with `kubectl scale`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: siphon-api
+  namespace: siphon-lab
+  labels:
+    app.kubernetes.io/name: siphon-api
+    app.kubernetes.io/part-of: siphon
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0   # drain-one-at-a-time — no scan gaps on roll
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: siphon-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: siphon-api
+        app.kubernetes.io/part-of: siphon
+    spec:
+      terminationGracePeriodSeconds: 45  # headroom for SIGTERM drain (Phase 5)
+      containers:
+        - name: siphon-api
+          image: siphon-api:lab
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: SIPHON_CORS_ORIGINS
+              value: "*"
+            - name: SIPHON_OVERRIDES_PATH
+              value: /etc/siphon/overrides.json
+            - name: RUST_LOG
+              value: info
+          volumeMounts:
+            - name: overrides
+              mountPath: /etc/siphon
+              readOnly: true
+          # Liveness: process is alive. Readiness: process can serve —
+          # Phase 3 gates /ready on overrides parsing clean.
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /ready, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+      volumes:
+        - name: overrides
+          configMap:
+            name: siphon-overrides
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: siphon-api
+  namespace: siphon-lab
+  labels:
+    app.kubernetes.io/name: siphon-api
+    app.kubernetes.io/part-of: siphon
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: siphon-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
