@@ -18,6 +18,7 @@ pub mod findings_ring;
 pub mod lsh;
 pub mod models;
 pub mod normalize;
+pub mod overrides;
 pub mod patterns;
 pub mod scanner;
 pub mod scoring;
