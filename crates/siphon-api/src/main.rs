@@ -1234,6 +1234,185 @@ async fn overrides_apply(
     }))
 }
 
+// ─── /v1/overrides/roll (Phase 6) ───────────────────────────────
+//
+// Triggers a rolling restart of both siphon Deployments by patching
+// each one's `spec.template.metadata.annotations.siphon.io/rolledAt`
+// to the current ISO8601 timestamp — the standard
+// `kubectl rollout restart` behaviour, expressed directly via the
+// apps/v1 API. Compiled in behind the `k8s-roll` cargo feature so
+// non-k8s builds stay lean.
+//
+// Without the feature: endpoint returns 501 with an operational
+// hint. Auto-roll after /apply (chaining) isn't wired yet — apply
+// still returns restart_required=true. A follow-up chains them.
+
+#[cfg(feature = "k8s-roll")]
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct RollRequest {
+    /// Kubernetes namespace hosting the Deployments. Defaults to the
+    /// pod's own namespace (read from the service-account mount) or
+    /// SIPHON_K8S_NAMESPACE if the ServiceAccount isn't mounted
+    /// (e.g. local `kubectl port-forward` into a cluster that the
+    /// pod itself isn't in).
+    namespace: Option<String>,
+    /// Deployment names to roll. Defaults to ["siphon-api",
+    /// "siphon-fs"] — the lab's two-Deployment layout.
+    deployments: Option<Vec<String>>,
+}
+
+#[cfg(feature = "k8s-roll")]
+#[derive(Serialize)]
+struct RollOutcome {
+    deployment: String,
+    namespace: String,
+    status: &'static str, // "rolled" | "skipped" | "error"
+    error: Option<String>,
+}
+
+#[cfg(feature = "k8s-roll")]
+#[derive(Serialize)]
+struct RollResponse {
+    status: &'static str,
+    rolled_at: String,
+    namespace: String,
+    deployments: Vec<RollOutcome>,
+    note: &'static str,
+}
+
+#[cfg(not(feature = "k8s-roll"))]
+async fn overrides_roll(
+    _state: State<Arc<AppState>>,
+    _addr: ConnectInfo<SocketAddr>,
+    // Accept + ignore a body so the same client code works against
+    // builds with or without the feature.
+    _body: Option<Json<serde_json::Value>>,
+) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ErrorResponse {
+            error:
+                "siphon-api was built without the `k8s-roll` feature — \
+                 rebuild with `cargo build --features k8s-roll` or roll \
+                 manually with `kubectl -n <ns> rollout restart \
+                 deployment/siphon-api deployment/siphon-fs`"
+                    .to_string(),
+        }),
+    )
+}
+
+#[cfg(feature = "k8s-roll")]
+async fn overrides_roll(
+    State(_state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    maybe_req: Option<Json<RollRequest>>,
+) -> Result<Json<RollResponse>, (StatusCode, Json<ErrorResponse>)> {
+    use k8s_openapi::api::apps::v1::Deployment;
+    use kube::{
+        api::{Api, Patch, PatchParams},
+        Client,
+    };
+
+    let req: RollRequest = maybe_req.map(|j| j.0).unwrap_or_default();
+
+    // Namespace resolution:
+    //   1. explicit request body field
+    //   2. SIPHON_K8S_NAMESPACE env override
+    //   3. in-cluster service-account mount
+    //   4. "default"
+    let namespace = req
+        .namespace
+        .or_else(|| std::env::var("SIPHON_K8S_NAMESPACE").ok())
+        .or_else(|| {
+            std::fs::read_to_string("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+                .ok()
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_else(|| "default".to_string());
+
+    let deployments = req
+        .deployments
+        .unwrap_or_else(|| vec!["siphon-api".to_string(), "siphon-fs".to_string()]);
+
+    let client = Client::try_default().await.map_err(|e| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                error: format!(
+                    "kube client init failed — not in a cluster? no kubeconfig? · {e}"
+                ),
+            }),
+        )
+    })?;
+    let api: Api<Deployment> = Api::namespaced(client, &namespace);
+
+    let rolled_at = siphon_core::audit::iso8601_now();
+    // Strategic-merge patch: bumping the annotation triggers a
+    // rollout because PodTemplate's hash changes. Mirrors kubectl's
+    // `kubectl.kubernetes.io/restartedAt` convention but with our
+    // own key so we can audit which roller poked each pod.
+    let patch = serde_json::json!({
+        "spec": {
+            "template": {
+                "metadata": {
+                    "annotations": {
+                        "siphon.io/rolledAt": rolled_at,
+                    }
+                }
+            }
+        }
+    });
+    let pp = PatchParams::default();
+
+    let mut outcomes = Vec::with_capacity(deployments.len());
+    for name in &deployments {
+        match api
+            .patch(name, &pp, &Patch::Strategic(&patch))
+            .await
+        {
+            Ok(_) => outcomes.push(RollOutcome {
+                deployment: name.clone(),
+                namespace: namespace.clone(),
+                status: "rolled",
+                error: None,
+            }),
+            Err(e) => outcomes.push(RollOutcome {
+                deployment: name.clone(),
+                namespace: namespace.clone(),
+                status: "error",
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    tracing::info!(
+        source_ip = %addr.ip(),
+        namespace = %namespace,
+        deployments = ?deployments,
+        rolled = outcomes.iter().filter(|o| o.status == "rolled").count(),
+        "overrides roll triggered"
+    );
+    if let Ok(event) = AuditEvent::new("CONFIG") {
+        emit_audit(
+            event
+                .with_action("overrides_roll")
+                .with_outcome("applied")
+                .with_source_ip(&addr.ip().to_string())
+                .with_metadata("namespace", serde_json::json!(namespace))
+                .with_metadata("deployments", serde_json::json!(deployments)),
+        );
+    }
+
+    Ok(Json(RollResponse {
+        status: "rolled",
+        rolled_at,
+        namespace,
+        deployments: outcomes,
+        note: "Deployment annotations patched · k8s will cycle the pods per the rolling-update strategy",
+    }))
+}
+
 // ─── /v1/overrides/history + /revert (Phase 7) ─────────────────
 //
 // `apply` has been creating timestamped `.v<nanos>.bak` backups
@@ -2230,6 +2409,7 @@ async fn main() {
         .route("/v1/overrides/apply", post(overrides_apply))
         .route("/v1/overrides/history", get(overrides_history))
         .route("/v1/overrides/revert", post(overrides_revert))
+        .route("/v1/overrides/roll", post(overrides_roll))
         .route("/v1/docs", get(docs_index))
         .route("/v1/docs/content", get(docs_content))
         .route("/v1/docs/changelog", get(doc_changelog))

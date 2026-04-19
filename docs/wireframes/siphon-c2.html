@@ -8403,7 +8403,92 @@ function OverridesHistoryPanel() {
             directory (an auto-prune knob lands later). Reverting to a version creates a fresh
             backup of the current file first, so the revert is itself undoable.
           </div>
+
+          <RollPodsFooter />
         </>
+      )}
+    </div>
+  );
+}
+
+// Dedicated auto-roll footer — kept separate from the history list
+// so the state machine (idle / rolling / success / error / not
+// implemented) doesn't leak into the table.
+function RollPodsFooter() {
+  const [state, setState] = React.useState({ phase: 'idle', data: null, error: null });
+
+  const trigger = async () => {
+    if (!confirm('Trigger a rolling restart of siphon-api + siphon-fs via the k8s apps/v1 API?\n\nPods cycle per the Deployment rolling-update strategy; in-flight scans drain on SIGTERM.')) return;
+    setState({ phase: 'rolling', data: null, error: null });
+    try {
+      const url = window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/overrides/roll';
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const j = await r.json();
+      if (r.status === 501) {
+        setState({ phase: 'not_implemented', data: null, error: j.error || 'not implemented' });
+        return;
+      }
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      setState({ phase: 'success', data: j, error: null });
+    } catch (e) {
+      setState({ phase: 'error', data: null, error: String(e.message || e) });
+    }
+  };
+
+  return (
+    <div style={{marginTop:14, paddingTop:12, borderTop:'1px solid var(--line-soft)'}}>
+      <div style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
+        <div style={{flex:1, minWidth:240}}>
+          <div style={{fontFamily:"'Space Grotesk', sans-serif", fontWeight:600, fontSize:13, color:'var(--ink-bright)', marginBottom:2}}>
+            Auto-roll
+          </div>
+          <div className="muted" style={{fontSize:11, lineHeight:1.6}}>
+            Pokes <span className="mono">spec.template.metadata.annotations.siphon.io/rolledAt</span>
+            on the siphon Deployments, which is the apps/v1 API equivalent of{' '}
+            <span className="mono">kubectl rollout restart</span>. Pods drain on SIGTERM
+            (Phase 5) and come back up with the current overrides file. Available when
+            siphon-api is built with the <span className="mono">k8s-roll</span> feature.
+          </div>
+        </div>
+        <button
+          className="btn primary"
+          onClick={trigger}
+          disabled={state.phase === 'rolling'}
+          title="POST /v1/overrides/roll">
+          {state.phase === 'rolling' ? 'Rolling…' : '⟳ Roll pods'}
+        </button>
+      </div>
+
+      {state.phase === 'success' && state.data && (
+        <div className="note" style={{borderColor:'var(--safe)', background:'var(--accent-wash)', color:'var(--ink)', fontSize:12, marginTop:10}}>
+          <b>✓ Rolled.</b> Deployments patched at <span className="mono">{state.data.rolled_at}</span>{' '}
+          in <span className="mono">{state.data.namespace}</span>.
+          <div style={{marginTop:6, fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>
+            {(state.data.deployments || []).map(d => (
+              <div key={d.deployment}>
+                <span className={`chip chip--${d.status === 'rolled' ? 'safe' : 'red'}`} style={{fontSize:9, marginRight:6}}>
+                  {d.status}
+                </span>
+                {d.deployment}
+                {d.error && <span className="muted"> · {d.error}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {state.phase === 'not_implemented' && (
+        <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:12, marginTop:10, lineHeight:1.6}}>
+          <b>⚠ Not built in.</b> {state.error}
+        </div>
+      )}
+      {state.phase === 'error' && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', fontSize:12, marginTop:10}}>
+          <b>Roll failed:</b> {state.error}
+        </div>
       )}
     </div>
   );
