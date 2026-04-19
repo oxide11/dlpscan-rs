@@ -3967,6 +3967,30 @@ function findingsSparkline(findings, buckets = 20, windowMinutes = 10) {
   return data;
 }
 
+// Bucket findings into N buckets covering `windowMin` minutes back
+// from now. For each bucket returns { count, confSum, red, warn, safe }.
+// Used by the KPI sparklines and the density heatmap.
+function bucketFindings(findings, buckets, windowMin) {
+  const now = Date.now();
+  const windowMs = windowMin * 60 * 1000;
+  const bucketMs = windowMs / buckets;
+  const out = Array.from({ length: buckets }, () => ({ count: 0, confSum: 0, red: 0, warn: 0, safe: 0 }));
+  (findings || []).forEach(f => {
+    const t = new Date(f.ts).getTime();
+    if (isNaN(t)) return;
+    const delta = now - t;
+    if (delta < 0 || delta > windowMs) return;
+    const idx = buckets - 1 - Math.floor(delta / bucketMs);
+    if (idx < 0 || idx >= buckets) return;
+    const b = out[idx];
+    b.count++;
+    b.confSum += (f.confidence || 0);
+    const sev = f.severity === 'red' ? 'red' : f.severity === 'warn' ? 'warn' : 'safe';
+    b[sev]++;
+  });
+  return out;
+}
+
 // Tiny inline sparkline renderer — emits an SVG polyline.
 // Named MiniSpark (not Spark) to avoid colliding with the richer
 // HI-FI Spark component later in the file which takes { series } as
@@ -3983,6 +4007,30 @@ function MiniSpark({ data, height, color }) {
     <svg viewBox={`0 0 100 ${h}`} preserveAspectRatio="none" style={{width:'100%', height:h, display:'block'}}>
       <polyline points={points} fill="none" stroke={fill} strokeWidth="1.5"/>
     </svg>
+  );
+}
+
+// KPI tile — big value, sparkline on the right, delta below. The
+// caller supplies everything pre-computed so the tile stays dumb.
+function KpiTile({ label, value, series, delta, color, formatDelta }) {
+  const up = typeof delta === 'number' ? delta > 0 : (delta || '').toString().trim().startsWith('+');
+  const down = typeof delta === 'number' ? delta < 0 : (delta || '').toString().trim().startsWith('-') || (delta || '').toString().trim().startsWith('−');
+  const deltaText = formatDelta
+    ? formatDelta(delta)
+    : (typeof delta === 'number' ? (delta > 0 ? '+' : '') + delta.toFixed(1) + '%' : delta || '—');
+  return (
+    <div className="box" style={{padding:'14px 16px'}}>
+      <div className="s-label" style={{marginBottom:8}}>{label}</div>
+      <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', gap:10}}>
+        <div className="s-val" style={{color: color || 'var(--ink-bright)'}}>{value}</div>
+        <div style={{flex:'0 0 110px'}}>
+          <MiniSpark data={series} height={28} color={color || 'var(--accent)'} />
+        </div>
+      </div>
+      <div className="s-delta" style={{marginTop:6, color: up ? 'var(--safe)' : down ? 'var(--red)' : 'var(--ink-soft)'}}>
+        {deltaText}
+      </div>
+    </div>
   );
 }
 
@@ -4012,6 +4060,32 @@ function DashV1_Ops_Local() {
   const findings = (fx.data && fx.data.findings) || [];
   const sparkData = findingsSparkline(findings, 20, 10);
 
+  // ── KPI strip values ──────────────────────────────────────────
+  // Findings/min: buckets of 20s each for 20 minutes, the last 3
+  // buckets (=60s) summed gives the per-minute rate.
+  const fpmBuckets = bucketFindings(findings, 20, 20);
+  const fpmSeries = fpmBuckets.map(b => b.count);
+  const findingsPerMin = fpmSeries.slice(-3).reduce((a, b) => a + b, 0); // last 60s
+  const fpmPrev = fpmSeries.slice(-6, -3).reduce((a, b) => a + b, 0);
+  const fpmDelta = fpmPrev > 0 ? ((findingsPerMin - fpmPrev) / fpmPrev) * 100 : 0;
+
+  // Mean confidence: avg over the ring, plus per-bucket for sparkline.
+  const mcBuckets = bucketFindings(findings, 20, 20);
+  const mcSeries = mcBuckets.map(b => b.count ? (b.confSum / b.count) * 100 : 0);
+  const meanConf = findings.length
+    ? (findings.reduce((a, f) => a + (f.confidence || 0), 0) / findings.length) * 100
+    : 0;
+  const mcPrev = mcSeries.slice(-6, -3).filter(v => v > 0);
+  const mcPrevAvg = mcPrev.length ? mcPrev.reduce((a, b) => a + b, 0) / mcPrev.length : 0;
+  const mcCur = mcSeries.slice(-3).filter(v => v > 0);
+  const mcCurAvg = mcCur.length ? mcCur.reduce((a, b) => a + b, 0) / mcCur.length : meanConf;
+  const mcDelta = mcPrevAvg ? (mcCurAvg - mcPrevAvg) : 0;
+
+  // Scans/sec: derived from total counters + uptime. Rolling delta
+  // between polls would be more accurate but needs state we don't
+  // currently keep in this component.
+  const scansPerSec = m.uptime_secs ? (m.scans_total || 0) / m.uptime_secs : 0;
+
   const overall = [mx.source, fx.source, ix.source].includes('offline') ? 'offline'
     : [mx.source, fx.source, ix.source].every(s => s === 'live') ? 'live' : 'loading';
 
@@ -4032,36 +4106,39 @@ function DashV1_Ops_Local() {
         </span>
       </div>
 
-      {/* ── 1 · Top metrics strip ─────────────────────────────── */}
+      {/* ── 1 · KPI strip ─────────────────────────────────────── */}
       <div className="grid grid-4" style={{marginBottom: 'var(--gap)'}}>
-        <div className="box"><div className="stat">
-          <span className="s-label">Scans total</span>
-          <span className="s-val">{m.scans_total != null ? m.scans_total.toLocaleString() : '—'}</span>
-          <span className="s-delta">since boot</span>
-          <div style={{marginTop:6}}><MiniSpark data={sparkData} height={28} color="var(--accent)" /></div>
-        </div></div>
-        <div className="box"><div className="stat">
-          <span className="s-label">Findings total</span>
-          <span className="s-val">{m.findings_total != null ? m.findings_total.toLocaleString() : '—'}</span>
-          <span className="s-delta">{findings.length} in ring</span>
-          <div style={{marginTop:6, height:28}} />
-        </div></div>
-        <div className="box"><div className="stat">
-          <span className="s-label">Errors</span>
-          <span className="s-val" style={{color: (m.scan_errors_total || 0) > 0 ? 'var(--red)' : 'var(--ink-bright)'}}>
-            {m.scan_errors_total != null ? m.scan_errors_total : '—'}
-          </span>
-          <span className="s-delta">
-            {m.scans_total ? ((m.scan_errors_total || 0) / m.scans_total * 100).toFixed(2) + '% rate' : '—'}
-          </span>
-          <div style={{marginTop:6, height:28}} />
-        </div></div>
-        <div className="box"><div className="stat">
-          <span className="s-label">Uptime</span>
-          <span className="s-val">{fmtUptime(m.uptime_secs)}</span>
-          <span className="s-delta">{m.patterns_loaded != null ? `${m.patterns_loaded} patterns · ${m.categories_loaded} cats` : ''}</span>
-          <div style={{marginTop:6, height:28}} />
-        </div></div>
+        <KpiTile
+          label="Findings / min"
+          value={findingsPerMin}
+          series={fpmSeries}
+          delta={fpmDelta}
+          color="var(--accent)"
+        />
+        <KpiTile
+          label="Errors · total"
+          value={m.scan_errors_total != null ? m.scan_errors_total : '—'}
+          series={[0, 0, 0, 0]}
+          delta={m.scans_total ? ((m.scan_errors_total || 0) / m.scans_total * 100).toFixed(2) + '% rate' : '—'}
+          color="var(--red)"
+          formatDelta={(d) => d}
+        />
+        <KpiTile
+          label="Mean confidence"
+          value={findings.length ? meanConf.toFixed(1) + '%' : '—'}
+          series={mcSeries}
+          delta={mcDelta}
+          color="var(--cyan)"
+          formatDelta={(d) => d > 0 ? '+' + d.toFixed(1) + ' pp' : d < 0 ? d.toFixed(1) + ' pp' : '— steady'}
+        />
+        <KpiTile
+          label="Scans / sec"
+          value={scansPerSec > 0 ? scansPerSec.toFixed(2) : '—'}
+          series={fpmSeries}
+          delta={`uptime ${fmtUptime(m.uptime_secs)} · ${m.scans_total != null ? m.scans_total.toLocaleString() : '—'} total`}
+          color="var(--violet)"
+          formatDelta={(d) => d}
+        />
       </div>
 
       {/* ── 2 · Recent findings · full width ──────────────────── */}
