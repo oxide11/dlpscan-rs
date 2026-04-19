@@ -7799,17 +7799,62 @@ function __siphonCatsEqual(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+// localStorage hand-off for the post-apply restart-required state so
+// reloading the page doesn't lose the fact that a roll is pending.
+// Keyed by pod URL so the same browser talking to multiple pods
+// (Phase 4.5) can track them independently.
+const APPLY_PENDING_KEY = 'c2:apply-pending';
+function readApplyPending() {
+  try { return JSON.parse(localStorage.getItem(APPLY_PENDING_KEY) || '{}'); }
+  catch { return {}; }
+}
+function writeApplyPending(state) {
+  try {
+    if (state) localStorage.setItem(APPLY_PENDING_KEY, JSON.stringify(state));
+    else localStorage.removeItem(APPLY_PENDING_KEY);
+  } catch {}
+}
+
 function PendingChangesBanner({ customCategories }) {
   const current = window.useSiphonApi('/v1/overrides/current');
+  const health  = window.useSiphonApi('/health');
   const [apply, setApply] = React.useState({ loading: false, error: null, success: null });
+  // Restart-pending bookkeeping persisted across reloads. Key by pod
+  // URL so multiple pods (Phase 4.5) don't trample each other.
+  const podUrl = window.SIPHON_API_URL();
+  const allPending = readApplyPending();
+  const podPending = allPending[podUrl] || null;
+  const [, force] = React.useState(0);
+  const bump = () => force(x => x + 1);
 
   const currentOverrides = (current.data && current.data.overrides) || {};
   const stagedWire = __siphonCustomCatsForWire(customCategories);
   const currentWire = __siphonCustomCatsForWire(currentOverrides.custom_categories);
   const dirty = !__siphonCatsEqual(stagedWire, currentWire);
 
-  // Show nothing when nothing's staged and nothing was just applied.
-  if (!dirty && !apply.success && !apply.error) return null;
+  // Roll detection: if the pod's started_at moved past the apply
+  // timestamp (or away from the pre-apply baseline), the pod has
+  // restarted and /current should now reflect the applied state.
+  // Clear the pending flag so the banner stops bugging the analyst.
+  const rolled = (
+    podPending
+    && health.data
+    && health.data.started_at
+    && health.data.started_at !== podPending.prior_started_at
+  );
+  React.useEffect(() => {
+    if (rolled) {
+      const next = { ...readApplyPending() };
+      delete next[podUrl];
+      writeApplyPending(Object.keys(next).length ? next : null);
+      current.refetch();
+      bump();
+    }
+  }, [rolled, podUrl]);
+
+  // Show nothing when nothing's staged, nothing was just applied,
+  // and no pod roll is pending.
+  if (!dirty && !apply.success && !apply.error && !podPending) return null;
 
   const doApply = async () => {
     setApply({ loading: true, error: null, success: null });
@@ -7829,7 +7874,23 @@ function PendingChangesBanner({ customCategories }) {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
       setApply({ loading: false, error: null, success: j });
+      // Stash the pre-apply startup timestamp so the banner can
+      // detect when the pod has actually rolled (Phase 4c). Keyed by
+      // pod URL so multi-pod (Phase 4.5) stays clean.
+      const priorStart = health.data && health.data.started_at;
+      if (priorStart) {
+        const pending = readApplyPending();
+        pending[podUrl] = {
+          apply_time: new Date().toISOString(),
+          prior_started_at: priorStart,
+          prior_pod_id: health.data.pod_id,
+          written_path: j.written_path,
+          backup_path: j.backup_path || null,
+        };
+        writeApplyPending(pending);
+      }
       current.refetch();
+      bump();
     } catch (e) {
       setApply({ loading: false, error: String(e.message || e), success: null });
     }
@@ -7838,19 +7899,74 @@ function PendingChangesBanner({ customCategories }) {
   const catCount = stagedWire.length;
   const patCount = stagedWire.reduce((a, c) => a + (c.patterns || []).length, 0);
 
-  // Recent-apply success banner — stays until dirty flips back to
-  // false (which happens automatically after /v1/overrides/current
-  // reflects the written state).
-  if (apply.success && !dirty) {
+  // Restart-required branch: an apply has landed on disk but the
+  // pod hasn't restarted yet, so the scanner is still using the old
+  // rules. Poll /health in the background (useSiphonApi already
+  // re-fetches); when started_at moves, we auto-dismiss above.
+  if (podPending && !rolled) {
+    const samePod = health.data && health.data.pod_id === podPending.prior_pod_id;
+    return (
+      <div className="note" style={{
+        borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)',
+        marginBottom:'var(--gap)', fontSize:12.5, lineHeight:1.6,
+      }}>
+        <div style={{display:'flex', alignItems:'center', gap:12, flexWrap:'wrap'}}>
+          <div style={{flex:1, minWidth:280}}>
+            <b>⏳ Restart required.</b> Overrides written to <span className="mono">{podPending.written_path}</span>
+            {podPending.backup_path && <> · backup: <span className="mono">{podPending.backup_path}</span></>}
+            . The pod at <span className="mono">{podUrl}</span> is still running
+            on rules from <span className="mono">{podPending.prior_started_at}</span> — it needs to
+            restart to pick up the new ruleset. Phase 6's kube-rs auto-roll will handle this
+            automatically; until then, roll the pod yourself:
+            <div className="mono" style={{fontSize:11, marginTop:6, padding:'6px 10px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:2, lineHeight:1.6}}>
+              kubectl -n siphon-lab rollout restart deployment/siphon-api deployment/siphon-fs<br/>
+              <span className="muted"># or in local dev:</span><br/>
+              pkill siphon-api; cargo run -p siphon-api
+            </div>
+          </div>
+          <button
+            className="btn"
+            onClick={() => { health.refetch(); current.refetch(); bump(); }}
+            title="re-check pod startup time">
+            Check status
+          </button>
+          <button
+            className="btn ghost"
+            onClick={() => {
+              const next = { ...readApplyPending() };
+              delete next[podUrl];
+              writeApplyPending(Object.keys(next).length ? next : null);
+              bump();
+            }}
+            title="stop showing this banner without verifying the roll">
+            Dismiss
+          </button>
+        </div>
+        {samePod && (
+          <div className="muted" style={{fontSize:11, marginTop:6}}>
+            pod_id still <span className="mono">{podPending.prior_pod_id ? podPending.prior_pod_id.slice(0, 8) : '—'}</span> — same instance, hasn't cycled yet
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Recent-apply success banner — shows briefly after the pod rolls
+  // (picked up by the rolled useEffect above) until dirty flips back
+  // to false. Once /current reflects the applied state, dirty is
+  // false, so this branch disappears on the next render.
+  if (apply.success && !dirty && !podPending) {
     return (
       <div className="note" style={{
         borderColor:'var(--safe)', background:'var(--accent-wash)', color:'var(--ink)',
         marginBottom:'var(--gap)', fontSize:12.5, lineHeight:1.6,
       }}>
-        <b>Applied.</b> Overrides written to <span className="mono">{apply.success.written_path}</span>
+        <b>✓ Applied and live.</b> Overrides written to <span className="mono">{apply.success.written_path}</span>
         {apply.success.backup_path && <> · previous file backed up to <span className="mono">{apply.success.backup_path}</span></>}
-        . <b>Restart required</b> — detection pods must be restarted to pick up the new rules
-        (Phase 6 will auto-roll). Refresh this view after the roll and the /current state will catch up.
+        {health.data && health.data.started_at && (
+          <> · picked up by pod at <span className="mono">{health.data.started_at}</span></>
+        )}
+        .
       </div>
     );
   }
