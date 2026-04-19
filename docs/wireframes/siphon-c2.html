@@ -5883,6 +5883,155 @@ function StreamRow({ f, onOpen, cellPad }) {
 // Finding Detail — full page, drilled in from the stream.
 // Fetches the same /v1/findings list and looks up by id so a fresh deep
 // link works even without prior stream state in memory.
+// DetectionPipeline — re-runs /scan with trace:true against the
+// finding's matched text so the analyst can see every stage in the
+// scanner pipeline and the exact moment this match was either
+// emitted or dropped. Self-contained (doesn't cross-reference the
+// Engineering TracePanel) so it can live in an earlier script block.
+const FD_STAGES = [
+  { key: 'regex',           label: 'regex' },
+  { key: 'validation',      label: 'validate' },
+  { key: 'context',         label: 'context' },
+  { key: 'ctx_required',    label: 'ctx-gate' },
+  { key: 'require_context', label: 'req-ctx' },
+  { key: 'min_confidence',  label: 'min-conf' },
+  { key: 'emit',            label: 'emit' },
+];
+function DetectionPipeline({ finding }) {
+  const [state, setState] = React.useState({ loading: true, trace: null, error: null });
+
+  React.useEffect(() => {
+    if (!finding || !finding.text) {
+      setState({ loading: false, trace: [], error: null });
+      return;
+    }
+    let cancelled = false;
+    setState(s => ({ ...s, loading: true, error: null }));
+    const url = (window.SIPHON_API_URL ? window.SIPHON_API_URL() : 'http://127.0.0.1:8080').replace(/\/$/, '') + '/scan';
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: finding.text, options: { trace: true } }),
+    })
+      .then(r => r.ok ? r.json() : r.text().then(t => Promise.reject(new Error('HTTP ' + r.status + ': ' + t))))
+      .then(j => { if (!cancelled) setState({ loading: false, trace: j.trace || [], error: null }); })
+      .catch(e => { if (!cancelled) setState({ loading: false, trace: null, error: String(e.message || e) }); });
+    return () => { cancelled = true; };
+  }, [finding && finding.id]);
+
+  // Narrow the trace to events about THIS candidate — matching
+  // category + sub_category (more forgiving than span since the
+  // rescan text is just the matched slice, not the original document).
+  const events = (state.trace || []).filter(e =>
+    e.category === finding.category &&
+    (!finding.sub_category || e.sub_category === finding.sub_category)
+  );
+  const byStage = {};
+  events.forEach(e => { byStage[e.stage] = e; });
+  const wasEmitted = events.some(e => e.outcome === 'emit');
+  const dropEvt = events.find(e => e.outcome === 'drop');
+
+  return (
+    <div className="box" style={{marginBottom:'var(--gap)'}}>
+      <div className="box-title">
+        <span className="t">Detection pipeline</span>
+        <span className="k">
+          re-run of <span className="mono">POST /scan</span> against the matched slice with <span className="mono">trace:true</span>
+        </span>
+      </div>
+
+      {state.loading && (
+        <div className="muted" style={{padding:12, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5}}>
+          tracing pipeline…
+        </div>
+      )}
+      {state.error && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)'}}>
+          <b>Error:</b> {state.error}
+        </div>
+      )}
+
+      {!state.loading && !state.error && (
+        <>
+          {/* verdict row */}
+          <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:10, flexWrap:'wrap'}}>
+            <span className={`chip chip--${wasEmitted ? 'safe' : 'red'}`} style={{fontSize:9, minWidth:50, textAlign:'center'}}>
+              {wasEmitted ? 'EMIT' : 'DROP'}
+            </span>
+            <span style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, color:'var(--ink)'}}>
+              {finding.category} / {finding.sub_category || '—'}
+            </span>
+            {typeof finding.confidence === 'number' && (
+              <span className="muted mono" style={{fontSize:11}}>confidence {finding.confidence.toFixed(3)}</span>
+            )}
+            <span className="muted mono" style={{marginLeft:'auto', fontSize:10}}>
+              {events.length} stage event{events.length === 1 ? '' : 's'}
+            </span>
+          </div>
+
+          {/* stage strip */}
+          <div style={{display:'flex', gap:2, marginBottom:10, flexWrap:'wrap'}}>
+            {FD_STAGES.map((s, si) => {
+              const e = byStage[s.key];
+              const color = !e
+                ? { bg: 'var(--bg-3)', fg: 'var(--ink-dim)', border: 'var(--line)' }
+                : e.outcome === 'emit'
+                  ? { bg: 'var(--accent-wash)', fg: 'var(--accent)', border: 'var(--accent)' }
+                  : e.outcome === 'drop'
+                    ? { bg: 'var(--red-wash)', fg: 'var(--red)', border: 'var(--red)' }
+                    : { bg: 'var(--amber-wash)', fg: 'var(--amber)', border: 'var(--amber)' };
+              return (
+                <React.Fragment key={si}>
+                  <span
+                    title={e
+                      ? `${s.label} · ${e.outcome}${e.confidence != null ? ' · conf ' + e.confidence.toFixed(3) : ''}${e.reason ? '\n' + e.reason : ''}`
+                      : `${s.label} · not reached`}
+                    style={{
+                      padding:'4px 10px',
+                      fontFamily:"'JetBrains Mono', monospace",
+                      fontSize:10,
+                      fontWeight: 600,
+                      letterSpacing:'0.08em',
+                      textTransform:'uppercase',
+                      border:'1px solid ' + color.border,
+                      color: color.fg,
+                      background: color.bg,
+                      borderRadius:'var(--radius)',
+                      borderStyle: e ? 'solid' : 'dashed',
+                    }}>
+                    {s.label}
+                  </span>
+                  {si < FD_STAGES.length - 1 && (
+                    <span style={{alignSelf:'center', color: e && e.outcome !== 'drop' ? 'var(--accent)' : 'var(--line)', fontSize:12}}>→</span>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </div>
+
+          {/* reason for the final outcome */}
+          {dropEvt && (
+            <div className="margin-note red" style={{marginTop:4}}>
+              dropped at <b>{dropEvt.stage}</b>: {dropEvt.reason}
+              {dropEvt.confidence != null && <> · confidence {dropEvt.confidence.toFixed(3)}</>}
+            </div>
+          )}
+          {!dropEvt && wasEmitted && byStage.emit && byStage.emit.confidence != null && (
+            <div className="margin-note" style={{marginTop:4}}>
+              emitted at confidence <b>{byStage.emit.confidence.toFixed(3)}</b>
+            </div>
+          )}
+          {events.length === 0 && (
+            <div className="muted mono" style={{padding:8, fontSize:11}}>
+              No stage events for this category · may have been the alt-decoding pass or a different pattern class.
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function FindingDetail({ id, back }) {
   const fx = window.useSiphonApi('/v1/findings?limit=500');
   const { PageBar } = window;
@@ -5995,6 +6144,9 @@ function FindingDetail({ id, back }) {
           <button className="btn primary">Acknowledge</button>
         </>}
       />
+
+      {/* Detection pipeline — full width above the hero grid */}
+      <DetectionPipeline finding={f} />
 
       <div className="finding-hero">
         <div className="box">
