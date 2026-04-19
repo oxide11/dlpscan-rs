@@ -2158,9 +2158,16 @@ const WORKSPACES = [
   { id: 'operate',     label: 'Operate',     hint: 'monitor · investigate',          glyph: '◈' },
   { id: 'detect',      label: 'Detect',      hint: 'rules · patterns · models',      glyph: '⤷' },
   { id: 'assure',      label: 'Assure',      hint: 'test · comply · audit',          glyph: '✓' },
-  { id: 'admin',       label: 'Admin',       hint: 'users · system · integrations',  glyph: '⚙' },
+  // 'admin' is still the internal workspace id so surface routing
+  // (crumbs, SurfaceBar filter) keeps working; label is now 'Settings'
+  // and `hidden: true` removes the tile from the top workspace bar
+  // now that the gear icon in the Topbar is the primary entry.
+  { id: 'admin',       label: 'Settings',    hint: 'users · system · integrations',  glyph: '⚙', hidden: true },
   { id: 'engineering', label: 'Engineering', hint: 'dev tools · live API',           glyph: '⌁' },
-  { id: 'docs',        label: 'Docs',        hint: 'architecture · guides · reference', glyph: '❖' },
+  // Docs is reachable via the HelpIcon popovers and the Settings →
+  // Docs button; hidden from the top workspace bar to keep primary
+  // navigation focused on Operate / Detect / Assure / Engineering.
+  { id: 'docs',        label: 'Docs',        hint: 'architecture · guides · reference', glyph: '❖', hidden: true },
 ];
 
 const SURFACES = [
@@ -2216,7 +2223,6 @@ function Topbar({ tweaks, setTweak }) {
         <span>POLYGON SIPHON</span>
         <span className="c2">· C2</span>
       </div>
-      <span className="env">PROD · us-east</span>
       <DeploymentChip />
       <span className="spacer" />
       <button className="tb-theme" onClick={() => {
@@ -2226,8 +2232,12 @@ function Topbar({ tweaks, setTweak }) {
       }} title="Cycle theme">
         {({phosphor:'◉ PHOSPHOR', amber:'◉ AMBER', ice:'◉ ICE', light:'◉ DAY'})[tweaks.theme] || '◉ PHOSPHOR'}
       </button>
-      <span className="tb-item">⌘K · Jump</span>
       <span className="tb-item">🔔 3</span>
+      <button
+        className="tb-theme"
+        onClick={() => window.__c2_go && window.__c2_go('settings')}
+        title="Settings"
+        style={{fontSize:14, lineHeight:1, padding:'3px 8px'}}>⚙</button>
       <span className="tb-user">R. Solanki · admin</span>
     </div>
   );
@@ -2265,7 +2275,7 @@ function WorkspaceBar({ current, go }) {
   const activeW = workspaceOf(current);
   return (
     <div className="wsbar">
-      {WORKSPACES.map(w => (
+      {WORKSPACES.filter(w => !w.hidden).map(w => (
         <button
           key={w.id}
           className={`wsbar-btn ${activeW === w.id ? 'active' : ''}`}
@@ -9149,6 +9159,7 @@ function Settings({ tweaks, setTweak }) {
   const tabs = [
     ['Deployment',  'deployment'],
     ['General',     'general'],
+    ['Changelog',   'changelog'],
     ['Appearance',  'appearance'],
     ['Features',    'features'],
     ['Users',       'users'],
@@ -9167,8 +9178,11 @@ function Settings({ tweaks, setTweak }) {
         title="Settings"
         subtitle="Platform, identity, and account configuration"
         actions={<>
-          <button className="btn ghost" onClick={() => setTab('general')}>Docs</button>
-          <button className="btn" onClick={() => setTab('general')}>Changelog</button>
+          <button
+            className="btn ghost"
+            onClick={() => window.__c2_go && window.__c2_go('docs')}
+            title="Open the full docs browser">Docs</button>
+          <button className="btn" onClick={() => setTab('changelog')}>Changelog</button>
         </>}
       />
 
@@ -9179,7 +9193,7 @@ function Settings({ tweaks, setTweak }) {
             <a key={k} className={tab===k?'active':''} onClick={() => setTab(k)}>{l}</a>
           ))}
           <div className="section-l">Account</div>
-          {tabs.filter(([, k]) => k === 'general' || k === 'appearance').map(([l,k]) => (
+          {tabs.filter(([, k]) => ['general','changelog','appearance'].includes(k)).map(([l,k]) => (
             <a key={k} className={tab===k?'active':''} onClick={() => setTab(k)}>{l}</a>
           ))}
           <div className="section-l">Identity &amp; access</div>
@@ -9195,6 +9209,7 @@ function Settings({ tweaks, setTweak }) {
         <div>
           {tab === 'deployment' && <DeploymentTab />}
           {tab === 'general' && <GeneralTab />}
+          {tab === 'changelog' && <ChangelogTab />}
           {tab === 'appearance' && <AppearanceTab tweaks={tweaks} setTweak={setTweak} />}
           {tab === 'features' && <FeaturesTab />}
           {tab === 'users' && <UsersTab />}
@@ -9340,113 +9355,262 @@ function ApiUrlControl() {
 }
 
 // ---------------------------------------------------------------------------
-// Very small Markdown → HTML renderer, targeted at the subset siphon's
-// docs actually use (headings, lists, code fences, inline code, bold,
-// italic, links). Intentionally tiny so we don't pull a 30kb CDN lib
-// just for a changelog. Output is injected via dangerouslySetInnerHTML;
-// we escape HTML first so user docs can't inject tags.
+// Compact Markdown → HTML renderer. Covers the subset siphon's docs
+// actually use: headings, lists, code fences (w/ lang label), inline
+// code, bold, italic, strikethrough, links, blockquotes, horizontal
+// rules, and GFM tables. Intentionally no CDN markdown lib — everything
+// below is <200 lines and works with the phosphor/amber/ice/light themes
+// because it only references CSS variables, never hardcoded colours.
+// Output is injected via dangerouslySetInnerHTML after escaping.
 function renderMarkdown(src) {
   if (!src) return '';
   const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  // Inline: code span, bold, italic, strike, links. Order matters —
+  // code span first so its contents aren't further processed.
+  const inlineMd = (s) => {
+    let t = esc(s);
+    t = t.replace(/`([^`]+)`/g,
+      '<code style="background:var(--bg-3);padding:1px 5px;border-radius:3px;'
+      + 'font-family:\'JetBrains Mono\',monospace;font-size:0.92em;'
+      + 'border:1px solid var(--line-soft);color:var(--accent)">$1</code>');
+    t = t.replace(/\*\*([^*]+)\*\*/g, '<b style="color:var(--ink-bright)">$1</b>');
+    t = t.replace(/(?<!\w)\*([^*\n]+)\*(?!\w)/g, '<i>$1</i>');
+    t = t.replace(/~~([^~]+)~~/g, '<s style="color:var(--ink-soft)">$1</s>');
+    t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener" '
+      + 'style="color:var(--accent);text-decoration:none;'
+      + 'border-bottom:1px dashed var(--accent-wash)">$1</a>');
+    return t;
+  };
+
   const lines = src.split('\n');
   const out = [];
   let inCode = false, codeLang = '', codeBuf = [];
   let inList = false, listOrdered = false;
-  const flushList = () => { if (inList) { out.push(listOrdered ? '</ol>' : '</ul>'); inList = false; } };
-  const inlineMd = (s) => {
-    let t = esc(s);
-    t = t.replace(/`([^`]+)`/g, '<code style="background:var(--bg-3);padding:0 4px;border-radius:2px;font-family:\'JetBrains Mono\',monospace;font-size:0.95em">$1</code>');
-    t = t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
-    t = t.replace(/\*([^*]+)\*/g, '<i>$1</i>');
-    t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener" style="color:var(--accent)">$1</a>');
-    return t;
+  let inBlockquote = false;
+  const flushList = () => {
+    if (inList) { out.push(listOrdered ? '</ol>' : '</ul>'); inList = false; }
   };
-  for (let raw of lines) {
+  const flushQuote = () => {
+    if (inBlockquote) { out.push('</blockquote>'); inBlockquote = false; }
+  };
+  const closeBlocks = () => { flushList(); flushQuote(); };
+
+  // Try to consume a GFM table starting at index `i`. Returns the
+  // number of lines consumed (0 if not a table).
+  const tryTable = (i) => {
+    const header = lines[i];
+    const sep = lines[i + 1];
+    if (!header || !sep) return 0;
+    if (!/\|/.test(header) || !/^\s*\|?[\s:\-|]+\|?\s*$/.test(sep)) return 0;
+    const split = (row) => row.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(c => c.trim());
+    const headerCells = split(header);
+    const aligns = split(sep).map(c => {
+      const l = c.startsWith(':');
+      const r = c.endsWith(':');
+      return l && r ? 'center' : r ? 'right' : 'left';
+    });
+    if (headerCells.length !== aligns.length) return 0;
+    const body = [];
+    let j = i + 2;
+    while (j < lines.length && /\|/.test(lines[j]) && lines[j].trim() !== '') {
+      body.push(split(lines[j]));
+      j += 1;
+    }
+    const th = headerCells.map((c, k) =>
+      `<th style="text-align:${aligns[k]};padding:6px 10px;`
+      + `border-bottom:2px solid var(--line-strong);`
+      + `font-family:'Space Grotesk',sans-serif;font-weight:600;`
+      + `color:var(--ink-bright);background:var(--bg-1)">${inlineMd(c)}</th>`
+    ).join('');
+    const rows = body.map(r =>
+      '<tr>' + r.map((c, k) =>
+        `<td style="text-align:${aligns[k] || 'left'};padding:5px 10px;`
+        + `border-bottom:1px dashed var(--line-soft);`
+        + `vertical-align:top">${inlineMd(c || '')}</td>`
+      ).join('') + '</tr>'
+    ).join('');
+    out.push(
+      '<div style="overflow-x:auto;margin:10px 0">'
+      + '<table style="border-collapse:collapse;width:100%;font-size:12.5px">'
+      + '<thead><tr>' + th + '</tr></thead>'
+      + '<tbody>' + rows + '</tbody></table></div>'
+    );
+    return j - i;
+  };
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const raw = lines[i];
+
+    // Code fence (```lang) — toggle and buffer lines literally.
     if (raw.startsWith('```')) {
       if (inCode) {
-        out.push(`<pre style="background:var(--bg-1);border:1px solid var(--line-soft);border-radius:var(--radius);padding:10px;margin:8px 0;overflow:auto;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.5;color:var(--ink)"><code>${codeBuf.map(esc).join('\n')}</code></pre>`);
+        const langLabel = codeLang
+          ? `<span style="position:absolute;top:4px;right:8px;`
+            + `font-family:'JetBrains Mono',monospace;font-size:10px;`
+            + `letter-spacing:0.1em;text-transform:uppercase;`
+            + `color:var(--ink-soft);opacity:0.75">${esc(codeLang)}</span>`
+          : '';
+        out.push(
+          `<pre style="position:relative;background:var(--bg-1);`
+          + `border:1px solid var(--line-soft);border-radius:var(--radius);`
+          + `padding:${codeLang ? '22px' : '10px'} 12px 10px;margin:10px 0;`
+          + `overflow:auto;font-family:'JetBrains Mono',monospace;`
+          + `font-size:12px;line-height:1.55;color:var(--ink)">${langLabel}`
+          + `<code>${codeBuf.map(esc).join('\n')}</code></pre>`
+        );
         inCode = false; codeBuf = []; codeLang = '';
       } else {
-        flushList();
+        closeBlocks();
         inCode = true; codeLang = raw.slice(3).trim();
       }
       continue;
     }
     if (inCode) { codeBuf.push(raw); continue; }
-    const hMatch = /^(#{1,6})\s+(.+)$/.exec(raw);
-    if (hMatch) {
-      flushList();
-      const lvl = hMatch[1].length;
-      const size = ({1:22,2:18,3:15,4:13,5:12,6:11})[lvl];
-      const mt = lvl <= 2 ? 18 : 12;
-      out.push(`<h${lvl} style="font-family:'Space Grotesk',sans-serif;font-size:${size}px;font-weight:600;margin:${mt}px 0 8px;color:var(--ink-bright)">${inlineMd(hMatch[2])}</h${lvl}>`);
+
+    // Horizontal rule — `---`, `***`, `___` on their own line.
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(raw)) {
+      closeBlocks();
+      out.push('<hr style="border:none;border-top:1px solid var(--line);margin:16px 0" />');
       continue;
     }
+
+    // GFM table — peek ahead, consume whole table if header+sep match.
+    if (raw.includes('|') && i + 1 < lines.length) {
+      const consumed = tryTable(i);
+      if (consumed > 0) {
+        closeBlocks();
+        i += consumed - 1;
+        continue;
+      }
+    }
+
+    // Heading (# through ######). h1/h2 get a subtle bottom border so
+    // section boundaries read cleanly in dense docs.
+    const hMatch = /^(#{1,6})\s+(.+)$/.exec(raw);
+    if (hMatch) {
+      closeBlocks();
+      const lvl = hMatch[1].length;
+      const size = ({1:22,2:18,3:15,4:13,5:12,6:11})[lvl];
+      const mt = lvl <= 2 ? 22 : 14;
+      const border = lvl <= 2 ? 'padding-bottom:4px;border-bottom:1px solid var(--line-soft);' : '';
+      out.push(
+        `<h${lvl} style="font-family:'Space Grotesk',sans-serif;`
+        + `font-size:${size}px;font-weight:600;letter-spacing:${lvl === 1 ? '-0.01em' : '0'};`
+        + `margin:${mt}px 0 10px;color:var(--ink-bright);${border}">`
+        + `${inlineMd(hMatch[2])}</h${lvl}>`
+      );
+      continue;
+    }
+
+    // Blockquote — lines starting with `>` stack into one <blockquote>.
+    const bq = /^\s*>\s?(.*)$/.exec(raw);
+    if (bq) {
+      flushList();
+      if (!inBlockquote) {
+        out.push(
+          '<blockquote style="border-left:3px solid var(--accent);'
+          + 'margin:10px 0;padding:4px 12px;background:var(--bg-1);'
+          + 'color:var(--ink-soft);font-style:italic">'
+        );
+        inBlockquote = true;
+      }
+      out.push(`<p style="margin:4px 0;line-height:1.6">${inlineMd(bq[1])}</p>`);
+      continue;
+    }
+    if (inBlockquote && raw.trim() === '') {
+      flushQuote();
+      continue;
+    }
+    if (inBlockquote) {
+      flushQuote();
+    }
+
+    // Lists (ordered + unordered, single-level).
     const ol = /^\s*(\d+)\.\s+(.*)$/.exec(raw);
     const ul = /^\s*[-*]\s+(.*)$/.exec(raw);
     if (ul || ol) {
       const wantOrdered = !!ol;
-      if (!inList || listOrdered !== wantOrdered) { flushList(); out.push(wantOrdered ? '<ol style="padding-left:22px;margin:6px 0">' : '<ul style="padding-left:22px;margin:6px 0">'); inList = true; listOrdered = wantOrdered; }
-      out.push(`<li style="margin:3px 0">${inlineMd((ul||ol)[ul?1:2])}</li>`);
+      if (!inList || listOrdered !== wantOrdered) {
+        flushList();
+        out.push(wantOrdered
+          ? '<ol style="padding-left:24px;margin:8px 0">'
+          : '<ul style="padding-left:24px;margin:8px 0">');
+        inList = true; listOrdered = wantOrdered;
+      }
+      out.push(`<li style="margin:4px 0;line-height:1.6">${inlineMd((ul||ol)[ul?1:2])}</li>`);
       continue;
     }
-    if (!raw.trim()) { flushList(); out.push(''); continue; }
-    flushList();
-    out.push(`<p style="margin:6px 0;line-height:1.6">${inlineMd(raw)}</p>`);
+
+    // Blank line breaks lists/quotes.
+    if (!raw.trim()) { closeBlocks(); out.push(''); continue; }
+
+    closeBlocks();
+    out.push(`<p style="margin:8px 0;line-height:1.7">${inlineMd(raw)}</p>`);
   }
-  flushList();
-  if (inCode) out.push(`<pre style="background:var(--bg-1);padding:10px;border-radius:var(--radius);border:1px solid var(--line-soft)"><code>${codeBuf.map(esc).join('\n')}</code></pre>`);
+
+  closeBlocks();
+  if (inCode) {
+    out.push(
+      `<pre style="background:var(--bg-1);padding:10px;border-radius:var(--radius);`
+      + `border:1px solid var(--line-soft)"><code>${codeBuf.map(esc).join('\n')}</code></pre>`
+    );
+  }
   return out.join('\n');
 }
 
 function GeneralTab() {
   const v = window.useSiphonApi('/v1/version');
-  const cl = window.useSiphonApi('/v1/docs/changelog');
   const d = v.data || {};
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">About this deployment</span>
+        <span className="k">
+          <window.LivePill source={v.source} onClick={v.refetch} /> from /v1/version
+        </span>
+      </div>
+      <div className="kv" style={{gridTemplateColumns:'180px 1fr'}}>
+        <span className="k">siphon-api version</span>  <span className="v mono">{d.api_version || '—'}</span>
+        <span className="k">siphon-core version</span> <span className="v mono">{d.core_version || '—'}</span>
+        <span className="k">Build profile</span>       <span className="v mono">{d.build_profile || '—'}</span>
+        <span className="k">Rust version</span>        <span className="v mono">{d.rust_version || '—'}</span>
+        <span className="k">Target triple</span>       <span className="v mono">{d.target_triple || '—'}</span>
+        <span className="k">Patterns loaded</span>     <span className="v mono">{d.patterns_loaded != null ? d.patterns_loaded : '—'}</span>
+        <span className="k">Categories loaded</span>   <span className="v mono">{d.categories_loaded != null ? d.categories_loaded : '—'}</span>
+      </div>
+    </div>
+  );
+}
+
+// Changelog — dedicated tab so the header Changelog button has a
+// predictable landing. renderMarkdown (below) gets the rich rendering
+// pass next.
+function ChangelogTab() {
+  const cl = window.useSiphonApi('/v1/docs/changelog');
   const clContent = (cl.data && cl.data.content) || '';
   return (
-    <>
-      <div className="box">
-        <div className="box-title">
-          <span className="t">About this deployment</span>
-          <span className="k">
-            <window.LivePill source={v.source} onClick={v.refetch} /> from /v1/version
-          </span>
-        </div>
-        <div className="kv" style={{gridTemplateColumns:'180px 1fr'}}>
-          <span className="k">siphon-api version</span>  <span className="v mono">{d.api_version || '—'}</span>
-          <span className="k">siphon-core version</span> <span className="v mono">{d.core_version || '—'}</span>
-          <span className="k">Build profile</span>       <span className="v mono">{d.build_profile || '—'}</span>
-          <span className="k">Rust version</span>        <span className="v mono">{d.rust_version || '—'}</span>
-          <span className="k">Target triple</span>       <span className="v mono">{d.target_triple || '—'}</span>
-          <span className="k">Patterns loaded</span>     <span className="v mono">{d.patterns_loaded != null ? d.patterns_loaded : '—'}</span>
-          <span className="k">Categories loaded</span>   <span className="v mono">{d.categories_loaded != null ? d.categories_loaded : '—'}</span>
-        </div>
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Changelog</span>
+        <span className="k">
+          <window.LivePill source={cl.source} onClick={cl.refetch} /> from docs/CHANGELOG.md · {cl.data ? cl.data.bytes + ' bytes' : ''}
+        </span>
       </div>
-
-      <div className="v-gap" />
-
-      <div className="box">
-        <div className="box-title">
-          <span className="t">Changelog</span>
-          <span className="k">
-            <window.LivePill source={cl.source} onClick={cl.refetch} /> from docs/CHANGELOG.md · {cl.data ? cl.data.bytes + ' bytes' : ''}
-          </span>
+      {cl.loading && <div className="muted" style={{padding:14, textAlign:'center'}}>loading…</div>}
+      {cl.error && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)'}}>
+          <b>Error:</b> {cl.error}
         </div>
-        {cl.loading && <div className="muted" style={{padding:14, textAlign:'center'}}>loading…</div>}
-        {cl.error && (
-          <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)'}}>
-            <b>Error:</b> {cl.error}
-          </div>
-        )}
-        {clContent && (
-          <div
-            style={{maxHeight: 520, overflow: 'auto', fontSize: 13, lineHeight: 1.6, color: 'var(--ink)', padding: '4px 2px'}}
-            dangerouslySetInnerHTML={{ __html: renderMarkdown(clContent) }}
-          />
-        )}
-      </div>
-    </>
+      )}
+      {clContent && (
+        <div
+          style={{maxHeight: 640, overflow: 'auto', fontSize: 13, lineHeight: 1.6, color: 'var(--ink)', padding: '4px 2px'}}
+          dangerouslySetInnerHTML={{ __html: renderMarkdown(clContent) }}
+        />
+      )}
+    </div>
   );
 }
 
