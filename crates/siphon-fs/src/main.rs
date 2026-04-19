@@ -67,33 +67,54 @@ struct AppState {
     /// patterns. Scanner swaps the static regex for an entry from
     /// this map when present (Phase 3d.2).
     pattern_regex_overrides: Arc<HashMap<(String, String), Regex>>,
+    /// Stable identifier for this pod instance (uuidv4, generated at
+    /// startup). Returned by /health so the C2 can deduplicate
+    /// replicas of the same Service.
+    pod_id: Arc<String>,
+    /// Wall-clock startup timestamp (ISO8601).
+    started_at_iso: String,
+    /// Monotonic startup mark for uptime calculation.
+    started_at: Instant,
 }
 
 // ─── health + readiness ──────────────────────────────────────────
+// Identity + capability snapshot. Mirrors siphon-api's /health so the
+// C2 can fan out across mixed pod fleets and treat both pod types
+// uniformly. pod_id deduplicates replicas; pod_type labels them.
 #[derive(Serialize)]
 struct HealthResponse {
     status: &'static str,
-    service: &'static str,
+    service: &'static str,    // legacy alias kept for older C2 builds
+    pod_type: &'static str,   // "siphon-fs"
+    pod_id: String,           // uuidv4, generated at startup
     version: &'static str,
+    core_version: &'static str,
+    started_at: String,
+    uptime_secs: u64,
 }
 
-async fn health() -> JsonResponse<HealthResponse> {
+fn build_health(state: &AppState, status: &'static str) -> JsonResponse<HealthResponse> {
     JsonResponse(HealthResponse {
-        status: "ok",
+        status,
         service: POD_NAME,
+        pod_type: POD_NAME,
+        pod_id: state.pod_id.to_string(),
         version: env!("CARGO_PKG_VERSION"),
+        core_version: siphon_core::VERSION,
+        started_at: state.started_at_iso.clone(),
+        uptime_secs: state.started_at.elapsed().as_secs(),
     })
 }
 
-async fn ready() -> JsonResponse<HealthResponse> {
-    // Same response as /health until Phase 3 introduces the overrides-
-    // loading gate. Keeping endpoints separate now so k8s manifests
+async fn health(State(state): State<AppState>) -> JsonResponse<HealthResponse> {
+    build_health(&state, "ok")
+}
+
+async fn ready(State(state): State<AppState>) -> JsonResponse<HealthResponse> {
+    // Same payload as /health until Phase 3+ introduces the overrides-
+    // parsing gate. Keeping endpoints separate now so k8s manifests
     // can target /ready today without refactoring.
-    JsonResponse(HealthResponse {
-        status: "ready",
-        service: POD_NAME,
-        version: env!("CARGO_PKG_VERSION"),
-    })
+    build_health(&state, "ready")
 }
 
 // ─── /scan response shape ────────────────────────────────────────
@@ -396,12 +417,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pattern_regex_overrides = Arc::new(overrides.compile_pattern_regex_overrides());
     let regex_override_count = pattern_regex_overrides.len();
 
+    let pod_id = Arc::new(uuid::Uuid::new_v4().to_string());
+    let started_at = Instant::now();
+    let started_at_iso = siphon_core::audit::iso8601_now();
+
     let state = AppState {
         findings: Arc::new(FindingsRing::new(FINDINGS_RING_CAP)),
         disabled_patterns,
         pattern_field_overrides,
         runtime_patterns,
         pattern_regex_overrides,
+        pod_id: pod_id.clone(),
+        started_at_iso,
+        started_at,
     };
     let app = build_router(state);
 

@@ -87,6 +87,14 @@ struct AppState {
     /// Compiled per-pattern regex overrides for compile-time
     /// patterns. Phase 3d.2.
     pattern_regex_overrides: Arc<HashMap<(String, String), Regex>>,
+    /// Stable identifier for this pod instance. Generated once at
+    /// startup; surfaced via /health so the C2 can deduplicate
+    /// replicas of the same Service.
+    pod_id: Arc<String>,
+    /// Wall-clock startup timestamp (ISO8601). Returned by /health.
+    started_at_iso: String,
+    /// Monotonic startup mark for uptime calculation.
+    started_at: Instant,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -446,9 +454,21 @@ struct Finding {
 }
 
 #[derive(Serialize)]
+// Identity + capability snapshot returned by /health. The C2 fans
+// out across pod URLs and uses pod_id to deduplicate replicas + uses
+// pod_type to label them in the topology view. version + core_version
+// give analysts at-a-glance compatibility info; started_at +
+// uptime_secs help spot recent restarts (e.g. after a Phase 6 roll).
 struct HealthResponse {
     status: &'static str,
-    pod: &'static str,
+    pod: &'static str,                // legacy alias — kept so older
+                                       // C2 builds keep parsing
+    pod_type: &'static str,           // "siphon-api" | "siphon-fs"
+    pod_id: String,                   // uuidv4, generated at startup
+    version: &'static str,            // crate version of this binary
+    core_version: &'static str,       // siphon-core crate version
+    started_at: String,               // ISO8601, captured at startup
+    uptime_secs: u64,
 }
 
 #[derive(Serialize, Clone)]
@@ -460,10 +480,16 @@ struct ErrorResponse {
 // Handlers
 // ---------------------------------------------------------------------------
 
-async fn health() -> Json<HealthResponse> {
+async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
         pod: "siphon-api",
+        pod_type: "siphon-api",
+        pod_id: state.pod_id.to_string(),
+        version: env!("CARGO_PKG_VERSION"),
+        core_version: siphon_core::VERSION,
+        started_at: state.started_at_iso.clone(),
+        uptime_secs: state.started_at.elapsed().as_secs(),
     })
 }
 
@@ -1540,6 +1566,10 @@ async fn main() {
         "PatternOverrides loaded"
     );
 
+    let pod_id = Arc::new(uuid::Uuid::new_v4().to_string());
+    let started_at = Instant::now();
+    let started_at_iso = siphon_core::audit::iso8601_now();
+
     let state = Arc::new(AppState {
         api_key_hash,
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
@@ -1554,6 +1584,9 @@ async fn main() {
         pattern_field_overrides,
         runtime_patterns,
         pattern_regex_overrides,
+        pod_id: pod_id.clone(),
+        started_at_iso,
+        started_at,
     });
 
     let app = Router::new()
