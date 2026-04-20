@@ -2464,6 +2464,7 @@ const IR_SURFACES = [
   { id: 'export',         workspace: 'evidence',  icon: '↧',  title: 'Export Bundle',    sub: 'package case for handoff' },
   // ── SETTINGS ─────────────────────────────────────────────────
   { id: 'integrations',   workspace: 'settings',  icon: '⇄',  title: 'Integrations',     sub: 'XSOAR · Splunk HEC' },
+  { id: 'ir-auth',        workspace: 'settings',  icon: '⛨',  title: 'Authentication',   sub: 'password · SAML · passkeys' },
   { id: 'ir-settings',    workspace: 'settings',  icon: '⚙',  title: 'Responder Prefs',  sub: 'filters · notifications' },
   { id: 'ir-deployment',  workspace: 'settings',  icon: '⚿',  title: 'Pod Registry',     sub: 'shared with admin console' },
   { id: 'ir-engineering', workspace: 'settings',  icon: '⌁',  title: 'Engineering',      sub: 'demo data · dev toggles' },
@@ -8474,12 +8475,136 @@ const SURFACE_COMPONENTS = {
   export:         () => <Stub title="Export Bundle"
                               description="Package a case into a zip for handoff (findings JSON, extracted text, exhibits, custody log, signed manifest)." />,
   integrations:   () => <IntegrationsSurface />,
+  'ir-auth':      () => <AuthenticationSurface />,
   'ir-settings':  () => <Stub title="Responder Preferences"
                               description="Default queue filters, notification channels, team membership, theme." />,
   'ir-deployment':() => <Stub title="Pod Registry"
                               description="Shared with the admin console — registered pods appear in both. Edits under Settings → Deployment on siphon-c2.html." />,
   'ir-engineering': () => <EngineeringSurface />,
 };
+
+// ─── Settings → Authentication · A5 ────────────────────────────
+// Status board for the console's authentication methods. Password
+// auth is wired (A1-A4) — SAML/Entra ID and Passkeys (WebAuthn)
+// are scoped as backlog items here so there's a named home for
+// them when they ship, and so current users can see at a glance
+// which paths are live.
+function AuthenticationSurface() {
+  const methods = [
+    {
+      id: 'password',
+      title: 'Password',
+      status: 'live',
+      summary: 'Email + password via PBKDF2-SHA256 (100k iters · salted per-user). WebCrypto-backed; runs entirely in the browser for the wireframe.',
+      details: [
+        ['Hash algo',     'PBKDF2-SHA256'],
+        ['Iterations',    String(IR_PBKDF2_ITERS)],
+        ['Policy floor',  '≥ 10 chars · letter + digit'],
+        ['Session TTL',   '12 h (rolling, not sliding)'],
+        ['Rotation',      'on-demand via Profile · enforced on seeded defaults'],
+      ],
+    },
+    {
+      id: 'saml-entra',
+      title: 'Entra ID · SAML 2.0',
+      status: 'backlog',
+      summary: 'SP-initiated SSO against Microsoft Entra ID (formerly Azure AD). Metadata exchange, certificate pinning, SCIM user provisioning.',
+      details: [
+        ['Flow',          'SP-initiated · AuthnRequest → IdP login → SAMLResponse'],
+        ['Metadata',      'published at /auth/saml/metadata (not wired)'],
+        ['Claim map',     'NameID→email · role from groups'],
+        ['Provisioning',  'SCIM 2.0 for just-in-time account create'],
+        ['Session bridge', 'exchange SAML assertion for ir:session cookie'],
+      ],
+    },
+    {
+      id: 'passkeys',
+      title: 'Passkeys · WebAuthn',
+      status: 'backlog',
+      summary: 'Platform + roaming authenticators via the WebAuthn API. Users register one or more passkeys against their account; login prompts the platform authenticator (Touch ID, Windows Hello, security key).',
+      details: [
+        ['Standard',       'WebAuthn L3 · FIDO2'],
+        ['Register',       'navigator.credentials.create({publicKey:…})'],
+        ['Login',          'navigator.credentials.get({publicKey:…})'],
+        ['Storage',        'per-user array of {credentialId, publicKey, counter}'],
+        ['Fallback',       'password still available if no passkeys registered'],
+      ],
+    },
+  ];
+
+  return (
+    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Authentication methods</span>
+          <span className="k mono" style={{fontSize:11}}>local-only wireframe · server-backed deployment replaces this</span>
+        </div>
+        <div style={{padding:14, display:'grid', gap:14}}>
+          {methods.map(m => (
+            <div key={m.id}
+                 style={{
+                   padding:14,
+                   background:'var(--bg-1)',
+                   border:'1px solid var(--line-soft)',
+                   borderRadius:'var(--radius)',
+                 }}>
+              <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:8, flexWrap:'wrap'}}>
+                <div style={{
+                  fontFamily:"'Space Grotesk', sans-serif", fontSize:15,
+                  fontWeight:700, color:'var(--ink-bright)',
+                }}>{m.title}</div>
+                <span className={'chip chip--' + (m.status === 'live' ? 'safe' : 'ghost')}
+                      style={{fontSize:10, padding:'3px 8px'}}>
+                  {m.status === 'live' ? '● LIVE' : '◯ BACKLOG'}
+                </span>
+              </div>
+              <div style={{fontSize:12, lineHeight:1.7, color:'var(--ink)', marginBottom:10}}>
+                {m.summary}
+              </div>
+              <div style={{
+                display:'grid',
+                gridTemplateColumns:'170px 1fr',
+                gap:'4px 14px',
+                fontSize:11.5,
+              }}>
+                {m.details.map(([k, v], i) => (
+                  <React.Fragment key={i}>
+                    <div className="label" style={{color:'var(--ink-soft)', padding:'2px 0'}}>{k}</div>
+                    <div className="mono" style={{color:'var(--ink)', padding:'2px 0'}}>{v}</div>
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Roadmap notes</span>
+          <span className="k mono" style={{fontSize:11}}>reserved slots</span>
+        </div>
+        <div style={{padding:14, fontSize:12, lineHeight:1.7, color:'var(--ink)'}}>
+          <ul style={{margin:0, paddingLeft:18}}>
+            <li>SAML wire target: <span className="mono">/auth/saml/initiate</span>,{' '}
+                <span className="mono">/auth/saml/acs</span>,{' '}
+                <span className="mono">/auth/saml/metadata</span> — parallel paths added
+                to siphon-api alongside the existing password handler.</li>
+            <li>Passkeys: per-user <span className="mono">credentials</span> array on the
+                User record; challenge/response ceremony stored server-side under a
+                short-lived key to prevent replay.</li>
+            <li>Downgrade policy: Passkey + SAML deploys will default to
+                <i> password disabled</i> for covered users — opt-in break-glass pw
+                only for administrators who specifically request it.</li>
+            <li>Audit: every auth event (login success/fail, pw change, passkey
+                register, SAML exchange) writes to <span className="mono">ir:auth-audit</span>{' '}
+                (future) so the Chain-of-Custody surface can cross-reference.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ─── Settings → Engineering ─────────────────────────────────────
 // Developer-facing toggles. Primary MVP tenant: the demo-data
