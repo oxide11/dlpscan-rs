@@ -2464,6 +2464,7 @@ const IR_SURFACES = [
   { id: 'export',         workspace: 'evidence',  icon: '↧',  title: 'Export Bundle',    sub: 'package case for handoff' },
   // ── SETTINGS ─────────────────────────────────────────────────
   { id: 'integrations',   workspace: 'settings',  icon: '⇄',  title: 'Integrations',     sub: 'XSOAR · Splunk HEC' },
+  { id: 'ir-users',       workspace: 'settings',  icon: '◇',  title: 'Users & Roles',    sub: 'invite · disable · role matrix' },
   { id: 'ir-auth',        workspace: 'settings',  icon: '⛨',  title: 'Authentication',   sub: 'password · SAML · passkeys' },
   { id: 'ir-settings',    workspace: 'settings',  icon: '⚙',  title: 'Responder Prefs',  sub: 'filters · notifications' },
   { id: 'ir-deployment',  workspace: 'settings',  icon: '⚿',  title: 'Pod Registry',     sub: 'shared with admin console' },
@@ -8475,6 +8476,7 @@ const SURFACE_COMPONENTS = {
   export:         () => <Stub title="Export Bundle"
                               description="Package a case into a zip for handoff (findings JSON, extracted text, exhibits, custody log, signed manifest)." />,
   integrations:   () => <IntegrationsSurface />,
+  'ir-users':     () => <UsersSurface />,
   'ir-auth':      () => <AuthenticationSurface />,
   'ir-settings':  () => <Stub title="Responder Preferences"
                               description="Default queue filters, notification channels, team membership, theme." />,
@@ -8482,6 +8484,326 @@ const SURFACE_COMPONENTS = {
                               description="Shared with the admin console — registered pods appear in both. Edits under Settings → Deployment on siphon-c2.html." />,
   'ir-engineering': () => <EngineeringSurface />,
 };
+
+// ─── Settings → Users & Roles · U3 ─────────────────────────────
+// List of every User record on this tenant + a collapsible role
+// matrix. Gated on canDo('users.view') — viewers and analysts see
+// the "access denied" panel; admins + engineers pass through.
+// Write actions (invite, create, disable, role change) carry
+// their own canDo gates at the button level so a viewer accidentally
+// handed the surface never hits a destructive control.
+
+// Tiny hook over the users list so rows reflect CRUD from anywhere
+// in the console (admin impersonation menu, invite accept, etc.).
+function useUsersList() {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => setTick(t => t + 1);
+    window.addEventListener('ir:usersChanged', refresh);
+    window.addEventListener('storage', (e) => {
+      if (e.key === IR_USERS_KEY) refresh();
+    });
+    return () => {
+      window.removeEventListener('ir:usersChanged', refresh);
+    };
+  }, []);
+  return readUsers();
+}
+
+function irFormatRelative(iso) {
+  if (!iso) return '—';
+  const then = new Date(iso).getTime();
+  if (!then || Number.isNaN(then)) return '—';
+  const diff = Date.now() - then;
+  if (diff < 0) return 'just now';
+  const mins = Math.floor(diff / 60e3);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  const days = Math.floor(hrs / 24);
+  if (days < 14) return days + 'd ago';
+  return new Date(iso).toISOString().slice(0, 10);
+}
+
+function UsersSurface() {
+  const canView    = useCan('users.view');
+  const canCreate  = useCan('users.create');
+  const canUpdate  = useCan('users.update');
+  const canDisable = useCan('users.disable');
+
+  const users = useUsersList();
+  const [search,     setSearch]     = React.useState('');
+  const [roleFilter, setRoleFilter] = React.useState('');
+  const [statFilter, setStatFilter] = React.useState('');
+  const [matrixOpen, setMatrixOpen] = React.useState(false);
+
+  if (!canView) {
+    return (
+      <div style={{padding:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Users & Roles</span>
+            <span className="k">
+              <span className="chip chip--red" style={{fontSize:10}}>PERMISSION DENIED</span>
+            </span>
+          </div>
+          <div style={{padding:20, fontSize:12.5, lineHeight:1.7, color:'var(--ink-soft)'}}>
+            Your role (<span className="mono">{(getCurrentUser() || {}).role || 'unknown'}</span>)
+            doesn't carry <span className="mono">users.view</span>. Ask an administrator
+            if you need access to user management.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const filtered = users.filter(u => {
+    if (roleFilter && u.role !== roleFilter) return false;
+    if (statFilter && u.status !== statFilter) return false;
+    if (search) {
+      const q = search.trim().toLowerCase();
+      if (!(
+           (u.name  || '').toLowerCase().includes(q)
+        || (u.email || '').toLowerCase().includes(q)
+        || (u.id    || '').toLowerCase().includes(q)
+      )) return false;
+    }
+    return true;
+  }).sort((a, b) => {
+    // Keep invited rows pinned so the admin spots pending onboards.
+    const ra = a.status === 'invited' ? 0 : 1;
+    const rb = b.status === 'invited' ? 0 : 1;
+    if (ra !== rb) return ra - rb;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
+  return (
+    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Users & Roles</span>
+          <span className="k mono" style={{fontSize:11}}>
+            {users.length} total · {users.filter(u => u.status === 'active').length} active ·{' '}
+            {users.filter(u => u.status === 'invited').length} invited
+          </span>
+        </div>
+
+        {/* Toolbar */}
+        <div style={{
+          display:'flex', gap:10, padding:'12px 14px',
+          borderBottom:'1px solid var(--line-soft)', flexWrap:'wrap',
+        }}>
+          <input type="search"
+                 value={search}
+                 onChange={(e) => setSearch(e.target.value)}
+                 placeholder="search name / email / id…"
+                 style={{
+                   flex:'1 1 240px', minWidth:200,
+                   padding:'7px 10px', fontSize:12,
+                   background:'var(--bg-1)', color:'var(--ink)',
+                   border:'1px solid var(--line-strong)',
+                   borderRadius:'var(--radius)',
+                   fontFamily:"'JetBrains Mono', monospace",
+                 }}/>
+          <select value={roleFilter}
+                  onChange={(e) => setRoleFilter(e.target.value)}
+                  style={{
+                    padding:'7px 10px', fontSize:12,
+                    background:'var(--bg-1)', color:'var(--ink)',
+                    border:'1px solid var(--line-strong)',
+                    borderRadius:'var(--radius)',
+                  }}>
+            <option value="">All roles</option>
+            {Object.entries(IR_ROLES).map(([id, r]) => (
+              <option key={id} value={id}>{r.glyph} {r.label}</option>
+            ))}
+          </select>
+          <select value={statFilter}
+                  onChange={(e) => setStatFilter(e.target.value)}
+                  style={{
+                    padding:'7px 10px', fontSize:12,
+                    background:'var(--bg-1)', color:'var(--ink)',
+                    border:'1px solid var(--line-strong)',
+                    borderRadius:'var(--radius)',
+                  }}>
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="invited">Invited</option>
+            <option value="disabled">Disabled</option>
+          </select>
+          <button className="btn primary"
+                  disabled={!canCreate}
+                  onClick={() => {
+                    // U4 will replace this with a modal. For now
+                    // tell the admin the form isn't wired yet.
+                    window.alert('Create-user form lands in the next commit (U4).');
+                  }}
+                  title={canCreate ? 'Create a new user' : 'users.create not granted to your role'}
+                  style={{fontSize:12}}>
+            + New user
+          </button>
+        </div>
+
+        {/* Table */}
+        <div style={{padding:0}}>
+          <div style={{
+            display:'grid',
+            gridTemplateColumns:'auto 1.4fr 1fr 110px 120px 120px',
+            gap:0,
+            fontSize:11, color:'var(--ink-soft)',
+            padding:'8px 14px',
+            borderBottom:'1px solid var(--line-soft)',
+            background:'var(--bg-2)',
+            fontFamily:"'Space Grotesk', sans-serif",
+            fontWeight:600, letterSpacing:'0.05em', textTransform:'uppercase',
+          }}>
+            <div></div>
+            <div>Name</div>
+            <div>Email / ID</div>
+            <div>Role</div>
+            <div>Status</div>
+            <div>Last active</div>
+          </div>
+          {filtered.map(u => {
+            const role = irRoleMeta(u.role);
+            return (
+              <div key={u.id}
+                   style={{
+                     display:'grid',
+                     gridTemplateColumns:'auto 1.4fr 1fr 110px 120px 120px',
+                     gap:0,
+                     alignItems:'center',
+                     padding:'10px 14px',
+                     borderBottom:'1px solid var(--line-soft)',
+                     fontSize:12,
+                   }}>
+                <div style={{
+                  width:28, height:28, borderRadius:'50%',
+                  background:'var(--bg-2)',
+                  border:'1px solid var(--line-strong)',
+                  color:'var(--ink)',
+                  display:'grid', placeItems:'center',
+                  fontSize:10, fontFamily:"'JetBrains Mono', monospace",
+                  fontWeight:700, marginRight:12,
+                }}>{u.avatar || '??'}</div>
+                <div>
+                  <div style={{color:'var(--ink-bright)', fontWeight:600}}>{u.name}</div>
+                  <div className="mono" style={{fontSize:10, color:'var(--ink-dim)'}}>{u.id}</div>
+                </div>
+                <div className="mono" style={{fontSize:11, color:'var(--ink)'}}>
+                  {u.email || <span className="muted">—</span>}
+                </div>
+                <div>
+                  <span className="chip"
+                        style={{
+                          fontSize:10,
+                          borderColor:role.color, color:role.color,
+                          background:'var(--bg-1)',
+                        }}>
+                    {role.glyph} {role.label}
+                  </span>
+                </div>
+                <div>
+                  <span className={'chip chip--' + (
+                    u.status === 'active' ? 'safe'
+                    : u.status === 'invited' ? 'warn'
+                    : 'red')}
+                        style={{fontSize:10}}>
+                    {u.status.toUpperCase()}
+                  </span>
+                </div>
+                <div style={{
+                  fontSize:11, color:'var(--ink-soft)',
+                  fontFamily:"'JetBrains Mono', monospace",
+                }}>
+                  {u.status === 'invited'
+                    ? <span style={{color:'var(--amber)'}}>invited {irFormatRelative(u.invited_at)}</span>
+                    : irFormatRelative(u.last_active)}
+                </div>
+              </div>
+            );
+          })}
+          {filtered.length === 0 && (
+            <div style={{padding:24, textAlign:'center', color:'var(--ink-soft)', fontSize:12}}>
+              No users match the current filters.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Permission matrix · roles × actions */}
+      <div className="box">
+        <div className="box-title" onClick={() => setMatrixOpen(o => !o)}
+             style={{cursor:'pointer', userSelect:'none'}}>
+          <span className="t">Permission matrix</span>
+          <span className="k">
+            <span className="mono" style={{fontSize:11}}>
+              {matrixOpen ? '▼' : '▶'} {irAllPermissions().length} actions × {Object.keys(IR_ROLES).length} roles
+            </span>
+          </span>
+        </div>
+        {matrixOpen && (
+          <div style={{padding:14, overflowX:'auto'}}>
+            <table style={{
+              borderCollapse:'collapse', fontSize:11,
+              fontFamily:"'JetBrains Mono', monospace",
+              minWidth:'100%',
+            }}>
+              <thead>
+                <tr>
+                  <th style={{
+                    textAlign:'left', padding:'8px 12px',
+                    color:'var(--ink-soft)', fontWeight:600,
+                    borderBottom:'1px solid var(--line-strong)',
+                  }}>action</th>
+                  {Object.entries(IR_ROLES).map(([id, r]) => (
+                    <th key={id}
+                        style={{
+                          padding:'8px 12px',
+                          color:r.color, fontWeight:700,
+                          borderBottom:'1px solid var(--line-strong)',
+                          textAlign:'center', whiteSpace:'nowrap',
+                        }}
+                        title={r.description}>
+                      {r.glyph} {id}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {irAllPermissions().map(action => (
+                  <tr key={action}>
+                    <td style={{
+                      padding:'6px 12px',
+                      color:'var(--ink)',
+                      borderBottom:'1px solid var(--line-soft)',
+                    }}>{action}</td>
+                    {Object.keys(IR_ROLES).map(id => {
+                      const yes = canDo(id, action);
+                      return (
+                        <td key={id}
+                            style={{
+                              padding:'6px 12px',
+                              textAlign:'center',
+                              color: yes ? 'var(--safe)' : 'var(--ink-dim)',
+                              borderBottom:'1px solid var(--line-soft)',
+                            }}
+                            title={yes ? id + ' can ' + action : id + ' cannot ' + action}>
+                          {yes ? '●' : '·'}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ─── Settings → Authentication · A5 ────────────────────────────
 // Status board for the console's authentication methods. Password
