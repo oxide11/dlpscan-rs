@@ -8713,6 +8713,7 @@ function irFormatRelative(iso) {
 //  · initial-pw — admin chooses a starting password; user logs in
 //                 with it and hits the A4 forced-change flow.
 function CreateUserForm({ canInvite, onCancel, onCreated }) {
+  useRolesTick();
   const [name,     setName]     = React.useState('');
   const [email,    setEmail]    = React.useState('');
   const [role,     setRole]     = React.useState('analyst');
@@ -8731,7 +8732,7 @@ function CreateUserForm({ canInvite, onCancel, onCreated }) {
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       return setErr('email looks malformed');
     }
-    if (!IR_ROLES[role]) return setErr('pick a role');
+    if (!getRoles()[role]) return setErr('pick a role');
     let default_password;
     if (mode === 'initial-pw') {
       const v = irValidatePassword(pw1, pw2);
@@ -8779,7 +8780,7 @@ function CreateUserForm({ canInvite, onCancel, onCreated }) {
         <label>
           <div className="label" style={{marginBottom:4}}>Role</div>
           <select value={role} onChange={(e) => setRole(e.target.value)} style={formInputStyle}>
-            {Object.entries(IR_ROLES).map(([id, r]) => (
+            {Object.entries(getRoles()).map(([id, r]) => (
               <option key={id} value={id}>{r.glyph} {r.label}</option>
             ))}
           </select>
@@ -8958,12 +8959,663 @@ function JustCreatedToast({ payload, onDismiss }) {
   );
 }
 
+// Per-row action menu · R1a. Kebab button in the last column opens
+// a popover with role-change + (later R1b/R1c) disable / delete.
+// Guards:
+//   · hidden entirely when the row's user IS the signed-in user
+//     (self-service goes through My Profile, not here)
+//   · change-role requires users.update
+function UserRowActions({ user, canUpdate, canDisable, canDelete }) {
+  const [open, setOpen] = React.useState(false);
+  const btnRef  = React.useRef(null);
+  const menuRef = React.useRef(null);
+  useRolesTick();
+  const me = getCurrentUser();
+  const isSelf = !!(me && me.id === user.id);
+
+  // Last-admin lockout guard. If this is the only active admin
+  // left, disable destructive paths so a misclick can't strand
+  // the tenant without anyone able to invite new users.
+  const activeAdmins = React.useMemo(() => {
+    try { return readUsers().filter(u => u.role === 'admin' && u.status === 'active'); }
+    catch { return []; }
+  }, [user.id, user.role, user.status]);
+  const isLastAdmin = user.role === 'admin'
+    && user.status === 'active'
+    && activeAdmins.length <= 1;
+
+  React.useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      if (btnRef.current  && btnRef.current.contains(e.target))  return;
+      setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown',   onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown',   onKey);
+    };
+  }, [open]);
+
+  if (isSelf || (!canUpdate && !canDisable && !canDelete)) {
+    // Keep the cell width consistent even when empty so the grid
+    // doesn't reflow per-row. Render an inert placeholder.
+    return <div style={{width:32}}/>;
+  }
+
+  const changeRole = (roleId) => {
+    if (roleId === user.role) { setOpen(false); return; }
+    updateUser(user.id, { role: roleId });
+    setOpen(false);
+  };
+  const toggleStatus = () => {
+    const next = user.status === 'active' ? 'disabled' : 'active';
+    updateUser(user.id, { status: next });
+    setOpen(false);
+  };
+  const handleDelete = () => {
+    if (isLastAdmin) {
+      window.alert("Can't delete the last active administrator. Promote another user to admin first.");
+      return;
+    }
+    const label = user.name + (user.email ? ' (' + user.email + ')' : '');
+    if (!window.confirm('Delete ' + label + '? This removes their record, dispositions tied to their id stay intact.')) {
+      setOpen(false);
+      return;
+    }
+    deleteUser(user.id);
+    setOpen(false);
+  };
+  // Invited rows shouldn't show disable — they're not active yet.
+  // Disabled rows get the "Enable" label instead.
+  const statusToggleLabel = user.status === 'active' ? 'Disable user' : 'Enable user';
+  const showStatusToggle = canDisable && user.status !== 'invited';
+
+  return (
+    <div style={{position:'relative', display:'flex', justifyContent:'flex-end'}}>
+      <button ref={btnRef}
+              type="button"
+              onClick={() => setOpen(o => !o)}
+              title="Row actions"
+              style={{
+                width:28, height:28,
+                background:'transparent',
+                border:'1px solid transparent',
+                borderRadius:'var(--radius)',
+                cursor:'pointer',
+                color:'var(--ink-soft)',
+                fontSize:14, lineHeight:1,
+                outline: open ? '1px solid var(--line-strong)' : 'none',
+              }}>⋯</button>
+      {open && (
+        <div ref={menuRef}
+             style={{
+               position:'absolute', top:'calc(100% + 4px)', right:0,
+               minWidth:220,
+               background:'var(--bg-1)',
+               border:'1px solid var(--line-strong)',
+               borderRadius:'var(--radius)',
+               boxShadow:'0 8px 24px rgba(0,0,0,0.4)',
+               zIndex:500,
+               padding:'6px 0',
+               fontSize:12,
+             }}>
+          {canUpdate && (
+            <>
+              <div style={{
+                padding:'4px 12px 6px',
+                fontSize:10, letterSpacing:'0.08em',
+                color:'var(--ink-soft)',
+                fontFamily:"'Space Grotesk', sans-serif",
+                fontWeight:600, textTransform:'uppercase',
+              }}>
+                Change role
+              </div>
+              {Object.entries(getRoles()).map(([id, r]) => {
+                const current = id === user.role;
+                return (
+                  <button key={id}
+                          onClick={() => changeRole(id)}
+                          disabled={current}
+                          style={{
+                            ...menuItemStyle,
+                            display:'flex', alignItems:'center', gap:8,
+                            cursor: current ? 'default' : 'pointer',
+                            opacity: current ? 0.55 : 1,
+                          }}>
+                    <span style={{color:r.color, width:12, textAlign:'center', fontSize:11}}>
+                      {r.glyph}
+                    </span>
+                    <span style={{flex:1}}>{r.label}</span>
+                    {current && (
+                      <span className="mono" style={{fontSize:10, color:'var(--ink-soft)'}}>
+                        current
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </>
+          )}
+
+          {showStatusToggle && (
+            <>
+              {canUpdate && (
+                <div style={{
+                  borderTop:'1px solid var(--line-soft)',
+                  margin:'4px 0',
+                }}/>
+              )}
+              <button onClick={toggleStatus}
+                      style={{
+                        ...menuItemStyle,
+                        color: user.status === 'active' ? 'var(--amber)' : 'var(--safe)',
+                      }}>
+                <span style={{marginRight:8}}>
+                  {user.status === 'active' ? '⊘' : '↻'}
+                </span>
+                {statusToggleLabel}
+              </button>
+            </>
+          )}
+
+          {canDelete && (
+            <>
+              {(canUpdate || showStatusToggle) && (
+                <div style={{
+                  borderTop:'1px solid var(--line-soft)',
+                  margin:'4px 0',
+                }}/>
+              )}
+              <button onClick={handleDelete}
+                      disabled={isLastAdmin}
+                      title={isLastAdmin ? "can't delete the last active admin" : ''}
+                      style={{
+                        ...menuItemStyle,
+                        color: isLastAdmin ? 'var(--ink-dim)' : 'var(--threat)',
+                        cursor: isLastAdmin ? 'not-allowed' : 'pointer',
+                      }}>
+                <span style={{marginRight:8}}>✕</span>
+                Delete user
+                {isLastAdmin && (
+                  <span className="mono" style={{marginLeft:'auto', fontSize:10, color:'var(--ink-soft)'}}>
+                    last admin
+                  </span>
+                )}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── CreateRoleForm · R2b3 ─────────────────────────────────────
+// Inline new-role form inside the Roles section. The palette +
+// glyph presets keep new roles visually consistent with the
+// system seeds; a free-text description documents intent so
+// engineers reviewing the permission matrix later don't have to
+// guess. Permission checkboxes come from irAllPermissions so the
+// editor can only toggle actions that already exist on some role.
+const IR_ROLE_COLOR_PRESETS = [
+  { id: 'accent', label: 'Accent (green)', value: 'var(--accent)' },
+  { id: 'red',    label: 'Red',            value: 'var(--red)' },
+  { id: 'amber',  label: 'Amber',          value: 'var(--amber)' },
+  { id: 'cyan',   label: 'Cyan',           value: 'var(--cyan)' },
+  { id: 'ink',    label: 'Ink',            value: 'var(--ink-soft)' },
+];
+const IR_ROLE_GLYPH_PRESETS = ['◆', '◈', '◇', '◉', '◎', '◍', '▲', '△', '▼', '▽', '◖', '◗', '✦', '✧', '✪', '☰', '⚑', '⚐'];
+
+// Shared form for creating a new role OR editing an existing one.
+// When `existing` is provided the id field is locked (changing a
+// role id in-place would strand every user assigned to it) and
+// submission routes to irUpdateRole instead of irCreateRole.
+function CreateRoleForm({ onCancel, onCreated, existing, existingId }) {
+  const isEdit = !!existing;
+  const [id, setId]             = React.useState(existingId || '');
+  const [label, setLabel]       = React.useState(existing ? existing.label : '');
+  const [glyph, setGlyph]       = React.useState(existing ? existing.glyph : '◆');
+  const [color, setColor]       = React.useState(existing ? existing.color : 'var(--accent)');
+  const [description, setDesc]  = React.useState(existing ? (existing.description || '') : '');
+  const [perms, setPerms]       = React.useState(existing ? (existing.permissions || []).slice() : []);
+  const [err, setErr]           = React.useState(null);
+  const allPerms = irAllPermissions();
+
+  // Auto-derive id from label while the id field hasn't been
+  // touched by the user (create-mode only). Edit mode locks it.
+  const [idTouched, setIdTouched] = React.useState(isEdit);
+  const effectiveId = isEdit
+    ? existingId
+    : (idTouched ? id : (label || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '').slice(0, 32));
+
+  const togglePerm = (p) => {
+    setPerms(cur => cur.includes(p) ? cur.filter(x => x !== p) : [...cur, p]);
+  };
+
+  const submit = (e) => {
+    if (e) e.preventDefault();
+    setErr(null);
+    if (!label.trim())      return setErr('label required');
+    if (!effectiveId)       return setErr('role id required');
+    const res = isEdit
+      ? irUpdateRole(effectiveId, { label, glyph, color, description, permissions: perms })
+      : irCreateRole({ id: effectiveId, label, glyph, color, description, permissions: perms });
+    if (!res.ok) return setErr(res.reason);
+    onCreated(res.role);
+  };
+
+  // Group permissions by resource for a tidier checklist.
+  const grouped = React.useMemo(() => {
+    const g = new Map();
+    allPerms.forEach(p => {
+      const resource = p.split('.')[0] || 'other';
+      if (!g.has(resource)) g.set(resource, []);
+      g.get(resource).push(p);
+    });
+    return [...g.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [allPerms.join('|')]);
+
+  return (
+    <form onSubmit={submit}
+          style={{
+            padding:14,
+            borderBottom:'1px solid var(--line-soft)',
+            background:'var(--bg-2)',
+            display:'grid', gap:12,
+          }}>
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:12}}>
+        <label>
+          <div className="label" style={{marginBottom:4}}>Label</div>
+          <input type="text" value={label} autoFocus
+                 onChange={(e) => setLabel(e.target.value)}
+                 placeholder="Compliance Auditor"
+                 style={formInputStyle}/>
+        </label>
+        <label>
+          <div className="label" style={{marginBottom:4}}>
+            Role id{' '}
+            <span className="muted" style={{fontSize:10}}>
+              {isEdit ? 'locked · changing would orphan assigned users' : 'kebab-safe · used in URLs + APIs'}
+            </span>
+          </div>
+          <input type="text" value={effectiveId}
+                 disabled={isEdit}
+                 onChange={(e) => { setId(e.target.value); setIdTouched(true); }}
+                 placeholder="compliance-auditor"
+                 style={{
+                   ...formInputStyle,
+                   opacity: isEdit ? 0.55 : 1,
+                 }}/>
+        </label>
+      </div>
+
+      <div style={{display:'grid', gridTemplateColumns:'auto 1fr', gap:12}}>
+        <label>
+          <div className="label" style={{marginBottom:4}}>Glyph</div>
+          <div style={{display:'flex', flexWrap:'wrap', gap:4}}>
+            {IR_ROLE_GLYPH_PRESETS.map(g => (
+              <button key={g} type="button"
+                      onClick={() => setGlyph(g)}
+                      style={{
+                        width:30, height:30,
+                        background: glyph === g ? 'var(--bg-0)' : 'transparent',
+                        border: '1px solid ' + (glyph === g ? 'var(--accent)' : 'var(--line-soft)'),
+                        borderRadius:'var(--radius)',
+                        cursor:'pointer',
+                        color: glyph === g ? color : 'var(--ink)',
+                        fontSize:14,
+                      }}>
+                {g}
+              </button>
+            ))}
+          </div>
+        </label>
+        <label>
+          <div className="label" style={{marginBottom:4}}>Color</div>
+          <div style={{display:'flex', flexWrap:'wrap', gap:4}}>
+            {IR_ROLE_COLOR_PRESETS.map(c => (
+              <button key={c.id} type="button"
+                      onClick={() => setColor(c.value)}
+                      title={c.label}
+                      style={{
+                        padding:'6px 12px',
+                        background: color === c.value ? 'var(--bg-0)' : 'transparent',
+                        border: '1px solid ' + (color === c.value ? c.value : 'var(--line-soft)'),
+                        borderRadius:'var(--radius)',
+                        cursor:'pointer',
+                        color: c.value,
+                        fontSize:11,
+                        fontFamily:"'JetBrains Mono', monospace",
+                      }}>
+                ● {c.label}
+              </button>
+            ))}
+          </div>
+        </label>
+      </div>
+
+      <label>
+        <div className="label" style={{marginBottom:4}}>Description</div>
+        <input type="text" value={description}
+               onChange={(e) => setDesc(e.target.value)}
+               placeholder="What this role is for — e.g. 'Read-only audit access across findings + dispositions'"
+               style={formInputStyle}/>
+      </label>
+
+      <div>
+        <div className="label" style={{marginBottom:6, display:'flex', alignItems:'center', gap:8}}>
+          Permissions
+          <span className="mono" style={{fontSize:10, color:'var(--ink-dim)'}}>
+            {perms.length} of {allPerms.length} selected
+          </span>
+        </div>
+        <div style={{
+          display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(220px, 1fr))',
+          gap:10,
+          padding:'10px 12px',
+          background:'var(--bg-1)',
+          border:'1px solid var(--line-soft)',
+          borderRadius:'var(--radius)',
+          maxHeight:260, overflowY:'auto',
+        }}>
+          {grouped.map(([resource, list]) => (
+            <div key={resource}>
+              <div className="mono" style={{
+                fontSize:10, color:'var(--ink-soft)',
+                letterSpacing:'0.08em', textTransform:'uppercase',
+                marginBottom:4,
+              }}>{resource}</div>
+              {list.map(p => {
+                const on = perms.includes(p);
+                return (
+                  <label key={p}
+                         style={{
+                           display:'flex', alignItems:'center', gap:6,
+                           padding:'2px 0',
+                           cursor:'pointer',
+                           fontSize:11,
+                           fontFamily:"'JetBrains Mono', monospace",
+                           color: on ? 'var(--ink-bright)' : 'var(--ink)',
+                         }}>
+                    <input type="checkbox" checked={on}
+                           onChange={() => togglePerm(p)}
+                           style={{margin:0}}/>
+                    {p}
+                  </label>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {err && (
+        <div style={{
+          padding:'8px 10px',
+          background:'var(--red-wash)',
+          border:'1px solid var(--threat)',
+          color:'var(--threat)',
+          borderRadius:'var(--radius)',
+          fontSize:12,
+        }}>{err}</div>
+      )}
+
+      <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+        <button type="button" className="btn ghost" onClick={onCancel} style={{fontSize:12}}>
+          Cancel
+        </button>
+        <button type="submit" className="btn primary" style={{fontSize:12}}>
+          {isEdit ? 'Save changes' : 'Create role'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// Per-role action menu · R2b4. Kebab in the action column opens
+// a popover with Edit and Delete items. Delete is disabled for
+// system roles and for custom roles that still have users
+// assigned — the `in-use` count lives right in the menu item so
+// the admin sees WHY they can't delete.
+function RoleRowActions({ id, role, onEdit, userCount }) {
+  const [open, setOpen] = React.useState(false);
+  const btnRef  = React.useRef(null);
+  const menuRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      if (btnRef.current  && btnRef.current.contains(e.target))  return;
+      setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown',   onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown',   onKey);
+    };
+  }, [open]);
+
+  const handleDelete = () => {
+    if (role.system)  { setOpen(false); return; }
+    if (userCount > 0) { setOpen(false); return; }
+    if (!window.confirm('Delete role "' + role.label + '"? This removes it from the tenant permanently.')) {
+      setOpen(false);
+      return;
+    }
+    const res = irDeleteRole(id);
+    if (!res.ok) window.alert(res.reason);
+    setOpen(false);
+  };
+
+  const deleteBlocked = role.system || userCount > 0;
+  const deleteReason  = role.system ? 'system role · built-in'
+                      : userCount > 0 ? userCount + ' user(s) still assigned'
+                      : '';
+
+  return (
+    <div style={{position:'relative', display:'flex', justifyContent:'flex-end'}}>
+      <button ref={btnRef}
+              type="button"
+              onClick={() => setOpen(o => !o)}
+              title="Role actions"
+              style={{
+                width:28, height:28,
+                background:'transparent',
+                border:'1px solid transparent',
+                borderRadius:'var(--radius)',
+                cursor:'pointer',
+                color:'var(--ink-soft)',
+                fontSize:14, lineHeight:1,
+                outline: open ? '1px solid var(--line-strong)' : 'none',
+              }}>⋯</button>
+      {open && (
+        <div ref={menuRef}
+             style={{
+               position:'absolute', top:'calc(100% + 4px)', right:0,
+               minWidth:220,
+               background:'var(--bg-1)',
+               border:'1px solid var(--line-strong)',
+               borderRadius:'var(--radius)',
+               boxShadow:'0 8px 24px rgba(0,0,0,0.4)',
+               zIndex:500,
+               padding:'6px 0',
+               fontSize:12,
+             }}>
+          <button onClick={() => { onEdit(); setOpen(false); }}
+                  style={menuItemStyle}>
+            <span style={{marginRight:8}}>✎</span>Edit role
+          </button>
+          <div style={{borderTop:'1px solid var(--line-soft)', margin:'4px 0'}}/>
+          <button onClick={handleDelete}
+                  disabled={deleteBlocked}
+                  title={deleteReason}
+                  style={{
+                    ...menuItemStyle,
+                    color: deleteBlocked ? 'var(--ink-dim)' : 'var(--threat)',
+                    cursor: deleteBlocked ? 'not-allowed' : 'pointer',
+                  }}>
+            <span style={{marginRight:8}}>✕</span>
+            Delete role
+            {deleteBlocked && (
+              <span className="mono" style={{marginLeft:'auto', fontSize:10, color:'var(--ink-soft)'}}>
+                {role.system ? 'system' : 'in use'}
+              </span>
+            )}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Roles section · R2b2 ──────────────────────────────────────
+// Lives inside UsersSurface between the users table and the
+// permission matrix. Reads the live role store + user roster so
+// each row can show how many users are assigned to the role —
+// critical context before an admin deletes or edits a role.
+function RolesSection() {
+  useRolesTick();
+  const canManage = useCan('roles.manage');
+  // Subscribe to user changes so the in-use counter refreshes
+  // when a role is swapped on a row via R1a's menu.
+  const users = useUsersList();
+  const [createOpen, setCreateOpen] = React.useState(false);
+  const [editingId, setEditingId]   = React.useState(null);
+
+  const roles = getRoles();
+  const entries = Object.entries(roles)
+    .sort(([, a], [, b]) => {
+      // System roles first (they're the anchors), then custom
+      // alphabetically by label.
+      if ((a.system ? 0 : 1) !== (b.system ? 0 : 1)) return a.system ? -1 : 1;
+      return (a.label || '').localeCompare(b.label || '');
+    });
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Roles</span>
+        <span className="k" style={{display:'flex', alignItems:'center', gap:10}}>
+          <span className="mono" style={{fontSize:11}}>
+            {entries.length} total ·{' '}
+            {entries.filter(([, r]) => r.system).length} system ·{' '}
+            {entries.filter(([, r]) => !r.system).length} custom
+          </span>
+          {canManage && (
+            <button className="btn primary"
+                    onClick={() => setCreateOpen(o => !o)}
+                    style={{fontSize:11, padding:'5px 10px'}}>
+              {createOpen ? '× Cancel' : '+ Create role'}
+            </button>
+          )}
+        </span>
+      </div>
+
+      {createOpen && canManage && (
+        <CreateRoleForm onCancel={() => setCreateOpen(false)}
+                        onCreated={() => setCreateOpen(false)}/>
+      )}
+
+      <div>
+        <div style={{
+          display:'grid',
+          gridTemplateColumns:'180px 1fr 90px 90px 60px',
+          gap:10, padding:'8px 14px',
+          borderBottom:'1px solid var(--line-soft)',
+          background:'var(--bg-2)',
+          fontSize:10, letterSpacing:'0.05em', textTransform:'uppercase',
+          color:'var(--ink-soft)',
+          fontFamily:"'Space Grotesk', sans-serif", fontWeight:600,
+        }}>
+          <span>Role</span>
+          <span>Description</span>
+          <span style={{textAlign:'right'}}>Permissions</span>
+          <span style={{textAlign:'right'}}>Users</span>
+          <span></span>
+        </div>
+        {entries.map(([id, r]) => {
+          const userCount = users.filter(u => u.role === id).length;
+          const isEditing = editingId === id;
+          return (
+            <React.Fragment key={id}>
+              <div style={{
+                     display:'grid',
+                     gridTemplateColumns:'180px 1fr 90px 90px 60px',
+                     gap:10, padding:'10px 14px',
+                     borderBottom:'1px solid var(--line-soft)',
+                     alignItems:'center', fontSize:12,
+                     background: isEditing ? 'var(--bg-2)' : 'transparent',
+                   }}>
+                <div style={{minWidth:0}}>
+                  <span className="chip"
+                        title={r.label}
+                        style={{
+                          fontSize:10, padding:'2px 10px',
+                          borderColor:r.color, color:r.color,
+                          background:'var(--bg-1)',
+                          whiteSpace:'nowrap',
+                          maxWidth:'100%', overflow:'hidden', textOverflow:'ellipsis',
+                        }}>
+                    {r.glyph} {r.label}
+                  </span>
+                  <div className="mono" style={{fontSize:10, color:'var(--ink-dim)', marginTop:4}}>
+                    {id}{r.system && <span style={{color:'var(--ink-soft)'}}> · system</span>}
+                  </div>
+                </div>
+                <div style={{fontSize:11.5, color:'var(--ink)', lineHeight:1.5}}>
+                  {r.description || <span className="muted">—</span>}
+                </div>
+                <div className="mono"
+                     style={{fontSize:11, color:'var(--ink)', textAlign:'right'}}>
+                  {(r.permissions || []).length}
+                </div>
+                <div className="mono"
+                     style={{fontSize:11, color:'var(--ink)', textAlign:'right'}}>
+                  {userCount}
+                </div>
+                <div style={{textAlign:'right'}}>
+                  {canManage && (
+                    <RoleRowActions id={id} role={r} userCount={userCount}
+                                    onEdit={() => setEditingId(id)} />
+                  )}
+                </div>
+              </div>
+              {isEditing && (
+                <CreateRoleForm existing={r} existingId={id}
+                                onCancel={() => setEditingId(null)}
+                                onCreated={() => setEditingId(null)}/>
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+      {!canManage && (
+        <div className="muted" style={{
+          padding:'10px 14px', fontSize:11, borderTop:'1px solid var(--line-soft)',
+        }}>
+          Your role doesn't carry <span className="mono">roles.manage</span>.
+          Admins can create, edit, and delete custom roles here.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UsersSurface() {
   const canView    = useCan('users.view');
   const canCreate  = useCan('users.create');
   const canUpdate  = useCan('users.update');
   const canDisable = useCan('users.disable');
+  const canDelete  = useCan('users.delete');
   const canInvite  = useCan('users.invite');
+  useRolesTick();
 
   const users = useUsersList();
   const [search,     setSearch]     = React.useState('');
@@ -9053,7 +9705,7 @@ function UsersSurface() {
                     borderRadius:'var(--radius)',
                   }}>
             <option value="">All roles</option>
-            {Object.entries(IR_ROLES).map(([id, r]) => (
+            {Object.entries(getRoles()).map(([id, r]) => (
               <option key={id} value={id}>{r.glyph} {r.label}</option>
             ))}
           </select>
@@ -9102,7 +9754,7 @@ function UsersSurface() {
         <div style={{padding:0}}>
           <div style={{
             display:'grid',
-            gridTemplateColumns:'auto 1.4fr 1fr 110px 120px 120px',
+            gridTemplateColumns:'auto 1.4fr 1fr 180px 100px 130px 44px',
             gap:0,
             fontSize:11, color:'var(--ink-soft)',
             padding:'8px 14px',
@@ -9117,6 +9769,7 @@ function UsersSurface() {
             <div>Role</div>
             <div>Status</div>
             <div>Last active</div>
+            <div></div>
           </div>
           {filtered.map(u => {
             const role = irRoleMeta(u.role);
@@ -9124,7 +9777,7 @@ function UsersSurface() {
               <div key={u.id}
                    style={{
                      display:'grid',
-                     gridTemplateColumns:'auto 1.4fr 1fr 110px 120px 120px',
+                     gridTemplateColumns:'auto 1.4fr 1fr 180px 100px 130px 44px',
                      gap:0,
                      alignItems:'center',
                      padding:'10px 14px',
@@ -9147,22 +9800,27 @@ function UsersSurface() {
                 <div className="mono" style={{fontSize:11, color:'var(--ink)'}}>
                   {u.email || <span className="muted">—</span>}
                 </div>
-                <div>
+                <div style={{minWidth:0}}>
                   <span className="chip"
+                        title={role.label}
                         style={{
                           fontSize:10,
                           borderColor:role.color, color:role.color,
                           background:'var(--bg-1)',
+                          whiteSpace:'nowrap',
+                          maxWidth:'100%',
+                          overflow:'hidden',
+                          textOverflow:'ellipsis',
                         }}>
                     {role.glyph} {role.label}
                   </span>
                 </div>
-                <div>
+                <div style={{minWidth:0}}>
                   <span className={'chip chip--' + (
                     u.status === 'active' ? 'safe'
                     : u.status === 'invited' ? 'warn'
                     : 'red')}
-                        style={{fontSize:10}}>
+                        style={{fontSize:10, whiteSpace:'nowrap'}}>
                     {u.status.toUpperCase()}
                   </span>
                 </div>
@@ -9174,6 +9832,10 @@ function UsersSurface() {
                     ? <span style={{color:'var(--amber)'}}>invited {irFormatRelative(u.invited_at)}</span>
                     : irFormatRelative(u.last_active)}
                 </div>
+                <UserRowActions user={u}
+                                canUpdate={canUpdate}
+                                canDisable={canDisable}
+                                canDelete={canDelete}/>
               </div>
             );
           })}
@@ -9185,6 +9847,9 @@ function UsersSurface() {
         </div>
       </div>
 
+      {/* Roles section · R2b · list + (create + edit + delete soon) */}
+      <RolesSection />
+
       {/* Permission matrix · roles × actions */}
       <div className="box">
         <div className="box-title" onClick={() => setMatrixOpen(o => !o)}
@@ -9192,7 +9857,7 @@ function UsersSurface() {
           <span className="t">Permission matrix</span>
           <span className="k">
             <span className="mono" style={{fontSize:11}}>
-              {matrixOpen ? '▼' : '▶'} {irAllPermissions().length} actions × {Object.keys(IR_ROLES).length} roles
+              {matrixOpen ? '▼' : '▶'} {irAllPermissions().length} actions × {Object.keys(getRoles()).length} roles
             </span>
           </span>
         </div>
@@ -9210,7 +9875,7 @@ function UsersSurface() {
                     color:'var(--ink-soft)', fontWeight:600,
                     borderBottom:'1px solid var(--line-strong)',
                   }}>action</th>
-                  {Object.entries(IR_ROLES).map(([id, r]) => (
+                  {Object.entries(getRoles()).map(([id, r]) => (
                     <th key={id}
                         style={{
                           padding:'8px 12px',
@@ -9232,7 +9897,7 @@ function UsersSurface() {
                       color:'var(--ink)',
                       borderBottom:'1px solid var(--line-soft)',
                     }}>{action}</td>
-                    {Object.keys(IR_ROLES).map(id => {
+                    {Object.keys(getRoles()).map(id => {
                       const yes = canDo(id, action);
                       return (
                         <td key={id}
@@ -9822,19 +10487,22 @@ function EngineeringSurface() {
 const IR_USERS_KEY        = 'ir:users';
 const IR_CURRENT_USER_KEY = 'ir:currentUserId';
 
-// Role catalogue. Each role has a glyph + description + default
-// list of permissions it carries; U2 wires `canDo(role, action)`
-// against these. The permission strings are deliberately loose
-// (verb.resource) so future surfaces can cite them without
-// refactoring the catalogue.
-const IR_ROLES = {
+// Role seed catalogue. system:true marks these as non-deletable —
+// custom roles created through the R2b editor will land alongside
+// them in the live `ir:roles` store and carry system:false. Every
+// runtime read goes through getRoles() so components pick up
+// admin-authored changes immediately.
+const IR_SYSTEM_ROLES = {
   admin: {
     label: 'Administrator',
     glyph: '★',
     color: 'var(--red)',
     description: 'Full access · user management · integrations · everything responders and engineers see.',
+    system: true,
     permissions: [
-      'users.view', 'users.create', 'users.invite', 'users.update', 'users.disable',
+      'users.view', 'users.create', 'users.invite', 'users.update',
+      'users.disable', 'users.delete',
+      'roles.manage',
       'findings.view', 'findings.dispose', 'findings.escalate',
       'playbooks.view', 'playbooks.edit',
       'integrations.view', 'integrations.edit',
@@ -9847,6 +10515,7 @@ const IR_ROLES = {
     glyph: '◈',
     color: 'var(--accent)',
     description: 'Primary DLP triage role · review + dispose findings · escalate to XSOAR · use the crypto workbench.',
+    system: true,
     permissions: [
       'findings.view', 'findings.dispose', 'findings.escalate',
       'playbooks.view',
@@ -9859,6 +10528,7 @@ const IR_ROLES = {
     glyph: '◯',
     color: 'var(--ink-soft)',
     description: 'Read-only access · stakeholder dashboards + audit reviews · cannot triage or escalate.',
+    system: true,
     permissions: [
       'findings.view',
       'playbooks.view',
@@ -9870,6 +10540,7 @@ const IR_ROLES = {
     glyph: '⌁',
     color: 'var(--amber)',
     description: 'Pattern authors · FP queue review · crosses into siphon-c2 for tuning.',
+    system: true,
     permissions: [
       'findings.view', 'findings.fp',
       'playbooks.view', 'playbooks.edit',
@@ -9879,8 +10550,109 @@ const IR_ROLES = {
     ],
   },
 };
+
+// Live role store · localStorage[ir:roles]. Seeded from
+// IR_SYSTEM_ROLES the first time it's read. Writes fire
+// 'ir:rolesChanged' so subscribed components re-render.
+const IR_ROLES_KEY = 'ir:roles';
+
+function readRoles() {
+  try {
+    const raw = localStorage.getItem(IR_ROLES_KEY);
+    if (!raw) {
+      const seeded = JSON.parse(JSON.stringify(IR_SYSTEM_ROLES));
+      localStorage.setItem(IR_ROLES_KEY, JSON.stringify(seeded));
+      return seeded;
+    }
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object') ? parsed : { ...IR_SYSTEM_ROLES };
+  } catch {
+    return { ...IR_SYSTEM_ROLES };
+  }
+}
+function writeRoles(dict) {
+  try { localStorage.setItem(IR_ROLES_KEY, JSON.stringify(dict)); } catch {}
+  window.dispatchEvent(new CustomEvent('ir:rolesChanged'));
+}
+// Convenience: current snapshot of the role map. Callers that
+// need to react to changes should pair this with useRolesTick().
+function getRoles() { return readRoles(); }
+
+// Re-render trigger for components that display roles or
+// permission chips. Bumps local state whenever the role store
+// mutates in this tab OR another.
+function useRolesTick() {
+  const [, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => setTick(t => t + 1);
+    const onStorage = (e) => { if (e.key === IR_ROLES_KEY) refresh(); };
+    window.addEventListener('ir:rolesChanged', refresh);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('ir:rolesChanged', refresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+}
+
+// ─── Role CRUD · R2b1 ──────────────────────────────────────────
+// Guards baked in so the editor surface (R2b2-4) doesn't have to
+// repeat them: kebab-safe id, no id collisions, no deleting
+// system roles, no deleting roles still assigned to users.
+
+function irUsersInRole(roleId) {
+  try { return readUsers().filter(u => u.role === roleId); }
+  catch { return []; }
+}
+
+function irCreateRole({ id, label, glyph, color, description, permissions }) {
+  const roles = readRoles();
+  const cleanId = (id || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 32);
+  if (!cleanId)        return { ok: false, reason: 'role id required' };
+  if (roles[cleanId])  return { ok: false, reason: 'a role with that id already exists' };
+  const rec = {
+    label: (label || cleanId).trim(),
+    glyph: (glyph || '◆').slice(0, 2),
+    color: color || 'var(--accent)',
+    description: (description || '').trim(),
+    system: false,
+    permissions: Array.isArray(permissions) ? permissions.slice() : [],
+  };
+  writeRoles({ ...roles, [cleanId]: rec });
+  return { ok: true, id: cleanId, role: rec };
+}
+
+function irUpdateRole(id, patch) {
+  const roles = readRoles();
+  const existing = roles[id];
+  if (!existing) return { ok: false, reason: 'no such role' };
+  // System roles can have their label / description / permissions
+  // / colour / glyph edited (so tenants can adjust the defaults
+  // for their environment), but their id + system flag are locked.
+  const { id: _ignoredId, system: _ignoredSystem, ...safe } = (patch || {});
+  const next = { ...existing, ...safe };
+  if (Array.isArray(next.permissions)) {
+    next.permissions = [...new Set(next.permissions)];
+  }
+  writeRoles({ ...roles, [id]: next });
+  return { ok: true, role: next };
+}
+
+function irDeleteRole(id) {
+  const roles = readRoles();
+  const existing = roles[id];
+  if (!existing)       return { ok: false, reason: 'no such role' };
+  if (existing.system) return { ok: false, reason: 'system roles are permanent' };
+  const inUse = irUsersInRole(id);
+  if (inUse.length)    return { ok: false, reason: 'role still assigned to ' + inUse.length + ' user(s)' };
+  const next = { ...roles };
+  delete next[id];
+  writeRoles(next);
+  return { ok: true };
+}
 function irRoleMeta(id) {
-  return IR_ROLES[id] || { label: id, glyph: '?', color: 'var(--ink-soft)', description: '', permissions: [] };
+  const roles = getRoles();
+  return roles[id] || { label: id, glyph: '?', color: 'var(--ink-soft)', description: '', permissions: [] };
 }
 
 // ─── Permission helpers · U2 ───────────────────────────────────
@@ -9909,16 +10681,18 @@ function canDo(userOrRole, action) {
       extras = userOrRole.extra_permissions;
     }
   }
-  const meta = IR_ROLES[role];
+  const meta = getRoles()[role];
   if (!meta) return false;
   return meta.permissions.includes(action) || extras.includes(action);
 }
 
-// Full enumeration across IR_ROLES for the permission-matrix UI
-// in U3. Returns a sorted deduplicated list.
+// Full enumeration across the live role store plus IR_SYSTEM_ROLES
+// (so newly-added actions that the system seed knows about still
+// show up in the matrix even before they're attached to a role).
 function irAllPermissions() {
   const s = new Set();
-  Object.values(IR_ROLES).forEach(r => r.permissions.forEach(p => s.add(p)));
+  Object.values(IR_SYSTEM_ROLES).forEach(r => r.permissions.forEach(p => s.add(p)));
+  Object.values(getRoles()).forEach(r => r.permissions.forEach(p => s.add(p)));
   return [...s].sort();
 }
 
@@ -10966,6 +11740,48 @@ const TWEAK_DEFAULTS = {
   nav: 'split',
 };
 
+// ─── AuthBrandHeader ───────────────────────────────────────────
+// Shared brand block used by LoginPage + ForceChangePassword +
+// InviteAcceptPage. Keeps the three auth screens visually
+// consistent — same logo, same wordmark, same subtitle treatment —
+// so swapping between them doesn't reshuffle the card header.
+// Logo source is the committed siphon-logo.png sibling; relative
+// paths load fine from file:// for images (only CSS/JS cross-
+// origin is blocked on that protocol).
+function AuthBrandHeader({ kicker, kickerColor, title, subtitle }) {
+  return (
+    <div style={{marginBottom:22, display:'flex', gap:14, alignItems:'flex-start'}}>
+      <img src="siphon-logo.png"
+           alt="Polygon Siphon"
+           width="56" height="56"
+           style={{
+             flex:'0 0 56px',
+             borderRadius:8,
+             imageRendering:'auto',
+           }}/>
+      <div style={{flex:1, minWidth:0}}>
+        <div style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 11,
+          color: kickerColor || 'var(--accent)',
+          letterSpacing:'0.12em',
+        }}>{kicker || 'POLYGON'}</div>
+        <div style={{
+          fontSize: 24, fontWeight: 700, color:'var(--ink-bright)',
+          letterSpacing: '-0.01em', marginTop: 2,
+        }}>{title}</div>
+        {subtitle && (
+          <div style={{
+            fontSize: 12, color:'var(--ink-soft)', marginTop: 8, lineHeight:1.5,
+          }}>
+            {subtitle}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── LoginPage · A2 ────────────────────────────────────────────
 // Full-page gate shown when no valid session is present. Takes an
 // `onLogin(user)` callback the App wires up to write the session
@@ -11012,22 +11828,10 @@ function LoginPage({ onLogin }) {
               padding: '28px 28px 22px',
               fontFamily: "'Space Grotesk', sans-serif",
             }}>
-        {/* Brand */}
-        <div style={{marginBottom:22}}>
-          <div style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 12, color:'var(--accent)', letterSpacing:'0.1em',
-          }}>POLYGON</div>
-          <div style={{
-            fontSize: 28, fontWeight: 700, color:'var(--ink-bright)',
-            letterSpacing: '-0.01em', marginTop: 2,
-          }}>siphon · IR</div>
-          <div style={{
-            fontSize: 12, color:'var(--ink-soft)', marginTop: 8, lineHeight:1.5,
-          }}>
-            Incident-response console · sign in with your corporate account
-          </div>
-        </div>
+        <AuthBrandHeader
+          kicker="POLYGON"
+          title="siphon · IR"
+          subtitle="Incident-response console · sign in with your corporate account" />
 
         {/* Email */}
         <label style={{display:'block', marginBottom:12}}>
@@ -11168,41 +11972,38 @@ function InviteAcceptPage({ token, onAccepted }) {
               padding: '28px 28px 22px',
               fontFamily: "'Space Grotesk', sans-serif",
             }}>
-        <div style={{marginBottom:20}}>
+        <AuthBrandHeader
+          kicker="ACCEPT INVITE"
+          title="Set your password"
+          subtitle={matchedUser ? <>
+            This invite provisions{' '}
+            <span className="mono" style={{color:'var(--ink)'}}>{matchedUser.email || matchedUser.name}</span>
+            {' '}as{' '}
+            <span className="chip"
+                  style={{
+                    fontSize:10, padding:'2px 8px',
+                    borderColor: role.color, color: role.color,
+                    background:'var(--bg-1)',
+                    whiteSpace:'nowrap',
+                  }}>{role.glyph} {role.label}</span>.
+            Pick a password to activate the account.
+          </> : null}/>
+
+        {/* Invalid-token banner lives outside the brand header —
+            it's a full-width warning card, not subtitle text. */}
+        {!matchedUser && (
           <div style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize:11, color:'var(--accent)', letterSpacing:'0.1em',
-          }}>ACCEPT INVITE</div>
-          <div style={{
-            fontSize:22, fontWeight:700, color:'var(--ink-bright)',
-            letterSpacing:'-0.01em', marginTop:4,
-          }}>Set your password</div>
-          {matchedUser ? (
-            <div style={{fontSize:12, color:'var(--ink-soft)', marginTop:10, lineHeight:1.6}}>
-              This invite provisions{' '}
-              <span className="mono" style={{color:'var(--ink)'}}>{matchedUser.email || matchedUser.name}</span>
-              {' '}as{' '}
-              <span className="chip"
-                    style={{
-                      fontSize:10, padding:'2px 8px',
-                      borderColor: role.color, color: role.color,
-                      background:'var(--bg-1)',
-                    }}>{role.glyph} {role.label}</span>.
-              Pick a password to activate the account.
-            </div>
-          ) : (
-            <div style={{
-              fontSize:12, color:'var(--threat)',
-              marginTop:10, padding:'8px 10px',
-              background:'var(--red-wash)',
-              border:'1px solid var(--threat)',
-              borderRadius:'var(--radius)',
-            }}>
-              This invite link isn't valid — it's been accepted already, or the
-              token was revoked. Ask an administrator for a new invite.
-            </div>
-          )}
-        </div>
+            fontSize:12, color:'var(--threat)',
+            marginTop:-6, marginBottom:18,
+            padding:'10px 12px',
+            background:'var(--red-wash)',
+            border:'1px solid var(--threat)',
+            borderRadius:'var(--radius)',
+          }}>
+            This invite link isn't valid — it's been accepted already, or the
+            token was revoked. Ask an administrator for a new invite.
+          </div>
+        )}
 
         {matchedUser && (
           <>
@@ -11312,21 +12113,15 @@ function ForceChangePassword({ user, onDone }) {
               padding: '28px 28px 22px',
               fontFamily: "'Space Grotesk', sans-serif",
             }}>
-        <div style={{marginBottom:20}}>
-          <div style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 11, color:'var(--amber)', letterSpacing:'0.1em',
-          }}>FORCED · FIRST LOGIN</div>
-          <div style={{
-            fontSize: 22, fontWeight: 700, color:'var(--ink-bright)',
-            letterSpacing:'-0.01em', marginTop: 4,
-          }}>Set a new password</div>
-          <div style={{fontSize:12, color:'var(--ink-soft)', marginTop:8, lineHeight:1.6}}>
+        <AuthBrandHeader
+          kicker="FORCED · FIRST LOGIN"
+          kickerColor="var(--amber)"
+          title="Set a new password"
+          subtitle={<>
             Signed in as <span className="mono" style={{color:'var(--ink)'}}>{user.email || user.id}</span>.
             You need to replace the default/initial password before the console
             is accessible.
-          </div>
-        </div>
+          </>}/>
 
         <label style={{display:'block', marginBottom:12}}>
           <div className="label" style={{marginBottom:4}}>New password</div>
