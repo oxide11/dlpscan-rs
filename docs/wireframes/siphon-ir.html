@@ -6708,7 +6708,7 @@ function DashboardSurface() {
 const CRYPTO_TABS = [
   { id: 'inspector',  label: 'File Inspector',  hint: 'magic bytes · entropy · hex dump · type detect' },
   { id: 'hasher',     label: 'Hash Computer',   hint: 'MD5 / SHA-1 / SHA-256 / SHA-384 / SHA-512 (WebCrypto)' },
-  { id: 'zipattack',  label: 'Zip Password',    hint: 'dictionary attack against encrypted zips (in-browser)' },
+  { id: 'zipattack',  label: 'Password Attack', hint: 'dictionary attack against encrypted zips / pdfs / office docs (in-browser)' },
 ];
 
 // ── File drop zone — shared primitive the Workbench tabs reuse.
@@ -7721,9 +7721,80 @@ function loadZipJs() {
   return window.__irZipJsLoading;
 }
 
-// ── Zip Password Attack tab · 5a shell + 5b dictionary engine ──
-function CryptoZipAttack() {
+// Lazy-load officecrypto-tool — CommonJS in origin form, so we
+// pull the jsDelivr +esm endpoint which does runtime bundle-to-ESM
+// conversion (and also resolves the node-ish deps: `cfb`,
+// `crypto-js`, `xml2js`). Uses `new Function('return import(u)')`
+// so Babel-standalone leaves the dynamic import untouched. Covers
+// legacy Office (.doc / .xls / .ppt) AND agile-encrypted modern
+// OOXML (.docx / .xlsx / .pptx) — both land in a CFB wrapper.
+function loadOfficeCrypto() {
+  if (window.__irOfficeCrypto) return Promise.resolve(window.__irOfficeCrypto);
+  if (window.__irOfficeCryptoLoading) return window.__irOfficeCryptoLoading;
+  const dynImport = new Function('u', 'return import(u)');
+  window.__irOfficeCryptoLoading = dynImport('https://cdn.jsdelivr.net/npm/officecrypto-tool@0.0.19/+esm')
+    .then(mod => {
+      const lib = mod.default || mod;
+      if (typeof lib.decrypt !== 'function') {
+        throw new Error('officecrypto-tool: decrypt() missing from module export');
+      }
+      window.__irOfficeCrypto = lib;
+      return lib;
+    });
+  return window.__irOfficeCryptoLoading;
+}
+
+// Lazy-load Mozilla pdf.js (legacy UMD build). Same lazy pattern as
+// zip.js — only pulled on first PDF attack. Workers also come from
+// jsDelivr so the page doesn't need same-origin copies.
+function loadPdfJs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (window.__irPdfJsLoading) return window.__irPdfJsLoading;
+  window.__irPdfJsLoading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4/legacy/build/pdf.min.js';
+    s.onload = () => {
+      try {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdn.jsdelivr.net/npm/pdfjs-dist@4/legacy/build/pdf.worker.min.js';
+        resolve(window.pdfjsLib);
+      } catch (e) { reject(e); }
+    };
+    s.onerror = () => reject(new Error('Failed to load pdf.js from CDN'));
+    document.head.appendChild(s);
+  });
+  return window.__irPdfJsLoading;
+}
+
+// Magic-byte format detect. Reads only the first 8 bytes of the
+// file — enough to distinguish the containers we care about.
+// Returns: 'zip' | 'pdf' | 'cfb' | 'unknown'.
+// 'cfb' (D0 CF 11 E0 …) is the OLE compound file used by legacy
+// Office (.doc/.xls/.ppt) and by agile-encrypted modern Office
+// wrappers — not wired for attack yet; detected so we can tell
+// the analyst why it's rejected.
+async function detectCryptoFormat(file) {
+  if (!file) return 'unknown';
+  try {
+    const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+    if (head.length >= 4 && head[0] === 0x25 && head[1] === 0x50 && head[2] === 0x44 && head[3] === 0x46) return 'pdf';
+    if (head.length >= 4 && head[0] === 0x50 && head[1] === 0x4B && head[2] === 0x03 && head[3] === 0x04) return 'zip';
+    if (head.length >= 8 && head[0] === 0xD0 && head[1] === 0xCF && head[2] === 0x11 && head[3] === 0xE0
+        && head[4] === 0xA1 && head[5] === 0xB1 && head[6] === 0x1A && head[7] === 0xE1) return 'cfb';
+  } catch {}
+  return 'unknown';
+}
+
+// ── Password Attack tab · dictionary engine across zip + pdf ──
+// Single surface that auto-detects the container format from the
+// first few bytes and routes to a format-specific verifier:
+//   · ZIP family → zip.js (AES / PKZIP)
+//   · PDF        → pdf.js (RC4-40/128, AES-128/256, rev 2–6)
+// CFB (agile-encrypted Office) is detected and flagged but not
+// cracked here — that wrapper needs a separate decoder.
+function CryptoPasswordAttack() {
   const [file, setFile] = React.useState(null);
+  const [format, setFormat] = React.useState('unknown'); // zip | pdf | cfb | unknown
   const [wordlistSource, setWordlistSource] = React.useState('builtin'); // builtin | paste | file
   const [wordlistText, setWordlistText] = React.useState('');
   const [wordlistFile, setWordlistFile] = React.useState(null);
@@ -7734,6 +7805,16 @@ function CryptoZipAttack() {
     startedAt: 0, finishedAt: 0,
   });
   const cancelRef = React.useRef(false);
+
+  // Detect the container format whenever a new file is picked.
+  // Async because the File API is async; synchronous UI state gets
+  // updated once the first 8 bytes come back.
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!file) { setFormat('unknown'); return; }
+    detectCryptoFormat(file).then(f => { if (!cancelled) setFormat(f); });
+    return () => { cancelled = true; };
+  }, [file]);
 
   // When the analyst picks a wordlist file, read it as text once
   // and cache so the attack loop doesn't re-read per password.
@@ -7765,65 +7846,151 @@ function CryptoZipAttack() {
     return out;
   }, [wordlistSource, wordlistText, wordlistFileText]);
 
-  const isZip = file && (
-    /\.(zip|docx|xlsx|pptx|odt|ods|odp|jar|war|apk|ipa)$/i.test(file.name)
-    || file.type === 'application/zip'
-    || file.type === 'application/x-zip-compressed'
-  );
+  // A supported file is one we have a verifier for. All three
+  // format branches below handle it.
+  const supported = !!file && (format === 'zip' || format === 'pdf' || format === 'cfb');
 
-  // Reset attack state when the file or wordlist changes.
+  // Reset attack state when the file, format, or wordlist changes.
   React.useEffect(() => {
     setAttack(s => s.status === 'running' ? s : {
       status: 'idle', tried: 0, total: 0, current: null,
       password: null, error: null, entries: [], startedAt: 0, finishedAt: 0,
     });
-  }, [file, candidates.length, wordlistSource]);
+  }, [file, format, candidates.length, wordlistSource]);
 
   const stop = () => {
     cancelRef.current = true;
     setAttack(s => ({ ...s, status: 'cancelled', finishedAt: Date.now() }));
   };
 
+  // Build a format-specific verifier. Each shape returns the same
+  // interface:
+  //   { verify(pw) -> bool, onSuccess() -> entries[], cleanup() }
+  // so the attack loop below stays format-agnostic.
+  const buildVerifier = async () => {
+    if (format === 'zip') {
+      const zipLib = await loadZipJs();
+      const reader = new zipLib.ZipReader(new zipLib.BlobReader(file));
+      const entries = await reader.getEntries();
+      const encrypted = entries.filter(e => e.encrypted)
+        .sort((a, b) => (a.uncompressedSize || 0) - (b.uncompressedSize || 0));
+      if (encrypted.length === 0) {
+        try { await reader.close(); } catch {}
+        throw new Error("no encrypted entries · the zip doesn't appear to be password-protected");
+      }
+      const probe = encrypted[0];
+      return {
+        verify: async (pw) => {
+          try {
+            // zip.js validates the AES auth header (or PKZIP
+            // CRC) at read time, so a wrong password throws
+            // quickly — no need to fully inflate the probe.
+            await probe.getData(new zipLib.Uint8ArrayWriter(), { password: pw });
+            return true;
+          } catch { return false; }
+        },
+        onSuccess: () => entries.map(e => ({
+          filename: e.filename,
+          size: e.uncompressedSize,
+          compressed: e.compressedSize,
+          encrypted: e.encrypted,
+          date: e.lastModDate ? e.lastModDate.toISOString().slice(0, 19).replace('T', ' ') : null,
+        })),
+        cleanup: async () => { try { await reader.close(); } catch {} },
+      };
+    }
+    if (format === 'pdf') {
+      const pdfjsLib = await loadPdfJs();
+      // Cache the raw bytes once; pdf.js consumes the buffer on
+      // each getDocument call, so we slice a fresh copy per try.
+      const buf = await file.arrayBuffer();
+      // Probe: the file must actually be password-protected or
+      // every attempt will trivially succeed with the wrong reason.
+      // pdf.js raises PasswordException(code=1 NEED_PASSWORD) when
+      // opened without a password on an encrypted PDF, or just
+      // resolves on an unencrypted one.
+      try {
+        const probeTask = pdfjsLib.getDocument({ data: buf.slice(0), password: '' });
+        const probeDoc = await probeTask.promise;
+        try { await probeDoc.destroy(); } catch {}
+        throw new Error("this pdf isn't password-protected · opens with empty password");
+      } catch (e) {
+        if (e.name !== 'PasswordException') throw e;
+        // expected — continue into attack loop
+      }
+      return {
+        verify: async (pw) => {
+          const loadingTask = pdfjsLib.getDocument({
+            data: buf.slice(0), password: pw, stopAtErrors: true,
+          });
+          try {
+            const doc = await loadingTask.promise;
+            try { await doc.destroy(); } catch {}
+            return true;
+          } catch (e) {
+            if (e.name === 'PasswordException') return false;
+            throw e;
+          }
+        },
+        onSuccess: () => [], // PDFs don't have a per-entry manifest
+        cleanup: () => {},
+      };
+    }
+    if (format === 'cfb') {
+      const officeCrypto = await loadOfficeCrypto();
+      const buf = await file.arrayBuffer();
+      const input = new Uint8Array(buf);
+      // isEncrypted tells us whether this CFB file is actually
+      // password-protected (vs. a plain legacy .doc without
+      // encryption). Without this check, every password would
+      // "succeed" on an unencrypted file and leave the analyst
+      // confused. Some builds of the library don't export it —
+      // fall back to just running decrypt().
+      if (typeof officeCrypto.isEncrypted === 'function') {
+        try {
+          if (!officeCrypto.isEncrypted(input)) {
+            throw new Error("this office document isn't password-protected");
+          }
+        } catch (e) {
+          // Re-throw our own error; swallow any false positive from
+          // isEncrypted throwing on unfamiliar CFB variants.
+          if (/not password-protected/.test(e.message || '')) throw e;
+        }
+      }
+      return {
+        verify: async (pw) => {
+          try {
+            // decrypt() resolves with a decrypted buffer on the
+            // right password, throws on the wrong one. Agile
+            // Encryption uses PBKDF2 with ~100k iterations, so
+            // each attempt is much slower than zip/pdf — that's
+            // surfaced in the UI warning below.
+            await officeCrypto.decrypt(input, { password: pw });
+            return true;
+          } catch { return false; }
+        },
+        onSuccess: () => [], // No per-entry manifest for CFB
+        cleanup: () => {},
+      };
+    }
+    throw new Error('unsupported format');
+  };
+
   const start = async () => {
-    if (!file || !isZip || candidates.length === 0) return;
+    if (!supported || candidates.length === 0) return;
     cancelRef.current = false;
     setAttack({
       status: 'loading', tried: 0, total: candidates.length,
       current: null, password: null, error: null, entries: [],
       startedAt: Date.now(), finishedAt: 0,
     });
-    let zipLib;
+    let verifier;
     try {
-      zipLib = await loadZipJs();
+      verifier = await buildVerifier();
     } catch (e) {
       setAttack(s => ({ ...s, status: 'error', error: String(e.message || e), finishedAt: Date.now() }));
       return;
     }
-
-    const reader = new zipLib.ZipReader(new zipLib.BlobReader(file));
-    let entries;
-    try {
-      entries = await reader.getEntries();
-    } catch (e) {
-      setAttack(s => ({ ...s, status: 'error', error: 'unreadable zip: ' + (e.message || e), finishedAt: Date.now() }));
-      try { await reader.close(); } catch {}
-      return;
-    }
-    // Pick a small encrypted entry to probe against — smallest
-    // entry with encryption set is fastest to verify a password
-    // attempt.
-    const encrypted = entries.filter(e => e.encrypted)
-      .sort((a, b) => (a.uncompressedSize || 0) - (b.uncompressedSize || 0));
-    if (encrypted.length === 0) {
-      setAttack(s => ({
-        ...s, status: 'error',
-        error: 'no encrypted entries · the zip doesn\'t appear to be password-protected',
-        finishedAt: Date.now(),
-      }));
-      try { await reader.close(); } catch {}
-      return;
-    }
-    const probe = encrypted[0];
 
     setAttack(s => ({ ...s, status: 'running' }));
 
@@ -7833,26 +8000,23 @@ function CryptoZipAttack() {
       const pw = candidates[i];
       // Yield to the event loop every 10 attempts so the UI
       // stays responsive and the Stop button can land its state
-      // update. zip.js decrypt is async anyway but the tight
-      // loop can still starve renders on long wordlists.
+      // update. The verifier is async anyway but the tight loop
+      // can still starve renders on long wordlists.
       if (i % 10 === 0) {
         setAttack(s => ({ ...s, tried: i, current: pw }));
         await new Promise(r => setTimeout(r, 0));
       }
       try {
-        // Pull the probe entry; zip.js validates the AES auth
-        // header (or PKZIP CRC) at read time, so a wrong
-        // password throws quickly.
-        await probe.getData(new zipLib.Uint8ArrayWriter(), { password: pw });
-        found = pw;
-        break;
+        if (await verifier.verify(pw)) { found = pw; break; }
       } catch (e) {
-        // Wrong password — keep going.
+        setAttack(s => ({ ...s, status: 'error', error: 'verify failed: ' + (e.message || e), finishedAt: Date.now() }));
+        try { await verifier.cleanup(); } catch {}
+        return;
       }
     }
 
     if (cancelRef.current) {
-      try { await reader.close(); } catch {}
+      try { await verifier.cleanup(); } catch {}
       return;
     }
 
@@ -7861,36 +8025,57 @@ function CryptoZipAttack() {
         ...s, status: 'exhausted', tried: candidates.length, current: null,
         finishedAt: Date.now(),
       }));
-      try { await reader.close(); } catch {}
+      try { await verifier.cleanup(); } catch {}
       return;
     }
 
-    // Found — surface the password + list decrypted entries.
     setAttack(s => ({
       ...s, status: 'success', password: found, tried: s.tried + 1,
-      current: null,
-      entries: entries.map(e => ({
-        filename: e.filename,
-        size: e.uncompressedSize,
-        compressed: e.compressedSize,
-        encrypted: e.encrypted,
-        date: e.lastModDate ? e.lastModDate.toISOString().slice(0, 19).replace('T', ' ') : null,
-      })),
+      current: null, entries: verifier.onSuccess(),
       finishedAt: Date.now(),
     }));
-    try { await reader.close(); } catch {}
+    try { await verifier.cleanup(); } catch {}
   };
 
   return (
     <div style={{padding:16, display:'grid', gap:14}}>
       <CryptoFileDrop file={file} onFile={setFile}
-                      label="drop an encrypted zip · .zip / .docx / .xlsx / .pptx / .jar — all ZIP containers"/>
+                      label="drop an encrypted file · .zip / .pdf / .docx / .xlsx / .pptx / .doc / .xls / .ppt / .jar"/>
 
-      {file && !isZip && (
+      {/* Format badge — only renders once a file's magic bytes
+          have been read. Gives the analyst an at-a-glance reason
+          for the Start button's enable/disable state. */}
+      {file && (
+        <div style={{display:'flex', alignItems:'center', gap:10, fontSize:12}}>
+          <span className="muted">detected format</span>
+          <span className={'chip chip--' + (
+            format === 'pdf' ? 'teal'
+            : format === 'zip' ? 'safe'
+            : format === 'cfb' ? 'teal'
+            : 'ghost')}>
+            {format === 'pdf' ? 'PDF'
+             : format === 'zip' ? 'ZIP / OOXML'
+             : format === 'cfb' ? 'OLE / CFB · Office'
+             : 'UNKNOWN'}
+          </span>
+          <span className="muted mono" style={{fontSize:11}}>{file.name}</span>
+        </div>
+      )}
+
+      {file && format === 'cfb' && (
         <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:12}}>
-          <b>Not a ZIP container.</b> The file extension / MIME don't look like a zip-family
-          format. The attack tool only handles ZIP-family files today — PDF / Office
-          non-ZIP / 7z / RAR aren't wired yet.
+          <b>Agile / Standard Encryption uses PBKDF2.</b> Each attempt is 10–100×
+          slower than ZIP or PDF (~50–200 ms per password vs. sub-millisecond
+          elsewhere). The built-in wordlist will take a minute or two; real
+          wordlists should be routed to <span className="mono">office2john.py</span>{' '}
+          + hashcat for real throughput.
+        </div>
+      )}
+      {file && format === 'unknown' && (
+        <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:12}}>
+          <b>Unrecognised container.</b> Magic bytes don't match any format we can attack
+          (ZIP / PDF / OLE). 7z, RAR, and encrypted archives wrapped in other
+          containers aren't wired yet.
         </div>
       )}
 
@@ -7975,9 +8160,9 @@ function CryptoZipAttack() {
           {attack.status !== 'running' && attack.status !== 'loading' && (
             <button className="btn primary"
                     onClick={start}
-                    disabled={!file || !isZip || candidates.length === 0}
-                    title={!file ? 'pick an encrypted zip first'
-                         : !isZip ? 'file must be a ZIP-family container'
+                    disabled={!supported || candidates.length === 0}
+                    title={!file ? 'pick an encrypted file first'
+                         : !supported ? 'unrecognised container · need ZIP / PDF / OLE'
                          : candidates.length === 0 ? 'add candidates to the wordlist first'
                          : 'start the dictionary attack'}>
               {attack.status === 'idle' ? '▶ Start attack' : '↻ Run again'}
@@ -7991,9 +8176,9 @@ function CryptoZipAttack() {
             </button>
           )}
           <span className="muted mono" style={{fontSize:11}}>
-            {file && isZip && candidates.length > 0
-              ? <>{file.name} · {candidates.length.toLocaleString()} candidates</>
-              : 'pick a zip + wordlist to enable'}
+            {supported && candidates.length > 0
+              ? <>{format.toUpperCase()} · {candidates.length.toLocaleString()} candidates</>
+              : 'pick a zip / pdf / office file + wordlist to enable'}
           </span>
         </div>
 
@@ -8137,8 +8322,10 @@ function CryptoZipAttack() {
         <div className="muted" style={{padding:'0 14px 14px', fontSize:10.5, lineHeight:1.7}}>
           Triage-scale only — browser-side AES decrypt, not a GPU cluster. Good for
           the 'probably a weak password' case; for real throughput, export the hash
-          and run hashcat / john the ripper. Files never leave the browser; zip.js
-          loads from jsDelivr on first attack (~80 KB).
+          and run hashcat / john the ripper. Files never leave the browser.{' '}
+          <span className="mono">zip.js</span> (~80 KB), <span className="mono">pdf.js</span>{' '}
+          (~350 KB), and <span className="mono">officecrypto-tool</span> (~500 KB)
+          lazy-load from jsDelivr on first attack of that format.
         </div>
       </div>
     </div>
@@ -8172,7 +8359,7 @@ function CryptoWorkbench() {
   } else if (tab === 'hasher') {
     tabBody = <CryptoHashComputer />;
   } else if (tab === 'zipattack') {
-    tabBody = <CryptoZipAttack />;
+    tabBody = <CryptoPasswordAttack />;
   }
 
   return (
