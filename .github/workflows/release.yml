@@ -76,7 +76,7 @@ jobs:
       # (Graviton, Ampere), we can split the matrix into
       # ubuntu-latest + ubuntu-24.04-arm (free for public repos)
       # and combine both per-arch images via a manifest job.
-      - uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ matrix.dockerfile }}
