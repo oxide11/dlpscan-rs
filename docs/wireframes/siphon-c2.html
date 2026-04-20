@@ -2159,10 +2159,10 @@ const WORKSPACES = [
   { id: 'detect',      label: 'Detect',      hint: 'rules · patterns · models',      glyph: '⤷' },
   { id: 'assure',      label: 'Assure',      hint: 'test · comply · audit',          glyph: '✓' },
   // 'admin' is still the internal workspace id so surface routing
-  // (crumbs, SurfaceBar filter) keeps working; label is now 'Settings'
-  // and `hidden: true` removes the tile from the top workspace bar
-  // now that the gear icon in the Topbar is the primary entry.
-  { id: 'admin',       label: 'Settings',    hint: 'users · system · integrations',  glyph: '⚙', hidden: true },
+  // (crumbs, SurfaceBar filter) keeps working; label is 'Settings'.
+  // Visible in the top workspace bar AND reachable via the topbar
+  // gear icon — operator muscle-memory goes both ways.
+  { id: 'admin',       label: 'Settings',    hint: 'users · system · integrations',  glyph: '⚙' },
   { id: 'engineering', label: 'Engineering', hint: 'dev tools · live API',           glyph: '⌁' },
   // Docs is reachable via the HelpIcon popovers and the Settings →
   // Docs button; hidden from the top workspace bar to keep primary
