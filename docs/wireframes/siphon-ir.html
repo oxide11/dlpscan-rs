@@ -3235,15 +3235,13 @@ function FindingsQueue() {
 
         {filtered.map(f => {
           const d = dispo[f.id];
-          const isOpen = expanded === f.id;
           const rowTint = d && d.kind === 'fp' ? 'var(--bg-1)'
                         : d && d.kind === 'escalate' ? 'var(--amber-wash, var(--bg-2))'
                         : 'transparent';
           const opacity = d && d.kind === 'fp' ? 0.5 : 1;
-          const ctx = deriveContext(f);
           return (
             <div key={f.id} style={{borderBottom:'1px solid var(--line-soft)'}}>
-              <div onClick={() => setExpanded(isOpen ? null : f.id)}
+              <div onClick={() => window.__ir_goFinding && window.__ir_goFinding(f.id)}
                    style={{
                      display:'grid',
                      gridTemplateColumns:'140px 90px 180px 1fr 60px 90px 160px',
@@ -3251,7 +3249,7 @@ function FindingsQueue() {
                      cursor:'pointer', background: rowTint, opacity,
                      fontFamily:"'JetBrains Mono', monospace",
                    }}
-                   title="click to review">
+                   title="click to open the 5W+H review surface">
                 <span style={{color:'var(--ink-soft)'}}>{fmtTs(f.ts)}</span>
                 <span className="chip chip--ghost" style={{fontSize:9, justifySelf:'start'}}>
                   {f.source_pod || '—'}
@@ -3274,7 +3272,7 @@ function FindingsQueue() {
                 <span style={{display:'flex', gap:4, justifySelf:'end', alignItems:'center'}}>
                   {!d && (
                     <span className="muted mono" style={{fontSize:10}}>
-                      ↓ review →
+                      open →
                     </span>
                   )}
                   {d && (
@@ -3294,129 +3292,431 @@ function FindingsQueue() {
                   )}
                 </span>
               </div>
-              {isOpen && (
-                <div style={{padding:'14px 16px 18px 16px', background:'var(--bg-1)', fontSize:12, borderTop:'1px dashed var(--line-soft)'}}>
-                  {/* ── 5W review grid ──────────────────────────── */}
-                  <div className="label" style={{marginBottom:8}}>
-                    Event context · who · what · where · when · why
-                  </div>
-                  <div style={{display:'grid', gridTemplateColumns:'70px 1fr', gap:'8px 14px', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, marginBottom:14}}>
-                    <span className="muted">who</span>
-                    <span style={{color:'var(--ink-bright)'}}>{ctx.who}</span>
-                    <span className="muted">what</span>
-                    <span>
-                      <span style={{color:'var(--accent)'}}>{ctx.what}</span>
-                      {f.text && <> · matched <span className="mono" style={{color:'var(--ink-bright)', background:'var(--bg-3)', padding:'1px 6px', borderRadius:3}}>{f.text}</span></>}
-                    </span>
-                    <span className="muted">where</span>
-                    <span>{ctx.where}{ctx.filename && <> · file <span className="mono">{ctx.filename}</span></>}</span>
-                    <span className="muted">when</span>
-                    <span className="mono">{fmtTs(ctx.when)}</span>
-                    <span className="muted">why</span>
-                    <span>{ctx.why}</span>
-                  </div>
-
-                  {/* ── Raw fields (collapsed grid below 5W) ──── */}
-                  <details style={{marginBottom:14, fontSize:11, fontFamily:"'JetBrains Mono', monospace"}}>
-                    <summary className="muted" style={{cursor:'pointer', padding:'4px 0'}}>raw finding fields</summary>
-                    <div style={{display:'grid', gridTemplateColumns:'140px 1fr', gap:'4px 12px', paddingTop:6}}>
-                      <span className="muted">finding id</span>
-                      <span className="mono">{f.id}</span>
-                      <span className="muted">request id</span>
-                      <span className="mono">{f.request_id || '—'}</span>
-                      <span className="muted">span</span>
-                      <span className="mono">{f.span ? f.span.join('..') : '—'}</span>
-                      <span className="muted">has context</span>
-                      <span>{f.has_context ? <span className="chip chip--safe" style={{fontSize:9}}>yes</span> : <span className="chip chip--ghost" style={{fontSize:9}}>no</span>}</span>
-                      {f.metadata && Object.keys(f.metadata).length > 0 && (
-                        <>
-                          <span className="muted">metadata</span>
-                          <span className="mono" style={{whiteSpace:'pre-wrap', wordBreak:'break-word'}}>
-                            {Object.entries(f.metadata).map(([k, v]) => `${k} = ${v}`).join('\n')}
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  </details>
-
-                  {/* ── Notes + disposition ─────────────────────── */}
-                  <div className="label" style={{marginBottom:4}}>Investigator notes</div>
-                  <textarea
-                    value={notesDraft[f.id] ?? (d && d.notes) ?? ''}
-                    onChange={e => setNotesDraft({ ...notesDraft, [f.id]: e.target.value })}
-                    placeholder="Why is this a TP/FP? What did you verify? Who did you contact?"
-                    rows={3}
-                    className="mono"
-                    style={{
-                      width:'100%', boxSizing:'border-box', fontSize:11.5,
-                      padding:'8px 10px', background:'var(--bg-2)', color:'var(--ink)',
-                      border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
-                      resize:'vertical',
-                    }}
-                  />
-
-                  {d && (
-                    <div className="note" style={{marginTop:8, fontSize:11,
-                                                   borderColor: d.kind === 'escalate' ? 'var(--amber)' : 'var(--line-strong)',
-                                                   background: 'var(--bg-2)', color: 'var(--ink)'}}>
-                      <b>{DISPO[d.kind].label}</b>
-                      <span className="muted"> · {d.at.slice(0, 19).replace('T',' ')} · {d.by || 'analyst'}</span>
-                      {d.kind === 'escalate' && d.xsoar_status && (
-                        <> · <span className="mono">{d.xsoar_status}</span></>
-                      )}
-                      {d.notes && <div style={{marginTop:4, whiteSpace:'pre-wrap'}}>{d.notes}</div>}
-                    </div>
-                  )}
-
-                  {/* ── Action row: 3 dispositions + tune detection ── */}
-                  <div style={{marginTop:12, display:'flex', gap:8, flexWrap:'wrap', alignItems:'center'}}>
-                    <button className="btn" onClick={() => dispose(f, 'event')}
-                            title="benign activity — close the event. Disposition persisted locally.">
-                      ✓ Close event
-                    </button>
-                    <button className="btn ghost" onClick={() => dispose(f, 'fp')}
-                            title="submit to the admin-console FP Queue for detection engineering to tune"
-                            style={{color:'var(--ink-soft)'}}>
-                      ⚑ Mark false-positive
-                    </button>
-                    <button className="btn primary" onClick={() => setXsoarFor(f)}
-                            title="hand off to XSOAR for remediation (configure webhook in Settings → Integrations)"
-                            style={{background:'var(--amber)', borderColor:'var(--amber)', color:'#000'}}>
-                      ↗ Escalate to XSOAR
-                    </button>
-                    <span className="spacer" style={{flex:1}} />
-                    <a className="btn ghost"
-                       href={`siphon-c2.html#patterns/${encodeURIComponent(f.category)}/${encodeURIComponent(f.sub_category || '')}`}
-                       target="_blank" rel="noopener"
-                       title="jump to the admin console to tune this pattern"
-                       style={{fontSize:11, textDecoration:'none'}}>
-                      ↗ Tune detection
-                    </a>
-                    <button className="btn ghost" onClick={() => {
-                      navigator.clipboard?.writeText(JSON.stringify(f, null, 2));
-                      setFlash({ id: f.id, label: 'Copied JSON' });
-                      setTimeout(() => setFlash(null), 1200);
-                    }} style={{fontSize:11}}>⎘ Copy JSON</button>
-                  </div>
-                </div>
-              )}
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
 
-      {/* XSOAR escalate modal — opens when `xsoarFor` is set. Reads
-          the configured XSOAR webhook from localStorage[ir:xsoar]
-          (managed under Settings → Integrations). If none configured,
-          the modal shows a CTA to go configure it; the analyst can
-          still Copy JSON for manual handoff. */}
+// ─── Finding Detail surface (5W+H review) ──────────────────────
+// Full-page review for a single finding. Structured around the
+// analyst's 5W+H question set so the review flow is explicit:
+//   Who · What · Where · When · Why · How
+// This commit scaffolds the shell: PageBar header with prev/next +
+// keyboard nav + disposition buttons, stub panels for each pillar
+// (filled in subsequent commits), notes field, raw-record
+// <details>, XSOAR modal integration.
+//
+// Starting point ported from siphon-c2.html's FindingDetail — the
+// surface-bar navigation, prev/next + j/k, match-value block, and
+// raw-record KV are lifted wholesale. The c2 panels (DetectionPipeline,
+// SourceDestination, RelatedFindings, FindingTimeline,
+// PolicyThatFired) map into the pillar grid in the next commits.
+
+// IR-local PageBar primitive. Simpler than c2's (no search, no
+// filters, no group-by) since the only consumer today is this
+// surface. If more IR surfaces pick it up we can widen the API.
+function IrPageBar({ crumbs, title, subtitle, actions }) {
+  return (
+    <div className="pagebar">
+      <div className="pagebar-row pagebar-head">
+        <div>
+          {crumbs && <div className="crumbs">{crumbs.join(' · ')}</div>}
+          <h1 className="page-title">{title}</h1>
+          {subtitle && <div className="page-sub">{subtitle}</div>}
+        </div>
+        <div className="actions">{actions}</div>
+      </div>
+    </div>
+  );
+}
+
+// Placeholder the 5W+H grid renders in until the panel for that
+// pillar is built. Keeps the surface navigable + gives the analyst
+// a quick summary so this scaffolding is already useful.
+function PanelStub({ title, question, children }) {
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">{title}</span>
+        <span className="k">{question}</span>
+      </div>
+      <div style={{padding:14, fontSize:12, lineHeight:1.7}}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function FindingDetail({ id, back }) {
+  // All hooks up front — React requires consistent hook order across
+  // renders, and the "finding not found" early return below comes
+  // AFTER them.
+  const findings = window.useIrFindings('?limit=500');
+  const [dispo, setDispo] = React.useState(readDispo);
+  const [notesDraft, setNotesDraft] = React.useState('');
+  const [xsoarFor, setXsoarFor] = React.useState(null);
+  const [flash, setFlash] = React.useState(null);
+
+  const all = (findings.data && findings.data.findings) || [];
+  const f = all.find(x => x.id === id);
+
+  // Prev / next. Must compute before the keyboard useEffect so the
+  // closure captures the right neighbours; guarded on `f` being
+  // loaded.
+  const idx = f ? all.findIndex(x => x.id === id) : -1;
+  const prev = idx > 0 ? all[idx - 1] : null;
+  const next = idx >= 0 && idx < all.length - 1 ? all[idx + 1] : null;
+
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      if ((e.key === 'j' || e.key === 'ArrowDown' || e.key === 'ArrowRight') && next) {
+        window.__ir_goFinding && window.__ir_goFinding(next.id);
+      } else if ((e.key === 'k' || e.key === 'ArrowUp' || e.key === 'ArrowLeft') && prev) {
+        window.__ir_goFinding && window.__ir_goFinding(prev.id);
+      } else if (e.key === 'Escape') {
+        back && back();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [prev, next, back]);
+
+  React.useEffect(() => {
+    const resync = () => setDispo(readDispo());
+    window.addEventListener('ir:demoChanged', resync);
+    window.addEventListener('storage', resync);
+    return () => {
+      window.removeEventListener('ir:demoChanged', resync);
+      window.removeEventListener('storage', resync);
+    };
+  }, []);
+
+  // Reset the notes textarea when the analyst jumps to a different
+  // finding — otherwise the draft leaks across investigations.
+  React.useEffect(() => { setNotesDraft(''); }, [id]);
+
+  if (!findings.loading && !f) {
+    return (
+      <div>
+        <IrPageBar
+          crumbs={['Respond', 'Findings', id]}
+          title="Finding not found"
+          subtitle="Not in the live ring or the demo seed."
+          actions={<button className="btn ghost" onClick={back}>‹ Back to queue</button>}
+        />
+        <div className="note" style={{borderColor:'var(--amber)', color:'var(--amber)', background:'var(--amber-wash)', margin:'var(--gap)'}}>
+          Ring size is bounded ({findings.data ? findings.data.capacity : '—'}).
+          Older findings fall off as new ones arrive. Toggle demo data under
+          Settings → Engineering to populate a stable set.
+        </div>
+      </div>
+    );
+  }
+  if (!f) {
+    return <div className="muted" style={{padding:30, textAlign:'center'}}>loading…</div>;
+  }
+
+  const ctx = deriveContext(f);
+  const d = dispo[f.id];
+
+  const fmtTs = (ts) => ts ? ts.replace('T', ' ').replace('Z', '').slice(0, 19) : '—';
+
+  const dispose = (kind, extra) => {
+    const note = notesDraft.trim() || (d && d.notes) || '';
+    const record = {
+      kind, at: new Date().toISOString(), by: 'local-analyst',
+      notes: note || null, ...extra,
+    };
+    const nextMap = { ...dispo, [f.id]: record };
+    setDispo(nextMap);
+    writeDispo(nextMap);
+    if (kind === 'fp' && !isDemoMode()) {
+      const queue = readFpQueue();
+      const existing = queue.findIndex(x => x.finding_id === f.id);
+      const entry = {
+        finding_id: f.id,
+        category: f.category,
+        sub_category: f.sub_category,
+        text: f.text,
+        confidence: f.confidence,
+        severity: f.severity,
+        source_pod: f.source_pod,
+        submitted_at: record.at,
+        submitted_by: record.by,
+        notes: note,
+        finding: f,
+      };
+      if (existing >= 0) queue[existing] = entry;
+      else queue.push(entry);
+      writeFpQueue(queue);
+    }
+    setFlash(DISPO[kind].label);
+    setTimeout(() => setFlash(null), 1500);
+  };
+
+  const undoDispose = () => {
+    const nextMap = { ...dispo };
+    delete nextMap[f.id];
+    setDispo(nextMap);
+    writeDispo(nextMap);
+    writeFpQueue(readFpQueue().filter(x => x.finding_id !== f.id));
+  };
+
+  return (
+    <div>
+      <IrPageBar
+        crumbs={['Respond', 'Findings', f.id]}
+        title={<>
+          <span className="mono" style={{color:'var(--ink-bright)'}}>{f.id}</span>
+          <span className="muted" style={{margin:'0 8px', fontSize:14}}>·</span>
+          <span style={{fontFamily:"'Space Grotesk', sans-serif"}}>{f.category}</span>
+          {f.sub_category && <span className="muted" style={{marginLeft:6, fontSize:14}}>/ {f.sub_category}</span>}
+          <span style={{marginLeft:10}}>{severityChip(f.severity)}</span>
+        </>}
+        subtitle={<>
+          <span className="mono">source {f.source_ip || '—'}</span>
+          <span className="muted"> · req </span>
+          <span className="mono">{(f.request_id || '').split('-')[0] || '—'}</span>
+          <span className="muted"> · </span>
+          <span className="mono">{fmtTs(f.ts)}</span>
+          {idx >= 0 && (<>
+            <span className="muted"> · </span>
+            <span className="mono">{idx + 1} of {all.length}</span>
+          </>)}
+          <span className="muted"> · keyboard </span>
+          <span className="mono" style={{color:'var(--ink-bright)'}}>j</span><span className="muted">/</span><span className="mono" style={{color:'var(--ink-bright)'}}>k</span>
+          <span className="muted"> to jump · </span>
+          <span className="mono" style={{color:'var(--ink-bright)'}}>esc</span>
+          <span className="muted"> to close</span>
+        </>}
+        actions={<>
+          <window.LivePill source={findings.source} onClick={findings.refetch} />
+          <div style={{display:'flex', gap:2, border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', overflow:'hidden'}}>
+            <button className="btn ghost" disabled={!prev}
+                    onClick={() => prev && window.__ir_goFinding(prev.id)}
+                    title={prev ? `prev · ${prev.id}` : 'no newer finding'}
+                    style={{border:'none', borderRight:'1px solid var(--line-strong)', padding:'5px 10px', opacity: prev ? 1 : 0.4, cursor: prev ? 'pointer' : 'not-allowed'}}>
+              ‹ Prev
+            </button>
+            <button className="btn ghost" disabled={!next}
+                    onClick={() => next && window.__ir_goFinding(next.id)}
+                    title={next ? `next · ${next.id}` : 'no older finding'}
+                    style={{border:'none', padding:'5px 10px', opacity: next ? 1 : 0.4, cursor: next ? 'pointer' : 'not-allowed'}}>
+              Next ›
+            </button>
+          </div>
+          <button className="btn ghost" onClick={back} title="esc">‹ Back</button>
+          {/* Three dispositions as primary actions — the whole reason
+              this surface exists. */}
+          <button className="btn" onClick={() => dispose('event')}
+                  title="benign activity · close the event">
+            ✓ Close event
+          </button>
+          <button className="btn ghost" onClick={() => dispose('fp')}
+                  title="submit to the admin-console FP queue"
+                  style={{color:'var(--ink-soft)'}}>
+            ⚑ False positive
+          </button>
+          <button className="btn primary" onClick={() => setXsoarFor(f)}
+                  title="escalate to XSOAR (configure webhook in Settings → Integrations)"
+                  style={{background:'var(--amber)', borderColor:'var(--amber)', color:'#000'}}>
+            ↗ Escalate
+          </button>
+        </>}
+      />
+
+      {/* Disposition banner — reflects whatever's already on this
+          finding, including history across reloads. */}
+      {d && (
+        <div className="note" style={{
+          margin:'var(--gap) var(--gap) 0 var(--gap)', fontSize:12,
+          borderColor: d.kind === 'escalate' ? 'var(--amber)' : 'var(--line-strong)',
+          background: 'var(--bg-2)', color: 'var(--ink)',
+        }}>
+          <b>{DISPO[d.kind].label}</b>
+          <span className="muted"> · {d.at.slice(0, 19).replace('T',' ')} · {d.by || 'analyst'}</span>
+          {d.kind === 'escalate' && d.xsoar_status && <> · <span className="mono">{d.xsoar_status}</span></>}
+          {d.notes && <div style={{marginTop:4, whiteSpace:'pre-wrap', fontSize:11.5}}>{d.notes}</div>}
+          <button className="btn ghost" onClick={undoDispose}
+                  style={{marginLeft:12, fontSize:10, padding:'3px 8px'}}>↶ undo</button>
+        </div>
+      )}
+      {flash && (
+        <div className="note" style={{
+          margin:'var(--gap) var(--gap) 0 var(--gap)', fontSize:12,
+          borderColor:'var(--safe)', background:'var(--accent-wash)', color:'var(--ink)',
+        }}>
+          ✓ {flash}
+        </div>
+      )}
+
+      {/* 5W+H grid — 2 cols × 3 rows. Each panel is a stub this
+          commit; subsequent commits replace them one pair at a
+          time with real panels (lifted from c2 or built here). */}
+      <div style={{
+        display:'grid',
+        gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)',
+        gap:'var(--gap)',
+        padding:'var(--gap)',
+        alignItems:'stretch',
+      }}>
+        <PanelStub title="Who" question="Who triggered this?">
+          <div className="muted" style={{fontSize:11.5}}>From metadata + source fields:</div>
+          <div style={{marginTop:6, fontSize:13, color:'var(--ink-bright)'}}>{ctx.who}</div>
+          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
+            Full panel (next commit): user / sender / recipient rows, region + department chips,
+            same-user findings pivot (count + jump), same-source-IP neighbours.
+          </div>
+        </PanelStub>
+
+        <PanelStub title="What" question="What data was exposed?">
+          <div className="muted" style={{fontSize:11.5}}>Matched value:</div>
+          <div className="mono" style={{
+            marginTop:6, fontSize:13, padding:'8px 10px',
+            background:'var(--amber-wash)', border:'1.5px solid var(--amber)',
+            borderRadius:2, wordBreak:'break-all',
+          }}>{f.text || '—'}</div>
+          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
+            Full panel (next commit): category tree + link to Patterns, confidence bar, has-context
+            chip, span offset visualisation, raw-metadata mini table.
+          </div>
+        </PanelStub>
+
+        <PanelStub title="Where" question="Where did this happen?">
+          <div className="muted" style={{fontSize:11.5}}>Channel:</div>
+          <div style={{marginTop:6, fontSize:13}}>{ctx.where}</div>
+          {ctx.filename && <div style={{fontSize:12, marginTop:4}}>File: <span className="mono">{ctx.filename}</span></div>}
+          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
+            Full panel (commit 3): source → destination diagram (IP + URL for network channels,
+            sender → recipient for email), pod the detection came from, full filesystem path.
+          </div>
+        </PanelStub>
+
+        <PanelStub title="When" question="When? And what else was happening?">
+          <div className="muted" style={{fontSize:11.5}}>Detection time:</div>
+          <div className="mono" style={{marginTop:6, fontSize:13}}>{fmtTs(f.ts)}</div>
+          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
+            Full panel (commit 3): same-request neighbours with severity + preview text,
+            same-user 24-hour timeline, detection-to-triage latency if already triaged.
+          </div>
+        </PanelStub>
+
+        <PanelStub title="Why" question="Why did detection fire?">
+          <div className="muted" style={{fontSize:11.5}}>Signal summary:</div>
+          <div style={{marginTop:6, fontSize:12, lineHeight:1.6}}>{ctx.why}</div>
+          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
+            Full panel (commit 4): pattern (category/sub) with link to Patterns browser, policy that
+            fired, detection-pipeline narrative (regex → validation → context → emit),
+            list-binding match if applicable, runtime overrides that were applied.
+          </div>
+        </PanelStub>
+
+        <PanelStub title="How" question="How should we respond?">
+          <div className="muted" style={{fontSize:11.5}}>Options:</div>
+          <ul style={{marginTop:6, fontSize:12, lineHeight:1.7, paddingLeft:18}}>
+            <li><b>Close event</b> — benign business activity handled per policy</li>
+            <li><b>False positive</b> — submit to admin FP queue for pattern tuning</li>
+            <li><b>Escalate</b> — hand off to XSOAR for remediation playbooks</li>
+          </ul>
+          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
+            Full panel (commit 4): suggested playbook (Phase C), related-user incident history,
+            prior disposition stats, quick-ack + quick-escalate shortcuts.
+          </div>
+        </PanelStub>
+      </div>
+
+      {/* Investigator notes — writes on the next disposition click. */}
+      <div style={{padding:'0 var(--gap) var(--gap) var(--gap)'}}>
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Investigator notes</span>
+            <span className="k muted">saved with the disposition record</span>
+          </div>
+          <div style={{padding:14}}>
+            <textarea
+              value={notesDraft || (d && d.notes) || ''}
+              onChange={e => setNotesDraft(e.target.value)}
+              placeholder="TP or FP? What did you verify? Who did you contact? What was the business context?"
+              rows={4}
+              className="mono"
+              style={{
+                width:'100%', boxSizing:'border-box', fontSize:12,
+                padding:'8px 10px', background:'var(--bg-2)', color:'var(--ink)',
+                border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                resize:'vertical',
+              }}
+            />
+            <div className="muted" style={{fontSize:10.5, marginTop:6}}>
+              Notes are persisted when you pick a disposition (Close event / False positive / Escalate).
+              Current draft stays local to this finding — switching to another row clears it.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Raw record — collapsed by default so it doesn't compete with
+          the 5W+H view, but one click away for analysts who want the
+          unpretty view. */}
+      <div style={{padding:'0 var(--gap) var(--gap) var(--gap)'}}>
+        <details className="box">
+          <summary style={{padding:'10px 14px', cursor:'pointer', fontFamily:"'Space Grotesk', sans-serif", fontWeight:600, fontSize:13, color:'var(--ink-bright)'}}>
+            Raw finding record
+          </summary>
+          <div style={{padding:'0 14px 14px 14px'}}>
+            <div className="kv" style={{marginTop:4}}>
+              <span className="k">Finding id</span>   <span className="v mono">{f.id}</span>
+              <span className="k">Request id</span>   <span className="v mono">{f.request_id || '—'}</span>
+              <span className="k">Timestamp</span>    <span className="v mono">{f.ts}</span>
+              <span className="k">Source IP</span>    <span className="v mono">{f.source_ip || '—'}</span>
+              <span className="k">Source pod</span>   <span className="v mono">{f.source_pod || '—'}</span>
+              <span className="k">Category</span>     <span className="v">{f.category}</span>
+              <span className="k">Sub-category</span> <span className="v">{f.sub_category || '—'}</span>
+              <span className="k">Confidence</span>   <span className="v mono">{f.confidence != null ? f.confidence.toFixed(3) : '—'}</span>
+              <span className="k">Has context</span>  <span className="v">{f.has_context ? 'yes' : 'no'}</span>
+              <span className="k">Span</span>         <span className="v mono">{f.span ? f.span.join('..') : '—'}</span>
+              <span className="k">Severity</span>     <span className="v">{f.severity}</span>
+            </div>
+            {f.metadata && Object.keys(f.metadata).length > 0 && (
+              <>
+                <div className="label" style={{marginTop:14, marginBottom:6}}>Metadata</div>
+                <div className="mono" style={{fontSize:11, lineHeight:1.8, background:'var(--bg-1)', padding:10, border:'1px dashed var(--line-soft)'}}>
+                  {Object.entries(f.metadata).map(([k, v]) => (
+                    <div key={k}><span style={{color:'var(--accent)'}}>{k}</span> = <span style={{color:'var(--ink-bright)'}}>{String(v)}</span></div>
+                  ))}
+                </div>
+              </>
+            )}
+            <div style={{marginTop:12, display:'flex', gap:8, flexWrap:'wrap'}}>
+              <button className="btn ghost" onClick={() => {
+                navigator.clipboard?.writeText(JSON.stringify(f, null, 2));
+                setFlash('Copied JSON');
+                setTimeout(() => setFlash(null), 1200);
+              }} style={{fontSize:11}}>⎘ Copy JSON</button>
+              <a className="btn ghost"
+                 href={`siphon-c2.html#patterns/${encodeURIComponent(f.category)}/${encodeURIComponent(f.sub_category || '')}`}
+                 target="_blank" rel="noopener"
+                 title="jump to the admin console to tune this pattern"
+                 style={{fontSize:11, textDecoration:'none'}}>
+                ↗ Tune detection
+              </a>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      {/* XSOAR escalate modal — consumes notesDraft so the payload
+          carries whatever the analyst typed. */}
       {xsoarFor && (
         <XsoarEscalateModal
           finding={xsoarFor}
-          note={notesDraft[xsoarFor.id] || ''}
+          note={notesDraft || (d && d.notes) || ''}
           onClose={() => setXsoarFor(null)}
           onDone={(statusText) => {
-            dispose(xsoarFor, 'escalate', { xsoar_status: statusText });
+            dispose('escalate', { xsoar_status: statusText });
             setXsoarFor(null);
           }}
         />
@@ -3911,9 +4211,13 @@ function App() {
   const [surface, setSurface] = React.useState(() => {
     try { return localStorage.getItem('ir:surface') || 'findings'; } catch { return 'findings'; }
   });
+  // Sub-route for detail pages. Shape: "finding:<id>" opens the
+  // FindingDetail view under the 'findings' surface. Persisted so a
+  // refresh doesn't drop you back to the queue mid-investigation.
+  const [sub, setSub] = React.useState(() => {
+    try { return localStorage.getItem('ir:sub') || ''; } catch { return ''; }
+  });
   const [tweaks, setTweaks] = React.useState(() => {
-    // Share tweaks with the admin console so the operator's theme
-    // choice follows them between consoles. Key matches siphon-c2's.
     let stored = {};
     try { stored = JSON.parse(localStorage.getItem('c2:tweaks') || '{}'); } catch {}
     return { ...TWEAK_DEFAULTS, ...stored };
@@ -3923,13 +4227,15 @@ function App() {
     try { localStorage.setItem('ir:surface', surface); } catch {}
   }, [surface]);
   React.useEffect(() => {
+    try { localStorage.setItem('ir:sub', sub); } catch {}
+  }, [sub]);
+  React.useEffect(() => {
     try { localStorage.setItem('c2:tweaks', JSON.stringify(tweaks)); } catch {}
   }, [tweaks]);
   React.useEffect(() => {
     document.documentElement.setAttribute('data-theme', tweaks.theme || 'phosphor');
   }, [tweaks.theme]);
 
-  // Cross-tab sync: if the admin console flips the theme, follow it.
   React.useEffect(() => {
     const onStorage = (e) => {
       if (e.key !== 'c2:tweaks') return;
@@ -3943,17 +4249,30 @@ function App() {
   }, []);
 
   const setTweak = (k, v) => setTweaks(t => ({ ...t, [k]: v }));
-  const go = (id) => setSurface(id);
+  const go = (id, s) => { setSurface(id); setSub(s || ''); };
   window.__ir_go = go;
+  // Convenience helper the FindingsQueue + FindingDetail use to
+  // navigate between rows and detail view without rebuilding the
+  // (surface, sub) tuple each time.
+  window.__ir_goFinding = (fid) => go('findings', fid ? 'finding:' + fid : '');
 
-  const renderSurface = SURFACE_COMPONENTS[surface] || SURFACE_COMPONENTS.findings;
+  // Dispatch: if we're on findings with a finding:<id> sub, render
+  // the detail view; otherwise fall back to the surface registry.
+  let body;
+  if (surface === 'findings' && sub && sub.startsWith('finding:')) {
+    body = <FindingDetail id={sub.slice('finding:'.length)}
+                           back={() => setSub('')} />;
+  } else {
+    const renderSurface = SURFACE_COMPONENTS[surface] || SURFACE_COMPONENTS.findings;
+    body = renderSurface();
+  }
 
   return (
     <div className="shell" data-density={tweaks.density} data-theme={tweaks.theme}>
       <Topbar tweaks={tweaks} setTweak={setTweak} />
       <WorkspaceBar current={surface} go={go} />
       <SurfaceBar current={surface} go={go} />
-      <main className="page">{renderSurface()}</main>
+      <main className="page">{body}</main>
     </div>
   );
 }
