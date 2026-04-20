@@ -555,8 +555,112 @@ pub struct CompiledList {
     pub name: String,
     pub kind: ListKind,
     /// Entries pre-normalised for the list's kind (lowercase for
-    /// string-ish kinds, whitespace-trimmed, etc.).
+    /// string-ish kinds, whitespace-trimmed, etc.). For Ip/Path, this
+    /// holds the original verbatim entries so admin-console display
+    /// still shows the CIDRs / globs the analyst typed — the compiled
+    /// matchers live in the fields below.
     entries: Vec<String>,
+    /// IPv4 CIDR ranges for ListKind::Ip. Each tuple is
+    /// `(network_addr, prefix_mask)` as u32. Bare IPs are compiled
+    /// with a /32 mask. Unparseable entries fall back to
+    /// `entries` string-match so no one's quietly dropped.
+    ip_ranges: Vec<(u32, u32)>,
+    /// Compiled glob patterns for ListKind::Path. `*` matches any
+    /// run of non-slash chars, `**` matches across slashes, `?`
+    /// matches a single non-slash char; everything else is literal.
+    /// Unparseable globs fall back to entries substring-match.
+    path_globs: Vec<regex::Regex>,
+}
+
+/// Parse an IPv4 "a.b.c.d" or "a.b.c.d/n" string into (network, mask).
+/// Returns None for malformed input so the caller can fall back.
+fn parse_ipv4_cidr(s: &str) -> Option<(u32, u32)> {
+    let (addr_part, prefix) = match s.split_once('/') {
+        Some((a, p)) => (a, p.parse::<u8>().ok()?),
+        None => (s, 32u8),
+    };
+    if prefix > 32 {
+        return None;
+    }
+    let addr: std::net::Ipv4Addr = addr_part.parse().ok()?;
+    let addr_u32 = u32::from(addr);
+    let mask = if prefix == 0 {
+        0u32
+    } else {
+        (!0u32) << (32 - prefix)
+    };
+    Some((addr_u32 & mask, mask))
+}
+
+/// Convert a subset-glob ("**/foo/*.log", "foo?.txt") into a regex.
+/// Semantics (subset of picomatch):
+///   · `*`    matches any run of non-slash chars
+///   · `?`    matches a single non-slash char
+///   · `**`   alone matches any chars including `/`
+///   · `/**/` collapses to zero-or-more path components, i.e.
+///            `/srv/**/secret` matches both `/srv/secret` and
+///            `/srv/a/b/secret`
+///   · `**/`  at the start matches zero-or-more leading components
+///   · `/**`  at the end matches the empty tail too
+/// All other regex metacharacters are escaped. Anchored. Case-
+/// insensitive since the caller lowercases text upstream.
+fn compile_path_glob(pat: &str) -> Option<regex::Regex> {
+    let mut rx = String::with_capacity(pat.len() + 4);
+    rx.push('^');
+    let bytes = pat.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // /**/ → optional path components (collapses /x/y/ or to just /)
+        if i + 3 < bytes.len()
+            && bytes[i] == b'/' && bytes[i + 1] == b'*' && bytes[i + 2] == b'*' && bytes[i + 3] == b'/'
+        {
+            rx.push_str("/(?:.*/)?");
+            i += 4;
+            continue;
+        }
+        // Trailing /** (i == len-3) → "/..." or nothing.
+        if i + 2 < bytes.len()
+            && bytes[i] == b'/' && bytes[i + 1] == b'*' && bytes[i + 2] == b'*'
+            && i + 3 == bytes.len()
+        {
+            rx.push_str("(?:/.*)?");
+            i += 3;
+            continue;
+        }
+        // Leading **/ (only when at start) → zero-or-more components.
+        if i == 0
+            && bytes.len() >= 3
+            && bytes[0] == b'*' && bytes[1] == b'*' && bytes[2] == b'/'
+        {
+            rx.push_str("(?:.*/)?");
+            i += 3;
+            continue;
+        }
+        let c = bytes[i] as char;
+        match c {
+            '*' => {
+                if i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                    // Standalone ** — match any chars including /.
+                    rx.push_str(".*");
+                    i += 2;
+                    continue;
+                }
+                rx.push_str("[^/]*");
+            }
+            '?' => rx.push_str("[^/]"),
+            '.' | '+' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$' | '\\' => {
+                rx.push('\\');
+                rx.push(c);
+            }
+            _ => rx.push(c),
+        }
+        i += 1;
+    }
+    rx.push('$');
+    regex::RegexBuilder::new(&rx)
+        .case_insensitive(true)
+        .build()
+        .ok()
 }
 
 impl CompiledList {
@@ -578,20 +682,48 @@ impl CompiledList {
                     // the usual convention and lets analysts paste
                     // hashes in any casing.
                     ListKind::Hash => trimmed.to_lowercase(),
-                    // IPs/CIDRs: keep verbatim for now; proper CIDR
-                    // parsing lands in a follow-up (requires the
-                    // ipnetwork crate). Falls back to exact string
-                    // match until then.
+                    // IPs/CIDRs: keep verbatim (parsing happens below
+                    // into ip_ranges). Unparseable entries stay in
+                    // `entries` as a string-match fallback.
                     ListKind::Ip => trimmed.to_string(),
                 }
             })
             .filter(|e| !e.is_empty())
             .collect();
+
+        // Precompile CIDR ranges and globs so scan-time matching is
+        // allocation-free. Entries that fail to parse stay in
+        // `entries` as a naive-string fallback so we never silently
+        // drop analyst input.
+        let mut ip_ranges = Vec::new();
+        let mut path_globs = Vec::new();
+        if matches!(list.kind, ListKind::Ip) {
+            for e in &entries {
+                if let Some(range) = parse_ipv4_cidr(e) {
+                    ip_ranges.push(range);
+                }
+            }
+        }
+        if matches!(list.kind, ListKind::Path) {
+            for e in &entries {
+                // Only compile entries that look like globs — bare
+                // substrings stay in the entries fallback so the
+                // existing "contains" semantics keep working.
+                if e.contains('*') || e.contains('?') {
+                    if let Some(rx) = compile_path_glob(e) {
+                        path_globs.push(rx);
+                    }
+                }
+            }
+        }
+
         Self {
             id: list.id.clone(),
             name: list.name.clone(),
             kind: list.kind,
             entries,
+            ip_ranges,
+            path_globs,
         }
     }
 
@@ -606,9 +738,11 @@ impl CompiledList {
     ///   · Email:   leading `@` = domain-suffix; else exact
     ///   · Hash:    exact (lowercased)
     ///   · Url:     case-insensitive prefix
-    ///   · Path:    naive — substring today; proper glob in follow-up
-    ///   · Ip:      case-insensitive exact today (string); CIDR
-    ///              containment in a follow-up
+    ///   · Path:    glob (`*`, `**`, `?`) when entry contains a
+    ///              wildcard; naive substring otherwise
+    ///   · Ip:      CIDR containment (IPv4) when entry parses as a
+    ///              CIDR/bare IP; case-insensitive exact-string
+    ///              fallback for IPv6 / malformed entries
     ///   · Other:   case-insensitive exact
     pub fn matches(&self, text: &str) -> bool {
         if self.entries.is_empty() {
@@ -633,8 +767,34 @@ impl CompiledList {
                 }
             }),
             ListKind::Url => self.entries.iter().any(|e| lower.starts_with(e)),
-            ListKind::Path => self.entries.iter().any(|e| lower.contains(e)),
-            ListKind::Hash | ListKind::Ip | ListKind::Other => {
+            ListKind::Path => {
+                // Glob matches first (precompiled); fall back to the
+                // naive substring for plain-string entries.
+                self.path_globs.iter().any(|rx| rx.is_match(&lower))
+                    || self.entries.iter().any(|e| {
+                        !(e.contains('*') || e.contains('?')) && lower.contains(e)
+                    })
+            }
+            ListKind::Ip => {
+                // Try the parsed CIDR ranges first — that's what
+                // makes 10.0.0.0/8 match 10.42.1.7. Fall back to
+                // exact string match for IPv6 / malformed entries
+                // the parser couldn't handle.
+                if !self.ip_ranges.is_empty() {
+                    if let Ok(addr) = text.trim().parse::<std::net::Ipv4Addr>() {
+                        let addr_u32 = u32::from(addr);
+                        if self
+                            .ip_ranges
+                            .iter()
+                            .any(|(net, mask)| (addr_u32 & mask) == *net)
+                        {
+                            return true;
+                        }
+                    }
+                }
+                self.entries.iter().any(|e| lower == *e)
+            }
+            ListKind::Hash | ListKind::Other => {
                 self.entries.iter().any(|e| lower == *e)
             }
         }
@@ -903,6 +1063,69 @@ mod tests {
         let c = CompiledList::from_list(&list);
         assert!(c.matches("5d41402abc4b2a76b9719d911017c592"));  // upper/lower round-trip
         assert!(!c.matches("deadbeef"));
+    }
+
+    #[test]
+    fn compiled_list_ip_cidr_ipv4() {
+        let list = MatchList {
+            id: "ip".into(), kind: ListKind::Ip,
+            entries: vec![
+                "10.0.0.0/8".into(),
+                "192.168.1.1".into(),     // bare IP = /32
+                "203.0.113.0/24".into(),
+            ],
+            ..Default::default()
+        };
+        let c = CompiledList::from_list(&list);
+        // Inside 10/8
+        assert!(c.matches("10.42.1.7"));
+        assert!(c.matches("10.0.0.0"));
+        // Outside 10/8
+        assert!(!c.matches("11.0.0.1"));
+        // Bare IP only hits the /32
+        assert!(c.matches("192.168.1.1"));
+        assert!(!c.matches("192.168.1.2"));
+        // /24 behaviour
+        assert!(c.matches("203.0.113.77"));
+        assert!(!c.matches("203.0.114.1"));
+        // Garbage addresses don't panic
+        assert!(!c.matches("not-an-ip"));
+    }
+
+    #[test]
+    fn compiled_list_ip_falls_back_to_exact_for_ipv6() {
+        let list = MatchList {
+            id: "ip6".into(), kind: ListKind::Ip,
+            entries: vec!["2001:db8::1".into()],
+            ..Default::default()
+        };
+        let c = CompiledList::from_list(&list);
+        assert!(c.matches("2001:db8::1"));
+        assert!(!c.matches("2001:db8::2"));
+    }
+
+    #[test]
+    fn compiled_list_path_glob() {
+        let list = MatchList {
+            id: "p".into(), kind: ListKind::Path,
+            entries: vec![
+                "/var/log/*.log".into(),   // single-level glob
+                "/srv/**/secret".into(),   // cross-dir glob
+                "/tmp/ab?.txt".into(),     // ? single-char
+                "/etc/config".into(),       // literal, no wildcard — substring fallback
+            ],
+            ..Default::default()
+        };
+        let c = CompiledList::from_list(&list);
+        // Globs
+        assert!(c.matches("/var/log/nginx.log"));
+        assert!(!c.matches("/var/log/nginx/old.log")); // * doesn't cross /
+        assert!(c.matches("/srv/foo/bar/secret"));
+        assert!(c.matches("/srv/secret"));
+        assert!(c.matches("/tmp/abc.txt"));
+        assert!(!c.matches("/tmp/abcd.txt"));
+        // Substring fallback for the literal entry
+        assert!(c.matches("something /etc/config something"));
     }
 
     #[test]

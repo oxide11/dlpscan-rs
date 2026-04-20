@@ -52,7 +52,7 @@ use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -113,6 +113,13 @@ struct AppState {
     /// Path on disk to the overrides file. Apply + disk-read handlers
     /// use this directly; no writes happen anywhere else.
     overrides_path: Arc<std::path::PathBuf>,
+    /// Runtime, per-pod pipeline-stage overrides. Each entry in the
+    /// set forces the corresponding stage into its most permissive
+    /// behaviour, regardless of what the caller sent in req.options
+    /// or what's baked into the policy/overrides. Controlled via
+    /// GET/PATCH /v1/pipeline/stages. Not persisted — restart clears.
+    /// Diagnostic-only; production pods should leave this empty.
+    disabled_stages: Arc<RwLock<HashSet<String>>>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -543,7 +550,17 @@ async fn scan(
         None
     };
 
-    let config = ScanConfig {
+    // Snapshot the runtime stage-disable set once per scan so a
+    // concurrent PATCH /v1/pipeline/stages can't flip a toggle
+    // mid-scan and leave us with an inconsistent config. Read-lock +
+    // clone of the small HashSet is cheap.
+    let stage_disabled: HashSet<String> = state
+        .disabled_stages
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+
+    let mut config = ScanConfig {
         min_confidence: req.options.min_confidence.unwrap_or(0.0),
         categories: req.options.categories.map(|c| c.into_iter().collect::<HashSet<_>>()),
         require_context: req.options.require_context.unwrap_or(false),
@@ -560,6 +577,16 @@ async fn scan(
         max_unique_per_subcategory: Some(state.unique_thresholds.clone()),
         ..Default::default()
     };
+    // Force each disabled stage into its most permissive behaviour.
+    // Done AFTER req.options so the toggle can't be bypassed by a
+    // caller setting require_context=true — analyst-facing
+    // diagnostic switch wins.
+    if stage_disabled.contains("min_confidence") {
+        config.min_confidence = 0.0;
+    }
+    if stage_disabled.contains("require_context") {
+        config.require_context = false;
+    }
 
     let request_id = uuid::Uuid::new_v4().to_string();
     let start = Instant::now();
@@ -1056,6 +1083,130 @@ async fn capabilities(State(state): State<Arc<AppState>>) -> Json<CapabilitiesRe
 // (Phase 6 automates that via kube-rs; until then it's a manual step).
 // The response always carries restart_required + an honest note.
 // ---------------------------------------------------------------------------
+// Per-pod pipeline stage toggles (Phase 9c)
+// ---------------------------------------------------------------------------
+// Runtime diagnostic knob — lets an operator force a specific scanner
+// stage into its most permissive behaviour on one pod without
+// redeploying. Useful for A/B comparisons ("same doc scanned with and
+// without require_context") and for quickly widening detection during
+// incident response. Not persisted; restart clears.
+
+/// Stages the pod recognises as toggleable. Mirrored by
+/// /v1/capabilities.scanner_pipeline so the admin console doesn't
+/// have to hardcode a list.
+const TOGGLEABLE_STAGES: &[&str] = &["min_confidence", "require_context"];
+
+#[derive(Serialize)]
+struct StageState {
+    stage: &'static str,
+    /// `true` when the stage runs normally. `false` means it's been
+    /// bypassed by an operator PATCH and every scan gets the stage's
+    /// permissive default (min_confidence=0.0, require_context=false).
+    enabled: bool,
+}
+
+#[derive(Serialize)]
+struct StagesResponse {
+    total: usize,
+    stages: Vec<StageState>,
+}
+
+async fn pipeline_stages_get(State(state): State<Arc<AppState>>) -> Json<StagesResponse> {
+    let disabled: HashSet<String> = state
+        .disabled_stages
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let stages: Vec<StageState> = TOGGLEABLE_STAGES
+        .iter()
+        .map(|s| StageState {
+            stage: s,
+            enabled: !disabled.contains(*s),
+        })
+        .collect();
+    Json(StagesResponse {
+        total: stages.len(),
+        stages,
+    })
+}
+
+#[derive(Deserialize)]
+struct StagesPatchRequest {
+    stage: String,
+    enabled: bool,
+}
+
+async fn pipeline_stages_patch(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(req): Json<StagesPatchRequest>,
+) -> Response {
+    if !TOGGLEABLE_STAGES.contains(&req.stage.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!(
+                    "stage {:?} is not toggleable; accepted: {:?}",
+                    req.stage, TOGGLEABLE_STAGES
+                ),
+            }),
+        )
+            .into_response();
+    }
+    {
+        let mut guard = match state.disabled_stages.write() {
+            Ok(g) => g,
+            Err(_) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "disabled_stages lock poisoned".into(),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+        if req.enabled {
+            guard.remove(&req.stage);
+        } else {
+            guard.insert(req.stage.clone());
+        }
+    }
+    tracing::warn!(
+        stage = %req.stage,
+        enabled = req.enabled,
+        source_ip = %addr.ip(),
+        "pipeline stage toggled"
+    );
+    if let Ok(event) = AuditEvent::new("CONFIG") {
+        emit_audit(
+            event
+                .with_action("pipeline_stage_toggle")
+                .with_outcome(if req.enabled { "enabled" } else { "disabled" })
+                .with_source_ip(&addr.ip().to_string())
+                .with_metadata("stage", serde_json::json!(req.stage)),
+        );
+    }
+    // Rebuild inline rather than re-invoking pipeline_stages_get — no
+    // need to take another lock when we already know the final state.
+    let disabled: HashSet<String> = state
+        .disabled_stages
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let stages: Vec<StageState> = TOGGLEABLE_STAGES
+        .iter()
+        .map(|s| StageState {
+            stage: s,
+            enabled: !disabled.contains(*s),
+        })
+        .collect();
+    Json(StagesResponse {
+        total: stages.len(),
+        stages,
+    })
+    .into_response()
+}
 
 #[derive(Serialize)]
 struct OverridesStateResponse {
@@ -1116,6 +1267,12 @@ struct ApplyResponse {
     /// can roll back manually if something goes wrong before Phase 7
     /// ships). `None` when no prior file existed.
     backup_path: Option<String>,
+    /// Backups removed by the auto-prune step during this apply.
+    /// Empty when SIPHON_OVERRIDES_KEEP is unset or the file count
+    /// was still under the cap. Included in the response so the
+    /// audit trail sees which backups went away.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pruned_backups: Vec<String>,
     summary: siphon_core::overrides::OverridesSummary,
     /// Always true after a successful apply. Until Phase 6's auto-roll
     /// is wired, a human or orchestrator has to restart detection pods
@@ -1157,6 +1314,32 @@ async fn overrides_apply(
     })?;
 
     let path = state.overrides_path.as_path();
+
+    // Create the parent directory if it's missing. Fresh local-dev
+    // setups (SIPHON_OVERRIDES_PATH=/etc/siphon/overrides.json on a
+    // macOS host that doesn't have /etc/siphon) otherwise hit
+    // "temp write failed: No such file or directory" at the first
+    // Apply. Fails loudly rather than silently — directory creation
+    // is expected to succeed on any writable path.
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!(
+                            "could not create overrides directory {}: {e}. Fix: run the pod \
+                             with SIPHON_OVERRIDES_PATH pointing at a writable path, or \
+                             `mkdir -p {}` first.",
+                            parent.display(),
+                            parent.display()
+                        ),
+                    }),
+                ));
+            }
+            tracing::info!(parent = %parent.display(), "created SIPHON_OVERRIDES_PATH parent dir");
+        }
+    }
 
     // Backup the previous file if one exists. Name carries a nanosecond
     // timestamp so concurrent applies (unlikely, but possible) don't
@@ -1201,6 +1384,21 @@ async fn overrides_apply(
         )
     })?;
 
+    // Auto-prune old backups so a chatty admin console doesn't grow
+    // the overrides directory without bound. SIPHON_OVERRIDES_KEEP
+    // caps the number of .v<nanos>.bak files we retain (newest kept);
+    // default 20 is enough for a week of normal tuning, and unset /
+    // malformed / 0 disables pruning entirely.
+    let prune_keep: Option<usize> = std::env::var("SIPHON_OVERRIDES_KEEP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n: &usize| n > 0);
+    let pruned_backups: Vec<String> = if let Some(keep) = prune_keep {
+        prune_backups(path, keep)
+    } else {
+        Vec::new()
+    };
+
     let summary = new_overrides.summary();
     tracing::info!(
         path = %path.display(),
@@ -1208,6 +1406,7 @@ async fn overrides_apply(
         disabled = summary.disabled_patterns,
         field_overrides = summary.pattern_overrides,
         custom_categories = summary.custom_categories,
+        pruned = pruned_backups.len(),
         "overrides applied"
     );
 
@@ -1233,10 +1432,69 @@ async fn overrides_apply(
         status: "applied",
         written_path: path.display().to_string(),
         backup_path,
+        pruned_backups,
         summary,
         restart_required: true,
         note: "overrides written to disk · restart detection pods to pick up the changes (Phase 6 will auto-roll)",
     }))
+}
+
+/// Enumerate the `<basename>.v<nanos>.bak` backups next to the main
+/// overrides file, sort newest-first, and remove everything past the
+/// `keep` cap. Returns the paths of the pruned files so the Apply
+/// response can surface them in the audit trail.
+fn prune_backups(path: &std::path::Path, keep: usize) -> Vec<String> {
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => return Vec::new(),
+    };
+    let base = match path.file_stem().and_then(|s| s.to_str()) {
+        Some(s) => s.to_string(),
+        None => return Vec::new(),
+    };
+    let read = match std::fs::read_dir(parent) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    // Collect entries matching `<base>.v<digits>.bak`. Nanosecond
+    // tie-break is baked into the filename so sorting by name =
+    // sorting by age.
+    let mut candidates: Vec<std::path::PathBuf> = read
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| {
+                    let prefix = format!("{base}.v");
+                    n.starts_with(&prefix)
+                        && n.ends_with(".bak")
+                        && n[prefix.len()..n.len() - 4]
+                            .chars()
+                            .all(|c| c.is_ascii_digit())
+                })
+                .unwrap_or(false)
+        })
+        .collect();
+    if candidates.len() <= keep {
+        return Vec::new();
+    }
+    candidates.sort_by(|a, b| b.file_name().cmp(&a.file_name())); // newest first
+    let mut pruned = Vec::new();
+    for old in candidates.into_iter().skip(keep) {
+        match std::fs::remove_file(&old) {
+            Ok(_) => {
+                tracing::info!(path = %old.display(), "pruned old overrides backup");
+                pruned.push(old.display().to_string());
+            }
+            Err(e) => {
+                // Backup prune failure is non-fatal — the apply
+                // itself still succeeded. Log and carry on.
+                tracing::warn!(path = %old.display(), error = %e, "backup prune failed");
+            }
+        }
+    }
+    pruned
 }
 
 // ─── /v1/overrides/roll (Phase 6) ───────────────────────────────
@@ -1598,6 +1856,90 @@ async fn overrides_history(
         total: entries.len(),
         entries,
     }))
+}
+
+/// GET /v1/overrides/content?version=<ver> — returns the parsed
+/// PatternOverrides document for a specific version ("current" or
+/// "v<nanos>"). Used by the admin console's history diff viewer.
+/// Kept separate from /history so that listing doesn't pay the
+/// deserialise+serialise cost for every backup file.
+#[derive(Deserialize)]
+struct OverridesContentQuery {
+    version: String,
+}
+
+#[derive(Serialize)]
+struct OverridesContentResponse {
+    version: String,
+    path: String,
+    /// Raw JSON of the file, parsed from the bytes on disk. Always a
+    /// valid PatternOverrides when `parses` is true.
+    overrides: siphon_core::overrides::PatternOverrides,
+    parses: bool,
+}
+
+async fn overrides_content(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<OverridesContentQuery>,
+) -> Result<Json<OverridesContentResponse>, (StatusCode, Json<ErrorResponse>)> {
+    use siphon_core::overrides::PatternOverrides;
+    let path = state.overrides_path.as_path();
+    let (target_path, label) = if q.version == "current" {
+        (path.to_path_buf(), "current".to_string())
+    } else {
+        // Expect "v<nanos>"; look up the sibling backup file.
+        let nanos = q
+            .version
+            .strip_prefix('v')
+            .and_then(|n| n.parse::<u128>().ok())
+            .ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: format!("bad version {:?}; expected 'current' or 'v<nanos>'", q.version),
+                    }),
+                )
+            })?;
+        let backup = path.with_extension(format!("v{nanos}.bak"));
+        if !backup.exists() {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("no backup at {}", backup.display()),
+                }),
+            ));
+        }
+        (backup, q.version.clone())
+    };
+
+    match std::fs::read(&target_path) {
+        Ok(bytes) => {
+            // Unparseable backups return parses=false + empty overrides
+            // so the UI can still diff against whatever the scanner
+            // WOULD have seen (which is: default overrides — the
+            // parse would have failed at pod load).
+            match PatternOverrides::from_bytes(&bytes) {
+                Ok(o) => Ok(Json(OverridesContentResponse {
+                    version: label,
+                    path: target_path.display().to_string(),
+                    overrides: o,
+                    parses: true,
+                })),
+                Err(_) => Ok(Json(OverridesContentResponse {
+                    version: label,
+                    path: target_path.display().to_string(),
+                    overrides: PatternOverrides::empty(),
+                    parses: false,
+                })),
+            }
+        }
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("read failed: {e}"),
+            }),
+        )),
+    }
 }
 
 #[derive(Deserialize)]
@@ -2395,6 +2737,7 @@ async fn main() {
         started_at,
         loaded_overrides,
         overrides_path: overrides_path_arc,
+        disabled_stages: Arc::new(RwLock::new(HashSet::new())),
     });
 
     let app = Router::new()
@@ -2422,6 +2765,9 @@ async fn main() {
         .route("/v1/overrides/disk", get(overrides_disk))
         .route("/v1/overrides/apply", post(overrides_apply))
         .route("/v1/overrides/history", get(overrides_history))
+        .route("/v1/overrides/content", get(overrides_content))
+        .route("/v1/pipeline/stages",
+               get(pipeline_stages_get).patch(pipeline_stages_patch))
         .route("/v1/overrides/revert", post(overrides_revert))
         .route("/v1/overrides/roll", post(overrides_roll))
         .route("/v1/docs", get(docs_index))

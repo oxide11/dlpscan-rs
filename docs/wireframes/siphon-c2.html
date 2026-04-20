@@ -8369,6 +8369,162 @@ function PendingChangesBanner({ customCategories: customCategoriesProp }) {
 // exposes a per-version revert button. Mounts alongside
 // PendingChangesBanner on the Patterns + Match Lists surfaces.
 
+// Recursive shallow+deep JSON diff. Returns a flat list of change
+// records the viewer renders as amber/green/red rows. Paths are
+// dotted ("pattern_overrides.creditcard/amex.specificity" for an
+// overrides tweak); array changes are keyed by index so the diff
+// makes sense without pulling in a full structural matcher.
+function __siphonJsonDiff(before, after, path, out) {
+  path = path || '';
+  out = out || [];
+  if (before === after) return out;
+  const bT = before === null ? 'null' : Array.isArray(before) ? 'array' : typeof before;
+  const aT = after === null ? 'null' : Array.isArray(after) ? 'array' : typeof after;
+  // One side missing entirely.
+  if (before === undefined) { out.push({ path, kind: 'added', before: undefined, after }); return out; }
+  if (after === undefined)  { out.push({ path, kind: 'removed', before, after: undefined }); return out; }
+  // Type mismatch — record as change at this level without recursing.
+  if (bT !== aT) { out.push({ path, kind: 'changed', before, after }); return out; }
+  if (bT === 'object') {
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    for (const k of keys) {
+      __siphonJsonDiff(before[k], after[k], path ? path + '.' + k : k, out);
+    }
+    return out;
+  }
+  if (bT === 'array') {
+    const n = Math.max(before.length, after.length);
+    for (let i = 0; i < n; i++) {
+      __siphonJsonDiff(before[i], after[i], path + '[' + i + ']', out);
+    }
+    return out;
+  }
+  // Primitives.
+  if (before !== after) out.push({ path, kind: 'changed', before, after });
+  return out;
+}
+
+// Inline diff viewer shown under the history table when the analyst
+// clicks ↔ Diff on a backup row. Fetches both versions' content via
+// the /v1/overrides/content endpoint and uses __siphonJsonDiff to
+// produce a flat, path-keyed list of changes. Anything more
+// sophisticated (full structural diff, inline text diff) lands later
+// if the flat view stops scaling.
+function OverridesDiffViewer({ version, onClose }) {
+  const [state, setState] = React.useState({ loading: true, error: null, before: null, after: null });
+  const [showEqual, setShowEqual] = React.useState(false);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setState({ loading: true, error: null, before: null, after: null });
+    const base = window.SIPHON_API_URL().replace(/\/$/, '');
+    const fetchV = async (v) => {
+      const r = await window.siphonFetch(base + '/v1/overrides/content?version=' + encodeURIComponent(v));
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' fetching ' + v);
+      const j = await r.json();
+      return j.overrides;
+    };
+    Promise.all([fetchV(version), fetchV('current')])
+      .then(([before, after]) => {
+        if (cancelled) return;
+        setState({ loading: false, error: null, before, after });
+      })
+      .catch(e => {
+        if (cancelled) return;
+        setState({ loading: false, error: String(e.message || e), before: null, after: null });
+      });
+    return () => { cancelled = true; };
+  }, [version]);
+
+  const diff = React.useMemo(() => {
+    if (!state.before || !state.after) return [];
+    return __siphonJsonDiff(state.before, state.after);
+  }, [state.before, state.after]);
+
+  const fmt = (v) => {
+    if (v === undefined) return '—';
+    if (v === null) return 'null';
+    if (typeof v === 'string') return JSON.stringify(v);
+    if (typeof v === 'object') return JSON.stringify(v);
+    return String(v);
+  };
+
+  return (
+    <div style={{marginTop:10, padding:'10px 12px', background:'var(--bg-1)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}>
+      <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:8}}>
+        <span style={{fontFamily:"'Space Grotesk', sans-serif", fontWeight:600, fontSize:13, color:'var(--ink-bright)'}}>
+          Diff <span className="mono">{version}</span> → <span className="mono">current</span>
+        </span>
+        <span className="muted" style={{fontSize:11}}>
+          {state.loading ? 'fetching both versions…'
+            : state.error ? ''
+            : <>{diff.length} change{diff.length === 1 ? '' : 's'}</>}
+        </span>
+        <label style={{marginLeft:'auto', display:'inline-flex', alignItems:'center', gap:6, fontSize:11}}>
+          <input type="checkbox" checked={showEqual} onChange={e => setShowEqual(e.target.checked)} />
+          show raw JSON
+        </label>
+        <button className="btn ghost" onClick={onClose} style={{fontSize:10.5}}>× Close</button>
+      </div>
+
+      {state.error && (
+        <div className="note" style={{borderColor:'var(--red)', background:'var(--red-wash)', color:'var(--red)', fontSize:12}}>
+          <b>Diff unavailable:</b> {state.error}
+        </div>
+      )}
+
+      {!state.loading && !state.error && diff.length === 0 && (
+        <div className="muted mono" style={{fontSize:11, padding:'8px 0'}}>
+          — this backup is identical to the current file —
+        </div>
+      )}
+
+      {!state.loading && !state.error && diff.length > 0 && !showEqual && (
+        <div style={{display:'grid', gridTemplateColumns:'18px minmax(200px, 1fr) 1fr 1fr', gap:6, fontFamily:"'JetBrains Mono', monospace", fontSize:11, lineHeight:1.5}}>
+          <span className="label"></span>
+          <span className="label">Path</span>
+          <span className="label">Before ({version})</span>
+          <span className="label">After (current)</span>
+          {diff.map((d, i) => {
+            const colour = d.kind === 'added' ? 'var(--safe)'
+                         : d.kind === 'removed' ? 'var(--red)'
+                         : 'var(--amber)';
+            const glyph = d.kind === 'added' ? '+' : d.kind === 'removed' ? '−' : '~';
+            return (
+              <React.Fragment key={i}>
+                <span style={{color: colour, fontWeight:600}}>{glyph}</span>
+                <span style={{color:'var(--ink-bright)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+                      title={d.path}>{d.path || '<root>'}</span>
+                <span style={{color: d.kind === 'added' ? 'var(--ink-soft)' : colour, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+                      title={fmt(d.before)}>{fmt(d.before)}</span>
+                <span style={{color: d.kind === 'removed' ? 'var(--ink-soft)' : colour, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+                      title={fmt(d.after)}>{fmt(d.after)}</span>
+              </React.Fragment>
+            );
+          })}
+        </div>
+      )}
+
+      {!state.loading && !state.error && showEqual && (
+        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
+          <div>
+            <div className="label" style={{marginBottom:4}}>Before · {version}</div>
+            <pre style={{maxHeight:280, overflow:'auto', margin:0, fontFamily:"'JetBrains Mono', monospace", fontSize:10.5, padding:8, background:'var(--bg-2)', border:'1px solid var(--line-soft)', borderRadius:2}}>
+              {JSON.stringify(state.before, null, 2)}
+            </pre>
+          </div>
+          <div>
+            <div className="label" style={{marginBottom:4}}>After · current</div>
+            <pre style={{maxHeight:280, overflow:'auto', margin:0, fontFamily:"'JetBrains Mono', monospace", fontSize:10.5, padding:8, background:'var(--bg-2)', border:'1px solid var(--line-soft)', borderRadius:2}}>
+              {JSON.stringify(state.after, null, 2)}
+            </pre>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OverridesHistoryPanel() {
   // Poll on every surface mount + manual refresh — not polled on a
   // timer because history only changes when an Apply/Revert
@@ -8379,6 +8535,10 @@ function OverridesHistoryPanel() {
   const [reverting, setReverting] = React.useState(null);  // version-in-flight
   const [err, setErr] = React.useState(null);
   const [note, setNote] = React.useState(null);
+  // Diff viewer: which backup version is currently expanded. null =
+  // no diff open. When set, fetches current + <version> contents and
+  // renders an inline panel underneath the history table.
+  const [diffFor, setDiffFor] = React.useState(null);
 
   const entries = (hist.data && hist.data.entries) || [];
   const backupCount = entries.filter(e => e.version !== 'current').length;
@@ -8482,7 +8642,15 @@ function OverridesHistoryPanel() {
                           title={summaryStr}>
                       {summaryStr}
                     </span>
-                    <span>
+                    <span style={{display:'flex', gap:4, justifyContent:'flex-end'}}>
+                      {!isCurrent && e.parses && (
+                        <button className="btn ghost"
+                                onClick={() => setDiffFor(diffFor === e.version ? null : e.version)}
+                                title="compare this backup against the current file"
+                                style={{fontSize:10.5}}>
+                          {diffFor === e.version ? '× Close' : '↔ Diff'}
+                        </button>
+                      )}
                       {isCurrent ? (
                         <span className="muted mono" style={{fontSize:10.5}}>live</span>
                       ) : !e.parses ? (
@@ -8502,11 +8670,13 @@ function OverridesHistoryPanel() {
             </div>
           )}
 
+          {diffFor && <OverridesDiffViewer version={diffFor} onClose={() => setDiffFor(null)} />}
+
           <div className="muted" style={{fontSize:10.5, marginTop:8, lineHeight:1.6}}>
-            Backups accumulate with every Apply / Revert. Pruning is manual for now — delete
-            unwanted <span className="mono">.v&lt;nanos&gt;.bak</span> files from the overrides
-            directory (an auto-prune knob lands later). Reverting to a version creates a fresh
-            backup of the current file first, so the revert is itself undoable.
+            Backups accumulate with every Apply / Revert. Auto-prune via
+            <span className="mono"> SIPHON_OVERRIDES_KEEP</span> (default 20, 0 disables) caps
+            the file count on the pod. Reverting to a version creates a fresh backup of the
+            current file first, so the revert is itself undoable.
           </div>
 
           <RollPodsFooter />
@@ -11688,8 +11858,87 @@ function PodHealthRow({ pod, onToggle, onRemove, isSeed }) {
             )}
           </div>
         )}
+        {c && c.pod_type === 'siphon-api' && (
+          <PipelineStagesControl baseUrl={pod.url} />
+        )}
       </div>
     )}
+    </div>
+  );
+}
+
+// Runtime pipeline-stage toggle control (Phase 9c). Only applies to
+// siphon-api pods — siphon-fs doesn't expose the endpoint yet. Small
+// per-pod panel under the capabilities grid; polls once on mount + on
+// every user flip. 'Disabled' means 'this stage is bypassed on this
+// pod only, right now' (not persisted across restart).
+function PipelineStagesControl({ baseUrl }) {
+  const [state, setState] = React.useState({ loading: true, stages: [], error: null });
+  const [busy, setBusy] = React.useState(null);
+  const fetchStages = React.useCallback(async () => {
+    setState(s => ({ ...s, loading: true, error: null }));
+    try {
+      const r = await window.siphonFetch(baseUrl.replace(/\/$/, '') + '/v1/pipeline/stages');
+      if (!r.ok) {
+        if (r.status === 404) {
+          // Pod predates Phase 9c — don't show the panel at all.
+          setState({ loading: false, stages: [], error: 'not-supported' });
+          return;
+        }
+        throw new Error('HTTP ' + r.status);
+      }
+      const j = await r.json();
+      setState({ loading: false, stages: j.stages || [], error: null });
+    } catch (e) {
+      setState({ loading: false, stages: [], error: String(e.message || e) });
+    }
+  }, [baseUrl]);
+  React.useEffect(() => { fetchStages(); }, [fetchStages]);
+
+  const toggle = async (stage, enabled) => {
+    setBusy(stage);
+    try {
+      const r = await window.siphonFetch(baseUrl.replace(/\/$/, '') + '/v1/pipeline/stages', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ stage, enabled }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      setState(s => ({ ...s, stages: j.stages || [] }));
+    } catch (e) {
+      setState(s => ({ ...s, error: String(e.message || e) }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (state.error === 'not-supported') return null;
+  return (
+    <div style={{marginTop:10, paddingTop:10, borderTop:'1px solid var(--line-soft)'}}>
+      <div className="label" style={{marginBottom:6}}>
+        Pipeline stages <span className="muted" style={{textTransform:'none', letterSpacing:0}}>— diagnostic per-pod toggles (not persisted)</span>
+      </div>
+      {state.error && state.error !== 'not-supported' && (
+        <div className="muted" style={{color:'var(--red)', fontSize:11}}>{state.error}</div>
+      )}
+      <div style={{display:'flex', flexWrap:'wrap', gap:8, fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>
+        {state.stages.map(s => {
+          const on = s.enabled;
+          return (
+            <label key={s.stage}
+                   style={{display:'inline-flex', alignItems:'center', gap:6, padding:'4px 8px', background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:2, cursor:'pointer'}}
+                   title={on ? 'click to bypass this stage — scans on this pod skip the filter' : 'click to re-enable normal behaviour'}>
+              <input type="checkbox"
+                     checked={on}
+                     disabled={busy === s.stage}
+                     onChange={e => toggle(s.stage, e.target.checked)} />
+              <span style={{color: on ? 'var(--ink)' : 'var(--amber)'}}>{s.stage}</span>
+              {busy === s.stage && <span className="muted">…</span>}
+            </label>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -14234,6 +14483,16 @@ function LiveScan() {
       </div>
 
       {result && result.trace && <TracePanel trace={result.trace} />}
+      {result && traceOn && !result.trace && (
+        <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', marginTop:'var(--gap)', fontSize:12, lineHeight:1.6}}>
+          <b>Trace requested but not returned.</b> The pod at{' '}
+          <span className="mono">{mode === 'file' ? fsUrl : apiUrl}</span> responded without a{' '}
+          <span className="mono">trace</span> array —{' '}
+          {mode === 'file'
+            ? <>likely a stale siphon-fs binary. Rebuild with <span className="mono">cargo build -p siphon-fs</span>, then STOP + START siphon-fs in the Local Launcher panel.</>
+            : <>likely a stale siphon-api binary. Rebuild with <span className="mono">cargo build -p siphon-api</span>, then restart the pod.</>}
+        </div>
+      )}
     </div>
   );
 }

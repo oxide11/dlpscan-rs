@@ -441,6 +441,39 @@ what's connected to the output. See
 [docs/architecture/microservices.md](docs/architecture/microservices.md)
 for the full pod inventory and deployment topology.
 
+### What ships today
+
+| Crate | Purpose |
+|---|---|
+| `siphon-core` | Scanner engine. `scan_text_with_config(&str, &ScanConfig)`. No I/O. |
+| `siphon-api`  | HTTP service for text scanning. `/scan` + `/v1/*` surface (patterns, policies, metrics, audit, findings, overrides, capabilities, pipeline stages). |
+| `siphon-fs`   | HTTP service for file uploads. `/scan` accepts multipart `file` + JSON `options`; dispatches through the extractor registry into the core scanner. |
+| `siphon-launcher` | Local-dev process manager. Spawns siphon-api / siphon-fs from a terminal, inherits stdio, reaps + tombstones dead children. k8s users don't need it. |
+| `siphon` (this crate) | CLI + extractors + libraries shared by all the pods. |
+
+The **admin console** lives at
+[`docs/wireframes/siphon-c2.html`](docs/wireframes/siphon-c2.html) —
+a single-file React app that talks to every `/v1` endpoint above.
+Open it directly in a browser. Point it at one or more pods via the
+Pod Registry under Settings → Deployment; every surface (Findings,
+Patterns, Policies, Overrides history, Live Scan, FP Troubleshooter)
+reads live data from whatever's registered.
+
+### Quickstart for the services
+
+```bash
+# terminal 1: the launcher
+cargo run -p siphon-launcher
+
+# then open docs/wireframes/siphon-c2.html in a browser
+# and click Start under Settings → Deployment → Local launcher
+# to spawn siphon-api + siphon-fs.
+#
+# or start them directly:
+SIPHON_PORT=8080    cargo run -p siphon-api
+SIPHON_FS_BIND=127.0.0.1:8081 cargo run -p siphon-fs
+```
+
 ### Scanner pipeline (inside `siphon-core`)
 
 ```

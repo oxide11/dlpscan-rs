@@ -152,13 +152,38 @@ polygon-siphon/
 │   │   ├── normalize, context
 │   │   ├── validation, scoring
 │   │   ├── edm, lsh, classification
+│   │   ├── overrides ← deployable PatternOverrides doc
+│   │   ├── findings_ring ← in-memory finding buffer
 │   │   ├── errors, bin_lookup
 │   │   └── scanner ← primary entry point
 │   │
-│   └── siphon-api/               # sync HTTP/gRPC scan service
-│       └── POST /scan endpoint
+│   ├── siphon-api/               # HTTP scan service (text input)
+│   │   ├── POST /scan, /v1/scan
+│   │   ├── GET  /v1/metrics, /v1/findings, /v1/audit
+│   │   ├── GET  /v1/patterns, /v1/categories, /v1/policies
+│   │   ├── GET  /v1/overrides/current, /disk, /history, /content
+│   │   ├── POST /v1/overrides/apply, /revert, /roll
+│   │   ├── GET  /v1/capabilities
+│   │   └── GET/PATCH /v1/pipeline/stages  ← runtime diag toggles
+│   │
+│   ├── siphon-fs/                # file-upload scan service
+│   │   ├── POST /scan            ← multipart: file + options JSON
+│   │   ├── extractors → siphon-core scanner
+│   │   └── shares findings_ring + overrides shape with siphon-api
+│   │
+│   └── siphon-launcher/          # local-dev process manager
+│       ├── GET  /health, /v1/manage/list
+│       ├── POST /v1/manage/start, /stop
+│       └── spawns siphon-api / siphon-fs subprocesses with
+│           inherited env + stdio; tombstones dead children so the
+│           admin console sees exit codes
 │
-└── src/                          # siphon crate (CLI + file tooling)
+├── docs/wireframes/
+│   └── siphon-c2.html            # single-file React admin console;
+│                                   talks to every endpoint above and
+│                                   fans out across the pod registry
+│
+└── src/                          # siphon crate (CLI + shared libs)
     ├── extractors                ← file format handlers
     ├── pipeline                  ← directory/batch orchestration
     ├── guard                     ← InputGuard scan/redact/tokenize
@@ -169,8 +194,34 @@ polygon-siphon/
 
 **Future crates** (see
 [architecture/microservices.md](architecture/microservices.md)):
-`siphon-extractors`, `siphon-fs`, `siphon-ds`, `siphon-gw`,
-`siphon-ml`, `siphon-vision`, `siphon-classify`, `siphon-c2`.
+`siphon-extractors`, `siphon-ds`, `siphon-gw`, `siphon-ml`,
+`siphon-vision`, `siphon-classify`, `siphon-c2` (server-backed
+replacement for the single-file console).
+
+## Admin console (siphon-c2.html)
+
+The admin surface ships today as a single-file React app at
+`docs/wireframes/siphon-c2.html`. It's a browser page you open
+directly (file://) or serve from any static host — every surface,
+stat, and graph is backed by a live `/v1` endpoint on one or more
+pods.
+
+Key design points:
+- **Pod registry**: `c2:pods` localStorage holds the list of known
+  pods. Each surface that needs data fans out across the registry
+  and unions results client-side (findings, capabilities).
+- **Auth header**: `c2:apiKey` is attached as
+  `Authorization: Bearer …` via `siphonFetch` so pods running with
+  `SIPHON_API_KEY` work unchanged.
+- **Local launcher panel**: drives `siphon-launcher` from Settings →
+  Deployment. Click Start and the launcher spawns siphon-api /
+  siphon-fs and auto-registers them in the pod registry.
+- **Apply / Revert / Diff**: the Patterns and Match Lists surfaces
+  stage changes in localStorage and ship them to the pod via
+  `/v1/overrides/apply`. The history panel lets the analyst diff
+  any backup against the current file before reverting.
+- **Runtime stage toggles**: per-pod diagnostic switches under each
+  expanded Pod Registry row, backed by `/v1/pipeline/stages`.
 
 ## Where to read next
 

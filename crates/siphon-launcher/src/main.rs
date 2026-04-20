@@ -300,6 +300,36 @@ async fn start_process(State(state): State<AppState>, Json(req): Json<StartReque
         }
         _ => {}
     }
+
+    // Default SIPHON_OVERRIDES_PATH to a launcher-owned, writable
+    // location so the admin console's Apply flow works out of the box
+    // on local-dev (the baked-in default is `/etc/siphon/overrides.json`
+    // which non-root analysts can't write to on macOS/Linux). Chosen
+    // path: <workspace_root>/.siphon/overrides.json if a workspace was
+    // detected, else <bin_dir>/../.siphon/overrides.json. Skipped when
+    // the analyst already set it via req.env or the parent launcher
+    // env — respect explicit config.
+    let analyst_provided_overrides = req
+        .env
+        .as_ref()
+        .map(|m| m.contains_key("SIPHON_OVERRIDES_PATH"))
+        .unwrap_or(false)
+        || std::env::var_os("SIPHON_OVERRIDES_PATH").is_some();
+    if !analyst_provided_overrides {
+        let base = state
+            .workspace_root
+            .as_deref()
+            .cloned()
+            .unwrap_or_else(|| state.bin_dir.as_ref().clone());
+        let default_overrides = base.join(".siphon").join("overrides.json");
+        cmd.env("SIPHON_OVERRIDES_PATH", &default_overrides);
+        info!(
+            kind = %req.kind,
+            path = %default_overrides.display(),
+            "defaulting SIPHON_OVERRIDES_PATH for spawned pod"
+        );
+    }
+
     if let Some(extra) = req.env {
         for (k, v) in extra {
             cmd.env(k, v);
