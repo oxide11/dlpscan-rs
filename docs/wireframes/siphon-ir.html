@@ -1,0 +1,4283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1360" />
+<title>Siphon · IR console</title>
+<!-- Theme + layout primitives. Source of truth lives at
+     docs/wireframes/siphon-shared.css — inlined here so the
+     console works from file:// (Safari/Chrome both block cross-
+     origin <link href> loads from file://). Re-inline from the
+     shared file on every change; a follow-up can serve the
+     consoles over HTTP and go back to external <link>. -->
+<style>
+/* ==========================================================================
+   SIPHON-C2 · hacker / infosec aesthetic
+   Three themes: phosphor (green CRT) · amber (CRT amber) · ice (modern cyber)
+   Fonts: JetBrains Mono everywhere, Space Grotesk for display, IBM Plex Sans
+   for UI body. No hand-scribble fonts.
+   ========================================================================== */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+/* ============ PHOSPHOR (default) — green-on-black terminal ============ */
+:root, [data-theme="phosphor"] {
+  --bg-0:        #05080a;           /* deepest — outside chrome */
+  --bg-1:        #0a1013;           /* canvas */
+  --bg-2:        #0f1619;           /* raised surface */
+  --bg-3:        #141c20;           /* table rows / hover */
+  --bg-4:        #1a2328;           /* input / selected */
+  --bg-topbar:   #030506;
+  --bg-panel:    #0d1417;
+
+  --ink:         #c8d6c2;           /* phosphor body text */
+  --ink-bright:  #d7ffd0;           /* highlights */
+  --ink-soft:    #8ba58a;
+  --ink-faint:   #5a7360;
+  --ink-dim:     #3a4c3f;
+
+  --line:        #1f3027;
+  --line-soft:   #17231c;
+  --line-strong: #2d4638;
+
+  --accent:      #5ef38c;           /* phosphor green — the signature */
+  --accent-dim:  #2fa85d;
+  --accent-glow: rgba(94, 243, 140, 0.25);
+  --accent-wash: rgba(94, 243, 140, 0.08);
+
+  --amber:       #ffb454;
+  --amber-wash:  rgba(255, 180, 84, 0.10);
+  --red:         #ff5c6c;
+  --red-wash:    rgba(255, 92, 108, 0.10);
+  --cyan:        #7bdff2;
+  --cyan-wash:   rgba(123, 223, 242, 0.10);
+  --magenta:     #ff79c6;
+  --violet:      #b48cff;
+
+  --safe:        var(--accent);
+  --warn:        var(--amber);
+  --threat:      var(--red);
+
+  --env-bg:      #3a2910;
+  --env-fg:      var(--amber);
+
+  --pad: 16px;
+  --gap: 16px;
+  --radius: 2px;
+  --radius-md: 3px;
+
+  /* scanline overlay opacity */
+  --scan-opacity: 0.035;
+  color-scheme: dark;
+}
+
+/* ============ AMBER — CRT amber variant ============ */
+[data-theme="amber"] {
+  --bg-0:        #0a0603;
+  --bg-1:        #0f0804;
+  --bg-2:        #150d06;
+  --bg-3:        #1c1208;
+  --bg-4:        #24190c;
+  --bg-topbar:   #050301;
+  --bg-panel:    #110a05;
+
+  --ink:         #ffc98c;
+  --ink-bright:  #ffe4b8;
+  --ink-soft:    #c49566;
+  --ink-faint:   #7a5b3e;
+  --ink-dim:     #4a3726;
+
+  --line:        #3a2711;
+  --line-soft:   #241808;
+  --line-strong: #55391b;
+
+  --accent:      #ffae48;
+  --accent-dim:  #c07e22;
+  --accent-glow: rgba(255, 174, 72, 0.25);
+  --accent-wash: rgba(255, 174, 72, 0.08);
+
+  --amber:       #ffae48;
+  --amber-wash:  rgba(255, 174, 72, 0.10);
+  --red:         #ff6b5c;
+  --red-wash:    rgba(255, 107, 92, 0.10);
+  --cyan:        #f5c27a;
+  --cyan-wash:   rgba(245, 194, 122, 0.10);
+  --magenta:     #ff9c4a;
+  --violet:      #ffb378;
+
+  --safe:        #a8d97a;
+  --warn:        var(--amber);
+  --threat:      var(--red);
+}
+
+/* ============ ICE — modern cyber (cyan on graphite) ============ */
+[data-theme="ice"] {
+  --bg-0:        #070a0e;
+  --bg-1:        #0c1117;
+  --bg-2:        #121821;
+  --bg-3:        #171f2a;
+  --bg-4:        #1e2836;
+  --bg-topbar:   #040609;
+  --bg-panel:    #0f1520;
+
+  --ink:         #d7e3ef;
+  --ink-bright:  #f5fbff;
+  --ink-soft:    #8aa0b8;
+  --ink-faint:   #5a6e85;
+  --ink-dim:     #36475c;
+
+  --line:        #1f2b3c;
+  --line-soft:   #141d2a;
+  --line-strong: #2f3f54;
+
+  --accent:      #5ee8ff;           /* electric cyan */
+  --accent-dim:  #2999b8;
+  --accent-glow: rgba(94, 232, 255, 0.25);
+  --accent-wash: rgba(94, 232, 255, 0.08);
+
+  --amber:       #ffb454;
+  --amber-wash:  rgba(255, 180, 84, 0.10);
+  --red:         #ff5c6c;
+  --red-wash:    rgba(255, 92, 108, 0.10);
+  --cyan:        #5ee8ff;
+  --cyan-wash:   rgba(94, 232, 255, 0.10);
+  --magenta:     #ff6ad5;
+  --violet:      #a78bfa;
+
+  --safe:        #4ade80;
+  --warn:        var(--amber);
+  --threat:      var(--red);
+}
+
+/* ============ LIGHT — high-contrast day mode ============ */
+[data-theme="light"] {
+  --bg-0:        #f3f5f2;
+  --bg-1:        #ffffff;
+  --bg-2:        #fafbf9;
+  --bg-3:        #f2f4f0;
+  --bg-4:        #e8ebe6;
+  --bg-topbar:   #ffffff;           /* light topbar matches page */
+  --bg-panel:    #ffffff;
+
+  --ink:         #1a2420;
+  --ink-bright:  #05090a;
+  --ink-soft:    #49574f;
+  --ink-faint:   #6b7970;
+  --ink-dim:     #9aa69f;
+
+  --line:        #d7dcd3;
+  --line-soft:   #e7eae3;
+  --line-strong: #b7c0b5;
+
+  --accent:      #0b7a3e;           /* deep emerald — WCAG-friendly */
+  --accent-dim:  #085a2d;
+  --accent-glow: rgba(11, 122, 62, 0.22);
+  --accent-wash: rgba(11, 122, 62, 0.08);
+
+  --amber:       #b4660d;
+  --amber-wash:  rgba(180, 102, 13, 0.10);
+  --red:         #b4161c;
+  --red-wash:    rgba(180, 22, 28, 0.08);
+  --cyan:        #0f6b80;
+  --cyan-wash:   rgba(15, 107, 128, 0.08);
+  --magenta:     #a4166b;
+  --violet:      #5b3ea8;
+
+  --safe:        var(--accent);
+  --warn:        var(--amber);
+  --threat:      var(--red);
+
+  --env-bg:      #3a2910;
+  --env-fg:      #ffc56b;
+
+  --scan-opacity: 0;                /* no scanlines in light mode */
+  color-scheme: light;
+}
+
+[data-density="compact"] { --pad: 10px; --gap: 10px; }
+
+/* ==========================================================================
+   GLOBAL
+   ========================================================================== */
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg-1);
+  color: var(--ink);
+  font-family: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* subtle scanline texture on the whole app — hints at CRT without screaming */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0 2px,
+    rgba(0,0,0,var(--scan-opacity,0.035)) 2px 3px
+  );
+  z-index: 1000;
+  mix-blend-mode: multiply;
+  opacity: var(--scan-opacity, 0.035) == 0 ? 0 : 1;
+}
+[data-theme="light"] body::before { display: none; }
+
+::selection { background: var(--accent); color: var(--bg-0); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--bg-1); }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border: 2px solid var(--bg-1); }
+::-webkit-scrollbar-thumb:hover { background: var(--accent-dim); }
+
+/* ==========================================================================
+   TYPE UTILITIES
+   ========================================================================== */
+.hand,
+.hand-b,
+.scribble {
+  /* backward compat — all legacy hand classes now render as display mono */
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-weight: 500;
+  color: var(--ink);
+}
+.hand-b { font-weight: 700; color: var(--ink-bright); }
+.scribble { color: var(--accent); font-weight: 500; }
+
+.label {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.mono {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink);
+}
+.muted { color: var(--ink-faint); }
+.right { margin-left: auto; }
+
+/* ==========================================================================
+   BOXES / PANELS
+   ========================================================================== */
+.box {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  position: relative;
+  padding: var(--pad);
+}
+.box::before {
+  /* corner crosshair — subtle tech detail */
+  content: '';
+  position: absolute; top: -1px; left: -1px;
+  width: 6px; height: 6px;
+  border-top: 1px solid var(--accent);
+  border-left: 1px solid var(--accent);
+  opacity: 0.5;
+}
+.box--dashed { border-style: dashed; }
+.box--tight { padding: 10px 12px; }
+
+.box-title {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin-bottom: 10px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.box-title .t {
+  font-family: 'Space Grotesk', 'JetBrains Mono', sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--ink-bright);
+  letter-spacing: 0.01em;
+}
+.box-title .t::before {
+  content: '▸ ';
+  color: var(--accent);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.box-title .k {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.note {
+  background: var(--amber-wash);
+  border: 1px solid var(--amber);
+  border-left: 3px solid var(--amber);
+  font-family: 'JetBrains Mono', monospace;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+  border-radius: var(--radius);
+}
+.note::before {
+  content: '// ';
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.arrow { font-family: 'JetBrains Mono', monospace; color: var(--ink-soft); font-size: 14px; }
+.arrow::before { content: '→'; }
+
+.tick::before  { content: '[✓]'; color: var(--safe); font-weight: 700; margin-right: 6px; font-family: 'JetBrains Mono', monospace; }
+.cross::before { content: '[✗]'; color: var(--threat); font-weight: 700; margin-right: 6px; font-family: 'JetBrains Mono', monospace; }
+.dot::before   { content: '·'; margin-right: 6px; color: var(--accent); font-weight: 700; }
+
+/* ==========================================================================
+   CHIPS
+   ========================================================================== */
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  background: var(--bg-3);
+  color: var(--ink-soft);
+}
+.chip--safe  { border-color: var(--safe);   color: var(--safe);   background: var(--accent-wash); }
+.chip--warn  { border-color: var(--warn);   color: var(--warn);   background: var(--amber-wash); }
+.chip--red   { border-color: var(--threat); color: var(--threat); background: var(--red-wash); }
+.chip--teal  { border-color: var(--cyan);   color: var(--cyan);   background: var(--cyan-wash); }
+.chip--ghost { border-style: dashed; color: var(--ink-faint); background: transparent; }
+
+/* ==========================================================================
+   HATCHES
+   ========================================================================== */
+.hatch       { background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(94,243,140,0.06) 6px 7px); }
+.hatch--sage { background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(94,243,140,0.14) 6px 7px); }
+.hatch--teal { background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(123,223,242,0.14) 6px 7px); }
+.hatch--red  { background: repeating-linear-gradient(135deg, transparent 0 6px, rgba(255,92,108,0.14) 6px 7px); }
+
+.line-ph { display: block; height: 7px; background: var(--line-strong); opacity: 0.5; border-radius: 1px; margin: 6px 0; }
+.line-ph.s { height: 5px; opacity: 0.35; }
+.line-ph.w1 { width: 70%; } .line-ph.w2 { width: 45%; } .line-ph.w3 { width: 90%; } .line-ph.w4 { width: 30%; }
+
+/* ==========================================================================
+   SHELL
+   ========================================================================== */
+.shell { display: grid; min-height: 100vh; grid-template-rows: auto auto auto 1fr; }
+
+.topbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 8px 16px;
+  background: var(--bg-topbar);
+  color: var(--ink);
+  border-bottom: 1px solid var(--line-strong);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+.topbar .brand {
+  display: flex; align-items: center; gap: 10px;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 13px;
+  color: var(--ink-bright);
+}
+.topbar .brand-logo {
+  width: 28px; height: 28px;
+  display: block;
+  filter: drop-shadow(0 0 6px var(--accent-glow));
+}
+[data-theme="light"] .topbar .brand-logo { filter: none; }
+.topbar .brand .c2 { color: var(--accent); font-weight: 700; }
+.topbar .spacer { flex: 1; }
+.topbar .tb-item {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.topbar .tb-theme {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: transparent; color: var(--ink-soft);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 3px 10px; cursor: pointer;
+}
+.topbar .tb-theme:hover { border-color: var(--accent); color: var(--accent); }
+.topbar .tb-user { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink); }
+.topbar .env {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  background: var(--env-bg);
+  color: var(--env-fg);
+  padding: 2px 8px;
+  border-radius: var(--radius);
+  border: 1px solid var(--env-fg);
+}
+
+.body-grid { display: grid; grid-template-columns: 1fr; }
+
+/* ── Workspace tabs — BIG primary nav, sits under topbar ── */
+.wsbar {
+  display: flex;
+  align-items: stretch;
+  background: var(--bg-topbar);
+  border-bottom: 1px solid var(--line-strong);
+  padding: 0 16px;
+  gap: 2px;
+  font-family: 'JetBrains Mono', monospace;
+  position: sticky; top: 0; z-index: 40;
+  min-height: 64px;
+}
+.wsbar-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  padding: 10px 22px 10px 18px;
+  background: transparent;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  white-space: nowrap;
+  line-height: 1.15;
+  position: relative;
+}
+.wsbar-btn + .wsbar-btn::before {
+  content: ''; position: absolute; left: -1px; top: 16px; bottom: 16px;
+  border-left: 1px solid var(--line-soft);
+}
+.wsbar-btn:hover { background: var(--bg-2); color: var(--ink); }
+.wsbar-btn.active {
+  background: var(--bg-1);
+  color: var(--ink-bright);
+  border-bottom-color: var(--accent);
+  box-shadow: inset 0 1px 0 var(--accent-wash);
+}
+.wsbar-topline {
+  display: flex; align-items: baseline; gap: 10px;
+}
+.wsbar-glyph {
+  font-size: 16px;
+  color: var(--ink-faint);
+  line-height: 1;
+}
+.wsbar-btn.active .wsbar-glyph { color: var(--accent); }
+.wsbar-label {
+  font-family: 'Space Grotesk', 'JetBrains Mono', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.wsbar-hint {
+  font-size: 10px;
+  color: var(--ink-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+}
+.wsbar-btn.active .wsbar-hint { color: var(--ink-soft); }
+
+/* ── Surface bar — secondary nav for the active workspace ── */
+.surfacebar {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+  padding: 0 16px;
+  font-family: 'JetBrains Mono', monospace;
+  position: sticky; top: 64px; z-index: 39;
+  height: 38px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.surfacebar a {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 0 14px;
+  color: var(--ink-soft);
+  text-decoration: none;
+  font-size: 12px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  letter-spacing: 0.03em;
+}
+.surfacebar a:hover { color: var(--ink); background: var(--bg-2); }
+.surfacebar a.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.surfacebar a .icn {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+.surfacebar a.active .icn { color: var(--accent); }
+.surfacebar a .sub {
+  color: var(--ink-dim);
+  font-size: 10px;
+  margin-left: 4px;
+}
+.surfacebar .utility {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.surfacebar .utility a {
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.sidenav {
+  background: var(--bg-0);
+  border-right: 1px solid var(--line);
+  padding: 14px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  position: sticky; top: 37px;
+  align-self: start;
+  max-height: calc(100vh - 37px);
+  overflow-y: auto;
+}
+.sidenav .section-l {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; font-weight: 600;
+  letter-spacing: 0.18em; text-transform: uppercase;
+  color: var(--ink-dim); margin: 14px 6px 6px;
+}
+.sidenav .section-l::before { content: '── '; color: var(--ink-dim); }
+.sidenav a {
+  display: flex; align-items: center; gap: 10px;
+  padding: 5px 8px; color: var(--ink-soft); text-decoration: none;
+  font-size: 12px; border-radius: var(--radius);
+  border-left: 2px solid transparent;
+  cursor: pointer; line-height: 1.3;
+}
+.sidenav a:hover { background: var(--bg-2); color: var(--ink); }
+.sidenav a.active {
+  background: var(--bg-2);
+  border-left-color: var(--accent);
+  color: var(--accent);
+}
+.sidenav a.active::before { content: '›'; color: var(--accent); position: absolute; }
+.sidenav .icn {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700; width: 16px; text-align: center;
+  color: var(--ink-faint); font-size: 11px;
+}
+.sidenav a.active .icn { color: var(--accent); }
+
+.topnav {
+  display: none;
+  background: var(--bg-0);
+  border-bottom: 1px solid var(--line);
+  padding: 4px 14px; gap: 2px;
+  overflow-x: auto; white-space: nowrap;
+  font-family: 'JetBrains Mono', monospace;
+  align-items: center;
+}
+[data-nav="top"] .topnav { display: flex; }
+[data-nav="top"] .sidenav { display: none; }
+.topnav a {
+  display: inline-block; padding: 4px 12px;
+  color: var(--ink-soft); text-decoration: none; font-size: 11px;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+}
+.topnav a:hover { color: var(--ink); }
+.topnav a.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  background: var(--bg-2);
+}
+
+[data-nav="rail"] .sidenav { padding: 10px 4px; }
+[data-nav="rail"] .sidenav .section-l { display: none; }
+[data-nav="rail"] .sidenav a .t { display: none; }
+[data-nav="rail"] .sidenav a { justify-content: center; padding: 10px 4px; }
+[data-nav="rail"] .sidenav a .icn { font-size: 14px; width: auto; }
+
+[data-nav="split"] .sidenav { padding: 10px 4px; }
+[data-nav="split"] .sidenav .section-l { display: none; }
+[data-nav="split"] .sidenav a .t { display: none; }
+[data-nav="split"] .sidenav a { justify-content: center; padding: 10px 4px; }
+.subnav {
+  display: none; background: var(--bg-0);
+  border-right: 1px solid var(--line);
+  padding: 14px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+[data-nav="split"] .subnav { display: block; }
+.subnav .sn-t {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--ink-dim); margin-bottom: 8px;
+}
+.subnav a { display: block; padding: 4px 8px; font-size: 12px; color: var(--ink-soft); text-decoration: none; border-radius: var(--radius); }
+.subnav a:hover { background: var(--bg-2); color: var(--ink); }
+.subnav a.active { background: var(--bg-2); color: var(--accent); border-left: 2px solid var(--accent); }
+
+.page { padding: 20px 24px 64px; max-width: 1500px; margin: 0 auto; width: 100%; }
+
+/* ==========================================================================
+   PAGE BAR
+   ========================================================================== */
+.pagebar {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 18px;
+}
+.pagebar-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.pagebar-head { justify-content: space-between; align-items: flex-start; }
+.pagebar-tools { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.pagebar .crumbs {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.pagebar .crumbs::before { content: '$ '; color: var(--accent); }
+.pagebar .page-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 24px; margin: 3px 0 0; color: var(--ink-bright);
+  line-height: 1.1; letter-spacing: -0.01em;
+}
+.pagebar .page-sub {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px; color: var(--ink-soft);
+  margin-top: 6px;
+}
+.pagebar .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.tb-search {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 4px 8px;
+  min-width: 260px; flex: 1 1 280px; max-width: 420px;
+}
+.tb-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-wash); }
+.tb-search .mag { color: var(--accent); font-size: 12px; font-family: 'JetBrains Mono', monospace; }
+.tb-search .mag::before { content: '⌕'; }
+.tb-search input {
+  border: none; outline: none; background: transparent;
+  font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--ink);
+  flex: 1;
+}
+.tb-search input::placeholder { color: var(--ink-faint); }
+.tb-search .kbd {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; color: var(--ink-faint);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius); padding: 1px 5px;
+  background: var(--bg-2);
+}
+
+.tb-filter {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  cursor: pointer;
+  color: var(--ink);
+}
+.tb-filter:hover { border-color: var(--accent); }
+.tb-filter .l { font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-faint); }
+.tb-filter .v { color: var(--ink-bright); font-weight: 600; }
+.tb-filter .chev { color: var(--ink-soft); font-size: 9px; }
+
+/* legacy page-head */
+.page-head {
+  display: flex; align-items: flex-end; gap: 16px; justify-content: space-between;
+  margin-bottom: 18px; padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.page-head h1 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600; font-size: 24px; margin: 0; color: var(--ink-bright);
+  letter-spacing: -0.01em;
+}
+.page-head .crumbs {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--ink-faint); margin-bottom: 3px;
+}
+.page-head .crumbs::before { content: '$ '; color: var(--accent); }
+.page-head .actions { display: flex; gap: 8px; align-items: center; }
+
+/* ==========================================================================
+   BUTTONS
+   ========================================================================== */
+.btn {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600; font-size: 10px;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  padding: 5px 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-2);
+  color: var(--ink);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 80ms;
+}
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary {
+  background: var(--accent);
+  color: var(--bg-0);
+  border-color: var(--accent);
+  font-weight: 700;
+}
+.btn.primary:hover { background: var(--ink-bright); border-color: var(--ink-bright); color: var(--bg-0); }
+.btn.ghost { background: transparent; border-color: var(--line); }
+
+/* ==========================================================================
+   GRID
+   ========================================================================== */
+.grid { display: grid; gap: var(--gap); }
+.grid-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-4 { grid-template-columns: repeat(4, 1fr); }
+.grid-2 { grid-template-columns: repeat(2, 1fr); }
+.grid-6 { grid-template-columns: repeat(6, 1fr); }
+.row { display: flex; gap: var(--gap); }
+
+/* ==========================================================================
+   VARIANT TABS
+   ========================================================================== */
+.variant-tabs { display: flex; gap: 2px; margin-bottom: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.variant-tabs button {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; padding: 7px 16px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  cursor: pointer;
+  color: var(--ink-soft);
+  letter-spacing: 0.04em;
+  margin-bottom: -1px;
+}
+.variant-tabs button.active {
+  background: var(--bg-2);
+  color: var(--accent);
+  border-color: var(--line);
+  border-bottom: 1px solid var(--bg-2);
+  font-weight: 600;
+}
+.variant-tabs + .variant-body { padding-top: 12px; }
+
+/* ==========================================================================
+   STAT
+   ========================================================================== */
+.stat { display: flex; flex-direction: column; gap: 4px; }
+.stat .s-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.stat .s-val {
+  font-family: 'Space Grotesk', 'JetBrains Mono', sans-serif;
+  font-weight: 600; font-size: 28px;
+  color: var(--ink-bright);
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+.stat .s-delta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--ink-soft);
+}
+.stat .s-delta.up { color: var(--safe); }
+.stat .s-delta.down { color: var(--threat); }
+
+.spark {
+  height: 36px;
+  background: linear-gradient(0deg, var(--accent-wash), transparent 70%);
+  position: relative;
+  border-bottom: 1px dashed var(--line);
+}
+
+/* ==========================================================================
+   POD ROW
+   ========================================================================== */
+.pod-row {
+  display: grid;
+  grid-template-columns: 16px 1fr 120px 80px 80px 80px 60px;
+  align-items: center; gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 12px;
+}
+.pod-row .dot-k {
+  width: 8px; height: 8px; border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--bg-2);
+}
+.pod-row .dot-k.ok   { background: var(--safe);   box-shadow: 0 0 0 2px var(--bg-2), 0 0 8px var(--safe); }
+.pod-row .dot-k.warn { background: var(--warn);   box-shadow: 0 0 0 2px var(--bg-2), 0 0 8px var(--warn); }
+.pod-row .dot-k.bad  { background: var(--threat); box-shadow: 0 0 0 2px var(--bg-2), 0 0 8px var(--threat); }
+.pod-row .name {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600; font-size: 12px;
+  color: var(--ink-bright);
+}
+.pod-row .name .v {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; color: var(--ink-faint);
+  font-weight: 400; margin-left: 6px;
+}
+
+.bar-row {
+  display: grid; grid-template-columns: 140px 1fr 50px;
+  gap: 8px; align-items: center;
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--ink);
+}
+.bar-row .b {
+  height: 10px; border: 1px solid var(--line);
+  background: var(--bg-1); position: relative;
+  border-radius: 1px;
+}
+.bar-row .b i {
+  display: block; height: 100%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+.bar-row .n {
+  font-family: 'JetBrains Mono', monospace;
+  text-align: right; font-size: 10px; color: var(--ink-soft);
+}
+
+/* ==========================================================================
+   FINDINGS
+   ========================================================================== */
+.find-row {
+  display: grid;
+  grid-template-columns: 70px 90px 1fr 70px 60px 70px 20px;
+  gap: 10px; padding: 6px 4px;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 11.5px;
+  align-items: center;
+  cursor: pointer;
+  font-family: 'JetBrains Mono', monospace;
+}
+.find-row:hover { background: var(--bg-3); }
+.find-row .ts { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-faint); }
+.find-row .src {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600; font-size: 11px;
+  color: var(--cyan);
+}
+.find-row .tx {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--ink);
+}
+
+.find-group {
+  margin-top: 12px;
+  padding: 5px 10px;
+  background: var(--bg-2);
+  border-left: 2px solid var(--accent);
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600; font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-bright);
+  display: flex; gap: 10px; align-items: center;
+}
+.find-group .gc {
+  color: var(--ink-faint);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; font-weight: 400;
+  text-transform: none;
+}
+
+/* dark stream = same as everything now; keep class for compat */
+.stream-dark { background: var(--bg-0); color: var(--ink); border-color: var(--line-strong); padding: 14px; }
+.stream-dark .find-row:hover { background: var(--bg-3); }
+
+/* ==========================================================================
+   TERMINAL (Pod Logs)
+   ========================================================================== */
+.term {
+  background: #000;
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px; line-height: 1.55;
+  padding: 12px 14px;
+  overflow: auto;
+  min-height: 480px;
+  position: relative;
+}
+.term::after {
+  /* phosphor glow overlay */
+  content: '';
+  position: absolute; inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.4) 100%);
+}
+.term-line { display: grid; grid-template-columns: 72px 88px 48px 1fr; gap: 10px; padding: 1px 0; }
+.term-line .ts { color: var(--ink-faint); }
+.term-line .pod { color: var(--cyan); }
+.term-line .lvl { text-align: center; font-weight: 700; font-size: 10px; }
+.term-line .lvl.info  { color: var(--cyan); }
+.term-line .lvl.warn  { color: var(--warn); }
+.term-line .lvl.error { color: var(--threat); }
+.term-line .lvl.debug { color: var(--ink-faint); }
+.term-line .msg { color: var(--ink); }
+.term-line .msg .k { color: var(--cyan); }
+.term-line .msg .v { color: var(--accent); }
+.term-line .msg .s { color: var(--violet); }
+.term-line:hover { background: rgba(94,243,140,0.04); }
+
+.term-head {
+  display: flex; gap: 10px; align-items: center;
+  padding: 6px 10px; margin: -12px -14px 10px;
+  background: var(--bg-0); color: var(--ink);
+  border-bottom: 1px solid var(--line-strong);
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.term-head .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.term-head .dot.ok { background: var(--safe); box-shadow: 0 0 6px var(--safe); }
+.term-head .dot.r  { background: var(--threat); box-shadow: 0 0 6px var(--threat); }
+.term-head .dot.y  { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+.term-head .t { color: var(--ink-soft); }
+.term-head .right { margin-left: auto; color: var(--ink-faint); }
+
+/* ==========================================================================
+   POLICY CANVAS
+   ========================================================================== */
+.canvas {
+  background:
+    linear-gradient(var(--line-soft) 1px, transparent 1px) 0 0 / 24px 24px,
+    linear-gradient(90deg, var(--line-soft) 1px, transparent 1px) 0 0 / 24px 24px,
+    var(--bg-1);
+  min-height: 480px; position: relative;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+}
+.node {
+  position: absolute;
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink);
+  min-width: 120px;
+  box-shadow: 0 0 0 0 var(--accent-glow);
+  transition: box-shadow 180ms;
+}
+.node:hover { box-shadow: 0 0 0 1px var(--accent), 0 0 12px var(--accent-glow); }
+.node .nt {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--ink-faint);
+  display: block; margin-bottom: 3px;
+}
+.node.start     { border-color: var(--accent); color: var(--accent); }
+.node.start .nt { color: var(--accent-dim); }
+.node.cond      { border-color: var(--cyan); }
+.node.cond .nt  { color: var(--cyan); }
+.node.act-redact { border-color: var(--warn); background: var(--amber-wash); }
+.node.act-block  { border-color: var(--threat); background: var(--red-wash); color: var(--threat); }
+.node.act-ok     { border-color: var(--safe); background: var(--accent-wash); color: var(--safe); }
+
+/* ==========================================================================
+   PATTERNS
+   ========================================================================== */
+.pat-row {
+  display: grid; grid-template-columns: 24px 1fr 100px 60px 50px 60px;
+  padding: 6px 0; gap: 8px; align-items: center;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 11.5px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.pat-row .pn {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600; font-size: 12px; color: var(--ink-bright);
+}
+.pat-row .pr {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; color: var(--accent-dim);
+}
+
+.spike { display: flex; align-items: flex-end; gap: 2px; height: 50px; }
+.spike i {
+  display: block; width: 6px;
+  background: var(--accent);
+  box-shadow: 0 0 4px var(--accent-glow);
+}
+
+.worldmap {
+  height: 180px;
+  border: 1px dashed var(--line-strong);
+  background:
+    radial-gradient(circle at 22% 42%, rgba(255,92,108,0.45) 0 10px, transparent 12px),
+    radial-gradient(circle at 48% 38%, rgba(94,243,140,0.45) 0 8px, transparent 10px),
+    radial-gradient(circle at 72% 48%, rgba(255,180,84,0.5) 0 12px, transparent 14px),
+    radial-gradient(circle at 81% 62%, rgba(123,223,242,0.4) 0 6px, transparent 8px),
+    repeating-linear-gradient(135deg, transparent 0 8px, rgba(94,243,140,0.03) 8px 9px);
+  position: relative; display: flex; align-items: center; justify-content: center;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--ink-faint); font-size: 11px;
+}
+
+.surface-variants { display: flex; gap: 4px; margin-bottom: 14px; flex-wrap: wrap; }
+.surface-variants span {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; letter-spacing: 0.16em;
+  text-transform: uppercase; color: var(--ink-faint);
+  align-self: center; margin-right: 4px;
+}
+.surface-variants button {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-2);
+  color: var(--ink-soft);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.surface-variants button:hover { color: var(--ink); border-color: var(--accent); }
+.surface-variants button.active {
+  background: var(--accent); color: var(--bg-0);
+  border-color: var(--accent); font-weight: 700;
+}
+
+.hidden { display: none !important; }
+
+/* ==========================================================================
+   TWEAKS PANEL
+   ========================================================================== */
+.tweaks {
+  position: fixed; right: 16px; bottom: 16px; width: 280px;
+  background: var(--bg-2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  box-shadow: 0 0 0 1px var(--accent-wash), 0 8px 32px rgba(0,0,0,0.6);
+  z-index: 100;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--ink);
+  display: none;
+}
+.tweaks.on { display: block; }
+.tweaks h4 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600; margin: 0 0 8px;
+  font-size: 13px; color: var(--ink-bright);
+  letter-spacing: 0.02em;
+}
+.tweaks h4::before { content: '▸ '; color: var(--accent); font-family: 'JetBrains Mono', monospace; }
+.tweaks .tw-row {
+  display: flex; justify-content: space-between; align-items: center;
+  margin: 8px 0; font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+}
+.tweaks .tw-row > span:first-child {
+  color: var(--ink-soft);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+.tweaks .tw-opts { display: flex; gap: 2px; flex-wrap: wrap; }
+.tweaks .tw-opts button {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; font-weight: 600;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 3px 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg-1);
+  color: var(--ink-soft);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.tweaks .tw-opts button:hover { color: var(--ink); border-color: var(--accent); }
+.tweaks .tw-opts button.on {
+  background: var(--accent); color: var(--bg-0);
+  border-color: var(--accent); font-weight: 700;
+}
+.tweaks hr { border: none; border-top: 1px dashed var(--line); margin: 8px 0; }
+
+.margin-note {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--accent);
+  padding: 4px 6px;
+  letter-spacing: 0.04em;
+}
+.margin-note::before { content: '// '; color: var(--accent-dim); }
+.margin-note.red { color: var(--threat); }
+.margin-note.red::before { color: var(--threat); }
+
+.legend {
+  display: flex; gap: 12px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; color: var(--ink-soft);
+  flex-wrap: wrap;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.legend span { display: inline-flex; align-items: center; gap: 4px; }
+.legend i {
+  display: inline-block; width: 8px; height: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.v-gap { height: var(--gap); }
+.sep { border: none; border-top: 1px dashed var(--line); margin: 16px 0; }
+
+/* ==========================================================================
+   SETTINGS
+   ========================================================================== */
+.settings-wrap { display: grid; grid-template-columns: 200px 1fr; gap: var(--gap); }
+.settings-tabs { font-family: 'JetBrains Mono', monospace; }
+.settings-tabs a {
+  display: block; padding: 5px 10px;
+  border-radius: var(--radius); font-size: 12px;
+  color: var(--ink-soft); cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.settings-tabs a:hover { background: var(--bg-2); color: var(--ink); }
+.settings-tabs a.active {
+  background: var(--bg-2);
+  border-left-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.settings-tabs .section-l {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; letter-spacing: 0.18em;
+  text-transform: uppercase; color: var(--ink-dim);
+  margin: 10px 6px 4px;
+}
+
+/* ==========================================================================
+   FINDING DETAIL
+   ========================================================================== */
+.finding-hero { display: grid; grid-template-columns: 2fr 1fr; gap: var(--gap); }
+.kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; font-size: 12px; }
+.kv .k {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--ink-faint);
+  align-self: center;
+}
+.kv .v {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px; color: var(--ink);
+}
+.kv .v.mono {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px; color: var(--accent);
+}
+
+/* ==========================================================================
+   Keep some legacy selectors alive
+   ========================================================================== */
+input[type="checkbox"] { accent-color: var(--accent); }
+mark { background: var(--accent-wash); color: var(--ink-bright); padding: 0 3px; border-radius: 1px; }
+hr.sep { border: none; border-top: 1px dashed var(--line); margin: 16px 0; }
+
+/* ==========================================================================
+   HI-FI OPERATE SURFACE (Dashboard · Stream · Finding Detail)
+   ========================================================================== */
+.hf-dash, .hf-stream, .hf-detail {
+  padding: 20px 24px 40px;
+  background: var(--bg-1);
+  min-height: 100%;
+  font-family: 'Inter', 'Space Grotesk', system-ui, sans-serif;
+}
+.crumbs {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--ink-faint); margin-bottom: 6px;
+}
+.crumbs a { color: var(--accent); cursor: pointer; text-decoration: none; }
+.crumbs a:hover { text-decoration: underline; }
+
+.hf-h1 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 26px; font-weight: 600; letter-spacing: -0.01em;
+  color: var(--ink-bright); margin: 0 0 4px;
+  display: flex; align-items: center; gap: 12px;
+}
+.hf-h1-env {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600;
+  color: var(--env-fg); background: var(--env-bg);
+  padding: 3px 8px; border-radius: 2px; letter-spacing: 1.5px;
+}
+.hf-sub { color: var(--ink-soft); font-size: 13px; }
+.hf-sub b { color: var(--ink); font-weight: 600; }
+
+.hf-dash-head, .hf-stream-head, .hf-detail-head {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 24px; margin-bottom: 20px;
+  padding-bottom: 16px; border-bottom: 1px solid var(--line);
+}
+.hf-dash-actions { display: flex; gap: 8px; align-items: center; }
+
+.hf-timerange {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 4px 4px 10px; background: var(--bg-panel);
+  border: 1px solid var(--line-strong); border-radius: 3px;
+}
+.hf-timerange .l {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--ink-faint); letter-spacing: 1px; text-transform: uppercase;
+}
+.hf-timerange select {
+  background: transparent; border: none; color: var(--ink);
+  font-family: 'JetBrains Mono', monospace; font-size: 12px;
+  padding: 2px 4px; cursor: pointer; outline: none;
+}
+
+/* ───────── Assure · Overview ───────── */
+.as-hero {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px;
+  align-items: stretch;
+}
+.as-card {
+  background: var(--bg-panel); border: 1px solid var(--line);
+  border-radius: 4px; padding: 20px; display: flex; flex-direction: column;
+  min-width: 0;
+}
+.as-h {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 12px; margin-bottom: 18px;
+}
+.as-num-wrap { min-width: 0; }
+.as-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--ink-faint); letter-spacing: 2px; text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.as-num {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 42px; font-weight: 600; letter-spacing: -0.02em;
+  line-height: 1; margin: 6px 0 6px;
+}
+.as-unit { font-size: 24px; margin-left: 2px; color: inherit; opacity: 0.8; }
+.as-meta { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-soft); }
+.as-meta b { color: var(--ink); font-weight: 600; }
+.as-status {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  font-weight: 700; letter-spacing: 1.5px; padding: 4px 8px;
+  border-radius: 2px; white-space: nowrap;
+}
+.as-status--ok   { color: var(--accent); border: 1px solid var(--accent-dim); background: var(--accent-wash); }
+.as-status--warn { color: var(--amber);  border: 1px solid var(--amber);      background: var(--amber-wash); }
+.as-status--bad  { color: var(--threat); border: 1px solid var(--threat);     background: var(--red-wash); }
+
+.as-spark-wrap { margin-bottom: 16px; }
+
+.as-breakdown { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); }
+.as-inc {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.as-inc li {
+  display: grid; grid-template-columns: 82px 50px 44px 1fr; gap: 8px;
+  font-size: 11px; align-items: center;
+}
+.as-inc-sev {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
+  padding: 2px 5px; border-radius: 2px; text-align: center;
+}
+.as-inc-sev--major { color: var(--threat); background: var(--red-wash); }
+.as-inc-sev--minor { color: var(--amber); background: var(--amber-wash); }
+
+.as-foot {
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line);
+  font-size: 11px;
+}
+.as-link {
+  color: var(--accent); cursor: pointer; font-family: 'JetBrains Mono', monospace;
+}
+.as-link:hover { text-decoration: underline; }
+
+/* coverage bars */
+.as-cov { display: flex; flex-direction: column; gap: 10px; margin-bottom: 8px; }
+.as-cov-row {
+  display: grid; grid-template-columns: 90px 1fr 40px 55px 1fr;
+  gap: 10px; align-items: center;
+  font-size: 11px;
+}
+.as-cov-tenant { color: var(--ink); font-size: 11px; }
+.as-cov-bar {
+  height: 6px; background: var(--bg-3); border-radius: 1px; overflow: hidden;
+  border: 1px solid var(--line);
+}
+.as-cov-bar-fill {
+  height: 100%; background: linear-gradient(90deg, var(--cyan), var(--accent));
+  transition: width 0.3s;
+}
+.as-cov-pct { color: var(--ink-bright); font-weight: 600; }
+.as-cov-count { color: var(--ink-soft); }
+.as-cov-note { font-size: 10.5px; }
+
+/* efficacy */
+.as-eff-confmat {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;
+  margin-bottom: 18px; padding: 12px; background: var(--bg-2);
+  border: 1px solid var(--line); border-radius: 3px;
+}
+.as-eff-col { text-align: center; }
+.as-eff-big {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 26px; font-weight: 600; line-height: 1.1; margin: 4px 0;
+}
+.as-eff-sub { font-size: 10px; color: var(--ink-faint); letter-spacing: 0.3px; }
+
+.as-eff-breakdown { margin-top: auto; }
+.as-eff-tbl {
+  width: 100%; border-collapse: collapse; font-size: 11px;
+}
+.as-eff-tbl thead th {
+  font-family: 'JetBrains Mono', monospace; font-weight: 500;
+  font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--ink-faint); text-align: left;
+  padding: 6px 4px; border-bottom: 1px solid var(--line);
+}
+.as-eff-tbl tbody td {
+  padding: 5px 4px; border-bottom: 1px solid var(--line);
+}
+.as-eff-tbl .right { text-align: right; }
+.as-eff-tbl tbody tr:last-child td { border-bottom: none; }
+
+/* why-these-three */
+.as-why {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px;
+  padding: 8px 4px; font-size: 12.5px; line-height: 1.55; color: var(--ink);
+}
+.as-why-h {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+/* compact SLO strip on Operate Dashboard */
+.op-slo-strip {
+  display: grid; grid-template-columns: repeat(3, 1fr) auto; gap: 18px;
+  align-items: center;
+  background: var(--bg-panel); border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 3px; padding: 10px 16px; margin-bottom: 18px;
+}
+.op-slo-cell { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.op-slo-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--ink-faint); letter-spacing: 1.5px; text-transform: uppercase;
+  min-width: 78px;
+}
+.op-slo-val {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 17px; font-weight: 600; letter-spacing: -0.01em;
+}
+.op-slo-sub {
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+  color: var(--ink-soft);
+}
+.op-slo-open {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--accent); cursor: pointer; letter-spacing: 0.5px;
+  padding: 6px 10px; border: 1px solid var(--accent-dim);
+  background: var(--accent-wash); border-radius: 2px;
+}
+.op-slo-open:hover { background: var(--accent); color: var(--bg-0); }
+
+/* ───────── Detect · Overview ───────── */
+.dt-strip {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 0; margin-bottom: 18px;
+  border: 1px solid var(--line); border-radius: 4px;
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+.dt-strip-cell {
+  padding: 14px 18px; border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 6px;
+  position: relative; cursor: pointer; transition: background 0.15s;
+}
+.dt-strip-cell:last-child { border-right: 0; }
+.dt-strip-cell:hover { background: var(--bg-3); }
+.dt-strip-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 1.6px; text-transform: uppercase; color: var(--ink-faint);
+}
+.dt-strip-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+}
+.dt-strip-val {
+  font-family: 'Space Grotesk', sans-serif; font-size: 26px; font-weight: 600;
+  letter-spacing: -0.01em; line-height: 1;
+}
+.dt-strip-delta {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--ink-soft);
+}
+.dt-strip-sub {
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+  color: var(--ink-soft);
+}
+
+.dt-hero { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+
+.dt-card {
+  background: var(--bg-panel); border: 1px solid var(--line);
+  border-radius: 4px; padding: 20px; display: flex; flex-direction: column;
+  min-width: 0; position: relative;
+}
+.dt-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: var(--accent);
+}
+.dt-card.dt-card--models::before     { background: var(--violet); }
+.dt-card.dt-card--fingerprints::before { background: var(--cyan); }
+
+.dt-card-h {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 12px; margin-bottom: 14px;
+}
+.dt-card-eyebrow {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 2px; text-transform: uppercase; color: var(--ink-faint);
+  margin-bottom: 4px;
+}
+.dt-card-title {
+  font-family: 'Space Grotesk', sans-serif; font-size: 22px; font-weight: 600;
+  color: var(--ink-bright); letter-spacing: -0.01em;
+  margin-bottom: 2px;
+}
+.dt-card-tagline {
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+  color: var(--ink-soft);
+}
+.dt-card-count {
+  font-family: 'Space Grotesk', sans-serif; font-size: 36px; font-weight: 600;
+  letter-spacing: -0.02em; line-height: 1; text-align: right;
+}
+.dt-card-count-u {
+  display: block; font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px; letter-spacing: 1.5px; text-transform: uppercase;
+  color: var(--ink-faint); margin-top: 4px; font-weight: 400;
+}
+
+.dt-card-kv {
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 14px;
+  padding: 10px 0; border-top: 1px dashed var(--line);
+  margin-top: 12px;
+}
+.dt-card-kv .k {
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+  color: var(--ink-soft); letter-spacing: 0.3px;
+}
+.dt-card-kv .v {
+  font-family: 'JetBrains Mono', monospace; font-size: 11.5px;
+  color: var(--ink); font-weight: 600; text-align: right;
+}
+.dt-card-kv .v.ok    { color: var(--accent); }
+.dt-card-kv .v.warn  { color: var(--amber); }
+.dt-card-kv .v.bad   { color: var(--threat); }
+
+.dt-card-list {
+  list-style: none; padding: 0; margin: 12px 0 0 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.dt-card-list li {
+  display: grid; grid-template-columns: 16px 1fr auto auto; gap: 10px; align-items: center;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  padding: 4px 0;
+}
+.dt-card-list .dt-rank {
+  color: var(--ink-faint); font-size: 10px;
+}
+.dt-card-list .dt-name { color: var(--ink); font-weight: 600; }
+.dt-card-list .dt-meta { color: var(--ink-soft); font-size: 10.5px; }
+.dt-card-list .dt-bar {
+  display: inline-block; width: 46px; height: 4px;
+  background: var(--bg-3); border-radius: 1px; overflow: hidden;
+}
+.dt-card-list .dt-bar-fill { display: block; height: 100%; background: var(--accent); }
+
+.dt-card-foot {
+  margin-top: auto; padding-top: 12px; border-top: 1px dashed var(--line);
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+  color: var(--ink-faint);
+}
+.dt-card-foot a {
+  color: var(--accent); text-decoration: none; cursor: pointer;
+}
+.dt-card-foot a:hover { text-decoration: underline; }
+
+/* routing map */
+.dt-routes {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.dt-route {
+  display: grid; grid-template-columns: 220px 16px 1fr auto; gap: 14px; align-items: center;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 3px;
+  background: var(--bg-2);
+}
+.dt-route-policy {
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.dt-route-policy .pn {
+  font-family: 'Space Grotesk', sans-serif; font-size: 14px; font-weight: 600;
+  color: var(--ink-bright);
+}
+.dt-route-policy .pt {
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+  color: var(--ink-soft);
+}
+.dt-route-arrow {
+  font-family: 'JetBrains Mono', monospace; color: var(--ink-faint); font-size: 13px;
+}
+.dt-route-stack {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.dt-route-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 8px; border: 1px solid var(--line-strong); border-radius: 2px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+  background: var(--bg-panel);
+}
+.dt-route-chip-kind {
+  font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase;
+  padding: 1px 4px; border-radius: 1px;
+}
+.dt-route-chip-kind.pat  { color: var(--accent); background: var(--accent-wash); }
+.dt-route-chip-kind.mdl  { color: var(--violet);  background: rgba(180,140,255,0.08); }
+.dt-route-chip-kind.fpr  { color: var(--cyan);   background: var(--cyan-wash); }
+.dt-route-chip .n { color: var(--ink); }
+.dt-route-action {
+  display: inline-flex; gap: 4px; align-items: center;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 1.2px; text-transform: uppercase; font-weight: 700;
+  padding: 3px 8px; border: 1px solid; border-radius: 2px;
+  white-space: nowrap;
+}
+.dt-route-action.flag     { color: var(--cyan);   border-color: var(--cyan);   background: var(--cyan-wash); }
+.dt-route-action.redact   { color: var(--amber);  border-color: var(--amber);  background: var(--amber-wash); }
+.dt-route-action.tokenize { color: var(--violet); border-color: rgba(180,140,255,0.4); background: rgba(180,140,255,0.08); }
+.dt-route-action.block    { color: var(--threat); border-color: var(--threat); background: var(--red-wash); }
+
+/* live detector load */
+.dt-load-grid {
+  display: grid; grid-template-columns: 120px 1fr auto; gap: 10px 16px;
+  align-items: center;
+}
+.dt-load-name {
+  font-family: 'JetBrains Mono', monospace; font-size: 11.5px;
+  color: var(--ink); font-weight: 600;
+}
+.dt-load-kind {
+  font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
+  letter-spacing: 1.3px; text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.dt-load-bar {
+  height: 14px; background: var(--bg-3); border-radius: 2px;
+  position: relative; overflow: hidden;
+}
+.dt-load-bar-fill {
+  position: absolute; inset: 0 auto 0 0; transition: width 0.5s;
+}
+.dt-load-bar-label {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--ink-bright); font-weight: 600;
+  text-shadow: 0 0 4px var(--bg-panel);
+}
+.dt-load-rate {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--ink-soft); white-space: nowrap; min-width: 60px; text-align: right;
+}
+
+/* why section */
+.dt-why {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px;
+  font-family: 'Inter', 'Space Grotesk', sans-serif;
+  font-size: 13px; line-height: 1.55; color: var(--ink-soft);
+}
+.dt-why-h {
+  font-family: 'Space Grotesk', sans-serif; font-size: 14px;
+  font-weight: 600; margin-bottom: 8px;
+}
+
+@media (max-width: 1100px) {
+  .as-hero { grid-template-columns: 1fr; }
+  .as-why { grid-template-columns: 1fr; }
+  .op-slo-strip { grid-template-columns: 1fr; gap: 8px; }
+  .dt-hero { grid-template-columns: 1fr; }
+  .dt-strip { grid-template-columns: 1fr 1fr; }
+  .dt-why { grid-template-columns: 1fr; }
+  .dt-route { grid-template-columns: 1fr; }
+}
+
+.hf-pulse {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 700;
+  letter-spacing: 2px; color: var(--accent);
+  padding: 4px 9px; border: 1px solid var(--accent); border-radius: 2px;
+  background: var(--accent-wash);
+}
+.hf-pulse[data-on="0"] { color: var(--ink-faint); border-color: var(--line-strong); background: transparent; }
+.hf-pulse .dot {
+  width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+  animation: hfPulse 1.4s ease-in-out infinite;
+}
+.hf-pulse[data-on="0"] .dot { animation: none; }
+@keyframes hfPulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.7); } }
+
+/* ===== KPI row ===== */
+.hf-kpi-row {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px;
+}
+.hf-kpi {
+  background: var(--bg-panel); border: 1px solid var(--line);
+  border-radius: 4px; padding: 14px 16px;
+  position: relative;
+}
+.hf-kpi-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--ink-faint); margin-bottom: 10px;
+}
+.hf-kpi-row2 { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; }
+.hf-kpi-value {
+  font-family: 'Space Grotesk', sans-serif; font-size: 30px; font-weight: 600;
+  letter-spacing: -0.02em; line-height: 1;
+}
+.hf-kpi-delta {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600;
+  margin-top: 6px;
+}
+.hf-kpi-delta[data-up="1"] { color: var(--accent); }
+.hf-kpi-delta[data-up="0"] { color: var(--ink-soft); }
+
+/* ===== panels ===== */
+.hf-grid-main {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.hf-panel {
+  background: var(--bg-panel); border: 1px solid var(--line);
+  border-radius: 4px; padding: 14px 16px;
+  min-width: 0;
+}
+.hf-panel--span2 { grid-column: span 2; }
+.hf-panel-h {
+  display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  padding-bottom: 10px; margin-bottom: 12px;
+  border-bottom: 1px dashed var(--line);
+}
+.hf-panel-h .t {
+  font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 14px;
+  color: var(--ink-bright);
+}
+.hf-panel-h .k {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--ink-faint); letter-spacing: 1.2px; text-transform: uppercase;
+}
+.hf-panel-chips { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+.hf-legend {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--ink-soft); display: inline-flex; align-items: center; gap: 5px;
+}
+.hf-swatch { width: 8px; height: 8px; border-radius: 1px; }
+
+/* ===== pod fleet table ===== */
+.hf-pods {
+  width: 100%; border-collapse: collapse;
+  font-size: 12px;
+}
+.hf-pods thead th {
+  text-align: left; font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--ink-faint); font-weight: 600;
+  padding: 4px 8px; border-bottom: 1px solid var(--line);
+}
+.hf-pods td {
+  padding: 7px 8px; border-bottom: 1px solid var(--line-soft);
+  color: var(--ink); vertical-align: middle;
+}
+.hf-pods td.right, .hf-pods th[style*="right"] { text-align: right; }
+.hf-pods tr.hf-pod-row:hover td { background: var(--bg-3); }
+.hf-pods tr.hf-pod-row--warn td:first-child,
+.hf-pods tr.hf-pod-row--drift td:first-child { position: relative; }
+
+.hf-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 8px var(--accent-glow);
+}
+.hf-dot--warn  { background: var(--amber); box-shadow: 0 0 8px rgba(255,180,84,0.5); }
+.hf-dot--drift { background: var(--threat); box-shadow: 0 0 8px rgba(255,92,108,0.5); }
+
+.hf-meter { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.hf-meter-val { color: var(--ink-soft); font-size: 11px; min-width: 22px; text-align: right; }
+.hf-meter-bar {
+  display: inline-block; width: 54px; height: 6px;
+  background: var(--bg-3); border-radius: 3px; overflow: hidden;
+}
+.hf-meter-bar span { display: block; height: 100%; border-radius: 3px; transition: width 0.4s; }
+
+/* ===== heatmap ===== */
+.hf-heat { display: flex; flex-direction: column; gap: 4px; }
+.hf-heat-row {
+  display: grid; grid-template-columns: 48px 1fr 44px; gap: 10px;
+  align-items: center;
+}
+.hf-heat-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600;
+  letter-spacing: 1.2px; color: var(--ink-soft);
+}
+.hf-heat-total { font-size: 11px; color: var(--ink-soft); text-align: right; }
+.hf-heat-axis {
+  grid-column: 2 / 3; display: grid; grid-template-columns: repeat(24, 1fr);
+  margin: 6px 0 0 58px;
+  font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--ink-faint);
+}
+.hf-heat-axis span { text-align: left; }
+
+/* ===== tenants list ===== */
+.hf-tenants { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.hf-tenants li { display: grid; grid-template-columns: 100px 1fr 52px 44px; gap: 8px; align-items: center; font-size: 12px; }
+.hf-ten-bar { height: 6px; background: var(--bg-3); border-radius: 3px; overflow: hidden; }
+.hf-ten-bar span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+
+/* ===== findings stream ===== */
+.hf-stream-filters {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 10px 12px; margin-bottom: 10px;
+  background: var(--bg-panel); border: 1px solid var(--line); border-radius: 4px;
+}
+.hf-search {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-3); border: 1px solid var(--line);
+  border-radius: 3px; padding: 5px 9px; min-width: 280px;
+}
+.hf-search span { color: var(--ink-faint); font-size: 12px; }
+.hf-search input {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: var(--ink); font-family: 'JetBrains Mono', monospace; font-size: 12px;
+}
+.hf-search .kbd {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--ink-faint);
+  border: 1px solid var(--line-strong); padding: 1px 5px; border-radius: 2px;
+}
+
+.hf-picker { display: inline-flex; align-items: center; gap: 6px; }
+.hf-picker .l {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 1.2px;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.hf-picker select {
+  background: var(--bg-3); border: 1px solid var(--line); color: var(--ink);
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  padding: 4px 6px; border-radius: 2px; outline: none;
+}
+.hf-stream-hist { display: inline-flex; align-items: center; margin-left: auto; }
+.hf-stream-count {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-soft);
+  padding-left: 10px; border-left: 1px solid var(--line);
+}
+.hf-stream-count b { color: var(--accent); font-size: 13px; }
+
+/* multi-row filter bar */
+.hf-stream-filters--multi {
+  flex-direction: column; align-items: stretch; gap: 8px;
+}
+.hf-filter-row {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+}
+.hf-filter-row--primary { padding-bottom: 8px; border-bottom: 1px dashed var(--line); }
+.hf-tf-group {
+  display: inline-flex; align-items: center; gap: 2px;
+  border: 1px solid var(--line); border-radius: 3px; background: var(--bg-3);
+  padding: 2px;
+}
+.hf-tf-btn {
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+  letter-spacing: 0.5px; padding: 3px 8px; border: 0; background: transparent;
+  color: var(--ink-soft); cursor: pointer; border-radius: 2px;
+}
+.hf-tf-btn:hover { color: var(--ink); }
+.hf-tf-btn.active {
+  background: var(--accent-wash); color: var(--accent); font-weight: 600;
+}
+.hf-tf-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 1.2px; text-transform: uppercase; color: var(--ink-faint);
+  margin-right: 4px;
+}
+.hf-tf-custom {
+  display: inline-flex; gap: 4px; align-items: center;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+}
+.hf-tf-custom input[type=date] {
+  background: var(--bg-3); border: 1px solid var(--line); color: var(--ink);
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  padding: 3px 5px; border-radius: 2px; outline: none;
+  color-scheme: var(--color-scheme, light);
+}
+
+.hf-adv-toggle {
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+  letter-spacing: 1px; color: var(--ink-soft);
+  background: transparent; border: 1px dashed var(--line-strong);
+  padding: 4px 10px; border-radius: 2px; cursor: pointer;
+}
+.hf-adv-toggle:hover { color: var(--accent); border-color: var(--accent-dim); }
+.hf-adv-toggle.active { color: var(--accent); border-color: var(--accent); border-style: solid; }
+
+.hf-adv-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 12px;
+  padding: 8px 0;
+}
+.hf-adv-field { display: flex; flex-direction: column; gap: 3px; }
+.hf-adv-field label {
+  font-family: 'JetBrains Mono', monospace; font-size: 9.5px;
+  letter-spacing: 1.2px; text-transform: uppercase; color: var(--ink-faint);
+}
+.hf-adv-field input {
+  background: var(--bg-3); border: 1px solid var(--line); color: var(--ink);
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  padding: 4px 7px; border-radius: 2px; outline: none;
+}
+.hf-adv-field input:focus { border-color: var(--accent-dim); }
+
+.hf-active-chips {
+  display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+  padding: 4px 0;
+}
+.hf-active-chips .l {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 1.2px; text-transform: uppercase; color: var(--ink-faint);
+}
+.hf-active-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+  padding: 3px 4px 3px 8px; border: 1px solid var(--accent-dim);
+  background: var(--accent-wash); color: var(--accent);
+  border-radius: 2px;
+}
+.hf-active-chip .k { color: var(--ink-faint); margin-right: 4px; font-size: 9.5px; letter-spacing: 1px; }
+.hf-active-chip .v { color: var(--ink); }
+.hf-active-chip button {
+  background: transparent; border: 0; color: var(--ink-faint); cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 0 4px;
+}
+.hf-active-chip button:hover { color: var(--threat); }
+.hf-active-chip--clear {
+  background: transparent; color: var(--ink-soft); border-color: var(--line-strong);
+  cursor: pointer;
+}
+.hf-active-chip--clear:hover { color: var(--threat); border-color: var(--threat); }
+
+.hf-stream-table td.hf-ch {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--ink-soft); letter-spacing: 1px; text-transform: uppercase;
+}
+
+@media (max-width: 1200px) {
+  .hf-adv-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.hf-stream-split {
+  display: block;
+  min-height: 0;
+}
+.hf-stream-table-wrap {
+  background: var(--bg-panel); border: 1px solid var(--line); border-radius: 4px;
+  overflow: auto; max-height: calc(100vh - 320px);
+}
+.hf-stream-table {
+  width: 100%; border-collapse: collapse; font-size: 12px;
+}
+.hf-stream-table thead th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--bg-panel);
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  letter-spacing: 1.2px; text-transform: uppercase; color: var(--ink-faint);
+  text-align: left; font-weight: 600;
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+}
+.hf-stream-row td {
+  padding: 6px 10px; border-bottom: 1px solid var(--line-soft);
+  color: var(--ink);
+}
+.hf-stream-row { cursor: pointer; }
+.hf-stream-row:hover td { background: var(--bg-3); }
+.hf-stream-row.is-selected td { background: var(--accent-wash); box-shadow: inset 2px 0 0 var(--accent); }
+.hf-stream-row.is-selected td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+.hf-stream-row--red td:first-child    { box-shadow: inset 2px 0 0 var(--threat); }
+.hf-stream-row--warn td:first-child   { box-shadow: inset 2px 0 0 var(--amber); }
+.hf-stream-row--safe td:first-child   { box-shadow: inset 2px 0 0 var(--accent-dim); }
+/* new-row flash: only applied to the first row once */
+.hf-stream-row--new { animation: hfSlideIn 600ms ease-out; animation-fill-mode: both; }
+@keyframes hfSlideIn {
+  0%   { opacity: 0.4; background: var(--accent-wash); }
+  100% { opacity: 1;   background: transparent; }
+}
+
+.hf-t { color: var(--ink-soft); white-space: nowrap; }
+.hf-match { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.right { text-align: right; }
+
+.hf-sev {
+  display: inline-block; font-family: 'JetBrains Mono', monospace;
+  font-size: 9px; font-weight: 700; letter-spacing: 1.3px; text-transform: uppercase;
+  padding: 2px 6px; border-radius: 2px;
+}
+.hf-sev--red  { background: var(--red-wash);    color: var(--threat); border: 1px solid var(--threat); }
+.hf-sev--warn { background: var(--amber-wash);  color: var(--amber);  border: 1px solid var(--amber); }
+.hf-sev--safe { background: var(--accent-wash); color: var(--accent); border: 1px solid var(--accent-dim); }
+
+.hf-cat-tag {
+  display: inline-block; font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; font-weight: 700; letter-spacing: 1.2px;
+  padding: 1px 6px; border: 1px solid currentColor; border-radius: 2px;
+  background: transparent;
+}
+
+.hf-act {
+  display: inline-block; font-family: 'JetBrains Mono', monospace;
+  font-size: 10px; font-weight: 600; letter-spacing: 1px;
+  padding: 2px 7px; border-radius: 2px;
+}
+.hf-act--block    { background: var(--red-wash);    color: var(--threat); }
+.hf-act--redact   { background: var(--amber-wash);  color: var(--amber); }
+.hf-act--flag     { background: var(--cyan-wash);   color: var(--cyan); }
+.hf-act--tokenize { background: rgba(180,140,255,0.1); color: var(--violet); }
+.hf-act--allow    { background: var(--bg-3);        color: var(--ink-soft); }
+
+/* status strip on finding detail */
+.hf-status-strip {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 4px 0 10px;
+}
+.hf-status-sep { color: var(--ink-faint); }
+.hf-status-badge {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase;
+  padding: 5px 10px 4px; border-radius: 2px; border: 1px solid;
+}
+.hf-status-badge--red  { color: var(--threat); border-color: var(--threat); background: var(--red-wash); }
+.hf-status-badge--warn { color: var(--amber);  border-color: var(--amber);  background: var(--amber-wash); }
+.hf-status-badge--safe { color: var(--accent); border-color: var(--accent-dim); background: var(--accent-wash); }
+.hf-status-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
+.hf-status-badge--safe .hf-status-dot { box-shadow: 0 0 6px currentColor; }
+
+.hf-action-badge {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  font-weight: 700; letter-spacing: 1.6px; text-transform: uppercase;
+  padding: 5px 10px 4px; border-radius: 2px; border: 1px solid transparent;
+}
+.hf-action-badge--block    { color: var(--threat); border-color: var(--threat); background: var(--red-wash); }
+.hf-action-badge--redact   { color: var(--amber);  border-color: var(--amber);  background: var(--amber-wash); }
+.hf-action-badge--flag     { color: var(--cyan);   border-color: var(--cyan);   background: var(--cyan-wash); }
+.hf-action-badge--tokenize { color: var(--violet); border-color: rgba(180,140,255,0.4); background: rgba(180,140,255,0.08); }
+.hf-action-badge--allow    { color: var(--ink-soft); border-color: var(--line-strong); background: var(--bg-3); }
+
+.hf-status-meta {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--ink-soft); letter-spacing: 0.3px;
+}
+
+.hf-h1--detail { margin-top: 2px; }
+.hf-match-mono { font-family: 'JetBrains Mono', monospace; font-weight: 500; color: var(--ink-bright); }
+
+/* stream row chevron + full-row click affordance */
+.hf-stream-chev {
+  color: var(--ink-faint); text-align: right; padding-right: 10px !important;
+  font-size: 16px; line-height: 1; width: 18px;
+  transition: color 0.12s, transform 0.12s;
+}
+.hf-stream-row:hover .hf-stream-chev { color: var(--accent); transform: translateX(2px); }
+
+/* peek panel (legacy — retained in case other surfaces reuse) */
+.hf-stream-peek {
+  background: var(--bg-panel); border: 1px solid var(--line); border-radius: 4px;
+  padding: 14px; height: fit-content; position: sticky; top: 12px;
+}
+.hf-stream-peek--empty { padding: 20px; }
+.hf-peek-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.hf-peek-id { font-size: 11px; color: var(--accent); letter-spacing: 1px; }
+.hf-peek-close {
+  background: transparent; border: none; color: var(--ink-faint); cursor: pointer;
+  font-size: 14px; padding: 0; line-height: 1;
+}
+.hf-peek-close:hover { color: var(--ink); }
+.hf-peek-title { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--ink-bright); margin-bottom: 12px; }
+.hf-peek-dl {
+  display: grid; grid-template-columns: 80px 1fr; gap: 6px 12px;
+  margin: 0; font-size: 11px;
+}
+.hf-peek-dl dt {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 1.2px;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.hf-peek-dl dd { margin: 0; color: var(--ink); }
+
+/* ===== finding detail ===== */
+.hf-detail-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;
+}
+.hf-evidence { background: var(--bg-3); padding: 14px; border-radius: 3px; border: 1px dashed var(--line); }
+.hf-ev-doc .label { margin-bottom: 8px; color: var(--ink-faint); font-size: 10px; }
+.hf-ev-body {
+  font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.8;
+  color: var(--ink);
+}
+.hf-mark {
+  background: var(--amber-wash); color: var(--amber);
+  padding: 1px 4px; border-radius: 2px; font-weight: 700;
+  border-bottom: 2px solid var(--amber);
+}
+
+.hf-code {
+  background: var(--bg-0); border: 1px solid var(--line);
+  border-radius: 3px; padding: 12px 14px;
+  font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6;
+  color: var(--ink); margin: 0; overflow-x: auto;
+}
+
+.hf-related { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.hf-related li {
+  display: flex; align-items: center; gap: 10px; padding: 6px 8px;
+  border-bottom: 1px solid var(--line-soft); font-size: 11px;
+}
+.hf-related li:hover { background: var(--bg-3); }
+
+.hf-timeline { list-style: none; padding: 0; margin: 0; position: relative; }
+.hf-timeline::before {
+  content: ''; position: absolute; left: 90px; top: 6px; bottom: 6px;
+  width: 1px; background: var(--line);
+}
+.hf-timeline li {
+  display: grid; grid-template-columns: 80px 16px 1fr; gap: 10px;
+  align-items: center; padding: 8px 0;
+  font-size: 13px; color: var(--ink);
+}
+.hf-tl-t { font-size: 11px; color: var(--ink-soft); text-align: right; }
+.hf-tl-marker {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--bg-1); border: 2px solid var(--line-strong);
+  margin: 0 auto; position: relative; z-index: 1;
+}
+.hf-tl-marker--accent { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }
+.hf-tl-marker--live   { border-color: var(--accent); background: var(--bg-1);
+  animation: hfPulseRing 1.6s ease-in-out infinite; }
+@keyframes hfPulseRing {
+  0%,100% { box-shadow: 0 0 0 0 var(--accent-glow); }
+  50%     { box-shadow: 0 0 0 8px transparent; }
+}
+
+/* light-theme nudges — evidence readability */
+[data-theme="light"] .hf-evidence { background: #fafaf6; }
+[data-theme="light"] .hf-code { background: #f7f9f5; }
+
+@media (max-width: 1280px) {
+  .hf-kpi-row { grid-template-columns: repeat(2, 1fr); }
+  .hf-grid-main { grid-template-columns: 1fr; }
+  .hf-panel--span2 { grid-column: auto; }
+  .hf-stream-split { grid-template-columns: 1fr; }
+  .hf-detail-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// ResizeObserver benign-loop shim (same as siphon-c2). Swallows the
+// "ResizeObserver loop completed with undelivered notifications"
+// warning that browsers surface as an uncaught error in dev.
+window.addEventListener('error', (e) => {
+  if (e.message && e.message.includes('ResizeObserver')) { e.stopImmediatePropagation(); e.preventDefault(); return false; }
+});
+const _RO = window.ResizeObserver;
+if (_RO) {
+  window.ResizeObserver = class extends _RO {
+    constructor(cb) { super((entries, o) => { requestAnimationFrame(() => { try { cb(entries, o); } catch {} }); }); }
+  };
+}
+</script>
+
+<!-- React + Babel from CDN (same versions siphon-c2 uses). -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+
+<!-- Shared JS primitives (URLs, auth, pod registry hooks, LivePill).
+     Source of truth at docs/wireframes/siphon-shared.js — inlined
+     here for the same file:// reason as the CSS above. -->
+<script>
+// ─── siphon-shared.js ───────────────────────────────────────────
+// Primitives used by every siphon console (siphon-c2 admin console,
+// siphon-ir responder console). Loaded as a plain <script> tag
+// AFTER react + react-dom + babel-standalone. Exposes everything on
+// `window.` so both Babel-transpiled and plain-JS consumers pick it
+// up without an import.
+//
+// Layered on purpose — keep this file limited to primitives that
+// don't depend on console-specific UI. Adding surface-level
+// components (Topbar, Sidenav, etc.) is a separate step once both
+// consoles agree on their shape.
+// ─────────────────────────────────────────────────────────────────
+
+(function () {
+  'use strict';
+
+  // ─── Endpoint config ────────────────────────────────────────────
+  // localStorage keys keep the admin console and the responder
+  // console pointed at the same pods without either needing to
+  // duplicate state. The same `c2:*` prefix is reused so a user who
+  // configured the admin console before the IR console existed has
+  // zero migration work.
+
+  window.SIPHON_API_URL = function () {
+    try { return localStorage.getItem('c2:apiUrl') || 'http://127.0.0.1:8080'; }
+    catch { return 'http://127.0.0.1:8080'; }
+  };
+
+  window.SIPHON_FS_URL = function () {
+    try {
+      const explicit = localStorage.getItem('c2:fsUrl');
+      if (explicit) return explicit;
+    } catch {}
+    const api = window.SIPHON_API_URL();
+    if (/\/api\/?$/.test(api)) return api.replace(/\/api\/?$/, '/fs');
+    try {
+      const u = new URL(api);
+      if (u.port === '8080') { u.port = '8081'; return u.origin; }
+    } catch {}
+    return 'http://127.0.0.1:8081';
+  };
+
+  window.SIPHON_LAUNCHER_URL = function () {
+    try {
+      const v = localStorage.getItem('c2:launcherUrl');
+      if (v) return v;
+    } catch {}
+    return 'http://127.0.0.1:8090';
+  };
+
+  window.SIPHON_API_KEY = function () {
+    try { return localStorage.getItem('c2:apiKey') || null; }
+    catch { return null; }
+  };
+
+  window.siphonAuthHeaders = function () {
+    const k = window.SIPHON_API_KEY();
+    return k ? { 'Authorization': 'Bearer ' + k } : {};
+  };
+
+  // Thin fetch wrapper — attaches Authorization when a key is saved.
+  // Safe against any URL; pods ignore the header when SIPHON_API_KEY
+  // isn't set. LocalLauncherPanel / direct-to-launcher code paths
+  // deliberately stick with plain fetch (no auth on loopback).
+  window.siphonFetch = function (url, options) {
+    const opts = options || {};
+    opts.headers = { ...(opts.headers || {}), ...window.siphonAuthHeaders() };
+    return fetch(url, opts);
+  };
+
+  // ─── Pod registry ───────────────────────────────────────────────
+  // Flat list of {url, label, role?, disabled?} persisted in
+  // localStorage[c2:pods]. Both consoles fan out across this list.
+  // Seeded on first read from SIPHON_API_URL + SIPHON_FS_URL so
+  // existing users keep working.
+  const POD_REGISTRY_KEY = 'c2:pods';
+  window.__pod_registry_listeners = window.__pod_registry_listeners || new Set();
+
+  function __podReadRaw() {
+    try { return JSON.parse(localStorage.getItem(POD_REGISTRY_KEY) || '[]'); }
+    catch { return []; }
+  }
+  function __podWriteRaw(list) {
+    try { localStorage.setItem(POD_REGISTRY_KEY, JSON.stringify(list)); } catch {}
+    window.__pod_registry_listeners.forEach(fn => { try { fn(); } catch {} });
+  }
+  function __podNormalise(url) {
+    try {
+      const u = new URL((url || '').trim());
+      const path = u.pathname.replace(/\/$/, '');
+      return u.origin + path;
+    } catch {
+      return (url || '').trim().replace(/\/$/, '');
+    }
+  }
+  function __podSeedIfEmpty() {
+    const list = __podReadRaw();
+    if (list.length) return;
+    const seed = [
+      { url: __podNormalise(window.SIPHON_API_URL()), role: 'api', label: 'primary-api', added_at: new Date().toISOString() },
+      { url: __podNormalise(window.SIPHON_FS_URL()),  role: 'fs',  label: 'primary-fs',  added_at: new Date().toISOString() },
+    ].filter((p, i, arr) => p.url && arr.findIndex(q => q.url === p.url) === i);
+    if (seed.length) __podWriteRaw(seed);
+  }
+
+  window.c2PodAdd = function (entry) {
+    const list = __podReadRaw();
+    const url = __podNormalise(entry.url);
+    if (!url) return false;
+    if (list.some(p => p.url === url)) return false;
+    list.push({
+      url,
+      role: entry.role || 'auto',
+      label: entry.label || '',
+      disabled: !!entry.disabled,
+      added_at: new Date().toISOString(),
+    });
+    __podWriteRaw(list);
+    return true;
+  };
+  window.c2PodRemove = function (url) {
+    const norm = __podNormalise(url);
+    __podWriteRaw(__podReadRaw().filter(p => p.url !== norm));
+  };
+  window.c2PodUpdate = function (url, patch) {
+    const norm = __podNormalise(url);
+    const list = __podReadRaw().map(p => p.url === norm ? { ...p, ...patch } : p);
+    __podWriteRaw(list);
+  };
+
+  // ─── React hooks ────────────────────────────────────────────────
+  // Wired as window.* rather than ES exports so Babel-transpiled
+  // scripts in either console can just reference them as globals.
+
+  window.usePodRegistry = function () {
+    const [, setTick] = React.useState(0);
+    React.useEffect(() => {
+      __podSeedIfEmpty();
+      const fn = () => setTick(t => t + 1);
+      window.__pod_registry_listeners.add(fn);
+      const onStorage = (e) => { if (e.key === POD_REGISTRY_KEY) fn(); };
+      window.addEventListener('storage', onStorage);
+      return () => {
+        window.__pod_registry_listeners.delete(fn);
+        window.removeEventListener('storage', onStorage);
+      };
+    }, []);
+    return __podReadRaw();
+  };
+
+  // GET /<path> against the primary siphon-api (SIPHON_API_URL).
+  // Returns { loading, data, error, refetch, source }.
+  window.useSiphonApi = function (path, deps) {
+    const [tick, setTick] = React.useState(0);
+    const [state, setState] = React.useState({ loading: true, data: null, error: null });
+    React.useEffect(() => {
+      let cancelled = false;
+      setState(s => ({ ...s, loading: true, error: null }));
+      const url = window.SIPHON_API_URL().replace(/\/$/, '') + path;
+      window.siphonFetch(url, { method: 'GET' })
+        .then(async r => {
+          if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+          return r.json();
+        })
+        .then(data => { if (!cancelled) setState({ loading: false, data, error: null }); })
+        .catch(e => { if (!cancelled) setState({ loading: false, data: null, error: String(e.message || e) }); });
+      return () => { cancelled = true; };
+    }, [...(deps || []), tick]);
+    const source = state.loading ? 'loading' : state.error ? 'offline' : 'live';
+    return { ...state, source, refetch: () => setTick(t => t + 1) };
+  };
+
+  // Fan-out across every enabled pod in the registry → union findings.
+  // Same shape both consoles consume.
+  window.useFindingsUnion = function (qs, deps) {
+    const [tick, setTick] = React.useState(0);
+    const [state, setState] = React.useState({
+      loading: true, data: null, error: null, perPod: [],
+    });
+    const rawPods = window.usePodRegistry ? window.usePodRegistry() : null;
+    const pods = rawPods ? rawPods.filter(p => !p.disabled) : null;
+    const effectivePods = pods !== null
+      ? pods
+      : [
+          { url: window.SIPHON_API_URL(), role: 'api', label: 'api' },
+          { url: window.SIPHON_FS_URL(),  role: 'fs',  label: 'fs'  },
+        ];
+    const podsKey = effectivePods.map(p => p.url).join('|');
+
+    React.useEffect(() => {
+      let cancelled = false;
+      setState(s => ({ ...s, loading: true, error: null }));
+
+      const fetchFrom = (pod) => {
+        const url = pod.url.replace(/\/$/, '') + '/v1/findings' + (qs || '');
+        return window.siphonFetch(url, { method: 'GET' })
+          .then(async r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+            return r.json();
+          })
+          .then(data => ({ pod, ok: true, data, error: null }))
+          .catch(e => ({ pod, ok: false, data: null, error: String(e.message || e) }));
+      };
+
+      Promise.all(effectivePods.map(fetchFrom)).then((results) => {
+        if (cancelled) return;
+
+        const findings = results
+          .flatMap(r => (r.data && r.data.findings) || [])
+          .sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+
+        const m = (qs || '').match(/[?&]limit=(\d+)/);
+        const limit = m ? parseInt(m[1], 10) : findings.length;
+        const trimmed = findings.slice(0, limit);
+
+        const total    = results.reduce((a, r) => a + ((r.data && r.data.total)    || 0), 0);
+        const capacity = results.reduce((a, r) => a + ((r.data && r.data.capacity) || 0), 0);
+
+        const perPod = results.map(r => ({
+          url: r.pod.url, label: r.pod.label || '', role: r.pod.role || 'auto',
+          ok: r.ok, error: r.error, data: r.data,
+        }));
+        let source;
+        if (perPod.length === 0) source = 'offline';
+        else if (perPod.every(p => p.ok)) source = 'live';
+        else if (perPod.some(p => p.ok)) source = 'partial';
+        else source = 'offline';
+
+        setState({
+          loading: false,
+          data: { total, returned: trimmed.length, capacity, findings: trimmed },
+          error: source === 'offline'
+            ? (perPod.length === 0 ? 'no pods in registry' : (perPod[0] && perPod[0].error) || 'no pods reachable')
+            : null,
+          perPod,
+          source,
+        });
+      });
+
+      return () => { cancelled = true; };
+    }, [...(deps || []), qs, tick, podsKey]);
+
+    const source = state.loading
+      ? 'loading'
+      : state.source || (state.data ? 'live' : 'offline');
+    return { ...state, source, refetch: () => setTick(t => t + 1) };
+  };
+
+  // ─── LivePill ────────────────────────────────────────────────────
+  // Status chip rendered in page-head actions. Written with
+  // React.createElement rather than JSX so this file stays loadable
+  // as a plain <script> without Babel re-parsing.
+  window.LivePill = function LivePill({ source, onClick, title }) {
+    const map = { live:'safe', offline:'red', loading:'warn', fixture:'ghost', partial:'warn' };
+    const label = { live:'LIVE', offline:'OFFLINE', loading:'LOADING…', fixture:'FIXTURE', partial:'PARTIAL' }[source] || source;
+    return React.createElement(
+      'span',
+      {
+        className: 'chip chip--' + (map[source] || 'ghost'),
+        onClick: onClick,
+        title: title || '',
+        style: { cursor: onClick ? 'pointer' : 'default' },
+      },
+      label,
+    );
+  };
+})();
+</script>
+
+<script type="text/babel" data-presets="react">
+/* ===== siphon-ir shell ========================================= */
+// Incident-response console. Persona: security analyst triaging
+// findings, analysing artifacts, managing evidence. Separate from
+// the detection-engineering console (siphon-c2.html) — the two share
+// primitives via siphon-shared.{css,js} but have their own IA.
+//
+// Workspaces: Respond · Analyze · Correlate · Evidence · Settings.
+
+const IR_WORKSPACES = [
+  { id: 'respond',   label: 'Respond',   hint: 'findings · alerts · investigations', glyph: '◈' },
+  { id: 'analyze',   label: 'Analyze',   hint: 'crypto · extractor · timeline',      glyph: '⧩' },
+  { id: 'correlate', label: 'Correlate', hint: 'pivots · ioc · cross-finding',       glyph: '⇌' },
+  { id: 'evidence',  label: 'Evidence',  hint: 'custody · exhibits · export',        glyph: '∎' },
+  { id: 'settings',  label: 'Settings',  hint: 'responder prefs · notifications',    glyph: '⚙' },
+];
+
+const IR_SURFACES = [
+  // ── RESPOND ──────────────────────────────────────────────────
+  { id: 'findings',       workspace: 'respond',   icon: '≋',  title: 'Findings Queue',   sub: 'live ring from all pods' },
+  { id: 'alerts',         workspace: 'respond',   icon: '!',  title: 'Alerts',           sub: 'threshold-breach signal' },
+  { id: 'investigations', workspace: 'respond',   icon: '⌖',  title: 'Investigations',   sub: 'case view · grouping' },
+  { id: 'handoffs',       workspace: 'respond',   icon: '⇉',  title: 'Handoffs',         sub: 'tickets · escalations' },
+  // ── ANALYZE ──────────────────────────────────────────────────
+  { id: 'crypto',         workspace: 'analyze',   icon: '⎔',  title: 'Crypto Workbench', sub: 'zip · pdf · office · hash' },
+  { id: 'extractor',      workspace: 'analyze',   icon: '⊞',  title: 'File Extractor',   sub: 'any siphon-fs format' },
+  { id: 'timeline',       workspace: 'analyze',   icon: '⧗',  title: 'Timeline',         sub: 'reconstruct by ts + span' },
+  // ── CORRELATE ────────────────────────────────────────────────
+  { id: 'pivots',         workspace: 'correlate', icon: '⇌',  title: 'Pivots',           sub: 'same-document · same-source' },
+  { id: 'ioc',            workspace: 'correlate', icon: '◉',  title: 'IOC Lookup',       sub: 'cross-reference indicators' },
+  // ── EVIDENCE ─────────────────────────────────────────────────
+  { id: 'custody',        workspace: 'evidence',  icon: '∎',  title: 'Chain of Custody', sub: 'per-finding history' },
+  { id: 'exhibits',       workspace: 'evidence',  icon: '▣',  title: 'Exhibits',         sub: 'attached artifacts' },
+  { id: 'export',         workspace: 'evidence',  icon: '↧',  title: 'Export Bundle',    sub: 'package case for handoff' },
+  // ── SETTINGS ─────────────────────────────────────────────────
+  { id: 'integrations',   workspace: 'settings',  icon: '⇄',  title: 'Integrations',     sub: 'XSOAR · Splunk HEC' },
+  { id: 'ir-settings',    workspace: 'settings',  icon: '⚙',  title: 'Responder Prefs',  sub: 'filters · notifications' },
+  { id: 'ir-deployment',  workspace: 'settings',  icon: '⚿',  title: 'Pod Registry',     sub: 'shared with admin console' },
+  { id: 'ir-engineering', workspace: 'settings',  icon: '⌁',  title: 'Engineering',      sub: 'demo data · dev toggles' },
+];
+
+function workspaceOf(surfaceId) {
+  const s = IR_SURFACES.find(x => x.id === surfaceId);
+  return s ? s.workspace : 'respond';
+}
+function firstSurfaceOf(wsId) {
+  const s = IR_SURFACES.find(x => x.workspace === wsId);
+  return s ? s.id : 'findings';
+}
+
+// ─── Topbar ─────────────────────────────────────────────────────
+// Mirrors siphon-c2's topbar layout so muscle memory carries over.
+// The brand chip reads "IR" instead of "C2" — the only visual
+// difference so the user always knows which console they're in.
+function Topbar({ tweaks, setTweak }) {
+  return (
+    <div className="topbar">
+      <div className="brand">
+        <span style={{fontWeight:700, letterSpacing:'0.08em'}}>POLYGON SIPHON</span>
+        <span className="c2" style={{color:'var(--threat)'}}>· IR</span>
+      </div>
+      <ConsoleChip />
+      <span className="spacer" />
+      <button className="tb-theme" onClick={() => {
+        const order = ['phosphor','amber','ice','light'];
+        const next = order[(order.indexOf(tweaks.theme)+1) % order.length];
+        setTweak('theme', next);
+      }} title="Cycle theme">
+        {({phosphor:'◉ PHOSPHOR', amber:'◉ AMBER', ice:'◉ ICE', light:'◉ DAY'})[tweaks.theme] || '◉ PHOSPHOR'}
+      </button>
+      <a href="siphon-c2.html"
+         className="tb-theme"
+         title="Switch to admin console (detection engineering)"
+         style={{fontSize:11, textDecoration:'none'}}>
+        ⇄ admin
+      </a>
+      <span className="tb-user">IR analyst</span>
+    </div>
+  );
+}
+
+// Console chip — IR-flavoured equivalent of siphon-c2's DeploymentChip.
+// Red accent so the operator instantly knows this is the IR console,
+// not the admin surface.
+function ConsoleChip() {
+  return (
+    <span
+      title="Incident-response console · reads findings from every pod in the registry"
+      style={{
+        padding: '2px 8px', fontSize: 10,
+        fontFamily: "'JetBrains Mono', monospace",
+        letterSpacing: '0.12em', fontWeight: 700, textTransform: 'uppercase',
+        border: '1px solid var(--threat)',
+        color: 'var(--threat)',
+        background: 'var(--threat-wash, var(--red-wash))',
+        borderRadius: 'var(--radius)',
+      }}>
+      RESPONDER · LIVE
+    </span>
+  );
+}
+
+// ─── WorkspaceBar ───────────────────────────────────────────────
+function WorkspaceBar({ current, go }) {
+  const activeW = workspaceOf(current);
+  return (
+    <div className="wsbar">
+      {IR_WORKSPACES.filter(w => !w.hidden).map(w => (
+        <button
+          key={w.id}
+          className={`wsbar-btn ${activeW === w.id ? 'active' : ''}`}
+          onClick={() => go(firstSurfaceOf(w.id))}
+          title={w.hint}>
+          <span className="wsbar-topline">
+            <span className="wsbar-glyph">{w.glyph}</span>
+            <span className="wsbar-label">{w.label}</span>
+          </span>
+          <span className="wsbar-hint">{w.hint}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── SurfaceBar (horizontal, sits under wsbar) ──────────────────
+function SurfaceBar({ current, go }) {
+  const activeW = workspaceOf(current);
+  const items = IR_SURFACES.filter(s => s.workspace === activeW);
+  return (
+    <nav className="surfacebar" aria-label="Surfaces">
+      {items.map(s => (
+        <a key={s.id}
+           className={current === s.id ? 'active' : ''}
+           onClick={() => go(s.id)}>
+          <span className="icn">{s.icon}</span>
+          <span className="t">{s.title}</span>
+          {s.sub && <span className="sub">· {s.sub}</span>}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+// ─── Placeholder surface ────────────────────────────────────────
+// Every workspace that isn't built yet renders this. Keeps the shell
+// navigable and tells the operator exactly what's coming.
+function Stub({ title, description }) {
+  return (
+    <div style={{padding:'var(--gap)'}}>
+      <div className="box">
+        <div className="box-title">
+          <span className="t">{title}</span>
+          <span className="k">coming soon</span>
+        </div>
+        <div className="muted" style={{padding:16, lineHeight:1.7, fontSize:13}}>
+          {description}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Findings Queue ─────────────────────────────────────────────
+// The core Respond surface. DLP analyst workflow per finding:
+//   1. Review the 5W detail: who uploaded/sent/logged it, what was
+//      detected, where (channel), when, why (pattern + policy).
+//   2. Add investigator notes capturing the rationale.
+//   3. Dispose:
+//        · Close Event           — benign activity, log + archive
+//        · False Positive        — submit to admin-console FP queue
+//                                  so detection engineering can tune
+//        · Escalate to XSOAR     — hand off to SOAR pipeline for
+//                                  remediation (open modal with JSON
+//                                  payload + optional webhook POST)
+//
+// Dispositions live in localStorage[ir:dispositions] (persists across
+// reloads) and False-Positive submissions additionally write to the
+// shared localStorage[c2:fpQueue] bucket that the admin console's FP
+// Queue surface reads.
+const IR_DISPO_KEY = 'ir:dispositions';
+const IR_DEMO_DISPO_KEY = 'ir:demoDispositions';
+const FP_QUEUE_KEY = 'c2:fpQueue';
+const XSOAR_CFG_KEY = 'ir:xsoar';
+const IR_DEMO_MODE_KEY = 'ir:demoMode';
+const IR_DEMO_SEED_KEY = 'ir:demoSeed';
+
+// ─── Demo-mode plumbing ─────────────────────────────────────────
+// Toggle lives under Settings → Engineering. When on, the Findings
+// Queue and dashboard read from a seeded fixture set instead of the
+// live pod union. Dispositions made in demo mode are stored in a
+// separate localStorage key so the analyst's real triage state never
+// collides with the demo state.
+
+function isDemoMode() {
+  try { return localStorage.getItem(IR_DEMO_MODE_KEY) === 'on'; }
+  catch { return false; }
+}
+function readDemoSeed() {
+  try {
+    const v = localStorage.getItem(IR_DEMO_SEED_KEY);
+    if (v) return parseInt(v, 10);
+  } catch {}
+  // Default stable-but-non-obvious seed so the first load always
+  // renders the same demo set for screenshot + doc purposes.
+  return 0x51D705C4;
+}
+function writeDemoSeed(seed) {
+  try { localStorage.setItem(IR_DEMO_SEED_KEY, String(seed >>> 0)); } catch {}
+}
+function setDemoMode(on) {
+  try { localStorage.setItem(IR_DEMO_MODE_KEY, on ? 'on' : 'off'); } catch {}
+  // Same-tab notifier — other tabs get the 'storage' event for free.
+  window.dispatchEvent(new CustomEvent('ir:demoChanged', { detail: { on } }));
+}
+
+// Four legal dispositions. 'open' means untriaged (no record in the
+// disposition map). Values in records use the 4 below + a free-text
+// `notes` field.
+const DISPO = {
+  event:    { label: 'Event closed',       chip: 'safe',  short: 'event' },
+  fp:       { label: 'False positive',     chip: 'ghost', short: 'fp'    },
+  escalate: { label: 'Escalated · XSOAR',  chip: 'warn',  short: 'esc'   },
+};
+
+// Dispo read/write route through the current mode so demo triage and
+// real triage never stomp each other. Same contract either way.
+function dispoKey() { return isDemoMode() ? IR_DEMO_DISPO_KEY : IR_DISPO_KEY; }
+function readDispo() {
+  try { return JSON.parse(localStorage.getItem(dispoKey()) || '{}') || {}; }
+  catch { return {}; }
+}
+function writeDispo(m) {
+  try { localStorage.setItem(dispoKey(), JSON.stringify(m)); } catch {}
+}
+function readFpQueue() {
+  try { return JSON.parse(localStorage.getItem(FP_QUEUE_KEY) || '[]') || []; }
+  catch { return []; }
+}
+function writeFpQueue(list) {
+  try { localStorage.setItem(FP_QUEUE_KEY, JSON.stringify(list)); } catch {}
+}
+function readXsoarCfg() {
+  try { return JSON.parse(localStorage.getItem(XSOAR_CFG_KEY) || '{}') || {}; }
+  catch { return {}; }
+}
+function writeXsoarCfg(cfg) {
+  try { localStorage.setItem(XSOAR_CFG_KEY, JSON.stringify(cfg)); } catch {}
+}
+
+// ─── Seeded RNG + demo data generator ───────────────────────────
+// mulberry32 — small, good-enough, deterministic from a uint32 seed.
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = seed;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// Weighted pick — `items` is `[{...entry, weight: N}]`.
+function wpick(rng, items) {
+  const total = items.reduce((a, i) => a + (i.weight || 1), 0);
+  let r = rng() * total;
+  for (const i of items) {
+    r -= (i.weight || 1);
+    if (r <= 0) return i;
+  }
+  return items[items.length - 1];
+}
+
+// Catalog curated to give the dashboard something to chart. Each
+// entry maps a (category, sub) to a realistic-looking example match
+// + a default severity bucket.
+const DEMO_CATALOG = [
+  { cat: 'North America - United States',   sub: 'USA SSN',              ex: '123-45-6789',          sev: 'high',     weight: 5 },
+  { cat: 'Credit Card Numbers',             sub: 'Visa',                 ex: '4539 1488 0343 6467',  sev: 'high',     weight: 4 },
+  { cat: 'Credit Card Numbers',             sub: 'Mastercard',           ex: '5425 2334 3010 9903',  sev: 'high',     weight: 3 },
+  { cat: 'Credit Card Numbers',             sub: 'Amex',                 ex: '3782 822463 10005',    sev: 'high',     weight: 2 },
+  { cat: 'North America - United States',   sub: 'USA ITIN',             ex: '912-75-4321',          sev: 'high',     weight: 2 },
+  { cat: 'North America - United States',   sub: 'USA Passport',         ex: '985421364',            sev: 'critical', weight: 2 },
+  { cat: 'Healthcare',                      sub: 'Medical Record Number',ex: 'MRN-884213',           sev: 'critical', weight: 3 },
+  { cat: 'Banking Authentication',          sub: 'PIN Block',            ex: '3B7A9C12F41D00A7',     sev: 'critical', weight: 1 },
+  { cat: 'Authentication Tokens',           sub: 'Session ID',           ex: 'af9a1d94c3c2b6119a3c6b1d8e44de21', sev: 'medium', weight: 3 },
+  { cat: 'Email Addresses',                 sub: 'Email',                ex: 'alice.example@corp.example', sev: 'low', weight: 6 },
+  { cat: 'North America - Canada',          sub: 'Canada SIN',           ex: '046 454 286',          sev: 'high',     weight: 1 },
+  { cat: 'AWS Credentials',                 sub: 'Access Key ID',        ex: 'AKIAIOSFODNN7EXAMPLE',  sev: 'critical', weight: 1 },
+  { cat: 'Customer Financial Data',         sub: 'Account Balance',      ex: '$12,487.00',           sev: 'medium',   weight: 3 },
+  { cat: 'Dates',                           sub: 'Date ISO',             ex: '1984-07-12',           sev: 'low',      weight: 4 },
+  { cat: 'Traffic Light Protocol',          sub: 'TLP:AMBER+STRICT',     ex: 'TLP:AMBER+STRICT',     sev: 'high',     weight: 2 },
+];
+
+// Analyst pool. Each analyst gets their own dispo fingerprint in the
+// dashboard breakdown (e.g. A. Rao tends to escalate, B. Smith FPs a
+// lot). Weights shape who shows up most.
+const DEMO_ANALYSTS = [
+  { id: 'a.rao',    name: 'A. Rao',    region: 'APAC',  style: 'escalator', weight: 4 },
+  { id: 'b.smith',  name: 'B. Smith',  region: 'NA',    style: 'fp-heavy',  weight: 3 },
+  { id: 'c.nguyen', name: 'C. Nguyen', region: 'APAC',  style: 'balanced',  weight: 3 },
+  { id: 'd.patel',  name: 'D. Patel',  region: 'EU',    style: 'escalator', weight: 2 },
+  { id: 'e.moreno', name: 'E. Moreno', region: 'LATAM', style: 'balanced',  weight: 2 },
+  { id: 'f.ito',    name: 'F. Ito',    region: 'APAC',  style: 'event-heavy', weight: 2 },
+  { id: 'g.volkov', name: 'G. Volkov', region: 'EU',    style: 'balanced',  weight: 2 },
+  { id: 'h.mbeki',  name: 'H. Mbeki',  region: 'MEA',   style: 'balanced',  weight: 1 },
+];
+
+// Users (the people who triggered the finding, NOT the analysts).
+// Weights >= 5 become Repeat Occurrences on the dashboard.
+const DEMO_USERS = [
+  { id: 'alice.intern@corp.example',   region: 'NA',    dept: 'engineering',   weight: 10 },  // repeat offender
+  { id: 'bob.ceo@corp.example',        region: 'NA',    dept: 'executive',     weight: 8  },  // repeat offender
+  { id: 'carol.finance@corp.example',  region: 'EU',    dept: 'finance',       weight: 6  },  // repeat offender
+  { id: 'dave.legal@corp.example',     region: 'NA',    dept: 'legal',         weight: 2  },
+  { id: 'eve.ops@corp.example',        region: 'APAC',  dept: 'operations',    weight: 2  },
+  { id: 'frank.sales@corp.example',    region: 'LATAM', dept: 'sales',         weight: 2  },
+  { id: 'gina.mktg@corp.example',      region: 'EU',    dept: 'marketing',     weight: 1  },
+  { id: 'henry.hr@corp.example',       region: 'NA',    dept: 'hr',            weight: 1  },
+  { id: 'ian.support@corp.example',    region: 'APAC',  dept: 'support',       weight: 1  },
+  { id: 'julia.research@corp.example', region: 'MEA',   dept: 'research',      weight: 1  },
+];
+
+const DEMO_CHANNELS = [
+  { id: 'email-outbound',  label: 'email · outbound',      pod: 'siphon-api' },
+  { id: 'email-inbound',   label: 'email · inbound',       pod: 'siphon-api' },
+  { id: 'web-upload',      label: 'web upload',            pod: 'siphon-fs'  },
+  { id: 'slack-dm',        label: 'slack · DM',            pod: 'siphon-api' },
+  { id: 'sharepoint',      label: 'sharepoint upload',     pod: 'siphon-fs'  },
+  { id: 'usb-transfer',    label: 'usb / removable media', pod: 'siphon-fs'  },
+  { id: 'print',           label: 'print job',             pod: 'siphon-api' },
+  { id: 'api-post',        label: 'api POST',              pod: 'siphon-api' },
+];
+
+// Build a stable set of findings + dispositions from the seed. Same
+// seed → same output, so the dashboard always has the same numbers
+// unless the analyst explicitly regenerates.
+function generateDemoFindings(seed) {
+  const rng = mulberry32(seed);
+  const n = 120; // enough for meaningful dashboard charts
+  const now = Date.now();
+  const findings = [];
+  for (let i = 0; i < n; i++) {
+    const cat = wpick(rng, DEMO_CATALOG);
+    const user = wpick(rng, DEMO_USERS);
+    const channel = wpick(rng, DEMO_CHANNELS);
+    // Skew timestamps so most findings are in the last week; some
+    // trail back up to 30 days for the longer-horizon chart.
+    const ageDays = Math.pow(rng(), 2) * 30;
+    const ts = new Date(now - ageDays * 86400e3).toISOString();
+    const confidence = 0.55 + rng() * 0.44;
+    const hasContext = rng() > 0.15;
+    const ip = `10.${(rng() * 240 | 0) + 10}.${rng() * 256 | 0}.${rng() * 256 | 0}`;
+    const destUrl = rng() > 0.4
+      ? `https://${wpick(rng, [{w:'partner', weight:2}, {w:'personal', weight:1}, {w:'competitor', weight:1}, {w:'backup', weight:1}]).w}.example.com/upload/${rng().toString(36).slice(2, 10)}`
+      : null;
+    const hash = ((rng() * 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0')
+               + ((rng() * 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0')
+               + ((rng() * 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0')
+               + ((rng() * 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0');
+    findings.push({
+      id: 'f-demo-' + i.toString().padStart(4, '0'),
+      ts,
+      category: cat.cat,
+      sub_category: cat.sub,
+      text: cat.ex,
+      confidence,
+      has_context: hasContext,
+      span: [rng() * 2000 | 0, 0].map((v, j) => j === 0 ? v : v + cat.ex.length),
+      severity: cat.sev,
+      source_pod: channel.pod,
+      source_ip: channel.pod === 'siphon-fs'
+        ? `report_q${(rng() * 4 | 0) + 1}_${user.id.split('@')[0]}.xlsx`
+        : ip,
+      request_id: 'r-' + ((rng() * 0xFFFFFF) | 0).toString(16).padStart(6, '0'),
+      metadata: {
+        user: user.id,
+        region: user.region,
+        department: user.dept,
+        channel: channel.label,
+        src_ip: ip,
+        ...(destUrl ? { dest_url: destUrl } : {}),
+        ...(channel.id.startsWith('email') ? {
+          sender: user.id,
+          recipient: wpick(rng, [
+            { w: 'partner.vendor@external.example', weight: 2 },
+            { w: 'personal@gmail.example', weight: 2 },
+            { w: 'competitor.contact@rival.example', weight: 1 },
+          ]).w,
+        } : {}),
+        content_hash: 'sha256:' + hash,
+      },
+    });
+  }
+  return findings;
+}
+
+// Seed dispositions for ~65% of findings so the dashboard has real
+// numbers for MTTR / totals. Analyst pick is weighted by the analyst
+// table; the analyst's 'style' nudges disposition probabilities.
+function generateDemoDispositions(findings, seed) {
+  const rng = mulberry32(seed ^ 0xABCDEF);
+  const map = {};
+  for (const f of findings) {
+    if (rng() > 0.65) continue; // 35% stay open
+    const analyst = wpick(rng, DEMO_ANALYSTS);
+    let kindRoll = rng();
+    // Style bias.
+    if (analyst.style === 'escalator')   kindRoll *= 0.7;
+    if (analyst.style === 'fp-heavy')    kindRoll = 0.2 + kindRoll * 0.8;
+    if (analyst.style === 'event-heavy') kindRoll = 0.6 + kindRoll * 0.4;
+    let kind;
+    if (kindRoll < 0.35) kind = 'escalate';
+    else if (kindRoll < 0.7) kind = 'event';
+    else kind = 'fp';
+    // Respond-time = minutes between finding.ts and triage.
+    const respondMins = 2 + Math.pow(rng(), 1.5) * 240; // 2-240 min, skewed fast
+    const triagedAt = new Date(new Date(f.ts).getTime() + respondMins * 60e3).toISOString();
+    const record = {
+      kind,
+      at: triagedAt,
+      by: analyst.name,
+      by_id: analyst.id,
+      respond_min: respondMins,
+      notes: ({
+        event: 'Verified with user — legitimate business activity per policy.',
+        fp: 'Pattern false-fired on a public-record identifier. Submitted to detection engineering.',
+        escalate: 'Confirmed TP — data exfiltration candidate. Handed off to XSOAR for remediation.',
+      })[kind],
+    };
+    if (kind === 'escalate') {
+      record.xsoar_status = 'POST 202';
+      // Remediate-time = extra minutes after escalation before
+      // XSOAR closes the incident (not all are closed yet).
+      if (rng() > 0.3) {
+        const remediateMins = 30 + Math.pow(rng(), 1.8) * 720; // 30-720 min
+        record.remediated_at = new Date(new Date(triagedAt).getTime() + remediateMins * 60e3).toISOString();
+        record.remediate_min = remediateMins;
+      }
+    }
+    map[f.id] = record;
+  }
+  return map;
+}
+
+// React hook — findings source of truth for every IR surface. Honors
+// demo mode; returns the same { loading, data, error, source,
+// perPod, refetch } contract as window.useFindingsUnion so surfaces
+// don't care which backend is live.
+window.useIrFindings = function (qs) {
+  const [mode, setMode] = React.useState(isDemoMode);
+  const [seed, setSeed] = React.useState(readDemoSeed);
+  const [tick, setTick] = React.useState(0);
+
+  React.useEffect(() => {
+    const sync = () => { setMode(isDemoMode()); setSeed(readDemoSeed()); };
+    window.addEventListener('ir:demoChanged', sync);
+    const onStorage = (e) => {
+      if (e.key === IR_DEMO_MODE_KEY || e.key === IR_DEMO_SEED_KEY) sync();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('ir:demoChanged', sync);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  const live = window.useFindingsUnion(qs, [mode, seed, tick]);
+
+  if (!mode) return live;
+
+  const demoFindings = generateDemoFindings(seed);
+  const m = (qs || '').match(/[?&]limit=(\d+)/);
+  const limit = m ? parseInt(m[1], 10) : demoFindings.length;
+  const findings = demoFindings
+    .slice()
+    .sort((a, b) => (b.ts || '').localeCompare(a.ts || ''))
+    .slice(0, limit);
+  return {
+    loading: false,
+    data: { total: demoFindings.length, returned: findings.length, capacity: 1000, findings },
+    error: null,
+    source: 'fixture',
+    perPod: [{ url: 'demo://seeded', label: 'demo', role: 'demo', ok: true, data: null, error: null }],
+    refetch: () => setTick(t => t + 1),
+  };
+};
+
+const SEVERITY_RANK = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+function severityChip(sev) {
+  const cls = {
+    critical: 'red', high: 'red', medium: 'amber',
+    low: 'warn', info: 'ghost',
+  }[sev] || 'ghost';
+  return <span className={`chip chip--${cls}`} style={{fontSize:10}}>{sev || 'info'}</span>;
+}
+
+// Derive Who / What / Where / When / Why from whatever the finding
+// carries. siphon-fs findings smuggle the filename through
+// `source_ip`; siphon-api findings carry the real caller IP. Channel
+// can be inferred from pod kind. Rich metadata (actor, email subject,
+// etc.) isn't captured today — left as 'unknown' so the analyst
+// annotates in the notes field.
+function deriveContext(f) {
+  const md = f.metadata || {};
+  const pod = f.source_pod || '';
+  const isFile = pod === 'siphon-fs' || md.filename;
+  const who =
+    md.actor || md.user || md.sender ||
+    (isFile
+      ? (f.source_ip && f.source_ip !== '<anon-upload>' ? `uploader of ${f.source_ip}` : 'anonymous upload')
+      : (f.source_ip || 'unknown'));
+  const what = `${f.category || '—'}${f.sub_category ? ' / ' + f.sub_category : ''}`;
+  const where =
+    md.channel || md.source_type ||
+    (isFile ? 'file upload (siphon-fs)'
+            : pod === 'siphon-api' ? 'API submission (siphon-api)'
+            : pod ? `pod: ${pod}` : 'unknown channel');
+  const when = f.ts || 'unknown';
+  const why =
+    (f.confidence != null ? `confidence ${f.confidence.toFixed(2)}` : 'no confidence')
+    + (f.has_context ? ' · keyword-context confirmed'
+                     : f.confidence != null ? ' · no context keyword nearby' : '')
+    + (md.list_matched ? ` · match-list "${md.list_matched}" (${md.list_action || '—'})` : '')
+    + (md.unique_count_breach ? ` · unique-count breach` : '');
+  return { who, what, where, when, why, isFile, filename: md.filename || (isFile ? f.source_ip : null) };
+}
+
+function FindingsQueue() {
+  const [filters, setFilters] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem('ir:queueFilters') || '{}') || {}; }
+    catch { return {}; }
+  });
+  const [limit, setLimit] = React.useState(() => {
+    try { return parseInt(localStorage.getItem('ir:queueLimit') || '100', 10); }
+    catch { return 100; }
+  });
+  const [expanded, setExpanded] = React.useState(null);
+  const [dispo, setDispo] = React.useState(readDispo);
+  const [notesDraft, setNotesDraft] = React.useState({});
+  const [xsoarFor, setXsoarFor] = React.useState(null); // finding being escalated
+  const [flash, setFlash] = React.useState(null);
+
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:queueFilters', JSON.stringify(filters)); } catch {}
+  }, [filters]);
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:queueLimit', String(limit)); } catch {}
+  }, [limit]);
+  // Re-read dispositions when demo mode flips so the row chips flip
+  // between the real and seeded stores without a reload.
+  React.useEffect(() => {
+    const resync = () => setDispo(readDispo());
+    window.addEventListener('ir:demoChanged', resync);
+    window.addEventListener('storage', resync);
+    return () => {
+      window.removeEventListener('ir:demoChanged', resync);
+      window.removeEventListener('storage', resync);
+    };
+  }, []);
+
+  const findings = window.useIrFindings('?limit=' + limit);
+  const all = (findings.data && findings.data.findings) || [];
+
+  const categories = React.useMemo(
+    () => Array.from(new Set(all.map(f => f.category).filter(Boolean))).sort(),
+    [all]
+  );
+  const pods = React.useMemo(
+    () => Array.from(new Set(all.map(f => f.source_pod).filter(Boolean))).sort(),
+    [all]
+  );
+
+  const filtered = React.useMemo(() => {
+    const s = (filters.search || '').toLowerCase();
+    return all.filter(f => {
+      if (filters.severity && filters.severity !== 'all' && f.severity !== filters.severity) return false;
+      if (filters.category && filters.category !== 'all' && f.category !== filters.category) return false;
+      if (filters.pod && filters.pod !== 'all' && f.source_pod !== filters.pod) return false;
+      if (s && !(f.text || '').toLowerCase().includes(s)
+          && !(f.category || '').toLowerCase().includes(s)
+          && !(f.sub_category || '').toLowerCase().includes(s)) return false;
+      const d = dispo[f.id];
+      if (filters.state === 'open' && d) return false;
+      if (filters.state === 'hide-event' && d && d.kind === 'event') return false;
+      if (filters.state === 'hide-fp' && d && d.kind === 'fp') return false;
+      if (filters.state === 'only-escalated' && (!d || d.kind !== 'escalate')) return false;
+      return true;
+    }).sort((a, b) => {
+      const sa = SEVERITY_RANK[a.severity] || 0;
+      const sb = SEVERITY_RANK[b.severity] || 0;
+      if (sa !== sb) return sb - sa;
+      return (b.ts || '').localeCompare(a.ts || '');
+    });
+  }, [all, filters, dispo]);
+
+  // Record a disposition. Always stamps who/when + carries the
+  // analyst's note (pulled from notesDraft[id]). FP dispositions also
+  // fan out to the shared FP queue the admin console watches.
+  const dispose = (finding, kind, extra) => {
+    const note = (notesDraft[finding.id] || '').trim();
+    const record = {
+      kind,
+      at: new Date().toISOString(),
+      by: 'local-analyst',
+      notes: note || null,
+      ...extra,
+    };
+    const next = { ...dispo, [finding.id]: record };
+    setDispo(next);
+    writeDispo(next);
+
+    if (kind === 'fp' && !isDemoMode()) {
+      // Append to the cross-console FP queue so detection engineering
+      // (admin console → Engineering → FP Queue) can triage. Skipped
+      // in demo mode so seeded data doesn't contaminate the real
+      // admin-side queue.
+      const queue = readFpQueue();
+      // Dedup by finding id — re-submitting overwrites the note + ts
+      // rather than stacking duplicates.
+      const existing = queue.findIndex(x => x.finding_id === finding.id);
+      const entry = {
+        finding_id: finding.id,
+        category: finding.category,
+        sub_category: finding.sub_category,
+        text: finding.text,
+        confidence: finding.confidence,
+        severity: finding.severity,
+        source_pod: finding.source_pod,
+        submitted_at: record.at,
+        submitted_by: record.by,
+        notes: note,
+        // Full finding for future rescanning / pattern-tuning context.
+        finding,
+      };
+      if (existing >= 0) queue[existing] = entry;
+      else queue.push(entry);
+      writeFpQueue(queue);
+    }
+
+    setFlash({ id: finding.id, label: DISPO[kind].label });
+    setTimeout(() => setFlash(null), 1800);
+    setNotesDraft(d => { const c = { ...d }; delete c[finding.id]; return c; });
+  };
+
+  const clearDispo = (finding) => {
+    const next = { ...dispo };
+    delete next[finding.id];
+    setDispo(next);
+    writeDispo(next);
+    // If this was an FP, remove from the cross-console queue too.
+    const q = readFpQueue().filter(x => x.finding_id !== finding.id);
+    writeFpQueue(q);
+  };
+
+  const counts = React.useMemo(() => {
+    const c = { open: 0, event: 0, fp: 0, escalate: 0 };
+    for (const f of all) {
+      const d = dispo[f.id];
+      if (!d) c.open += 1;
+      else if (c[d.kind] != null) c[d.kind] += 1;
+    }
+    return c;
+  }, [all, dispo]);
+
+  const fmtTs = (ts) => ts ? ts.replace('T', ' ').replace('Z', '').slice(0, 19) : '—';
+
+  return (
+    <div style={{padding:'var(--gap)'}}>
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Findings Queue</span>
+          <span className="k" style={{display:'flex', alignItems:'center', gap:8}}>
+            <window.LivePill source={findings.source} onClick={findings.refetch}
+                             title="click to refetch across all pods" />
+            <span className="mono" style={{fontSize:11}}>
+              {filtered.length} shown · {all.length} loaded
+              {findings.data && findings.data.total > all.length ? ` · ${findings.data.total} in ring` : ''}
+            </span>
+          </span>
+        </div>
+
+        {/* triage summary chips */}
+        <div style={{padding:'10px 14px', display:'flex', gap:8, flexWrap:'wrap', borderBottom:'1px solid var(--line-soft)', alignItems:'center'}}>
+          <span className="muted mono" style={{fontSize:11, marginRight:4}}>queue:</span>
+          <span className="chip chip--red" style={{fontSize:10, cursor:'pointer'}}
+                onClick={() => setFilters({...filters, state: filters.state === 'open' ? 'all' : 'open'})}
+                title="show only not-yet-triaged findings">
+            {counts.open} open
+          </span>
+          <span className="chip chip--warn" style={{fontSize:10, cursor:'pointer'}}
+                onClick={() => setFilters({...filters, state: filters.state === 'only-escalated' ? 'all' : 'only-escalated'})}
+                title="show only findings escalated to XSOAR">
+            {counts.escalate} escalated
+          </span>
+          <span className="chip chip--safe" style={{fontSize:10}}>{counts.event} closed-events</span>
+          <span className="chip chip--ghost" style={{fontSize:10}}>{counts.fp} fp-submitted</span>
+          {findings.perPod && findings.perPod.length > 0 && (
+            <span className="muted mono" style={{fontSize:10.5, marginLeft:'auto'}}>
+              {findings.perPod.filter(p => p.ok).length}/{findings.perPod.length} pods reachable
+            </span>
+          )}
+        </div>
+
+        {/* filter controls */}
+        <div style={{padding:'10px 14px', display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', borderBottom:'1px solid var(--line-soft)'}}>
+          <input
+            value={filters.search || ''}
+            onChange={e => setFilters({...filters, search: e.target.value})}
+            placeholder="search text · category · sub-category"
+            className="mono"
+            style={{
+              flex:'1 1 240px', fontSize:12,
+              padding:'6px 10px', background:'var(--bg-1)', color:'var(--ink)',
+              border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+            }}
+          />
+          <select value={filters.severity || 'all'}
+                  onChange={e => setFilters({...filters, severity: e.target.value})}
+                  style={{fontSize:11, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}>
+            <option value="all">any severity</option>
+            <option value="critical">critical</option>
+            <option value="high">high</option>
+            <option value="medium">medium</option>
+            <option value="low">low</option>
+            <option value="info">info</option>
+          </select>
+          <select value={filters.category || 'all'}
+                  onChange={e => setFilters({...filters, category: e.target.value})}
+                  style={{fontSize:11, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', maxWidth:180}}>
+            <option value="all">any category</option>
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          {pods.length > 1 && (
+            <select value={filters.pod || 'all'}
+                    onChange={e => setFilters({...filters, pod: e.target.value})}
+                    style={{fontSize:11, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}>
+              <option value="all">any pod</option>
+              {pods.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          )}
+          <select value={filters.state || 'all'}
+                  onChange={e => setFilters({...filters, state: e.target.value})}
+                  style={{fontSize:11, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}>
+            <option value="all">all triage states</option>
+            <option value="open">only open</option>
+            <option value="only-escalated">only escalated</option>
+            <option value="hide-event">hide closed-events</option>
+            <option value="hide-fp">hide fp-submitted</option>
+          </select>
+          <select value={limit}
+                  onChange={e => setLimit(parseInt(e.target.value, 10))}
+                  style={{fontSize:11, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}
+                  title="how many findings to pull from each pod">
+            <option value={50}>50 per pod</option>
+            <option value={100}>100 per pod</option>
+            <option value={500}>500 per pod</option>
+            <option value={1000}>1000 per pod</option>
+          </select>
+          <button className="btn ghost" onClick={() => setFilters({})}
+                  title="clear all filters" style={{fontSize:11}}>
+            clear
+          </button>
+        </div>
+
+        {/* table */}
+        {findings.loading && (
+          <div className="muted mono" style={{padding:20, textAlign:'center', fontSize:12}}>
+            loading findings from pod registry…
+          </div>
+        )}
+        {!findings.loading && findings.error && (
+          <div className="note" style={{margin:10, borderColor:'var(--red)', background:'var(--red-wash)', color:'var(--red)', fontSize:12}}>
+            <b>Error:</b> {findings.error}
+          </div>
+        )}
+        {!findings.loading && !findings.error && filtered.length === 0 && (
+          <div className="muted mono" style={{padding:30, textAlign:'center', fontSize:12}}>
+            — no findings match the current filter —
+            {all.length > 0 && (
+              <><br/><br/>
+              <a style={{color:'var(--accent)', cursor:'pointer'}}
+                 onClick={() => setFilters({})}>clear filters</a>
+              {' '}to see all {all.length} loaded.</>
+            )}
+          </div>
+        )}
+
+        {/* header row */}
+        {filtered.length > 0 && (
+          <div style={{
+            display:'grid',
+            gridTemplateColumns:'140px 90px 180px 1fr 60px 90px 160px',
+            gap:8, padding:'8px 14px', borderBottom:'1.5px solid var(--line)',
+            fontFamily:"'JetBrains Mono', monospace", fontSize:10,
+            color:'var(--ink-soft)', textTransform:'uppercase', letterSpacing:'0.08em',
+          }}>
+            <span>timestamp</span>
+            <span>pod</span>
+            <span>category / sub</span>
+            <span>matched text</span>
+            <span>conf</span>
+            <span>severity</span>
+            <span>triage</span>
+          </div>
+        )}
+
+        {filtered.map(f => {
+          const d = dispo[f.id];
+          const rowTint = d && d.kind === 'fp' ? 'var(--bg-1)'
+                        : d && d.kind === 'escalate' ? 'var(--amber-wash, var(--bg-2))'
+                        : 'transparent';
+          const opacity = d && d.kind === 'fp' ? 0.5 : 1;
+          return (
+            <div key={f.id} style={{borderBottom:'1px solid var(--line-soft)'}}>
+              <div onClick={() => window.__ir_goFinding && window.__ir_goFinding(f.id)}
+                   style={{
+                     display:'grid',
+                     gridTemplateColumns:'140px 90px 180px 1fr 60px 90px 160px',
+                     gap:8, padding:'8px 14px', fontSize:11.5, alignItems:'center',
+                     cursor:'pointer', background: rowTint, opacity,
+                     fontFamily:"'JetBrains Mono', monospace",
+                   }}
+                   title="click to open the 5W+H review surface">
+                <span style={{color:'var(--ink-soft)'}}>{fmtTs(f.ts)}</span>
+                <span className="chip chip--ghost" style={{fontSize:9, justifySelf:'start'}}>
+                  {f.source_pod || '—'}
+                </span>
+                <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+                      title={`${f.category} / ${f.sub_category}`}>
+                  <span style={{color:'var(--ink-bright)'}}>{f.category}</span>
+                  {f.sub_category && <span className="muted"> / {f.sub_category}</span>}
+                </span>
+                <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:'var(--accent)'}}
+                      title={f.text || ''}>
+                  {f.text || '—'}
+                </span>
+                <span style={{color: f.confidence >= 0.9 ? 'var(--safe)'
+                                    : f.confidence >= 0.7 ? 'var(--amber)'
+                                    : 'var(--ink-soft)'}}>
+                  {f.confidence != null ? f.confidence.toFixed(2) : '—'}
+                </span>
+                <span>{severityChip(f.severity)}</span>
+                <span style={{display:'flex', gap:4, justifySelf:'end', alignItems:'center'}}>
+                  {!d && (
+                    <span className="muted mono" style={{fontSize:10}}>
+                      open →
+                    </span>
+                  )}
+                  {d && (
+                    <>
+                      <span className={`chip chip--${DISPO[d.kind].chip}`}
+                            title={`${DISPO[d.kind].label}${d.notes ? '\n\n' + d.notes : ''}`}
+                            style={{fontSize:9}}>{DISPO[d.kind].short}</span>
+                      <button className="btn ghost" onClick={(e) => { e.stopPropagation(); clearDispo(f); }}
+                              title="undo disposition"
+                              style={{fontSize:10, padding:'3px 6px'}}>↶</button>
+                    </>
+                  )}
+                  {flash && flash.id === f.id && (
+                    <span className="mono" style={{fontSize:10, color:'var(--safe)'}}>
+                      ✓
+                    </span>
+                  )}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Finding Detail surface (5W+H review) ──────────────────────
+// Full-page review for a single finding. Structured around the
+// analyst's 5W+H question set so the review flow is explicit:
+//   Who · What · Where · When · Why · How
+// This commit scaffolds the shell: PageBar header with prev/next +
+// keyboard nav + disposition buttons, stub panels for each pillar
+// (filled in subsequent commits), notes field, raw-record
+// <details>, XSOAR modal integration.
+//
+// Starting point ported from siphon-c2.html's FindingDetail — the
+// surface-bar navigation, prev/next + j/k, match-value block, and
+// raw-record KV are lifted wholesale. The c2 panels (DetectionPipeline,
+// SourceDestination, RelatedFindings, FindingTimeline,
+// PolicyThatFired) map into the pillar grid in the next commits.
+
+// IR-local PageBar primitive. Simpler than c2's (no search, no
+// filters, no group-by) since the only consumer today is this
+// surface. If more IR surfaces pick it up we can widen the API.
+function IrPageBar({ crumbs, title, subtitle, actions }) {
+  return (
+    <div className="pagebar">
+      <div className="pagebar-row pagebar-head">
+        <div>
+          {crumbs && <div className="crumbs">{crumbs.join(' · ')}</div>}
+          <h1 className="page-title">{title}</h1>
+          {subtitle && <div className="page-sub">{subtitle}</div>}
+        </div>
+        <div className="actions">{actions}</div>
+      </div>
+    </div>
+  );
+}
+
+// Placeholder the 5W+H grid renders in until the panel for that
+// pillar is built. Keeps the surface navigable + gives the analyst
+// a quick summary so this scaffolding is already useful.
+function PanelStub({ title, question, children }) {
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">{title}</span>
+        <span className="k">{question}</span>
+      </div>
+      <div style={{padding:14, fontSize:12, lineHeight:1.7}}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function FindingDetail({ id, back }) {
+  // All hooks up front — React requires consistent hook order across
+  // renders, and the "finding not found" early return below comes
+  // AFTER them.
+  const findings = window.useIrFindings('?limit=500');
+  const [dispo, setDispo] = React.useState(readDispo);
+  const [notesDraft, setNotesDraft] = React.useState('');
+  const [xsoarFor, setXsoarFor] = React.useState(null);
+  const [flash, setFlash] = React.useState(null);
+
+  const all = (findings.data && findings.data.findings) || [];
+  const f = all.find(x => x.id === id);
+
+  // Prev / next. Must compute before the keyboard useEffect so the
+  // closure captures the right neighbours; guarded on `f` being
+  // loaded.
+  const idx = f ? all.findIndex(x => x.id === id) : -1;
+  const prev = idx > 0 ? all[idx - 1] : null;
+  const next = idx >= 0 && idx < all.length - 1 ? all[idx + 1] : null;
+
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      if ((e.key === 'j' || e.key === 'ArrowDown' || e.key === 'ArrowRight') && next) {
+        window.__ir_goFinding && window.__ir_goFinding(next.id);
+      } else if ((e.key === 'k' || e.key === 'ArrowUp' || e.key === 'ArrowLeft') && prev) {
+        window.__ir_goFinding && window.__ir_goFinding(prev.id);
+      } else if (e.key === 'Escape') {
+        back && back();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [prev, next, back]);
+
+  React.useEffect(() => {
+    const resync = () => setDispo(readDispo());
+    window.addEventListener('ir:demoChanged', resync);
+    window.addEventListener('storage', resync);
+    return () => {
+      window.removeEventListener('ir:demoChanged', resync);
+      window.removeEventListener('storage', resync);
+    };
+  }, []);
+
+  // Reset the notes textarea when the analyst jumps to a different
+  // finding — otherwise the draft leaks across investigations.
+  React.useEffect(() => { setNotesDraft(''); }, [id]);
+
+  if (!findings.loading && !f) {
+    return (
+      <div>
+        <IrPageBar
+          crumbs={['Respond', 'Findings', id]}
+          title="Finding not found"
+          subtitle="Not in the live ring or the demo seed."
+          actions={<button className="btn ghost" onClick={back}>‹ Back to queue</button>}
+        />
+        <div className="note" style={{borderColor:'var(--amber)', color:'var(--amber)', background:'var(--amber-wash)', margin:'var(--gap)'}}>
+          Ring size is bounded ({findings.data ? findings.data.capacity : '—'}).
+          Older findings fall off as new ones arrive. Toggle demo data under
+          Settings → Engineering to populate a stable set.
+        </div>
+      </div>
+    );
+  }
+  if (!f) {
+    return <div className="muted" style={{padding:30, textAlign:'center'}}>loading…</div>;
+  }
+
+  const ctx = deriveContext(f);
+  const d = dispo[f.id];
+
+  const fmtTs = (ts) => ts ? ts.replace('T', ' ').replace('Z', '').slice(0, 19) : '—';
+
+  const dispose = (kind, extra) => {
+    const note = notesDraft.trim() || (d && d.notes) || '';
+    const record = {
+      kind, at: new Date().toISOString(), by: 'local-analyst',
+      notes: note || null, ...extra,
+    };
+    const nextMap = { ...dispo, [f.id]: record };
+    setDispo(nextMap);
+    writeDispo(nextMap);
+    if (kind === 'fp' && !isDemoMode()) {
+      const queue = readFpQueue();
+      const existing = queue.findIndex(x => x.finding_id === f.id);
+      const entry = {
+        finding_id: f.id,
+        category: f.category,
+        sub_category: f.sub_category,
+        text: f.text,
+        confidence: f.confidence,
+        severity: f.severity,
+        source_pod: f.source_pod,
+        submitted_at: record.at,
+        submitted_by: record.by,
+        notes: note,
+        finding: f,
+      };
+      if (existing >= 0) queue[existing] = entry;
+      else queue.push(entry);
+      writeFpQueue(queue);
+    }
+    setFlash(DISPO[kind].label);
+    setTimeout(() => setFlash(null), 1500);
+  };
+
+  const undoDispose = () => {
+    const nextMap = { ...dispo };
+    delete nextMap[f.id];
+    setDispo(nextMap);
+    writeDispo(nextMap);
+    writeFpQueue(readFpQueue().filter(x => x.finding_id !== f.id));
+  };
+
+  return (
+    <div>
+      <IrPageBar
+        crumbs={['Respond', 'Findings', f.id]}
+        title={<>
+          <span className="mono" style={{color:'var(--ink-bright)'}}>{f.id}</span>
+          <span className="muted" style={{margin:'0 8px', fontSize:14}}>·</span>
+          <span style={{fontFamily:"'Space Grotesk', sans-serif"}}>{f.category}</span>
+          {f.sub_category && <span className="muted" style={{marginLeft:6, fontSize:14}}>/ {f.sub_category}</span>}
+          <span style={{marginLeft:10}}>{severityChip(f.severity)}</span>
+        </>}
+        subtitle={<>
+          <span className="mono">source {f.source_ip || '—'}</span>
+          <span className="muted"> · req </span>
+          <span className="mono">{(f.request_id || '').split('-')[0] || '—'}</span>
+          <span className="muted"> · </span>
+          <span className="mono">{fmtTs(f.ts)}</span>
+          {idx >= 0 && (<>
+            <span className="muted"> · </span>
+            <span className="mono">{idx + 1} of {all.length}</span>
+          </>)}
+          <span className="muted"> · keyboard </span>
+          <span className="mono" style={{color:'var(--ink-bright)'}}>j</span><span className="muted">/</span><span className="mono" style={{color:'var(--ink-bright)'}}>k</span>
+          <span className="muted"> to jump · </span>
+          <span className="mono" style={{color:'var(--ink-bright)'}}>esc</span>
+          <span className="muted"> to close</span>
+        </>}
+        actions={<>
+          <window.LivePill source={findings.source} onClick={findings.refetch} />
+          <div style={{display:'flex', gap:2, border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', overflow:'hidden'}}>
+            <button className="btn ghost" disabled={!prev}
+                    onClick={() => prev && window.__ir_goFinding(prev.id)}
+                    title={prev ? `prev · ${prev.id}` : 'no newer finding'}
+                    style={{border:'none', borderRight:'1px solid var(--line-strong)', padding:'5px 10px', opacity: prev ? 1 : 0.4, cursor: prev ? 'pointer' : 'not-allowed'}}>
+              ‹ Prev
+            </button>
+            <button className="btn ghost" disabled={!next}
+                    onClick={() => next && window.__ir_goFinding(next.id)}
+                    title={next ? `next · ${next.id}` : 'no older finding'}
+                    style={{border:'none', padding:'5px 10px', opacity: next ? 1 : 0.4, cursor: next ? 'pointer' : 'not-allowed'}}>
+              Next ›
+            </button>
+          </div>
+          <button className="btn ghost" onClick={back} title="esc">‹ Back</button>
+          {/* Three dispositions as primary actions — the whole reason
+              this surface exists. */}
+          <button className="btn" onClick={() => dispose('event')}
+                  title="benign activity · close the event">
+            ✓ Close event
+          </button>
+          <button className="btn ghost" onClick={() => dispose('fp')}
+                  title="submit to the admin-console FP queue"
+                  style={{color:'var(--ink-soft)'}}>
+            ⚑ False positive
+          </button>
+          <button className="btn primary" onClick={() => setXsoarFor(f)}
+                  title="escalate to XSOAR (configure webhook in Settings → Integrations)"
+                  style={{background:'var(--amber)', borderColor:'var(--amber)', color:'#000'}}>
+            ↗ Escalate
+          </button>
+        </>}
+      />
+
+      {/* Disposition banner — reflects whatever's already on this
+          finding, including history across reloads. */}
+      {d && (
+        <div className="note" style={{
+          margin:'var(--gap) var(--gap) 0 var(--gap)', fontSize:12,
+          borderColor: d.kind === 'escalate' ? 'var(--amber)' : 'var(--line-strong)',
+          background: 'var(--bg-2)', color: 'var(--ink)',
+        }}>
+          <b>{DISPO[d.kind].label}</b>
+          <span className="muted"> · {d.at.slice(0, 19).replace('T',' ')} · {d.by || 'analyst'}</span>
+          {d.kind === 'escalate' && d.xsoar_status && <> · <span className="mono">{d.xsoar_status}</span></>}
+          {d.notes && <div style={{marginTop:4, whiteSpace:'pre-wrap', fontSize:11.5}}>{d.notes}</div>}
+          <button className="btn ghost" onClick={undoDispose}
+                  style={{marginLeft:12, fontSize:10, padding:'3px 8px'}}>↶ undo</button>
+        </div>
+      )}
+      {flash && (
+        <div className="note" style={{
+          margin:'var(--gap) var(--gap) 0 var(--gap)', fontSize:12,
+          borderColor:'var(--safe)', background:'var(--accent-wash)', color:'var(--ink)',
+        }}>
+          ✓ {flash}
+        </div>
+      )}
+
+      {/* 5W+H grid — 2 cols × 3 rows. Each panel is a stub this
+          commit; subsequent commits replace them one pair at a
+          time with real panels (lifted from c2 or built here). */}
+      <div style={{
+        display:'grid',
+        gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)',
+        gap:'var(--gap)',
+        padding:'var(--gap)',
+        alignItems:'stretch',
+      }}>
+        <PanelStub title="Who" question="Who triggered this?">
+          <div className="muted" style={{fontSize:11.5}}>From metadata + source fields:</div>
+          <div style={{marginTop:6, fontSize:13, color:'var(--ink-bright)'}}>{ctx.who}</div>
+          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
+            Full panel (next commit): user / sender / recipient rows, region + department chips,
+            same-user findings pivot (count + jump), same-source-IP neighbours.
+          </div>
+        </PanelStub>
+
+        <PanelStub title="What" question="What data was exposed?">
+          <div className="muted" style={{fontSize:11.5}}>Matched value:</div>
+          <div className="mono" style={{
+            marginTop:6, fontSize:13, padding:'8px 10px',
+            background:'var(--amber-wash)', border:'1.5px solid var(--amber)',
+            borderRadius:2, wordBreak:'break-all',
+          }}>{f.text || '—'}</div>
+          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
+            Full panel (next commit): category tree + link to Patterns, confidence bar, has-context
+            chip, span offset visualisation, raw-metadata mini table.
+          </div>
+        </PanelStub>
+
+        <PanelStub title="Where" question="Where did this happen?">
+          <div className="muted" style={{fontSize:11.5}}>Channel:</div>
+          <div style={{marginTop:6, fontSize:13}}>{ctx.where}</div>
+          {ctx.filename && <div style={{fontSize:12, marginTop:4}}>File: <span className="mono">{ctx.filename}</span></div>}
+          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
+            Full panel (commit 3): source → destination diagram (IP + URL for network channels,
+            sender → recipient for email), pod the detection came from, full filesystem path.
+          </div>
+        </PanelStub>
+
+        <PanelStub title="When" question="When? And what else was happening?">
+          <div className="muted" style={{fontSize:11.5}}>Detection time:</div>
+          <div className="mono" style={{marginTop:6, fontSize:13}}>{fmtTs(f.ts)}</div>
+          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
+            Full panel (commit 3): same-request neighbours with severity + preview text,
+            same-user 24-hour timeline, detection-to-triage latency if already triaged.
+          </div>
+        </PanelStub>
+
+        <PanelStub title="Why" question="Why did detection fire?">
+          <div className="muted" style={{fontSize:11.5}}>Signal summary:</div>
+          <div style={{marginTop:6, fontSize:12, lineHeight:1.6}}>{ctx.why}</div>
+          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
+            Full panel (commit 4): pattern (category/sub) with link to Patterns browser, policy that
+            fired, detection-pipeline narrative (regex → validation → context → emit),
+            list-binding match if applicable, runtime overrides that were applied.
+          </div>
+        </PanelStub>
+
+        <PanelStub title="How" question="How should we respond?">
+          <div className="muted" style={{fontSize:11.5}}>Options:</div>
+          <ul style={{marginTop:6, fontSize:12, lineHeight:1.7, paddingLeft:18}}>
+            <li><b>Close event</b> — benign business activity handled per policy</li>
+            <li><b>False positive</b> — submit to admin FP queue for pattern tuning</li>
+            <li><b>Escalate</b> — hand off to XSOAR for remediation playbooks</li>
+          </ul>
+          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
+            Full panel (commit 4): suggested playbook (Phase C), related-user incident history,
+            prior disposition stats, quick-ack + quick-escalate shortcuts.
+          </div>
+        </PanelStub>
+      </div>
+
+      {/* Investigator notes — writes on the next disposition click. */}
+      <div style={{padding:'0 var(--gap) var(--gap) var(--gap)'}}>
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Investigator notes</span>
+            <span className="k muted">saved with the disposition record</span>
+          </div>
+          <div style={{padding:14}}>
+            <textarea
+              value={notesDraft || (d && d.notes) || ''}
+              onChange={e => setNotesDraft(e.target.value)}
+              placeholder="TP or FP? What did you verify? Who did you contact? What was the business context?"
+              rows={4}
+              className="mono"
+              style={{
+                width:'100%', boxSizing:'border-box', fontSize:12,
+                padding:'8px 10px', background:'var(--bg-2)', color:'var(--ink)',
+                border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                resize:'vertical',
+              }}
+            />
+            <div className="muted" style={{fontSize:10.5, marginTop:6}}>
+              Notes are persisted when you pick a disposition (Close event / False positive / Escalate).
+              Current draft stays local to this finding — switching to another row clears it.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Raw record — collapsed by default so it doesn't compete with
+          the 5W+H view, but one click away for analysts who want the
+          unpretty view. */}
+      <div style={{padding:'0 var(--gap) var(--gap) var(--gap)'}}>
+        <details className="box">
+          <summary style={{padding:'10px 14px', cursor:'pointer', fontFamily:"'Space Grotesk', sans-serif", fontWeight:600, fontSize:13, color:'var(--ink-bright)'}}>
+            Raw finding record
+          </summary>
+          <div style={{padding:'0 14px 14px 14px'}}>
+            <div className="kv" style={{marginTop:4}}>
+              <span className="k">Finding id</span>   <span className="v mono">{f.id}</span>
+              <span className="k">Request id</span>   <span className="v mono">{f.request_id || '—'}</span>
+              <span className="k">Timestamp</span>    <span className="v mono">{f.ts}</span>
+              <span className="k">Source IP</span>    <span className="v mono">{f.source_ip || '—'}</span>
+              <span className="k">Source pod</span>   <span className="v mono">{f.source_pod || '—'}</span>
+              <span className="k">Category</span>     <span className="v">{f.category}</span>
+              <span className="k">Sub-category</span> <span className="v">{f.sub_category || '—'}</span>
+              <span className="k">Confidence</span>   <span className="v mono">{f.confidence != null ? f.confidence.toFixed(3) : '—'}</span>
+              <span className="k">Has context</span>  <span className="v">{f.has_context ? 'yes' : 'no'}</span>
+              <span className="k">Span</span>         <span className="v mono">{f.span ? f.span.join('..') : '—'}</span>
+              <span className="k">Severity</span>     <span className="v">{f.severity}</span>
+            </div>
+            {f.metadata && Object.keys(f.metadata).length > 0 && (
+              <>
+                <div className="label" style={{marginTop:14, marginBottom:6}}>Metadata</div>
+                <div className="mono" style={{fontSize:11, lineHeight:1.8, background:'var(--bg-1)', padding:10, border:'1px dashed var(--line-soft)'}}>
+                  {Object.entries(f.metadata).map(([k, v]) => (
+                    <div key={k}><span style={{color:'var(--accent)'}}>{k}</span> = <span style={{color:'var(--ink-bright)'}}>{String(v)}</span></div>
+                  ))}
+                </div>
+              </>
+            )}
+            <div style={{marginTop:12, display:'flex', gap:8, flexWrap:'wrap'}}>
+              <button className="btn ghost" onClick={() => {
+                navigator.clipboard?.writeText(JSON.stringify(f, null, 2));
+                setFlash('Copied JSON');
+                setTimeout(() => setFlash(null), 1200);
+              }} style={{fontSize:11}}>⎘ Copy JSON</button>
+              <a className="btn ghost"
+                 href={`siphon-c2.html#patterns/${encodeURIComponent(f.category)}/${encodeURIComponent(f.sub_category || '')}`}
+                 target="_blank" rel="noopener"
+                 title="jump to the admin console to tune this pattern"
+                 style={{fontSize:11, textDecoration:'none'}}>
+                ↗ Tune detection
+              </a>
+            </div>
+          </div>
+        </details>
+      </div>
+
+      {/* XSOAR escalate modal — consumes notesDraft so the payload
+          carries whatever the analyst typed. */}
+      {xsoarFor && (
+        <XsoarEscalateModal
+          finding={xsoarFor}
+          note={notesDraft || (d && d.notes) || ''}
+          onClose={() => setXsoarFor(null)}
+          onDone={(statusText) => {
+            dispose('escalate', { xsoar_status: statusText });
+            setXsoarFor(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── XSOAR escalate modal ───────────────────────────────────────
+// Builds a JSON payload from the finding + investigator notes and
+// lets the analyst send it to the XSOAR webhook configured under
+// Settings → Integrations, or copy it for manual submission. Send
+// failures annotate the disposition but don't block it — the
+// analyst may have already handed off by other means.
+function XsoarEscalateModal({ finding, note, onClose, onDone }) {
+  const [cfg] = React.useState(readXsoarCfg);
+  const [sending, setSending] = React.useState(false);
+  const [sendErr, setSendErr] = React.useState(null);
+  const [sendOk, setSendOk] = React.useState(null);
+
+  const payload = React.useMemo(() => ({
+    source: 'siphon-ir',
+    submitted_at: new Date().toISOString(),
+    submitted_by: 'local-analyst',
+    investigator_notes: note || null,
+    finding: {
+      id: finding.id,
+      ts: finding.ts,
+      category: finding.category,
+      sub_category: finding.sub_category,
+      text: finding.text,
+      confidence: finding.confidence,
+      has_context: finding.has_context,
+      severity: finding.severity,
+      source_ip: finding.source_ip,
+      source_pod: finding.source_pod,
+      request_id: finding.request_id,
+      span: finding.span,
+      metadata: finding.metadata || {},
+    },
+    context: deriveContext(finding),
+  }), [finding, note]);
+
+  const copyPayload = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      setSendOk('Copied to clipboard');
+      setTimeout(() => setSendOk(null), 1500);
+    } catch (e) { setSendErr(String(e.message || e)); }
+  };
+
+  const sendWebhook = async () => {
+    if (!cfg.webhook) return;
+    setSending(true); setSendErr(null); setSendOk(null);
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (cfg.apiKey) headers['Authorization'] = cfg.authHeader === 'api-key'
+        ? cfg.apiKey
+        : 'Bearer ' + cfg.apiKey;
+      const r = await fetch(cfg.webhook, {
+        method: 'POST', headers, body: JSON.stringify(payload),
+      });
+      if (!r.ok) {
+        const body = await r.text();
+        throw new Error('HTTP ' + r.status + (body ? ': ' + body.slice(0, 200) : ''));
+      }
+      setSendOk('POST ' + r.status);
+      setTimeout(() => onDone('POST ' + r.status), 600);
+    } catch (e) {
+      setSendErr(String(e.message || e));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,0.7)',
+      display:'flex', alignItems:'center', justifyContent:'center',
+      zIndex:100,
+    }} onClick={onClose}>
+      <div className="box" style={{width:'min(820px, 90vw)', maxHeight:'90vh', overflow:'auto', margin:0}}
+           onClick={e => e.stopPropagation()}>
+        <div className="box-title">
+          <span className="t">Escalate to XSOAR</span>
+          <span className="k">
+            {cfg.webhook
+              ? <span className="mono" style={{fontSize:10, color:'var(--ink-soft)'}}>target: {(new URL(cfg.webhook)).host}</span>
+              : <span className="chip chip--warn" style={{fontSize:9}}>no webhook configured</span>}
+          </span>
+        </div>
+        <div style={{padding:14}}>
+          {!cfg.webhook && (
+            <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', marginBottom:12, fontSize:12}}>
+              <b>XSOAR webhook not configured.</b> Set the URL + credentials under{' '}
+              <a onClick={() => { onClose(); window.__ir_go && window.__ir_go('integrations'); }}
+                 style={{color:'var(--accent)', cursor:'pointer'}}>Settings → Integrations</a>.
+              In the meantime, copy the payload and submit via another channel.
+            </div>
+          )}
+          <div className="label" style={{marginBottom:4}}>
+            Finding · <span className="mono">{finding.id}</span>{' '}
+            <span className="muted">· {finding.category}/{finding.sub_category}</span>
+          </div>
+          <pre style={{
+            background:'var(--bg-1)', padding:10, border:'1px solid var(--line-soft)',
+            borderRadius:'var(--radius)', fontSize:11, maxHeight:320, overflow:'auto',
+            fontFamily:"'JetBrains Mono', monospace", whiteSpace:'pre', margin:0,
+          }}>{JSON.stringify(payload, null, 2)}</pre>
+
+          {sendErr && (
+            <div className="note" style={{borderColor:'var(--red)', background:'var(--red-wash)', color:'var(--red)', fontSize:12, marginTop:10}}>
+              <b>Send failed:</b> {sendErr} · disposition not recorded
+            </div>
+          )}
+          {sendOk && (
+            <div className="note" style={{borderColor:'var(--safe)', background:'var(--accent-wash)', color:'var(--ink)', fontSize:12, marginTop:10}}>
+              <b>{sendOk}</b>
+            </div>
+          )}
+
+          <div style={{marginTop:14, display:'flex', gap:8, flexWrap:'wrap', justifyContent:'flex-end'}}>
+            <button className="btn ghost" onClick={onClose}>Cancel</button>
+            <button className="btn ghost" onClick={copyPayload}>⎘ Copy JSON</button>
+            <button className="btn ghost" onClick={() => onDone('handed off manually')}
+                    title="record disposition without POSTing (analyst will submit via another channel)">
+              Record as escalated
+            </button>
+            <button className="btn primary" onClick={sendWebhook}
+                    disabled={!cfg.webhook || sending}
+                    style={{background:'var(--amber)', borderColor:'var(--amber)', color:'#000'}}>
+              {sending ? 'Sending…' : '↗ POST to XSOAR'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Settings → Integrations ────────────────────────────────────
+// Centralises the XSOAR + Splunk HEC configuration. Other IR
+// surfaces read these from localStorage (ir:xsoar, ir:splunk). The
+// 'Test' buttons validate the endpoint is reachable before a real
+// escalation tries.
+function IntegrationsSurface() {
+  const [xsoar, setXsoar] = React.useState(() => ({
+    webhook: '', apiKey: '', authHeader: 'bearer', ...readXsoarCfg(),
+  }));
+  const [splunk, setSplunk] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem('ir:splunk') || '{}') || { hec: '', token: '', index: 'dlp_ir' }; }
+    catch { return { hec: '', token: '', index: 'dlp_ir' }; }
+  });
+  const [xsoarSaved, setXsoarSaved] = React.useState(false);
+  const [splunkSaved, setSplunkSaved] = React.useState(false);
+  const [xsoarTest, setXsoarTest] = React.useState(null);
+  const [splunkTest, setSplunkTest] = React.useState(null);
+
+  const saveXsoar = () => {
+    writeXsoarCfg(xsoar);
+    setXsoarSaved(true);
+    setTimeout(() => setXsoarSaved(false), 1500);
+  };
+  const saveSplunk = () => {
+    try { localStorage.setItem('ir:splunk', JSON.stringify(splunk)); } catch {}
+    setSplunkSaved(true);
+    setTimeout(() => setSplunkSaved(false), 1500);
+  };
+
+  const testXsoar = async () => {
+    setXsoarTest({ state: 'running' });
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (xsoar.apiKey) headers['Authorization'] = xsoar.authHeader === 'api-key'
+        ? xsoar.apiKey
+        : 'Bearer ' + xsoar.apiKey;
+      const r = await fetch(xsoar.webhook, {
+        method: 'POST', headers,
+        body: JSON.stringify({ source: 'siphon-ir', kind: 'test', submitted_at: new Date().toISOString() }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      setXsoarTest({ state: 'ok', status: r.status });
+    } catch (e) {
+      setXsoarTest({ state: 'fail', error: String(e.message || e) });
+    }
+  };
+  const testSplunk = async () => {
+    setSplunkTest({ state: 'running' });
+    try {
+      const r = await fetch(splunk.hec, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Splunk ' + (splunk.token || ''),
+        },
+        body: JSON.stringify({
+          event: { source: 'siphon-ir', kind: 'test', ts: new Date().toISOString() },
+          sourcetype: 'siphon:ir:test',
+          index: splunk.index || 'main',
+        }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      setSplunkTest({ state: 'ok', status: r.status });
+    } catch (e) {
+      setSplunkTest({ state: 'fail', error: String(e.message || e) });
+    }
+  };
+
+  const fieldStyle = {
+    flex:1, minWidth:280, fontFamily:"'JetBrains Mono', monospace", fontSize:12,
+    padding:'6px 10px', background:'var(--bg-1)', color:'var(--ink)',
+    border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+  };
+
+  return (
+    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
+      {/* ── XSOAR ───────────────────────────────────────────────── */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">XSOAR · SOAR / remediation pipeline</span>
+          <span className="k">
+            {xsoar.webhook ? <span className="chip chip--safe" style={{fontSize:9}}>configured</span>
+                           : <span className="chip chip--ghost" style={{fontSize:9}}>not configured</span>}
+          </span>
+        </div>
+        <div style={{padding:14, display:'grid', gap:10, fontSize:12}}>
+          <div className="muted" style={{fontSize:11.5, lineHeight:1.6}}>
+            Webhook endpoint XSOAR listens on (Cortex XSOAR playbook trigger, or a generic webhook
+            that feeds into your playbook engine). Escalate actions POST the finding + 5W context +
+            investigator notes as JSON.
+          </div>
+          <div>
+            <div className="label" style={{marginBottom:4}}>Webhook URL</div>
+            <input type="text" value={xsoar.webhook}
+                   onChange={e => setXsoar({ ...xsoar, webhook: e.target.value })}
+                   placeholder="https://xsoar.example.com/instance/execute/siphon_ir_webhook"
+                   style={fieldStyle} />
+          </div>
+          <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
+            <div style={{flex:2, minWidth:280}}>
+              <div className="label" style={{marginBottom:4}}>API key / token</div>
+              <input type="password" value={xsoar.apiKey}
+                     onChange={e => setXsoar({ ...xsoar, apiKey: e.target.value })}
+                     placeholder="bearer token or raw api-key"
+                     style={fieldStyle} autoComplete="off" />
+            </div>
+            <div style={{flex:1, minWidth:160}}>
+              <div className="label" style={{marginBottom:4}}>Auth header</div>
+              <select value={xsoar.authHeader}
+                      onChange={e => setXsoar({ ...xsoar, authHeader: e.target.value })}
+                      style={{...fieldStyle, width:'100%'}}>
+                <option value="bearer">Authorization: Bearer …</option>
+                <option value="api-key">Authorization: &lt;key&gt;</option>
+              </select>
+            </div>
+          </div>
+          <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
+            <button className="btn" onClick={saveXsoar}>{xsoarSaved ? 'Saved' : 'Save'}</button>
+            <button className="btn ghost" onClick={testXsoar}
+                    disabled={!xsoar.webhook || (xsoarTest && xsoarTest.state === 'running')}>
+              {xsoarTest && xsoarTest.state === 'running' ? 'Testing…' : 'Send test event'}
+            </button>
+            {xsoarTest && xsoarTest.state === 'ok' && (
+              <span className="chip chip--safe" style={{fontSize:10}}>test OK · {xsoarTest.status}</span>
+            )}
+            {xsoarTest && xsoarTest.state === 'fail' && (
+              <span className="chip chip--red" style={{fontSize:10}} title={xsoarTest.error}>
+                test failed: {xsoarTest.error.slice(0, 80)}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Splunk HEC ──────────────────────────────────────────── */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Splunk HEC · event forwarder</span>
+          <span className="k">
+            {splunk.hec ? <span className="chip chip--safe" style={{fontSize:9}}>configured</span>
+                        : <span className="chip chip--ghost" style={{fontSize:9}}>not configured</span>}
+          </span>
+        </div>
+        <div style={{padding:14, display:'grid', gap:10, fontSize:12}}>
+          <div className="muted" style={{fontSize:11.5, lineHeight:1.6}}>
+            When configured, every analyst disposition (Close Event / Mark FP / Escalate) mirrors
+            into Splunk via HEC for reporting + long-term audit. Complements the admin console's
+            SIEM forwarders (which stream detections); this stream carries the triage outcomes.
+          </div>
+          <div>
+            <div className="label" style={{marginBottom:4}}>HEC URL</div>
+            <input type="text" value={splunk.hec}
+                   onChange={e => setSplunk({ ...splunk, hec: e.target.value })}
+                   placeholder="https://splunk.example.com:8088/services/collector"
+                   style={fieldStyle} />
+          </div>
+          <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
+            <div style={{flex:2, minWidth:280}}>
+              <div className="label" style={{marginBottom:4}}>HEC token</div>
+              <input type="password" value={splunk.token}
+                     onChange={e => setSplunk({ ...splunk, token: e.target.value })}
+                     placeholder="e.g. B5A79AAD-D822-46CC-80D1-…"
+                     style={fieldStyle} autoComplete="off" />
+            </div>
+            <div style={{flex:1, minWidth:140}}>
+              <div className="label" style={{marginBottom:4}}>Index</div>
+              <input type="text" value={splunk.index}
+                     onChange={e => setSplunk({ ...splunk, index: e.target.value })}
+                     placeholder="dlp_ir"
+                     style={fieldStyle} />
+            </div>
+          </div>
+          <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
+            <button className="btn" onClick={saveSplunk}>{splunkSaved ? 'Saved' : 'Save'}</button>
+            <button className="btn ghost" onClick={testSplunk}
+                    disabled={!splunk.hec || (splunkTest && splunkTest.state === 'running')}>
+              {splunkTest && splunkTest.state === 'running' ? 'Testing…' : 'Send test event'}
+            </button>
+            {splunkTest && splunkTest.state === 'ok' && (
+              <span className="chip chip--safe" style={{fontSize:10}}>test OK · {splunkTest.status}</span>
+            )}
+            {splunkTest && splunkTest.state === 'fail' && (
+              <span className="chip chip--red" style={{fontSize:10}} title={splunkTest.error}>
+                test failed: {splunkTest.error.slice(0, 80)}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="muted" style={{fontSize:11, lineHeight:1.7, padding:'0 2px'}}>
+        Both configurations live in this browser's localStorage only. Clear them with the browser's
+        site-data panel. For a shared multi-analyst setup, back these with a server-side secret store
+        and a /v1/integrations endpoint on siphon-api — Phase 7 of the IR roadmap.
+      </div>
+    </div>
+  );
+}
+
+// ─── Surface registry ───────────────────────────────────────────
+// Each surface is its own function below. MVP phases fill them in
+// one at a time; this dispatcher lets us ship the shell and the
+// first real surface (Findings Queue) without touching the rest.
+const SURFACE_COMPONENTS = {
+  findings:       () => <FindingsQueue />,
+  alerts:         () => <Stub title="Alerts"
+                              description="Threshold-breach signals routed from siphon-api's audit ring." />,
+  investigations: () => <Stub title="Investigations"
+                              description="Case view — group findings, annotate, assign." />,
+  handoffs:       () => <Stub title="Handoffs"
+                              description="Tickets and escalations to downstream tools (Jira, ServiceNow, email)." />,
+  crypto:         () => <Stub title="Crypto Workbench"
+                              description="Forensic tools for encrypted archives and documents: zip password attack, PDF/Office decrypt, hash compute, entropy + magic-byte inspection. Phase 3-5 of the IR MVP." />,
+  extractor:      () => <Stub title="File Extractor"
+                              description="Point-and-shoot at any file siphon-fs recognises (PDF, DOCX, XLSX, PPTX, ZIP/RAR/7z, Parquet, SQLite, EML, MSG, QR)." />,
+  timeline:       () => <Stub title="Timeline"
+                              description="Reconstruct a finding sequence by timestamp + document span." />,
+  pivots:         () => <Stub title="Pivots"
+                              description="Jump from a finding to every other finding in the same document, same source, same pod, same category." />,
+  ioc:            () => <Stub title="IOC Lookup"
+                              description="Cross-reference matched values against known indicator sets (URLhaus, MISP, custom)." />,
+  custody:        () => <Stub title="Chain of Custody"
+                              description="Per-finding history: who acted, when, what action (acknowledge, escalate, mark FP, export)." />,
+  exhibits:       () => <Stub title="Exhibits"
+                              description="Attached artifacts: original file, extracted text, finding metadata, investigator notes." />,
+  export:         () => <Stub title="Export Bundle"
+                              description="Package a case into a zip for handoff (findings JSON, extracted text, exhibits, custody log, signed manifest)." />,
+  integrations:   () => <IntegrationsSurface />,
+  'ir-settings':  () => <Stub title="Responder Preferences"
+                              description="Default queue filters, notification channels, team membership, theme." />,
+  'ir-deployment':() => <Stub title="Pod Registry"
+                              description="Shared with the admin console — registered pods appear in both. Edits under Settings → Deployment on siphon-c2.html." />,
+  'ir-engineering': () => <EngineeringSurface />,
+};
+
+// ─── Settings → Engineering ─────────────────────────────────────
+// Developer-facing toggles. Primary MVP tenant: the demo-data
+// switch, which backs every IR surface with seeded fixtures when
+// on. Live pod data resumes the moment the toggle flips off; the
+// two datasets never mix (separate disposition stores).
+function EngineeringSurface() {
+  const [mode, setMode] = React.useState(isDemoMode);
+  const [seed, setSeed] = React.useState(readDemoSeed);
+  const [demoDispoCount, setDemoDispoCount] = React.useState(() => Object.keys(JSON.parse(localStorage.getItem(IR_DEMO_DISPO_KEY) || '{}')).length);
+
+  // Seed demo dispositions the first time demo mode is turned on so
+  // the dashboard has MTTR data to chart. Re-seed happens only when
+  // the analyst explicitly clicks Regenerate.
+  React.useEffect(() => {
+    if (!mode) return;
+    const existing = localStorage.getItem(IR_DEMO_DISPO_KEY);
+    if (existing && existing !== '{}') return;
+    const findings = generateDemoFindings(seed);
+    const dispo = generateDemoDispositions(findings, seed);
+    localStorage.setItem(IR_DEMO_DISPO_KEY, JSON.stringify(dispo));
+    setDemoDispoCount(Object.keys(dispo).length);
+    window.dispatchEvent(new CustomEvent('ir:demoChanged', { detail: { reason: 'seeded' } }));
+  }, [mode, seed]);
+
+  const toggle = () => {
+    const next = !mode;
+    setMode(next);
+    setDemoMode(next);
+  };
+
+  const regenerate = () => {
+    if (!confirm('Regenerate demo data? Any triage actions you made in demo mode will be overwritten.')) return;
+    const newSeed = (Math.random() * 0xFFFFFFFF) >>> 0;
+    writeDemoSeed(newSeed);
+    setSeed(newSeed);
+    const findings = generateDemoFindings(newSeed);
+    const dispo = generateDemoDispositions(findings, newSeed);
+    localStorage.setItem(IR_DEMO_DISPO_KEY, JSON.stringify(dispo));
+    setDemoDispoCount(Object.keys(dispo).length);
+    window.dispatchEvent(new CustomEvent('ir:demoChanged', { detail: { reason: 'regenerate' } }));
+  };
+
+  const clearDemoOnly = () => {
+    if (!confirm('Clear demo dispositions? Your real (live-mode) triage state is NOT touched.')) return;
+    localStorage.removeItem(IR_DEMO_DISPO_KEY);
+    setDemoDispoCount(0);
+    window.dispatchEvent(new CustomEvent('ir:demoChanged', { detail: { reason: 'cleared' } }));
+  };
+
+  const findingsPreview = React.useMemo(() => generateDemoFindings(seed).length, [seed]);
+
+  return (
+    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Demo data</span>
+          <span className="k">
+            {mode ? <span className="chip chip--warn" style={{fontSize:9}}>DEMO MODE ACTIVE</span>
+                  : <span className="chip chip--safe" style={{fontSize:9}}>LIVE</span>}
+          </span>
+        </div>
+        <div style={{padding:14, display:'grid', gap:12, fontSize:12, lineHeight:1.7}}>
+          <div className="muted">
+            Swaps the Findings Queue + Dashboard data source from live pod unions to
+            a deterministic seeded set ({findingsPreview} findings across {DEMO_ANALYSTS.length} analysts
+            and {DEMO_USERS.length} end-users, with pre-triaged dispositions).
+            Useful for demos, screenshots, and dashboard tuning without
+            needing a real pod scanning real traffic.
+          </div>
+          <div className="muted" style={{fontSize:11.5, padding:'8px 10px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:'var(--radius)'}}>
+            <b>Isolation:</b> demo dispositions are stored under{' '}
+            <span className="mono">localStorage[ir:demoDispositions]</span>, separate from your
+            live triage state at <span className="mono">ir:dispositions</span>. They never mix.
+            The FP Queue handoff to the admin console also suppresses demo entries so you don't
+            pollute the real engineering queue.
+          </div>
+          <div style={{display:'flex', gap:10, alignItems:'center', flexWrap:'wrap'}}>
+            <label style={{display:'inline-flex', alignItems:'center', gap:8, cursor:'pointer'}}>
+              <input type="checkbox" checked={mode} onChange={toggle} />
+              <span style={{fontWeight:600}}>Use demo data</span>
+            </label>
+            <span className="muted mono" style={{fontSize:11}}>
+              seed <span className="mono" style={{color:'var(--ink)'}}>{(seed >>> 0).toString(16).padStart(8, '0')}</span>
+              {' · '}{demoDispoCount} demo dispositions
+            </span>
+          </div>
+          <div style={{display:'flex', gap:8, flexWrap:'wrap', paddingTop:4}}>
+            <button className="btn ghost" onClick={regenerate}
+                    title="reshuffle the seed and re-seed dispositions">
+              ↻ Regenerate seed
+            </button>
+            <button className="btn ghost" onClick={clearDemoOnly}
+                    title="wipe demo dispositions · live state not touched"
+                    style={{color:'var(--red)'}}>
+              ✕ Clear demo dispositions
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="muted" style={{fontSize:11, lineHeight:1.7, padding:'0 2px'}}>
+        More developer toggles will live here: mock XSOAR/Splunk responses, synthetic webhook
+        replay, fast-forward clock for MTTR testing.
+      </div>
+    </div>
+  );
+}
+
+// ─── App ────────────────────────────────────────────────────────
+const TWEAK_DEFAULTS = {
+  theme: 'phosphor',
+  density: 'cozy',
+  nav: 'split',
+};
+
+function App() {
+  const [surface, setSurface] = React.useState(() => {
+    try { return localStorage.getItem('ir:surface') || 'findings'; } catch { return 'findings'; }
+  });
+  // Sub-route for detail pages. Shape: "finding:<id>" opens the
+  // FindingDetail view under the 'findings' surface. Persisted so a
+  // refresh doesn't drop you back to the queue mid-investigation.
+  const [sub, setSub] = React.useState(() => {
+    try { return localStorage.getItem('ir:sub') || ''; } catch { return ''; }
+  });
+  const [tweaks, setTweaks] = React.useState(() => {
+    let stored = {};
+    try { stored = JSON.parse(localStorage.getItem('c2:tweaks') || '{}'); } catch {}
+    return { ...TWEAK_DEFAULTS, ...stored };
+  });
+
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:surface', surface); } catch {}
+  }, [surface]);
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:sub', sub); } catch {}
+  }, [sub]);
+  React.useEffect(() => {
+    try { localStorage.setItem('c2:tweaks', JSON.stringify(tweaks)); } catch {}
+  }, [tweaks]);
+  React.useEffect(() => {
+    document.documentElement.setAttribute('data-theme', tweaks.theme || 'phosphor');
+  }, [tweaks.theme]);
+
+  React.useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== 'c2:tweaks') return;
+      try {
+        const parsed = JSON.parse(e.newValue || '{}');
+        setTweaks(t => ({ ...t, ...parsed }));
+      } catch {}
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  const setTweak = (k, v) => setTweaks(t => ({ ...t, [k]: v }));
+  const go = (id, s) => { setSurface(id); setSub(s || ''); };
+  window.__ir_go = go;
+  // Convenience helper the FindingsQueue + FindingDetail use to
+  // navigate between rows and detail view without rebuilding the
+  // (surface, sub) tuple each time.
+  window.__ir_goFinding = (fid) => go('findings', fid ? 'finding:' + fid : '');
+
+  // Dispatch: if we're on findings with a finding:<id> sub, render
+  // the detail view; otherwise fall back to the surface registry.
+  let body;
+  if (surface === 'findings' && sub && sub.startsWith('finding:')) {
+    body = <FindingDetail id={sub.slice('finding:'.length)}
+                           back={() => setSub('')} />;
+  } else {
+    const renderSurface = SURFACE_COMPONENTS[surface] || SURFACE_COMPONENTS.findings;
+    body = renderSurface();
+  }
+
+  return (
+    <div className="shell" data-density={tweaks.density} data-theme={tweaks.theme}>
+      <Topbar tweaks={tweaks} setTweak={setTweak} />
+      <WorkspaceBar current={surface} go={go} />
+      <SurfaceBar current={surface} go={go} />
+      <main className="page">{body}</main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

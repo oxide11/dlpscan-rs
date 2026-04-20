@@ -2158,15 +2158,14 @@ const WORKSPACES = [
   { id: 'operate',     label: 'Operate',     hint: 'monitor · investigate',          glyph: '◈' },
   { id: 'detect',      label: 'Detect',      hint: 'rules · patterns · models',      glyph: '⤷' },
   { id: 'assure',      label: 'Assure',      hint: 'test · comply · audit',          glyph: '✓' },
-  // 'admin' is still the internal workspace id so surface routing
-  // (crumbs, SurfaceBar filter) keeps working; label is 'Settings'.
-  // Visible in the top workspace bar AND reachable via the topbar
-  // gear icon — operator muscle-memory goes both ways.
-  { id: 'admin',       label: 'Settings',    hint: 'users · system · integrations',  glyph: '⚙' },
   { id: 'engineering', label: 'Engineering', hint: 'dev tools · live API',           glyph: '⌁' },
+  // Settings sits on the far right — config-last mental model, lines
+  // up with where the topbar gear icon is. Gear icon in the topbar
+  // stays as a secondary entry.
+  { id: 'admin',       label: 'Settings',    hint: 'users · system · integrations',  glyph: '⚙' },
   // Docs is reachable via the HelpIcon popovers and the Settings →
   // Docs button; hidden from the top workspace bar to keep primary
-  // navigation focused on Operate / Detect / Assure / Engineering.
+  // navigation focused on the five visible workspaces.
   { id: 'docs',        label: 'Docs',        hint: 'architecture · guides · reference', glyph: '❖', hidden: true },
 ];
 
