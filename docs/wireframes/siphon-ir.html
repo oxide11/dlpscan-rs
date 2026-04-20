@@ -10045,6 +10045,7 @@ const IR_SYSTEM_ROLES = {
     permissions: [
       'users.view', 'users.create', 'users.invite', 'users.update',
       'users.disable', 'users.delete',
+      'roles.manage',
       'findings.view', 'findings.dispose', 'findings.escalate',
       'playbooks.view', 'playbooks.edit',
       'integrations.view', 'integrations.edit',
@@ -10135,6 +10136,62 @@ function useRolesTick() {
       window.removeEventListener('storage', onStorage);
     };
   }, []);
+}
+
+// ─── Role CRUD · R2b1 ──────────────────────────────────────────
+// Guards baked in so the editor surface (R2b2-4) doesn't have to
+// repeat them: kebab-safe id, no id collisions, no deleting
+// system roles, no deleting roles still assigned to users.
+
+function irUsersInRole(roleId) {
+  try { return readUsers().filter(u => u.role === roleId); }
+  catch { return []; }
+}
+
+function irCreateRole({ id, label, glyph, color, description, permissions }) {
+  const roles = readRoles();
+  const cleanId = (id || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 32);
+  if (!cleanId)        return { ok: false, reason: 'role id required' };
+  if (roles[cleanId])  return { ok: false, reason: 'a role with that id already exists' };
+  const rec = {
+    label: (label || cleanId).trim(),
+    glyph: (glyph || '◆').slice(0, 2),
+    color: color || 'var(--accent)',
+    description: (description || '').trim(),
+    system: false,
+    permissions: Array.isArray(permissions) ? permissions.slice() : [],
+  };
+  writeRoles({ ...roles, [cleanId]: rec });
+  return { ok: true, id: cleanId, role: rec };
+}
+
+function irUpdateRole(id, patch) {
+  const roles = readRoles();
+  const existing = roles[id];
+  if (!existing) return { ok: false, reason: 'no such role' };
+  // System roles can have their label / description / permissions
+  // / colour / glyph edited (so tenants can adjust the defaults
+  // for their environment), but their id + system flag are locked.
+  const { id: _ignoredId, system: _ignoredSystem, ...safe } = (patch || {});
+  const next = { ...existing, ...safe };
+  if (Array.isArray(next.permissions)) {
+    next.permissions = [...new Set(next.permissions)];
+  }
+  writeRoles({ ...roles, [id]: next });
+  return { ok: true, role: next };
+}
+
+function irDeleteRole(id) {
+  const roles = readRoles();
+  const existing = roles[id];
+  if (!existing)       return { ok: false, reason: 'no such role' };
+  if (existing.system) return { ok: false, reason: 'system roles are permanent' };
+  const inUse = irUsersInRole(id);
+  if (inUse.length)    return { ok: false, reason: 'role still assigned to ' + inUse.length + ' user(s)' };
+  const next = { ...roles };
+  delete next[id];
+  writeRoles(next);
+  return { ok: true };
 }
 function irRoleMeta(id) {
   const roles = getRoles();
