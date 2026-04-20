@@ -7705,18 +7705,35 @@ const IR_BUILTIN_WORDLIST = [
   'Password1', 'abc12345', 'qwerty123', 'corporate', 'partner',
 ];
 
-// ── Zip Password Attack tab · 5a · UI shell ───────────────────
-// Picker for the encrypted zip + a wordlist source (paste /
-// upload / use built-in). Start button currently shows a
-// 'attack engine lands in 5b' banner; 5b wires zip.js and runs
-// the dictionary loop.
+// Lazy-load zip.js from CDN. Only pulled when the analyst actually
+// runs an attack — keeps the CDN hit off the critical path for
+// every other surface. Resolves to window.zip once ready.
+function loadZipJs() {
+  if (window.zip) return Promise.resolve(window.zip);
+  if (window.__irZipJsLoading) return window.__irZipJsLoading;
+  window.__irZipJsLoading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/@zip.js/zip.js@2.7.52/dist/zip.min.js';
+    s.onload = () => resolve(window.zip);
+    s.onerror = () => reject(new Error('Failed to load zip.js from CDN'));
+    document.head.appendChild(s);
+  });
+  return window.__irZipJsLoading;
+}
+
+// ── Zip Password Attack tab · 5a shell + 5b dictionary engine ──
 function CryptoZipAttack() {
   const [file, setFile] = React.useState(null);
   const [wordlistSource, setWordlistSource] = React.useState('builtin'); // builtin | paste | file
   const [wordlistText, setWordlistText] = React.useState('');
   const [wordlistFile, setWordlistFile] = React.useState(null);
   const [wordlistFileText, setWordlistFileText] = React.useState(null);
-  const [stubFlash, setStubFlash] = React.useState(false);
+  const [attack, setAttack] = React.useState({
+    status: 'idle', // idle | loading | running | success | exhausted | error | cancelled
+    tried: 0, total: 0, current: null, password: null, error: null, entries: [],
+    startedAt: 0, finishedAt: 0,
+  });
+  const cancelRef = React.useRef(false);
 
   // When the analyst picks a wordlist file, read it as text once
   // and cache so the attack loop doesn't re-read per password.
@@ -7754,11 +7771,114 @@ function CryptoZipAttack() {
     || file.type === 'application/x-zip-compressed'
   );
 
-  const start = () => {
-    // Actual attack engine lands in 5b; for now flash a note so
-    // the analyst can still test the shell wiring.
-    setStubFlash(true);
-    setTimeout(() => setStubFlash(false), 2400);
+  // Reset attack state when the file or wordlist changes.
+  React.useEffect(() => {
+    setAttack(s => s.status === 'running' ? s : {
+      status: 'idle', tried: 0, total: 0, current: null,
+      password: null, error: null, entries: [], startedAt: 0, finishedAt: 0,
+    });
+  }, [file, candidates.length, wordlistSource]);
+
+  const stop = () => {
+    cancelRef.current = true;
+    setAttack(s => ({ ...s, status: 'cancelled', finishedAt: Date.now() }));
+  };
+
+  const start = async () => {
+    if (!file || !isZip || candidates.length === 0) return;
+    cancelRef.current = false;
+    setAttack({
+      status: 'loading', tried: 0, total: candidates.length,
+      current: null, password: null, error: null, entries: [],
+      startedAt: Date.now(), finishedAt: 0,
+    });
+    let zipLib;
+    try {
+      zipLib = await loadZipJs();
+    } catch (e) {
+      setAttack(s => ({ ...s, status: 'error', error: String(e.message || e), finishedAt: Date.now() }));
+      return;
+    }
+
+    const reader = new zipLib.ZipReader(new zipLib.BlobReader(file));
+    let entries;
+    try {
+      entries = await reader.getEntries();
+    } catch (e) {
+      setAttack(s => ({ ...s, status: 'error', error: 'unreadable zip: ' + (e.message || e), finishedAt: Date.now() }));
+      try { await reader.close(); } catch {}
+      return;
+    }
+    // Pick a small encrypted entry to probe against — smallest
+    // entry with encryption set is fastest to verify a password
+    // attempt.
+    const encrypted = entries.filter(e => e.encrypted)
+      .sort((a, b) => (a.uncompressedSize || 0) - (b.uncompressedSize || 0));
+    if (encrypted.length === 0) {
+      setAttack(s => ({
+        ...s, status: 'error',
+        error: 'no encrypted entries · the zip doesn\'t appear to be password-protected',
+        finishedAt: Date.now(),
+      }));
+      try { await reader.close(); } catch {}
+      return;
+    }
+    const probe = encrypted[0];
+
+    setAttack(s => ({ ...s, status: 'running' }));
+
+    let found = null;
+    for (let i = 0; i < candidates.length; i++) {
+      if (cancelRef.current) break;
+      const pw = candidates[i];
+      // Yield to the event loop every 10 attempts so the UI
+      // stays responsive and the Stop button can land its state
+      // update. zip.js decrypt is async anyway but the tight
+      // loop can still starve renders on long wordlists.
+      if (i % 10 === 0) {
+        setAttack(s => ({ ...s, tried: i, current: pw }));
+        await new Promise(r => setTimeout(r, 0));
+      }
+      try {
+        // Pull the probe entry; zip.js validates the AES auth
+        // header (or PKZIP CRC) at read time, so a wrong
+        // password throws quickly.
+        await probe.getData(new zipLib.Uint8ArrayWriter(), { password: pw });
+        found = pw;
+        break;
+      } catch (e) {
+        // Wrong password — keep going.
+      }
+    }
+
+    if (cancelRef.current) {
+      try { await reader.close(); } catch {}
+      return;
+    }
+
+    if (!found) {
+      setAttack(s => ({
+        ...s, status: 'exhausted', tried: candidates.length, current: null,
+        finishedAt: Date.now(),
+      }));
+      try { await reader.close(); } catch {}
+      return;
+    }
+
+    // Found — surface the password + list decrypted entries.
+    setAttack(s => ({
+      ...s, status: 'success', password: found, tried: s.tried + 1,
+      current: null,
+      entries: entries.map(e => ({
+        filename: e.filename,
+        size: e.uncompressedSize,
+        compressed: e.compressedSize,
+        encrypted: e.encrypted,
+        date: e.lastModDate ? e.lastModDate.toISOString().slice(0, 19).replace('T', ' ') : null,
+      })),
+      finishedAt: Date.now(),
+    }));
+    try { await reader.close(); } catch {}
   };
 
   return (
@@ -7845,38 +7965,180 @@ function CryptoZipAttack() {
         </div>
       </div>
 
-      {/* Attack control */}
+      {/* Attack control + status */}
       <div className="box">
         <div className="box-title">
           <span className="t">Attack</span>
-          <span className="k">in-browser dictionary · WebCrypto-backed AES decrypt (via zip.js · phase 5b)</span>
+          <span className="k">in-browser dictionary · zip.js + WebCrypto</span>
         </div>
         <div style={{padding:14, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap'}}>
-          <button className="btn primary"
-                  onClick={start}
-                  disabled={!file || !isZip || candidates.length === 0}
-                  title={!file ? 'pick an encrypted zip first'
-                       : !isZip ? 'file must be a ZIP-family container'
-                       : candidates.length === 0 ? 'add candidates to the wordlist first'
-                       : 'start the dictionary attack'}>
-            ▶ Start attack
-          </button>
+          {attack.status !== 'running' && attack.status !== 'loading' && (
+            <button className="btn primary"
+                    onClick={start}
+                    disabled={!file || !isZip || candidates.length === 0}
+                    title={!file ? 'pick an encrypted zip first'
+                         : !isZip ? 'file must be a ZIP-family container'
+                         : candidates.length === 0 ? 'add candidates to the wordlist first'
+                         : 'start the dictionary attack'}>
+              {attack.status === 'idle' ? '▶ Start attack' : '↻ Run again'}
+            </button>
+          )}
+          {(attack.status === 'running' || attack.status === 'loading') && (
+            <button className="btn"
+                    onClick={stop}
+                    style={{background:'var(--red)', borderColor:'var(--red)', color:'#000'}}>
+              ■ Stop
+            </button>
+          )}
           <span className="muted mono" style={{fontSize:11}}>
             {file && isZip && candidates.length > 0
               ? <>{file.name} · {candidates.length.toLocaleString()} candidates</>
               : 'pick a zip + wordlist to enable'}
           </span>
-          {stubFlash && (
-            <span className="chip chip--warn" style={{fontSize:10}}>
-              attack engine lands in 5b (zip.js integration)
-            </span>
-          )}
         </div>
+
+        {/* Progress bar + status line */}
+        {(attack.status === 'loading' || attack.status === 'running' || attack.tried > 0) && (
+          <div style={{padding:'0 14px 14px'}}>
+            <div style={{height:6, background:'var(--bg-3)', border:'1px solid var(--line-soft)', borderRadius:3, overflow:'hidden', marginBottom:8}}>
+              <div style={{
+                height:'100%',
+                width: attack.total > 0 ? ((attack.tried / attack.total) * 100) + '%' : '0%',
+                background: attack.status === 'success' ? 'var(--safe)'
+                          : attack.status === 'exhausted' ? 'var(--amber)'
+                          : attack.status === 'cancelled' ? 'var(--ink-soft)'
+                          : attack.status === 'error' ? 'var(--red)'
+                          : 'var(--accent)',
+                transition: 'width 120ms linear',
+              }}/>
+            </div>
+            <div className="mono" style={{fontSize:11, color:'var(--ink-soft)', display:'flex', gap:12, flexWrap:'wrap'}}>
+              <span>
+                <b style={{color:'var(--ink)'}}>{attack.tried.toLocaleString()}</b>
+                <span> / {attack.total.toLocaleString()} tried</span>
+              </span>
+              {attack.status === 'running' && attack.current && (
+                <span>
+                  trying <span style={{color:'var(--accent)'}}>{attack.current}</span>
+                </span>
+              )}
+              {attack.status === 'loading' && <span>loading zip.js…</span>}
+              {attack.finishedAt > 0 && attack.startedAt > 0 && (
+                <span>
+                  <span className="muted">elapsed</span>{' '}
+                  {((attack.finishedAt - attack.startedAt) / 1000).toFixed(1)}s
+                  <span className="muted"> · </span>
+                  {attack.tried > 0
+                    ? ((attack.tried / ((attack.finishedAt - attack.startedAt) / 1000)).toFixed(0) + ' pw/s')
+                    : '—'}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Result — password found */}
+        {attack.status === 'success' && (
+          <div style={{padding:'0 14px 14px'}}>
+            <div style={{padding:14, background:'var(--accent-wash)', border:'2px solid var(--safe)', borderRadius:'var(--radius)'}}>
+              <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:10, flexWrap:'wrap'}}>
+                <span className="chip chip--safe" style={{fontSize:11, padding:'4px 10px'}}>
+                  ✓ PASSWORD RECOVERED
+                </span>
+                <span className="muted mono" style={{fontSize:11}}>
+                  after {attack.tried.toLocaleString()} attempt{attack.tried === 1 ? '' : 's'}
+                </span>
+              </div>
+              <div className="mono" style={{
+                fontSize: 16, fontWeight: 600,
+                color:'var(--ink-bright)',
+                padding:'8px 12px', background:'var(--bg-1)',
+                border:'1px solid var(--safe)',
+                borderRadius:2, userSelect:'all',
+                wordBreak:'break-all',
+                marginBottom: 12,
+              }}>
+                {attack.password}
+              </div>
+              <button onClick={() => {
+                try { navigator.clipboard.writeText(attack.password); } catch {}
+              }} className="btn ghost"
+                 style={{fontSize:11}}>⎘ Copy password</button>
+
+              {/* Entry manifest */}
+              {attack.entries.length > 0 && (
+                <div style={{marginTop:16, paddingTop:12, borderTop:'1px dashed var(--line-soft)'}}>
+                  <div className="label" style={{marginBottom:6}}>
+                    Archive contents · {attack.entries.length} entries
+                  </div>
+                  <div style={{
+                    maxHeight: 220, overflowY:'auto',
+                    fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+                    background:'var(--bg-1)', borderRadius:'var(--radius)',
+                    border:'1px solid var(--line-soft)',
+                  }}>
+                    {attack.entries.slice(0, 100).map((e, i) => (
+                      <div key={i} style={{
+                        display:'grid', gridTemplateColumns:'1fr 100px 60px',
+                        gap:10, padding:'5px 10px',
+                        borderBottom:'1px solid var(--line-soft)',
+                        color:'var(--ink)',
+                      }}>
+                        <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={e.filename}>
+                          {e.encrypted
+                            ? <span style={{color:'var(--amber)', marginRight:4}}>🔒</span>
+                            : <span style={{color:'var(--ink-dim)', marginRight:4}}>  </span>}
+                          {e.filename}
+                        </span>
+                        <span className="muted" style={{textAlign:'right'}}>
+                          {e.size != null ? e.size.toLocaleString() + ' B' : '—'}
+                        </span>
+                        <span className="muted">
+                          {e.encrypted ? 'AES' : 'plain'}
+                        </span>
+                      </div>
+                    ))}
+                    {attack.entries.length > 100 && (
+                      <div className="muted" style={{padding:8, textAlign:'center', fontSize:10.5}}>
+                        …{attack.entries.length - 100} more entries not shown
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Result — exhausted / cancelled / error */}
+        {attack.status === 'exhausted' && (
+          <div style={{padding:'0 14px 14px'}}>
+            <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:12}}>
+              <b>Wordlist exhausted.</b> Tried {attack.tried.toLocaleString()} passwords without a match.
+              Try a larger wordlist, or confirm the file is actually passworded (encrypted entries exist).
+            </div>
+          </div>
+        )}
+        {attack.status === 'cancelled' && (
+          <div style={{padding:'0 14px 14px'}}>
+            <div className="note" style={{borderColor:'var(--ink-soft)', background:'var(--bg-2)', color:'var(--ink)', fontSize:12}}>
+              <b>Attack cancelled</b> after {attack.tried.toLocaleString()} attempts.
+            </div>
+          </div>
+        )}
+        {attack.status === 'error' && (
+          <div style={{padding:'0 14px 14px'}}>
+            <div className="note" style={{borderColor:'var(--red)', background:'var(--red-wash)', color:'var(--red)', fontSize:12}}>
+              <b>Error:</b> {attack.error}
+            </div>
+          </div>
+        )}
+
         <div className="muted" style={{padding:'0 14px 14px', fontSize:10.5, lineHeight:1.7}}>
-          Triage-scale only — this is browser-side AES decrypt, not a GPU cluster.
-          Useful for the 'probably a weak password' case; not a replacement for
-          hashcat / john the ripper when you need throughput. Files never leave
-          the browser.
+          Triage-scale only — browser-side AES decrypt, not a GPU cluster. Good for
+          the 'probably a weak password' case; for real throughput, export the hash
+          and run hashcat / john the ripper. Files never leave the browser; zip.js
+          loads from jsDelivr on first attack (~80 KB).
         </div>
       </div>
     </div>
