@@ -8526,17 +8526,276 @@ function irFormatRelative(iso) {
   return new Date(iso).toISOString().slice(0, 10);
 }
 
+// Inline create-user form. Two provisioning modes:
+//  · invite     — generate a magic link the admin shares; the
+//                 invited user accepts via U5 and sets their own
+//                 password. createUser() returns with status=invited
+//                 and an invite_token.
+//  · initial-pw — admin chooses a starting password; user logs in
+//                 with it and hits the A4 forced-change flow.
+function CreateUserForm({ canInvite, onCancel, onCreated }) {
+  const [name,     setName]     = React.useState('');
+  const [email,    setEmail]    = React.useState('');
+  const [role,     setRole]     = React.useState('analyst');
+  const [timezone, setTimezone] = React.useState('browser');
+  const [mode,     setMode]     = React.useState(canInvite ? 'invite' : 'initial-pw');
+  const [pw1, setPw1] = React.useState('');
+  const [pw2, setPw2] = React.useState('');
+  const [err, setErr] = React.useState(null);
+
+  const submit = (e) => {
+    if (e) e.preventDefault();
+    setErr(null);
+    if (!name.trim() && !email.trim()) {
+      return setErr('name or email required');
+    }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      return setErr('email looks malformed');
+    }
+    if (!IR_ROLES[role]) return setErr('pick a role');
+    let default_password;
+    if (mode === 'initial-pw') {
+      const v = irValidatePassword(pw1, pw2);
+      if (!v.ok) return setErr(v.reason);
+      default_password = pw1;
+    }
+    const u = createUser({
+      name: name.trim() || email.trim(),
+      email: email.trim(),
+      role,
+      timezone,
+      default_password,
+    });
+    onCreated(u, { mode });
+  };
+
+  const roleMeta = irRoleMeta(role);
+
+  return (
+    <div style={{
+      padding:14,
+      borderBottom:'1px solid var(--line-soft)',
+      background:'var(--bg-2)',
+    }}>
+      <form onSubmit={submit}
+            style={{
+              display:'grid',
+              gridTemplateColumns:'1fr 1fr',
+              gap:12,
+            }}>
+        <label>
+          <div className="label" style={{marginBottom:4}}>Name</div>
+          <input type="text" value={name} autoFocus
+                 onChange={(e) => setName(e.target.value)}
+                 placeholder="A. Rao"
+                 style={formInputStyle}/>
+        </label>
+        <label>
+          <div className="label" style={{marginBottom:4}}>Email</div>
+          <input type="email" value={email}
+                 onChange={(e) => setEmail(e.target.value)}
+                 placeholder="a.rao@corp.example"
+                 style={formInputStyle}/>
+        </label>
+        <label>
+          <div className="label" style={{marginBottom:4}}>Role</div>
+          <select value={role} onChange={(e) => setRole(e.target.value)} style={formInputStyle}>
+            {Object.entries(IR_ROLES).map(([id, r]) => (
+              <option key={id} value={id}>{r.glyph} {r.label}</option>
+            ))}
+          </select>
+          <div style={{marginTop:4, fontSize:11, color:'var(--ink-soft)', lineHeight:1.5}}>
+            {roleMeta.description}
+          </div>
+        </label>
+        <label>
+          <div className="label" style={{marginBottom:4}}>Timezone</div>
+          <select value={timezone} onChange={(e) => setTimezone(e.target.value)} style={formInputStyle}>
+            {IR_TIMEZONES.map(tz => (
+              <option key={tz.id} value={tz.id}>{tz.label}</option>
+            ))}
+          </select>
+        </label>
+
+        {/* Provisioning mode */}
+        <div style={{gridColumn:'1 / -1', marginTop:4}}>
+          <div className="label" style={{marginBottom:6}}>Initial credential</div>
+          <div style={{display:'flex', gap:2, borderBottom:'1px solid var(--line-soft)'}}>
+            {[
+              ['invite',     'Send invite (magic link)', canInvite, 'users.invite not granted to your role'],
+              ['initial-pw', 'Set initial password',     true,      ''],
+            ].map(([id, label, enabled, hint]) => {
+              const active = mode === id;
+              return (
+                <button key={id} type="button"
+                        disabled={!enabled}
+                        onClick={() => enabled && setMode(id)}
+                        title={enabled ? '' : hint}
+                        style={{
+                          background:'transparent', border:'none',
+                          padding:'8px 12px',
+                          cursor: enabled ? 'pointer' : 'not-allowed',
+                          color: enabled
+                            ? (active ? 'var(--ink-bright)' : 'var(--ink-soft)')
+                            : 'var(--ink-dim)',
+                          borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+                          fontFamily:"'Space Grotesk', sans-serif",
+                          fontWeight: active ? 700 : 500, fontSize:12,
+                        }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {mode === 'invite' && (
+          <div style={{
+            gridColumn:'1 / -1',
+            padding:'10px 12px',
+            background:'var(--bg-1)',
+            border:'1px dashed var(--line-soft)',
+            borderRadius:'var(--radius)',
+            fontSize:11.5, color:'var(--ink-soft)', lineHeight:1.6,
+          }}>
+            A one-time magic link is generated on create · share it via the
+            channel of your choice (Slack, email, password manager). Link
+            carries a <span className="mono">invite_token</span> that lets the
+            user pick their own first password. Token is revoked on first use.
+          </div>
+        )}
+        {mode === 'initial-pw' && (
+          <>
+            <label>
+              <div className="label" style={{marginBottom:4}}>Initial password</div>
+              <input type="password" value={pw1}
+                     onChange={(e) => setPw1(e.target.value)}
+                     placeholder="≥ 10 chars · letter + digit"
+                     autoComplete="new-password"
+                     style={formInputStyle}/>
+            </label>
+            <label>
+              <div className="label" style={{marginBottom:4}}>Confirm</div>
+              <input type="password" value={pw2}
+                     onChange={(e) => setPw2(e.target.value)}
+                     placeholder="re-enter"
+                     autoComplete="new-password"
+                     style={formInputStyle}/>
+            </label>
+            <div style={{gridColumn:'1 / -1', fontSize:11, color:'var(--ink-soft)', lineHeight:1.5}}>
+              User logs in with this password once, then is forced to set their own on first sign-in.
+            </div>
+          </>
+        )}
+
+        {err && (
+          <div style={{
+            gridColumn:'1 / -1',
+            padding:'8px 10px',
+            background:'var(--red-wash)',
+            border:'1px solid var(--threat)',
+            color:'var(--threat)',
+            borderRadius:'var(--radius)',
+            fontSize:12,
+          }}>{err}</div>
+        )}
+
+        <div style={{gridColumn:'1 / -1', display:'flex', gap:8, justifyContent:'flex-end', marginTop:4}}>
+          <button type="button" className="btn ghost" onClick={onCancel} style={{fontSize:12}}>
+            Cancel
+          </button>
+          <button type="submit" className="btn primary" style={{fontSize:12}}>
+            Create user
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+const formInputStyle = {
+  width:'100%', boxSizing:'border-box',
+  padding:'8px 10px', fontSize:12,
+  background:'var(--bg-0)', color:'var(--ink)',
+  border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+  fontFamily:"'JetBrains Mono', monospace",
+};
+
+// Post-create status banner. Shows the new user's invite link +
+// copy button when provisioned via invite; shows a short "user
+// created" acknowledgment otherwise.
+function JustCreatedToast({ payload, onDismiss }) {
+  const { user, mode } = payload;
+  const inviteLink = user.invite_token
+    ? `${location.origin}${location.pathname}#invite=${user.invite_token}`
+    : null;
+  const copy = () => {
+    if (inviteLink) {
+      try { navigator.clipboard.writeText(inviteLink); } catch {}
+    }
+  };
+  return (
+    <div style={{
+      padding:'12px 14px',
+      background:'var(--accent-wash)',
+      borderBottom:'1px solid var(--safe)',
+      display:'flex', alignItems:'flex-start', gap:12, flexWrap:'wrap',
+      fontSize:12,
+    }}>
+      <span className="chip chip--safe" style={{fontSize:10, alignSelf:'center'}}>✓ USER CREATED</span>
+      <div style={{flex:'1 1 300px', minWidth:0}}>
+        <div style={{color:'var(--ink-bright)', fontWeight:600, marginBottom:4}}>
+          {user.name} · {irRoleMeta(user.role).label}
+        </div>
+        {mode === 'invite' && inviteLink ? (
+          <>
+            <div className="muted" style={{fontSize:11, marginBottom:4}}>
+              Share this magic link — it revokes on first use:
+            </div>
+            <div className="mono"
+                 style={{
+                   padding:'6px 8px', background:'var(--bg-0)',
+                   border:'1px solid var(--line-soft)',
+                   borderRadius:'var(--radius)',
+                   fontSize:11, wordBreak:'break-all',
+                   color:'var(--ink-bright)',
+                 }}>
+              {inviteLink}
+            </div>
+          </>
+        ) : (
+          <div className="muted" style={{fontSize:11}}>
+            User can sign in with the initial password you set — they'll be forced to change it on first login.
+          </div>
+        )}
+      </div>
+      <div style={{display:'flex', gap:6}}>
+        {mode === 'invite' && inviteLink && (
+          <button onClick={copy} className="btn ghost" style={{fontSize:11}}>⎘ Copy link</button>
+        )}
+        <button onClick={onDismiss} className="btn ghost" style={{fontSize:11}}>Dismiss</button>
+      </div>
+    </div>
+  );
+}
+
 function UsersSurface() {
   const canView    = useCan('users.view');
   const canCreate  = useCan('users.create');
   const canUpdate  = useCan('users.update');
   const canDisable = useCan('users.disable');
+  const canInvite  = useCan('users.invite');
 
   const users = useUsersList();
   const [search,     setSearch]     = React.useState('');
   const [roleFilter, setRoleFilter] = React.useState('');
   const [statFilter, setStatFilter] = React.useState('');
   const [matrixOpen, setMatrixOpen] = React.useState(false);
+  const [createOpen, setCreateOpen] = React.useState(false);
+  // Freshly-created user's invite payload (non-null immediately
+  // after createUser so the admin can copy the magic link before
+  // the form closes).
+  const [justCreated, setJustCreated] = React.useState(null);
 
   if (!canView) {
     return (
@@ -8634,16 +8893,31 @@ function UsersSurface() {
           </select>
           <button className="btn primary"
                   disabled={!canCreate}
-                  onClick={() => {
-                    // U4 will replace this with a modal. For now
-                    // tell the admin the form isn't wired yet.
-                    window.alert('Create-user form lands in the next commit (U4).');
-                  }}
+                  onClick={() => setCreateOpen(o => !o)}
                   title={canCreate ? 'Create a new user' : 'users.create not granted to your role'}
                   style={{fontSize:12}}>
-            + New user
+            {createOpen ? '× Cancel' : '+ New user'}
           </button>
         </div>
+
+        {/* Inline create-user form · U4 */}
+        {createOpen && canCreate && (
+          <CreateUserForm
+            canInvite={canInvite}
+            onCancel={() => setCreateOpen(false)}
+            onCreated={(u, ctx) => {
+              setCreateOpen(false);
+              setJustCreated({ user: u, ...ctx });
+            }}/>
+        )}
+
+        {/* Post-create toast — shows once, shareable magic link
+            preserved so the admin can copy/paste it without
+            digging through localStorage. */}
+        {justCreated && (
+          <JustCreatedToast payload={justCreated}
+                            onDismiss={() => setJustCreated(null)}/>
+        )}
 
         {/* Table */}
         <div style={{padding:0}}>
