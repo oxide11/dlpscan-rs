@@ -2464,7 +2464,9 @@ const IR_SURFACES = [
   { id: 'export',         workspace: 'evidence',  icon: '↧',  title: 'Export Bundle',    sub: 'package case for handoff' },
   // ── SETTINGS ─────────────────────────────────────────────────
   { id: 'integrations',   workspace: 'settings',  icon: '⇄',  title: 'Integrations',     sub: 'XSOAR · Splunk HEC' },
-  { id: 'ir-settings',    workspace: 'settings',  icon: '⚙',  title: 'Responder Prefs',  sub: 'filters · notifications' },
+  { id: 'ir-users',       workspace: 'settings',  icon: '◇',  title: 'Users & Roles',    sub: 'invite · disable · role matrix' },
+  { id: 'ir-auth',        workspace: 'settings',  icon: '⛨',  title: 'Authentication',   sub: 'password · SAML · passkeys' },
+  { id: 'ir-settings',    workspace: 'settings',  icon: '⚙',  title: 'My Profile',       sub: 'timezone · notifications · change password' },
   { id: 'ir-deployment',  workspace: 'settings',  icon: '⚿',  title: 'Pod Registry',     sub: 'shared with admin console' },
   { id: 'ir-engineering', workspace: 'settings',  icon: '⌁',  title: 'Engineering',      sub: 'demo data · dev toggles' },
 ];
@@ -2512,10 +2514,220 @@ function Topbar({ tweaks, setTweak, openPlaybooks }) {
          style={{fontSize:11, textDecoration:'none'}}>
         ⇄ admin
       </a>
-      <span className="tb-user">IR analyst</span>
+      <TopbarUser />
     </div>
   );
 }
+
+// Identity slot in the topbar — clicking opens a dropdown with:
+//   · who you are (name · email · role)
+//   · "My profile" nav link
+//   · impersonation sub-list (admins only; reads the full user
+//     roster and lets an admin pose as anyone for demos)
+//   · "Sign out"
+// The impersonation list is gated on users.view, not a separate
+// users.impersonate permission — if you can see the roster, you
+// can switch seats. Production would replace this with real
+// identity signals from the IdP.
+function TopbarUser() {
+  const [open, setOpen] = React.useState(false);
+  const [showAll, setShowAll] = React.useState(false);
+  const [, setTick] = React.useState(0);
+  const btnRef = React.useRef(null);
+  const menuRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const refresh = () => setTick(t => t + 1);
+    window.addEventListener('ir:currentUserChanged', refresh);
+    window.addEventListener('ir:usersChanged',       refresh);
+    window.addEventListener('ir:sessionChanged',     refresh);
+    return () => {
+      window.removeEventListener('ir:currentUserChanged', refresh);
+      window.removeEventListener('ir:usersChanged',       refresh);
+      window.removeEventListener('ir:sessionChanged',     refresh);
+    };
+  }, []);
+
+  // Click-outside + Escape close
+  React.useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      if (btnRef.current  && btnRef.current.contains(e.target))  return;
+      setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown',   onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown',   onKey);
+    };
+  }, [open]);
+
+  const user = getCurrentUser();
+  if (!user) return <span className="tb-user">guest</span>;
+  const role = irRoleMeta(user.role);
+
+  const logout = () => {
+    setOpen(false);
+    if (typeof window.__ir_logout === 'function') window.__ir_logout();
+  };
+  const goToProfile = () => {
+    setOpen(false);
+    if (typeof window.__ir_go === 'function') window.__ir_go('ir-settings');
+  };
+
+  // Impersonation: admin clicks a user in the list, we swap
+  // ir:currentUserId + write a fresh session tied to that id.
+  // This is a demo-time convenience — prod deployments should
+  // require a step-up auth + audit log.
+  const canImpersonate = canDo(user, 'users.view');
+  const impersonate = (target) => {
+    if (!target || target.id === user.id) { setOpen(false); return; }
+    setCurrentUser(target.id);
+    writeSession(target.id);
+    setOpen(false);
+  };
+
+  const otherUsers = canImpersonate
+    ? readUsers().filter(u => u.status !== 'disabled' && u.id !== user.id)
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    : [];
+  const shownOthers = showAll ? otherUsers : otherUsers.slice(0, 6);
+
+  return (
+    <span style={{display:'flex', alignItems:'center', gap:8, position:'relative'}}>
+      <button ref={btnRef}
+              type="button"
+              onClick={() => setOpen(o => !o)}
+              title={role.label + ' · click for menu'}
+              className="tb-user"
+              style={{
+                display:'flex', alignItems:'center', gap:6,
+                background:'transparent', border:'none', cursor:'pointer',
+                fontFamily:'inherit', fontSize:'inherit', color:'inherit',
+                padding:'4px 8px',
+                borderRadius:'var(--radius)',
+                outline: open ? '1px solid var(--line-strong)' : 'none',
+              }}>
+        <span style={{color: role.color, fontSize:11}}>{role.glyph}</span>
+        <span>{user.name}</span>
+        <span style={{fontSize:9, color:'var(--ink-soft)', marginLeft:2}}>
+          {open ? '▲' : '▼'}
+        </span>
+      </button>
+
+      {open && (
+        <div ref={menuRef}
+             style={{
+               position:'absolute', top:'calc(100% + 6px)', right:0,
+               minWidth:260, maxWidth:320,
+               background:'var(--bg-1)',
+               border:'1px solid var(--line-strong)',
+               borderRadius:'var(--radius)',
+               boxShadow:'0 10px 30px rgba(0,0,0,0.4)',
+               zIndex:1000,
+               padding:0,
+               fontSize:12,
+             }}>
+          {/* Identity header */}
+          <div style={{
+            padding:'12px 14px',
+            borderBottom:'1px solid var(--line-soft)',
+          }}>
+            <div style={{color:'var(--ink-bright)', fontWeight:700, fontSize:13, marginBottom:2}}>
+              {user.name}
+            </div>
+            <div className="mono" style={{fontSize:10.5, color:'var(--ink-soft)'}}>
+              {user.email || user.id}
+            </div>
+            <div style={{marginTop:6}}>
+              <span className="chip"
+                    style={{
+                      fontSize:10, padding:'2px 8px',
+                      borderColor: role.color, color: role.color,
+                      background:'var(--bg-2)',
+                    }}>
+                {role.glyph} {role.label}
+              </span>
+            </div>
+          </div>
+
+          {/* Nav items */}
+          <button onClick={goToProfile} className="menu-item"
+                  style={menuItemStyle}>
+            <span style={{marginRight:8}}>⚙</span>My profile
+          </button>
+
+          {/* Impersonation */}
+          {canImpersonate && otherUsers.length > 0 && (
+            <div style={{
+              borderTop:'1px solid var(--line-soft)',
+              padding:'8px 0',
+            }}>
+              <div style={{
+                padding:'2px 14px 6px',
+                fontSize:10, letterSpacing:'0.08em',
+                color:'var(--ink-soft)',
+                fontFamily:"'Space Grotesk', sans-serif",
+                fontWeight:600, textTransform:'uppercase',
+              }}>
+                Switch user (demo)
+              </div>
+              {shownOthers.map(u => {
+                const r = irRoleMeta(u.role);
+                return (
+                  <button key={u.id}
+                          onClick={() => impersonate(u)}
+                          style={{
+                            ...menuItemStyle,
+                            display:'flex', alignItems:'center', gap:8,
+                          }}>
+                    <span style={{color:r.color, width:12, textAlign:'center', fontSize:11}}>
+                      {r.glyph}
+                    </span>
+                    <span style={{flex:1, color:'var(--ink)'}}>{u.name}</span>
+                    <span className="mono" style={{fontSize:10, color:'var(--ink-dim)'}}>
+                      {u.role}
+                    </span>
+                  </button>
+                );
+              })}
+              {otherUsers.length > shownOthers.length && (
+                <button onClick={() => setShowAll(true)}
+                        style={{
+                          ...menuItemStyle,
+                          color:'var(--accent)', fontSize:11,
+                        }}>
+                  + show {otherUsers.length - shownOthers.length} more
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Sign out */}
+          <div style={{borderTop:'1px solid var(--line-soft)'}}>
+            <button onClick={logout} style={{
+              ...menuItemStyle,
+              color:'var(--threat)',
+            }}>
+              <span style={{marginRight:8}}>⏻</span>Sign out
+            </button>
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
+
+const menuItemStyle = {
+  display:'block', width:'100%', textAlign:'left',
+  background:'transparent', border:'none',
+  padding:'9px 14px', cursor:'pointer',
+  color:'var(--ink)', fontSize:12,
+  fontFamily:"'Space Grotesk', sans-serif",
+};
 
 // Console chip — IR-flavoured equivalent of siphon-c2's DeploymentChip.
 // Red accent so the operator instantly knows this is the IR console,
@@ -3103,7 +3315,12 @@ function FindingsQueue() {
     return c;
   }, [all, dispo]);
 
-  const fmtTs = (ts) => ts ? ts.replace('T', ' ').replace('Z', '').slice(0, 19) : '—';
+  // Route through the TZ-aware formatter so profile-timezone
+  // changes land across every row without each call site doing
+  // the Intl dance. useUserTzTick() gives us a re-render when
+  // the current user swaps TZ.
+  useUserTzTick();
+  const fmtTs = (ts) => irFormatTimestamp(ts);
 
   return (
     <div style={{padding:'var(--gap)'}}>
@@ -3113,6 +3330,7 @@ function FindingsQueue() {
           <span className="k" style={{display:'flex', alignItems:'center', gap:8}}>
             <window.LivePill source={findings.source} onClick={findings.refetch}
                              title="click to refetch across all pods" />
+            <TzLabel />
             <span className="mono" style={{fontSize:11}}>
               {filtered.length} shown · {all.length} loaded
               {findings.data && findings.data.total > all.length ? ` · ${findings.data.total} in ring` : ''}
@@ -5135,7 +5353,12 @@ function FindingDetail({ id, back }) {
   const ctx = deriveContext(f);
   const d = dispo[f.id];
 
-  const fmtTs = (ts) => ts ? ts.replace('T', ' ').replace('Z', '').slice(0, 19) : '—';
+  // Route through the TZ-aware formatter so profile-timezone
+  // changes land across every row without each call site doing
+  // the Intl dance. useUserTzTick() gives us a re-render when
+  // the current user swaps TZ.
+  useUserTzTick();
+  const fmtTs = (ts) => irFormatTimestamp(ts);
 
   const dispose = (kind, extra) => {
     const note = notesDraft.trim() || (d && d.notes) || '';
@@ -8433,12 +8656,1051 @@ const SURFACE_COMPONENTS = {
   export:         () => <Stub title="Export Bundle"
                               description="Package a case into a zip for handoff (findings JSON, extracted text, exhibits, custody log, signed manifest)." />,
   integrations:   () => <IntegrationsSurface />,
-  'ir-settings':  () => <Stub title="Responder Preferences"
-                              description="Default queue filters, notification channels, team membership, theme." />,
+  'ir-users':     () => <UsersSurface />,
+  'ir-auth':      () => <AuthenticationSurface />,
+  'ir-settings':  () => <ProfileSurface />,
   'ir-deployment':() => <Stub title="Pod Registry"
                               description="Shared with the admin console — registered pods appear in both. Edits under Settings → Deployment on siphon-c2.html." />,
   'ir-engineering': () => <EngineeringSurface />,
 };
+
+// ─── Settings → Users & Roles · U3 ─────────────────────────────
+// List of every User record on this tenant + a collapsible role
+// matrix. Gated on canDo('users.view') — viewers and analysts see
+// the "access denied" panel; admins + engineers pass through.
+// Write actions (invite, create, disable, role change) carry
+// their own canDo gates at the button level so a viewer accidentally
+// handed the surface never hits a destructive control.
+
+// Tiny hook over the users list so rows reflect CRUD from anywhere
+// in the console (admin impersonation menu, invite accept, etc.).
+function useUsersList() {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => setTick(t => t + 1);
+    window.addEventListener('ir:usersChanged', refresh);
+    window.addEventListener('storage', (e) => {
+      if (e.key === IR_USERS_KEY) refresh();
+    });
+    return () => {
+      window.removeEventListener('ir:usersChanged', refresh);
+    };
+  }, []);
+  return readUsers();
+}
+
+function irFormatRelative(iso) {
+  if (!iso) return '—';
+  const then = new Date(iso).getTime();
+  if (!then || Number.isNaN(then)) return '—';
+  const diff = Date.now() - then;
+  if (diff < 0) return 'just now';
+  const mins = Math.floor(diff / 60e3);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return mins + 'm ago';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ago';
+  const days = Math.floor(hrs / 24);
+  if (days < 14) return days + 'd ago';
+  return new Date(iso).toISOString().slice(0, 10);
+}
+
+// Inline create-user form. Two provisioning modes:
+//  · invite     — generate a magic link the admin shares; the
+//                 invited user accepts via U5 and sets their own
+//                 password. createUser() returns with status=invited
+//                 and an invite_token.
+//  · initial-pw — admin chooses a starting password; user logs in
+//                 with it and hits the A4 forced-change flow.
+function CreateUserForm({ canInvite, onCancel, onCreated }) {
+  const [name,     setName]     = React.useState('');
+  const [email,    setEmail]    = React.useState('');
+  const [role,     setRole]     = React.useState('analyst');
+  const [timezone, setTimezone] = React.useState('browser');
+  const [mode,     setMode]     = React.useState(canInvite ? 'invite' : 'initial-pw');
+  const [pw1, setPw1] = React.useState('');
+  const [pw2, setPw2] = React.useState('');
+  const [err, setErr] = React.useState(null);
+
+  const submit = (e) => {
+    if (e) e.preventDefault();
+    setErr(null);
+    if (!name.trim() && !email.trim()) {
+      return setErr('name or email required');
+    }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      return setErr('email looks malformed');
+    }
+    if (!IR_ROLES[role]) return setErr('pick a role');
+    let default_password;
+    if (mode === 'initial-pw') {
+      const v = irValidatePassword(pw1, pw2);
+      if (!v.ok) return setErr(v.reason);
+      default_password = pw1;
+    }
+    const u = createUser({
+      name: name.trim() || email.trim(),
+      email: email.trim(),
+      role,
+      timezone,
+      default_password,
+    });
+    onCreated(u, { mode });
+  };
+
+  const roleMeta = irRoleMeta(role);
+
+  return (
+    <div style={{
+      padding:14,
+      borderBottom:'1px solid var(--line-soft)',
+      background:'var(--bg-2)',
+    }}>
+      <form onSubmit={submit}
+            style={{
+              display:'grid',
+              gridTemplateColumns:'1fr 1fr',
+              gap:12,
+            }}>
+        <label>
+          <div className="label" style={{marginBottom:4}}>Name</div>
+          <input type="text" value={name} autoFocus
+                 onChange={(e) => setName(e.target.value)}
+                 placeholder="A. Rao"
+                 style={formInputStyle}/>
+        </label>
+        <label>
+          <div className="label" style={{marginBottom:4}}>Email</div>
+          <input type="email" value={email}
+                 onChange={(e) => setEmail(e.target.value)}
+                 placeholder="a.rao@corp.example"
+                 style={formInputStyle}/>
+        </label>
+        <label>
+          <div className="label" style={{marginBottom:4}}>Role</div>
+          <select value={role} onChange={(e) => setRole(e.target.value)} style={formInputStyle}>
+            {Object.entries(IR_ROLES).map(([id, r]) => (
+              <option key={id} value={id}>{r.glyph} {r.label}</option>
+            ))}
+          </select>
+          <div style={{marginTop:4, fontSize:11, color:'var(--ink-soft)', lineHeight:1.5}}>
+            {roleMeta.description}
+          </div>
+        </label>
+        <label>
+          <div className="label" style={{marginBottom:4}}>Timezone</div>
+          <select value={timezone} onChange={(e) => setTimezone(e.target.value)} style={formInputStyle}>
+            {IR_TIMEZONES.map(tz => (
+              <option key={tz.id} value={tz.id}>{tz.label}</option>
+            ))}
+          </select>
+        </label>
+
+        {/* Provisioning mode */}
+        <div style={{gridColumn:'1 / -1', marginTop:4}}>
+          <div className="label" style={{marginBottom:6}}>Initial credential</div>
+          <div style={{display:'flex', gap:2, borderBottom:'1px solid var(--line-soft)'}}>
+            {[
+              ['invite',     'Send invite (magic link)', canInvite, 'users.invite not granted to your role'],
+              ['initial-pw', 'Set initial password',     true,      ''],
+            ].map(([id, label, enabled, hint]) => {
+              const active = mode === id;
+              return (
+                <button key={id} type="button"
+                        disabled={!enabled}
+                        onClick={() => enabled && setMode(id)}
+                        title={enabled ? '' : hint}
+                        style={{
+                          background:'transparent', border:'none',
+                          padding:'8px 12px',
+                          cursor: enabled ? 'pointer' : 'not-allowed',
+                          color: enabled
+                            ? (active ? 'var(--ink-bright)' : 'var(--ink-soft)')
+                            : 'var(--ink-dim)',
+                          borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+                          fontFamily:"'Space Grotesk', sans-serif",
+                          fontWeight: active ? 700 : 500, fontSize:12,
+                        }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {mode === 'invite' && (
+          <div style={{
+            gridColumn:'1 / -1',
+            padding:'10px 12px',
+            background:'var(--bg-1)',
+            border:'1px dashed var(--line-soft)',
+            borderRadius:'var(--radius)',
+            fontSize:11.5, color:'var(--ink-soft)', lineHeight:1.6,
+          }}>
+            A one-time magic link is generated on create · share it via the
+            channel of your choice (Slack, email, password manager). Link
+            carries a <span className="mono">invite_token</span> that lets the
+            user pick their own first password. Token is revoked on first use.
+          </div>
+        )}
+        {mode === 'initial-pw' && (
+          <>
+            <label>
+              <div className="label" style={{marginBottom:4}}>Initial password</div>
+              <input type="password" value={pw1}
+                     onChange={(e) => setPw1(e.target.value)}
+                     placeholder="≥ 10 chars · letter + digit"
+                     autoComplete="new-password"
+                     style={formInputStyle}/>
+            </label>
+            <label>
+              <div className="label" style={{marginBottom:4}}>Confirm</div>
+              <input type="password" value={pw2}
+                     onChange={(e) => setPw2(e.target.value)}
+                     placeholder="re-enter"
+                     autoComplete="new-password"
+                     style={formInputStyle}/>
+            </label>
+            <div style={{gridColumn:'1 / -1', fontSize:11, color:'var(--ink-soft)', lineHeight:1.5}}>
+              User logs in with this password once, then is forced to set their own on first sign-in.
+            </div>
+          </>
+        )}
+
+        {err && (
+          <div style={{
+            gridColumn:'1 / -1',
+            padding:'8px 10px',
+            background:'var(--red-wash)',
+            border:'1px solid var(--threat)',
+            color:'var(--threat)',
+            borderRadius:'var(--radius)',
+            fontSize:12,
+          }}>{err}</div>
+        )}
+
+        <div style={{gridColumn:'1 / -1', display:'flex', gap:8, justifyContent:'flex-end', marginTop:4}}>
+          <button type="button" className="btn ghost" onClick={onCancel} style={{fontSize:12}}>
+            Cancel
+          </button>
+          <button type="submit" className="btn primary" style={{fontSize:12}}>
+            Create user
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+const formInputStyle = {
+  width:'100%', boxSizing:'border-box',
+  padding:'8px 10px', fontSize:12,
+  background:'var(--bg-0)', color:'var(--ink)',
+  border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+  fontFamily:"'JetBrains Mono', monospace",
+};
+
+// Post-create status banner. Shows the new user's invite link +
+// copy button when provisioned via invite; shows a short "user
+// created" acknowledgment otherwise.
+function JustCreatedToast({ payload, onDismiss }) {
+  const { user, mode } = payload;
+  const inviteLink = user.invite_token
+    ? `${location.origin}${location.pathname}#invite=${user.invite_token}`
+    : null;
+  const copy = () => {
+    if (inviteLink) {
+      try { navigator.clipboard.writeText(inviteLink); } catch {}
+    }
+  };
+  return (
+    <div style={{
+      padding:'12px 14px',
+      background:'var(--accent-wash)',
+      borderBottom:'1px solid var(--safe)',
+      display:'flex', alignItems:'flex-start', gap:12, flexWrap:'wrap',
+      fontSize:12,
+    }}>
+      <span className="chip chip--safe" style={{fontSize:10, alignSelf:'center'}}>✓ USER CREATED</span>
+      <div style={{flex:'1 1 300px', minWidth:0}}>
+        <div style={{color:'var(--ink-bright)', fontWeight:600, marginBottom:4}}>
+          {user.name} · {irRoleMeta(user.role).label}
+        </div>
+        {mode === 'invite' && inviteLink ? (
+          <>
+            <div className="muted" style={{fontSize:11, marginBottom:4}}>
+              Share this magic link — it revokes on first use:
+            </div>
+            <div className="mono"
+                 style={{
+                   padding:'6px 8px', background:'var(--bg-0)',
+                   border:'1px solid var(--line-soft)',
+                   borderRadius:'var(--radius)',
+                   fontSize:11, wordBreak:'break-all',
+                   color:'var(--ink-bright)',
+                 }}>
+              {inviteLink}
+            </div>
+          </>
+        ) : (
+          <div className="muted" style={{fontSize:11}}>
+            User can sign in with the initial password you set — they'll be forced to change it on first login.
+          </div>
+        )}
+      </div>
+      <div style={{display:'flex', gap:6}}>
+        {mode === 'invite' && inviteLink && (
+          <button onClick={copy} className="btn ghost" style={{fontSize:11}}>⎘ Copy link</button>
+        )}
+        <button onClick={onDismiss} className="btn ghost" style={{fontSize:11}}>Dismiss</button>
+      </div>
+    </div>
+  );
+}
+
+function UsersSurface() {
+  const canView    = useCan('users.view');
+  const canCreate  = useCan('users.create');
+  const canUpdate  = useCan('users.update');
+  const canDisable = useCan('users.disable');
+  const canInvite  = useCan('users.invite');
+
+  const users = useUsersList();
+  const [search,     setSearch]     = React.useState('');
+  const [roleFilter, setRoleFilter] = React.useState('');
+  const [statFilter, setStatFilter] = React.useState('');
+  const [matrixOpen, setMatrixOpen] = React.useState(false);
+  const [createOpen, setCreateOpen] = React.useState(false);
+  // Freshly-created user's invite payload (non-null immediately
+  // after createUser so the admin can copy the magic link before
+  // the form closes).
+  const [justCreated, setJustCreated] = React.useState(null);
+
+  if (!canView) {
+    return (
+      <div style={{padding:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Users & Roles</span>
+            <span className="k">
+              <span className="chip chip--red" style={{fontSize:10}}>PERMISSION DENIED</span>
+            </span>
+          </div>
+          <div style={{padding:20, fontSize:12.5, lineHeight:1.7, color:'var(--ink-soft)'}}>
+            Your role (<span className="mono">{(getCurrentUser() || {}).role || 'unknown'}</span>)
+            doesn't carry <span className="mono">users.view</span>. Ask an administrator
+            if you need access to user management.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const filtered = users.filter(u => {
+    if (roleFilter && u.role !== roleFilter) return false;
+    if (statFilter && u.status !== statFilter) return false;
+    if (search) {
+      const q = search.trim().toLowerCase();
+      if (!(
+           (u.name  || '').toLowerCase().includes(q)
+        || (u.email || '').toLowerCase().includes(q)
+        || (u.id    || '').toLowerCase().includes(q)
+      )) return false;
+    }
+    return true;
+  }).sort((a, b) => {
+    // Keep invited rows pinned so the admin spots pending onboards.
+    const ra = a.status === 'invited' ? 0 : 1;
+    const rb = b.status === 'invited' ? 0 : 1;
+    if (ra !== rb) return ra - rb;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
+  return (
+    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Users & Roles</span>
+          <span className="k mono" style={{fontSize:11}}>
+            {users.length} total · {users.filter(u => u.status === 'active').length} active ·{' '}
+            {users.filter(u => u.status === 'invited').length} invited
+          </span>
+        </div>
+
+        {/* Toolbar */}
+        <div style={{
+          display:'flex', gap:10, padding:'12px 14px',
+          borderBottom:'1px solid var(--line-soft)', flexWrap:'wrap',
+        }}>
+          <input type="search"
+                 value={search}
+                 onChange={(e) => setSearch(e.target.value)}
+                 placeholder="search name / email / id…"
+                 style={{
+                   flex:'1 1 240px', minWidth:200,
+                   padding:'7px 10px', fontSize:12,
+                   background:'var(--bg-1)', color:'var(--ink)',
+                   border:'1px solid var(--line-strong)',
+                   borderRadius:'var(--radius)',
+                   fontFamily:"'JetBrains Mono', monospace",
+                 }}/>
+          <select value={roleFilter}
+                  onChange={(e) => setRoleFilter(e.target.value)}
+                  style={{
+                    padding:'7px 10px', fontSize:12,
+                    background:'var(--bg-1)', color:'var(--ink)',
+                    border:'1px solid var(--line-strong)',
+                    borderRadius:'var(--radius)',
+                  }}>
+            <option value="">All roles</option>
+            {Object.entries(IR_ROLES).map(([id, r]) => (
+              <option key={id} value={id}>{r.glyph} {r.label}</option>
+            ))}
+          </select>
+          <select value={statFilter}
+                  onChange={(e) => setStatFilter(e.target.value)}
+                  style={{
+                    padding:'7px 10px', fontSize:12,
+                    background:'var(--bg-1)', color:'var(--ink)',
+                    border:'1px solid var(--line-strong)',
+                    borderRadius:'var(--radius)',
+                  }}>
+            <option value="">All statuses</option>
+            <option value="active">Active</option>
+            <option value="invited">Invited</option>
+            <option value="disabled">Disabled</option>
+          </select>
+          <button className="btn primary"
+                  disabled={!canCreate}
+                  onClick={() => setCreateOpen(o => !o)}
+                  title={canCreate ? 'Create a new user' : 'users.create not granted to your role'}
+                  style={{fontSize:12}}>
+            {createOpen ? '× Cancel' : '+ New user'}
+          </button>
+        </div>
+
+        {/* Inline create-user form · U4 */}
+        {createOpen && canCreate && (
+          <CreateUserForm
+            canInvite={canInvite}
+            onCancel={() => setCreateOpen(false)}
+            onCreated={(u, ctx) => {
+              setCreateOpen(false);
+              setJustCreated({ user: u, ...ctx });
+            }}/>
+        )}
+
+        {/* Post-create toast — shows once, shareable magic link
+            preserved so the admin can copy/paste it without
+            digging through localStorage. */}
+        {justCreated && (
+          <JustCreatedToast payload={justCreated}
+                            onDismiss={() => setJustCreated(null)}/>
+        )}
+
+        {/* Table */}
+        <div style={{padding:0}}>
+          <div style={{
+            display:'grid',
+            gridTemplateColumns:'auto 1.4fr 1fr 110px 120px 120px',
+            gap:0,
+            fontSize:11, color:'var(--ink-soft)',
+            padding:'8px 14px',
+            borderBottom:'1px solid var(--line-soft)',
+            background:'var(--bg-2)',
+            fontFamily:"'Space Grotesk', sans-serif",
+            fontWeight:600, letterSpacing:'0.05em', textTransform:'uppercase',
+          }}>
+            <div></div>
+            <div>Name</div>
+            <div>Email / ID</div>
+            <div>Role</div>
+            <div>Status</div>
+            <div>Last active</div>
+          </div>
+          {filtered.map(u => {
+            const role = irRoleMeta(u.role);
+            return (
+              <div key={u.id}
+                   style={{
+                     display:'grid',
+                     gridTemplateColumns:'auto 1.4fr 1fr 110px 120px 120px',
+                     gap:0,
+                     alignItems:'center',
+                     padding:'10px 14px',
+                     borderBottom:'1px solid var(--line-soft)',
+                     fontSize:12,
+                   }}>
+                <div style={{
+                  width:28, height:28, borderRadius:'50%',
+                  background:'var(--bg-2)',
+                  border:'1px solid var(--line-strong)',
+                  color:'var(--ink)',
+                  display:'grid', placeItems:'center',
+                  fontSize:10, fontFamily:"'JetBrains Mono', monospace",
+                  fontWeight:700, marginRight:12,
+                }}>{u.avatar || '??'}</div>
+                <div>
+                  <div style={{color:'var(--ink-bright)', fontWeight:600}}>{u.name}</div>
+                  <div className="mono" style={{fontSize:10, color:'var(--ink-dim)'}}>{u.id}</div>
+                </div>
+                <div className="mono" style={{fontSize:11, color:'var(--ink)'}}>
+                  {u.email || <span className="muted">—</span>}
+                </div>
+                <div>
+                  <span className="chip"
+                        style={{
+                          fontSize:10,
+                          borderColor:role.color, color:role.color,
+                          background:'var(--bg-1)',
+                        }}>
+                    {role.glyph} {role.label}
+                  </span>
+                </div>
+                <div>
+                  <span className={'chip chip--' + (
+                    u.status === 'active' ? 'safe'
+                    : u.status === 'invited' ? 'warn'
+                    : 'red')}
+                        style={{fontSize:10}}>
+                    {u.status.toUpperCase()}
+                  </span>
+                </div>
+                <div style={{
+                  fontSize:11, color:'var(--ink-soft)',
+                  fontFamily:"'JetBrains Mono', monospace",
+                }}>
+                  {u.status === 'invited'
+                    ? <span style={{color:'var(--amber)'}}>invited {irFormatRelative(u.invited_at)}</span>
+                    : irFormatRelative(u.last_active)}
+                </div>
+              </div>
+            );
+          })}
+          {filtered.length === 0 && (
+            <div style={{padding:24, textAlign:'center', color:'var(--ink-soft)', fontSize:12}}>
+              No users match the current filters.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Permission matrix · roles × actions */}
+      <div className="box">
+        <div className="box-title" onClick={() => setMatrixOpen(o => !o)}
+             style={{cursor:'pointer', userSelect:'none'}}>
+          <span className="t">Permission matrix</span>
+          <span className="k">
+            <span className="mono" style={{fontSize:11}}>
+              {matrixOpen ? '▼' : '▶'} {irAllPermissions().length} actions × {Object.keys(IR_ROLES).length} roles
+            </span>
+          </span>
+        </div>
+        {matrixOpen && (
+          <div style={{padding:14, overflowX:'auto'}}>
+            <table style={{
+              borderCollapse:'collapse', fontSize:11,
+              fontFamily:"'JetBrains Mono', monospace",
+              minWidth:'100%',
+            }}>
+              <thead>
+                <tr>
+                  <th style={{
+                    textAlign:'left', padding:'8px 12px',
+                    color:'var(--ink-soft)', fontWeight:600,
+                    borderBottom:'1px solid var(--line-strong)',
+                  }}>action</th>
+                  {Object.entries(IR_ROLES).map(([id, r]) => (
+                    <th key={id}
+                        style={{
+                          padding:'8px 12px',
+                          color:r.color, fontWeight:700,
+                          borderBottom:'1px solid var(--line-strong)',
+                          textAlign:'center', whiteSpace:'nowrap',
+                        }}
+                        title={r.description}>
+                      {r.glyph} {id}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {irAllPermissions().map(action => (
+                  <tr key={action}>
+                    <td style={{
+                      padding:'6px 12px',
+                      color:'var(--ink)',
+                      borderBottom:'1px solid var(--line-soft)',
+                    }}>{action}</td>
+                    {Object.keys(IR_ROLES).map(id => {
+                      const yes = canDo(id, action);
+                      return (
+                        <td key={id}
+                            style={{
+                              padding:'6px 12px',
+                              textAlign:'center',
+                              color: yes ? 'var(--safe)' : 'var(--ink-dim)',
+                              borderBottom:'1px solid var(--line-soft)',
+                            }}
+                            title={yes ? id + ' can ' + action : id + ' cannot ' + action}>
+                          {yes ? '●' : '·'}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Settings → Authentication · A5 ────────────────────────────
+// Status board for the console's authentication methods. Password
+// auth is wired (A1-A4) — SAML/Entra ID and Passkeys (WebAuthn)
+// are scoped as backlog items here so there's a named home for
+// them when they ship, and so current users can see at a glance
+// which paths are live.
+function AuthenticationSurface() {
+  const methods = [
+    {
+      id: 'password',
+      title: 'Password',
+      status: 'live',
+      summary: 'Email + password via PBKDF2-SHA256 (100k iters · salted per-user). WebCrypto-backed; runs entirely in the browser for the wireframe.',
+      details: [
+        ['Hash algo',     'PBKDF2-SHA256'],
+        ['Iterations',    String(IR_PBKDF2_ITERS)],
+        ['Policy floor',  '≥ 10 chars · letter + digit'],
+        ['Session TTL',   '12 h (rolling, not sliding)'],
+        ['Rotation',      'on-demand via Profile · enforced on seeded defaults'],
+      ],
+    },
+    {
+      id: 'saml-entra',
+      title: 'Entra ID · SAML 2.0',
+      status: 'backlog',
+      summary: 'SP-initiated SSO against Microsoft Entra ID (formerly Azure AD). Metadata exchange, certificate pinning, SCIM user provisioning.',
+      details: [
+        ['Flow',          'SP-initiated · AuthnRequest → IdP login → SAMLResponse'],
+        ['Metadata',      'published at /auth/saml/metadata (not wired)'],
+        ['Claim map',     'NameID→email · role from groups'],
+        ['Provisioning',  'SCIM 2.0 for just-in-time account create'],
+        ['Session bridge', 'exchange SAML assertion for ir:session cookie'],
+      ],
+    },
+    {
+      id: 'passkeys',
+      title: 'Passkeys · WebAuthn',
+      status: 'backlog',
+      summary: 'Platform + roaming authenticators via the WebAuthn API. Users register one or more passkeys against their account; login prompts the platform authenticator (Touch ID, Windows Hello, security key).',
+      details: [
+        ['Standard',       'WebAuthn L3 · FIDO2'],
+        ['Register',       'navigator.credentials.create({publicKey:…})'],
+        ['Login',          'navigator.credentials.get({publicKey:…})'],
+        ['Storage',        'per-user array of {credentialId, publicKey, counter}'],
+        ['Fallback',       'password still available if no passkeys registered'],
+      ],
+    },
+  ];
+
+  return (
+    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Authentication methods</span>
+          <span className="k mono" style={{fontSize:11}}>local-only wireframe · server-backed deployment replaces this</span>
+        </div>
+        <div style={{padding:14, display:'grid', gap:14}}>
+          {methods.map(m => (
+            <div key={m.id}
+                 style={{
+                   padding:14,
+                   background:'var(--bg-1)',
+                   border:'1px solid var(--line-soft)',
+                   borderRadius:'var(--radius)',
+                 }}>
+              <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:8, flexWrap:'wrap'}}>
+                <div style={{
+                  fontFamily:"'Space Grotesk', sans-serif", fontSize:15,
+                  fontWeight:700, color:'var(--ink-bright)',
+                }}>{m.title}</div>
+                <span className={'chip chip--' + (m.status === 'live' ? 'safe' : 'ghost')}
+                      style={{fontSize:10, padding:'3px 8px'}}>
+                  {m.status === 'live' ? '● LIVE' : '◯ BACKLOG'}
+                </span>
+              </div>
+              <div style={{fontSize:12, lineHeight:1.7, color:'var(--ink)', marginBottom:10}}>
+                {m.summary}
+              </div>
+              <div style={{
+                display:'grid',
+                gridTemplateColumns:'170px 1fr',
+                gap:'4px 14px',
+                fontSize:11.5,
+              }}>
+                {m.details.map(([k, v], i) => (
+                  <React.Fragment key={i}>
+                    <div className="label" style={{color:'var(--ink-soft)', padding:'2px 0'}}>{k}</div>
+                    <div className="mono" style={{color:'var(--ink)', padding:'2px 0'}}>{v}</div>
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Roadmap notes</span>
+          <span className="k mono" style={{fontSize:11}}>reserved slots</span>
+        </div>
+        <div style={{padding:14, fontSize:12, lineHeight:1.7, color:'var(--ink)'}}>
+          <ul style={{margin:0, paddingLeft:18}}>
+            <li>SAML wire target: <span className="mono">/auth/saml/initiate</span>,{' '}
+                <span className="mono">/auth/saml/acs</span>,{' '}
+                <span className="mono">/auth/saml/metadata</span> — parallel paths added
+                to siphon-api alongside the existing password handler.</li>
+            <li>Passkeys: per-user <span className="mono">credentials</span> array on the
+                User record; challenge/response ceremony stored server-side under a
+                short-lived key to prevent replay.</li>
+            <li>Downgrade policy: Passkey + SAML deploys will default to
+                <i> password disabled</i> for covered users — opt-in break-glass pw
+                only for administrators who specifically request it.</li>
+            <li>Audit: every auth event (login success/fail, pw change, passkey
+                register, SAML exchange) writes to <span className="mono">ir:auth-audit</span>{' '}
+                (future) so the Chain-of-Custody surface can cross-reference.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Settings → My Profile · U6 ────────────────────────────────
+// Self-service form for the currently signed-in user. Lets them
+// change display name / timezone / theme / notification prefs /
+// password without touching the admin-only Users surface.
+function ProfileSurface() {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => setTick(t => t + 1);
+    window.addEventListener('ir:currentUserChanged', refresh);
+    window.addEventListener('ir:usersChanged',       refresh);
+    return () => {
+      window.removeEventListener('ir:currentUserChanged', refresh);
+      window.removeEventListener('ir:usersChanged',       refresh);
+    };
+  }, []);
+  const user = getCurrentUser();
+  if (!user) {
+    return <Stub title="Not signed in" description="No profile to edit." />;
+  }
+  const role = irRoleMeta(user.role);
+  const settings = user.settings || defaultUserSettings();
+
+  // Identity form · editable display name (email and role stay
+  // read-only from this surface — admin changes those via Users).
+  const [name, setName]   = React.useState(user.name);
+  const [dirty, setDirty] = React.useState(false);
+  React.useEffect(() => { setName(user.name); setDirty(false); }, [user.id, tick]);
+  const saveName = () => {
+    updateUser(user.id, { name: name.trim() || user.name });
+    setDirty(false);
+  };
+
+  // Preferences and notifications mutate the .settings sub-object.
+  const setSetting = (patch) => updateCurrentUserSettings(patch);
+  const toggleNotif = (key) => setSetting({
+    notifications: { ...settings.notifications, [key]: !settings.notifications[key] },
+  });
+
+  const [changePwOpen, setChangePwOpen] = React.useState(false);
+
+  return (
+    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
+      {/* Identity */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Identity</span>
+          <span className="k mono" style={{fontSize:11}}>{user.id}</span>
+        </div>
+        <div style={{padding:16, display:'grid', gridTemplateColumns:'90px 1fr', gap:14, alignItems:'start'}}>
+          <div style={{
+            width:80, height:80, borderRadius:'50%',
+            background:'var(--bg-2)',
+            border:'1px solid var(--line-strong)',
+            color:'var(--ink-bright)',
+            display:'grid', placeItems:'center',
+            fontSize:24, fontFamily:"'JetBrains Mono', monospace",
+            fontWeight:700,
+          }}>{user.avatar || (user.name || '?').slice(0, 2).toUpperCase()}</div>
+          <div style={{display:'grid', gap:10}}>
+            <label>
+              <div className="label" style={{marginBottom:4}}>Display name</div>
+              <input type="text" value={name}
+                     onChange={(e) => { setName(e.target.value); setDirty(true); }}
+                     style={formInputStyle}/>
+            </label>
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
+              <div>
+                <div className="label" style={{marginBottom:4}}>Email</div>
+                <div className="mono" style={{
+                  padding:'8px 10px', fontSize:12,
+                  background:'var(--bg-2)',
+                  border:'1px dashed var(--line-soft)',
+                  borderRadius:'var(--radius)',
+                  color:'var(--ink)',
+                }}>{user.email || '—'}</div>
+              </div>
+              <div>
+                <div className="label" style={{marginBottom:4}}>Role</div>
+                <div style={{padding:'6px 10px'}}>
+                  <span className="chip"
+                        title={role.description}
+                        style={{
+                          fontSize:11, padding:'3px 10px',
+                          borderColor:role.color, color:role.color,
+                          background:'var(--bg-1)',
+                        }}>
+                    {role.glyph} {role.label}
+                  </span>
+                </div>
+              </div>
+            </div>
+            {dirty && (
+              <div style={{display:'flex', gap:8}}>
+                <button className="btn primary" onClick={saveName} style={{fontSize:12}}>
+                  Save changes
+                </button>
+                <button className="btn ghost"
+                        onClick={() => { setName(user.name); setDirty(false); }}
+                        style={{fontSize:12}}>
+                  Discard
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Preferences */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Preferences</span>
+          <span className="k mono" style={{fontSize:11}}>timezone · theme · density</span>
+        </div>
+        <div style={{padding:16, display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:14}}>
+          <label>
+            <div className="label" style={{marginBottom:4}}>Timezone</div>
+            <select value={settings.timezone || 'browser'}
+                    onChange={(e) => setSetting({ timezone: e.target.value })}
+                    style={formInputStyle}>
+              {IR_TIMEZONES.map(tz => (
+                <option key={tz.id} value={tz.id}>{tz.label}</option>
+              ))}
+            </select>
+            <div style={{marginTop:4, fontSize:11, color:'var(--ink-soft)', lineHeight:1.5}}>
+              U8 wires this into every displayed timestamp.
+            </div>
+          </label>
+          <label>
+            <div className="label" style={{marginBottom:4}}>Theme</div>
+            <select value={settings.theme || ''}
+                    onChange={(e) => setSetting({ theme: e.target.value || null })}
+                    style={formInputStyle}>
+              <option value="">Follow global</option>
+              <option value="phosphor">Phosphor (green)</option>
+              <option value="amber">Amber</option>
+              <option value="ice">Ice</option>
+              <option value="light">Day (light)</option>
+            </select>
+            <div style={{marginTop:4, fontSize:11, color:'var(--ink-soft)', lineHeight:1.5}}>
+              Per-user override for the topbar theme switcher.
+            </div>
+          </label>
+          <label>
+            <div className="label" style={{marginBottom:4}}>Density</div>
+            <select value={settings.density || ''}
+                    onChange={(e) => setSetting({ density: e.target.value || null })}
+                    style={formInputStyle}>
+              <option value="">Follow global</option>
+              <option value="compact">Compact</option>
+              <option value="cozy">Cozy</option>
+              <option value="comfy">Comfy</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      {/* Notifications */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Notifications</span>
+          <span className="k mono" style={{fontSize:11}}>local-only · no server-backed delivery yet</span>
+        </div>
+        <div style={{padding:4}}>
+          {[
+            ['new_finding',     'New finding lands on a subscribed pod'],
+            ['my_assignment',   'A finding is assigned to me'],
+            ['fp_submission',   'FP queue item I submitted is reviewed'],
+            ['escalation_done', 'My XSOAR escalation completes'],
+            ['playbook_update', 'A playbook I use is updated'],
+          ].map(([key, label]) => {
+            const on = !!(settings.notifications || {})[key];
+            return (
+              <div key={key}
+                   style={{
+                     display:'flex', alignItems:'center',
+                     padding:'10px 14px',
+                     borderBottom:'1px solid var(--line-soft)',
+                     fontSize:12,
+                   }}>
+                <div style={{flex:1, color:'var(--ink)'}}>{label}</div>
+                <button onClick={() => toggleNotif(key)}
+                        style={{
+                          width:44, height:22, borderRadius:11,
+                          border:'1px solid ' + (on ? 'var(--safe)' : 'var(--line-strong)'),
+                          background: on ? 'var(--safe)' : 'var(--bg-2)',
+                          cursor:'pointer', padding:0, position:'relative',
+                          transition:'background 150ms',
+                        }}
+                        title={on ? 'on · click to turn off' : 'off · click to turn on'}>
+                  <span style={{
+                    position:'absolute', top:1, left: on ? 23 : 1,
+                    width:18, height:18, borderRadius:'50%',
+                    background: on ? '#000' : 'var(--ink-soft)',
+                    transition:'left 150ms',
+                  }}/>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Security */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Security</span>
+          <span className="k mono" style={{fontSize:11}}>
+            {user.auth
+              ? 'last changed ' + irFormatRelative(user.auth.last_changed)
+              : 'no password set · admin invite pending'}
+          </span>
+        </div>
+        <div style={{padding:14}}>
+          {!changePwOpen && (
+            <button className="btn primary"
+                    onClick={() => setChangePwOpen(true)}
+                    style={{fontSize:12}}>
+              Change password
+            </button>
+          )}
+          {changePwOpen && (
+            <ChangePasswordForm user={user}
+                                onDone={() => setChangePwOpen(false)}
+                                onCancel={() => setChangePwOpen(false)}/>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChangePasswordForm({ user, onDone, onCancel }) {
+  const [cur, setCur] = React.useState('');
+  const [pw1, setPw1] = React.useState('');
+  const [pw2, setPw2] = React.useState('');
+  const [err, setErr] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [success, setSuccess] = React.useState(false);
+
+  const submit = async (e) => {
+    if (e) e.preventDefault();
+    setErr(null);
+    setSuccess(false);
+    const v = irValidatePassword(pw1, pw2);
+    if (!v.ok) return setErr(v.reason);
+    setBusy(true);
+    // Verify the current password. Skip the check if the user
+    // still has the default seed password — they're not really
+    // "changing" at that point, just setting for real.
+    let currentOk = true;
+    if (user.auth) {
+      currentOk = await irVerifyPassword(cur, user.auth);
+    } else if (user.default_password) {
+      currentOk = cur === user.default_password;
+    }
+    if (!currentOk) {
+      setBusy(false);
+      return setErr('current password is wrong');
+    }
+    await irSetPassword(user.id, pw1);
+    setBusy(false);
+    setSuccess(true);
+    setTimeout(() => onDone(), 900);
+  };
+
+  return (
+    <form onSubmit={submit} style={{display:'grid', gap:10, maxWidth:420}}>
+      <label>
+        <div className="label" style={{marginBottom:4}}>Current password</div>
+        <input type="password" value={cur} autoFocus
+               onChange={(e) => setCur(e.target.value)}
+               autoComplete="current-password"
+               style={formInputStyle}/>
+      </label>
+      <label>
+        <div className="label" style={{marginBottom:4}}>New password</div>
+        <input type="password" value={pw1}
+               onChange={(e) => setPw1(e.target.value)}
+               autoComplete="new-password"
+               placeholder="≥ 10 chars · letter + digit"
+               style={formInputStyle}/>
+      </label>
+      <label>
+        <div className="label" style={{marginBottom:4}}>Confirm new password</div>
+        <input type="password" value={pw2}
+               onChange={(e) => setPw2(e.target.value)}
+               autoComplete="new-password"
+               style={formInputStyle}/>
+      </label>
+      {err && (
+        <div style={{
+          padding:'8px 10px',
+          background:'var(--red-wash)',
+          border:'1px solid var(--threat)',
+          color:'var(--threat)',
+          borderRadius:'var(--radius)',
+          fontSize:12,
+        }}>{err}</div>
+      )}
+      {success && (
+        <div style={{
+          padding:'8px 10px',
+          background:'var(--accent-wash)',
+          border:'1px solid var(--safe)',
+          color:'var(--safe)',
+          borderRadius:'var(--radius)',
+          fontSize:12,
+        }}>✓ Password updated</div>
+      )}
+      <div style={{display:'flex', gap:8}}>
+        <button type="submit" className="btn primary" disabled={busy} style={{fontSize:12}}>
+          {busy ? 'saving…' : 'Update password'}
+        </button>
+        <button type="button" className="btn ghost" onClick={onCancel} style={{fontSize:12}}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
 
 // ─── Settings → Engineering ─────────────────────────────────────
 // Developer-facing toggles. Primary MVP tenant: the demo-data
@@ -8621,6 +9883,63 @@ function irRoleMeta(id) {
   return IR_ROLES[id] || { label: id, glyph: '?', color: 'var(--ink-soft)', description: '', permissions: [] };
 }
 
+// ─── Permission helpers · U2 ───────────────────────────────────
+// canDo(user | role, action) is the single entry point surfaces
+// use to gate UI. All checks route through it so a future move to
+// server-backed decisions only needs to replace this function.
+//
+// Accepts either:
+//   · a user record (reads .role + any per-user .extra_permissions)
+//   · a role id string ('admin' / 'analyst' / 'viewer' / 'engineer')
+//   · null (treated as no permissions)
+//
+// Permission strings are verb.resource, e.g. 'findings.dispose',
+// 'users.invite'. Unknown actions always return false — surfaces
+// should prefer tight action names over catch-all wildcards so
+// new permissions are explicitly added to each role.
+function canDo(userOrRole, action) {
+  if (!userOrRole || !action) return false;
+  let role;
+  let extras = [];
+  if (typeof userOrRole === 'string') {
+    role = userOrRole;
+  } else {
+    role = userOrRole.role;
+    if (Array.isArray(userOrRole.extra_permissions)) {
+      extras = userOrRole.extra_permissions;
+    }
+  }
+  const meta = IR_ROLES[role];
+  if (!meta) return false;
+  return meta.permissions.includes(action) || extras.includes(action);
+}
+
+// Full enumeration across IR_ROLES for the permission-matrix UI
+// in U3. Returns a sorted deduplicated list.
+function irAllPermissions() {
+  const s = new Set();
+  Object.values(IR_ROLES).forEach(r => r.permissions.forEach(p => s.add(p)));
+  return [...s].sort();
+}
+
+// Hook variant for components that gate on the CURRENT signed-in
+// user. Re-renders on ir:currentUserChanged / ir:usersChanged
+// (impersonation, role edit, etc.) so surfaces don't cache a
+// stale role.
+function useCan(action) {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => setTick(t => t + 1);
+    window.addEventListener('ir:currentUserChanged', refresh);
+    window.addEventListener('ir:usersChanged',       refresh);
+    return () => {
+      window.removeEventListener('ir:currentUserChanged', refresh);
+      window.removeEventListener('ir:usersChanged',       refresh);
+    };
+  }, []);
+  return canDo(getCurrentUser(), action);
+}
+
 // Timezone catalogue — short list covering the regions analysts
 // commonly work from. Enough for the profile picker in U6; users
 // can pick their browser-detected default too.
@@ -8767,7 +10086,14 @@ function seedUsers() {
       invite_token: 'tok_' + Math.random().toString(36).slice(2, 10),
       settings: defaultUserSettings(),
     },
-  ];
+  ].map(u => u.status === 'invited'
+    // Invited users have no password until they accept; the
+    // invite_token is their gating credential.
+    ? u
+    // Active seed users share a single default password so the
+    // demo login page can surface one clear hint. A4 forces a
+    // change on first login, which swaps this for a real hash.
+    : { ...u, default_password: IR_SEED_DEFAULT_PASSWORD, must_change_password: true });
 }
 
 function readUsers() {
@@ -8806,7 +10132,7 @@ function setCurrentUser(id) {
 
 // CRUD helpers — surface code uses these so nobody reaches into
 // the raw array.
-function createUser({ name, email, role, timezone }) {
+function createUser({ name, email, role, timezone, default_password }) {
   const users = readUsers();
   const id = 'u-' + (email || name || Math.random().toString(36)).toLowerCase()
     .replace(/[^a-z0-9]+/g, '-').slice(0, 40) + '-' + Math.random().toString(36).slice(2, 6);
@@ -8823,6 +10149,14 @@ function createUser({ name, email, role, timezone }) {
     invite_token: 'tok_' + Math.random().toString(36).slice(2, 10),
     settings: { ...defaultUserSettings(), timezone: timezone || 'browser' },
   };
+  // Admin-set initial password (optional). When present, the
+  // new user logs in with it directly and is forced to change
+  // on first login. When absent, they must use the invite_token
+  // (magic link) to set their first password.
+  if (default_password) {
+    u.default_password = default_password;
+    u.must_change_password = true;
+  }
   writeUsers([...users, u]);
   return u;
 }
@@ -8842,6 +10176,295 @@ function updateCurrentUserSettings(patch) {
   return updateUser(cur.id, {
     settings: { ...cur.settings, ...patch },
   });
+}
+
+// ─── Timezone formatter · U8 ───────────────────────────────────
+// Reads the current user's settings.timezone and formats any ISO
+// timestamp accordingly. Uses Intl.DateTimeFormat so DST is
+// handled correctly; falls back to browser default on 'browser'
+// or on invalid IANA ids.
+function irGetCurrentUserTz() {
+  try {
+    const u = getCurrentUser();
+    const tz = u && u.settings && u.settings.timezone;
+    return tz && tz !== 'browser' ? tz : null;
+  } catch { return null; }
+}
+function irFormatTimestamp(iso, opts) {
+  if (!iso) return '—';
+  const d = iso instanceof Date ? iso : new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const style = (opts && opts.style) || 'datetime';
+  const tz    = (opts && 'tz' in opts) ? opts.tz : irGetCurrentUserTz();
+  try {
+    const fmtOpts = style === 'date'
+      ? { year: 'numeric', month: '2-digit', day: '2-digit' }
+      : { year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+    if (tz) fmtOpts.timeZone = tz;
+    // en-CA gives YYYY-MM-DD and 24 h time — canonical and
+    // parse-able, which is what analysts want when comparing
+    // across pods.
+    return new Intl.DateTimeFormat('en-CA', fmtOpts).format(d).replace(', ', ' ');
+  } catch {
+    return (typeof iso === 'string' ? iso : d.toISOString())
+      .replace('T', ' ').replace('Z', '').slice(0, 19);
+  }
+}
+
+// Re-render trigger for surfaces that want their timestamps to
+// follow the user's current TZ setting without a manual refresh.
+// Components call this once (discard the return value); the tick
+// bumps whenever ir:currentUserChanged / ir:usersChanged fires,
+// forcing a re-render where irFormatTimestamp runs again.
+function useUserTzTick() {
+  const [, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => setTick(t => t + 1);
+    window.addEventListener('ir:currentUserChanged', refresh);
+    window.addEventListener('ir:usersChanged',       refresh);
+    return () => {
+      window.removeEventListener('ir:currentUserChanged', refresh);
+      window.removeEventListener('ir:usersChanged',       refresh);
+    };
+  }, []);
+}
+
+// Small chip component surfaces can drop into their box-title
+// kicker. Tells the analyst which TZ the shown timestamps sit in
+// so a quick glance distinguishes "stored in UTC" from "shown in
+// my Asia/Singapore profile".
+function TzLabel() {
+  useUserTzTick();
+  const tz = irGetCurrentUserTz();
+  return (
+    <span className="mono" style={{fontSize:10, color:'var(--ink-dim)'}}>
+      times · {tz || 'browser'}
+    </span>
+  );
+}
+
+// ─── Password primitives · A1 ──────────────────────────────────
+// PBKDF2-SHA256 via WebCrypto. 100k iterations is what the demo
+// uses — slow enough to resist casual brute-force, fast enough
+// that login feels instant (~60 ms on a laptop). Seeded users
+// carry a plain `default_password` that the login flow accepts
+// on first login before swapping it out for a real hash on
+// forced change (wired in A4).
+const IR_PBKDF2_ITERS = 100000;
+
+function __b64(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s);
+}
+function __unb64(s) {
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function irPasswordHash(password, saltBytes, iters) {
+  const salt = saltBytes || crypto.getRandomValues(new Uint8Array(16));
+  const i = iters || IR_PBKDF2_ITERS;
+  const enc = new TextEncoder();
+  const keyMat = await crypto.subtle.importKey(
+    'raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveBits'],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: i, hash: 'SHA-256' },
+    keyMat, 256,
+  );
+  return {
+    algo: 'PBKDF2-SHA256',
+    iters: i,
+    salt: __b64(salt),
+    hash: __b64(new Uint8Array(bits)),
+    last_changed: new Date().toISOString(),
+  };
+}
+
+// Timing-safe-ish byte compare. JS can't do this truly constant-
+// time without heroics, but the OR-accumulator at least won't
+// short-circuit on the first mismatch.
+function __bytesEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+async function irVerifyPassword(password, rec) {
+  if (!rec || !rec.salt || !rec.hash) return false;
+  const salt  = __unb64(rec.salt);
+  const want  = __unb64(rec.hash);
+  const check = await irPasswordHash(password, salt, rec.iters || IR_PBKDF2_ITERS);
+  return __bytesEqual(__unb64(check.hash), want);
+}
+
+// Every seeded user starts with this default password; the login
+// page surfaces it in a "demo credentials" hint. A4 forces a
+// change on first login which replaces default_password with a
+// real PBKDF2 hash.
+const IR_SEED_DEFAULT_PASSWORD = 'ChangeMe!2026';
+
+// Login check used by the login page (A2). Returns one of:
+//   { ok: true, user }
+//   { ok: false, reason: 'no-such-user' | 'wrong-password' | 'disabled' | 'invited' }
+// If the user logs in with their seed default password, the
+// caller should send them through the forced-change flow (A4).
+async function irAuthenticate(emailOrId, password) {
+  const users = readUsers();
+  const needle = (emailOrId || '').trim().toLowerCase();
+  const user = users.find(u =>
+       (u.email || '').toLowerCase() === needle
+    || (u.id    || '').toLowerCase() === needle
+    || (u.name  || '').toLowerCase() === needle,
+  );
+  if (!user) return { ok: false, reason: 'no-such-user' };
+  if (user.status === 'disabled') return { ok: false, reason: 'disabled', user };
+  if (user.status === 'invited' && !user.auth && !user.default_password) {
+    return { ok: false, reason: 'invited', user };
+  }
+  if (user.auth) {
+    const ok = await irVerifyPassword(password, user.auth);
+    return ok ? { ok: true, user } : { ok: false, reason: 'wrong-password', user };
+  }
+  if (user.default_password && password === user.default_password) {
+    return { ok: true, user, default_password_used: true };
+  }
+  return { ok: false, reason: 'wrong-password', user };
+}
+
+// Password-policy check. Deliberately loose for a wireframe — the
+// actual floor for a production deployment would be enforced by
+// the server. Returns { ok: true } or { ok: false, reason }.
+function irValidatePassword(pw, confirm) {
+  if (typeof pw !== 'string' || pw.length < 10) {
+    return { ok: false, reason: 'password must be at least 10 characters' };
+  }
+  if (!/[A-Za-z]/.test(pw) || !/[0-9]/.test(pw)) {
+    return { ok: false, reason: 'password must include at least one letter and one digit' };
+  }
+  if (pw === IR_SEED_DEFAULT_PASSWORD) {
+    return { ok: false, reason: "can't reuse the seeded default password" };
+  }
+  if (confirm != null && pw !== confirm) {
+    return { ok: false, reason: "the two passwords don't match" };
+  }
+  return { ok: true };
+}
+
+// Invite token parsed from the URL's hash (#invite=TOKEN). Used
+// to gate the InviteAcceptPage before the normal LoginPage gate.
+// Reading from hash (not query string) keeps the token out of
+// server-access logs if this ever ships behind a real web server.
+function irReadInviteTokenFromUrl() {
+  try {
+    const h = (typeof location !== 'undefined' && location.hash) || '';
+    const m = h.match(/(?:^|[#&])invite=([^&]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch { return null; }
+}
+function irClearInviteTokenFromUrl() {
+  try {
+    const h = (typeof location !== 'undefined' && location.hash) || '';
+    const cleaned = h.replace(/(?:^#?|&)invite=[^&]+/, '');
+    const next = cleaned && cleaned !== '#' ? cleaned : '';
+    history.replaceState(null, '', location.pathname + location.search + next);
+  } catch {}
+}
+
+// Accept an invite by swapping the token for a real password.
+// Returns { ok: true, user } or { ok: false, reason }. Clears
+// invite_token on success so the link can't be replayed.
+async function irAcceptInvite(token, newPassword) {
+  if (!token) return { ok: false, reason: 'missing token' };
+  const users = readUsers();
+  const user = users.find(u => u.invite_token === token);
+  if (!user) return { ok: false, reason: 'no such invite · already accepted or expired' };
+  if (user.status === 'disabled') return { ok: false, reason: 'invite is for a disabled account' };
+  const v = irValidatePassword(newPassword);
+  if (!v.ok) return { ok: false, reason: v.reason };
+  await irSetPassword(user.id, newPassword);
+  // Re-read since irSetPassword writes through readUsers/writeUsers.
+  const fresh = readUsers().map(u => u.id === user.id
+    ? { ...u, invite_token: undefined, status: 'active',
+        joined_at: u.joined_at || new Date().toISOString() }
+    : u);
+  writeUsers(fresh);
+  return { ok: true, user: fresh.find(u => u.id === user.id) };
+}
+
+// Replace a user's password with a fresh PBKDF2 hash. Clears
+// default_password and must_change_password so re-login doesn't
+// keep nagging. Async because hashing is async.
+async function irSetPassword(userId, newPassword) {
+  const rec = await irPasswordHash(newPassword);
+  const users = readUsers();
+  const next = users.map(u => u.id === userId
+    ? { ...u, auth: rec, default_password: undefined, must_change_password: false,
+        joined_at: u.joined_at || new Date().toISOString(),
+        status: u.status === 'invited' ? 'active' : u.status }
+    : u);
+  writeUsers(next);
+  return next.find(u => u.id === userId) || null;
+}
+
+// ─── Session helpers · A3 ──────────────────────────────────────
+// Minimal session model — just enough to gate the app behind
+// login. Real deployments would back this with an HttpOnly cookie
+// from siphon-api, but since this file is the wireframe we keep
+// it in localStorage so the whole flow is inspectable.
+const IR_SESSION_KEY = 'ir:session';
+const IR_SESSION_TTL_MS = 12 * 3600 * 1000; // 12 hours
+
+function readSession() {
+  try {
+    const raw = localStorage.getItem(IR_SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (!s || !s.userId || !s.expiresAt) return null;
+    if (Date.now() > new Date(s.expiresAt).getTime()) {
+      localStorage.removeItem(IR_SESSION_KEY);
+      return null;
+    }
+    return s;
+  } catch { return null; }
+}
+function writeSession(userId, ttlMs) {
+  const ttl = ttlMs || IR_SESSION_TTL_MS;
+  const now = Date.now();
+  const s = {
+    userId,
+    issuedAt:  new Date(now).toISOString(),
+    expiresAt: new Date(now + ttl).toISOString(),
+  };
+  try { localStorage.setItem(IR_SESSION_KEY, JSON.stringify(s)); } catch {}
+  window.dispatchEvent(new CustomEvent('ir:sessionChanged'));
+  return s;
+}
+function clearSession() {
+  try { localStorage.removeItem(IR_SESSION_KEY); } catch {}
+  window.dispatchEvent(new CustomEvent('ir:sessionChanged'));
+}
+
+// Hook: returns the session record + listener so the app re-
+// renders when a login / logout happens in this tab OR another.
+function useSession() {
+  const [session, setSession] = React.useState(() => readSession());
+  React.useEffect(() => {
+    const refresh = () => setSession(readSession());
+    window.addEventListener('ir:sessionChanged', refresh);
+    window.addEventListener('storage', (e) => {
+      if (e.key === IR_SESSION_KEY) refresh();
+    });
+    return () => {
+      window.removeEventListener('ir:sessionChanged', refresh);
+    };
+  }, []);
+  return session;
 }
 
 // ─── Playbooks · data + markdown renderer ──────────────────────
@@ -9343,7 +10966,484 @@ const TWEAK_DEFAULTS = {
   nav: 'split',
 };
 
+// ─── LoginPage · A2 ────────────────────────────────────────────
+// Full-page gate shown when no valid session is present. Takes an
+// `onLogin(user)` callback the App wires up to write the session
+// + redirect the user into the console. PBKDF2 hashing is async,
+// so the form shows a loading state during verification.
+function LoginPage({ onLogin }) {
+  const [email,    setEmail]    = React.useState('');
+  const [password, setPassword] = React.useState('');
+  const [err,      setErr]      = React.useState(null);
+  const [busy,     setBusy]     = React.useState(false);
+
+  const submit = async (e) => {
+    if (e) e.preventDefault();
+    setErr(null);
+    if (!email.trim())    return setErr('email required');
+    if (!password)        return setErr('password required');
+    setBusy(true);
+    const res = await irAuthenticate(email, password);
+    setBusy(false);
+    if (!res.ok) {
+      if (res.reason === 'no-such-user')   return setErr('No user with that email / id');
+      if (res.reason === 'wrong-password') return setErr('Wrong password');
+      if (res.reason === 'disabled')       return setErr('This account is disabled · contact an administrator');
+      if (res.reason === 'invited')        return setErr('This account is pending · use the invite link to set a password');
+      return setErr('Login failed');
+    }
+    onLogin(res.user, { default_password_used: !!res.default_password_used });
+  };
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      background: 'var(--bg-0)',
+      display: 'grid', placeItems: 'center',
+      padding: '32px',
+    }}>
+      <form onSubmit={submit}
+            style={{
+              width: '100%', maxWidth: 420,
+              background: 'var(--bg-1)',
+              border: '1px solid var(--line-strong)',
+              borderRadius: 'var(--radius)',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.35)',
+              padding: '28px 28px 22px',
+              fontFamily: "'Space Grotesk', sans-serif",
+            }}>
+        {/* Brand */}
+        <div style={{marginBottom:22}}>
+          <div style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 12, color:'var(--accent)', letterSpacing:'0.1em',
+          }}>POLYGON</div>
+          <div style={{
+            fontSize: 28, fontWeight: 700, color:'var(--ink-bright)',
+            letterSpacing: '-0.01em', marginTop: 2,
+          }}>siphon · IR</div>
+          <div style={{
+            fontSize: 12, color:'var(--ink-soft)', marginTop: 8, lineHeight:1.5,
+          }}>
+            Incident-response console · sign in with your corporate account
+          </div>
+        </div>
+
+        {/* Email */}
+        <label style={{display:'block', marginBottom:12}}>
+          <div className="label" style={{marginBottom:4}}>Email</div>
+          <input type="text"
+                 value={email}
+                 onChange={(e) => setEmail(e.target.value)}
+                 autoComplete="username"
+                 autoFocus
+                 placeholder="you@corp.example"
+                 style={{
+                   width:'100%', boxSizing:'border-box',
+                   padding:'10px 12px', fontSize: 13,
+                   background:'var(--bg-0)', color:'var(--ink)',
+                   border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                   fontFamily:"'JetBrains Mono', monospace",
+                 }}/>
+        </label>
+
+        {/* Password */}
+        <label style={{display:'block', marginBottom:14}}>
+          <div className="label" style={{marginBottom:4}}>Password</div>
+          <input type="password"
+                 value={password}
+                 onChange={(e) => setPassword(e.target.value)}
+                 autoComplete="current-password"
+                 placeholder="••••••••••"
+                 style={{
+                   width:'100%', boxSizing:'border-box',
+                   padding:'10px 12px', fontSize: 13,
+                   background:'var(--bg-0)', color:'var(--ink)',
+                   border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                   fontFamily:"'JetBrains Mono', monospace",
+                 }}/>
+        </label>
+
+        {err && (
+          <div style={{
+            padding:'8px 10px', marginBottom:12,
+            background:'var(--red-wash)',
+            border:'1px solid var(--threat)',
+            color:'var(--threat)',
+            borderRadius:'var(--radius)',
+            fontSize:12,
+          }}>{err}</div>
+        )}
+
+        <button type="submit"
+                className="btn primary"
+                disabled={busy}
+                style={{width:'100%', padding:'10px 0', fontSize:13, fontWeight:600}}>
+          {busy ? 'signing in…' : 'Sign in'}
+        </button>
+
+        {/* Future-auth stubs — wired in A5 */}
+        <div style={{
+          marginTop:16, paddingTop:16,
+          borderTop:'1px dashed var(--line-soft)',
+          display:'flex', gap:8, flexDirection:'column',
+        }}>
+          <button type="button"
+                  className="btn ghost"
+                  disabled
+                  title="Entra ID (SAML) — backlog · not wired yet"
+                  style={{width:'100%', padding:'9px 0', fontSize:12, opacity:0.55}}>
+            Sign in with Entra ID (SAML) · soon
+          </button>
+          <button type="button"
+                  className="btn ghost"
+                  disabled
+                  title="Passkeys (WebAuthn) — backlog · not wired yet"
+                  style={{width:'100%', padding:'9px 0', fontSize:12, opacity:0.55}}>
+            Sign in with a passkey · soon
+          </button>
+        </div>
+
+        {/* Demo hint — only while the user roster still has seeded
+            default passwords. Reads readUsers() once on mount so
+            a user who's changed their password doesn't see the
+            stale "ChangeMe!2026" hint stuck on screen. */}
+        <LoginDemoHint />
+
+        <div style={{
+          marginTop:14, fontSize:10.5, color:'var(--ink-dim)',
+          textAlign:'center', lineHeight:1.6,
+        }}>
+          Sessions expire after 12 h · all auth state is local to this browser
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ─── InviteAcceptPage · U5 ─────────────────────────────────────
+// Full-page form shown when the URL carries #invite=TOKEN and the
+// visitor isn't already signed in. Resolves the token to a User
+// record on mount (displays name + role so the acceptor can tell
+// they've been sent to the right place), then swaps the token
+// for a real password + immediately logs them in.
+function InviteAcceptPage({ token, onAccepted }) {
+  const [matchedUser, setMatchedUser] = React.useState(() => {
+    try { return readUsers().find(u => u.invite_token === token) || null; }
+    catch { return null; }
+  });
+  const [pw1, setPw1] = React.useState('');
+  const [pw2, setPw2] = React.useState('');
+  const [err, setErr] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+
+  const submit = async (e) => {
+    if (e) e.preventDefault();
+    setErr(null);
+    const v = irValidatePassword(pw1, pw2);
+    if (!v.ok) return setErr(v.reason);
+    setBusy(true);
+    const res = await irAcceptInvite(token, pw1);
+    setBusy(false);
+    if (!res.ok) return setErr(res.reason);
+    onAccepted(res.user);
+  };
+
+  const role = matchedUser ? irRoleMeta(matchedUser.role) : null;
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      background: 'var(--bg-0)',
+      display: 'grid', placeItems: 'center',
+      padding: '32px',
+    }}>
+      <form onSubmit={submit}
+            style={{
+              width: '100%', maxWidth: 460,
+              background: 'var(--bg-1)',
+              border: '1px solid var(--line-strong)',
+              borderRadius: 'var(--radius)',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.35)',
+              padding: '28px 28px 22px',
+              fontFamily: "'Space Grotesk', sans-serif",
+            }}>
+        <div style={{marginBottom:20}}>
+          <div style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize:11, color:'var(--accent)', letterSpacing:'0.1em',
+          }}>ACCEPT INVITE</div>
+          <div style={{
+            fontSize:22, fontWeight:700, color:'var(--ink-bright)',
+            letterSpacing:'-0.01em', marginTop:4,
+          }}>Set your password</div>
+          {matchedUser ? (
+            <div style={{fontSize:12, color:'var(--ink-soft)', marginTop:10, lineHeight:1.6}}>
+              This invite provisions{' '}
+              <span className="mono" style={{color:'var(--ink)'}}>{matchedUser.email || matchedUser.name}</span>
+              {' '}as{' '}
+              <span className="chip"
+                    style={{
+                      fontSize:10, padding:'2px 8px',
+                      borderColor: role.color, color: role.color,
+                      background:'var(--bg-1)',
+                    }}>{role.glyph} {role.label}</span>.
+              Pick a password to activate the account.
+            </div>
+          ) : (
+            <div style={{
+              fontSize:12, color:'var(--threat)',
+              marginTop:10, padding:'8px 10px',
+              background:'var(--red-wash)',
+              border:'1px solid var(--threat)',
+              borderRadius:'var(--radius)',
+            }}>
+              This invite link isn't valid — it's been accepted already, or the
+              token was revoked. Ask an administrator for a new invite.
+            </div>
+          )}
+        </div>
+
+        {matchedUser && (
+          <>
+            <label style={{display:'block', marginBottom:12}}>
+              <div className="label" style={{marginBottom:4}}>New password</div>
+              <input type="password" value={pw1} autoFocus
+                     onChange={(e) => setPw1(e.target.value)}
+                     autoComplete="new-password"
+                     placeholder="≥ 10 chars · letters + digits"
+                     style={{
+                       width:'100%', boxSizing:'border-box',
+                       padding:'10px 12px', fontSize:13,
+                       background:'var(--bg-0)', color:'var(--ink)',
+                       border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                       fontFamily:"'JetBrains Mono', monospace",
+                     }}/>
+            </label>
+            <label style={{display:'block', marginBottom:14}}>
+              <div className="label" style={{marginBottom:4}}>Confirm password</div>
+              <input type="password" value={pw2}
+                     onChange={(e) => setPw2(e.target.value)}
+                     autoComplete="new-password"
+                     placeholder="re-enter the same password"
+                     style={{
+                       width:'100%', boxSizing:'border-box',
+                       padding:'10px 12px', fontSize:13,
+                       background:'var(--bg-0)', color:'var(--ink)',
+                       border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                       fontFamily:"'JetBrains Mono', monospace",
+                     }}/>
+            </label>
+
+            {err && (
+              <div style={{
+                padding:'8px 10px', marginBottom:12,
+                background:'var(--red-wash)',
+                border:'1px solid var(--threat)',
+                color:'var(--threat)',
+                borderRadius:'var(--radius)',
+                fontSize:12,
+              }}>{err}</div>
+            )}
+
+            <button type="submit" className="btn primary"
+                    disabled={busy}
+                    style={{width:'100%', padding:'10px 0', fontSize:13, fontWeight:600}}>
+              {busy ? 'activating…' : 'Activate account & sign in'}
+            </button>
+          </>
+        )}
+
+        <div style={{
+          marginTop:14, fontSize:10.5, color:'var(--ink-dim)',
+          textAlign:'center', lineHeight:1.6,
+        }}>
+          This link revokes on first use · keep it private
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ─── ForceChangePassword · A4 ──────────────────────────────────
+// Shown immediately after a successful login when the user record
+// still carries must_change_password=true — i.e. the seeded
+// default, an admin-set initial password, or an admin-forced
+// rotation. Same full-page layout as LoginPage so the flow feels
+// continuous. Submission calls irSetPassword, which replaces the
+// default_password fallback with a real PBKDF2 hash and flips
+// must_change_password off.
+function ForceChangePassword({ user, onDone }) {
+  const [pw1, setPw1] = React.useState('');
+  const [pw2, setPw2] = React.useState('');
+  const [err, setErr] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+
+  const submit = async (e) => {
+    if (e) e.preventDefault();
+    setErr(null);
+    const v = irValidatePassword(pw1, pw2);
+    if (!v.ok) return setErr(v.reason);
+    setBusy(true);
+    try {
+      await irSetPassword(user.id, pw1);
+      onDone();
+    } catch (ex) {
+      setErr('could not save password · ' + (ex.message || ex));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      background: 'var(--bg-0)',
+      display: 'grid', placeItems: 'center',
+      padding: '32px',
+    }}>
+      <form onSubmit={submit}
+            style={{
+              width: '100%', maxWidth: 460,
+              background: 'var(--bg-1)',
+              border: '1px solid var(--line-strong)',
+              borderRadius: 'var(--radius)',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.35)',
+              padding: '28px 28px 22px',
+              fontFamily: "'Space Grotesk', sans-serif",
+            }}>
+        <div style={{marginBottom:20}}>
+          <div style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 11, color:'var(--amber)', letterSpacing:'0.1em',
+          }}>FORCED · FIRST LOGIN</div>
+          <div style={{
+            fontSize: 22, fontWeight: 700, color:'var(--ink-bright)',
+            letterSpacing:'-0.01em', marginTop: 4,
+          }}>Set a new password</div>
+          <div style={{fontSize:12, color:'var(--ink-soft)', marginTop:8, lineHeight:1.6}}>
+            Signed in as <span className="mono" style={{color:'var(--ink)'}}>{user.email || user.id}</span>.
+            You need to replace the default/initial password before the console
+            is accessible.
+          </div>
+        </div>
+
+        <label style={{display:'block', marginBottom:12}}>
+          <div className="label" style={{marginBottom:4}}>New password</div>
+          <input type="password"
+                 value={pw1}
+                 onChange={(e) => setPw1(e.target.value)}
+                 autoComplete="new-password"
+                 autoFocus
+                 placeholder="at least 10 characters · letters + digits"
+                 style={{
+                   width:'100%', boxSizing:'border-box',
+                   padding:'10px 12px', fontSize:13,
+                   background:'var(--bg-0)', color:'var(--ink)',
+                   border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                   fontFamily:"'JetBrains Mono', monospace",
+                 }}/>
+        </label>
+
+        <label style={{display:'block', marginBottom:14}}>
+          <div className="label" style={{marginBottom:4}}>Confirm password</div>
+          <input type="password"
+                 value={pw2}
+                 onChange={(e) => setPw2(e.target.value)}
+                 autoComplete="new-password"
+                 placeholder="re-enter the same password"
+                 style={{
+                   width:'100%', boxSizing:'border-box',
+                   padding:'10px 12px', fontSize:13,
+                   background:'var(--bg-0)', color:'var(--ink)',
+                   border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                   fontFamily:"'JetBrains Mono', monospace",
+                 }}/>
+        </label>
+
+        {err && (
+          <div style={{
+            padding:'8px 10px', marginBottom:12,
+            background:'var(--red-wash)',
+            border:'1px solid var(--threat)',
+            color:'var(--threat)',
+            borderRadius:'var(--radius)',
+            fontSize:12,
+          }}>{err}</div>
+        )}
+
+        <button type="submit"
+                className="btn primary"
+                disabled={busy}
+                style={{width:'100%', padding:'10px 0', fontSize:13, fontWeight:600}}>
+          {busy ? 'saving…' : 'Set password & continue'}
+        </button>
+
+        <div style={{
+          marginTop:14, padding:'8px 10px',
+          background:'var(--bg-2)',
+          border:'1px dashed var(--line-soft)',
+          borderRadius:'var(--radius)',
+          fontSize:11, color:'var(--ink-soft)',
+          lineHeight:1.6,
+        }}>
+          <b style={{color:'var(--ink)'}}>Policy</b> · ≥ 10 characters, at least one
+          letter and one digit, can't reuse the seeded default. Production would
+          layer on server-side checks (breach-corpus, HIBP, etc.).
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function LoginDemoHint() {
+  // Only surface the hint while at least one seeded user still
+  // carries the default password. Once everyone's rotated, the
+  // hint disappears silently.
+  const anyDefault = React.useMemo(() => {
+    try { return readUsers().some(u => u.default_password === IR_SEED_DEFAULT_PASSWORD); }
+    catch { return false; }
+  }, []);
+  if (!anyDefault) return null;
+  return (
+    <div style={{
+      marginTop:14, padding:'10px 12px',
+      background:'var(--bg-2)',
+      border:'1px dashed var(--line-soft)',
+      borderRadius:'var(--radius)',
+      fontSize:11, color:'var(--ink-soft)',
+      lineHeight:1.6,
+    }}>
+      <b style={{color:'var(--ink)'}}>Demo mode · seeded credentials</b><br/>
+      Any seeded user · e.g. <span className="mono">r.solanki@corp.example</span>
+      {' '}· password{' '}
+      <span className="mono" style={{color:'var(--ink-bright)'}}>
+        {IR_SEED_DEFAULT_PASSWORD}
+      </span>
+      <br/>
+      You'll be asked to set a new password on first sign-in.
+    </div>
+  );
+}
+
 function App() {
+  // Session gate. When no valid session exists, the LoginPage
+  // takes over the viewport and every other piece of state below
+  // still initialises (cheap, and avoids re-wiring on login).
+  const session = useSession();
+  const handleLogin = React.useCallback((user) => {
+    writeSession(user.id);
+    setCurrentUser(user.id);
+  }, []);
+  const handleLogout = React.useCallback(() => {
+    clearSession();
+    // Leave ir:currentUserId in place so re-logins land on the
+    // same impersonation slot; tests can clear it explicitly.
+  }, []);
+  // Expose logout for the Topbar menu without threading props
+  // through the whole tree.
+  window.__ir_logout = handleLogout;
+
   const [surface, setSurface] = React.useState(() => {
     try { return localStorage.getItem('ir:surface') || 'dashboard'; } catch { return 'dashboard'; }
   });
@@ -9453,16 +11553,78 @@ function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Invite-accept gate · U5. Checked before the login gate so
+  // clicking a magic link in a signed-out browser always lands
+  // the visitor on the accept-invite form regardless of any
+  // stale session. After the link is consumed we drop the token
+  // from the URL + write the session so subsequent visits from
+  // the same browser skip the accept form.
+  const inviteToken = irReadInviteTokenFromUrl();
+  if (!session && inviteToken) {
+    return <InviteAcceptPage
+             token={inviteToken}
+             onAccepted={(user) => {
+               irClearInviteTokenFromUrl();
+               handleLogin(user);
+             }}/>;
+  }
+
+  // Gate: without a session the console is invisible. LoginPage
+  // carries its own theme-agnostic styling so it renders cleanly
+  // regardless of data-theme.
+  if (!session) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
+
+  // Second gate: if the signed-in user still carries a forced-
+  // change flag (seeded default, admin-set initial password, or
+  // admin-forced rotation), trap them on the change form until
+  // they set a real password. useChangeTick re-reads the user
+  // record on ir:usersChanged so the gate releases the moment
+  // irSetPassword writes.
+  return <GatedShell session={session}
+                     tweaks={tweaks} setTweak={setTweak}
+                     surface={surface} setSurface={setSurface}
+                     sub={sub} setSub={setSub}
+                     go={go}
+                     playbooksOpen={playbooksOpen}
+                     closePlaybooks={closePlaybooks}
+                     openPlaybooks={openPlaybooks}
+                     playbooksInitial={playbooksInitial}
+                     body={body} />;
+}
+
+// Splits the mandatory-change gate out so GatedShell can subscribe
+// to user updates and re-evaluate without rebuilding the rest of
+// App's state. It consumes the pre-computed `body` + nav wiring
+// and just decides between "change password first" and the full
+// console shell.
+function GatedShell(props) {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => setTick(t => t + 1);
+    window.addEventListener('ir:usersChanged',       refresh);
+    window.addEventListener('ir:currentUserChanged', refresh);
+    return () => {
+      window.removeEventListener('ir:usersChanged',       refresh);
+      window.removeEventListener('ir:currentUserChanged', refresh);
+    };
+  }, []);
+  const user = getCurrentUser();
+  if (user && user.must_change_password) {
+    return <ForceChangePassword user={user}
+                                onDone={() => setTick(t => t + 1)} />;
+  }
   return (
-    <div className="shell" data-density={tweaks.density} data-theme={tweaks.theme}>
-      <Topbar tweaks={tweaks} setTweak={setTweak}
-              openPlaybooks={openPlaybooks} />
-      <WorkspaceBar current={surface} go={go} />
-      <SurfaceBar current={surface} go={go} />
-      <main className="page">{body}</main>
-      <PlaybookDrawer open={playbooksOpen}
-                      onClose={closePlaybooks}
-                      initialPlaybookId={playbooksInitial} />
+    <div className="shell" data-density={props.tweaks.density} data-theme={props.tweaks.theme}>
+      <Topbar tweaks={props.tweaks} setTweak={props.setTweak}
+              openPlaybooks={props.openPlaybooks} />
+      <WorkspaceBar current={props.surface} go={props.go} />
+      <SurfaceBar current={props.surface} go={props.go} />
+      <main className="page">{props.body}</main>
+      <PlaybookDrawer open={props.playbooksOpen}
+                      onClose={props.closePlaybooks}
+                      initialPlaybookId={props.playbooksInitial} />
     </div>
   );
 }

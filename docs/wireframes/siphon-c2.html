@@ -3352,6 +3352,36 @@ function Users() {
   ];
   const rx = window.useSiphonApi('/v1/roles');
   const liveRoles = (rx.data && rx.data.roles) || [];
+
+  // Live IR roster read straight from the shared localStorage slot
+  // (`ir:users`). No dependency on the IR console's React bundle;
+  // c2 just reads the canonical record so admins see the effects
+  // of invites / role changes without bouncing tabs.
+  const [irTick, setIrTick] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = (e) => {
+      if (e && e.key && e.key !== 'ir:users') return;
+      setIrTick(t => t + 1);
+    };
+    window.addEventListener('storage', refresh);
+    // Poll once per 5 s — the IR console fires the ir:usersChanged
+    // custom event inside its own tab, but this is a different
+    // window so only the storage event arrives. Polling covers the
+    // brief gap before the next event without being noticeable.
+    const i = setInterval(() => setIrTick(t => t + 1), 5000);
+    return () => { window.removeEventListener('storage', refresh); clearInterval(i); };
+  }, []);
+  const irUsers = React.useMemo(() => {
+    try { return JSON.parse(localStorage.getItem('ir:users') || '[]'); }
+    catch { return []; }
+  }, [irTick]);
+  const roleMeta = {
+    admin:    { label: 'Administrator',     color: 'var(--threat)', glyph: '★' },
+    analyst:  { label: 'Incident Responder', color: 'var(--accent)', glyph: '◈' },
+    engineer: { label: 'Detection Engineer', color: 'var(--amber)',  glyph: '⌁' },
+    viewer:   { label: 'Viewer',             color: 'var(--ink-soft)', glyph: '◯' },
+  };
+
   return (
     <div>
       <div className="page-head">
@@ -3364,6 +3394,126 @@ function Users() {
           <button className="btn">SAML / OIDC</button>
           <button className="btn primary">New role</button>
         </div>
+      </div>
+
+      {/* Cross-console banner — U9. The IR console (siphon-ir.html)
+          owns invite / create / role-change today; this surface
+          mirrors the roster but defers writes to the IR settings
+          page so admin + responder stay in sync. */}
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div style={{
+          padding:'12px 14px',
+          background:'var(--bg-2)',
+          border:'1px dashed var(--line-soft)',
+          borderRadius:'var(--radius)',
+          display:'flex', alignItems:'center', gap:12, flexWrap:'wrap',
+          fontSize:12, color:'var(--ink)',
+        }}>
+          <span className="chip chip--teal" style={{fontSize:10, padding:'3px 10px'}}>
+            IR-OWNED
+          </span>
+          <div style={{flex:1}}>
+            User invites, role changes, password resets, and permission matrix live
+            in the responder console (siphon-ir.html → Settings → Users &amp; Roles).
+            Both consoles share the same{' '}
+            <span className="mono">ir:users</span> store, so changes made over there
+            reflect here on the next event or refresh.
+          </div>
+          <a href="siphon-ir.html#surface=ir-users"
+             className="btn primary"
+             style={{fontSize:11, textDecoration:'none', padding:'6px 12px'}}>
+            Open in IR console →
+          </a>
+        </div>
+      </div>
+
+      {/* Live roster · pulled from localStorage[ir:users]. */}
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title">
+          <span className="t">Live roster · shared</span>
+          <span className="k mono" style={{fontSize:11}}>
+            {irUsers.length} users · from <span style={{color:'var(--ink-bright)'}}>ir:users</span>
+            {' '}· {irUsers.filter(u => u.status === 'active').length} active ·{' '}
+            {irUsers.filter(u => u.status === 'invited').length} invited
+          </span>
+        </div>
+        {irUsers.length === 0 ? (
+          <div style={{padding:14, fontSize:12, color:'var(--ink-soft)', lineHeight:1.6}}>
+            No shared roster yet. Open the IR console at least once to seed
+            <span className="mono"> ir:users</span> with the demo users.
+          </div>
+        ) : (
+          <div>
+            <div style={{
+              display:'grid',
+              gridTemplateColumns:'1.4fr 1.2fr 150px 110px 130px',
+              gap:10, padding:'6px 14px',
+              borderBottom:'1.5px solid var(--line)',
+              fontSize:10, letterSpacing:'0.05em', textTransform:'uppercase',
+              color:'var(--ink-soft)',
+            }}>
+              <span>Name</span>
+              <span>Email / ID</span>
+              <span>Role</span>
+              <span>Status</span>
+              <span>Last active</span>
+            </div>
+            {irUsers
+              .slice()
+              .sort((a, b) => (a.status === 'invited' ? 0 : 1) - (b.status === 'invited' ? 0 : 1)
+                || (a.name || '').localeCompare(b.name || ''))
+              .map((u, i) => {
+                const r = roleMeta[u.role] || { label: u.role, color: 'var(--ink-soft)', glyph: '?' };
+                const rel = (() => {
+                  const iso = u.status === 'invited' ? u.invited_at : u.last_active;
+                  if (!iso) return '—';
+                  const diff = Date.now() - new Date(iso).getTime();
+                  if (Number.isNaN(diff)) return '—';
+                  const mins = Math.floor(diff / 60e3);
+                  if (mins < 1) return 'now';
+                  if (mins < 60) return mins + 'm';
+                  const hrs = Math.floor(mins / 60);
+                  if (hrs < 24) return hrs + 'h';
+                  return Math.floor(hrs / 24) + 'd';
+                })();
+                return (
+                  <div key={u.id || i}
+                       style={{
+                         display:'grid',
+                         gridTemplateColumns:'1.4fr 1.2fr 150px 110px 130px',
+                         gap:10, padding:'8px 14px',
+                         borderBottom:'1px solid var(--line-soft)',
+                         alignItems:'center', fontSize:12,
+                         fontFamily:"'JetBrains Mono', monospace",
+                       }}>
+                    <span style={{color:'var(--ink-bright)'}}>{u.name}</span>
+                    <span className="muted">{u.email || u.id}</span>
+                    <span>
+                      <span className="chip"
+                            style={{
+                              fontSize:9, padding:'2px 8px',
+                              borderColor: r.color, color: r.color,
+                              background: 'var(--bg-1)',
+                            }}>
+                        {r.glyph} {r.label}
+                      </span>
+                    </span>
+                    <span>
+                      <span className={'chip chip--' + (
+                        u.status === 'active' ? 'safe'
+                        : u.status === 'invited' ? 'warn'
+                        : 'red')} style={{fontSize:9}}>
+                        {u.status}
+                      </span>
+                    </span>
+                    <span className="muted">
+                      {u.status === 'invited' ? 'invited ' + rel + ' ago' : rel + ' ago'}
+                    </span>
+                  </div>
+                );
+              })}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
