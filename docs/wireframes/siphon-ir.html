@@ -3639,6 +3639,680 @@ function WhatPanel({ f }) {
   );
 }
 
+// ── Document preview — synthesis + highlighting ──────────────
+//
+// The IR analyst's workflow hinges on seeing the actual document
+// that tripped the detector, not just the matched slice. Today
+// siphon-core doesn't retain the full scanned payload (findings
+// only carry the matched span), so this surface synthesises a
+// realistic preview from the finding's channel + metadata so the
+// analyst has something to eyeball. A future /v1/findings/{id}
+// /payload endpoint would replace the synthesis with the real
+// captured content; the rest of this module — the highlighting,
+// download, legend — reuses unchanged.
+
+// Per-category highlight palette. Colours borrow the theme vars
+// where possible so the marks look at home in phosphor / amber /
+// ice / light. Categories not in the map fall back to the default
+// accent colour.
+const MATCH_COLOR_DEFAULT = { bg: 'rgba(94,243,140,0.22)',  border: '#5ef38c', fg: '#d7ffd0' };
+const CATEGORY_COLORS = {
+  'Credit Card Numbers':           { bg: 'rgba(255,180,50,0.25)', border: '#ffb432', fg: '#ffe0a3' },
+  'Customer Financial Data':       { bg: 'rgba(255,180,50,0.22)', border: '#ffb432', fg: '#ffe0a3' },
+  'Regulatory Identifiers':        { bg: 'rgba(255,180,50,0.22)', border: '#ffb432', fg: '#ffe0a3' },
+  'Traffic Light Protocol':        { bg: 'rgba(255,180,50,0.18)', border: '#ffb432', fg: '#ffe0a3' },
+  'Healthcare':                    { bg: 'rgba(255,92,108,0.26)', border: '#ff5c6c', fg: '#ffd5d9' },
+  'Authentication Tokens':         { bg: 'rgba(255,92,108,0.22)', border: '#ff5c6c', fg: '#ffd5d9' },
+  'Banking Authentication':        { bg: 'rgba(255,92,108,0.22)', border: '#ff5c6c', fg: '#ffd5d9' },
+  'AWS Credentials':               { bg: 'rgba(255,92,108,0.22)', border: '#ff5c6c', fg: '#ffd5d9' },
+  'Biometric Identifiers':         { bg: 'rgba(255,92,108,0.22)', border: '#ff5c6c', fg: '#ffd5d9' },
+  'North America - United States': { bg: 'rgba(148,208,255,0.26)', border: '#94d0ff', fg: '#d9eeff' },
+  'North America - Canada':        { bg: 'rgba(148,208,255,0.22)', border: '#94d0ff', fg: '#d9eeff' },
+  'Email Addresses':               { bg: 'rgba(186,145,255,0.25)', border: '#ba91ff', fg: '#e4d7ff' },
+  'Dates':                         { bg: 'rgba(139,165,138,0.22)', border: '#8ba58a', fg: '#cddfc9' },
+};
+const KEYWORD_COLOR = { bg: 'rgba(94,243,140,0.10)', border: '#5ef38c', fg: '#b8e8c7' };
+
+// Keywords the preview ought to flag — cues an analyst reading the
+// document would rely on. Intentionally short lists; this is
+// suggestive highlighting, not exhaustive.
+const CONTEXT_KEYWORDS_MAP = {
+  'Credit Card Numbers':           ['credit card', 'card number', 'card no', 'pan', 'cvv', 'cvc', 'expiry', 'visa', 'mastercard', 'amex'],
+  'Customer Financial Data':       ['balance', 'account', 'income', 'statement'],
+  'Regulatory Identifiers':        ['sar', 'ctr', 'fincen', 'report number', 'filing'],
+  'Traffic Light Protocol':        ['tlp', 'classification', 'handling'],
+  'Healthcare':                    ['medical', 'patient', 'mrn', 'diagnosis', 'hipaa', 'phi'],
+  'Authentication Tokens':         ['token', 'session', 'bearer', 'api key', 'jwt'],
+  'Banking Authentication':        ['pin', 'authorization', 'hsm', 'key', 'encryption'],
+  'AWS Credentials':               ['aws', 'access key', 'secret', 'credentials'],
+  'Biometric Identifiers':         ['fingerprint', 'biometric', 'retina'],
+  'North America - United States': ['ssn', 'social security', 'itin', 'passport'],
+  'North America - Canada':        ['sin', 'social insurance', 'quebec'],
+  'Email Addresses':               ['email', 'address', 'mailto'],
+  'Dates':                         ['date of birth', 'dob', 'birthdate', 'birth', 'born'],
+};
+
+// Synthesise a fake-but-plausible document preview per channel.
+// Body contains every finding.text from `sameReq` embedded in a
+// realistic surrounding so the analyst can read the matched value
+// in context.
+function generatePreviewText(finding, sameReq) {
+  const md = finding.metadata || {};
+  const channel = (md.channel || '').toLowerCase();
+  const all = [finding, ...(sameReq || [])];
+  const matched = all.map(f => f.text).filter(Boolean);
+  const ts = finding.ts || new Date().toISOString();
+  const tsDisp = ts.replace('T', ' ').replace('Z', '').slice(0, 19);
+
+  const joinedMatches = matched.length
+    ? matched.map(m => `  · ${m}`).join('\n')
+    : '  · [no matched slice available]';
+
+  if (channel.includes('email')) {
+    const sender = md.sender || 'unknown.sender@corp.example';
+    const recipient = md.recipient || 'unknown.recipient@example.com';
+    const outbound = channel.includes('outbound');
+    const firstName = sender.split('@')[0].split('.')[0];
+    const capName = firstName[0].toUpperCase() + firstName.slice(1);
+    const cats = Array.from(new Set(all.map(f => f.category))).join(' + ');
+    const body =
+`Hi,
+
+${outbound
+  ? 'Per our earlier discussion, sharing the records you requested. Please store securely and let me know if anything is missing.'
+  : 'Forwarding the records we pulled for the quarterly review. Let me know if you need the expanded dataset.'}
+
+Relevant identifiers flagged for follow-up:
+${joinedMatches}
+
+Context: ${cats} · generated from our backend on ${tsDisp}.
+
+${outbound ? 'Best regards,\n' + capName : 'Thanks,\n' + capName}
+`;
+    return {
+      kind: 'email',
+      direction: outbound ? 'outbound' : 'inbound',
+      headers: {
+        From: sender,
+        To: recipient,
+        Date: tsDisp,
+        Subject: `${outbound ? 'Fwd: ' : 'Re: '}${cats} records · Q1`,
+        'Message-ID': `<${(finding.request_id || 'x').slice(0, 12)}.${ts.slice(0, 10)}@mail.corp.example>`,
+      },
+      body,
+      size: body.length,
+    };
+  }
+
+  if (channel.includes('slack')) {
+    const sender = md.sender || md.user || 'user@corp.example';
+    const firstName = sender.split('@')[0].split('.')[0];
+    const body =
+`[slack · direct message · ${tsDisp}]
+
+${firstName}: hey quick one — i'm prepping the handoff to the vendor and need to confirm a couple of values. can you check these?
+
+${matched.map(m => firstName + ': ' + m).join('\n')}
+
+${firstName}: would it be easier to share via the secure channel or should i paste in chat?
+`;
+    return {
+      kind: 'slack',
+      headers: {
+        Channel: 'direct message',
+        Participant: sender,
+        Date: tsDisp,
+      },
+      body,
+      size: body.length,
+    };
+  }
+
+  if (channel.includes('print')) {
+    const who = md.user || finding.source_ip || 'unknown';
+    const body =
+`[print spool · ${md.channel || 'print'}]
+user=${who}  printer=HQ-NE-18-COLOR  pages=4  ts=${tsDisp}
+
+─── page 1 ──────────────────────────────────────────
+
+Quarterly customer review — CONFIDENTIAL
+
+The following records are included in this report:
+
+${joinedMatches}
+
+These should not be printed on shared devices. If you received this
+in error, please destroy and notify the compliance team.
+
+─── page 2 ──────────────────────────────────────────
+`;
+    return {
+      kind: 'print',
+      headers: {
+        User: who,
+        Printer: 'HQ-NE-18-COLOR',
+        Pages: '4',
+        Date: tsDisp,
+      },
+      body,
+      size: body.length,
+    };
+  }
+
+  if (channel.includes('api')) {
+    const body = JSON.stringify({
+      ts: tsDisp,
+      user: md.user || 'service-account',
+      action: 'records.export',
+      payload: {
+        rows: matched.map((m, i) => ({ id: i + 1, value: m })),
+        note: `batch export via api · ${all[0].category}`,
+      },
+    }, null, 2);
+    return {
+      kind: 'api',
+      headers: {
+        Endpoint: 'POST /v1/exports',
+        'Content-Type': 'application/json',
+        Date: tsDisp,
+      },
+      body,
+      size: body.length,
+    };
+  }
+
+  // Default — file upload / sharepoint / usb / web-upload / etc.
+  const filename = md.filename || (finding.source_pod === 'siphon-fs' ? finding.source_ip : null) || `document-${(finding.request_id || 'x').slice(0, 6)}.txt`;
+  const who = md.user || 'unknown';
+  const body =
+`[file preview · extracted text]
+filename=${filename}  uploaded_by=${who}  size≈${8 + Math.round(Math.random() * 40)}kb  ts=${tsDisp}
+
+────────────────────────────────────────────────────
+
+CUSTOMER RECORDS — CONFIDENTIAL
+
+This document contains the customer records requested for review. The
+following values appear in the extracted text at the positions siphon-fs
+flagged:
+
+${joinedMatches}
+
+End of extracted preview.
+`;
+  return {
+    kind: 'file',
+    headers: {
+      Filename: filename,
+      'Uploaded by': who,
+      Date: tsDisp,
+      'Channel': md.channel || (finding.source_pod || 'unknown'),
+    },
+    body,
+    size: body.length,
+  };
+}
+
+// Locate every match + keyword range in `body`, merge overlaps
+// (matches win), and emit a list of render-ready segments. Each
+// segment is either `{ kind: 'plain', text }` or
+// `{ kind: 'match'|'keyword', text, ... }`.
+function applyHighlights(body, findings, keywords) {
+  const ranges = [];
+
+  // Matches — indexOf-loop so we catch every occurrence of each
+  // finding's text in the preview.
+  for (const f of findings) {
+    if (!f.text) continue;
+    let from = 0;
+    while (true) {
+      const at = body.indexOf(f.text, from);
+      if (at === -1) break;
+      ranges.push({
+        start: at, end: at + f.text.length,
+        kind: 'match', category: f.category, sub_category: f.sub_category,
+      });
+      from = at + f.text.length;
+    }
+  }
+
+  // Keywords — case-insensitive, word-boundary. Regex special
+  // chars in the keyword get escaped so 'c++' doesn't blow up.
+  for (const kw of keywords) {
+    const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rx = new RegExp('\\b' + escaped + '\\b', 'gi');
+    let m;
+    while ((m = rx.exec(body)) !== null) {
+      ranges.push({
+        start: m.index, end: m.index + m[0].length,
+        kind: 'keyword', keyword: kw,
+      });
+    }
+  }
+
+  // Sort: earlier start first, then matches win over keywords at
+  // the same position.
+  ranges.sort((a, b) => a.start - b.start
+    || (a.kind === 'match' ? -1 : 1));
+
+  // Drop any range that's fully inside a prior one. Matches take
+  // precedence when a match swallows a keyword.
+  const kept = [];
+  let furthest = 0;
+  for (const r of ranges) {
+    if (r.start < furthest) {
+      const prev = kept[kept.length - 1];
+      if (prev && r.kind === 'keyword' && prev.kind === 'match') continue;
+      if (prev && r.start < prev.end) continue; // collision, keep the earlier one
+    }
+    kept.push(r);
+    furthest = Math.max(furthest, r.end);
+  }
+
+  const segs = [];
+  let pos = 0;
+  for (const r of kept) {
+    if (r.start > pos) segs.push({ kind: 'plain', text: body.slice(pos, r.start) });
+    segs.push({ ...r, text: body.slice(r.start, r.end) });
+    pos = r.end;
+  }
+  if (pos < body.length) segs.push({ kind: 'plain', text: body.slice(pos) });
+  return segs;
+}
+
+function DocumentPreview({ finding, sameReq }) {
+  const preview = React.useMemo(
+    () => generatePreviewText(finding, sameReq),
+    [finding.id, (sameReq || []).length]
+  );
+  const allFindings = React.useMemo(
+    () => [finding, ...(sameReq || [])],
+    [finding.id, (sameReq || []).length]
+  );
+
+  // Collect keywords from every category represented in the preview
+  // + the primary finding's category (in case no siblings).
+  const categories = Array.from(new Set(allFindings.map(f => f.category).filter(Boolean)));
+  const keywords = React.useMemo(() => {
+    const s = new Set();
+    for (const c of categories) {
+      (CONTEXT_KEYWORDS_MAP[c] || []).forEach(k => s.add(k));
+    }
+    return Array.from(s);
+  }, [categories.join('|')]);
+
+  const segs = React.useMemo(
+    () => applyHighlights(preview.body, allFindings, keywords),
+    [preview.body, allFindings.length, keywords.length]
+  );
+
+  const download = () => {
+    const lines = [];
+    if (preview.headers) {
+      for (const [k, v] of Object.entries(preview.headers)) lines.push(`${k}: ${v}`);
+      lines.push('');
+    }
+    lines.push(preview.body);
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `finding-${finding.id}-preview.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const kindIcon = {
+    email: '✉', slack: '💬', print: '🖨', file: '📄', api: '⟨/⟩', text: '☰',
+  }[preview.kind] || '☰';
+  const kindLabel = {
+    email: preview.direction === 'outbound' ? 'Email · outbound' : 'Email · inbound',
+    slack: 'Slack · direct message',
+    print: 'Print job',
+    file: 'File upload',
+    api: 'API payload',
+    text: 'Text',
+  }[preview.kind] || preview.kind;
+
+  const usedCategories = Array.from(new Set(
+    segs.filter(s => s.kind === 'match').map(s => s.category)
+  ));
+  const hasKeywordHits = segs.some(s => s.kind === 'keyword');
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">
+          Document preview
+          <span className="muted" style={{fontWeight:400, marginLeft:10, fontSize:11}}>
+            synthesised · future /v1/findings/{'{'}id{'}'}/payload will serve the real capture
+          </span>
+        </span>
+        <span className="k" style={{display:'flex', alignItems:'center', gap:10}}>
+          <span className="mono" style={{fontSize:11}}>{preview.size.toLocaleString()} bytes</span>
+          <button className="btn" onClick={download}
+                  title="download the preview as a plain-text file"
+                  style={{fontSize:11, padding:'4px 10px'}}>
+            ↓ Download
+          </button>
+        </span>
+      </div>
+
+      {/* Preview header — metadata for this channel (From/To, file name, etc.) */}
+      <div style={{
+        display:'flex', alignItems:'center', gap:14,
+        padding:'10px 14px', borderBottom:'1px solid var(--line-soft)',
+        background:'var(--bg-1)', flexWrap:'wrap',
+      }}>
+        <span style={{fontSize:20, lineHeight:1}}>{kindIcon}</span>
+        <span className="chip chip--ghost" style={{fontSize:10}}>{kindLabel}</span>
+        {preview.headers && Object.entries(preview.headers).map(([k, v]) => (
+          <span key={k} style={{display:'inline-flex', alignItems:'baseline', gap:5}}>
+            <span className="muted mono" style={{fontSize:10.5, textTransform:'uppercase', letterSpacing:'0.08em'}}>{k}</span>
+            <span className="mono" style={{fontSize:11.5, color:'var(--ink-bright)'}}>{String(v)}</span>
+          </span>
+        ))}
+      </div>
+
+      {/* Body with highlights */}
+      <pre style={{
+        margin:0, padding:16,
+        fontFamily:"'JetBrains Mono', monospace",
+        fontSize:12, lineHeight:1.6,
+        color:'var(--ink)', whiteSpace:'pre-wrap', wordBreak:'break-word',
+        maxHeight:480, overflow:'auto',
+        background:'var(--bg-1)',
+      }}>
+        {segs.map((s, i) => {
+          if (s.kind === 'plain') return <span key={i}>{s.text}</span>;
+          if (s.kind === 'match') {
+            const c = CATEGORY_COLORS[s.category] || MATCH_COLOR_DEFAULT;
+            const title = `${s.category}${s.sub_category ? ' / ' + s.sub_category : ''} · detected match`;
+            return (
+              <mark key={i} title={title} style={{
+                background: c.bg, color: c.fg,
+                border: '1px solid ' + c.border,
+                borderBottom: '2px solid ' + c.border,
+                padding: '1px 3px', borderRadius: 2,
+                fontWeight: 600,
+              }}>{s.text}</mark>
+            );
+          }
+          // keyword
+          return (
+            <span key={i} title={`context keyword · "${s.keyword}"`} style={{
+              background: KEYWORD_COLOR.bg,
+              color: KEYWORD_COLOR.fg,
+              borderBottom: '1px dashed ' + KEYWORD_COLOR.border,
+              padding: '0 1px',
+            }}>{s.text}</span>
+          );
+        })}
+      </pre>
+
+      {/* Legend */}
+      {(usedCategories.length > 0 || hasKeywordHits) && (
+        <div style={{
+          padding:'10px 14px', borderTop:'1px solid var(--line-soft)',
+          background:'var(--bg-2)', display:'flex', alignItems:'center',
+          gap:10, flexWrap:'wrap', fontSize:10.5,
+        }}>
+          <span className="muted mono" style={{textTransform:'uppercase', letterSpacing:'0.1em'}}>
+            legend
+          </span>
+          {usedCategories.map(cat => {
+            const c = CATEGORY_COLORS[cat] || MATCH_COLOR_DEFAULT;
+            return (
+              <span key={cat} style={{
+                display:'inline-flex', alignItems:'center', gap:6,
+                padding:'3px 8px',
+                background: c.bg, border:'1px solid ' + c.border,
+                borderRadius: 2, color: c.fg,
+                fontFamily:"'JetBrains Mono', monospace",
+                fontSize: 10,
+              }}>
+                <span style={{width:8, height:8, background: c.border, borderRadius: 2, display:'inline-block'}}/>
+                {cat}
+              </span>
+            );
+          })}
+          {hasKeywordHits && (
+            <span style={{
+              display:'inline-flex', alignItems:'center', gap:6,
+              padding:'3px 8px',
+              background: KEYWORD_COLOR.bg,
+              borderBottom: '1px dashed ' + KEYWORD_COLOR.border,
+              color: KEYWORD_COLOR.fg,
+              fontFamily:"'JetBrains Mono', monospace",
+              fontSize: 10,
+            }}>
+              <span style={{width:8, height:8, borderBottom: '2px dashed ' + KEYWORD_COLOR.border, display:'inline-block'}}/>
+              context keywords
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Where panel ───────────────────────────────────────────────
+// Source → channel → destination flow. Simpler than siphon-c2's
+// SVG version — the IR surface cares less about integrations and
+// more about 'what path did this take'. External-domain recipients
+// flag in amber so exfil shapes surface at a glance.
+function WherePanel({ f }) {
+  const md = f.metadata || {};
+  const sender = md.sender || null;
+  const recipient = md.recipient || null;
+  const destUrl = md.dest_url || null;
+  const filename = md.filename || (f.source_pod === 'siphon-fs' ? f.source_ip : null);
+  const channelLabel = md.channel || (f.source_pod === 'siphon-fs'
+    ? 'file upload'
+    : f.source_pod === 'siphon-api' ? 'http POST /scan' : f.source_pod || 'unknown');
+  const srcIp = md.src_ip || (f.source_pod !== 'siphon-fs' ? f.source_ip : null);
+  // Heuristic exfil detector. Matches the Who/subtitle logic so the
+  // analyst gets the same signal in both places.
+  const externalish = (v) => v && /(external|gmail|rival|personal|competitor)\.example/i.test(v);
+  const destExt = externalish(recipient) || externalish(destUrl);
+
+  const Node = ({ label, value, accent, small }) => (
+    <div style={{
+      flex: '1 1 180px', minWidth: 0,
+      padding:'10px 12px',
+      background: accent ? 'var(--amber-wash)' : 'var(--bg-1)',
+      border: '1px solid ' + (accent ? 'var(--amber)' : 'var(--line-soft)'),
+      borderRadius: 'var(--radius)',
+    }}>
+      <div style={{fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:'var(--ink-soft)', marginBottom:4}}>
+        {label}
+      </div>
+      <div className="mono" style={{
+        fontSize: small ? 11.5 : 13,
+        color: accent ? 'var(--amber)' : 'var(--ink-bright)',
+        wordBreak: 'break-all',
+      }}>{value || '—'}</div>
+    </div>
+  );
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Where</span>
+        <span className="k">source → channel → destination</span>
+      </div>
+      <div style={{padding:14}}>
+        <div style={{display:'flex', gap:8, alignItems:'stretch', flexWrap:'wrap'}}>
+          <Node label="Source"
+                value={sender || srcIp || filename || '—'}
+                small={!sender} />
+          <div style={{display:'flex', alignItems:'center', color:'var(--ink-soft)', fontSize:16, padding:'0 2px'}}>→</div>
+          <Node label="Channel"
+                value={channelLabel} />
+          <div style={{display:'flex', alignItems:'center', color:'var(--ink-soft)', fontSize:16, padding:'0 2px'}}>→</div>
+          <Node label="Destination"
+                value={recipient || destUrl || '(captured)'}
+                accent={destExt} />
+        </div>
+
+        <div className="kv" style={{marginTop:14, gridTemplateColumns:'140px 1fr', gap:'6px 12px', fontSize:12}}>
+          <span className="k">Detection pod</span>
+          <span className="v"><span className="chip chip--ghost" style={{fontSize:10}}>{f.source_pod || 'unknown'}</span></span>
+          {filename && (<>
+            <span className="k">File</span>
+            <span className="v mono" style={{fontSize:11.5}}>{filename}</span>
+          </>)}
+          {md.department && (<>
+            <span className="k">Department</span>
+            <span className="v">{md.department}</span>
+          </>)}
+          {md.region && (<>
+            <span className="k">Region</span>
+            <span className="v"><span className="chip chip--ghost" style={{fontSize:10}}>{md.region}</span></span>
+          </>)}
+          {destExt && (<>
+            <span className="k">Signal</span>
+            <span className="v">
+              <span className="chip chip--red" style={{fontSize:10}}>external destination</span>
+              <span className="muted" style={{marginLeft:8, fontSize:11}}>
+                recipient / URL outside the corporate domain — possible exfil
+              </span>
+            </span>
+          </>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Why panel ─────────────────────────────────────────────────
+// The detection rationale. Rather than re-run /scan with trace (as
+// siphon-c2's DetectionPipeline does) we render an illustrative
+// pipeline statically — in demo mode the trace endpoint has no
+// relevant finding, and in live mode the rescan would invalidate
+// the audit trail. If we later wire a /v1/findings/{id}/trace
+// endpoint this panel consumes it the same way.
+const WHY_STAGES = [
+  { key: 'regex',          label: 'Regex',          note: 'pattern match on normalised text' },
+  { key: 'validation',     label: 'Validate',       note: 'checksum / structural validator' },
+  { key: 'context',        label: 'Context',        note: 'Aho-Corasick keyword proximity' },
+  { key: 'min_confidence', label: 'Min-confidence', note: 'threshold filter' },
+  { key: 'emit',           label: 'Emit',           note: 'finding written to ring + audit' },
+];
+
+function WhyPanel({ f }) {
+  const md = f.metadata || {};
+  const emitted = true; // by definition, this finding was emitted
+  const ctx = f.has_context;
+  const conf = f.confidence;
+
+  // Status per stage: 'pass' | 'warn' | 'skip' | 'block'. Since the
+  // finding was emitted, every stage passed. `context` is 'pass'
+  // when has_context, otherwise 'skip' (the pattern wasn't
+  // context-gated).
+  const stageStatus = {
+    regex: 'pass',
+    validation: 'pass',
+    context: ctx ? 'pass' : 'skip',
+    min_confidence: conf != null && conf >= 0 ? 'pass' : 'skip',
+    emit: 'pass',
+  };
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Why</span>
+        <span className="k">pattern · pipeline · policy</span>
+      </div>
+      <div style={{padding:14}}>
+        {/* Verdict + pattern summary row */}
+        <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:10, flexWrap:'wrap'}}>
+          <span className="chip chip--safe" style={{fontSize:10}}>EMIT</span>
+          <a href={`siphon-c2.html#patterns/${encodeURIComponent(f.category)}/${encodeURIComponent(f.sub_category || '')}`}
+             target="_blank" rel="noopener"
+             style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, color:'var(--accent)', textDecoration:'none'}}>
+            {f.category}
+            {f.sub_category && <><span className="muted"> / </span>{f.sub_category}</>}
+            <span style={{marginLeft:4, fontSize:10}}>↗</span>
+          </a>
+          {conf != null && (
+            <span className="muted mono" style={{fontSize:11}}>conf {conf.toFixed(3)}</span>
+          )}
+        </div>
+
+        {/* Pipeline strip */}
+        <div style={{display:'flex', gap:2, marginBottom:10, flexWrap:'wrap', alignItems:'center'}}>
+          {WHY_STAGES.map((s, i) => {
+            const st = stageStatus[s.key];
+            const color = st === 'pass' ? { bg: 'var(--accent-wash)', fg: 'var(--accent)', border: 'var(--accent)' }
+                        : st === 'skip' ? { bg: 'var(--bg-3)', fg: 'var(--ink-soft)', border: 'var(--line)' }
+                        : { bg: 'var(--red-wash)', fg: 'var(--red)', border: 'var(--red)' };
+            return (
+              <React.Fragment key={s.key}>
+                <span title={`${s.label} · ${st}\n${s.note}`}
+                      style={{
+                        padding:'4px 10px',
+                        fontFamily:"'JetBrains Mono', monospace",
+                        fontSize:10, fontWeight: 600,
+                        letterSpacing:'0.06em', textTransform:'uppercase',
+                        border:'1px solid ' + color.border,
+                        color: color.fg, background: color.bg,
+                        borderRadius:'var(--radius)',
+                        borderStyle: st === 'skip' ? 'dashed' : 'solid',
+                      }}>
+                  {s.label}
+                </span>
+                {i < WHY_STAGES.length - 1 && (
+                  <span style={{color: 'var(--ink-soft)', fontSize: 12, padding: '0 1px'}}>→</span>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </div>
+
+        <div className="muted mono" style={{fontSize:10.5, marginBottom:12}}>
+          Pipeline above is illustrative. A future /v1/findings/{'{'}id{'}'}/trace endpoint
+          will replace this with the actual per-stage trace that fired this finding.
+        </div>
+
+        <div className="kv" style={{gridTemplateColumns:'140px 1fr', gap:'6px 12px', fontSize:12}}>
+          <span className="k">Context gate</span>
+          <span className="v">
+            {ctx ? <span className="chip chip--safe" style={{fontSize:10}}>keyword matched</span>
+                 : <span className="chip chip--ghost" style={{fontSize:10}}>no keyword required · always-run pattern</span>}
+          </span>
+          <span className="k">Specificity</span>
+          <span className="v mono">
+            {conf != null ? (conf >= 0.9 ? 'high' : conf >= 0.7 ? 'medium' : 'low') : '—'}
+          </span>
+          {md.list_matched && (<>
+            <span className="k">List match</span>
+            <span className="v">
+              <span className="chip chip--warn" style={{fontSize:10}}>{md.list_matched}</span>
+              <span className="muted"> · action <span className="mono">{md.list_action || 'tag'}</span></span>
+            </span>
+          </>)}
+          {md.unique_count_breach === 'true' && (<>
+            <span className="k">Unique breach</span>
+            <span className="v">
+              <span className="chip chip--red" style={{fontSize:10}}>breached</span>
+              <span className="muted"> · {md.unique_count || '?'} distinct values in scan</span>
+            </span>
+          </>)}
+          <span className="k">Policy</span>
+          <span className="v muted" style={{fontSize:11.5}}>
+            No per-finding policy attribution yet · siphon-api's policy engine runs at scan time
+            but doesn't tag findings with the policy that fired. Future enhancement.
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Timeline panel ────────────────────────────────────────────
 // Ported from siphon-c2's FindingTimeline. Walks the known event
 // sequence for this finding: request accepted → match detected →
@@ -4131,9 +4805,20 @@ function FindingDetail({ id, back }) {
         </div>
       )}
 
-      {/* 5W+H grid — 2 cols × 3 rows. Each panel is a stub this
-          commit; subsequent commits replace them one pair at a
-          time with real panels (lifted from c2 or built here). */}
+      {/* Document preview — full-width, centerpiece of the surface.
+          Shows the synthesised email/file/print/slack/api payload
+          with matches highlighted in their category colours and
+          context keywords underlined. Download button emits a
+          plain-text copy for evidence / handoff. */}
+      <div style={{padding:'var(--gap) var(--gap) 0 var(--gap)'}}>
+        <DocumentPreview
+          finding={f}
+          sameReq={all.filter(x => x.id !== f.id && x.request_id === f.request_id)} />
+      </div>
+
+      {/* 5W+H grid — 2 cols × 3 rows. Provenance on the left
+          column (Who / Where / When), classification + response on
+          the right (What / Why / How). */}
       <div style={{
         display:'grid',
         gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)',
@@ -4144,28 +4829,12 @@ function FindingDetail({ id, back }) {
         <WhoPanel f={f} all={all} />
         <WhatPanel f={f} />
 
-        <PanelStub title="Where" question="Where did this happen?">
-          <div className="muted" style={{fontSize:11.5}}>Channel:</div>
-          <div style={{marginTop:6, fontSize:13}}>{ctx.where}</div>
-          {ctx.filename && <div style={{fontSize:12, marginTop:4}}>File: <span className="mono">{ctx.filename}</span></div>}
-          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
-            Full panel (commit 3): source → destination diagram (IP + URL for network channels,
-            sender → recipient for email), pod the detection came from, full filesystem path.
-          </div>
-        </PanelStub>
+        <WherePanel f={f} />
 
         <FindingTimeline finding={f}
                          sameReq={all.filter(x => x.id !== f.id && x.request_id === f.request_id)} />
 
-        <PanelStub title="Why" question="Why did detection fire?">
-          <div className="muted" style={{fontSize:11.5}}>Signal summary:</div>
-          <div style={{marginTop:6, fontSize:12, lineHeight:1.6}}>{ctx.why}</div>
-          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
-            Full panel (commit 4): pattern (category/sub) with link to Patterns browser, policy that
-            fired, detection-pipeline narrative (regex → validation → context → emit),
-            list-binding match if applicable, runtime overrides that were applied.
-          </div>
-        </PanelStub>
+        <WhyPanel f={f} />
 
         <QuickActions f={f} />
       </div>
