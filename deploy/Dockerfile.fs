@@ -1,5 +1,5 @@
 # Siphon-FS — file-scanner HTTP service (multipart in, findings out)
-FROM rust:1.85-bookworm AS builder
+FROM rust:1.88-bookworm AS builder
 
 # Optional cargo parallelism cap. CI pipes CARGO_BUILD_JOBS=2 in
 # to keep rav1e / arrow / parquet codegen under the runner's

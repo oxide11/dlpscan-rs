@@ -1680,7 +1680,7 @@ fn extract_opendocument(file_path: &str) -> Result<ExtractionResult, String> {
 #[cfg(feature = "msg")]
 fn extract_msg(file_path: &str) -> Result<ExtractionResult, String> {
     let file = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
-    let mut comp = cfb::CompoundFile::open(file).map_err(|e| format!("Invalid MSG file: {}", e))?;
+    let mut comp = cfb::CompoundFile::open(file).map_err(|e| format!("Invalid MSG file: {e}"))?;
     let mut text = String::new();
 
     // MSG stores properties in streams like "__substg1.0_XXXX" where XXXX is the property tag
@@ -1705,7 +1705,7 @@ fn extract_msg(file_path: &str) -> Result<ExtractionResult, String> {
     ];
 
     for (stream_name, label) in &property_streams {
-        let path = format!("/{}", stream_name);
+        let path = format!("/{stream_name}");
         if let Ok(mut stream) = comp.open_stream(&path) {
             use std::io::Read;
             let mut buf = Vec::new();
@@ -1726,7 +1726,7 @@ fn extract_msg(file_path: &str) -> Result<ExtractionResult, String> {
 
                 let content = content.trim_end_matches('\0').trim();
                 if !content.is_empty() {
-                    text.push_str(&format!("{}: {}\n", label, content));
+                    text.push_str(&format!("{label}: {content}\n"));
                 }
             }
         }
@@ -1748,7 +1748,7 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
     // List archive contents
     let archive = unrar::Archive::new(file_path)
         .open_for_listing()
-        .map_err(|e| format!("Failed to open RAR: {}", e))?;
+        .map_err(|e| format!("Failed to open RAR: {e}"))?;
 
     let mut file_names = Vec::new();
     for entry in archive.flatten() {
@@ -1756,9 +1756,9 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
         file_names.push(entry.filename.to_string_lossy().to_string());
     }
 
-    text.push_str(&format!("RAR Archive ({} files):\n", file_count));
+    text.push_str(&format!("RAR Archive ({file_count} files):\n"));
     for name in &file_names {
-        text.push_str(&format!("  {}\n", name));
+        text.push_str(&format!("  {name}\n"));
     }
 
     // Extract and read text content from small text files
@@ -1772,7 +1772,7 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
     // Use process mode to extract each file
     let archive = unrar::Archive::new(file_path)
         .open_for_processing()
-        .map_err(|e| format!("Failed to open RAR for processing: {}", e))?;
+        .map_err(|e| format!("Failed to open RAR for processing: {e}"))?;
 
     let mut cursor = archive;
     let mut total_extracted_size: u64 = 0;
@@ -1844,7 +1844,7 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
                     // Re-validate after extraction (defense in depth)
                     if let Some(dest) = sanitize_archive_path(tmp_dir.path(), &name) {
                         if let Ok(content) = std::fs::read_to_string(&dest) {
-                            text.push_str(&format!("\n--- {} ---\n", name));
+                            text.push_str(&format!("\n--- {name} ---\n"));
                             let content: String = content.chars().take(100_000).collect();
                             text.push_str(&content);
                             text.push('\n');
@@ -1853,7 +1853,7 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
                 }
                 Err(e) => {
                     // Try to continue despite error
-                    text.push_str(&format!("\n--- {} (extraction error: {}) ---\n", name, e));
+                    text.push_str(&format!("\n--- {name} (extraction error: {e}) ---\n"));
                     break;
                 }
             }
@@ -1887,7 +1887,7 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
         std::cmp::min(src_meta.len().saturating_mul(100), MAX_EXTRACT_TOTAL_SIZE);
 
     sevenz_rust::decompress_file(file_path, tmp_dir.path())
-        .map_err(|e| format!("Failed to extract 7z: {}", e))?;
+        .map_err(|e| format!("Failed to extract 7z: {e}"))?;
 
     let mut file_count = 0u32;
     let text_extensions = [
@@ -1938,9 +1938,8 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
         drop(files);
         drop(tmp_dir);
         return Err(format!(
-            "7z archive exceeds maximum extracted size: {} bytes (max {} bytes). \
-             Possible zip bomb (compression ratio > 100:1).",
-            total_size, max_decompressed
+            "7z archive exceeds maximum extracted size: {total_size} bytes (max {max_decompressed} bytes). \
+             Possible zip bomb (compression ratio > 100:1)."
         ));
     }
 
@@ -2011,7 +2010,7 @@ fn extract_parquet(file_path: &str) -> Result<ExtractionResult, String> {
 
     let file = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
     let reader =
-        SerializedFileReader::new(file).map_err(|e| format!("Invalid Parquet file: {}", e))?;
+        SerializedFileReader::new(file).map_err(|e| format!("Invalid Parquet file: {e}"))?;
 
     let metadata = reader.metadata();
     let schema = metadata.file_metadata().schema();
@@ -2044,7 +2043,7 @@ fn extract_parquet(file_path: &str) -> Result<ExtractionResult, String> {
         // Use Row's Display implementation which formats all fields
         let row_str: Vec<String> = row
             .get_column_iter()
-            .map(|(_, field)| format!("{}", field))
+            .map(|(_, field)| format!("{field}"))
             .collect();
         text.push_str(&row_str.join("\t"));
         text.push('\n');
@@ -2071,7 +2070,7 @@ fn extract_sqlite(file_path: &str) -> Result<ExtractionResult, String> {
         file_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
-    .map_err(|e| format!("Failed to open SQLite database: {}", e))?;
+    .map_err(|e| format!("Failed to open SQLite database: {e}"))?;
 
     let mut text = String::new();
     let max_rows_per_table = 5_000usize;
@@ -2093,7 +2092,7 @@ fn extract_sqlite(file_path: &str) -> Result<ExtractionResult, String> {
             continue;
         }
 
-        text.push_str(&format!("--- Table: {} ---\n", table));
+        text.push_str(&format!("--- Table: {table} ---\n"));
 
         // Get column names
         let pragma_sql = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
