@@ -74,7 +74,7 @@ tempfile = "3"
 
 # File extraction
 pdf-extract = { version = "0.10", optional = true }
-calamine = { version = "0.26", optional = true }
+calamine = { version = "0.34", optional = true }
 zip = "2"
 quick-xml = { version = "0.37", optional = true }
 
