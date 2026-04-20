@@ -2512,8 +2512,49 @@ function Topbar({ tweaks, setTweak, openPlaybooks }) {
          style={{fontSize:11, textDecoration:'none'}}>
         ⇄ admin
       </a>
-      <span className="tb-user">IR analyst</span>
+      <TopbarUser />
     </div>
+  );
+}
+
+// Identity slot in the topbar. Renders the currently signed-in
+// user's name + role glyph and exposes a click-to-logout. U7 will
+// extend this into a full impersonation menu; for now it's a
+// straightforward "who you are + sign out" control.
+function TopbarUser() {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => setTick(t => t + 1);
+    window.addEventListener('ir:currentUserChanged', refresh);
+    window.addEventListener('ir:usersChanged',       refresh);
+    window.addEventListener('ir:sessionChanged',     refresh);
+    return () => {
+      window.removeEventListener('ir:currentUserChanged', refresh);
+      window.removeEventListener('ir:usersChanged',       refresh);
+      window.removeEventListener('ir:sessionChanged',     refresh);
+    };
+  }, []);
+  const user = getCurrentUser();
+  if (!user) return <span className="tb-user">guest</span>;
+  const role = irRoleMeta(user.role);
+  const logout = () => {
+    if (typeof window.__ir_logout === 'function') window.__ir_logout();
+  };
+  return (
+    <span style={{display:'flex', alignItems:'center', gap:8}}>
+      <span className="tb-user"
+            title={role.label + ' · ' + (user.email || user.id)}
+            style={{display:'flex', alignItems:'center', gap:6}}>
+        <span style={{color: role.color, fontSize:11}}>{role.glyph}</span>
+        <span>{user.name}</span>
+      </span>
+      <button className="tb-theme"
+              onClick={logout}
+              title="Sign out · clears your session"
+              style={{fontSize:11}}>
+        ⏻ sign out
+      </button>
+    </span>
   );
 }
 
@@ -8967,6 +9008,61 @@ async function irSetPassword(userId, newPassword) {
   return next.find(u => u.id === userId) || null;
 }
 
+// ─── Session helpers · A3 ──────────────────────────────────────
+// Minimal session model — just enough to gate the app behind
+// login. Real deployments would back this with an HttpOnly cookie
+// from siphon-api, but since this file is the wireframe we keep
+// it in localStorage so the whole flow is inspectable.
+const IR_SESSION_KEY = 'ir:session';
+const IR_SESSION_TTL_MS = 12 * 3600 * 1000; // 12 hours
+
+function readSession() {
+  try {
+    const raw = localStorage.getItem(IR_SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw);
+    if (!s || !s.userId || !s.expiresAt) return null;
+    if (Date.now() > new Date(s.expiresAt).getTime()) {
+      localStorage.removeItem(IR_SESSION_KEY);
+      return null;
+    }
+    return s;
+  } catch { return null; }
+}
+function writeSession(userId, ttlMs) {
+  const ttl = ttlMs || IR_SESSION_TTL_MS;
+  const now = Date.now();
+  const s = {
+    userId,
+    issuedAt:  new Date(now).toISOString(),
+    expiresAt: new Date(now + ttl).toISOString(),
+  };
+  try { localStorage.setItem(IR_SESSION_KEY, JSON.stringify(s)); } catch {}
+  window.dispatchEvent(new CustomEvent('ir:sessionChanged'));
+  return s;
+}
+function clearSession() {
+  try { localStorage.removeItem(IR_SESSION_KEY); } catch {}
+  window.dispatchEvent(new CustomEvent('ir:sessionChanged'));
+}
+
+// Hook: returns the session record + listener so the app re-
+// renders when a login / logout happens in this tab OR another.
+function useSession() {
+  const [session, setSession] = React.useState(() => readSession());
+  React.useEffect(() => {
+    const refresh = () => setSession(readSession());
+    window.addEventListener('ir:sessionChanged', refresh);
+    window.addEventListener('storage', (e) => {
+      if (e.key === IR_SESSION_KEY) refresh();
+    });
+    return () => {
+      window.removeEventListener('ir:sessionChanged', refresh);
+    };
+  }, []);
+  return session;
+}
+
 // ─── Playbooks · data + markdown renderer ──────────────────────
 // Data the drawer consumes (wired in a later commit). Each entry:
 //   id         — stable key
@@ -9466,7 +9562,209 @@ const TWEAK_DEFAULTS = {
   nav: 'split',
 };
 
+// ─── LoginPage · A2 ────────────────────────────────────────────
+// Full-page gate shown when no valid session is present. Takes an
+// `onLogin(user)` callback the App wires up to write the session
+// + redirect the user into the console. PBKDF2 hashing is async,
+// so the form shows a loading state during verification.
+function LoginPage({ onLogin }) {
+  const [email,    setEmail]    = React.useState('');
+  const [password, setPassword] = React.useState('');
+  const [err,      setErr]      = React.useState(null);
+  const [busy,     setBusy]     = React.useState(false);
+
+  const submit = async (e) => {
+    if (e) e.preventDefault();
+    setErr(null);
+    if (!email.trim())    return setErr('email required');
+    if (!password)        return setErr('password required');
+    setBusy(true);
+    const res = await irAuthenticate(email, password);
+    setBusy(false);
+    if (!res.ok) {
+      if (res.reason === 'no-such-user')   return setErr('No user with that email / id');
+      if (res.reason === 'wrong-password') return setErr('Wrong password');
+      if (res.reason === 'disabled')       return setErr('This account is disabled · contact an administrator');
+      if (res.reason === 'invited')        return setErr('This account is pending · use the invite link to set a password');
+      return setErr('Login failed');
+    }
+    onLogin(res.user, { default_password_used: !!res.default_password_used });
+  };
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      background: 'var(--bg-0)',
+      display: 'grid', placeItems: 'center',
+      padding: '32px',
+    }}>
+      <form onSubmit={submit}
+            style={{
+              width: '100%', maxWidth: 420,
+              background: 'var(--bg-1)',
+              border: '1px solid var(--line-strong)',
+              borderRadius: 'var(--radius)',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.35)',
+              padding: '28px 28px 22px',
+              fontFamily: "'Space Grotesk', sans-serif",
+            }}>
+        {/* Brand */}
+        <div style={{marginBottom:22}}>
+          <div style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 12, color:'var(--accent)', letterSpacing:'0.1em',
+          }}>POLYGON</div>
+          <div style={{
+            fontSize: 28, fontWeight: 700, color:'var(--ink-bright)',
+            letterSpacing: '-0.01em', marginTop: 2,
+          }}>siphon · IR</div>
+          <div style={{
+            fontSize: 12, color:'var(--ink-soft)', marginTop: 8, lineHeight:1.5,
+          }}>
+            Incident-response console · sign in with your corporate account
+          </div>
+        </div>
+
+        {/* Email */}
+        <label style={{display:'block', marginBottom:12}}>
+          <div className="label" style={{marginBottom:4}}>Email</div>
+          <input type="text"
+                 value={email}
+                 onChange={(e) => setEmail(e.target.value)}
+                 autoComplete="username"
+                 autoFocus
+                 placeholder="you@corp.example"
+                 style={{
+                   width:'100%', boxSizing:'border-box',
+                   padding:'10px 12px', fontSize: 13,
+                   background:'var(--bg-0)', color:'var(--ink)',
+                   border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                   fontFamily:"'JetBrains Mono', monospace",
+                 }}/>
+        </label>
+
+        {/* Password */}
+        <label style={{display:'block', marginBottom:14}}>
+          <div className="label" style={{marginBottom:4}}>Password</div>
+          <input type="password"
+                 value={password}
+                 onChange={(e) => setPassword(e.target.value)}
+                 autoComplete="current-password"
+                 placeholder="••••••••••"
+                 style={{
+                   width:'100%', boxSizing:'border-box',
+                   padding:'10px 12px', fontSize: 13,
+                   background:'var(--bg-0)', color:'var(--ink)',
+                   border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                   fontFamily:"'JetBrains Mono', monospace",
+                 }}/>
+        </label>
+
+        {err && (
+          <div style={{
+            padding:'8px 10px', marginBottom:12,
+            background:'var(--red-wash)',
+            border:'1px solid var(--threat)',
+            color:'var(--threat)',
+            borderRadius:'var(--radius)',
+            fontSize:12,
+          }}>{err}</div>
+        )}
+
+        <button type="submit"
+                className="btn primary"
+                disabled={busy}
+                style={{width:'100%', padding:'10px 0', fontSize:13, fontWeight:600}}>
+          {busy ? 'signing in…' : 'Sign in'}
+        </button>
+
+        {/* Future-auth stubs — wired in A5 */}
+        <div style={{
+          marginTop:16, paddingTop:16,
+          borderTop:'1px dashed var(--line-soft)',
+          display:'flex', gap:8, flexDirection:'column',
+        }}>
+          <button type="button"
+                  className="btn ghost"
+                  disabled
+                  title="Entra ID (SAML) — backlog · not wired yet"
+                  style={{width:'100%', padding:'9px 0', fontSize:12, opacity:0.55}}>
+            Sign in with Entra ID (SAML) · soon
+          </button>
+          <button type="button"
+                  className="btn ghost"
+                  disabled
+                  title="Passkeys (WebAuthn) — backlog · not wired yet"
+                  style={{width:'100%', padding:'9px 0', fontSize:12, opacity:0.55}}>
+            Sign in with a passkey · soon
+          </button>
+        </div>
+
+        {/* Demo hint — only while the user roster still has seeded
+            default passwords. Reads readUsers() once on mount so
+            a user who's changed their password doesn't see the
+            stale "ChangeMe!2026" hint stuck on screen. */}
+        <LoginDemoHint />
+
+        <div style={{
+          marginTop:14, fontSize:10.5, color:'var(--ink-dim)',
+          textAlign:'center', lineHeight:1.6,
+        }}>
+          Sessions expire after 12 h · all auth state is local to this browser
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function LoginDemoHint() {
+  // Only surface the hint while at least one seeded user still
+  // carries the default password. Once everyone's rotated, the
+  // hint disappears silently.
+  const anyDefault = React.useMemo(() => {
+    try { return readUsers().some(u => u.default_password === IR_SEED_DEFAULT_PASSWORD); }
+    catch { return false; }
+  }, []);
+  if (!anyDefault) return null;
+  return (
+    <div style={{
+      marginTop:14, padding:'10px 12px',
+      background:'var(--bg-2)',
+      border:'1px dashed var(--line-soft)',
+      borderRadius:'var(--radius)',
+      fontSize:11, color:'var(--ink-soft)',
+      lineHeight:1.6,
+    }}>
+      <b style={{color:'var(--ink)'}}>Demo mode · seeded credentials</b><br/>
+      Any seeded user · e.g. <span className="mono">r.solanki@corp.example</span>
+      {' '}· password{' '}
+      <span className="mono" style={{color:'var(--ink-bright)'}}>
+        {IR_SEED_DEFAULT_PASSWORD}
+      </span>
+      <br/>
+      You'll be asked to set a new password on first sign-in.
+    </div>
+  );
+}
+
 function App() {
+  // Session gate. When no valid session exists, the LoginPage
+  // takes over the viewport and every other piece of state below
+  // still initialises (cheap, and avoids re-wiring on login).
+  const session = useSession();
+  const handleLogin = React.useCallback((user) => {
+    writeSession(user.id);
+    setCurrentUser(user.id);
+  }, []);
+  const handleLogout = React.useCallback(() => {
+    clearSession();
+    // Leave ir:currentUserId in place so re-logins land on the
+    // same impersonation slot; tests can clear it explicitly.
+  }, []);
+  // Expose logout for the Topbar menu without threading props
+  // through the whole tree.
+  window.__ir_logout = handleLogout;
+
   const [surface, setSurface] = React.useState(() => {
     try { return localStorage.getItem('ir:surface') || 'dashboard'; } catch { return 'dashboard'; }
   });
@@ -9575,6 +9873,13 @@ function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // Gate: without a session the console is invisible. LoginPage
+  // carries its own theme-agnostic styling so it renders cleanly
+  // regardless of data-theme.
+  if (!session) {
+    return <LoginPage onLogin={handleLogin} />;
+  }
 
   return (
     <div className="shell" data-density={tweaks.density} data-theme={tweaks.theme}>
