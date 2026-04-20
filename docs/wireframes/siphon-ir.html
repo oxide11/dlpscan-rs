@@ -8713,6 +8713,7 @@ function irFormatRelative(iso) {
 //  · initial-pw — admin chooses a starting password; user logs in
 //                 with it and hits the A4 forced-change flow.
 function CreateUserForm({ canInvite, onCancel, onCreated }) {
+  useRolesTick();
   const [name,     setName]     = React.useState('');
   const [email,    setEmail]    = React.useState('');
   const [role,     setRole]     = React.useState('analyst');
@@ -8731,7 +8732,7 @@ function CreateUserForm({ canInvite, onCancel, onCreated }) {
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       return setErr('email looks malformed');
     }
-    if (!IR_ROLES[role]) return setErr('pick a role');
+    if (!getRoles()[role]) return setErr('pick a role');
     let default_password;
     if (mode === 'initial-pw') {
       const v = irValidatePassword(pw1, pw2);
@@ -8779,7 +8780,7 @@ function CreateUserForm({ canInvite, onCancel, onCreated }) {
         <label>
           <div className="label" style={{marginBottom:4}}>Role</div>
           <select value={role} onChange={(e) => setRole(e.target.value)} style={formInputStyle}>
-            {Object.entries(IR_ROLES).map(([id, r]) => (
+            {Object.entries(getRoles()).map(([id, r]) => (
               <option key={id} value={id}>{r.glyph} {r.label}</option>
             ))}
           </select>
@@ -8968,6 +8969,7 @@ function UserRowActions({ user, canUpdate, canDisable, canDelete }) {
   const [open, setOpen] = React.useState(false);
   const btnRef  = React.useRef(null);
   const menuRef = React.useRef(null);
+  useRolesTick();
   const me = getCurrentUser();
   const isSelf = !!(me && me.id === user.id);
 
@@ -9072,7 +9074,7 @@ function UserRowActions({ user, canUpdate, canDisable, canDelete }) {
               }}>
                 Change role
               </div>
-              {Object.entries(IR_ROLES).map(([id, r]) => {
+              {Object.entries(getRoles()).map(([id, r]) => {
                 const current = id === user.role;
                 return (
                   <button key={id}
@@ -9159,6 +9161,7 @@ function UsersSurface() {
   const canDisable = useCan('users.disable');
   const canDelete  = useCan('users.delete');
   const canInvite  = useCan('users.invite');
+  useRolesTick();
 
   const users = useUsersList();
   const [search,     setSearch]     = React.useState('');
@@ -9248,7 +9251,7 @@ function UsersSurface() {
                     borderRadius:'var(--radius)',
                   }}>
             <option value="">All roles</option>
-            {Object.entries(IR_ROLES).map(([id, r]) => (
+            {Object.entries(getRoles()).map(([id, r]) => (
               <option key={id} value={id}>{r.glyph} {r.label}</option>
             ))}
           </select>
@@ -9397,7 +9400,7 @@ function UsersSurface() {
           <span className="t">Permission matrix</span>
           <span className="k">
             <span className="mono" style={{fontSize:11}}>
-              {matrixOpen ? '▼' : '▶'} {irAllPermissions().length} actions × {Object.keys(IR_ROLES).length} roles
+              {matrixOpen ? '▼' : '▶'} {irAllPermissions().length} actions × {Object.keys(getRoles()).length} roles
             </span>
           </span>
         </div>
@@ -9415,7 +9418,7 @@ function UsersSurface() {
                     color:'var(--ink-soft)', fontWeight:600,
                     borderBottom:'1px solid var(--line-strong)',
                   }}>action</th>
-                  {Object.entries(IR_ROLES).map(([id, r]) => (
+                  {Object.entries(getRoles()).map(([id, r]) => (
                     <th key={id}
                         style={{
                           padding:'8px 12px',
@@ -9437,7 +9440,7 @@ function UsersSurface() {
                       color:'var(--ink)',
                       borderBottom:'1px solid var(--line-soft)',
                     }}>{action}</td>
-                    {Object.keys(IR_ROLES).map(id => {
+                    {Object.keys(getRoles()).map(id => {
                       const yes = canDo(id, action);
                       return (
                         <td key={id}
@@ -10027,17 +10030,18 @@ function EngineeringSurface() {
 const IR_USERS_KEY        = 'ir:users';
 const IR_CURRENT_USER_KEY = 'ir:currentUserId';
 
-// Role catalogue. Each role has a glyph + description + default
-// list of permissions it carries; U2 wires `canDo(role, action)`
-// against these. The permission strings are deliberately loose
-// (verb.resource) so future surfaces can cite them without
-// refactoring the catalogue.
-const IR_ROLES = {
+// Role seed catalogue. system:true marks these as non-deletable —
+// custom roles created through the R2b editor will land alongside
+// them in the live `ir:roles` store and carry system:false. Every
+// runtime read goes through getRoles() so components pick up
+// admin-authored changes immediately.
+const IR_SYSTEM_ROLES = {
   admin: {
     label: 'Administrator',
     glyph: '★',
     color: 'var(--red)',
     description: 'Full access · user management · integrations · everything responders and engineers see.',
+    system: true,
     permissions: [
       'users.view', 'users.create', 'users.invite', 'users.update',
       'users.disable', 'users.delete',
@@ -10053,6 +10057,7 @@ const IR_ROLES = {
     glyph: '◈',
     color: 'var(--accent)',
     description: 'Primary DLP triage role · review + dispose findings · escalate to XSOAR · use the crypto workbench.',
+    system: true,
     permissions: [
       'findings.view', 'findings.dispose', 'findings.escalate',
       'playbooks.view',
@@ -10065,6 +10070,7 @@ const IR_ROLES = {
     glyph: '◯',
     color: 'var(--ink-soft)',
     description: 'Read-only access · stakeholder dashboards + audit reviews · cannot triage or escalate.',
+    system: true,
     permissions: [
       'findings.view',
       'playbooks.view',
@@ -10076,6 +10082,7 @@ const IR_ROLES = {
     glyph: '⌁',
     color: 'var(--amber)',
     description: 'Pattern authors · FP queue review · crosses into siphon-c2 for tuning.',
+    system: true,
     permissions: [
       'findings.view', 'findings.fp',
       'playbooks.view', 'playbooks.edit',
@@ -10085,8 +10092,53 @@ const IR_ROLES = {
     ],
   },
 };
+
+// Live role store · localStorage[ir:roles]. Seeded from
+// IR_SYSTEM_ROLES the first time it's read. Writes fire
+// 'ir:rolesChanged' so subscribed components re-render.
+const IR_ROLES_KEY = 'ir:roles';
+
+function readRoles() {
+  try {
+    const raw = localStorage.getItem(IR_ROLES_KEY);
+    if (!raw) {
+      const seeded = JSON.parse(JSON.stringify(IR_SYSTEM_ROLES));
+      localStorage.setItem(IR_ROLES_KEY, JSON.stringify(seeded));
+      return seeded;
+    }
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object') ? parsed : { ...IR_SYSTEM_ROLES };
+  } catch {
+    return { ...IR_SYSTEM_ROLES };
+  }
+}
+function writeRoles(dict) {
+  try { localStorage.setItem(IR_ROLES_KEY, JSON.stringify(dict)); } catch {}
+  window.dispatchEvent(new CustomEvent('ir:rolesChanged'));
+}
+// Convenience: current snapshot of the role map. Callers that
+// need to react to changes should pair this with useRolesTick().
+function getRoles() { return readRoles(); }
+
+// Re-render trigger for components that display roles or
+// permission chips. Bumps local state whenever the role store
+// mutates in this tab OR another.
+function useRolesTick() {
+  const [, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => setTick(t => t + 1);
+    const onStorage = (e) => { if (e.key === IR_ROLES_KEY) refresh(); };
+    window.addEventListener('ir:rolesChanged', refresh);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('ir:rolesChanged', refresh);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+}
 function irRoleMeta(id) {
-  return IR_ROLES[id] || { label: id, glyph: '?', color: 'var(--ink-soft)', description: '', permissions: [] };
+  const roles = getRoles();
+  return roles[id] || { label: id, glyph: '?', color: 'var(--ink-soft)', description: '', permissions: [] };
 }
 
 // ─── Permission helpers · U2 ───────────────────────────────────
@@ -10115,16 +10167,18 @@ function canDo(userOrRole, action) {
       extras = userOrRole.extra_permissions;
     }
   }
-  const meta = IR_ROLES[role];
+  const meta = getRoles()[role];
   if (!meta) return false;
   return meta.permissions.includes(action) || extras.includes(action);
 }
 
-// Full enumeration across IR_ROLES for the permission-matrix UI
-// in U3. Returns a sorted deduplicated list.
+// Full enumeration across the live role store plus IR_SYSTEM_ROLES
+// (so newly-added actions that the system seed knows about still
+// show up in the matrix even before they're attached to a role).
 function irAllPermissions() {
   const s = new Set();
-  Object.values(IR_ROLES).forEach(r => r.permissions.forEach(p => s.add(p)));
+  Object.values(IR_SYSTEM_ROLES).forEach(r => r.permissions.forEach(p => s.add(p)));
+  Object.values(getRoles()).forEach(r => r.permissions.forEach(p => s.add(p)));
   return [...s].sort();
 }
 
