@@ -2727,6 +2727,110 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
             distance: 100,
         },
     ),
+    // Traffic Light Protocol (FIRST.org TLP 2.0).
+    // The TLP regex already matches a well-defined token — keyword
+    // entries are here so the scanner's Aho-Corasick index carries
+    // TLP vocabulary for has_context annotation and so the admin
+    // console's 'keywords per pattern' view isn't empty for TLP.
+    // All six variants share the same vocabulary; keyword lists are
+    // short because TLP itself is the distinguishing token.
+    (
+        "Traffic Light Protocol",
+        "TLP:RED",
+        ContextEntry {
+            keywords: &[
+                "tlp",
+                "traffic light protocol",
+                "classification",
+                "marking",
+                "sharing restriction",
+                "handling",
+                "first.org",
+            ],
+            distance: 80,
+        },
+    ),
+    (
+        "Traffic Light Protocol",
+        "TLP:AMBER+STRICT",
+        ContextEntry {
+            keywords: &[
+                "tlp",
+                "traffic light protocol",
+                "classification",
+                "marking",
+                "sharing restriction",
+                "handling",
+                "first.org",
+                "strict",
+            ],
+            distance: 80,
+        },
+    ),
+    (
+        "Traffic Light Protocol",
+        "TLP:AMBER",
+        ContextEntry {
+            keywords: &[
+                "tlp",
+                "traffic light protocol",
+                "classification",
+                "marking",
+                "sharing restriction",
+                "handling",
+                "first.org",
+            ],
+            distance: 80,
+        },
+    ),
+    (
+        "Traffic Light Protocol",
+        "TLP:GREEN",
+        ContextEntry {
+            keywords: &[
+                "tlp",
+                "traffic light protocol",
+                "classification",
+                "marking",
+                "community",
+                "handling",
+                "first.org",
+            ],
+            distance: 80,
+        },
+    ),
+    (
+        "Traffic Light Protocol",
+        "TLP:CLEAR",
+        ContextEntry {
+            keywords: &[
+                "tlp",
+                "traffic light protocol",
+                "classification",
+                "marking",
+                "public",
+                "handling",
+                "first.org",
+            ],
+            distance: 80,
+        },
+    ),
+    (
+        "Traffic Light Protocol",
+        "TLP:WHITE",
+        ContextEntry {
+            keywords: &[
+                "tlp",
+                "traffic light protocol",
+                "classification",
+                "marking",
+                "public",
+                "handling",
+                "first.org",
+            ],
+            distance: 80,
+        },
+    ),
     // Corporate Classification
     (
         "Corporate Classification",

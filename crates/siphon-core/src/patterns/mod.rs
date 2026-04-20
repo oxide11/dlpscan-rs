@@ -230,7 +230,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[0-9A-Z]{6}[0-9A-Z]{2}\d\b",
         case_insensitive: false,
         specificity: 0.70,
-        context_required: false,
+        // Context-gated (see models::is_context_required). CUSIP has
+        // no published check digit at the regex layer and would
+        // otherwise match any 9-char alnum run.
+        context_required: true,
     },
     PatternDef {
         category: "Securities Identifiers",
@@ -246,7 +249,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[0-9BCDFGHJKLMNPQRSTVWXYZ]{6}\d\b",
         case_insensitive: false,
         specificity: 0.50,
-        context_required: false,
+        // Context-gated (see models::is_context_required). 7-char
+        // alnum run is too loose to fire without a SEDOL-context
+        // keyword nearby.
+        context_required: true,
     },
     PatternDef {
         category: "Securities Identifiers",
@@ -270,7 +276,9 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"(?:^|[\s\(\[{,;])\$[A-Z]{1,5}\b",
         case_insensitive: false,
         specificity: 0.60,
-        context_required: false,
+        // Context-gated (see models::is_context_required). $SYMBOL
+        // shape fires on every currency-prefixed uppercase token.
+        context_required: true,
     },
     PatternDef {
         category: "Loan and Mortgage Data",
@@ -382,7 +390,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"(?:^|[\s\(\[{,;])[\$\x{20ac}\x{00a3}\x{00a5}]\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d{2})?\b",
         case_insensitive: false,
         specificity: 0.50,
-        context_required: false,
+        // Context-gated (see models::is_context_required). Currency
+        // amount regex matches every price/invoice line; only gate-on
+        // 'balance' keywords turns it into a real signal.
+        context_required: true,
     },
     PatternDef {
         category: "Customer Financial Data",
@@ -390,7 +401,8 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:USD|EUR|GBP|JPY|CAD|AUD|CHF)\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d{2})?\b",
         case_insensitive: false,
         specificity: 0.55,
-        context_required: false,
+        // Context-gated (see models::is_context_required).
+        context_required: true,
     },
     PatternDef {
         category: "Customer Financial Data",
@@ -398,7 +410,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"(?:^|[\s\(\[{,;])[\$\x{20ac}\x{00a3}\x{00a5}]\s?\d{1,3}(?:[,.\s]\d{3})*(?:\.\d{2})?\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // Context-gated (see models::is_context_required). Same
+        // currency-amount shape as Account Balance — only safe with
+        // income-context keywords nearby.
+        context_required: true,
     },
     PatternDef {
         category: "Customer Financial Data",
@@ -422,7 +437,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]{1,3}\d{4,8}\b",
         case_insensitive: false,
         specificity: 0.35,
-        context_required: false,
+        // Context-gated (see models::is_context_required). Loose
+        // letter+digit shape would fire on SKUs/product codes without
+        // a teller-context keyword nearby.
+        context_required: true,
     },
     PatternDef {
         category: "PCI Sensitive Data",
@@ -718,7 +736,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{2}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{6}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{6}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{2}\b",
         case_insensitive: false,
         specificity: 0.55,
-        context_required: false,
+        // Context-gated (see models::is_context_required). IMEISV's
+        // trailing 2 digits are a Software Version, NOT a checksum,
+        // so 16-digit shape has zero structural discipline.
+        context_required: true,
     },
     PatternDef {
         category: "Device Identifiers",
@@ -726,7 +747,9 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[0-9A-F]{2}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?[0-9A-F]{6}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?[0-9A-F]{6}\b",
         case_insensitive: false,
         specificity: 0.70,
-        context_required: false,
+        // Context-gated (see models::is_context_required). 14 hex
+        // chars with no check digit captured by the regex.
+        context_required: true,
     },
     PatternDef {
         category: "Device Identifiers",
@@ -1475,6 +1498,11 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "North America - United States",
         sub_category: "USA SSN",
+        // Context-gated (see models::is_context_required) so a bare
+        // NNN-NN-NNNN pattern doesn't fire on arbitrary dashed
+        // 9-digit strings (invoice numbers, order refs, etc.) absent
+        // the rich SSN keyword set.
+        //
         // A SSN must have a separator between its three digit groups.
         // The previous regex made the separator optional (`?`), which
         // let any 9-digit run match — including product SKUs, order
@@ -1502,7 +1530,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]\d{2}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]\d{4}\b",
         case_insensitive: false,
         specificity: 0.70,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1510,7 +1538,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b9\d{2}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{2}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{4}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // Context-gated (see models::is_context_required). The 9xx
+        // prefix is the only structural anchor; without a keyword
+        // gate it matches any 9-digit run starting with 9.
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -2029,7 +2060,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}\b",
         case_insensitive: false,
         specificity: 0.70,
-        context_required: false,
+        // Context-gated (see models::is_context_required). Bare
+        // 3-3-3 digit run with Luhn validation still matches many
+        // benign 9-digit strings.
+        context_required: true,
     },
     PatternDef {
         category: "North America - Canada",
@@ -2105,7 +2139,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]{4}\d{8}\b",
         case_insensitive: false,
         specificity: 0.55,
-        context_required: false,
+        // Context-gated (see models::is_context_required). 4-letter
+        // + 8-digit shape fires on serial numbers and SKUs without
+        // a healthcare keyword in range.
+        context_required: true,
     },
     PatternDef {
         category: "North America - Canada",
@@ -3617,7 +3654,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{2,3}\b",
         case_insensitive: false,
         specificity: 0.65,
-        context_required: false,
+        // Context-gated (see models::is_context_required). Even
+        // with the TFN mod-11 check, 8-9 digit runs match too many
+        // benign tokens; keyword gating keeps FPs down.
+        context_required: true,
     },
     PatternDef {
         category: "Asia-Pacific - Australia",
