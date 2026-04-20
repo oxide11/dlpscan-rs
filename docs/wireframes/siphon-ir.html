@@ -5599,10 +5599,11 @@ function IntegrationsSurface() {
 // consistent across surfaces.
 
 const IR_TIME_RANGES = [
-  { id: '24h', label: '24h',     days: 1 },
-  { id: '7d',  label: '7 days',  days: 7 },
-  { id: '30d', label: '30 days', days: 30 },
-  { id: 'all', label: 'all',     days: 36500 },
+  { id: '24h',    label: '24h',     days: 1 },
+  { id: '7d',     label: '7 days',  days: 7 },
+  { id: '30d',    label: '30 days', days: 30 },
+  { id: 'all',    label: 'all',     days: 36500 },
+  { id: 'custom', label: 'custom',  days: null },
 ];
 
 function irMedian(arr) {
@@ -6056,12 +6057,31 @@ function DashboardSurface() {
   const [comparison, setComparison] = React.useState(() => {
     try { return localStorage.getItem('ir:dashCmp') || 'none'; } catch { return 'none'; }
   });
+  // Custom date range. Defaults to the last 30 days so a fresh
+  // 'custom' click lands on a sensible window the analyst can then
+  // adjust with the date inputs.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const daysAgoIso = (d) => new Date(Date.now() - d * 86400000).toISOString().slice(0, 10);
+  const [customFrom, setCustomFrom] = React.useState(() => {
+    try { return localStorage.getItem('ir:dashCustomFrom') || daysAgoIso(30); }
+    catch { return daysAgoIso(30); }
+  });
+  const [customTo, setCustomTo] = React.useState(() => {
+    try { return localStorage.getItem('ir:dashCustomTo') || todayIso; }
+    catch { return todayIso; }
+  });
   React.useEffect(() => {
     try { localStorage.setItem('ir:dashRange', range); } catch {}
   }, [range]);
   React.useEffect(() => {
     try { localStorage.setItem('ir:dashCmp', comparison); } catch {}
   }, [comparison]);
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:dashCustomFrom', customFrom); } catch {}
+  }, [customFrom]);
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:dashCustomTo', customTo); } catch {}
+  }, [customTo]);
 
   const findings = window.useIrFindings('?limit=1000');
   const [dispo, setDispo] = React.useState(readDispo);
@@ -6075,15 +6095,29 @@ function DashboardSurface() {
     };
   }, []);
 
-  const cutoff = React.useMemo(() => {
-    const def = IR_TIME_RANGES.find(r => r.id === range) || IR_TIME_RANGES[1];
-    return Date.now() - def.days * 86400e3;
-  }, [range]);
+  // Compute the lower / upper bounds of the active window. Preset
+  // ranges run from (now - days) to now. Custom range pulls its
+  // bounds from the date inputs; to-date is inclusive of the full
+  // day (end of day UTC).
+  const [lowerMs, upperMs, effectiveDays] = React.useMemo(() => {
+    if (range === 'custom') {
+      const from = new Date(customFrom + 'T00:00:00').getTime();
+      const to   = new Date(customTo   + 'T23:59:59').getTime();
+      const lo = Math.min(from, to);
+      const hi = Math.max(from, to);
+      return [lo, hi, Math.max(1, Math.round((hi - lo) / 86400e3))];
+    }
+    const def = IR_TIME_RANGES.find(r => r.id === range && r.days != null) || IR_TIME_RANGES[1];
+    return [Date.now() - def.days * 86400e3, Date.now(), def.days];
+  }, [range, customFrom, customTo]);
 
   const all = (findings.data && findings.data.findings) || [];
   const windowed = React.useMemo(
-    () => all.filter(f => new Date(f.ts || 0).getTime() >= cutoff),
-    [all, cutoff]
+    () => all.filter(f => {
+      const t = new Date(f.ts || 0).getTime();
+      return t >= lowerMs && t <= upperMs;
+    }),
+    [all, lowerMs, upperMs]
   );
 
   const stats = React.useMemo(() => {
@@ -6168,6 +6202,35 @@ function DashboardSurface() {
             {r.label}
           </button>
         ))}
+        {range === 'custom' && (
+          <span style={{display:'inline-flex', alignItems:'center', gap:6, marginLeft:4, padding:'3px 8px', background:'var(--bg-2)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}>
+            <input type="date"
+                   value={customFrom}
+                   max={customTo}
+                   onChange={e => setCustomFrom(e.target.value)}
+                   style={{
+                     background:'var(--bg-1)', color:'var(--ink-bright)',
+                     border:'1px solid var(--line-soft)', borderRadius:'var(--radius)',
+                     padding:'3px 6px', fontSize:11,
+                     fontFamily:"'JetBrains Mono', monospace",
+                     colorScheme: 'dark',
+                   }}/>
+            <span className="muted mono" style={{fontSize:10}}>→</span>
+            <input type="date"
+                   value={customTo}
+                   min={customFrom}
+                   max={todayIso}
+                   onChange={e => setCustomTo(e.target.value)}
+                   style={{
+                     background:'var(--bg-1)', color:'var(--ink-bright)',
+                     border:'1px solid var(--line-soft)', borderRadius:'var(--radius)',
+                     padding:'3px 6px', fontSize:11,
+                     fontFamily:"'JetBrains Mono', monospace",
+                     colorScheme: 'dark',
+                   }}/>
+            <span className="muted mono" style={{fontSize:10.5}}>· {effectiveDays}d</span>
+          </span>
+        )}
         <span style={{borderLeft:'1px solid var(--line)', height:22, margin:'0 6px'}}/>
         <span className="label" style={{marginRight:6}}>Compare</span>
         {IR_COMPARISONS.map(c => (
