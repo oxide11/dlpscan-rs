@@ -10971,6 +10971,46 @@ const TWEAK_DEFAULTS = {
   nav: 'split',
 };
 
+// ─── AuthBrandHeader ───────────────────────────────────────────
+// Shared brand block used by LoginPage + ForceChangePassword +
+// InviteAcceptPage. Keeps the three auth screens visually
+// consistent — same logo, same wordmark, same subtitle treatment —
+// so swapping between them doesn't reshuffle the card header.
+// Logo source is the committed siphon-logo.png sibling; relative
+// paths load fine from file:// for images (only CSS/JS cross-
+// origin is blocked on that protocol).
+function AuthBrandHeader({ kicker, title, subtitle }) {
+  return (
+    <div style={{marginBottom:22, display:'flex', gap:14, alignItems:'flex-start'}}>
+      <img src="siphon-logo.png"
+           alt="Polygon Siphon"
+           width="56" height="56"
+           style={{
+             flex:'0 0 56px',
+             borderRadius:8,
+             imageRendering:'auto',
+           }}/>
+      <div style={{flex:1, minWidth:0}}>
+        <div style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 11, color:'var(--accent)', letterSpacing:'0.12em',
+        }}>{kicker || 'POLYGON'}</div>
+        <div style={{
+          fontSize: 24, fontWeight: 700, color:'var(--ink-bright)',
+          letterSpacing: '-0.01em', marginTop: 2,
+        }}>{title}</div>
+        {subtitle && (
+          <div style={{
+            fontSize: 12, color:'var(--ink-soft)', marginTop: 8, lineHeight:1.5,
+          }}>
+            {subtitle}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── LoginPage · A2 ────────────────────────────────────────────
 // Full-page gate shown when no valid session is present. Takes an
 // `onLogin(user)` callback the App wires up to write the session
@@ -11017,22 +11057,10 @@ function LoginPage({ onLogin }) {
               padding: '28px 28px 22px',
               fontFamily: "'Space Grotesk', sans-serif",
             }}>
-        {/* Brand */}
-        <div style={{marginBottom:22}}>
-          <div style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 12, color:'var(--accent)', letterSpacing:'0.1em',
-          }}>POLYGON</div>
-          <div style={{
-            fontSize: 28, fontWeight: 700, color:'var(--ink-bright)',
-            letterSpacing: '-0.01em', marginTop: 2,
-          }}>siphon · IR</div>
-          <div style={{
-            fontSize: 12, color:'var(--ink-soft)', marginTop: 8, lineHeight:1.5,
-          }}>
-            Incident-response console · sign in with your corporate account
-          </div>
-        </div>
+        <AuthBrandHeader
+          kicker="POLYGON"
+          title="siphon · IR"
+          subtitle="Incident-response console · sign in with your corporate account" />
 
         {/* Email */}
         <label style={{display:'block', marginBottom:12}}>
