@@ -214,6 +214,26 @@ struct ScanResponse {
     parsed_as: String,
     warnings: Vec<String>,
     findings: Vec<ScanFinding>,
+    /// Per-stage trace events — present only when the caller sent
+    /// `options={"trace":true}` as a multipart field. Mirrors the shape
+    /// siphon-api's /scan returns so the admin console's trace
+    /// view renders both pods identically.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trace: Option<Vec<siphon_core::scanner::StageEvent>>,
+}
+
+/// Scan options accepted as a JSON-encoded `options` multipart field.
+/// Shape mirrors siphon-api's ScanOptions so the admin console can
+/// reuse the same form data for both /scan endpoints. All fields are
+/// optional — omitted fields fall back to ScanConfig defaults.
+#[derive(Deserialize, Default)]
+struct ScanOptions {
+    min_confidence: Option<f64>,
+    categories: Option<Vec<String>>,
+    require_context: Option<bool>,
+    baseline_only: Option<bool>,
+    deduplicate: Option<bool>,
+    trace: Option<bool>,
 }
 
 #[derive(Serialize)]
@@ -233,6 +253,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
     let mut file_bytes: Option<Vec<u8>> = None;
     let mut filename: Option<String> = None;
     let mut content_type: Option<String> = None;
+    let mut options: ScanOptions = ScanOptions::default();
 
     loop {
         match multipart.next_field().await {
@@ -250,9 +271,33 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
                             );
                         }
                     }
+                } else if name == "options" {
+                    // JSON-encoded ScanOptions (mirrors siphon-api's
+                    // /scan body shape). Malformed → 400; missing is
+                    // fine, options stays at Default.
+                    match field.text().await {
+                        Ok(s) if !s.is_empty() => {
+                            match serde_json::from_str::<ScanOptions>(&s) {
+                                Ok(o) => options = o,
+                                Err(e) => {
+                                    return err(
+                                        StatusCode::BAD_REQUEST,
+                                        format!("options JSON parse failed: {e}"),
+                                    );
+                                }
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            return err(
+                                StatusCode::BAD_REQUEST,
+                                format!("options field read failed: {e}"),
+                            );
+                        }
+                    }
                 } else {
-                    // 'options' JSON (min_confidence, categories, etc.) wiring
-                    // is a post-Phase-0 follow-up; for now drain the field.
+                    // Unknown field — drain bytes so the next iteration
+                    // of the multipart parser advances cleanly.
                     let _ = field.bytes().await;
                 }
             }
@@ -319,15 +364,42 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
         }
     };
 
-    let config = ScanConfig {
+    // Caller opted into tracing — allocate a sink the scanner drains
+    // into; None disables tracing at the hot path (no per-candidate
+    // allocs).
+    let trace_sink: siphon_core::scanner::TraceSink = if options.trace.unwrap_or(false) {
+        Some(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())))
+    } else {
+        None
+    };
+
+    let mut config = ScanConfig {
         disabled_patterns: Some(state.disabled_patterns.clone()),
         pattern_field_overrides: Some(state.pattern_field_overrides.clone()),
         runtime_patterns: Some(state.runtime_patterns.clone()),
         pattern_regex_overrides: Some(state.pattern_regex_overrides.clone()),
         list_bindings: Some(state.list_bindings.clone()),
         max_unique_per_subcategory: Some(state.unique_thresholds.clone()),
+        trace: trace_sink.clone(),
         ..Default::default()
     };
+    if let Some(v) = options.min_confidence {
+        config.min_confidence = v;
+    }
+    if let Some(v) = options.require_context {
+        config.require_context = v;
+    }
+    if let Some(v) = options.baseline_only {
+        config.baseline_only = v;
+    }
+    if let Some(v) = options.deduplicate {
+        config.deduplicate = v;
+    }
+    if let Some(cats) = options.categories.as_ref() {
+        if !cats.is_empty() {
+            config.categories = Some(cats.iter().cloned().collect());
+        }
+    }
     let matches = match scan_text_with_config(&extract.text, &config) {
         Ok(m) => m,
         Err(e) => {
@@ -394,6 +466,12 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
         "scan ok"
     );
 
+    // Drain the trace sink after the scan completes. The scanner only
+    // writes to it mid-pipeline, so unlocking here is race-free.
+    let trace = trace_sink.and_then(|s| {
+        s.lock().ok().map(|g| g.clone())
+    });
+
     JsonResponse(ScanResponse {
         request_id,
         filename,
@@ -403,6 +481,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
         parsed_as: extract.format,
         warnings: extract.warnings,
         findings,
+        trace,
     })
     .into_response()
 }
@@ -536,7 +615,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "siphon-fs starting"
     );
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(addr = %addr, error = %e, "bind failed — another process likely holds this port");
+            std::process::exit(1);
+        }
+    };
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;

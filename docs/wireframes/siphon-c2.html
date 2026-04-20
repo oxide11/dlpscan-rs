@@ -11795,31 +11795,48 @@ function LocalLauncherPanel() {
                 <span></span>
                 <span className="label">Action</span>
               </div>
-              {processes.map(p => (
-                <div key={p.id} style={{display:'grid', gridTemplateColumns:'auto minmax(180px, 1fr) 110px 150px 60px auto', gap:8, padding:'6px 0', borderBottom:'1px dashed var(--line-soft)', fontSize:12, alignItems:'center'}}>
-                  <span className={`chip chip--${p.status === 'running' ? 'safe' : 'ghost'}`} style={{fontSize:9, padding:'2px 6px'}}>
-                    {p.status}
-                  </span>
-                  <span className="mono" style={{fontSize:11, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
-                    <span style={{color:'var(--ink-bright)'}}>{p.id}</span>
-                    <span className="muted"> · {p.kind}</span>
-                  </span>
-                  <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{p.pid}</span>
-                  <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{p.bind}</span>
-                  <span></span>
-                  <span style={{display:'flex', gap:4}}>
-                    <button className="btn ghost"
-                            onClick={() => onStop(p.id, false)}
-                            disabled={p.status !== 'running'}
-                            title="SIGTERM + 60s drain">stop</button>
-                    <button className="btn ghost"
-                            onClick={() => onStop(p.id, true)}
-                            disabled={p.status !== 'running'}
-                            title="SIGKILL immediately"
-                            style={{color:'var(--red)'}}>force</button>
-                  </span>
-                </div>
-              ))}
+              {processes.map(p => {
+                const running = p.status === 'running';
+                // Exit code colouring: 0 = clean stop, non-zero = crash.
+                // -1 covers signal death (SIGKILL/SIGTERM).
+                const badExit = !running && p.exit_code != null && p.exit_code !== 0;
+                const chipKind = running ? 'safe' : badExit ? 'red' : 'ghost';
+                const chipLabel = running
+                  ? p.status
+                  : (p.exit_code != null ? `exited ${p.exit_code}` : p.status);
+                return (
+                  <div key={p.id} style={{display:'grid', gridTemplateColumns:'auto minmax(180px, 1fr) 110px 150px 60px auto', gap:8, padding:'6px 0', borderBottom:'1px dashed var(--line-soft)', fontSize:12, alignItems:'center', opacity: running ? 1 : 0.75}}>
+                    <span className={`chip chip--${chipKind}`} style={{fontSize:9, padding:'2px 6px'}}>
+                      {chipLabel}
+                    </span>
+                    <span className="mono" style={{fontSize:11, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                      <span style={{color:'var(--ink-bright)'}}>{p.id}</span>
+                      <span className="muted"> · {p.kind}</span>
+                    </span>
+                    <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{p.pid}</span>
+                    <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{p.bind}</span>
+                    <span></span>
+                    <span style={{display:'flex', gap:4}}>
+                      {running ? (
+                        <>
+                          <button className="btn ghost"
+                                  onClick={() => onStop(p.id, false)}
+                                  title="SIGTERM + 60s drain">stop</button>
+                          <button className="btn ghost"
+                                  onClick={() => onStop(p.id, true)}
+                                  title="SIGKILL immediately"
+                                  style={{color:'var(--red)'}}>force</button>
+                        </>
+                      ) : (
+                        <button className="btn ghost"
+                                onClick={() => onStop(p.id, true)}
+                                title="Dismiss this tombstone from the registry"
+                                style={{color:'var(--ink-soft)'}}>dismiss</button>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -13756,15 +13773,28 @@ function LiveScan() {
   //   · source_pod       (hardcoded 'siphon-fs' for the chip)
   //   · parsed_as        (extractor that ran — pdf/rtf/plain/etc.)
   //   · warnings         (extractor diagnostics, if any)
-  // Options (min_confidence, require_context, etc.) aren't yet wired
-  // through to siphon-fs — Phase 0c's TODO. Scans run with default
-  // ScanConfig for now.
+  //   · trace            (when Trace toggle is on — same shape as text-mode)
+  // Options go over the wire as a second multipart field `options`
+  // with a JSON-encoded ScanOptions body — same shape siphon-api
+  // accepts as the /scan POST body.
   const runFileScan = async () => {
     if (!file) return;
     setLoading(true); setError(null); setResult(null);
     try {
       const form = new FormData();
       form.append('file', file, file.name);
+      const opts = {
+        min_confidence: minConf || undefined,
+        require_context: requireCtx || undefined,
+        deduplicate:     dedupe || undefined,
+        trace:           traceOn || undefined,
+      };
+      // Only attach the field if something's set — keeps small scans
+      // on the wire minimal and lets siphon-fs skip JSON parsing
+      // entirely when defaults are fine.
+      if (Object.values(opts).some(v => v !== undefined)) {
+        form.append('options', JSON.stringify(opts));
+      }
       const target = fsUrl.replace(/\/$/, '');
       const r = await fetch(target + '/scan', { method: 'POST', body: form });
       const j = await r.json();
@@ -13779,6 +13809,7 @@ function LiveScan() {
         bytes: j.bytes,
         parsed_as: j.parsed_as,
         warnings: j.warnings || [],
+        trace: j.trace || null,
       });
     } catch (e) {
       setError(String(e.message || e));
@@ -13909,7 +13940,7 @@ function LiveScan() {
           </div>
         )}
 
-        <div style={{display:'grid', gridTemplateColumns:'auto 1fr auto auto auto', gap:10, alignItems:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12, opacity: mode === 'file' ? 0.55 : 1}}>
+        <div style={{display:'grid', gridTemplateColumns:'auto 1fr auto auto auto', gap:10, alignItems:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
           <span className="label">API URL</span>
           <input
             type="text"
@@ -13921,37 +13952,34 @@ function LiveScan() {
               fontFamily:"'JetBrains Mono', monospace", fontSize:12,
               padding:'6px 8px', background:'var(--bg-1)',
               color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+              opacity: mode === 'file' ? 0.55 : 1,
             }}
           />
           <label style={{display:'inline-flex', alignItems:'center', gap:6}}>
-            <input type="checkbox" checked={requireCtx} onChange={e => setRequireCtx(e.target.checked)}
-                   disabled={mode === 'file'} />
+            <input type="checkbox" checked={requireCtx} onChange={e => setRequireCtx(e.target.checked)} />
             <span className="label">require-context</span>
           </label>
           <label style={{display:'inline-flex', alignItems:'center', gap:6}}>
-            <input type="checkbox" checked={dedupe} onChange={e => setDedupe(e.target.checked)}
-                   disabled={mode === 'file'} />
+            <input type="checkbox" checked={dedupe} onChange={e => setDedupe(e.target.checked)} />
             <span className="label">deduplicate</span>
           </label>
           <label style={{display:'inline-flex', alignItems:'center', gap:6}}
                  title="when on, the server records every candidate's trip through the pipeline so you can see where a detection was accepted or dropped">
-            <input type="checkbox" checked={traceOn} onChange={e => setTraceOn(e.target.checked)}
-                   disabled={mode === 'file'} />
-            <span className="label" style={{color: traceOn && mode !== 'file' ? 'var(--accent)' : undefined}}>trace pipeline</span>
+            <input type="checkbox" checked={traceOn} onChange={e => setTraceOn(e.target.checked)} />
+            <span className="label" style={{color: traceOn ? 'var(--accent)' : undefined}}>trace pipeline</span>
           </label>
           <label style={{display:'inline-flex', alignItems:'center', gap:6}}>
             <span className="label">min-conf</span>
             <input type="number" min="0" max="1" step="0.05" value={minConf}
                    onChange={e => setMinConf(parseFloat(e.target.value) || 0)}
-                   disabled={mode === 'file'}
                    style={{width:60, fontFamily:"'JetBrains Mono', monospace", fontSize:12, padding:'4px 6px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}} />
           </label>
         </div>
         {mode === 'file' && (
           <div className="muted" style={{fontSize:11, marginTop:8, lineHeight:1.6}}>
             File mode hits <span className="mono">{fsUrl}/scan</span> — options above
-            don't apply yet (siphon-fs runs with default <span className="mono">ScanConfig</span>).
-            Plumbing options + trace through siphon-fs lands in a follow-up.
+            apply end-to-end (siphon-fs accepts a JSON <span className="mono">options</span>{' '}
+            multipart field; trace results render below on the Trace tab).
           </div>
         )}
       </div>

@@ -2483,11 +2483,21 @@ async fn main() {
             shutdown_handle.graceful_shutdown(Some(Duration::from_secs(30)));
         });
 
-        axum_server::bind_rustls(addr.parse().unwrap(), rustls_config)
+        let parsed_addr: SocketAddr = match addr.parse() {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::error!(addr = %addr, error = %e, "invalid bind address");
+                std::process::exit(1);
+            }
+        };
+        if let Err(e) = axum_server::bind_rustls(parsed_addr, rustls_config)
             .handle(handle)
             .serve(app.into_make_service_with_connect_info::<SocketAddr>())
             .await
-            .unwrap();
+        {
+            tracing::error!(error = %e, "TLS server terminated with error");
+            std::process::exit(1);
+        }
     } else {
         if bind != "127.0.0.1" && bind != "::1" {
             tracing::warn!(
@@ -2495,15 +2505,24 @@ async fn main() {
             );
         }
 
-        let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+        let listener = match tokio::net::TcpListener::bind(&addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::error!(addr = %addr, error = %e, "bind failed — another process likely holds this port");
+                std::process::exit(1);
+            }
+        };
 
-        axum::serve(
+        if let Err(e) = axum::serve(
             listener,
             app.into_make_service_with_connect_info::<SocketAddr>(),
         )
         .with_graceful_shutdown(shutdown_signal())
         .await
-        .unwrap();
+        {
+            tracing::error!(error = %e, "server terminated with error");
+            std::process::exit(1);
+        }
     }
 }
 
