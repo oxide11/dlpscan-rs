@@ -11196,7 +11196,7 @@ function EvadexAdversarial() {
   const [count,     setCount]     = React.useState(250);
   const [evRate,    setEvRate]    = React.useState(30);
   const [lang,      setLang]      = React.useState('EN');
-  const [template,  setTemplate]  = React.useState('banking-statement');
+  const [template,  setTemplate]  = React.useState('statement');
   const [genBusy,   setGenBusy]   = React.useState(false);
   const [genErr,    setGenErr]    = React.useState('');
 
@@ -11312,7 +11312,7 @@ function EvadexAdversarial() {
         category:     String(genCat).toLowerCase(),
         count:        count,
         evasion_rate: evRate / 100,
-        language:     String(lang).toLowerCase().replace('-', '_'),
+        language:     String(lang).toLowerCase(),
         template:     template,
       };
       const r = await bridgeFetch('/v1/evadex/generate', {
@@ -11700,11 +11700,11 @@ function EvadexAdversarial() {
             <div className="label" style={{marginBottom:4}}>Template</div>
             <select value={template} onChange={e => setTemplate(e.target.value)}
                     style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
-              <option value="banking-statement">banking-statement · monthly</option>
-              <option value="hr-record">hr-record · employee file</option>
+              <option value="statement">statement · monthly banking</option>
+              <option value="hr_record">hr_record · employee file</option>
               <option value="invoice">invoice · accounts payable</option>
-              <option value="medical-referral">medical-referral · PHI</option>
-              <option value="credential-dump">credential-dump · sim</option>
+              <option value="medical_record">medical_record · PHI</option>
+              <option value="secrets_file">secrets_file · credential sim</option>
               <option value="generic">generic · mixed tokens</option>
             </select>
           </div>
