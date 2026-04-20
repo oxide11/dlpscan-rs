@@ -7126,6 +7126,201 @@ function matchPlaybookForCategory(cat) {
       || null;
 }
 
+// ─── PlaybookDrawer ─────────────────────────────────────────────
+// Right-side slide-in drawer that shows the playbook list + the
+// selected body. No wiring in this commit — App renders this in
+// the next (C3) commit so it can ship in a self-contained diff.
+//
+// Props:
+//   open              boolean — renders nothing when false
+//   onClose           fn — invoked on × / backdrop click / Escape
+//   initialPlaybookId string — pre-selects a playbook (C5 passes
+//                     the match for the current finding's category)
+function PlaybookDrawer({ open, onClose, initialPlaybookId }) {
+  const [selectedId, setSelectedId] = React.useState(
+    initialPlaybookId || (IR_PLAYBOOKS[0] && IR_PLAYBOOKS[0].id)
+  );
+  const [search, setSearch] = React.useState('');
+
+  // When the drawer opens with a new initial pick, follow it.
+  React.useEffect(() => {
+    if (open && initialPlaybookId) setSelectedId(initialPlaybookId);
+  }, [open, initialPlaybookId]);
+
+  // Escape closes.
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === 'Escape') onClose && onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const filtered = IR_PLAYBOOKS.filter(p => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return p.title.toLowerCase().includes(q)
+        || (p.tags || []).some(t => t.includes(q))
+        || (p.categories || []).some(c => c.toLowerCase().includes(q));
+  });
+
+  const selected = IR_PLAYBOOKS.find(p => p.id === selectedId) || filtered[0] || IR_PLAYBOOKS[0];
+  const bodyHtml = selected ? renderIrMarkdown(selected.markdown) : '';
+
+  return (
+    <div onClick={onClose}
+         style={{
+           position:'fixed', inset:0,
+           background:'rgba(0,0,0,0.55)',
+           zIndex:1000, display:'flex', justifyContent:'flex-end',
+         }}>
+      <div onClick={(e) => e.stopPropagation()}
+           style={{
+             width:'min(960px, 92vw)', height:'100%',
+             background:'var(--bg-1)',
+             borderLeft:'1px solid var(--line-strong)',
+             display:'grid', gridTemplateColumns:'280px 1fr',
+             boxShadow:'-12px 0 40px rgba(0,0,0,0.6)',
+             overflow:'hidden',
+           }}>
+        {/* Left pane · list */}
+        <div style={{
+          borderRight:'1px solid var(--line-soft)', background:'var(--bg-2)',
+          display:'flex', flexDirection:'column', minHeight:0,
+        }}>
+          <div style={{
+            padding:'14px 14px 10px', borderBottom:'1px solid var(--line-soft)',
+          }}>
+            <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:10}}>
+              <span style={{fontFamily:"'Space Grotesk', sans-serif", fontWeight:700, fontSize:14, color:'var(--ink-bright)'}}>
+                ❖ Playbooks
+              </span>
+              <button onClick={onClose}
+                      title="close (esc)"
+                      style={{
+                        background:'transparent', border:'1px solid var(--line-strong)',
+                        color:'var(--ink)', width:26, height:26,
+                        borderRadius:'var(--radius)', cursor:'pointer',
+                        fontFamily:"'JetBrains Mono', monospace", fontSize:14, lineHeight:1,
+                      }}>×</button>
+            </div>
+            <input type="text"
+                   value={search}
+                   onChange={e => setSearch(e.target.value)}
+                   placeholder="filter · title / tag / category"
+                   className="mono"
+                   style={{
+                     width:'100%', boxSizing:'border-box',
+                     padding:'6px 10px', fontSize:11,
+                     background:'var(--bg-1)', color:'var(--ink)',
+                     border:'1px solid var(--line-strong)',
+                     borderRadius:'var(--radius)',
+                   }}/>
+          </div>
+          <div style={{flex:1, overflowY:'auto'}}>
+            {filtered.length === 0 && (
+              <div className="muted mono" style={{padding:14, fontSize:11, textAlign:'center'}}>
+                — no playbooks match —
+              </div>
+            )}
+            {filtered.map(p => {
+              const active = selected && selected.id === p.id;
+              return (
+                <button key={p.id}
+                        onClick={() => setSelectedId(p.id)}
+                        style={{
+                          display:'block', width:'100%', textAlign:'left',
+                          padding:'10px 14px',
+                          background: active ? 'var(--accent-wash)' : 'transparent',
+                          border:'none',
+                          borderLeft: active ? '3px solid var(--accent)' : '3px solid transparent',
+                          borderBottom:'1px solid var(--line-soft)',
+                          color:'var(--ink)', cursor:'pointer',
+                          fontFamily:'inherit',
+                        }}>
+                  <div style={{
+                    fontWeight:600, fontSize:12.5,
+                    color: active ? 'var(--ink-bright)' : 'var(--ink)',
+                    fontFamily:"'Space Grotesk', sans-serif",
+                    marginBottom:4,
+                  }}>
+                    {p.title}
+                  </div>
+                  {p.categories && p.categories.length > 0 && (
+                    <div style={{display:'flex', gap:4, flexWrap:'wrap'}}>
+                      {p.categories.slice(0, 2).map(c => (
+                        <span key={c} className="chip chip--ghost"
+                              style={{fontSize:9, padding:'2px 6px'}}>{c}</span>
+                      ))}
+                      {p.categories.length > 2 && (
+                        <span className="muted mono" style={{fontSize:10, alignSelf:'center'}}>
+                          +{p.categories.length - 2}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Right pane · content */}
+        <div style={{display:'flex', flexDirection:'column', minHeight:0}}>
+          <div style={{
+            padding:'14px 20px', borderBottom:'1px solid var(--line-soft)',
+            display:'flex', alignItems:'center', justifyContent:'space-between',
+            background:'var(--bg-2)',
+          }}>
+            <div>
+              <div style={{
+                fontFamily:"'Space Grotesk', sans-serif", fontWeight:700,
+                fontSize:17, color:'var(--ink-bright)',
+              }}>
+                {selected ? selected.title : 'Select a playbook'}
+              </div>
+              {selected && selected.tags && selected.tags.length > 0 && (
+                <div style={{marginTop:6, display:'flex', gap:4, flexWrap:'wrap'}}>
+                  {selected.tags.map(t => (
+                    <span key={t} className="mono"
+                          style={{fontSize:10, color:'var(--ink-soft)',
+                                  padding:'1px 6px', border:'1px solid var(--line-soft)',
+                                  borderRadius:2}}>#{t}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+            {selected && (
+              <button
+                onClick={() => {
+                  try { navigator.clipboard.writeText(selected.markdown); } catch {}
+                }}
+                title="copy the markdown body to clipboard"
+                style={{
+                  padding:'5px 10px', fontSize:11,
+                  background:'transparent', color:'var(--ink)',
+                  border:'1px solid var(--line-strong)',
+                  borderRadius:'var(--radius)', cursor:'pointer',
+                  fontFamily:"'JetBrains Mono', monospace",
+                }}>
+                ⎘ Copy
+              </button>
+            )}
+          </div>
+          <div style={{
+            flex:1, overflowY:'auto', padding:'16px 24px 40px',
+            fontFamily:"'IBM Plex Sans', sans-serif", fontSize:13,
+          }}
+          // renderIrMarkdown escapes + emits a tightly-controlled
+          // subset; safe to inject as HTML.
+          dangerouslySetInnerHTML={{ __html: bodyHtml }}/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── App ────────────────────────────────────────────────────────
 const TWEAK_DEFAULTS = {
   theme: 'phosphor',
