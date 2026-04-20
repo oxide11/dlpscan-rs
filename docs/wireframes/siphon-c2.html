@@ -11107,10 +11107,9 @@ function Testing() {
 }
 
 /* ===== surfaces/adversarial.jsx =====
-   Evadex adversarial-testing surface. Backend (evadex HTTP bridge) is not
-   wired yet — metrics render a "connecting…" state, form controls are
-   interactive so the workflow is reviewable, and actions that would hit
-   the bridge are disabled. */
+   Evadex adversarial-testing surface. Wired to the evadex HTTP bridge
+   (v3.16.0) — polls GET /v1/evadex/metrics on a 30 s cadence and drives
+   POST /v1/evadex/run + POST /v1/evadex/generate from the UI. */
 
 // Tiny self-contained sparkline — kept local so the surface does not
 // depend on MiniSpark being exported from the Dashboard script block.
@@ -11130,14 +11129,65 @@ function EvadexSpark({ data, height, color }) {
   );
 }
 
+// Relative-time formatter for the run-history column.
+function evadexRel(iso) {
+  if (!iso) return '—';
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 60)      return `${Math.round(s)}s ago`;
+  if (s < 3600)    return `${Math.round(s / 60)}m ago`;
+  if (s < 86400)   return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
+// Color FN / FP cells by severity band.
+function evadexCountColor(n) {
+  if (!n || n <= 0) return 'var(--ink-soft)';
+  if (n > 10)       return 'var(--threat)';
+  return 'var(--amber)';
+}
+
+function evadexTrendGlyph(trend) {
+  if (typeof trend === 'string') {
+    const t = trend.trim();
+    if (t.startsWith('+')) return { g: '↑', color: 'var(--safe)', text: t };
+    if (t.startsWith('-')) return { g: '↓', color: 'var(--threat)', text: t };
+    return { g: '→', color: 'var(--ink-soft)', text: t };
+  }
+  if (typeof trend === 'number') {
+    if (trend > 0) return { g: '↑', color: 'var(--safe)',   text: `+${trend.toFixed(1)}%` };
+    if (trend < 0) return { g: '↓', color: 'var(--threat)', text: `${trend.toFixed(1)}%`  };
+    return           { g: '→', color: 'var(--ink-soft)', text: '0.0%' };
+  }
+  return { g: '→', color: 'var(--ink-soft)', text: '—' };
+}
+
 function EvadexAdversarial() {
   const { PageBar } = window;
+
+  // ── Bridge connection config (persisted in localStorage) ─────
+  const LS_URL = 'evadex.bridge.url';
+  const LS_KEY = 'evadex.bridge.key';
+  const [bridgeUrl, setBridgeUrl] = React.useState(
+    () => (typeof localStorage !== 'undefined' && localStorage.getItem(LS_URL)) || 'http://localhost:8081'
+  );
+  const [apiKey, setApiKey] = React.useState(
+    () => (typeof localStorage !== 'undefined' && localStorage.getItem(LS_KEY)) || ''
+  );
+  const [status,      setStatus]      = React.useState('connecting'); // connecting | live | offline
+  const [metrics,     setMetrics]     = React.useState(null);
+  const [metricsErr,  setMetricsErr]  = React.useState('');
+  const [lastFetched, setLastFetched] = React.useState(null);
 
   // ── Run control state ──────────────────────────────────────
   const [profile,  setProfile]  = React.useState('banking-pci-ca');
   const [tier,     setTier]     = React.useState('core');
   const [evasion,  setEvasion]  = React.useState('weighted');
   const [schedule, setSchedule] = React.useState(true);
+  const [runId,      setRunId]      = React.useState(null);
+  const [runStatus,  setRunStatus]  = React.useState('idle'); // idle | queued | running | completed | failed
+  const [runErr,     setRunErr]     = React.useState('');
 
   // ── File generator state ───────────────────────────────────
   const [fmt,       setFmt]       = React.useState('xlsx');
@@ -11146,21 +11196,212 @@ function EvadexAdversarial() {
   const [count,     setCount]     = React.useState(250);
   const [evRate,    setEvRate]    = React.useState(30);
   const [lang,      setLang]      = React.useState('EN');
-  const [template,  setTemplate]  = React.useState('banking-statement');
+  const [template,  setTemplate]  = React.useState('statement');
+  const [genBusy,   setGenBusy]   = React.useState(false);
+  const [genErr,    setGenErr]    = React.useState('');
 
-  // ── Category results (placeholder shape — fills in once the
-  //     evadex bridge lands). Values intentionally '—' to signal
-  //     the pending state without hiding the columns.
+  // Coarse C2 buckets shown in the per-category table — same order as
+  // the evadex bridge categories module.
   const CATEGORIES = ['PCI', 'PII', 'PHI', 'CRED', 'SECRET', 'CRYPTO', 'CLASSIFIED'];
 
-  // ── History placeholder — 10 rows of pending runs so the table
-  //     shape, sparkline, and export flow are reviewable.
-  const HISTORY = Array.from({length: 10}, (_, i) => ({
-    run:   `R-${String(48500 - i).padStart(5, '0')}`,
-    when:  `pending · slot ${i + 1}`,
-    prof:  ['banking-pci-ca','hr-ca-core','finance-regional','banking-pci-ca','full-sweep','banking-pci-ca','hr-ca-core','finance-regional','banking-pci-ca','full-sweep'][i],
-    det:   '—',
-  }));
+  // Persist bridge config so reloading the page keeps the connection.
+  React.useEffect(() => {
+    try { localStorage.setItem(LS_URL, bridgeUrl); } catch {}
+  }, [bridgeUrl]);
+  React.useEffect(() => {
+    try { localStorage.setItem(LS_KEY, apiKey); } catch {}
+  }, [apiKey]);
+
+  // Wrapper that injects the x-api-key header when configured.
+  const bridgeFetch = React.useCallback((path, opts) => {
+    const headers = Object.assign({}, (opts && opts.headers) || {});
+    if (apiKey) headers['x-api-key'] = apiKey;
+    return fetch(bridgeUrl.replace(/\/$/, '') + path, Object.assign({}, opts, { headers }));
+  }, [bridgeUrl, apiKey]);
+
+  // ── Metrics polling (30 s cadence) ─────────────────────────
+  const fetchMetrics = React.useCallback(async () => {
+    try {
+      const r = await bridgeFetch('/v1/evadex/metrics');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      setMetrics(data);
+      setStatus('live');
+      setMetricsErr('');
+      setLastFetched(new Date().toISOString());
+    } catch (e) {
+      setStatus('offline');
+      setMetricsErr(String(e && e.message || e));
+    }
+  }, [bridgeFetch]);
+
+  React.useEffect(() => {
+    setStatus('connecting');
+    fetchMetrics();
+    const id = setInterval(fetchMetrics, 30000);
+    return () => clearInterval(id);
+  }, [fetchMetrics]);
+
+  // ── Run lifecycle ──────────────────────────────────────────
+  const pollRun = React.useCallback(async (id) => {
+    try {
+      const r = await bridgeFetch(`/v1/evadex/run/${encodeURIComponent(id)}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      setRunStatus(data.status || 'running');
+      if (data.status === 'failed') {
+        // Surface the bridge's error + stderr tail so the operator can
+        // see what actually went wrong without opening the server log.
+        const msg = data.error
+          || (data.stderr && data.stderr.trim().split('\n').slice(-2).join(' · '))
+          || `exit ${data.exit_code}`;
+        setRunErr(msg);
+      }
+      if (data.status === 'completed' || data.status === 'failed') {
+        // Refresh metrics so the new run appears in history / trends.
+        fetchMetrics();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      setRunErr(String(e && e.message || e));
+      setRunStatus('failed');
+      return true;
+    }
+  }, [bridgeFetch, fetchMetrics]);
+
+  const triggerRun = async () => {
+    setRunErr('');
+    setRunId(null);
+    setRunStatus('queued');
+    try {
+      const r = await bridgeFetch('/v1/evadex/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          profile,
+          tier,
+          evasion_mode:  evasion,
+          tool:          'siphon-cli',
+          scanner_label: 'siphon-c2-run',
+        }),
+      });
+      if (!r.ok) {
+        const txt = await r.text();
+        throw new Error(`HTTP ${r.status} · ${txt.slice(0, 200)}`);
+      }
+      const data = await r.json();
+      setRunId(data.run_id);
+      setRunStatus(data.status || 'queued');
+    } catch (e) {
+      setRunErr(String(e && e.message || e));
+      setRunStatus('failed');
+    }
+  };
+
+  // Poll run status every 3 s until terminal.
+  React.useEffect(() => {
+    if (!runId || runStatus === 'completed' || runStatus === 'failed') return;
+    const id = setInterval(async () => {
+      const done = await pollRun(runId);
+      if (done) clearInterval(id);
+    }, 3000);
+    return () => clearInterval(id);
+  }, [runId, runStatus, pollRun]);
+
+  // ── File generator ─────────────────────────────────────────
+  const triggerGenerate = async () => {
+    setGenErr('');
+    setGenBusy(true);
+    try {
+      const body = {
+        format:       fmt,
+        tier:         genTier,
+        category:     String(genCat).toLowerCase(),
+        count:        count,
+        evasion_rate: evRate / 100,
+        language:     String(lang).toLowerCase(),
+        template:     template,
+      };
+      const r = await bridgeFetch('/v1/evadex/generate', {
+        method:  'POST',
+        headers: { 'content-type': 'application/json' },
+        body:    JSON.stringify(body),
+      });
+      if (!r.ok) {
+        let detail = `HTTP ${r.status}`;
+        try {
+          const j = await r.json();
+          detail += ' · ' + (j.detail && j.detail.error || JSON.stringify(j).slice(0, 200));
+        } catch {}
+        throw new Error(detail);
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `test_data_${genTier}_${fmt}.${fmt}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      setGenErr(String(e && e.message || e));
+    } finally {
+      setGenBusy(false);
+    }
+  };
+
+  // ── Export metrics report ──────────────────────────────────
+  const triggerExport = async () => {
+    try {
+      const r = await bridgeFetch('/v1/evadex/metrics', {
+        headers: { accept: 'application/json' },
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'evadex-report.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      setMetricsErr(String(e && e.message || e));
+    }
+  };
+
+  // ── Derived render values ──────────────────────────────────
+  const m = metrics || {};
+  const detRate   = typeof m.detection_rate === 'number' ? m.detection_rate : null;
+  const detTrend  = Array.isArray(m.detection_trend) && m.detection_trend.length ? m.detection_trend : null;
+  const fpRate    = typeof m.fp_rate === 'number' ? m.fp_rate : null;
+  const fpTrend   = Array.isArray(m.fp_trend) && m.fp_trend.length ? m.fp_trend : null;
+  const covPct    = typeof m.coverage === 'number' ? m.coverage : null;
+  const pTested   = m.patterns_tested ?? null;
+  const pTotal    = m.patterns_total  ?? null;
+  const byCat     = m.by_category || {};
+  const topEv     = Array.isArray(m.top_evasions) ? m.top_evasions : [];
+  const history   = Array.isArray(m.history) ? m.history : [];
+
+  const detTrendDelta = detTrend && detTrend.length >= 2
+    ? (detTrend[detTrend.length - 1] - detTrend[detTrend.length - 2]) : null;
+  const fpTrendDelta  = fpTrend  && fpTrend.length  >= 2
+    ? (fpTrend[fpTrend.length - 1]  - fpTrend[fpTrend.length - 2])  : null;
+
+  const statusChip = status === 'live'
+    ? { cls: 'chip chip--safe', text: 'evadex · live' }
+    : status === 'offline'
+    ? { cls: 'chip chip--red',  text: 'evadex · offline' }
+    : { cls: 'chip chip--warn', text: 'evadex · connecting' };
+
+  const runBtnLabel = runStatus === 'queued'    ? '… queued'
+                    : runStatus === 'running'   ? '… running'
+                    : runStatus === 'completed' ? '✓ completed · run again'
+                    : runStatus === 'failed'    ? '⚠ failed · retry'
+                    : '▶ Run now';
+  const runDisabled = status !== 'live' || runStatus === 'queued' || runStatus === 'running';
+
+  const val = (x, suffix = '') => (x == null || Number.isNaN(x)) ? '—' : `${(+x).toFixed(1)}${suffix}`;
 
   return (
     <div>
@@ -11169,11 +11410,37 @@ function EvadexAdversarial() {
         title="Adversarial Testing"
         subtitle="Evadex evasion harness · detection · false-positive · coverage against Siphon detectors"
         actions={<>
-          <span className="chip chip--warn">evadex · connecting</span>
-          <button className="btn ghost" disabled title="bridge not wired">Open archive</button>
-          <button className="btn primary" disabled title="bridge not wired">＋ New suite</button>
+          <span className={statusChip.cls}>{statusChip.text}</span>
+          <button className="btn ghost" onClick={triggerExport} disabled={status !== 'live'}>Export report</button>
+          <button className="btn primary" onClick={fetchMetrics}>↻ Refresh</button>
         </>}
       />
+
+      {/* ══════════ Bridge connection config ══════════ */}
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="row" style={{gap:10, alignItems:'center', flexWrap:'wrap'}}>
+          <span className="label" style={{margin:0}}>Bridge</span>
+          <input type="text" value={bridgeUrl}
+                 onChange={e => setBridgeUrl(e.target.value)}
+                 placeholder="http://localhost:8081"
+                 style={{flex:'1 1 280px', minWidth:240, padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}} />
+          <span className="label" style={{margin:0}}>API Key</span>
+          <input type="password" value={apiKey}
+                 onChange={e => setApiKey(e.target.value)}
+                 placeholder="(optional · x-api-key)"
+                 style={{flex:'1 1 220px', minWidth:180, padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}} />
+          <button className="btn" onClick={fetchMetrics}>Connect</button>
+          <span className="right row" style={{gap:10, alignItems:'center'}}>
+            <span className={statusChip.cls}>{statusChip.text}</span>
+            {lastFetched && <span className="mono muted" style={{fontSize:10}}>last · {evadexRel(lastFetched)}</span>}
+          </span>
+        </div>
+        {status === 'offline' && metricsErr && (
+          <div className="note" style={{marginTop:8, borderColor:'var(--threat)', color:'var(--threat)', fontSize:11}}>
+            <b>bridge unreachable</b> · {metricsErr} · start with <span className="mono">python -m evadex bridge</span>
+          </div>
+        )}
+      </div>
 
       {/* ══════════ SECTION 1 — Overview metrics ══════════ */}
       <div className="grid grid-3" style={{marginBottom:'var(--gap)'}}>
@@ -11184,11 +11451,16 @@ function EvadexAdversarial() {
           </div>
           <div className="stat">
             <span className="s-label">current</span>
-            <span className="s-val" style={{color:'var(--ink-dim)', fontFamily:"'JetBrains Mono', monospace"}}>connecting…</span>
-            <span className="s-delta muted">vs last run · —</span>
+            <span className="s-val" style={{color: detRate == null ? 'var(--ink-dim)' : 'var(--safe)', fontFamily:"'JetBrains Mono', monospace"}}>
+              {detRate == null ? 'connecting…' : `${detRate.toFixed(1)}%`}
+            </span>
+            <span className={`s-delta ${detTrendDelta == null ? 'muted' : detTrendDelta >= 0 ? 'up' : 'down'}`}>
+              {detTrendDelta == null ? 'vs last run · —'
+                : `${detTrendDelta >= 0 ? '▲' : '▼'} ${Math.abs(detTrendDelta).toFixed(1)} pp vs last run`}
+            </span>
           </div>
-          <div style={{marginTop:8, opacity:0.35}}>
-            <EvadexSpark data={[0,0,0,0,0,0,0,0]} color="var(--safe)" height={28} />
+          <div style={{marginTop:8, opacity: detTrend ? 1 : 0.35}}>
+            <EvadexSpark data={detTrend || [0,0,0,0,0,0,0,0]} color="var(--safe)" height={28} />
           </div>
         </div>
 
@@ -11199,11 +11471,16 @@ function EvadexAdversarial() {
           </div>
           <div className="stat">
             <span className="s-label">current</span>
-            <span className="s-val" style={{color:'var(--ink-dim)', fontFamily:"'JetBrains Mono', monospace"}}>connecting…</span>
-            <span className="s-delta muted">vs last run · —</span>
+            <span className="s-val" style={{color: fpRate == null ? 'var(--ink-dim)' : fpRate > 10 ? 'var(--threat)' : fpRate > 2 ? 'var(--amber)' : 'var(--safe)', fontFamily:"'JetBrains Mono', monospace"}}>
+              {fpRate == null ? 'connecting…' : `${fpRate.toFixed(1)}%`}
+            </span>
+            <span className={`s-delta ${fpTrendDelta == null ? 'muted' : fpTrendDelta <= 0 ? 'up' : 'down'}`}>
+              {fpTrendDelta == null ? 'vs last run · —'
+                : `${fpTrendDelta <= 0 ? '▼' : '▲'} ${Math.abs(fpTrendDelta).toFixed(1)} pp vs last run`}
+            </span>
           </div>
-          <div style={{marginTop:8, opacity:0.35}}>
-            <EvadexSpark data={[0,0,0,0,0,0,0,0]} color="var(--amber)" height={28} />
+          <div style={{marginTop:8, opacity: fpTrend ? 1 : 0.35}}>
+            <EvadexSpark data={fpTrend || [0,0,0,0,0,0,0,0]} color="var(--amber)" height={28} />
           </div>
         </div>
 
@@ -11214,11 +11491,15 @@ function EvadexAdversarial() {
           </div>
           <div className="stat">
             <span className="s-label">current</span>
-            <span className="s-val" style={{color:'var(--ink-dim)', fontFamily:"'JetBrains Mono', monospace"}}>connecting…</span>
-            <span className="s-delta muted">— / — patterns</span>
+            <span className="s-val" style={{color: covPct == null ? 'var(--ink-dim)' : 'var(--accent)', fontFamily:"'JetBrains Mono', monospace"}}>
+              {covPct == null ? 'connecting…' : `${covPct.toFixed(1)}%`}
+            </span>
+            <span className="s-delta muted">
+              {pTested == null ? '— / — patterns' : `${pTested} / ${pTotal} patterns`}
+            </span>
           </div>
-          <div style={{marginTop:8, opacity:0.35}}>
-            <EvadexSpark data={[0,0,0,0,0,0,0,0]} color="var(--accent)" height={28} />
+          <div style={{marginTop:8, opacity: detTrend ? 0.6 : 0.35}}>
+            <EvadexSpark data={detTrend || [0,0,0,0,0,0,0,0]} color="var(--accent)" height={28} />
           </div>
         </div>
       </div>
@@ -11266,20 +11547,33 @@ function EvadexAdversarial() {
         <hr className="sep" />
 
         <div className="row" style={{gap:12, alignItems:'center', flexWrap:'wrap'}}>
-          <button className="btn primary" disabled title="bridge not wired">▶ Run now</button>
+          <button className="btn primary" onClick={triggerRun} disabled={runDisabled}
+                  title={status !== 'live' ? 'bridge offline' : ''}>
+            {runBtnLabel}
+          </button>
+          {runId && (
+            <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
+              run · <b style={{color:'var(--accent)'}}>{runId}</b> · {runStatus}
+            </span>
+          )}
           <label style={{display:'inline-flex', alignItems:'center', gap:6, cursor:'pointer'}}>
             <input type="checkbox" checked={schedule} onChange={e => setSchedule(e.target.checked)} />
             <span className="label" style={{margin:0}}>schedule · nightly 04:00 UTC</span>
           </label>
           <span className="right row" style={{gap:14, alignItems:'center'}}>
             <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
-              last run · <span className="muted">—</span>
+              last run · <span className="muted">{m.last_run ? evadexRel(m.last_run) : '—'}</span>
             </span>
             <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
               next · {schedule ? 'tonight 04:00' : 'off'}
             </span>
           </span>
         </div>
+        {runErr && (
+          <div className="note" style={{marginTop:8, borderColor:'var(--threat)', color:'var(--threat)', fontSize:11}}>
+            <b>run error</b> · {runErr}
+          </div>
+        )}
       </div>
 
       {/* ══════════ SECTION 3 — Results table ══════════ */}
@@ -11296,14 +11590,23 @@ function EvadexAdversarial() {
             <span className="label">FP</span>
             <span className="label">Recall</span>
             <span className="label">Precision</span>
-            {CATEGORIES.flatMap((c, i) => [
-              <span key={'a'+i}><span className={`chip chip--${c==='PCI'?'red':c==='PII'||c==='PHI'?'warn':c==='CRED'||c==='SECRET'?'teal':'ghost'}`}>{c}</span></span>,
-              <span key={'b'+i} className="mono" style={{fontSize:11, color:'var(--ink-dim)'}}>—</span>,
-              <span key={'c'+i} className="mono" style={{fontSize:11, color:'var(--ink-dim)'}}>—</span>,
-              <span key={'d'+i} className="mono" style={{fontSize:11, color:'var(--ink-dim)'}}>—</span>,
-              <span key={'e'+i} className="mono" style={{fontSize:11, color:'var(--ink-dim)'}}>—</span>,
-              <span key={'f'+i} className="mono" style={{fontSize:11, color:'var(--ink-dim)'}}>—</span>,
-            ])}
+            {CATEGORIES.flatMap((c, i) => {
+              const row = byCat[c] || {};
+              const tp  = row.tp;
+              const fn  = row.fn;
+              const fp  = row.fp;
+              const rec = row.recall;
+              const pre = row.precision;
+              const dim = metrics ? 'var(--ink)' : 'var(--ink-dim)';
+              return [
+                <span key={'a'+i}><span className={`chip chip--${c==='PCI'?'red':c==='PII'||c==='PHI'?'warn':c==='CRED'||c==='SECRET'?'teal':'ghost'}`}>{c}</span></span>,
+                <span key={'b'+i} className="mono" style={{fontSize:11, color: dim}}>{tp ?? '—'}</span>,
+                <span key={'c'+i} className="mono" style={{fontSize:11, color: evadexCountColor(fn)}}>{fn ?? '—'}</span>,
+                <span key={'d'+i} className="mono" style={{fontSize:11, color: evadexCountColor(fp)}}>{fp ?? '—'}</span>,
+                <span key={'e'+i} className="mono" style={{fontSize:11, color: rec == null ? 'var(--ink-dim)' : rec >= 95 ? 'var(--safe)' : rec >= 85 ? 'var(--amber)' : 'var(--threat)'}}>{val(rec, '%')}</span>,
+                <span key={'f'+i} className="mono" style={{fontSize:11, color: pre == null ? 'var(--ink-dim)' : pre >= 95 ? 'var(--safe)' : pre >= 85 ? 'var(--amber)' : 'var(--threat)'}}>{val(pre, '%')}</span>,
+              ];
+            })}
           </div>
         </div>
 
@@ -11312,26 +11615,28 @@ function EvadexAdversarial() {
             <span className="t">Top evasions bypassing detection</span>
             <span className="k">ranked · last completed run</span>
           </div>
-          <div style={{display:'grid', gridTemplateColumns:'1fr 70px', gap:6, fontSize:12}}>
-            {[
-              'nfkc + fullwidth mix',
-              'zero-width joiner splits',
-              'homoglyph · cyrillic a/о',
-              'b64-nested · triple wrap',
-              'prompt-leak · "forget previous"',
-              'gzip + b64 compound',
-              'csv injection · leading =',
-            ].map((t, i) => (
-              <React.Fragment key={i}>
-                <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{t}</span>
-                <span className="mono" style={{fontSize:11, color:'var(--ink-dim)', textAlign:'right'}}>—</span>
-              </React.Fragment>
-            ))}
-          </div>
-          <hr className="sep" />
-          <div className="note" style={{fontSize:11}}>
-            Rankings populate once evadex posts a completed run.
-          </div>
+          {topEv.length === 0 ? (
+            <div className="note" style={{fontSize:11}}>
+              {metrics ? 'No evasion data yet — run a scan to populate.' : 'Rankings populate once evadex posts a completed run.'}
+            </div>
+          ) : (
+            <div style={{display:'grid', gridTemplateColumns:'1fr 90px 60px', gap:6, fontSize:12, alignItems:'center'}}>
+              {topEv.map((e, i) => {
+                const t = evadexTrendGlyph(e.trend);
+                return (
+                  <React.Fragment key={i}>
+                    <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{e.technique}</span>
+                    <span className="mono" style={{fontSize:11, color:'var(--ink)', textAlign:'right'}}>
+                      {typeof e.success_rate === 'number' ? `${e.success_rate.toFixed(1)}%` : '—'}
+                    </span>
+                    <span className="mono" style={{fontSize:11, color: t.color, textAlign:'right'}}>
+                      {t.g} {t.text}
+                    </span>
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 
@@ -11403,11 +11708,11 @@ function EvadexAdversarial() {
             <div className="label" style={{marginBottom:4}}>Template</div>
             <select value={template} onChange={e => setTemplate(e.target.value)}
                     style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
-              <option value="banking-statement">banking-statement · monthly</option>
-              <option value="hr-record">hr-record · employee file</option>
+              <option value="statement">statement · monthly banking</option>
+              <option value="hr_record">hr_record · employee file</option>
               <option value="invoice">invoice · accounts payable</option>
-              <option value="medical-referral">medical-referral · PHI</option>
-              <option value="credential-dump">credential-dump · sim</option>
+              <option value="medical_record">medical_record · PHI</option>
+              <option value="secrets_file">secrets_file · credential sim</option>
               <option value="generic">generic · mixed tokens</option>
             </select>
           </div>
@@ -11416,12 +11721,25 @@ function EvadexAdversarial() {
         <hr className="sep" />
 
         <div className="row" style={{gap:10, alignItems:'center'}}>
-          <button className="btn primary" disabled title="bridge not wired">⬇ Generate + Download</button>
+          <button className="btn primary" onClick={triggerGenerate}
+                  disabled={status !== 'live' || genBusy}
+                  title={status !== 'live' ? 'bridge offline' : ''}>
+            {genBusy ? '… generating' : '⬇ Generate + Download'}
+          </button>
           <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
             {count} × {fmt} · {genTier}/{genCat} · {evRate}% evasion · {lang} · {template}
           </span>
-          <span className="right"><span className="chip chip--warn">evadex · pending</span></span>
+          <span className="right">{
+            status === 'live'
+              ? <span className="chip chip--safe">evadex · live</span>
+              : <span className="chip chip--warn">evadex · {status}</span>
+          }</span>
         </div>
+        {genErr && (
+          <div className="note" style={{marginTop:8, borderColor:'var(--threat)', color:'var(--threat)', fontSize:11}}>
+            <b>generate failed</b> · {genErr}
+          </div>
+        )}
       </div>
 
       {/* ══════════ SECTION 5 — History ══════════ */}
@@ -11432,35 +11750,34 @@ function EvadexAdversarial() {
         </div>
 
         <div className="grid" style={{gridTemplateColumns:'2fr 1fr', gap:'var(--gap)', alignItems:'center', marginBottom:'var(--gap)'}}>
-          <div style={{opacity:0.35}}>
-            <EvadexSpark data={[0,0,0,0,0,0,0,0,0,0]} color="var(--safe)" height={40} />
+          <div style={{opacity: detTrend ? 1 : 0.35}}>
+            <EvadexSpark data={detTrend || [0,0,0,0,0,0,0,0,0,0]} color="var(--safe)" height={40} />
             <div className="muted" style={{fontSize:10, marginTop:2}}>detection-rate trend · last 10 runs</div>
           </div>
           <div className="row" style={{justifyContent:'flex-end'}}>
-            <button className="btn ghost" disabled title="bridge not wired">⬇ Export report</button>
+            <button className="btn ghost" onClick={triggerExport} disabled={status !== 'live'}>⬇ Export report</button>
           </div>
         </div>
 
-        <div style={{display:'grid', gridTemplateColumns:'110px 1fr 1.4fr 120px', gap:8, fontSize:13, alignItems:'center'}}>
+        <div style={{display:'grid', gridTemplateColumns:'140px 1fr 1.4fr 120px', gap:8, fontSize:13, alignItems:'center'}}>
           <span className="label">Run</span>
           <span className="label">When</span>
           <span className="label">Profile</span>
           <span className="label">Detection</span>
-          {HISTORY.flatMap((r, i) => [
-            <span key={'a'+i} className="mono" style={{fontSize:11}}>{r.run}</span>,
-            <span key={'b'+i} className="muted" style={{fontSize:11}}>{r.when}</span>,
-            <span key={'c'+i} className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{r.prof}</span>,
-            <span key={'d'+i} className="mono" style={{fontSize:11, color:'var(--ink-dim)'}}>{r.det}</span>,
-          ])}
+          {(history.length ? history : Array.from({length: 3}, () => ({run_id:'—', when:null, profile:'—', detection_rate:null})))
+            .flatMap((r, i) => [
+              <span key={'a'+i} className="mono" style={{fontSize:11}}>{r.run_id || '—'}</span>,
+              <span key={'b'+i} className="muted" style={{fontSize:11}}>{r.when ? evadexRel(r.when) : '—'}</span>,
+              <span key={'c'+i} className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{r.profile || '—'}</span>,
+              <span key={'d'+i} className="mono" style={{fontSize:11, color: r.detection_rate == null ? 'var(--ink-dim)' : r.detection_rate >= 95 ? 'var(--safe)' : r.detection_rate >= 85 ? 'var(--amber)' : 'var(--threat)'}}>
+                {r.detection_rate == null ? '—' : `${(+r.detection_rate).toFixed(1)}%`}
+              </span>,
+            ])}
         </div>
 
         <hr className="sep" />
         <div className="note" style={{maxWidth: 760, fontSize:11}}>
-          <b>evadex backend integration is coming.</b> Controls above are live so the
-          workflow is reviewable; runs, downloads, and reports require the evadex bridge
-          — planned endpoints: <span className="mono">POST /v1/evadex/run</span> ·
-          <span className="mono"> GET /v1/evadex/metrics</span> ·
-          <span className="mono"> POST /v1/evadex/generate</span>.
+          Wired to <span className="mono">{bridgeUrl}</span> · polling <span className="mono">GET /v1/evadex/metrics</span> every 30 s · <span className="mono">POST /v1/evadex/run</span> + <span className="mono">POST /v1/evadex/generate</span> drive from the UI. Start the bridge locally with <span className="mono">python -m evadex bridge</span>.
         </div>
       </div>
     </div>
