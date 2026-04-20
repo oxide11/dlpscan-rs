@@ -2587,13 +2587,389 @@ function Stub({ title, description }) {
   );
 }
 
+// ─── Findings Queue ─────────────────────────────────────────────
+// The core Respond surface — unioned findings from every pod in the
+// registry (siphon-api + siphon-fs rings + whatever else the analyst
+// has added). Client-side filters layer on top of the fetched set;
+// `limit` drives how many records each pod returns.
+//
+// Actions (Ack / Escalate / Mark FP) are stubbed for MVP: they flash
+// a local confirmation and persist a per-finding marker in
+// localStorage, so the analyst can triage across reloads even before
+// the server-side acknowledge endpoint lands.
+const IR_ACK_KEY = 'ir:acks';
+function readAcks() {
+  try { return JSON.parse(localStorage.getItem(IR_ACK_KEY) || '{}') || {}; }
+  catch { return {}; }
+}
+function writeAcks(m) {
+  try { localStorage.setItem(IR_ACK_KEY, JSON.stringify(m)); } catch {}
+}
+const SEVERITY_RANK = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+function severityChip(sev) {
+  const cls = {
+    critical: 'red', high: 'red', medium: 'amber',
+    low: 'warn', info: 'ghost',
+  }[sev] || 'ghost';
+  return <span className={`chip chip--${cls}`} style={{fontSize:10}}>{sev || 'info'}</span>;
+}
+
+function FindingsQueue() {
+  const [filters, setFilters] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem('ir:queueFilters') || '{}') || {}; }
+    catch { return {}; }
+  });
+  const [limit, setLimit] = React.useState(() => {
+    try { return parseInt(localStorage.getItem('ir:queueLimit') || '100', 10); }
+    catch { return 100; }
+  });
+  const [expanded, setExpanded] = React.useState(null);
+  const [acks, setAcks] = React.useState(readAcks);
+  const [flash, setFlash] = React.useState(null); // short-lived toast
+
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:queueFilters', JSON.stringify(filters)); } catch {}
+  }, [filters]);
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:queueLimit', String(limit)); } catch {}
+  }, [limit]);
+
+  const findings = window.useFindingsUnion('?limit=' + limit);
+  const all = (findings.data && findings.data.findings) || [];
+
+  // Derive filter options from the live set so the dropdowns track
+  // whatever's actually in the ring, rather than a hardcoded list.
+  const categories = React.useMemo(
+    () => Array.from(new Set(all.map(f => f.category).filter(Boolean))).sort(),
+    [all]
+  );
+  const pods = React.useMemo(
+    () => Array.from(new Set(all.map(f => f.source_pod).filter(Boolean))).sort(),
+    [all]
+  );
+
+  const filtered = React.useMemo(() => {
+    const s = (filters.search || '').toLowerCase();
+    const needFp = filters.ack === 'hide-fp';
+    const needAck = filters.ack === 'hide-ack';
+    const needOpen = filters.ack === 'open';
+    return all.filter(f => {
+      if (filters.severity && filters.severity !== 'all' && f.severity !== filters.severity) return false;
+      if (filters.category && filters.category !== 'all' && f.category !== filters.category) return false;
+      if (filters.pod && filters.pod !== 'all' && f.source_pod !== filters.pod) return false;
+      if (s && !(f.text || '').toLowerCase().includes(s)
+          && !(f.category || '').toLowerCase().includes(s)
+          && !(f.sub_category || '').toLowerCase().includes(s)) return false;
+      const ack = acks[f.id];
+      if (needFp && ack && ack.kind === 'fp') return false;
+      if (needAck && ack && ack.kind === 'ack') return false;
+      if (needOpen && ack) return false;
+      return true;
+    }).sort((a, b) => {
+      // Severity-then-recency sort feels right for a triage queue.
+      const sa = SEVERITY_RANK[a.severity] || 0;
+      const sb = SEVERITY_RANK[b.severity] || 0;
+      if (sa !== sb) return sb - sa;
+      return (b.ts || '').localeCompare(a.ts || '');
+    });
+  }, [all, filters, acks]);
+
+  const doAck = (finding, kind) => {
+    const next = { ...acks, [finding.id]: {
+      kind, at: new Date().toISOString(), by: 'local-user',
+    }};
+    setAcks(next);
+    writeAcks(next);
+    setFlash({
+      id: finding.id,
+      label: kind === 'fp' ? 'Marked false-positive'
+           : kind === 'esc' ? 'Escalated'
+           : 'Acknowledged',
+    });
+    setTimeout(() => setFlash(null), 1800);
+  };
+  const clearAck = (finding) => {
+    const next = { ...acks };
+    delete next[finding.id];
+    setAcks(next);
+    writeAcks(next);
+  };
+
+  const counts = React.useMemo(() => {
+    const c = { open: 0, ack: 0, fp: 0, esc: 0 };
+    for (const f of all) {
+      const a = acks[f.id];
+      if (!a) c.open += 1;
+      else if (a.kind === 'fp')  c.fp += 1;
+      else if (a.kind === 'esc') c.esc += 1;
+      else                       c.ack += 1;
+    }
+    return c;
+  }, [all, acks]);
+
+  const fmtTs = (ts) => ts ? ts.replace('T', ' ').replace('Z', '').slice(0, 19) : '—';
+
+  return (
+    <div style={{padding:'var(--gap)'}}>
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Findings Queue</span>
+          <span className="k" style={{display:'flex', alignItems:'center', gap:8}}>
+            <window.LivePill source={findings.source} onClick={findings.refetch}
+                             title="click to refetch across all pods" />
+            <span className="mono" style={{fontSize:11}}>
+              {filtered.length} shown · {all.length} loaded
+              {findings.data && findings.data.total > all.length ? ` · ${findings.data.total} in ring` : ''}
+            </span>
+          </span>
+        </div>
+
+        {/* triage summary chips */}
+        <div style={{padding:'10px 14px', display:'flex', gap:8, flexWrap:'wrap', borderBottom:'1px solid var(--line-soft)', alignItems:'center'}}>
+          <span className="muted mono" style={{fontSize:11, marginRight:4}}>queue:</span>
+          <span className="chip chip--red" style={{fontSize:10, cursor:'pointer'}}
+                onClick={() => setFilters({...filters, ack: filters.ack === 'open' ? 'all' : 'open'})}
+                title="show only not-yet-triaged findings">
+            {counts.open} open
+          </span>
+          <span className="chip chip--warn" style={{fontSize:10}}>{counts.esc} escalated</span>
+          <span className="chip chip--safe" style={{fontSize:10}}>{counts.ack} acknowledged</span>
+          <span className="chip chip--ghost" style={{fontSize:10}}>{counts.fp} false-positive</span>
+          {findings.perPod && findings.perPod.length > 0 && (
+            <span className="muted mono" style={{fontSize:10.5, marginLeft:'auto'}}>
+              {findings.perPod.filter(p => p.ok).length}/{findings.perPod.length} pods reachable
+            </span>
+          )}
+        </div>
+
+        {/* filter controls */}
+        <div style={{padding:'10px 14px', display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', borderBottom:'1px solid var(--line-soft)'}}>
+          <input
+            value={filters.search || ''}
+            onChange={e => setFilters({...filters, search: e.target.value})}
+            placeholder="search text · category · sub-category"
+            className="mono"
+            style={{
+              flex:'1 1 240px', fontSize:12,
+              padding:'6px 10px', background:'var(--bg-1)', color:'var(--ink)',
+              border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+            }}
+          />
+          <select value={filters.severity || 'all'}
+                  onChange={e => setFilters({...filters, severity: e.target.value})}
+                  style={{fontSize:11, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}>
+            <option value="all">any severity</option>
+            <option value="critical">critical</option>
+            <option value="high">high</option>
+            <option value="medium">medium</option>
+            <option value="low">low</option>
+            <option value="info">info</option>
+          </select>
+          <select value={filters.category || 'all'}
+                  onChange={e => setFilters({...filters, category: e.target.value})}
+                  style={{fontSize:11, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', maxWidth:180}}>
+            <option value="all">any category</option>
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          {pods.length > 1 && (
+            <select value={filters.pod || 'all'}
+                    onChange={e => setFilters({...filters, pod: e.target.value})}
+                    style={{fontSize:11, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}>
+              <option value="all">any pod</option>
+              {pods.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          )}
+          <select value={filters.ack || 'all'}
+                  onChange={e => setFilters({...filters, ack: e.target.value})}
+                  style={{fontSize:11, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}>
+            <option value="all">all triage states</option>
+            <option value="open">only open</option>
+            <option value="hide-ack">hide acknowledged</option>
+            <option value="hide-fp">hide false-positive</option>
+          </select>
+          <select value={limit}
+                  onChange={e => setLimit(parseInt(e.target.value, 10))}
+                  style={{fontSize:11, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}
+                  title="how many findings to pull from each pod">
+            <option value={50}>50 per pod</option>
+            <option value={100}>100 per pod</option>
+            <option value={500}>500 per pod</option>
+            <option value={1000}>1000 per pod</option>
+          </select>
+          <button className="btn ghost" onClick={() => setFilters({})}
+                  title="clear all filters" style={{fontSize:11}}>
+            clear
+          </button>
+        </div>
+
+        {/* table */}
+        {findings.loading && (
+          <div className="muted mono" style={{padding:20, textAlign:'center', fontSize:12}}>
+            loading findings from pod registry…
+          </div>
+        )}
+        {!findings.loading && findings.error && (
+          <div className="note" style={{margin:10, borderColor:'var(--red)', background:'var(--red-wash)', color:'var(--red)', fontSize:12}}>
+            <b>Error:</b> {findings.error}
+          </div>
+        )}
+        {!findings.loading && !findings.error && filtered.length === 0 && (
+          <div className="muted mono" style={{padding:30, textAlign:'center', fontSize:12}}>
+            — no findings match the current filter —
+            {all.length > 0 && (
+              <><br/><br/>
+              <a style={{color:'var(--accent)', cursor:'pointer'}}
+                 onClick={() => setFilters({})}>clear filters</a>
+              {' '}to see all {all.length} loaded.</>
+            )}
+          </div>
+        )}
+
+        {/* header row */}
+        {filtered.length > 0 && (
+          <div style={{
+            display:'grid',
+            gridTemplateColumns:'140px 90px 180px 1fr 60px 90px 160px',
+            gap:8, padding:'8px 14px', borderBottom:'1.5px solid var(--line)',
+            fontFamily:"'JetBrains Mono', monospace", fontSize:10,
+            color:'var(--ink-soft)', textTransform:'uppercase', letterSpacing:'0.08em',
+          }}>
+            <span>timestamp</span>
+            <span>pod</span>
+            <span>category / sub</span>
+            <span>matched text</span>
+            <span>conf</span>
+            <span>severity</span>
+            <span>triage</span>
+          </div>
+        )}
+
+        {filtered.map(f => {
+          const ack = acks[f.id];
+          const isOpen = expanded === f.id;
+          const rowTint = ack && ack.kind === 'fp' ? 'var(--bg-1)'
+                        : ack && ack.kind === 'esc' ? 'var(--amber-wash, var(--bg-2))'
+                        : 'transparent';
+          const opacity = ack && ack.kind === 'fp' ? 0.5 : 1;
+          return (
+            <div key={f.id} style={{borderBottom:'1px solid var(--line-soft)'}}>
+              <div onClick={() => setExpanded(isOpen ? null : f.id)}
+                   style={{
+                     display:'grid',
+                     gridTemplateColumns:'140px 90px 180px 1fr 60px 90px 160px',
+                     gap:8, padding:'8px 14px', fontSize:11.5, alignItems:'center',
+                     cursor:'pointer', background: rowTint, opacity,
+                     fontFamily:"'JetBrains Mono', monospace",
+                   }}
+                   title="click to expand">
+                <span style={{color:'var(--ink-soft)'}}>{fmtTs(f.ts)}</span>
+                <span className="chip chip--ghost" style={{fontSize:9, justifySelf:'start'}}>
+                  {f.source_pod || '—'}
+                </span>
+                <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+                      title={`${f.category} / ${f.sub_category}`}>
+                  <span style={{color:'var(--ink-bright)'}}>{f.category}</span>
+                  {f.sub_category && <span className="muted"> / {f.sub_category}</span>}
+                </span>
+                <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:'var(--accent)'}}
+                      title={f.text || ''}>
+                  {f.text || '—'}
+                </span>
+                <span style={{color: f.confidence >= 0.9 ? 'var(--safe)'
+                                    : f.confidence >= 0.7 ? 'var(--amber)'
+                                    : 'var(--ink-soft)'}}>
+                  {f.confidence != null ? f.confidence.toFixed(2) : '—'}
+                </span>
+                <span>{severityChip(f.severity)}</span>
+                <span style={{display:'flex', gap:4, justifySelf:'end'}}
+                      onClick={e => e.stopPropagation()}>
+                  {!ack && (
+                    <>
+                      <button className="btn ghost" onClick={() => doAck(f, 'ack')}
+                              title="acknowledge · stays in queue, marked triaged"
+                              style={{fontSize:10, padding:'3px 6px'}}>ack</button>
+                      <button className="btn ghost" onClick={() => doAck(f, 'esc')}
+                              title="escalate · flag for follow-up"
+                              style={{fontSize:10, padding:'3px 6px', color:'var(--amber)'}}>esc</button>
+                      <button className="btn ghost" onClick={() => doAck(f, 'fp')}
+                              title="mark as false-positive"
+                              style={{fontSize:10, padding:'3px 6px', color:'var(--ink-soft)'}}>fp</button>
+                    </>
+                  )}
+                  {ack && (
+                    <>
+                      <span className={`chip chip--${ack.kind === 'fp' ? 'ghost' : ack.kind === 'esc' ? 'warn' : 'safe'}`}
+                            style={{fontSize:9}}>{ack.kind}</span>
+                      <button className="btn ghost" onClick={() => clearAck(f)}
+                              title="undo triage"
+                              style={{fontSize:10, padding:'3px 6px'}}>↶</button>
+                    </>
+                  )}
+                  {flash && flash.id === f.id && (
+                    <span className="mono" style={{fontSize:10, color:'var(--safe)'}}>
+                      ✓ {flash.label}
+                    </span>
+                  )}
+                </span>
+              </div>
+              {isOpen && (
+                <div style={{padding:'12px 14px 16px 14px', background:'var(--bg-1)', fontSize:11.5, borderTop:'1px dashed var(--line-soft)'}}>
+                  <div style={{display:'grid', gridTemplateColumns:'160px 1fr', gap:'6px 14px', fontFamily:"'JetBrains Mono', monospace"}}>
+                    <span className="muted">finding id</span>
+                    <span className="mono">{f.id}</span>
+                    <span className="muted">request id</span>
+                    <span className="mono">{f.request_id || '—'}</span>
+                    <span className="muted">source</span>
+                    <span className="mono">{f.source_ip || '—'} <span className="muted">via</span> {f.source_pod || '—'}</span>
+                    <span className="muted">span</span>
+                    <span className="mono">{f.span ? f.span.join('..') : '—'}</span>
+                    <span className="muted">has context</span>
+                    <span>{f.has_context ? <span className="chip chip--safe" style={{fontSize:9}}>yes</span> : <span className="chip chip--ghost" style={{fontSize:9}}>no</span>}</span>
+                    {f.metadata && Object.keys(f.metadata).length > 0 && (
+                      <>
+                        <span className="muted">metadata</span>
+                        <span className="mono" style={{whiteSpace:'pre-wrap', wordBreak:'break-word'}}>
+                          {Object.entries(f.metadata).map(([k, v]) => `${k} = ${v}`).join('\n')}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                  <div style={{marginTop:12, display:'flex', gap:8, flexWrap:'wrap'}}>
+                    <a className="btn ghost"
+                       href={`siphon-c2.html#patterns/${encodeURIComponent(f.category)}/${encodeURIComponent(f.sub_category || '')}`}
+                       target="_blank" rel="noopener"
+                       title="jump to the admin console to tune this pattern"
+                       style={{fontSize:11, textDecoration:'none'}}>
+                      ↗ Tune detection
+                    </a>
+                    <button className="btn ghost" onClick={() => {
+                      navigator.clipboard?.writeText(JSON.stringify(f, null, 2));
+                      setFlash({ id: f.id, label: 'Copied JSON' });
+                      setTimeout(() => setFlash(null), 1200);
+                    }} style={{fontSize:11}}>⎘ Copy JSON</button>
+                    {ack && ack.at && (
+                      <span className="muted mono" style={{fontSize:10.5, alignSelf:'center'}}>
+                        triaged {ack.at.slice(0, 19).replace('T', ' ')}
+                        {ack.by && ack.by !== 'local-user' ? ` by ${ack.by}` : ''}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Surface registry ───────────────────────────────────────────
 // Each surface is its own function below. MVP phases fill them in
 // one at a time; this dispatcher lets us ship the shell and the
 // first real surface (Findings Queue) without touching the rest.
 const SURFACE_COMPONENTS = {
-  findings:       () => <Stub title="Findings Queue"
-                              description="Live ring from every pod in the registry. Phase 2 of the IR MVP." />,
+  findings:       () => <FindingsQueue />,
   alerts:         () => <Stub title="Alerts"
                               description="Threshold-breach signals routed from siphon-api's audit ring." />,
   investigations: () => <Stub title="Investigations"
