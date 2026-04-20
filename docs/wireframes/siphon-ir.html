@@ -3932,8 +3932,48 @@ function DocumentPreview({ finding, sameReq }) {
     [finding.id, (sameReq || []).length]
   );
 
-  // Collect keywords from every category represented in the preview
-  // + the primary finding's category (in case no siblings).
+  // View controls — persisted per-analyst so analysts keep their
+  // preferred font / wrap / highlight state between findings.
+  const [fontSize, setFontSize] = React.useState(() => {
+    try { return parseFloat(localStorage.getItem('ir:preview:font')) || 12; }
+    catch { return 12; }
+  });
+  const [wrap, setWrap] = React.useState(() => {
+    try { return localStorage.getItem('ir:preview:wrap') !== 'off'; } catch { return true; }
+  });
+  const [showHl, setShowHl] = React.useState(() => {
+    try { return localStorage.getItem('ir:preview:hl') !== 'off'; } catch { return true; }
+  });
+  const [height, setHeight] = React.useState(() => {
+    try { return parseInt(localStorage.getItem('ir:preview:h'), 10) || 480; }
+    catch { return 480; }
+  });
+  const [flash, setFlash] = React.useState(null);
+  const ping = (m) => { setFlash(m); setTimeout(() => setFlash(null), 1200); };
+  React.useEffect(() => { try { localStorage.setItem('ir:preview:font', String(fontSize)); } catch {} }, [fontSize]);
+  React.useEffect(() => { try { localStorage.setItem('ir:preview:wrap', wrap ? 'on' : 'off'); } catch {} }, [wrap]);
+  React.useEffect(() => { try { localStorage.setItem('ir:preview:hl',   showHl ? 'on' : 'off'); } catch {} }, [showHl]);
+
+  // Track the <pre>'s resize via ResizeObserver so we can persist
+  // the height. User drags the CSS resize handle; observer fires;
+  // we stash the new height.
+  const preRef = React.useRef(null);
+  React.useEffect(() => {
+    const el = preRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const h = Math.round(e.contentRect.height);
+        if (h && Math.abs(h - height) > 2) {
+          setHeight(h);
+          try { localStorage.setItem('ir:preview:h', String(h)); } catch {}
+        }
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const categories = Array.from(new Set(allFindings.map(f => f.category).filter(Boolean)));
   const keywords = React.useMemo(() => {
     const s = new Set();
@@ -3964,6 +4004,22 @@ function DocumentPreview({ finding, sameReq }) {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    ping('Downloaded');
+  };
+
+  const copyBody = () => {
+    const lines = [];
+    if (preview.headers) {
+      for (const [k, v] of Object.entries(preview.headers)) lines.push(`${k}: ${v}`);
+      lines.push('');
+    }
+    lines.push(preview.body);
+    try {
+      navigator.clipboard.writeText(lines.join('\n'));
+      ping('Copied to clipboard');
+    } catch {
+      ping('Copy failed');
+    }
   };
 
   const kindIcon = {
@@ -3983,8 +4039,26 @@ function DocumentPreview({ finding, sameReq }) {
   ));
   const hasKeywordHits = segs.some(s => s.kind === 'keyword');
 
+  // Small toolbar button — keeps the edge strip visually consistent.
+  const ToolBtn = ({ onClick, title, active, children, danger }) => (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        background: active ? 'var(--accent-wash)' : 'transparent',
+        color: danger ? 'var(--red)' : active ? 'var(--accent)' : 'var(--ink)',
+        border: '1px solid ' + (active ? 'var(--accent)' : 'var(--line-soft)'),
+        padding: '4px 9px',
+        fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+        borderRadius: 'var(--radius)',
+        cursor: 'pointer', lineHeight: 1,
+      }}>
+      {children}
+    </button>
+  );
+
   return (
-    <div className="box">
+    <div className="box" style={{overflow:'hidden'}}>
       <div className="box-title">
         <span className="t">
           Document preview
@@ -3992,21 +4066,23 @@ function DocumentPreview({ finding, sameReq }) {
             synthesised · future /v1/findings/{'{'}id{'}'}/payload will serve the real capture
           </span>
         </span>
-        <span className="k" style={{display:'flex', alignItems:'center', gap:10}}>
-          <span className="mono" style={{fontSize:11}}>{preview.size.toLocaleString()} bytes</span>
-          <button className="btn" onClick={download}
-                  title="download the preview as a plain-text file"
-                  style={{fontSize:11, padding:'4px 10px'}}>
-            ↓ Download
-          </button>
+        <span className="k" style={{display:'flex', alignItems:'center', gap:6}}>
+          <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
+            {preview.size.toLocaleString()} bytes
+          </span>
+          {flash && (
+            <span className="mono" style={{fontSize:10.5, color:'var(--safe)', marginLeft:4}}>
+              ✓ {flash}
+            </span>
+          )}
         </span>
       </div>
 
-      {/* Preview header — metadata for this channel (From/To, file name, etc.) */}
+      {/* ── TOP EDGE — metadata strip ──────────────────────────── */}
       <div style={{
         display:'flex', alignItems:'center', gap:14,
         padding:'10px 14px', borderBottom:'1px solid var(--line-soft)',
-        background:'var(--bg-1)', flexWrap:'wrap',
+        background:'var(--bg-2)', flexWrap:'wrap',
       }}>
         <span style={{fontSize:20, lineHeight:1}}>{kindIcon}</span>
         <span className="chip chip--ghost" style={{fontSize:10}}>{kindLabel}</span>
@@ -4018,41 +4094,89 @@ function DocumentPreview({ finding, sameReq }) {
         ))}
       </div>
 
-      {/* Body with highlights */}
-      <pre style={{
-        margin:0, padding:16,
-        fontFamily:"'JetBrains Mono', monospace",
-        fontSize:12, lineHeight:1.6,
-        color:'var(--ink)', whiteSpace:'pre-wrap', wordBreak:'break-word',
-        maxHeight:480, overflow:'auto',
+      {/* ── BODY ROW: left rail + pre + right rail ─────────────── */}
+      <div style={{
+        display:'grid',
+        gridTemplateColumns:'40px 1fr 40px',
         background:'var(--bg-1)',
       }}>
-        {segs.map((s, i) => {
-          if (s.kind === 'plain') return <span key={i}>{s.text}</span>;
-          if (s.kind === 'match') {
-            const c = CATEGORY_COLORS[s.category] || MATCH_COLOR_DEFAULT;
-            const title = `${s.category}${s.sub_category ? ' / ' + s.sub_category : ''} · detected match`;
+        {/* LEFT EDGE — primary actions */}
+        <div style={{
+          display:'flex', flexDirection:'column', alignItems:'center',
+          gap:6, padding:'10px 4px',
+          borderRight:'1px solid var(--line-soft)', background:'var(--bg-2)',
+        }}>
+          <ToolBtn onClick={download} title="download preview as plain-text file">↓</ToolBtn>
+          <ToolBtn onClick={copyBody} title="copy preview body to clipboard">⎘</ToolBtn>
+          <ToolBtn onClick={() => setShowHl(!showHl)} title={showHl ? 'turn off highlights' : 'turn on highlights'} active={showHl}>
+            {showHl ? '◉' : '○'}
+          </ToolBtn>
+        </div>
+
+        {/* PREVIEW BODY — resizable */}
+        <pre ref={preRef}
+             style={{
+               margin:0, padding:16,
+               fontFamily:"'JetBrains Mono', monospace",
+               fontSize: fontSize, lineHeight:1.6,
+               color:'var(--ink)',
+               whiteSpace: wrap ? 'pre-wrap' : 'pre',
+               wordBreak: wrap ? 'break-word' : 'normal',
+               height: height,
+               minHeight: 200,
+               resize: 'vertical',
+               overflow:'auto',
+               background:'var(--bg-1)',
+             }}>
+          {segs.map((s, i) => {
+            if (s.kind === 'plain' || !showHl) return <span key={i}>{s.text}</span>;
+            if (s.kind === 'match') {
+              const c = CATEGORY_COLORS[s.category] || MATCH_COLOR_DEFAULT;
+              const title = `${s.category}${s.sub_category ? ' / ' + s.sub_category : ''} · detected match`;
+              // Leave color: inherit so the text itself stays
+              // readable — don't override foreground. Background
+              // wash + thick bottom underline carries the colour.
+              return (
+                <mark key={i} title={title} style={{
+                  background: c.bg,
+                  color: 'inherit',
+                  borderBottom: '2.5px solid ' + c.border,
+                  padding: '0 1px',
+                  borderRadius: 0,
+                }}>{s.text}</mark>
+              );
+            }
+            // keyword — dashed underline, no background
             return (
-              <mark key={i} title={title} style={{
-                background: c.bg, color: c.fg,
-                border: '1px solid ' + c.border,
-                borderBottom: '2px solid ' + c.border,
-                padding: '1px 3px', borderRadius: 2,
-                fontWeight: 600,
-              }}>{s.text}</mark>
+              <span key={i} title={`context keyword · "${s.keyword}"`} style={{
+                color: 'inherit',
+                borderBottom: '1px dashed ' + KEYWORD_COLOR.border,
+                padding: '0 1px',
+              }}>{s.text}</span>
             );
-          }
-          // keyword
-          return (
-            <span key={i} title={`context keyword · "${s.keyword}"`} style={{
-              background: KEYWORD_COLOR.bg,
-              color: KEYWORD_COLOR.fg,
-              borderBottom: '1px dashed ' + KEYWORD_COLOR.border,
-              padding: '0 1px',
-            }}>{s.text}</span>
-          );
-        })}
-      </pre>
+          })}
+        </pre>
+
+        {/* RIGHT EDGE — view controls */}
+        <div style={{
+          display:'flex', flexDirection:'column', alignItems:'center',
+          gap:6, padding:'10px 4px',
+          borderLeft:'1px solid var(--line-soft)', background:'var(--bg-2)',
+        }}>
+          <ToolBtn onClick={() => setFontSize(Math.min(18, fontSize + 1))} title="larger font">A+</ToolBtn>
+          <ToolBtn onClick={() => setFontSize(Math.max(9, fontSize - 1))} title="smaller font">A−</ToolBtn>
+          <ToolBtn onClick={() => setWrap(!wrap)} title={wrap ? 'disable word-wrap (horizontal scroll)' : 'enable word-wrap'} active={wrap}>
+            ⏎
+          </ToolBtn>
+          <ToolBtn onClick={() => {
+                     setHeight(480);
+                     try { localStorage.setItem('ir:preview:h', '480'); } catch {}
+                   }}
+                   title="reset preview height to 480px">
+            ↕
+          </ToolBtn>
+        </div>
+      </div>
 
       {/* Legend */}
       {(usedCategories.length > 0 || hasKeywordHits) && (
