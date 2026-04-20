@@ -8787,6 +8787,63 @@ function irRoleMeta(id) {
   return IR_ROLES[id] || { label: id, glyph: '?', color: 'var(--ink-soft)', description: '', permissions: [] };
 }
 
+// ─── Permission helpers · U2 ───────────────────────────────────
+// canDo(user | role, action) is the single entry point surfaces
+// use to gate UI. All checks route through it so a future move to
+// server-backed decisions only needs to replace this function.
+//
+// Accepts either:
+//   · a user record (reads .role + any per-user .extra_permissions)
+//   · a role id string ('admin' / 'analyst' / 'viewer' / 'engineer')
+//   · null (treated as no permissions)
+//
+// Permission strings are verb.resource, e.g. 'findings.dispose',
+// 'users.invite'. Unknown actions always return false — surfaces
+// should prefer tight action names over catch-all wildcards so
+// new permissions are explicitly added to each role.
+function canDo(userOrRole, action) {
+  if (!userOrRole || !action) return false;
+  let role;
+  let extras = [];
+  if (typeof userOrRole === 'string') {
+    role = userOrRole;
+  } else {
+    role = userOrRole.role;
+    if (Array.isArray(userOrRole.extra_permissions)) {
+      extras = userOrRole.extra_permissions;
+    }
+  }
+  const meta = IR_ROLES[role];
+  if (!meta) return false;
+  return meta.permissions.includes(action) || extras.includes(action);
+}
+
+// Full enumeration across IR_ROLES for the permission-matrix UI
+// in U3. Returns a sorted deduplicated list.
+function irAllPermissions() {
+  const s = new Set();
+  Object.values(IR_ROLES).forEach(r => r.permissions.forEach(p => s.add(p)));
+  return [...s].sort();
+}
+
+// Hook variant for components that gate on the CURRENT signed-in
+// user. Re-renders on ir:currentUserChanged / ir:usersChanged
+// (impersonation, role edit, etc.) so surfaces don't cache a
+// stale role.
+function useCan(action) {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => setTick(t => t + 1);
+    window.addEventListener('ir:currentUserChanged', refresh);
+    window.addEventListener('ir:usersChanged',       refresh);
+    return () => {
+      window.removeEventListener('ir:currentUserChanged', refresh);
+      window.removeEventListener('ir:usersChanged',       refresh);
+    };
+  }, []);
+  return canDo(getCurrentUser(), action);
+}
+
 // Timezone catalogue — short list covering the regions analysts
 // commonly work from. Enough for the profile picker in U6; users
 // can pick their browser-detected default too.
