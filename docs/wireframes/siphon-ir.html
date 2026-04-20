@@ -6711,6 +6711,162 @@ const CRYPTO_TABS = [
   { id: 'zipattack',  label: 'Zip Password',    hint: 'dictionary attack against encrypted zips (in-browser)' },
 ];
 
+// ── File drop zone — shared primitive the Workbench tabs reuse.
+// Thin wrapper around <input type=file> + drag/drop handlers. The
+// child render-prop receives the picked File (or null) so each
+// tab only deals with the picked-file state, not the event wiring.
+function CryptoFileDrop({ file, onFile, label }) {
+  const [dragging, setDragging] = React.useState(false);
+  const inputRef = React.useRef(null);
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) onFile && onFile(f);
+  };
+
+  const humanSize = (n) => {
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KiB';
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MiB';
+    return (n / 1073741824).toFixed(2) + ' GiB';
+  };
+
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+      onClick={() => inputRef.current && inputRef.current.click()}
+      style={{
+        border: '2px dashed ' + (dragging ? 'var(--accent)' : 'var(--line-strong)'),
+        background: dragging ? 'var(--accent-wash)' : 'var(--bg-1)',
+        padding: file ? '12px 16px' : '36px 20px',
+        textAlign: 'center', cursor: 'pointer',
+        borderRadius: 'var(--radius)',
+        transition: 'border-color 180ms ease-out, background 180ms ease-out',
+      }}>
+      <input type="file" ref={inputRef}
+             onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) onFile(f); }}
+             style={{display:'none'}}/>
+      {!file && (
+        <>
+          <div style={{
+            fontFamily:"'Space Grotesk', sans-serif",
+            fontSize: 14, color:'var(--ink-bright)', fontWeight: 600, marginBottom: 6,
+          }}>
+            Drop a file here
+          </div>
+          <div className="muted" style={{fontSize:11.5, lineHeight:1.6}}>
+            {label || 'or click to pick · files stay in the browser, nothing uploads'}
+          </div>
+        </>
+      )}
+      {file && (
+        <div style={{
+          display:'grid', gridTemplateColumns:'auto 1fr auto', alignItems:'center',
+          gap: 14, textAlign: 'left', fontFamily:"'JetBrains Mono', monospace",
+        }}>
+          <span style={{fontSize: 22}}>📄</span>
+          <div style={{minWidth:0}}>
+            <div style={{
+              fontSize: 12.5, color:'var(--ink-bright)', fontWeight: 600,
+              overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+            }} title={file.name}>{file.name}</div>
+            <div className="muted" style={{fontSize:11, marginTop: 3}}>
+              <span className="mono">{humanSize(file.size)}</span>
+              {file.type && <> · <span className="mono">{file.type}</span></>}
+              {file.lastModified && <> · <span className="mono">{new Date(file.lastModified).toISOString().slice(0, 19).replace('T', ' ')}</span></>}
+            </div>
+          </div>
+          <button onClick={(e) => { e.stopPropagation(); onFile(null); }}
+                  title="clear"
+                  style={{
+                    background:'transparent', border:'1px solid var(--line-strong)',
+                    color:'var(--ink)', padding:'4px 10px',
+                    fontSize:11, fontFamily:"'JetBrains Mono', monospace",
+                    borderRadius:'var(--radius)', cursor:'pointer',
+                  }}>× clear</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── File Inspector tab — picker + metadata today; magic bytes /
+// entropy / hex dump land in 3c and 3d.
+function CryptoFileInspector() {
+  const [file, setFile] = React.useState(null);
+
+  return (
+    <div style={{padding:16, display:'grid', gap:14}}>
+      <CryptoFileDrop file={file} onFile={setFile}
+                      label="or click to pick · files stay in the browser · no network upload"/>
+
+      {!file && (
+        <div className="muted" style={{fontSize:11.5, lineHeight:1.7, padding:'0 4px'}}>
+          Pick any file to see its browser-reported metadata. Byte-level analysis
+          (magic signature, Shannon entropy, hex/ASCII dump) lands in the next
+          two commits (3c + 3d).
+        </div>
+      )}
+
+      {file && (
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Reported metadata</span>
+            <span className="k mono" style={{fontSize:11}}>
+              browser File object · byte-level analysis lands next
+            </span>
+          </div>
+          <div style={{padding:14}}>
+            <div className="kv" style={{gridTemplateColumns:'180px 1fr', gap:'6px 12px', fontSize:12}}>
+              <span className="k">Filename</span>
+              <span className="v mono">{file.name}</span>
+              <span className="k">Size</span>
+              <span className="v mono">
+                {file.size.toLocaleString()} bytes
+                <span className="muted"> · {
+                  file.size < 1024 ? file.size + ' B' :
+                  file.size < 1048576 ? (file.size / 1024).toFixed(1) + ' KiB' :
+                  file.size < 1073741824 ? (file.size / 1048576).toFixed(1) + ' MiB' :
+                  (file.size / 1073741824).toFixed(2) + ' GiB'
+                }</span>
+              </span>
+              <span className="k">MIME type (browser)</span>
+              <span className="v mono">
+                {file.type || <span className="muted">— not set · browsers only populate common types —</span>}
+              </span>
+              <span className="k">Last modified</span>
+              <span className="v mono">
+                {file.lastModified
+                  ? new Date(file.lastModified).toISOString().slice(0, 19).replace('T', ' ') + ' UTC'
+                  : <span className="muted">—</span>}
+              </span>
+              <span className="k">Extension</span>
+              <span className="v mono">
+                {(() => {
+                  const i = file.name.lastIndexOf('.');
+                  return i >= 0 && i < file.name.length - 1
+                    ? <span>.{file.name.slice(i + 1).toLowerCase()}</span>
+                    : <span className="muted">— none —</span>;
+                })()}
+              </span>
+            </div>
+            <div className="muted" style={{fontSize:10.5, marginTop:12, lineHeight:1.7, padding:'8px 10px', background:'var(--bg-1)', borderRadius:'var(--radius)', border:'1px dashed var(--line-soft)'}}>
+              <b>Reminder:</b> the browser reports what it's told — MIME type comes from
+              the drag/drop source or the OS's extension mapping, not the file's
+              actual contents. Trust the magic-byte readout (3c) for true type
+              identification, especially on suspicious uploads.
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CryptoWorkbench() {
   const [tab, setTab] = React.useState(() => {
     try { return localStorage.getItem('ir:crypto:tab') || 'inspector'; }
@@ -6734,15 +6890,7 @@ function CryptoWorkbench() {
 
   let tabBody;
   if (tab === 'inspector') {
-    tabBody = (
-      <TabStub title="File Inspector"
-               description={<>
-                 Drop a file to see its magic-byte signature, computed Shannon entropy
-                 (8-bit, 0–8 range — high numbers suggest encryption or compression),
-                 a hex/ASCII dump of the leading bytes, and a best-guess MIME / type
-                 identification. Fills in next commit (phase 3b-d).
-               </>}/>
-    );
+    tabBody = <CryptoFileInspector />;
   } else if (tab === 'hasher') {
     tabBody = (
       <TabStub title="Hash Computer"
