@@ -3350,6 +3350,505 @@ function PanelStub({ title, question, children }) {
   );
 }
 
+// Apply a filter to the queue and navigate back to it. Used by the
+// Who + What panels (and later the When panel) as the one-click
+// pivot: "show me everything by the same user / same hash / same
+// recipient". The queue picks up the updated filters from
+// localStorage on its next render.
+function irPivotToQueue(patch) {
+  try {
+    const cur = JSON.parse(localStorage.getItem('ir:queueFilters') || '{}');
+    localStorage.setItem('ir:queueFilters', JSON.stringify({ ...cur, ...patch }));
+  } catch {}
+  window.__ir_go && window.__ir_go('findings', '');
+}
+
+// ── Who panel ─────────────────────────────────────────────────
+// Identity context for the event. Pulls every identity-ish field
+// out of the finding's top-level + metadata and offers one-click
+// pivots back to the queue filtered on that value. Useful when the
+// analyst wants to know "what else has this user been doing today?"
+function WhoPanel({ f, all }) {
+  const md = f.metadata || {};
+  const user = md.user || null;
+  const sender = md.sender || null;
+  const recipient = md.recipient || null;
+  const ip = md.src_ip || f.source_ip || null;
+  const region = md.region || null;
+  const department = md.department || null;
+
+  // Count same-user / same-ip / etc neighbours. `all` is the current
+  // findings set (live or demo) so counts follow whatever the analyst
+  // is looking at.
+  const eqUser = user
+    ? all.filter(x => x.id !== f.id && x.metadata && x.metadata.user === user)
+    : [];
+  const eqSender = sender && sender !== user
+    ? all.filter(x => x.id !== f.id && x.metadata && x.metadata.sender === sender)
+    : [];
+  const eqRecipient = recipient
+    ? all.filter(x => x.id !== f.id && x.metadata && x.metadata.recipient === recipient)
+    : [];
+  const eqIp = ip
+    ? all.filter(x => x.id !== f.id
+        && (x.source_ip === ip
+            || (x.metadata && x.metadata.src_ip === ip)))
+    : [];
+
+  const hasAnyPivot = eqUser.length + eqSender.length + eqRecipient.length + eqIp.length > 0;
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Who</span>
+        <span className="k">identity · pivot</span>
+      </div>
+      <div style={{padding:14, fontSize:12}}>
+        <div className="kv" style={{gridTemplateColumns:'120px 1fr', gap:'6px 12px'}}>
+          {user && (<>
+            <span className="k">User</span>
+            <span className="v mono" style={{color:'var(--ink-bright)'}}>{user}</span>
+          </>)}
+          {sender && sender !== user && (<>
+            <span className="k">Sender</span>
+            <span className="v mono">{sender}</span>
+          </>)}
+          {recipient && (<>
+            <span className="k">Recipient</span>
+            <span className="v mono" style={{color: (recipient.includes('external.example')
+                                                   || recipient.includes('gmail.example')
+                                                   || recipient.includes('rival.example'))
+                                                   ? 'var(--amber)' : 'var(--ink)'}}>
+              {recipient}
+            </span>
+          </>)}
+          {ip && (<>
+            <span className="k">Source IP</span>
+            <span className="v mono">{ip}</span>
+          </>)}
+          {region && (<>
+            <span className="k">Region</span>
+            <span className="v">
+              <span className="chip chip--ghost" style={{fontSize:10}}>{region}</span>
+            </span>
+          </>)}
+          {department && (<>
+            <span className="k">Department</span>
+            <span className="v">{department}</span>
+          </>)}
+          {!user && !sender && !ip && (
+            <span className="muted" style={{gridColumn:'1 / span 2', fontSize:11.5}}>
+              No identity metadata on this finding. Source emitter should add
+              <span className="mono"> metadata.user</span>,<span className="mono"> .sender</span>,<span className="mono"> .src_ip</span> when scanning.
+            </span>
+          )}
+        </div>
+
+        {hasAnyPivot && (<>
+          <div className="label" style={{marginTop:14, marginBottom:6}}>Pivot on identity</div>
+          <div style={{display:'flex', flexDirection:'column', gap:4, fontSize:11.5}}>
+            {user && eqUser.length > 0 && (
+              <a onClick={() => irPivotToQueue({ search: user })}
+                 style={{color:'var(--accent)', cursor:'pointer'}}
+                 title={`filter queue to ${user}`}>
+                → {eqUser.length} other finding{eqUser.length === 1 ? '' : 's'} by <span className="mono">{user}</span>
+              </a>
+            )}
+            {sender && eqSender.length > 0 && (
+              <a onClick={() => irPivotToQueue({ search: sender })}
+                 style={{color:'var(--accent)', cursor:'pointer'}}>
+                → {eqSender.length} other finding{eqSender.length === 1 ? '' : 's'} from sender <span className="mono">{sender}</span>
+              </a>
+            )}
+            {recipient && eqRecipient.length > 0 && (
+              <a onClick={() => irPivotToQueue({ search: recipient })}
+                 style={{color:'var(--accent)', cursor:'pointer'}}>
+                → {eqRecipient.length} other finding{eqRecipient.length === 1 ? '' : 's'} to recipient <span className="mono">{recipient}</span>
+              </a>
+            )}
+            {ip && eqIp.length > 0 && (
+              <a onClick={() => irPivotToQueue({ search: ip })}
+                 style={{color:'var(--accent)', cursor:'pointer'}}>
+                → {eqIp.length} other finding{eqIp.length === 1 ? '' : 's'} from IP <span className="mono">{ip}</span>
+              </a>
+            )}
+          </div>
+        </>)}
+      </div>
+    </div>
+  );
+}
+
+// ── Classification + helpers ──────────────────────────────────
+// Map the scanner's category to a regulatory/classification label.
+// These are policy-framework labels that responders reason about
+// ("is this PCI? PHI?") and DLP regimes anchor to. The admin
+// console doesn't surface them; the IR surface needs them front
+// and centre.
+function deriveClassification(f) {
+  const md = f.metadata || {};
+  // Explicit metadata wins if the emitter tagged it upstream.
+  if (md.classification) return { label: md.classification.toUpperCase(), color: 'var(--amber)' };
+  if (md.tlp) return { label: 'TLP:' + md.tlp.toUpperCase(), color: 'var(--amber)' };
+  const cat = (f.category || '').toLowerCase();
+  const sub = (f.sub_category || '').toLowerCase();
+  if (cat.includes('credit card') || cat.includes('card number')) return { label: 'PCI-DSS', color: 'var(--red)' };
+  if (cat.includes('healthcare') || sub.includes('medical') || cat.includes('hipaa')) return { label: 'PHI · HIPAA', color: 'var(--red)' };
+  if (cat.includes('aws') || cat.includes('credentials') || cat.includes('auth tokens') || cat.includes('banking authentication')) return { label: 'CREDENTIAL', color: 'var(--red)' };
+  if (cat.includes('biometric')) return { label: 'BIOMETRIC PII', color: 'var(--red)' };
+  if (cat.includes('regulatory')) return { label: 'REGULATORY', color: 'var(--amber)' };
+  if (cat.includes('traffic light') || sub.startsWith('tlp:')) {
+    const name = (f.sub_category || 'TLP').toUpperCase();
+    return { label: name, color: 'var(--amber)' };
+  }
+  if (cat.includes('customer financial')) return { label: 'FINANCIAL PII', color: 'var(--amber)' };
+  if (cat.includes('north america') || cat.includes('europe') || cat.includes('asia-pacific') || cat.includes('latin') || cat.includes('middle east') || cat.includes('africa')) {
+    return { label: 'PII · REGIONAL ID', color: 'var(--amber)' };
+  }
+  if (cat.includes('email') || cat.includes('phone') || cat.includes('address')) return { label: 'PII', color: 'var(--amber)' };
+  return { label: 'SENSITIVE', color: 'var(--ink-soft)' };
+}
+
+// Small wall-clock helper. Lifted verbatim from siphon-c2.
+function fmtWallClock(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return String(d.getHours()).padStart(2, '0') + ':'
+       + String(d.getMinutes()).padStart(2, '0') + ':'
+       + String(d.getSeconds()).padStart(2, '0');
+}
+
+// Large-format severity chip for the PageBar — the small one in
+// queue rows is too cramped when the finding # is 28px.
+function severityChipLarge(sev) {
+  const cls = {
+    critical: 'red', high: 'red', medium: 'amber',
+    low: 'warn', info: 'ghost',
+  }[sev] || 'ghost';
+  return (
+    <span className={`chip chip--${cls}`}
+          style={{
+            fontSize: 11, padding: '5px 12px',
+            fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700,
+            letterSpacing: '0.08em',
+          }}>
+      {(sev || 'info').toUpperCase()}
+    </span>
+  );
+}
+
+// ── What panel ────────────────────────────────────────────────
+// The actual matched value + the signals that flagged it. Matched
+// value goes on top (amber highlight, monospace, breakable) so the
+// analyst sees what was exposed before anything else. Category,
+// confidence, has-context, severity, span below.
+function WhatPanel({ f }) {
+  const md = f.metadata || {};
+  const ctxHash = md.content_hash || null;
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">What</span>
+        <span className="k">matched value · signals</span>
+      </div>
+      <div style={{padding:14}}>
+        <div className="label" style={{marginBottom:4}}>Matched value</div>
+        <div className="mono" style={{
+          fontSize:14, padding:'8px 10px',
+          background:'var(--amber-wash)', border:'1.5px solid var(--amber)',
+          borderRadius:2, wordBreak:'break-all', color:'var(--ink-bright)',
+        }}>{f.text || '—'}</div>
+
+        <div className="kv" style={{marginTop:14, gridTemplateColumns:'120px 1fr', gap:'6px 12px', fontSize:12}}>
+          <span className="k">Category</span>
+          <span className="v">
+            <a href={`siphon-c2.html#patterns/${encodeURIComponent(f.category)}/${encodeURIComponent(f.sub_category || '')}`}
+               target="_blank" rel="noopener"
+               style={{color:'var(--accent)', textDecoration:'none'}}
+               title="open this pattern in the admin console">
+              {f.category}
+              {f.sub_category && <><span className="muted"> / </span><span style={{color:'var(--accent)'}}>{f.sub_category}</span></>}
+              <span style={{marginLeft:4, fontSize:10}}>↗</span>
+            </a>
+          </span>
+          <span className="k">Confidence</span>
+          <span className="v">
+            {f.confidence != null ? (
+              <span style={{display:'inline-flex', alignItems:'center', gap:8, verticalAlign:'middle'}}>
+                <span style={{
+                  width:120, height:6, background:'var(--bg-3)',
+                  borderRadius:3, overflow:'hidden', display:'inline-block',
+                  border:'1px solid var(--line-soft)',
+                }}>
+                  <span style={{
+                    display:'block', height:'100%',
+                    width: `${Math.min(100, Math.max(0, f.confidence * 100))}%`,
+                    background: f.confidence >= 0.9 ? 'var(--safe)'
+                              : f.confidence >= 0.7 ? 'var(--amber)'
+                              : 'var(--ink-soft)',
+                  }}/>
+                </span>
+                <span className="mono" style={{color:'var(--ink-bright)'}}>{f.confidence.toFixed(3)}</span>
+              </span>
+            ) : <span className="muted">—</span>}
+          </span>
+          <span className="k">Context</span>
+          <span className="v">
+            {f.has_context
+              ? <span className="chip chip--safe" style={{fontSize:10}}>keyword matched</span>
+              : <span className="chip chip--ghost" style={{fontSize:10}}>no nearby keyword</span>}
+          </span>
+          <span className="k">Severity</span>
+          <span className="v">{severityChip(f.severity)}</span>
+          <span className="k">Span</span>
+          <span className="v mono">
+            offset {f.span ? f.span[0] : '—'} → {f.span ? f.span[1] : '—'}
+            {f.span && <span className="muted"> ({f.span[1] - f.span[0]} chars)</span>}
+          </span>
+          {ctxHash && (<>
+            <span className="k">Content hash</span>
+            <span className="v mono" title={ctxHash}
+                  style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontSize:10.5}}>
+              <a onClick={() => irPivotToQueue({ search: ctxHash })}
+                 style={{color:'var(--accent)', cursor:'pointer', textDecoration:'none'}}
+                 title="pivot · find all findings with the same content hash">
+                {ctxHash.slice(0, 40)}{ctxHash.length > 40 ? '…' : ''}
+              </a>
+            </span>
+          </>)}
+          {md.list_matched && (<>
+            <span className="k">List match</span>
+            <span className="v">
+              <span className="chip chip--warn" style={{fontSize:10}}>
+                {md.list_matched}
+              </span>
+              <span className="muted"> · action <span className="mono">{md.list_action || 'tag'}</span></span>
+            </span>
+          </>)}
+          {md.unique_count_breach === 'true' && (<>
+            <span className="k">Breach</span>
+            <span className="v">
+              <span className="chip chip--red" style={{fontSize:10}}>unique-count breach</span>
+              <span className="muted"> · {md.unique_count || '?'} distinct values</span>
+            </span>
+          </>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Timeline panel ────────────────────────────────────────────
+// Ported from siphon-c2's FindingTimeline. Walks the known event
+// sequence for this finding: request accepted → match detected →
+// any siblings in the same scan → audit event (if available) → now.
+// In demo mode we still render the first three + now; audit event
+// is live-only since seeded findings aren't carried in /v1/audit.
+function FindingTimeline({ finding, sameReq }) {
+  const ax = window.useSiphonApi('/v1/audit?limit=200');
+  const events = (ax.data && ax.data.events) || [];
+  const auditEvt = events.find(e => e.request_id === finding.request_id);
+  const demo = isDemoMode();
+
+  const baseMs = auditEvt
+    ? new Date(finding.ts).getTime() - ((auditEvt.duration_ms || 0) | 0)
+    : new Date(finding.ts).getTime();
+  const fmt = (ts) => fmtWallClock(ts) + (ts ? '.' + new Date(ts).getMilliseconds().toString().padStart(3, '0') : '');
+  const offset = (ts) => {
+    const ms = new Date(ts).getTime() - baseMs;
+    const sign = ms >= 0 ? '+' : '-';
+    return sign + Math.abs(ms) + 'ms';
+  };
+
+  const steps = [];
+  steps.push({
+    ts: new Date(baseMs).toISOString(),
+    label: 'request accepted',
+    detail: <>source <span className="mono">{finding.source_ip || '—'}</span> · {finding.source_pod === 'siphon-fs' ? 'POST /scan (multipart)' : 'POST /scan'} · req <span className="mono">{(finding.request_id || '').slice(0, 8)}</span></>,
+    marker: 'dim',
+  });
+  steps.push({
+    ts: finding.ts,
+    label: 'match detected',
+    detail: <>pattern <span className="mono">{finding.sub_category || finding.category}</span> · span {finding.span ? finding.span.join('..') : '—'} · conf <b>{finding.confidence != null ? finding.confidence.toFixed(3) : '—'}</b></>,
+    marker: 'accent',
+  });
+  (sameReq || []).forEach(r => {
+    steps.push({
+      ts: r.ts,
+      label: 'also in same scan',
+      detail: <><span className="mono">{r.sub_category || r.category}</span> · <span style={{color:'var(--accent)'}}>{r.text}</span> · conf {r.confidence != null ? r.confidence.toFixed(2) : '—'}</>,
+      marker: 'dim',
+    });
+  });
+  if (auditEvt) {
+    steps.push({
+      ts: auditEvt.timestamp,
+      label: 'audit event emitted',
+      detail: <>outcome <b>{auditEvt.outcome || '—'}</b> · {auditEvt.finding_count} finding{auditEvt.finding_count === 1 ? '' : 's'} total · duration {auditEvt.duration_ms != null ? Math.round(auditEvt.duration_ms) + 'ms' : '—'}</>,
+      marker: 'accent',
+    });
+  } else if (!demo) {
+    steps.push({
+      ts: finding.ts,
+      label: 'audit event',
+      detail: <span className="muted">not found in the last 200 events · older events have rolled off the ring</span>,
+      marker: 'dim',
+    });
+  }
+  steps.push({
+    ts: new Date().toISOString(),
+    label: 'you are here',
+    detail: <>awaiting analyst decision · <i>Close event · False positive · Escalate</i></>,
+    marker: 'live',
+  });
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">When</span>
+        <span className="k">detection → audit → you are here</span>
+      </div>
+      <div style={{padding:14}}>
+        <div style={{display:'grid', gridTemplateColumns:'100px 16px 1fr', rowGap:8, fontFamily:"'JetBrains Mono', monospace", fontSize:11.5}}>
+          {steps.map((s, i) => {
+            const markerColor = s.marker === 'accent' ? 'var(--accent)'
+                              : s.marker === 'live'   ? 'var(--red)'
+                              : 'var(--ink-faint)';
+            return (
+              <React.Fragment key={i}>
+                <div className="muted mono" style={{fontSize:10.5}} title={s.ts + ' (' + offset(s.ts) + ')'}>
+                  {fmt(s.ts)}
+                </div>
+                <div style={{display:'flex', justifyContent:'center', alignItems:'center', position:'relative'}}>
+                  <span style={{
+                    display:'inline-block',
+                    width: s.marker === 'live' ? 10 : 8,
+                    height: s.marker === 'live' ? 10 : 8,
+                    borderRadius:'50%', background: markerColor,
+                    boxShadow: s.marker === 'live' ? '0 0 0 2px var(--bg-1), 0 0 8px ' + markerColor : 'none',
+                  }} />
+                  {i < steps.length - 1 && (
+                    <span style={{
+                      position:'absolute', top:'calc(50% + 6px)', bottom:'-8px',
+                      width:1, background:'var(--line)',
+                    }} />
+                  )}
+                </div>
+                <div>
+                  <div style={{color:'var(--ink-bright)', fontWeight:600}}>{s.label}</div>
+                  <div className="muted" style={{fontSize:11, marginTop:2, lineHeight:1.5}}>{s.detail}</div>
+                </div>
+              </React.Fragment>
+            );
+          })}
+        </div>
+        {demo && (
+          <div className="muted" style={{fontSize:10.5, marginTop:10, paddingTop:8, borderTop:'1px dashed var(--line-soft)'}}>
+            Demo mode: audit event is live-only. Real /v1/audit entries appear here for live-pod findings.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Quick Actions panel ───────────────────────────────────────
+// A lighter version of siphon-c2's FindingDetail Actions box,
+// re-scoped for responders: copy JSON, mail the user, open the
+// playbook (Phase C), cross-link to admin console for pattern
+// tuning, rescan the match text in Live Scan. The primary three
+// dispositions live in the PageBar header; this panel is for the
+// adjacent actions an analyst reaches for during a review.
+function QuickActions({ f }) {
+  const md = f.metadata || {};
+  const user = md.user || md.sender || null;
+  const [flash, setFlash] = React.useState(null);
+  const ping = (msg) => { setFlash(msg); setTimeout(() => setFlash(null), 1300); };
+
+  const mailtoHref = user
+    ? 'mailto:' + user
+      + '?subject=' + encodeURIComponent(`[DLP review] finding ${f.id} · ${f.category}`)
+      + '&body=' + encodeURIComponent(
+          `Hi,\n\n`
+          + `Our DLP scanner surfaced the following on ${(f.ts || '').slice(0, 19).replace('T', ' ')}:\n\n`
+          + `  category    : ${f.category}${f.sub_category ? ' / ' + f.sub_category : ''}\n`
+          + `  channel     : ${md.channel || f.source_pod || 'unknown'}\n`
+          + `  confidence  : ${f.confidence != null ? f.confidence.toFixed(2) : '—'}\n`
+          + `  finding_id  : ${f.id}\n\n`
+          + `Could you confirm the business context for this? Is this activity expected?\n\n`
+          + `Thanks.\n`
+        )
+    : null;
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">How</span>
+        <span className="k">response actions · handoffs</span>
+      </div>
+      <div style={{padding:14, display:'flex', flexDirection:'column', gap:6, fontSize:12}}>
+        <a className="btn primary"
+           href={mailtoHref || undefined}
+           target={mailtoHref ? '_self' : undefined}
+           onClick={mailtoHref ? undefined : (e) => { e.preventDefault(); ping('No user/sender on this finding — add metadata.user upstream'); }}
+           style={{textDecoration:'none', textAlign:'left',
+                   opacity: mailtoHref ? 1 : 0.5, cursor: mailtoHref ? 'pointer' : 'not-allowed'}}
+           title={mailtoHref ? 'opens your default mail client with a pre-filled template' : 'no user / sender on this finding'}>
+          ✉ Email {user ? user.split('@')[0] : 'the user'} for context
+        </a>
+
+        <button className="btn"
+                onClick={() => ping('Playbooks land in Phase C')}
+                title="open the playbook matched to this category (Phase C of the IR MVP)">
+          ❖ Open playbook
+          <span className="muted" style={{marginLeft:8, fontSize:10}}>· {f.category}</span>
+        </button>
+
+        <a className="btn"
+           href={`siphon-c2.html#patterns/${encodeURIComponent(f.category)}/${encodeURIComponent(f.sub_category || '')}`}
+           target="_blank" rel="noopener"
+           style={{textDecoration:'none', textAlign:'left'}}
+           title="admin console · Patterns surface for this (category, sub)">
+          ⚙ Tune detection in admin console ↗
+        </a>
+
+        <button className="btn"
+                onClick={() => {
+                  try { localStorage.setItem('c2:livescan-text', f.text || ''); } catch {}
+                  window.open('siphon-c2.html', '_blank');
+                  ping('Opened admin console — Live Scan pre-loaded');
+                }}
+                title="re-run this text through siphon-api's scanner with trace on so you can verify the detection pipeline"
+                disabled={!f.text}>
+          ▶ Rescan in Live Scan
+        </button>
+
+        <button className="btn"
+                onClick={() => {
+                  try { navigator.clipboard.writeText(JSON.stringify(f, null, 2)); } catch {}
+                  ping('Copied finding JSON to clipboard');
+                }}>
+          ⎘ Copy record as JSON
+        </button>
+
+        <button className="btn ghost"
+                onClick={() => ping('Assign-to-teammate lands with the multi-analyst work (IR Phase 7)')}
+                title="hand this review to another analyst — multi-analyst infra arrives later">
+          → Assign to teammate
+        </button>
+
+        {flash && (
+          <div className="muted mono" style={{fontSize:10.5, marginTop:6, color:'var(--accent)'}}>
+            {flash}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FindingDetail({ id, back }) {
   // All hooks up front — React requires consistent hook order across
   // renders, and the "finding not found" early return below comes
@@ -3470,29 +3969,107 @@ function FindingDetail({ id, back }) {
     <div>
       <IrPageBar
         crumbs={['Respond', 'Findings', f.id]}
-        title={<>
-          <span className="mono" style={{color:'var(--ink-bright)'}}>{f.id}</span>
-          <span className="muted" style={{margin:'0 8px', fontSize:14}}>·</span>
-          <span style={{fontFamily:"'Space Grotesk', sans-serif"}}>{f.category}</span>
-          {f.sub_category && <span className="muted" style={{marginLeft:6, fontSize:14}}>/ {f.sub_category}</span>}
-          <span style={{marginLeft:10}}>{severityChip(f.severity)}</span>
-        </>}
-        subtitle={<>
-          <span className="mono">source {f.source_ip || '—'}</span>
-          <span className="muted"> · req </span>
-          <span className="mono">{(f.request_id || '').split('-')[0] || '—'}</span>
-          <span className="muted"> · </span>
-          <span className="mono">{fmtTs(f.ts)}</span>
-          {idx >= 0 && (<>
-            <span className="muted"> · </span>
-            <span className="mono">{idx + 1} of {all.length}</span>
-          </>)}
-          <span className="muted"> · keyboard </span>
-          <span className="mono" style={{color:'var(--ink-bright)'}}>j</span><span className="muted">/</span><span className="mono" style={{color:'var(--ink-bright)'}}>k</span>
-          <span className="muted"> to jump · </span>
-          <span className="mono" style={{color:'var(--ink-bright)'}}>esc</span>
-          <span className="muted"> to close</span>
-        </>}
+        title={<div style={{display:'flex', alignItems:'center', gap:14, flexWrap:'wrap'}}>
+          {/* Big bold finding id — the single label an analyst refers
+              to this case by throughout the review. */}
+          <span className="mono" style={{
+            fontSize: 28, lineHeight: 1,
+            color:'var(--ink-bright)', fontWeight: 700,
+            letterSpacing:'-0.02em',
+          }}>{f.id}</span>
+          {/* Data-type badge — category + sub_category rendered as a
+              single prominent pill so the type of data surfaces
+              before anything else. */}
+          <span style={{
+            fontSize: 12, padding:'5px 12px', lineHeight: 1.2,
+            fontFamily:"'Space Grotesk', sans-serif", fontWeight: 600,
+            letterSpacing:'0.02em',
+            background:'var(--amber-wash)',
+            border:'1.5px solid var(--amber)',
+            color:'var(--ink-bright)',
+            borderRadius:'var(--radius)',
+          }}>
+            {f.category}
+            {f.sub_category && <><span style={{opacity:0.55, margin:'0 5px'}}>/</span>{f.sub_category}</>}
+          </span>
+          {/* Classification label — derived from category (PCI / PHI
+              / PII / CREDENTIAL etc.) so the regulatory lens is
+              visible at a glance. */}
+          {(() => {
+            const c = deriveClassification(f);
+            return (
+              <span style={{
+                fontSize: 10.5, padding:'5px 10px', lineHeight: 1.2,
+                fontFamily:"'Space Grotesk', sans-serif", fontWeight: 700,
+                letterSpacing:'0.12em', textTransform:'uppercase',
+                border: `1.5px solid ${c.color}`,
+                color: c.color,
+                background:'transparent',
+                borderRadius:'var(--radius)',
+              }} title="regulatory / classification label derived from the pattern category">
+                {c.label}
+              </span>
+            );
+          })()}
+          {severityChipLarge(f.severity)}
+        </div>}
+        subtitle={(() => {
+          const md = f.metadata || {};
+          const sender = md.sender || null;
+          const recipient = md.recipient || null;
+          // Amber-highlight external-domain recipients as a cheap
+          // exfil-shape signal.
+          const recipientExt = recipient && /(external|gmail|rival|personal|competitor)\.example/i.test(recipient);
+          const labelStyle = {fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:'var(--ink-soft)', fontWeight:600};
+          return (
+            <div style={{display:'flex', gap:16, flexWrap:'wrap', alignItems:'center', marginTop:6, fontSize:13, fontFamily:"'JetBrains Mono', monospace"}}>
+              {sender && (
+                <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                  <span style={labelStyle}>From</span>
+                  <span style={{color:'var(--ink-bright)', fontSize:13}}>{sender}</span>
+                </span>
+              )}
+              {recipient && (
+                <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                  <span style={labelStyle}>To</span>
+                  <span style={{
+                    color: recipientExt ? 'var(--amber)' : 'var(--ink-bright)',
+                    fontSize: 13, fontWeight: recipientExt ? 600 : 400,
+                  }} title={recipientExt ? 'external-domain recipient — possible exfil shape' : undefined}>
+                    {recipient}
+                    {recipientExt && <span style={{marginLeft:6, fontSize:9, padding:'1px 5px', background:'var(--amber-wash)', border:'1px solid var(--amber)', borderRadius:2}}>external</span>}
+                  </span>
+                </span>
+              )}
+              {!sender && !recipient && (
+                <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                  <span style={labelStyle}>Source</span>
+                  <span style={{color:'var(--ink-bright)', fontSize:13}}>{f.source_ip || '—'}</span>
+                </span>
+              )}
+              <span style={{color:'var(--ink-dim)'}}>·</span>
+              <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                <span style={labelStyle}>When</span>
+                <span style={{color:'var(--ink)', fontSize:12}}>{fmtTs(f.ts)}</span>
+              </span>
+              <span style={{color:'var(--ink-dim)'}}>·</span>
+              <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                <span style={labelStyle}>Req</span>
+                <span style={{color:'var(--ink-soft)', fontSize:12}}>{(f.request_id || '').split('-')[0] || '—'}</span>
+              </span>
+              {idx >= 0 && (<>
+                <span style={{color:'var(--ink-dim)'}}>·</span>
+                <span style={{color:'var(--ink-soft)', fontSize:12}}>{idx + 1} of {all.length}</span>
+              </>)}
+              <span style={{marginLeft:'auto', color:'var(--ink-dim)', fontSize:10.5}}>
+                <span className="mono" style={{color:'var(--ink-soft)'}}>j</span><span>/</span><span className="mono" style={{color:'var(--ink-soft)'}}>k</span>
+                <span> jump · </span>
+                <span className="mono" style={{color:'var(--ink-soft)'}}>esc</span>
+                <span> close</span>
+              </span>
+            </div>
+          );
+        })()}
         actions={<>
           <window.LivePill source={findings.source} onClick={findings.refetch} />
           <div style={{display:'flex', gap:2, border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', overflow:'hidden'}}>
@@ -3564,27 +4141,8 @@ function FindingDetail({ id, back }) {
         padding:'var(--gap)',
         alignItems:'stretch',
       }}>
-        <PanelStub title="Who" question="Who triggered this?">
-          <div className="muted" style={{fontSize:11.5}}>From metadata + source fields:</div>
-          <div style={{marginTop:6, fontSize:13, color:'var(--ink-bright)'}}>{ctx.who}</div>
-          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
-            Full panel (next commit): user / sender / recipient rows, region + department chips,
-            same-user findings pivot (count + jump), same-source-IP neighbours.
-          </div>
-        </PanelStub>
-
-        <PanelStub title="What" question="What data was exposed?">
-          <div className="muted" style={{fontSize:11.5}}>Matched value:</div>
-          <div className="mono" style={{
-            marginTop:6, fontSize:13, padding:'8px 10px',
-            background:'var(--amber-wash)', border:'1.5px solid var(--amber)',
-            borderRadius:2, wordBreak:'break-all',
-          }}>{f.text || '—'}</div>
-          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
-            Full panel (next commit): category tree + link to Patterns, confidence bar, has-context
-            chip, span offset visualisation, raw-metadata mini table.
-          </div>
-        </PanelStub>
+        <WhoPanel f={f} all={all} />
+        <WhatPanel f={f} />
 
         <PanelStub title="Where" question="Where did this happen?">
           <div className="muted" style={{fontSize:11.5}}>Channel:</div>
@@ -3596,14 +4154,8 @@ function FindingDetail({ id, back }) {
           </div>
         </PanelStub>
 
-        <PanelStub title="When" question="When? And what else was happening?">
-          <div className="muted" style={{fontSize:11.5}}>Detection time:</div>
-          <div className="mono" style={{marginTop:6, fontSize:13}}>{fmtTs(f.ts)}</div>
-          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
-            Full panel (commit 3): same-request neighbours with severity + preview text,
-            same-user 24-hour timeline, detection-to-triage latency if already triaged.
-          </div>
-        </PanelStub>
+        <FindingTimeline finding={f}
+                         sameReq={all.filter(x => x.id !== f.id && x.request_id === f.request_id)} />
 
         <PanelStub title="Why" question="Why did detection fire?">
           <div className="muted" style={{fontSize:11.5}}>Signal summary:</div>
@@ -3615,18 +4167,7 @@ function FindingDetail({ id, back }) {
           </div>
         </PanelStub>
 
-        <PanelStub title="How" question="How should we respond?">
-          <div className="muted" style={{fontSize:11.5}}>Options:</div>
-          <ul style={{marginTop:6, fontSize:12, lineHeight:1.7, paddingLeft:18}}>
-            <li><b>Close event</b> — benign business activity handled per policy</li>
-            <li><b>False positive</b> — submit to admin FP queue for pattern tuning</li>
-            <li><b>Escalate</b> — hand off to XSOAR for remediation playbooks</li>
-          </ul>
-          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
-            Full panel (commit 4): suggested playbook (Phase C), related-user incident history,
-            prior disposition stats, quick-ack + quick-escalate shortcuts.
-          </div>
-        </PanelStub>
+        <QuickActions f={f} />
       </div>
 
       {/* Investigator notes — writes on the next disposition click. */}
