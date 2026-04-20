@@ -7525,7 +7525,7 @@ function CryptoFileInspector() {
                   })()}
                 </div>
               )}
-              {file.size > firstBytes.length && (
+              {firstBytes && file.size > firstBytes.length && (
                 <div className="muted mono" style={{fontSize:10.5, marginTop:8, textAlign:'right'}}>
                   … {(file.size - firstBytes.length).toLocaleString()} more bytes not shown
                 </div>
@@ -7944,18 +7944,26 @@ function loadZipJs() {
   return window.__irZipJsLoading;
 }
 
-// Lazy-load officecrypto-tool — CommonJS in origin form, so we
-// pull the jsDelivr +esm endpoint which does runtime bundle-to-ESM
-// conversion (and also resolves the node-ish deps: `cfb`,
-// `crypto-js`, `xml2js`). Uses `new Function('return import(u)')`
-// so Babel-standalone leaves the dynamic import untouched. Covers
-// legacy Office (.doc / .xls / .ppt) AND agile-encrypted modern
-// OOXML (.docx / .xlsx / .pptx) — both land in a CFB wrapper.
+// Lazy-load officecrypto-tool. The library is CommonJS with deep
+// Node-builtin deps (cfb → stream, xml2js → sax → stream), so we
+// need a CDN that polyfills them at bundle time. esm.sh does;
+// jsDelivr's +esm endpoint does not (fails with "Stream=e" when
+// cfb tries to subclass Node's Stream). new Function wrapper
+// keeps Babel-standalone from touching the dynamic import.
+//
+// Failures are cached + translated into a user-facing message so
+// the analyst sees "browser can't run this library · use
+// office2john + hashcat" instead of the raw minified crash text.
+const IR_OFFICECRYPTO_FAIL_MSG =
+  'In-browser Office decryption unavailable · the officecrypto-tool ' +
+  'library failed to load (its Node-stream deps don\'t run in this ' +
+  'browser). Export with office2john.py and run hashcat / john instead.';
+
 function loadOfficeCrypto() {
   if (window.__irOfficeCrypto) return Promise.resolve(window.__irOfficeCrypto);
   if (window.__irOfficeCryptoLoading) return window.__irOfficeCryptoLoading;
   const dynImport = new Function('u', 'return import(u)');
-  window.__irOfficeCryptoLoading = dynImport('https://cdn.jsdelivr.net/npm/officecrypto-tool@0.0.19/+esm')
+  window.__irOfficeCryptoLoading = dynImport('https://esm.sh/officecrypto-tool@0.0.19')
     .then(mod => {
       const lib = mod.default || mod;
       if (typeof lib.decrypt !== 'function') {
@@ -7963,6 +7971,12 @@ function loadOfficeCrypto() {
       }
       window.__irOfficeCrypto = lib;
       return lib;
+    })
+    .catch(err => {
+      // Log the raw error for devs + re-throw a human-readable one
+      // so the UI's attack.error shows something actionable.
+      try { console.warn('[siphon-ir] loadOfficeCrypto failed:', err); } catch {}
+      throw new Error(IR_OFFICECRYPTO_FAIL_MSG);
     });
   return window.__irOfficeCryptoLoading;
 }
@@ -8292,6 +8306,12 @@ function CryptoPasswordAttack() {
           elsewhere). The built-in wordlist will take a minute or two; real
           wordlists should be routed to <span className="mono">office2john.py</span>{' '}
           + hashcat for real throughput.
+          <br/>
+          <span style={{color:'var(--ink-soft)', fontSize:11}}>
+            In-browser support depends on the library loading via esm.sh; some
+            browsers block the Node-builtin polyfills it needs. If Start throws
+            a load error, fall back to office2john + hashcat.
+          </span>
         </div>
       )}
       {file && format === 'unknown' && (
