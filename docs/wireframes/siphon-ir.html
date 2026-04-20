@@ -9154,6 +9154,113 @@ function UserRowActions({ user, canUpdate, canDisable, canDelete }) {
   );
 }
 
+// ─── Roles section · R2b2 ──────────────────────────────────────
+// Lives inside UsersSurface between the users table and the
+// permission matrix. Reads the live role store + user roster so
+// each row can show how many users are assigned to the role —
+// critical context before an admin deletes or edits a role.
+function RolesSection() {
+  useRolesTick();
+  const canManage = useCan('roles.manage');
+  // Subscribe to user changes so the in-use counter refreshes
+  // when a role is swapped on a row via R1a's menu.
+  const users = useUsersList();
+
+  const roles = getRoles();
+  const entries = Object.entries(roles)
+    .sort(([, a], [, b]) => {
+      // System roles first (they're the anchors), then custom
+      // alphabetically by label.
+      if ((a.system ? 0 : 1) !== (b.system ? 0 : 1)) return a.system ? -1 : 1;
+      return (a.label || '').localeCompare(b.label || '');
+    });
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Roles</span>
+        <span className="k mono" style={{fontSize:11}}>
+          {entries.length} total ·{' '}
+          {entries.filter(([, r]) => r.system).length} system ·{' '}
+          {entries.filter(([, r]) => !r.system).length} custom
+        </span>
+      </div>
+      <div>
+        <div style={{
+          display:'grid',
+          gridTemplateColumns:'180px 1fr 90px 90px 60px',
+          gap:10, padding:'8px 14px',
+          borderBottom:'1px solid var(--line-soft)',
+          background:'var(--bg-2)',
+          fontSize:10, letterSpacing:'0.05em', textTransform:'uppercase',
+          color:'var(--ink-soft)',
+          fontFamily:"'Space Grotesk', sans-serif", fontWeight:600,
+        }}>
+          <span>Role</span>
+          <span>Description</span>
+          <span style={{textAlign:'right'}}>Permissions</span>
+          <span style={{textAlign:'right'}}>Users</span>
+          <span></span>
+        </div>
+        {entries.map(([id, r]) => {
+          const userCount = users.filter(u => u.role === id).length;
+          return (
+            <div key={id}
+                 style={{
+                   display:'grid',
+                   gridTemplateColumns:'180px 1fr 90px 90px 60px',
+                   gap:10, padding:'10px 14px',
+                   borderBottom:'1px solid var(--line-soft)',
+                   alignItems:'center', fontSize:12,
+                 }}>
+              <div style={{minWidth:0}}>
+                <span className="chip"
+                      title={r.label}
+                      style={{
+                        fontSize:10, padding:'2px 10px',
+                        borderColor:r.color, color:r.color,
+                        background:'var(--bg-1)',
+                        whiteSpace:'nowrap',
+                        maxWidth:'100%', overflow:'hidden', textOverflow:'ellipsis',
+                      }}>
+                  {r.glyph} {r.label}
+                </span>
+                <div className="mono" style={{fontSize:10, color:'var(--ink-dim)', marginTop:4}}>
+                  {id}{r.system && <span style={{color:'var(--ink-soft)'}}> · system</span>}
+                </div>
+              </div>
+              <div style={{fontSize:11.5, color:'var(--ink)', lineHeight:1.5}}>
+                {r.description || <span className="muted">—</span>}
+              </div>
+              <div className="mono"
+                   style={{fontSize:11, color:'var(--ink)', textAlign:'right'}}>
+                {(r.permissions || []).length}
+              </div>
+              <div className="mono"
+                   style={{fontSize:11, color:'var(--ink)', textAlign:'right'}}>
+                {userCount}
+              </div>
+              <div style={{textAlign:'right'}}>
+                {canManage
+                  ? <span className="mono" style={{fontSize:10, color:'var(--ink-dim)'}}>soon</span>
+                  : ''}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {!canManage && (
+        <div className="muted" style={{
+          padding:'10px 14px', fontSize:11, borderTop:'1px solid var(--line-soft)',
+        }}>
+          Your role doesn't carry <span className="mono">roles.manage</span>.
+          Admins can create, edit, and delete custom roles here.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function UsersSurface() {
   const canView    = useCan('users.view');
   const canCreate  = useCan('users.create');
@@ -9392,6 +9499,9 @@ function UsersSurface() {
           )}
         </div>
       </div>
+
+      {/* Roles section · R2b · list + (create + edit + delete soon) */}
+      <RolesSection />
 
       {/* Permission matrix · roles × actions */}
       <div className="box">
