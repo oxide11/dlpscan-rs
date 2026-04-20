@@ -9170,21 +9170,27 @@ const IR_ROLE_COLOR_PRESETS = [
 ];
 const IR_ROLE_GLYPH_PRESETS = ['◆', '◈', '◇', '◉', '◎', '◍', '▲', '△', '▼', '▽', '◖', '◗', '✦', '✧', '✪', '☰', '⚑', '⚐'];
 
-function CreateRoleForm({ onCancel, onCreated }) {
-  const [id, setId]             = React.useState('');
-  const [label, setLabel]       = React.useState('');
-  const [glyph, setGlyph]       = React.useState('◆');
-  const [color, setColor]       = React.useState('var(--accent)');
-  const [description, setDesc]  = React.useState('');
-  const [perms, setPerms]       = React.useState([]);
+// Shared form for creating a new role OR editing an existing one.
+// When `existing` is provided the id field is locked (changing a
+// role id in-place would strand every user assigned to it) and
+// submission routes to irUpdateRole instead of irCreateRole.
+function CreateRoleForm({ onCancel, onCreated, existing, existingId }) {
+  const isEdit = !!existing;
+  const [id, setId]             = React.useState(existingId || '');
+  const [label, setLabel]       = React.useState(existing ? existing.label : '');
+  const [glyph, setGlyph]       = React.useState(existing ? existing.glyph : '◆');
+  const [color, setColor]       = React.useState(existing ? existing.color : 'var(--accent)');
+  const [description, setDesc]  = React.useState(existing ? (existing.description || '') : '');
+  const [perms, setPerms]       = React.useState(existing ? (existing.permissions || []).slice() : []);
   const [err, setErr]           = React.useState(null);
   const allPerms = irAllPermissions();
 
   // Auto-derive id from label while the id field hasn't been
-  // touched by the user. Once they type in the id box the auto-
-  // derive stops so they can hand-tune.
-  const [idTouched, setIdTouched] = React.useState(false);
-  const effectiveId = idTouched ? id : (label || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '').slice(0, 32);
+  // touched by the user (create-mode only). Edit mode locks it.
+  const [idTouched, setIdTouched] = React.useState(isEdit);
+  const effectiveId = isEdit
+    ? existingId
+    : (idTouched ? id : (label || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '').slice(0, 32));
 
   const togglePerm = (p) => {
     setPerms(cur => cur.includes(p) ? cur.filter(x => x !== p) : [...cur, p]);
@@ -9195,10 +9201,9 @@ function CreateRoleForm({ onCancel, onCreated }) {
     setErr(null);
     if (!label.trim())      return setErr('label required');
     if (!effectiveId)       return setErr('role id required');
-    const res = irCreateRole({
-      id: effectiveId, label, glyph, color, description,
-      permissions: perms,
-    });
+    const res = isEdit
+      ? irUpdateRole(effectiveId, { label, glyph, color, description, permissions: perms })
+      : irCreateRole({ id: effectiveId, label, glyph, color, description, permissions: perms });
     if (!res.ok) return setErr(res.reason);
     onCreated(res.role);
   };
@@ -9232,12 +9237,19 @@ function CreateRoleForm({ onCancel, onCreated }) {
         </label>
         <label>
           <div className="label" style={{marginBottom:4}}>
-            Role id <span className="muted" style={{fontSize:10}}>kebab-safe · used in URLs + APIs</span>
+            Role id{' '}
+            <span className="muted" style={{fontSize:10}}>
+              {isEdit ? 'locked · changing would orphan assigned users' : 'kebab-safe · used in URLs + APIs'}
+            </span>
           </div>
           <input type="text" value={effectiveId}
+                 disabled={isEdit}
                  onChange={(e) => { setId(e.target.value); setIdTouched(true); }}
                  placeholder="compliance-auditor"
-                 style={formInputStyle}/>
+                 style={{
+                   ...formInputStyle,
+                   opacity: isEdit ? 0.55 : 1,
+                 }}/>
         </label>
       </div>
 
@@ -9357,10 +9369,109 @@ function CreateRoleForm({ onCancel, onCreated }) {
           Cancel
         </button>
         <button type="submit" className="btn primary" style={{fontSize:12}}>
-          Create role
+          {isEdit ? 'Save changes' : 'Create role'}
         </button>
       </div>
     </form>
+  );
+}
+
+// Per-role action menu · R2b4. Kebab in the action column opens
+// a popover with Edit and Delete items. Delete is disabled for
+// system roles and for custom roles that still have users
+// assigned — the `in-use` count lives right in the menu item so
+// the admin sees WHY they can't delete.
+function RoleRowActions({ id, role, onEdit, userCount }) {
+  const [open, setOpen] = React.useState(false);
+  const btnRef  = React.useRef(null);
+  const menuRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      if (btnRef.current  && btnRef.current.contains(e.target))  return;
+      setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown',   onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown',   onKey);
+    };
+  }, [open]);
+
+  const handleDelete = () => {
+    if (role.system)  { setOpen(false); return; }
+    if (userCount > 0) { setOpen(false); return; }
+    if (!window.confirm('Delete role "' + role.label + '"? This removes it from the tenant permanently.')) {
+      setOpen(false);
+      return;
+    }
+    const res = irDeleteRole(id);
+    if (!res.ok) window.alert(res.reason);
+    setOpen(false);
+  };
+
+  const deleteBlocked = role.system || userCount > 0;
+  const deleteReason  = role.system ? 'system role · built-in'
+                      : userCount > 0 ? userCount + ' user(s) still assigned'
+                      : '';
+
+  return (
+    <div style={{position:'relative', display:'flex', justifyContent:'flex-end'}}>
+      <button ref={btnRef}
+              type="button"
+              onClick={() => setOpen(o => !o)}
+              title="Role actions"
+              style={{
+                width:28, height:28,
+                background:'transparent',
+                border:'1px solid transparent',
+                borderRadius:'var(--radius)',
+                cursor:'pointer',
+                color:'var(--ink-soft)',
+                fontSize:14, lineHeight:1,
+                outline: open ? '1px solid var(--line-strong)' : 'none',
+              }}>⋯</button>
+      {open && (
+        <div ref={menuRef}
+             style={{
+               position:'absolute', top:'calc(100% + 4px)', right:0,
+               minWidth:220,
+               background:'var(--bg-1)',
+               border:'1px solid var(--line-strong)',
+               borderRadius:'var(--radius)',
+               boxShadow:'0 8px 24px rgba(0,0,0,0.4)',
+               zIndex:500,
+               padding:'6px 0',
+               fontSize:12,
+             }}>
+          <button onClick={() => { onEdit(); setOpen(false); }}
+                  style={menuItemStyle}>
+            <span style={{marginRight:8}}>✎</span>Edit role
+          </button>
+          <div style={{borderTop:'1px solid var(--line-soft)', margin:'4px 0'}}/>
+          <button onClick={handleDelete}
+                  disabled={deleteBlocked}
+                  title={deleteReason}
+                  style={{
+                    ...menuItemStyle,
+                    color: deleteBlocked ? 'var(--ink-dim)' : 'var(--threat)',
+                    cursor: deleteBlocked ? 'not-allowed' : 'pointer',
+                  }}>
+            <span style={{marginRight:8}}>✕</span>
+            Delete role
+            {deleteBlocked && (
+              <span className="mono" style={{marginLeft:'auto', fontSize:10, color:'var(--ink-soft)'}}>
+                {role.system ? 'system' : 'in use'}
+              </span>
+            )}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -9376,6 +9487,7 @@ function RolesSection() {
   // when a role is swapped on a row via R1a's menu.
   const users = useUsersList();
   const [createOpen, setCreateOpen] = React.useState(false);
+  const [editingId, setEditingId]   = React.useState(null);
 
   const roles = getRoles();
   const entries = Object.entries(roles)
@@ -9430,48 +9542,57 @@ function RolesSection() {
         </div>
         {entries.map(([id, r]) => {
           const userCount = users.filter(u => u.role === id).length;
+          const isEditing = editingId === id;
           return (
-            <div key={id}
-                 style={{
-                   display:'grid',
-                   gridTemplateColumns:'180px 1fr 90px 90px 60px',
-                   gap:10, padding:'10px 14px',
-                   borderBottom:'1px solid var(--line-soft)',
-                   alignItems:'center', fontSize:12,
-                 }}>
-              <div style={{minWidth:0}}>
-                <span className="chip"
-                      title={r.label}
-                      style={{
-                        fontSize:10, padding:'2px 10px',
-                        borderColor:r.color, color:r.color,
-                        background:'var(--bg-1)',
-                        whiteSpace:'nowrap',
-                        maxWidth:'100%', overflow:'hidden', textOverflow:'ellipsis',
-                      }}>
-                  {r.glyph} {r.label}
-                </span>
-                <div className="mono" style={{fontSize:10, color:'var(--ink-dim)', marginTop:4}}>
-                  {id}{r.system && <span style={{color:'var(--ink-soft)'}}> · system</span>}
+            <React.Fragment key={id}>
+              <div style={{
+                     display:'grid',
+                     gridTemplateColumns:'180px 1fr 90px 90px 60px',
+                     gap:10, padding:'10px 14px',
+                     borderBottom:'1px solid var(--line-soft)',
+                     alignItems:'center', fontSize:12,
+                     background: isEditing ? 'var(--bg-2)' : 'transparent',
+                   }}>
+                <div style={{minWidth:0}}>
+                  <span className="chip"
+                        title={r.label}
+                        style={{
+                          fontSize:10, padding:'2px 10px',
+                          borderColor:r.color, color:r.color,
+                          background:'var(--bg-1)',
+                          whiteSpace:'nowrap',
+                          maxWidth:'100%', overflow:'hidden', textOverflow:'ellipsis',
+                        }}>
+                    {r.glyph} {r.label}
+                  </span>
+                  <div className="mono" style={{fontSize:10, color:'var(--ink-dim)', marginTop:4}}>
+                    {id}{r.system && <span style={{color:'var(--ink-soft)'}}> · system</span>}
+                  </div>
+                </div>
+                <div style={{fontSize:11.5, color:'var(--ink)', lineHeight:1.5}}>
+                  {r.description || <span className="muted">—</span>}
+                </div>
+                <div className="mono"
+                     style={{fontSize:11, color:'var(--ink)', textAlign:'right'}}>
+                  {(r.permissions || []).length}
+                </div>
+                <div className="mono"
+                     style={{fontSize:11, color:'var(--ink)', textAlign:'right'}}>
+                  {userCount}
+                </div>
+                <div style={{textAlign:'right'}}>
+                  {canManage && (
+                    <RoleRowActions id={id} role={r} userCount={userCount}
+                                    onEdit={() => setEditingId(id)} />
+                  )}
                 </div>
               </div>
-              <div style={{fontSize:11.5, color:'var(--ink)', lineHeight:1.5}}>
-                {r.description || <span className="muted">—</span>}
-              </div>
-              <div className="mono"
-                   style={{fontSize:11, color:'var(--ink)', textAlign:'right'}}>
-                {(r.permissions || []).length}
-              </div>
-              <div className="mono"
-                   style={{fontSize:11, color:'var(--ink)', textAlign:'right'}}>
-                {userCount}
-              </div>
-              <div style={{textAlign:'right'}}>
-                {canManage
-                  ? <span className="mono" style={{fontSize:10, color:'var(--ink-dim)'}}>soon</span>
-                  : ''}
-              </div>
-            </div>
+              {isEditing && (
+                <CreateRoleForm existing={r} existingId={id}
+                                onCancel={() => setEditingId(null)}
+                                onCreated={() => setEditingId(null)}/>
+              )}
+            </React.Fragment>
           );
         })}
       </div>
