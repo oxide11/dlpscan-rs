@@ -2466,7 +2466,7 @@ const IR_SURFACES = [
   { id: 'integrations',   workspace: 'settings',  icon: '⇄',  title: 'Integrations',     sub: 'XSOAR · Splunk HEC' },
   { id: 'ir-users',       workspace: 'settings',  icon: '◇',  title: 'Users & Roles',    sub: 'invite · disable · role matrix' },
   { id: 'ir-auth',        workspace: 'settings',  icon: '⛨',  title: 'Authentication',   sub: 'password · SAML · passkeys' },
-  { id: 'ir-settings',    workspace: 'settings',  icon: '⚙',  title: 'Responder Prefs',  sub: 'filters · notifications' },
+  { id: 'ir-settings',    workspace: 'settings',  icon: '⚙',  title: 'My Profile',       sub: 'timezone · notifications · change password' },
   { id: 'ir-deployment',  workspace: 'settings',  icon: '⚿',  title: 'Pod Registry',     sub: 'shared with admin console' },
   { id: 'ir-engineering', workspace: 'settings',  icon: '⌁',  title: 'Engineering',      sub: 'demo data · dev toggles' },
 ];
@@ -8478,8 +8478,7 @@ const SURFACE_COMPONENTS = {
   integrations:   () => <IntegrationsSurface />,
   'ir-users':     () => <UsersSurface />,
   'ir-auth':      () => <AuthenticationSurface />,
-  'ir-settings':  () => <Stub title="Responder Preferences"
-                              description="Default queue filters, notification channels, team membership, theme." />,
+  'ir-settings':  () => <ProfileSurface />,
   'ir-deployment':() => <Stub title="Pod Registry"
                               description="Shared with the admin console — registered pods appear in both. Edits under Settings → Deployment on siphon-c2.html." />,
   'ir-engineering': () => <EngineeringSurface />,
@@ -9199,6 +9198,327 @@ function AuthenticationSurface() {
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Settings → My Profile · U6 ────────────────────────────────
+// Self-service form for the currently signed-in user. Lets them
+// change display name / timezone / theme / notification prefs /
+// password without touching the admin-only Users surface.
+function ProfileSurface() {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => setTick(t => t + 1);
+    window.addEventListener('ir:currentUserChanged', refresh);
+    window.addEventListener('ir:usersChanged',       refresh);
+    return () => {
+      window.removeEventListener('ir:currentUserChanged', refresh);
+      window.removeEventListener('ir:usersChanged',       refresh);
+    };
+  }, []);
+  const user = getCurrentUser();
+  if (!user) {
+    return <Stub title="Not signed in" description="No profile to edit." />;
+  }
+  const role = irRoleMeta(user.role);
+  const settings = user.settings || defaultUserSettings();
+
+  // Identity form · editable display name (email and role stay
+  // read-only from this surface — admin changes those via Users).
+  const [name, setName]   = React.useState(user.name);
+  const [dirty, setDirty] = React.useState(false);
+  React.useEffect(() => { setName(user.name); setDirty(false); }, [user.id, tick]);
+  const saveName = () => {
+    updateUser(user.id, { name: name.trim() || user.name });
+    setDirty(false);
+  };
+
+  // Preferences and notifications mutate the .settings sub-object.
+  const setSetting = (patch) => updateCurrentUserSettings(patch);
+  const toggleNotif = (key) => setSetting({
+    notifications: { ...settings.notifications, [key]: !settings.notifications[key] },
+  });
+
+  const [changePwOpen, setChangePwOpen] = React.useState(false);
+
+  return (
+    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
+      {/* Identity */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Identity</span>
+          <span className="k mono" style={{fontSize:11}}>{user.id}</span>
+        </div>
+        <div style={{padding:16, display:'grid', gridTemplateColumns:'90px 1fr', gap:14, alignItems:'start'}}>
+          <div style={{
+            width:80, height:80, borderRadius:'50%',
+            background:'var(--bg-2)',
+            border:'1px solid var(--line-strong)',
+            color:'var(--ink-bright)',
+            display:'grid', placeItems:'center',
+            fontSize:24, fontFamily:"'JetBrains Mono', monospace",
+            fontWeight:700,
+          }}>{user.avatar || (user.name || '?').slice(0, 2).toUpperCase()}</div>
+          <div style={{display:'grid', gap:10}}>
+            <label>
+              <div className="label" style={{marginBottom:4}}>Display name</div>
+              <input type="text" value={name}
+                     onChange={(e) => { setName(e.target.value); setDirty(true); }}
+                     style={formInputStyle}/>
+            </label>
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10}}>
+              <div>
+                <div className="label" style={{marginBottom:4}}>Email</div>
+                <div className="mono" style={{
+                  padding:'8px 10px', fontSize:12,
+                  background:'var(--bg-2)',
+                  border:'1px dashed var(--line-soft)',
+                  borderRadius:'var(--radius)',
+                  color:'var(--ink)',
+                }}>{user.email || '—'}</div>
+              </div>
+              <div>
+                <div className="label" style={{marginBottom:4}}>Role</div>
+                <div style={{padding:'6px 10px'}}>
+                  <span className="chip"
+                        title={role.description}
+                        style={{
+                          fontSize:11, padding:'3px 10px',
+                          borderColor:role.color, color:role.color,
+                          background:'var(--bg-1)',
+                        }}>
+                    {role.glyph} {role.label}
+                  </span>
+                </div>
+              </div>
+            </div>
+            {dirty && (
+              <div style={{display:'flex', gap:8}}>
+                <button className="btn primary" onClick={saveName} style={{fontSize:12}}>
+                  Save changes
+                </button>
+                <button className="btn ghost"
+                        onClick={() => { setName(user.name); setDirty(false); }}
+                        style={{fontSize:12}}>
+                  Discard
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Preferences */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Preferences</span>
+          <span className="k mono" style={{fontSize:11}}>timezone · theme · density</span>
+        </div>
+        <div style={{padding:16, display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:14}}>
+          <label>
+            <div className="label" style={{marginBottom:4}}>Timezone</div>
+            <select value={settings.timezone || 'browser'}
+                    onChange={(e) => setSetting({ timezone: e.target.value })}
+                    style={formInputStyle}>
+              {IR_TIMEZONES.map(tz => (
+                <option key={tz.id} value={tz.id}>{tz.label}</option>
+              ))}
+            </select>
+            <div style={{marginTop:4, fontSize:11, color:'var(--ink-soft)', lineHeight:1.5}}>
+              U8 wires this into every displayed timestamp.
+            </div>
+          </label>
+          <label>
+            <div className="label" style={{marginBottom:4}}>Theme</div>
+            <select value={settings.theme || ''}
+                    onChange={(e) => setSetting({ theme: e.target.value || null })}
+                    style={formInputStyle}>
+              <option value="">Follow global</option>
+              <option value="phosphor">Phosphor (green)</option>
+              <option value="amber">Amber</option>
+              <option value="ice">Ice</option>
+              <option value="light">Day (light)</option>
+            </select>
+            <div style={{marginTop:4, fontSize:11, color:'var(--ink-soft)', lineHeight:1.5}}>
+              Per-user override for the topbar theme switcher.
+            </div>
+          </label>
+          <label>
+            <div className="label" style={{marginBottom:4}}>Density</div>
+            <select value={settings.density || ''}
+                    onChange={(e) => setSetting({ density: e.target.value || null })}
+                    style={formInputStyle}>
+              <option value="">Follow global</option>
+              <option value="compact">Compact</option>
+              <option value="cozy">Cozy</option>
+              <option value="comfy">Comfy</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      {/* Notifications */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Notifications</span>
+          <span className="k mono" style={{fontSize:11}}>local-only · no server-backed delivery yet</span>
+        </div>
+        <div style={{padding:4}}>
+          {[
+            ['new_finding',     'New finding lands on a subscribed pod'],
+            ['my_assignment',   'A finding is assigned to me'],
+            ['fp_submission',   'FP queue item I submitted is reviewed'],
+            ['escalation_done', 'My XSOAR escalation completes'],
+            ['playbook_update', 'A playbook I use is updated'],
+          ].map(([key, label]) => {
+            const on = !!(settings.notifications || {})[key];
+            return (
+              <div key={key}
+                   style={{
+                     display:'flex', alignItems:'center',
+                     padding:'10px 14px',
+                     borderBottom:'1px solid var(--line-soft)',
+                     fontSize:12,
+                   }}>
+                <div style={{flex:1, color:'var(--ink)'}}>{label}</div>
+                <button onClick={() => toggleNotif(key)}
+                        style={{
+                          width:44, height:22, borderRadius:11,
+                          border:'1px solid ' + (on ? 'var(--safe)' : 'var(--line-strong)'),
+                          background: on ? 'var(--safe)' : 'var(--bg-2)',
+                          cursor:'pointer', padding:0, position:'relative',
+                          transition:'background 150ms',
+                        }}
+                        title={on ? 'on · click to turn off' : 'off · click to turn on'}>
+                  <span style={{
+                    position:'absolute', top:1, left: on ? 23 : 1,
+                    width:18, height:18, borderRadius:'50%',
+                    background: on ? '#000' : 'var(--ink-soft)',
+                    transition:'left 150ms',
+                  }}/>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Security */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Security</span>
+          <span className="k mono" style={{fontSize:11}}>
+            {user.auth
+              ? 'last changed ' + irFormatRelative(user.auth.last_changed)
+              : 'no password set · admin invite pending'}
+          </span>
+        </div>
+        <div style={{padding:14}}>
+          {!changePwOpen && (
+            <button className="btn primary"
+                    onClick={() => setChangePwOpen(true)}
+                    style={{fontSize:12}}>
+              Change password
+            </button>
+          )}
+          {changePwOpen && (
+            <ChangePasswordForm user={user}
+                                onDone={() => setChangePwOpen(false)}
+                                onCancel={() => setChangePwOpen(false)}/>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChangePasswordForm({ user, onDone, onCancel }) {
+  const [cur, setCur] = React.useState('');
+  const [pw1, setPw1] = React.useState('');
+  const [pw2, setPw2] = React.useState('');
+  const [err, setErr] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [success, setSuccess] = React.useState(false);
+
+  const submit = async (e) => {
+    if (e) e.preventDefault();
+    setErr(null);
+    setSuccess(false);
+    const v = irValidatePassword(pw1, pw2);
+    if (!v.ok) return setErr(v.reason);
+    setBusy(true);
+    // Verify the current password. Skip the check if the user
+    // still has the default seed password — they're not really
+    // "changing" at that point, just setting for real.
+    let currentOk = true;
+    if (user.auth) {
+      currentOk = await irVerifyPassword(cur, user.auth);
+    } else if (user.default_password) {
+      currentOk = cur === user.default_password;
+    }
+    if (!currentOk) {
+      setBusy(false);
+      return setErr('current password is wrong');
+    }
+    await irSetPassword(user.id, pw1);
+    setBusy(false);
+    setSuccess(true);
+    setTimeout(() => onDone(), 900);
+  };
+
+  return (
+    <form onSubmit={submit} style={{display:'grid', gap:10, maxWidth:420}}>
+      <label>
+        <div className="label" style={{marginBottom:4}}>Current password</div>
+        <input type="password" value={cur} autoFocus
+               onChange={(e) => setCur(e.target.value)}
+               autoComplete="current-password"
+               style={formInputStyle}/>
+      </label>
+      <label>
+        <div className="label" style={{marginBottom:4}}>New password</div>
+        <input type="password" value={pw1}
+               onChange={(e) => setPw1(e.target.value)}
+               autoComplete="new-password"
+               placeholder="≥ 10 chars · letter + digit"
+               style={formInputStyle}/>
+      </label>
+      <label>
+        <div className="label" style={{marginBottom:4}}>Confirm new password</div>
+        <input type="password" value={pw2}
+               onChange={(e) => setPw2(e.target.value)}
+               autoComplete="new-password"
+               style={formInputStyle}/>
+      </label>
+      {err && (
+        <div style={{
+          padding:'8px 10px',
+          background:'var(--red-wash)',
+          border:'1px solid var(--threat)',
+          color:'var(--threat)',
+          borderRadius:'var(--radius)',
+          fontSize:12,
+        }}>{err}</div>
+      )}
+      {success && (
+        <div style={{
+          padding:'8px 10px',
+          background:'var(--accent-wash)',
+          border:'1px solid var(--safe)',
+          color:'var(--safe)',
+          borderRadius:'var(--radius)',
+          fontSize:12,
+        }}>✓ Password updated</div>
+      )}
+      <div style={{display:'flex', gap:8}}>
+        <button type="submit" className="btn primary" disabled={busy} style={{fontSize:12}}>
+          {busy ? 'saving…' : 'Update password'}
+        </button>
+        <button type="button" className="btn ghost" onClick={onCancel} style={{fontSize:12}}>
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 
