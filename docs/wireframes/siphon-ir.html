@@ -10979,7 +10979,7 @@ const TWEAK_DEFAULTS = {
 // Logo source is the committed siphon-logo.png sibling; relative
 // paths load fine from file:// for images (only CSS/JS cross-
 // origin is blocked on that protocol).
-function AuthBrandHeader({ kicker, title, subtitle }) {
+function AuthBrandHeader({ kicker, kickerColor, title, subtitle }) {
   return (
     <div style={{marginBottom:22, display:'flex', gap:14, alignItems:'flex-start'}}>
       <img src="siphon-logo.png"
@@ -10993,7 +10993,9 @@ function AuthBrandHeader({ kicker, title, subtitle }) {
       <div style={{flex:1, minWidth:0}}>
         <div style={{
           fontFamily: "'JetBrains Mono', monospace",
-          fontSize: 11, color:'var(--accent)', letterSpacing:'0.12em',
+          fontSize: 11,
+          color: kickerColor || 'var(--accent)',
+          letterSpacing:'0.12em',
         }}>{kicker || 'POLYGON'}</div>
         <div style={{
           fontSize: 24, fontWeight: 700, color:'var(--ink-bright)',
@@ -11345,21 +11347,15 @@ function ForceChangePassword({ user, onDone }) {
               padding: '28px 28px 22px',
               fontFamily: "'Space Grotesk', sans-serif",
             }}>
-        <div style={{marginBottom:20}}>
-          <div style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 11, color:'var(--amber)', letterSpacing:'0.1em',
-          }}>FORCED · FIRST LOGIN</div>
-          <div style={{
-            fontSize: 22, fontWeight: 700, color:'var(--ink-bright)',
-            letterSpacing:'-0.01em', marginTop: 4,
-          }}>Set a new password</div>
-          <div style={{fontSize:12, color:'var(--ink-soft)', marginTop:8, lineHeight:1.6}}>
+        <AuthBrandHeader
+          kicker="FORCED · FIRST LOGIN"
+          kickerColor="var(--amber)"
+          title="Set a new password"
+          subtitle={<>
             Signed in as <span className="mono" style={{color:'var(--ink)'}}>{user.email || user.id}</span>.
             You need to replace the default/initial password before the console
             is accessible.
-          </div>
-        </div>
+          </>}/>
 
         <label style={{display:'block', marginBottom:12}}>
           <div className="label" style={{marginBottom:4}}>New password</div>
