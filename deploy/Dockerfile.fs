@@ -5,6 +5,10 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock* ./
 COPY crates/ crates/
 COPY src/ src/
+# Workspace root declares [[bench]] name = "scanning" — Cargo parses
+# the whole workspace even for `-p siphon-fs`, so the bench source
+# file has to be present at image-build time.
+COPY benches/ benches/
 
 RUN cargo build --release -p siphon-fs --locked
 

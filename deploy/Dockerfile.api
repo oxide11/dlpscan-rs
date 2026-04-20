@@ -5,6 +5,11 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock* ./
 COPY crates/ crates/
 COPY src/ src/
+# Workspace root declares [[bench]] name = "scanning" — Cargo parses
+# the whole workspace even for `-p siphon-api`, so the bench source
+# file has to be present at image-build time even though it isn't
+# compiled in the release profile.
+COPY benches/ benches/
 
 # --features k8s-roll pulls in kube + k8s-openapi so /v1/overrides/roll
 # can patch Deployment annotations from inside the cluster. Omit the
