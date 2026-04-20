@@ -2519,12 +2519,23 @@ function Topbar({ tweaks, setTweak, openPlaybooks }) {
   );
 }
 
-// Identity slot in the topbar. Renders the currently signed-in
-// user's name + role glyph and exposes a click-to-logout. U7 will
-// extend this into a full impersonation menu; for now it's a
-// straightforward "who you are + sign out" control.
+// Identity slot in the topbar — clicking opens a dropdown with:
+//   · who you are (name · email · role)
+//   · "My profile" nav link
+//   · impersonation sub-list (admins only; reads the full user
+//     roster and lets an admin pose as anyone for demos)
+//   · "Sign out"
+// The impersonation list is gated on users.view, not a separate
+// users.impersonate permission — if you can see the roster, you
+// can switch seats. Production would replace this with real
+// identity signals from the IdP.
 function TopbarUser() {
-  const [tick, setTick] = React.useState(0);
+  const [open, setOpen] = React.useState(false);
+  const [showAll, setShowAll] = React.useState(false);
+  const [, setTick] = React.useState(0);
+  const btnRef = React.useRef(null);
+  const menuRef = React.useRef(null);
+
   React.useEffect(() => {
     const refresh = () => setTick(t => t + 1);
     window.addEventListener('ir:currentUserChanged', refresh);
@@ -2536,29 +2547,187 @@ function TopbarUser() {
       window.removeEventListener('ir:sessionChanged',     refresh);
     };
   }, []);
+
+  // Click-outside + Escape close
+  React.useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      if (btnRef.current  && btnRef.current.contains(e.target))  return;
+      setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown',   onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown',   onKey);
+    };
+  }, [open]);
+
   const user = getCurrentUser();
   if (!user) return <span className="tb-user">guest</span>;
   const role = irRoleMeta(user.role);
+
   const logout = () => {
+    setOpen(false);
     if (typeof window.__ir_logout === 'function') window.__ir_logout();
   };
+  const goToProfile = () => {
+    setOpen(false);
+    if (typeof window.__ir_go === 'function') window.__ir_go('ir-settings');
+  };
+
+  // Impersonation: admin clicks a user in the list, we swap
+  // ir:currentUserId + write a fresh session tied to that id.
+  // This is a demo-time convenience — prod deployments should
+  // require a step-up auth + audit log.
+  const canImpersonate = canDo(user, 'users.view');
+  const impersonate = (target) => {
+    if (!target || target.id === user.id) { setOpen(false); return; }
+    setCurrentUser(target.id);
+    writeSession(target.id);
+    setOpen(false);
+  };
+
+  const otherUsers = canImpersonate
+    ? readUsers().filter(u => u.status !== 'disabled' && u.id !== user.id)
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    : [];
+  const shownOthers = showAll ? otherUsers : otherUsers.slice(0, 6);
+
   return (
-    <span style={{display:'flex', alignItems:'center', gap:8}}>
-      <span className="tb-user"
-            title={role.label + ' · ' + (user.email || user.id)}
-            style={{display:'flex', alignItems:'center', gap:6}}>
+    <span style={{display:'flex', alignItems:'center', gap:8, position:'relative'}}>
+      <button ref={btnRef}
+              type="button"
+              onClick={() => setOpen(o => !o)}
+              title={role.label + ' · click for menu'}
+              className="tb-user"
+              style={{
+                display:'flex', alignItems:'center', gap:6,
+                background:'transparent', border:'none', cursor:'pointer',
+                fontFamily:'inherit', fontSize:'inherit', color:'inherit',
+                padding:'4px 8px',
+                borderRadius:'var(--radius)',
+                outline: open ? '1px solid var(--line-strong)' : 'none',
+              }}>
         <span style={{color: role.color, fontSize:11}}>{role.glyph}</span>
         <span>{user.name}</span>
-      </span>
-      <button className="tb-theme"
-              onClick={logout}
-              title="Sign out · clears your session"
-              style={{fontSize:11}}>
-        ⏻ sign out
+        <span style={{fontSize:9, color:'var(--ink-soft)', marginLeft:2}}>
+          {open ? '▲' : '▼'}
+        </span>
       </button>
+
+      {open && (
+        <div ref={menuRef}
+             style={{
+               position:'absolute', top:'calc(100% + 6px)', right:0,
+               minWidth:260, maxWidth:320,
+               background:'var(--bg-1)',
+               border:'1px solid var(--line-strong)',
+               borderRadius:'var(--radius)',
+               boxShadow:'0 10px 30px rgba(0,0,0,0.4)',
+               zIndex:1000,
+               padding:0,
+               fontSize:12,
+             }}>
+          {/* Identity header */}
+          <div style={{
+            padding:'12px 14px',
+            borderBottom:'1px solid var(--line-soft)',
+          }}>
+            <div style={{color:'var(--ink-bright)', fontWeight:700, fontSize:13, marginBottom:2}}>
+              {user.name}
+            </div>
+            <div className="mono" style={{fontSize:10.5, color:'var(--ink-soft)'}}>
+              {user.email || user.id}
+            </div>
+            <div style={{marginTop:6}}>
+              <span className="chip"
+                    style={{
+                      fontSize:10, padding:'2px 8px',
+                      borderColor: role.color, color: role.color,
+                      background:'var(--bg-2)',
+                    }}>
+                {role.glyph} {role.label}
+              </span>
+            </div>
+          </div>
+
+          {/* Nav items */}
+          <button onClick={goToProfile} className="menu-item"
+                  style={menuItemStyle}>
+            <span style={{marginRight:8}}>⚙</span>My profile
+          </button>
+
+          {/* Impersonation */}
+          {canImpersonate && otherUsers.length > 0 && (
+            <div style={{
+              borderTop:'1px solid var(--line-soft)',
+              padding:'8px 0',
+            }}>
+              <div style={{
+                padding:'2px 14px 6px',
+                fontSize:10, letterSpacing:'0.08em',
+                color:'var(--ink-soft)',
+                fontFamily:"'Space Grotesk', sans-serif",
+                fontWeight:600, textTransform:'uppercase',
+              }}>
+                Switch user (demo)
+              </div>
+              {shownOthers.map(u => {
+                const r = irRoleMeta(u.role);
+                return (
+                  <button key={u.id}
+                          onClick={() => impersonate(u)}
+                          style={{
+                            ...menuItemStyle,
+                            display:'flex', alignItems:'center', gap:8,
+                          }}>
+                    <span style={{color:r.color, width:12, textAlign:'center', fontSize:11}}>
+                      {r.glyph}
+                    </span>
+                    <span style={{flex:1, color:'var(--ink)'}}>{u.name}</span>
+                    <span className="mono" style={{fontSize:10, color:'var(--ink-dim)'}}>
+                      {u.role}
+                    </span>
+                  </button>
+                );
+              })}
+              {otherUsers.length > shownOthers.length && (
+                <button onClick={() => setShowAll(true)}
+                        style={{
+                          ...menuItemStyle,
+                          color:'var(--accent)', fontSize:11,
+                        }}>
+                  + show {otherUsers.length - shownOthers.length} more
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Sign out */}
+          <div style={{borderTop:'1px solid var(--line-soft)'}}>
+            <button onClick={logout} style={{
+              ...menuItemStyle,
+              color:'var(--threat)',
+            }}>
+              <span style={{marginRight:8}}>⏻</span>Sign out
+            </button>
+          </div>
+        </div>
+      )}
     </span>
   );
 }
+
+const menuItemStyle = {
+  display:'block', width:'100%', textAlign:'left',
+  background:'transparent', border:'none',
+  padding:'9px 14px', cursor:'pointer',
+  color:'var(--ink)', fontSize:12,
+  fontFamily:"'Space Grotesk', sans-serif",
+};
 
 // Console chip — IR-flavoured equivalent of siphon-c2's DeploymentChip.
 // Red accent so the operator instantly knows this is the IR console,
