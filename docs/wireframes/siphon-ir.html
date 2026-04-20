@@ -8964,12 +8964,23 @@ function JustCreatedToast({ payload, onDismiss }) {
 //   · hidden entirely when the row's user IS the signed-in user
 //     (self-service goes through My Profile, not here)
 //   · change-role requires users.update
-function UserRowActions({ user, canUpdate, canDisable }) {
+function UserRowActions({ user, canUpdate, canDisable, canDelete }) {
   const [open, setOpen] = React.useState(false);
   const btnRef  = React.useRef(null);
   const menuRef = React.useRef(null);
   const me = getCurrentUser();
   const isSelf = !!(me && me.id === user.id);
+
+  // Last-admin lockout guard. If this is the only active admin
+  // left, disable destructive paths so a misclick can't strand
+  // the tenant without anyone able to invite new users.
+  const activeAdmins = React.useMemo(() => {
+    try { return readUsers().filter(u => u.role === 'admin' && u.status === 'active'); }
+    catch { return []; }
+  }, [user.id, user.role, user.status]);
+  const isLastAdmin = user.role === 'admin'
+    && user.status === 'active'
+    && activeAdmins.length <= 1;
 
   React.useEffect(() => {
     if (!open) return;
@@ -8987,7 +8998,7 @@ function UserRowActions({ user, canUpdate, canDisable }) {
     };
   }, [open]);
 
-  if (isSelf || (!canUpdate && !canDisable)) {
+  if (isSelf || (!canUpdate && !canDisable && !canDelete)) {
     // Keep the cell width consistent even when empty so the grid
     // doesn't reflow per-row. Render an inert placeholder.
     return <div style={{width:32}}/>;
@@ -9001,6 +9012,19 @@ function UserRowActions({ user, canUpdate, canDisable }) {
   const toggleStatus = () => {
     const next = user.status === 'active' ? 'disabled' : 'active';
     updateUser(user.id, { status: next });
+    setOpen(false);
+  };
+  const handleDelete = () => {
+    if (isLastAdmin) {
+      window.alert("Can't delete the last active administrator. Promote another user to admin first.");
+      return;
+    }
+    const label = user.name + (user.email ? ' (' + user.email + ')' : '');
+    if (!window.confirm('Delete ' + label + '? This removes their record, dispositions tied to their id stay intact.')) {
+      setOpen(false);
+      return;
+    }
+    deleteUser(user.id);
     setOpen(false);
   };
   // Invited rows shouldn't show disable — they're not active yet.
@@ -9095,6 +9119,33 @@ function UserRowActions({ user, canUpdate, canDisable }) {
               </button>
             </>
           )}
+
+          {canDelete && (
+            <>
+              {(canUpdate || showStatusToggle) && (
+                <div style={{
+                  borderTop:'1px solid var(--line-soft)',
+                  margin:'4px 0',
+                }}/>
+              )}
+              <button onClick={handleDelete}
+                      disabled={isLastAdmin}
+                      title={isLastAdmin ? "can't delete the last active admin" : ''}
+                      style={{
+                        ...menuItemStyle,
+                        color: isLastAdmin ? 'var(--ink-dim)' : 'var(--threat)',
+                        cursor: isLastAdmin ? 'not-allowed' : 'pointer',
+                      }}>
+                <span style={{marginRight:8}}>✕</span>
+                Delete user
+                {isLastAdmin && (
+                  <span className="mono" style={{marginLeft:'auto', fontSize:10, color:'var(--ink-soft)'}}>
+                    last admin
+                  </span>
+                )}
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>
@@ -9106,6 +9157,7 @@ function UsersSurface() {
   const canCreate  = useCan('users.create');
   const canUpdate  = useCan('users.update');
   const canDisable = useCan('users.disable');
+  const canDelete  = useCan('users.delete');
   const canInvite  = useCan('users.invite');
 
   const users = useUsersList();
@@ -9325,7 +9377,8 @@ function UsersSurface() {
                 </div>
                 <UserRowActions user={u}
                                 canUpdate={canUpdate}
-                                canDisable={canDisable}/>
+                                canDisable={canDisable}
+                                canDelete={canDelete}/>
               </div>
             );
           })}
@@ -9986,7 +10039,8 @@ const IR_ROLES = {
     color: 'var(--red)',
     description: 'Full access · user management · integrations · everything responders and engineers see.',
     permissions: [
-      'users.view', 'users.create', 'users.invite', 'users.update', 'users.disable',
+      'users.view', 'users.create', 'users.invite', 'users.update',
+      'users.disable', 'users.delete',
       'findings.view', 'findings.dispose', 'findings.escalate',
       'playbooks.view', 'playbooks.edit',
       'integrations.view', 'integrations.edit',
