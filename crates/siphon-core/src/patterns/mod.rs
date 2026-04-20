@@ -174,7 +174,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z0-9]{16,35}\b",
         case_insensitive: false,
         specificity: 0.50,
-        context_required: false,
+        // Loose alnum 16-35 char regex matches tracking numbers,
+        // order refs, commit hashes, UUIDs. Gate on wire-context
+        // keywords.
+        context_required: true,
     },
     PatternDef {
         category: "Wire Transfer Data",
@@ -198,7 +201,8 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z0-9]{12,35}\b",
         case_insensitive: false,
         specificity: 0.50,
-        context_required: false,
+        // Same alnum shape as Wire Reference; gate on SEPA keywords.
+        context_required: true,
     },
     PatternDef {
         category: "Check and MICR Data",
@@ -286,7 +290,9 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z0-9]{8,15}\b",
         case_insensitive: false,
         specificity: 0.45,
-        context_required: false,
+        // Loose 8-15 alnum shape matches invoice refs, PO numbers,
+        // JIRA keys. Gate on loan/mortgage keywords.
+        context_required: true,
     },
     PatternDef {
         category: "Loan and Mortgage Data",
@@ -318,7 +324,9 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{14,20}\b",
         case_insensitive: false,
         specificity: 0.30,
-        context_required: false,
+        // Bare 14-20 digit run matches order totals, timestamps,
+        // tracking numbers. Gate on SAR-context keywords.
+        context_required: true,
     },
     PatternDef {
         category: "Regulatory Identifiers",
@@ -326,7 +334,8 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{14,20}\b",
         case_insensitive: false,
         specificity: 0.30,
-        context_required: false,
+        // Same bare shape as SAR Filing Number; gate on CTR keywords.
+        context_required: true,
     },
     PatternDef {
         category: "Regulatory Identifiers",
@@ -350,7 +359,9 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{14}\b",
         case_insensitive: false,
         specificity: 0.30,
-        context_required: false,
+        // Bare 14-digit run with no check digit; gate on FinCEN /
+        // BSA / SAR-context keywords.
+        context_required: true,
     },
     PatternDef {
         category: "Regulatory Identifiers",
@@ -366,7 +377,9 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[0-9A-F]{16}\b",
         case_insensitive: false,
         specificity: 0.65,
-        context_required: false,
+        // 16 uppercase-hex chars; matches every SHA-1 prefix, UUID
+        // slice, session token. Gate on PIN/HSM/block keywords.
+        context_required: true,
     },
     PatternDef {
         category: "Banking Authentication",
@@ -374,7 +387,9 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[0-9A-Fa-f]{32,64}\b",
         case_insensitive: false,
         specificity: 0.55,
-        context_required: false,
+        // Hex blob 32-64 chars = every MD5, SHA-1, SHA-256 in any
+        // repo. Must be keyword-gated on HSM/key terminology.
+        context_required: true,
     },
     PatternDef {
         category: "Banking Authentication",
@@ -382,7 +397,9 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[0-9A-Fa-f]{32,48}\b",
         case_insensitive: false,
         specificity: 0.50,
-        context_required: false,
+        // Same hex-blob problem as HSM Key; gate on encryption /
+        // cipher / key keywords.
+        context_required: true,
     },
     PatternDef {
         category: "Customer Financial Data",
@@ -429,7 +446,9 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]{2,4}\d{8,14}\b",
         case_insensitive: false,
         specificity: 0.50,
-        context_required: false,
+        // 2-4 letter prefix + 8-14 digits matches SKU patterns,
+        // JIRA keys, fleet IDs. Gate on internal-banking keywords.
+        context_required: true,
     },
     PatternDef {
         category: "Internal Banking References",
@@ -608,7 +627,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{4}[-/](?:0[1-9]|1[0-2])[-/](?:0[1-9]|[12]\d|3[01])\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // Every invoice, release note, log line has an ISO date.
+        // Gate on birth-date keywords (the keyword set in
+        // keywords.rs is birth-focused — the intent is detecting DOBs).
+        context_required: true,
     },
     PatternDef {
         category: "Dates",
@@ -616,7 +638,8 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:0[1-9]|1[0-2])[-/](?:0[1-9]|[12]\d|3[01])[-/]\d{4}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // Same DOB-detection intent as Date ISO.
+        context_required: true,
     },
     PatternDef {
         category: "Dates",
@@ -624,7 +647,8 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:0[1-9]|[12]\d|3[01])[-/](?:0[1-9]|1[0-2])[-/]\d{4}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // Same DOB-detection intent as Date ISO / Date US.
+        context_required: true,
     },
     PatternDef {
         category: "URLs with Credentials",
@@ -844,7 +868,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[0-9a-f]{32,64}\b",
         case_insensitive: false,
         specificity: 0.55,
-        context_required: false,
+        // Lowercase-hex 32-64 chars matches every commit hash,
+        // git object, generic UUID-minus-dashes. Gate on session /
+        // auth / token keywords.
+        context_required: true,
     },
     PatternDef {
         category: "Social Media Identifiers",
@@ -892,7 +919,9 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]{1,3}\d{4,8}\b",
         case_insensitive: false,
         specificity: 0.35,
-        context_required: false,
+        // Short letter+digit shape matches countless SKUs and
+        // product codes. Gate on HR / employee keywords.
+        context_required: true,
     },
     PatternDef {
         category: "Employment Identifiers",
@@ -908,7 +937,9 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[0-9a-f]{64}\b",
         case_insensitive: false,
         specificity: 0.70,
-        context_required: false,
+        // SHA-256 shape — every hex hash in a repo, every git
+        // object. Gate on biometric / fingerprint keywords.
+        context_required: true,
     },
     PatternDef {
         category: "Biometric Identifiers",
@@ -1620,7 +1651,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{10}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // Bare 10-digit regex with no check digit. Matches every
+        // order number, phone area-bodydigits slice, account ref
+        // in any document. Context-gate on DoD ID keywords.
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1628,7 +1662,9 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{9}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // Bare 9-digit regex with no check digit. Same problem as
+        // DoD ID; gate on KTN-context keywords.
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1644,7 +1680,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{7}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1652,7 +1688,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{7}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1660,7 +1696,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:[A-Z]\d{8}|\d{9})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1668,7 +1704,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{8,9}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1676,7 +1712,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]\d{7}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1684,7 +1720,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:\d{9}|[A-Z]\d{3,6})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1692,7 +1728,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{9}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1700,7 +1736,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{1,7}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1708,7 +1744,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:\d{7}|\d{9})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1716,7 +1752,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]\d{12}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1724,7 +1760,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{7,9}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1732,7 +1768,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:[A-Z]\d{8}|\d{9})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1740,7 +1776,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]{2}\d{6}[A-Z]\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1748,7 +1784,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]\d{11}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1756,7 +1792,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:\d{10}|[A-Z]\d{9})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1764,7 +1800,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{3}[A-Z]{2}\d{4}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1772,7 +1808,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:[A-Z]\d{8}|[A-Z]{2}\d{7}|\d{9})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1780,7 +1816,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]\d{8}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1788,7 +1824,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{9}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1796,7 +1832,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{7}[A-Z]?\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1804,7 +1840,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]\d{12}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1812,7 +1848,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:[A-Z]\d{8}|\d{9})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1820,7 +1856,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]\d{12}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1828,7 +1864,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]\d{12}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1836,7 +1872,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{9}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1844,7 +1880,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:[A-Z]\d{5,9}|\d{9})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1852,7 +1888,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:\d{13}|\d{9})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1860,7 +1896,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]\d{8}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1868,7 +1904,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:\d{10}|\d{12})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1876,7 +1912,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{2}[A-Z]{3}\d{5}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1884,7 +1920,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]\d{14}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1892,7 +1928,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{9}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1900,7 +1936,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{9}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1908,7 +1944,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{1,12}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1916,7 +1952,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:[A-Z]{3}\d{6}|\d{9})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1924,7 +1960,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]{2}\d{6}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1932,7 +1968,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:[A-Z]\d{9}|\d{9})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1940,7 +1976,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{1,9}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1948,7 +1984,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{8}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1956,7 +1992,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:\d{7}|[A-Z]\d{6})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1964,7 +2000,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{5,11}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1972,7 +2008,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:\d{8,10}|\d{12})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1980,7 +2016,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{7,9}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1988,7 +2024,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{8}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -1996,7 +2032,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{4,10}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -2004,7 +2040,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:\d{8}|\d{7}[A-Z])\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -2012,7 +2048,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:[A-Z]\d{8,11}|\d{9})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -2020,7 +2056,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]{1,7}[A-Z0-9*]{5,11}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -2028,7 +2064,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b(?:\d{7}|[A-Z]\d{6})\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -2036,7 +2072,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]\d{13}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -2044,7 +2080,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{9,10}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - US Generic DL",
@@ -2052,7 +2088,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[A-Z]{1,2}\d{4,14}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - Canada",

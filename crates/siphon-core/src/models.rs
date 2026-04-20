@@ -491,5 +491,54 @@ pub fn is_context_required(sub_category: &str) -> bool {
             // Remaining patterns with no published checksum.
             | "ACH Trace Number"  // 15 digits, prefix-validated by regex, no check digit
             | "India Voter ID"    // 3 letters + 7 digits, no published check digit
+            // --- Bucket 1 gate (this commit) ---
+            // Bare-regex IDs with no checksum / structural discipline
+            // that were firing always-run. Each has keyword coverage
+            // in context/keywords.rs and needs the gate to stay
+            // within striking distance of a clean FP rate.
+            | "US DoD ID"              // \d{10}
+            | "US Known Traveler Number" // \d{9}
+            | "SAR Filing Number"      // \d{14,20}
+            | "CTR Number"             // \d{14,20}
+            | "FinCEN Report Number"   // \d{14}
+            | "PIN Block"              // [0-9A-F]{16}
+            | "HSM Key"                // [0-9A-Fa-f]{32,64}
+            | "Encryption Key"         // [0-9A-Fa-f]{32,48}
+            | "Wire Reference Number"  // [A-Z0-9]{16,35}
+            | "SEPA Reference"         // [A-Z0-9]{12,35}
+            | "Loan Number"            // [A-Z0-9]{8,15}
+            | "Internal Account Ref"   // [A-Z]{2,4}\d{8,14}
+            | "Session ID"             // [0-9a-f]{32,64}
+            | "Employee ID"            // [A-Z]{1,3}\d{4,8}
+            | "Biometric Hash"         // [0-9a-f]{64}
+            // US state driver's licenses — every one is a bare digit
+            // run or short letter+digit shape with no published check
+            // digit. Without keyword gating they drown any document
+            // containing order numbers, SKUs, phone fragments, etc.
+            // Keyword coverage exists for each state in keywords.rs.
+            | "Alabama DL"         | "Alaska DL"        | "Arizona DL"
+            | "Arkansas DL"        | "California DL"    | "Colorado DL"
+            | "Connecticut DL"     | "Delaware DL"      | "DC DL"
+            | "Florida DL"         | "Georgia DL"       | "Hawaii DL"
+            | "Idaho DL"           | "Illinois DL"      | "Indiana DL"
+            | "Iowa DL"            | "Kansas DL"        | "Kentucky DL"
+            | "Louisiana DL"       | "Maine DL"         | "Maryland DL"
+            | "Massachusetts DL"   | "Michigan DL"      | "Minnesota DL"
+            | "Mississippi DL"     | "Missouri DL"      | "Montana DL"
+            | "Nebraska DL"        | "Nevada DL"        | "New Hampshire DL"
+            | "New Jersey DL"      | "New Mexico DL"    | "New York DL"
+            | "North Carolina DL"  | "North Dakota DL"  | "Ohio DL"
+            | "Oklahoma DL"        | "Oregon DL"        | "Pennsylvania DL"
+            | "Rhode Island DL"    | "South Carolina DL"| "South Dakota DL"
+            | "Tennessee DL"       | "Texas DL"         | "Utah DL"
+            | "Vermont DL"         | "Virginia DL"      | "Washington DL"
+            | "West Virginia DL"   | "Wisconsin DL"     | "Wyoming DL"
+            | "Generic US DL"
+            // Date patterns — the regex classes match every date in
+            // any document (invoices, logs, release notes). The
+            // keyword set is birth-date focused, so gating them
+            // turns "Date ISO" into "ISO-formatted date of birth"
+            // which is the actual DLP intent.
+            | "Date ISO" | "Date US" | "Date EU"
     )
 }
