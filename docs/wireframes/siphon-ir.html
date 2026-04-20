@@ -9790,6 +9790,47 @@ function irValidatePassword(pw, confirm) {
   return { ok: true };
 }
 
+// Invite token parsed from the URL's hash (#invite=TOKEN). Used
+// to gate the InviteAcceptPage before the normal LoginPage gate.
+// Reading from hash (not query string) keeps the token out of
+// server-access logs if this ever ships behind a real web server.
+function irReadInviteTokenFromUrl() {
+  try {
+    const h = (typeof location !== 'undefined' && location.hash) || '';
+    const m = h.match(/(?:^|[#&])invite=([^&]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  } catch { return null; }
+}
+function irClearInviteTokenFromUrl() {
+  try {
+    const h = (typeof location !== 'undefined' && location.hash) || '';
+    const cleaned = h.replace(/(?:^#?|&)invite=[^&]+/, '');
+    const next = cleaned && cleaned !== '#' ? cleaned : '';
+    history.replaceState(null, '', location.pathname + location.search + next);
+  } catch {}
+}
+
+// Accept an invite by swapping the token for a real password.
+// Returns { ok: true, user } or { ok: false, reason }. Clears
+// invite_token on success so the link can't be replayed.
+async function irAcceptInvite(token, newPassword) {
+  if (!token) return { ok: false, reason: 'missing token' };
+  const users = readUsers();
+  const user = users.find(u => u.invite_token === token);
+  if (!user) return { ok: false, reason: 'no such invite · already accepted or expired' };
+  if (user.status === 'disabled') return { ok: false, reason: 'invite is for a disabled account' };
+  const v = irValidatePassword(newPassword);
+  if (!v.ok) return { ok: false, reason: v.reason };
+  await irSetPassword(user.id, newPassword);
+  // Re-read since irSetPassword writes through readUsers/writeUsers.
+  const fresh = readUsers().map(u => u.id === user.id
+    ? { ...u, invite_token: undefined, status: 'active',
+        joined_at: u.joined_at || new Date().toISOString() }
+    : u);
+  writeUsers(fresh);
+  return { ok: true, user: fresh.find(u => u.id === user.id) };
+}
+
 // Replace a user's password with a fresh PBKDF2 hash. Clears
 // default_password and must_change_password so re-login doesn't
 // keep nagging. Async because hashing is async.
@@ -10514,6 +10555,150 @@ function LoginPage({ onLogin }) {
   );
 }
 
+// ─── InviteAcceptPage · U5 ─────────────────────────────────────
+// Full-page form shown when the URL carries #invite=TOKEN and the
+// visitor isn't already signed in. Resolves the token to a User
+// record on mount (displays name + role so the acceptor can tell
+// they've been sent to the right place), then swaps the token
+// for a real password + immediately logs them in.
+function InviteAcceptPage({ token, onAccepted }) {
+  const [matchedUser, setMatchedUser] = React.useState(() => {
+    try { return readUsers().find(u => u.invite_token === token) || null; }
+    catch { return null; }
+  });
+  const [pw1, setPw1] = React.useState('');
+  const [pw2, setPw2] = React.useState('');
+  const [err, setErr] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+
+  const submit = async (e) => {
+    if (e) e.preventDefault();
+    setErr(null);
+    const v = irValidatePassword(pw1, pw2);
+    if (!v.ok) return setErr(v.reason);
+    setBusy(true);
+    const res = await irAcceptInvite(token, pw1);
+    setBusy(false);
+    if (!res.ok) return setErr(res.reason);
+    onAccepted(res.user);
+  };
+
+  const role = matchedUser ? irRoleMeta(matchedUser.role) : null;
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      background: 'var(--bg-0)',
+      display: 'grid', placeItems: 'center',
+      padding: '32px',
+    }}>
+      <form onSubmit={submit}
+            style={{
+              width: '100%', maxWidth: 460,
+              background: 'var(--bg-1)',
+              border: '1px solid var(--line-strong)',
+              borderRadius: 'var(--radius)',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.35)',
+              padding: '28px 28px 22px',
+              fontFamily: "'Space Grotesk', sans-serif",
+            }}>
+        <div style={{marginBottom:20}}>
+          <div style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize:11, color:'var(--accent)', letterSpacing:'0.1em',
+          }}>ACCEPT INVITE</div>
+          <div style={{
+            fontSize:22, fontWeight:700, color:'var(--ink-bright)',
+            letterSpacing:'-0.01em', marginTop:4,
+          }}>Set your password</div>
+          {matchedUser ? (
+            <div style={{fontSize:12, color:'var(--ink-soft)', marginTop:10, lineHeight:1.6}}>
+              This invite provisions{' '}
+              <span className="mono" style={{color:'var(--ink)'}}>{matchedUser.email || matchedUser.name}</span>
+              {' '}as{' '}
+              <span className="chip"
+                    style={{
+                      fontSize:10, padding:'2px 8px',
+                      borderColor: role.color, color: role.color,
+                      background:'var(--bg-1)',
+                    }}>{role.glyph} {role.label}</span>.
+              Pick a password to activate the account.
+            </div>
+          ) : (
+            <div style={{
+              fontSize:12, color:'var(--threat)',
+              marginTop:10, padding:'8px 10px',
+              background:'var(--red-wash)',
+              border:'1px solid var(--threat)',
+              borderRadius:'var(--radius)',
+            }}>
+              This invite link isn't valid — it's been accepted already, or the
+              token was revoked. Ask an administrator for a new invite.
+            </div>
+          )}
+        </div>
+
+        {matchedUser && (
+          <>
+            <label style={{display:'block', marginBottom:12}}>
+              <div className="label" style={{marginBottom:4}}>New password</div>
+              <input type="password" value={pw1} autoFocus
+                     onChange={(e) => setPw1(e.target.value)}
+                     autoComplete="new-password"
+                     placeholder="≥ 10 chars · letters + digits"
+                     style={{
+                       width:'100%', boxSizing:'border-box',
+                       padding:'10px 12px', fontSize:13,
+                       background:'var(--bg-0)', color:'var(--ink)',
+                       border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                       fontFamily:"'JetBrains Mono', monospace",
+                     }}/>
+            </label>
+            <label style={{display:'block', marginBottom:14}}>
+              <div className="label" style={{marginBottom:4}}>Confirm password</div>
+              <input type="password" value={pw2}
+                     onChange={(e) => setPw2(e.target.value)}
+                     autoComplete="new-password"
+                     placeholder="re-enter the same password"
+                     style={{
+                       width:'100%', boxSizing:'border-box',
+                       padding:'10px 12px', fontSize:13,
+                       background:'var(--bg-0)', color:'var(--ink)',
+                       border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                       fontFamily:"'JetBrains Mono', monospace",
+                     }}/>
+            </label>
+
+            {err && (
+              <div style={{
+                padding:'8px 10px', marginBottom:12,
+                background:'var(--red-wash)',
+                border:'1px solid var(--threat)',
+                color:'var(--threat)',
+                borderRadius:'var(--radius)',
+                fontSize:12,
+              }}>{err}</div>
+            )}
+
+            <button type="submit" className="btn primary"
+                    disabled={busy}
+                    style={{width:'100%', padding:'10px 0', fontSize:13, fontWeight:600}}>
+              {busy ? 'activating…' : 'Activate account & sign in'}
+            </button>
+          </>
+        )}
+
+        <div style={{
+          marginTop:14, fontSize:10.5, color:'var(--ink-dim)',
+          textAlign:'center', lineHeight:1.6,
+        }}>
+          This link revokes on first use · keep it private
+        </div>
+      </form>
+    </div>
+  );
+}
+
 // ─── ForceChangePassword · A4 ──────────────────────────────────
 // Shown immediately after a successful login when the user record
 // still carries must_change_password=true — i.e. the seeded
@@ -10801,6 +10986,22 @@ function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  // Invite-accept gate · U5. Checked before the login gate so
+  // clicking a magic link in a signed-out browser always lands
+  // the visitor on the accept-invite form regardless of any
+  // stale session. After the link is consumed we drop the token
+  // from the URL + write the session so subsequent visits from
+  // the same browser skip the accept form.
+  const inviteToken = irReadInviteTokenFromUrl();
+  if (!session && inviteToken) {
+    return <InviteAcceptPage
+             token={inviteToken}
+             onAccepted={(user) => {
+               irClearInviteTokenFromUrl();
+               handleLogin(user);
+             }}/>;
+  }
 
   // Gate: without a session the console is invisible. LoginPage
   // carries its own theme-agnostic styling so it renders cleanly
