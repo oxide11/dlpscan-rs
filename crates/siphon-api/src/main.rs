@@ -1707,6 +1707,90 @@ async fn overrides_history(
     }))
 }
 
+/// GET /v1/overrides/content?version=<ver> — returns the parsed
+/// PatternOverrides document for a specific version ("current" or
+/// "v<nanos>"). Used by the admin console's history diff viewer.
+/// Kept separate from /history so that listing doesn't pay the
+/// deserialise+serialise cost for every backup file.
+#[derive(Deserialize)]
+struct OverridesContentQuery {
+    version: String,
+}
+
+#[derive(Serialize)]
+struct OverridesContentResponse {
+    version: String,
+    path: String,
+    /// Raw JSON of the file, parsed from the bytes on disk. Always a
+    /// valid PatternOverrides when `parses` is true.
+    overrides: siphon_core::overrides::PatternOverrides,
+    parses: bool,
+}
+
+async fn overrides_content(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<OverridesContentQuery>,
+) -> Result<Json<OverridesContentResponse>, (StatusCode, Json<ErrorResponse>)> {
+    use siphon_core::overrides::PatternOverrides;
+    let path = state.overrides_path.as_path();
+    let (target_path, label) = if q.version == "current" {
+        (path.to_path_buf(), "current".to_string())
+    } else {
+        // Expect "v<nanos>"; look up the sibling backup file.
+        let nanos = q
+            .version
+            .strip_prefix('v')
+            .and_then(|n| n.parse::<u128>().ok())
+            .ok_or_else(|| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: format!("bad version {:?}; expected 'current' or 'v<nanos>'", q.version),
+                    }),
+                )
+            })?;
+        let backup = path.with_extension(format!("v{nanos}.bak"));
+        if !backup.exists() {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("no backup at {}", backup.display()),
+                }),
+            ));
+        }
+        (backup, q.version.clone())
+    };
+
+    match std::fs::read(&target_path) {
+        Ok(bytes) => {
+            // Unparseable backups return parses=false + empty overrides
+            // so the UI can still diff against whatever the scanner
+            // WOULD have seen (which is: default overrides — the
+            // parse would have failed at pod load).
+            match PatternOverrides::from_bytes(&bytes) {
+                Ok(o) => Ok(Json(OverridesContentResponse {
+                    version: label,
+                    path: target_path.display().to_string(),
+                    overrides: o,
+                    parses: true,
+                })),
+                Err(_) => Ok(Json(OverridesContentResponse {
+                    version: label,
+                    path: target_path.display().to_string(),
+                    overrides: PatternOverrides::empty(),
+                    parses: false,
+                })),
+            }
+        }
+        Err(e) => Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("read failed: {e}"),
+            }),
+        )),
+    }
+}
+
 #[derive(Deserialize)]
 struct RevertRequest {
     version: String,
@@ -2529,6 +2613,7 @@ async fn main() {
         .route("/v1/overrides/disk", get(overrides_disk))
         .route("/v1/overrides/apply", post(overrides_apply))
         .route("/v1/overrides/history", get(overrides_history))
+        .route("/v1/overrides/content", get(overrides_content))
         .route("/v1/overrides/revert", post(overrides_revert))
         .route("/v1/overrides/roll", post(overrides_roll))
         .route("/v1/docs", get(docs_index))
