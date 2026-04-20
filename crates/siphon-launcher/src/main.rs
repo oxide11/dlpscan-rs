@@ -77,6 +77,13 @@ struct TrackedProcess {
     // Option so stop() can take() the Child to wait on it without
     // keeping the lock held for the full grace window.
     child: Option<Child>,
+    // Tombstone. Set on the first /list call that observes try_wait
+    // returning Some(status). Kept in the registry (not auto-pruned)
+    // so the analyst sees *why* the pod is gone instead of it just
+    // vanishing from the list. Dismissed by a manual /v1/manage/stop
+    // with force=true on the id, which prunes the entry.
+    exit_code: Option<i32>,
+    exited_at: Option<String>,
 }
 
 // ─── Health ──────────────────────────────────────────────────────
@@ -106,9 +113,18 @@ struct ManagedProcess {
     bind: String,
     started_at: String,
     /// "running" | "exited" — re-checked on every /list by calling
-    /// try_wait() on the tracked Child. `exited` entries get pruned
-    /// out of the registry so the list stays tidy.
+    /// try_wait() on the tracked Child. Exited entries stay in the
+    /// registry as tombstones so the analyst can see the exit code;
+    /// use /v1/manage/stop with force=true on the id to dismiss.
     status: &'static str,
+    /// Exit code for tombstoned entries (None while running). Unix
+    /// signal-death shows up here as `Some(0)` — status.code()
+    /// returns None for signals and we fold that into a generic
+    /// non-zero in the serialised form.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exited_at: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -120,17 +136,39 @@ struct ListResponse {
 async fn list_processes(State(state): State<AppState>) -> JsonResponse<ListResponse> {
     let mut guard = state.registry.lock().await;
     let mut processes = Vec::new();
-    let mut to_prune: Vec<String> = Vec::new();
 
-    for (id, tp) in guard.iter_mut() {
-        let status = match tp.child.as_mut() {
-            Some(c) => match c.try_wait() {
-                Ok(Some(_)) => "exited",
-                Ok(None) => "running",
-                Err(_) => "exited", // kernel says the pid is gone
-            },
-            None => "exited",
-        };
+    for tp in guard.values_mut() {
+        // Tombstone transition: first /list call after a child exits
+        // stamps exit_code + exited_at and drops the Child handle.
+        // Subsequent calls read those fields without touching the
+        // kernel.
+        if tp.exit_code.is_none() {
+            if let Some(c) = tp.child.as_mut() {
+                match c.try_wait() {
+                    Ok(Some(status)) => {
+                        // status.code() is None for signal death —
+                        // stamp -1 so the analyst still sees a
+                        // non-zero "bad exit" marker in the UI.
+                        tp.exit_code = Some(status.code().unwrap_or(-1));
+                        tp.exited_at = Some(siphon_core::audit::iso8601_now());
+                        tp.child = None;
+                    }
+                    Ok(None) => {}
+                    Err(_) => {
+                        tp.exit_code = Some(-1);
+                        tp.exited_at = Some(siphon_core::audit::iso8601_now());
+                        tp.child = None;
+                    }
+                }
+            } else {
+                // No Child to wait on (e.g. stop() already reaped it
+                // but didn't stamp an exit code). Treat as a clean
+                // zero to avoid a phantom-red chip.
+                tp.exit_code = Some(0);
+                tp.exited_at = Some(siphon_core::audit::iso8601_now());
+            }
+        }
+        let status = if tp.exit_code.is_some() { "exited" } else { "running" };
         processes.push(ManagedProcess {
             id: tp.id.clone(),
             kind: tp.kind.clone(),
@@ -138,13 +176,9 @@ async fn list_processes(State(state): State<AppState>) -> JsonResponse<ListRespo
             bind: tp.bind.clone(),
             started_at: tp.started_at.clone(),
             status,
+            exit_code: tp.exit_code,
+            exited_at: tp.exited_at.clone(),
         });
-        if status == "exited" {
-            to_prune.push(id.clone());
-        }
-    }
-    for id in to_prune {
-        guard.remove(&id);
     }
     JsonResponse(ListResponse {
         total: processes.len(),
@@ -306,6 +340,8 @@ async fn start_process(State(state): State<AppState>, Json(req): Json<StartReque
         pid,
         started_at: started_at.clone(),
         child: Some(child),
+        exit_code: None,
+        exited_at: None,
     };
     state.registry.lock().await.insert(id.clone(), tp);
 
@@ -352,7 +388,7 @@ struct StopResponse {
 async fn stop_process(State(state): State<AppState>, Json(req): Json<StopRequest>) -> Response {
     // Take the Child out of the registry so we can wait on it
     // without holding the registry lock for the full grace window.
-    let (child, pid) = {
+    let (child, pid, tombstone_exit) = {
         let mut guard = state.registry.lock().await;
         let Some(tp) = guard.get_mut(&req.id) else {
             return err(
@@ -360,20 +396,30 @@ async fn stop_process(State(state): State<AppState>, Json(req): Json<StopRequest
                 format!("no process with id {:?}", req.id),
             );
         };
-        (tp.child.take(), tp.pid)
+        (tp.child.take(), tp.pid, tp.exit_code)
     };
 
     let Some(mut child) = child else {
-        // Already taken — previous stop call in flight or child
-        // died on its own. Prune the entry.
+        // No live child. Either stop() already reaped it, or /list's
+        // tombstone sweep stamped exit_code. Either way, prune the
+        // registry entry and return OK with the known exit details
+        // so the UI's "dismiss" action feels clean instead of a 409.
         state.registry.lock().await.remove(&req.id);
-        return err(
-            StatusCode::CONFLICT,
-            format!(
-                "process {:?} has no live child — already stopping or exited",
-                req.id
-            ),
-        );
+        return (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "id": req.id,
+                "pid": pid,
+                "signal": "none",
+                "graceful": true,
+                "waited_ms": 0,
+                "note": match tombstone_exit {
+                    Some(code) => format!("already exited with code {code} — tombstone dismissed"),
+                    None => "already stopping — tombstone dismissed".to_string(),
+                },
+                "exit_code": tombstone_exit,
+            })),
+        ).into_response();
     };
 
     let t0 = std::time::Instant::now();

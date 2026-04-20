@@ -536,7 +536,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "siphon-fs starting"
     );
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(addr = %addr, error = %e, "bind failed — another process likely holds this port");
+            std::process::exit(1);
+        }
+    };
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
