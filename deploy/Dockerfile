@@ -3,8 +3,17 @@ FROM rust:1.85-bookworm AS builder
 
 WORKDIR /app
 
-# Cache dependencies by building a dummy project first
+# Copy the full workspace. The root Cargo.toml references workspace
+# members under crates/ AND a [[bench]] at benches/scanning.rs, so
+# both have to be present before any `cargo build` runs or the
+# manifest fails to parse.
 COPY Cargo.toml Cargo.lock* ./
+COPY crates/ crates/
+COPY benches/ benches/
+
+# Cache dependencies by building with a dummy src first. Using the
+# real Cargo.toml ensures dep layout + workspace membership match
+# the final build.
 RUN mkdir src && \
     echo 'fn main() { println!("placeholder"); }' > src/main.rs && \
     echo 'pub fn lib() {}' > src/lib.rs && \

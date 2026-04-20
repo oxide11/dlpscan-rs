@@ -7944,43 +7944,6 @@ function loadZipJs() {
   return window.__irZipJsLoading;
 }
 
-// Lazy-load officecrypto-tool. The library is CommonJS with deep
-// Node-builtin deps (cfb → stream, xml2js → sax → stream), so we
-// need a CDN that polyfills them at bundle time. esm.sh does;
-// jsDelivr's +esm endpoint does not (fails with "Stream=e" when
-// cfb tries to subclass Node's Stream). new Function wrapper
-// keeps Babel-standalone from touching the dynamic import.
-//
-// Failures are cached + translated into a user-facing message so
-// the analyst sees "browser can't run this library · use
-// office2john + hashcat" instead of the raw minified crash text.
-const IR_OFFICECRYPTO_FAIL_MSG =
-  'In-browser Office decryption unavailable · the officecrypto-tool ' +
-  'library failed to load (its Node-stream deps don\'t run in this ' +
-  'browser). Export with office2john.py and run hashcat / john instead.';
-
-function loadOfficeCrypto() {
-  if (window.__irOfficeCrypto) return Promise.resolve(window.__irOfficeCrypto);
-  if (window.__irOfficeCryptoLoading) return window.__irOfficeCryptoLoading;
-  const dynImport = new Function('u', 'return import(u)');
-  window.__irOfficeCryptoLoading = dynImport('https://esm.sh/officecrypto-tool@0.0.19')
-    .then(mod => {
-      const lib = mod.default || mod;
-      if (typeof lib.decrypt !== 'function') {
-        throw new Error('officecrypto-tool: decrypt() missing from module export');
-      }
-      window.__irOfficeCrypto = lib;
-      return lib;
-    })
-    .catch(err => {
-      // Log the raw error for devs + re-throw a human-readable one
-      // so the UI's attack.error shows something actionable.
-      try { console.warn('[siphon-ir] loadOfficeCrypto failed:', err); } catch {}
-      throw new Error(IR_OFFICECRYPTO_FAIL_MSG);
-    });
-  return window.__irOfficeCryptoLoading;
-}
-
 // Lazy-load Mozilla pdf.js (legacy UMD build). Same lazy pattern as
 // zip.js — only pulled on first PDF attack. Workers also come from
 // jsDelivr so the page doesn't need same-origin copies.
@@ -8083,9 +8046,10 @@ function CryptoPasswordAttack() {
     return out;
   }, [wordlistSource, wordlistText, wordlistFileText]);
 
-  // A supported file is one we have a verifier for. All three
-  // format branches below handle it.
-  const supported = !!file && (format === 'zip' || format === 'pdf' || format === 'cfb');
+  // A supported file is one we have an in-browser verifier for.
+  // CFB is detected but not attackable from the browser (see the
+  // buildVerifier() CFB branch + UI note for the reasoning).
+  const supported = !!file && (format === 'zip' || format === 'pdf');
 
   // Reset attack state when the file, format, or wordlist changes.
   React.useEffect(() => {
@@ -8174,65 +8138,26 @@ function CryptoPasswordAttack() {
       };
     }
     if (format === 'cfb') {
-      const officeCrypto = await loadOfficeCrypto();
-      const buf = await file.arrayBuffer();
-      // Fresh copy per call. officecrypto-tool walks the CFB
-      // structure in-place (its cfb dep mutates the underlying
-      // Uint8Array as it parses), so reusing a single buffer
-      // means every attempt after the first sees corrupt data
-      // and "fails" regardless of password. buf.slice(0) gives
-      // us a fresh ArrayBuffer copy — small cost (~50 ms for a
-      // typical doc) next to the 100k-iter PBKDF2 per attempt.
-      const cloneInput = () => new Uint8Array(buf.slice(0));
-
-      // isEncrypted tells us whether this CFB file is actually
-      // password-protected (vs. a plain legacy .doc without
-      // encryption). Without this check, every password would
-      // "succeed" on an unencrypted file and leave the analyst
-      // confused. Some builds of the library don't export it —
-      // fall back to just running decrypt().
-      if (typeof officeCrypto.isEncrypted === 'function') {
-        try {
-          if (!officeCrypto.isEncrypted(cloneInput())) {
-            throw new Error("this office document isn't password-protected");
-          }
-        } catch (e) {
-          // Re-throw our own error; swallow any false positive from
-          // isEncrypted throwing on unfamiliar CFB variants.
-          if (/not password-protected/.test(e.message || '')) throw e;
-        }
-      }
-      return {
-        verify: async (pw) => {
-          try {
-            // decrypt() resolves with a decrypted buffer on the
-            // right password, throws on the wrong one. Agile
-            // Encryption uses PBKDF2 with ~100k iterations, so
-            // each attempt is much slower than zip/pdf — that's
-            // surfaced in the UI warning below.
-            await officeCrypto.decrypt(cloneInput(), { password: pw });
-            return true;
-          } catch (e) {
-            // Discriminate wrong-password (expected, keep going)
-            // from everything else (library failure, unsupported
-            // cipher, etc. — abort so the user sees a real error
-            // instead of a false "exhausted" result).
-            const msg = String((e && e.message) || e || '');
-            if (/password.*(incorrect|invalid|wrong)/i.test(msg)
-                || /incorrect.*password/i.test(msg)
-                || /wrong.*password/i.test(msg)
-                || /bad.*decrypt/i.test(msg)) {
-              return false;
-            }
-            // Surface unexpected errors once to the console then
-            // re-throw so the attack loop's catch aborts.
-            try { console.warn('[siphon-ir] CFB verify error:', e); } catch {}
-            throw e;
-          }
-        },
-        onSuccess: () => [], // No per-entry manifest for CFB
-        cleanup: () => {},
-      };
+      // officecrypto-tool depends on Node's crypto.createHash
+      // (via its cfb + crypto-js chain). No browser CDN bundler
+      // ships a real polyfill for createHash — esm.sh's unenv
+      // stub throws "[unenv] crypto.createHash is not implemented
+      // yet!" the moment decrypt() runs. jsDelivr's +esm doesn't
+      // even load the library. In short, in-browser attack on CFB
+      // isn't viable without a WebCrypto-native reimplementation
+      // of Agile / Standard Encryption.
+      //
+      // Until that lands, we surface a clear error + point the
+      // analyst at office2john + hashcat / john so they know the
+      // right next step instead of watching a dictionary exhaust
+      // falsely.
+      throw new Error(
+        "In-browser attack on OLE / CFB Office files isn't supported — " +
+        "the underlying crypto relies on Node's crypto.createHash which " +
+        "no browser CDN bundler fully polyfills. Export the hash with " +
+        "office2john.py and run hashcat / john the ripper against it."
+      );
+    }
     }
     throw new Error('unsupported format');
   };
@@ -8312,7 +8237,7 @@ function CryptoPasswordAttack() {
           <span className={'chip chip--' + (
             format === 'pdf' ? 'teal'
             : format === 'zip' ? 'safe'
-            : format === 'cfb' ? 'teal'
+            : format === 'cfb' ? 'warn'
             : 'ghost')}>
             {format === 'pdf' ? 'PDF'
              : format === 'zip' ? 'ZIP / OOXML'
@@ -8325,16 +8250,18 @@ function CryptoPasswordAttack() {
 
       {file && format === 'cfb' && (
         <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:12}}>
-          <b>Agile / Standard Encryption uses PBKDF2.</b> Each attempt is 10–100×
-          slower than ZIP or PDF (~50–200 ms per password vs. sub-millisecond
-          elsewhere). The built-in wordlist will take a minute or two; real
-          wordlists should be routed to <span className="mono">office2john.py</span>{' '}
-          + hashcat for real throughput.
+          <b>OLE / CFB Office attack not supported in-browser.</b>
+          The library (<span className="mono">officecrypto-tool</span>) depends
+          on Node's <span className="mono">crypto.createHash</span> which no
+          browser CDN bundler ships a working polyfill for.
           <br/>
           <span style={{color:'var(--ink-soft)', fontSize:11}}>
-            In-browser support depends on the library loading via esm.sh; some
-            browsers block the Node-builtin polyfills it needs. If Start throws
-            a load error, fall back to office2john + hashcat.
+            Recommended workflow: export the hash with{' '}
+            <span className="mono">office2john.py</span> and run{' '}
+            <span className="mono">hashcat -m 9600 hash.txt wordlist.txt</span>
+            {' '}(agile) or <span className="mono">-m 9500/9700</span>{' '}
+            (standard / RC4) against it. A future commit may land a
+            WebCrypto-native Agile implementation here.
           </span>
         </div>
       )}
@@ -8590,9 +8517,10 @@ function CryptoPasswordAttack() {
           Triage-scale only — browser-side AES decrypt, not a GPU cluster. Good for
           the 'probably a weak password' case; for real throughput, export the hash
           and run hashcat / john the ripper. Files never leave the browser.{' '}
-          <span className="mono">zip.js</span> (~80 KB), <span className="mono">pdf.js</span>{' '}
-          (~350 KB), and <span className="mono">officecrypto-tool</span> (~500 KB)
-          lazy-load from jsDelivr on first attack of that format.
+          <span className="mono">zip.js</span> (~80 KB) and{' '}
+          <span className="mono">pdf.js</span> (~350 KB) lazy-load from jsDelivr
+          on first attack of that format. OLE / CFB Office files are detected but
+          not attackable in-browser (no working crypto.createHash polyfill).
         </div>
       </div>
     </div>
