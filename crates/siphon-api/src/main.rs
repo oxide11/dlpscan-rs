@@ -1116,6 +1116,12 @@ struct ApplyResponse {
     /// can roll back manually if something goes wrong before Phase 7
     /// ships). `None` when no prior file existed.
     backup_path: Option<String>,
+    /// Backups removed by the auto-prune step during this apply.
+    /// Empty when SIPHON_OVERRIDES_KEEP is unset or the file count
+    /// was still under the cap. Included in the response so the
+    /// audit trail sees which backups went away.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pruned_backups: Vec<String>,
     summary: siphon_core::overrides::OverridesSummary,
     /// Always true after a successful apply. Until Phase 6's auto-roll
     /// is wired, a human or orchestrator has to restart detection pods
@@ -1227,6 +1233,21 @@ async fn overrides_apply(
         )
     })?;
 
+    // Auto-prune old backups so a chatty admin console doesn't grow
+    // the overrides directory without bound. SIPHON_OVERRIDES_KEEP
+    // caps the number of .v<nanos>.bak files we retain (newest kept);
+    // default 20 is enough for a week of normal tuning, and unset /
+    // malformed / 0 disables pruning entirely.
+    let prune_keep: Option<usize> = std::env::var("SIPHON_OVERRIDES_KEEP")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|&n: &usize| n > 0);
+    let pruned_backups: Vec<String> = if let Some(keep) = prune_keep {
+        prune_backups(path, keep)
+    } else {
+        Vec::new()
+    };
+
     let summary = new_overrides.summary();
     tracing::info!(
         path = %path.display(),
@@ -1234,6 +1255,7 @@ async fn overrides_apply(
         disabled = summary.disabled_patterns,
         field_overrides = summary.pattern_overrides,
         custom_categories = summary.custom_categories,
+        pruned = pruned_backups.len(),
         "overrides applied"
     );
 
@@ -1259,10 +1281,69 @@ async fn overrides_apply(
         status: "applied",
         written_path: path.display().to_string(),
         backup_path,
+        pruned_backups,
         summary,
         restart_required: true,
         note: "overrides written to disk · restart detection pods to pick up the changes (Phase 6 will auto-roll)",
     }))
+}
+
+/// Enumerate the `<basename>.v<nanos>.bak` backups next to the main
+/// overrides file, sort newest-first, and remove everything past the
+/// `keep` cap. Returns the paths of the pruned files so the Apply
+/// response can surface them in the audit trail.
+fn prune_backups(path: &std::path::Path, keep: usize) -> Vec<String> {
+    let parent = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => return Vec::new(),
+    };
+    let base = match path.file_stem().and_then(|s| s.to_str()) {
+        Some(s) => s.to_string(),
+        None => return Vec::new(),
+    };
+    let read = match std::fs::read_dir(parent) {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+    // Collect entries matching `<base>.v<digits>.bak`. Nanosecond
+    // tie-break is baked into the filename so sorting by name =
+    // sorting by age.
+    let mut candidates: Vec<std::path::PathBuf> = read
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| {
+                    let prefix = format!("{base}.v");
+                    n.starts_with(&prefix)
+                        && n.ends_with(".bak")
+                        && n[prefix.len()..n.len() - 4]
+                            .chars()
+                            .all(|c| c.is_ascii_digit())
+                })
+                .unwrap_or(false)
+        })
+        .collect();
+    if candidates.len() <= keep {
+        return Vec::new();
+    }
+    candidates.sort_by(|a, b| b.file_name().cmp(&a.file_name())); // newest first
+    let mut pruned = Vec::new();
+    for old in candidates.into_iter().skip(keep) {
+        match std::fs::remove_file(&old) {
+            Ok(_) => {
+                tracing::info!(path = %old.display(), "pruned old overrides backup");
+                pruned.push(old.display().to_string());
+            }
+            Err(e) => {
+                // Backup prune failure is non-fatal — the apply
+                // itself still succeeded. Log and carry on.
+                tracing::warn!(path = %old.display(), error = %e, "backup prune failed");
+            }
+        }
+    }
+    pruned
 }
 
 // ─── /v1/overrides/roll (Phase 6) ───────────────────────────────
