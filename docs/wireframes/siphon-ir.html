@@ -9154,6 +9154,216 @@ function UserRowActions({ user, canUpdate, canDisable, canDelete }) {
   );
 }
 
+// ─── CreateRoleForm · R2b3 ─────────────────────────────────────
+// Inline new-role form inside the Roles section. The palette +
+// glyph presets keep new roles visually consistent with the
+// system seeds; a free-text description documents intent so
+// engineers reviewing the permission matrix later don't have to
+// guess. Permission checkboxes come from irAllPermissions so the
+// editor can only toggle actions that already exist on some role.
+const IR_ROLE_COLOR_PRESETS = [
+  { id: 'accent', label: 'Accent (green)', value: 'var(--accent)' },
+  { id: 'red',    label: 'Red',            value: 'var(--red)' },
+  { id: 'amber',  label: 'Amber',          value: 'var(--amber)' },
+  { id: 'cyan',   label: 'Cyan',           value: 'var(--cyan)' },
+  { id: 'ink',    label: 'Ink',            value: 'var(--ink-soft)' },
+];
+const IR_ROLE_GLYPH_PRESETS = ['◆', '◈', '◇', '◉', '◎', '◍', '▲', '△', '▼', '▽', '◖', '◗', '✦', '✧', '✪', '☰', '⚑', '⚐'];
+
+function CreateRoleForm({ onCancel, onCreated }) {
+  const [id, setId]             = React.useState('');
+  const [label, setLabel]       = React.useState('');
+  const [glyph, setGlyph]       = React.useState('◆');
+  const [color, setColor]       = React.useState('var(--accent)');
+  const [description, setDesc]  = React.useState('');
+  const [perms, setPerms]       = React.useState([]);
+  const [err, setErr]           = React.useState(null);
+  const allPerms = irAllPermissions();
+
+  // Auto-derive id from label while the id field hasn't been
+  // touched by the user. Once they type in the id box the auto-
+  // derive stops so they can hand-tune.
+  const [idTouched, setIdTouched] = React.useState(false);
+  const effectiveId = idTouched ? id : (label || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '').slice(0, 32);
+
+  const togglePerm = (p) => {
+    setPerms(cur => cur.includes(p) ? cur.filter(x => x !== p) : [...cur, p]);
+  };
+
+  const submit = (e) => {
+    if (e) e.preventDefault();
+    setErr(null);
+    if (!label.trim())      return setErr('label required');
+    if (!effectiveId)       return setErr('role id required');
+    const res = irCreateRole({
+      id: effectiveId, label, glyph, color, description,
+      permissions: perms,
+    });
+    if (!res.ok) return setErr(res.reason);
+    onCreated(res.role);
+  };
+
+  // Group permissions by resource for a tidier checklist.
+  const grouped = React.useMemo(() => {
+    const g = new Map();
+    allPerms.forEach(p => {
+      const resource = p.split('.')[0] || 'other';
+      if (!g.has(resource)) g.set(resource, []);
+      g.get(resource).push(p);
+    });
+    return [...g.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [allPerms.join('|')]);
+
+  return (
+    <form onSubmit={submit}
+          style={{
+            padding:14,
+            borderBottom:'1px solid var(--line-soft)',
+            background:'var(--bg-2)',
+            display:'grid', gap:12,
+          }}>
+      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:12}}>
+        <label>
+          <div className="label" style={{marginBottom:4}}>Label</div>
+          <input type="text" value={label} autoFocus
+                 onChange={(e) => setLabel(e.target.value)}
+                 placeholder="Compliance Auditor"
+                 style={formInputStyle}/>
+        </label>
+        <label>
+          <div className="label" style={{marginBottom:4}}>
+            Role id <span className="muted" style={{fontSize:10}}>kebab-safe · used in URLs + APIs</span>
+          </div>
+          <input type="text" value={effectiveId}
+                 onChange={(e) => { setId(e.target.value); setIdTouched(true); }}
+                 placeholder="compliance-auditor"
+                 style={formInputStyle}/>
+        </label>
+      </div>
+
+      <div style={{display:'grid', gridTemplateColumns:'auto 1fr', gap:12}}>
+        <label>
+          <div className="label" style={{marginBottom:4}}>Glyph</div>
+          <div style={{display:'flex', flexWrap:'wrap', gap:4}}>
+            {IR_ROLE_GLYPH_PRESETS.map(g => (
+              <button key={g} type="button"
+                      onClick={() => setGlyph(g)}
+                      style={{
+                        width:30, height:30,
+                        background: glyph === g ? 'var(--bg-0)' : 'transparent',
+                        border: '1px solid ' + (glyph === g ? 'var(--accent)' : 'var(--line-soft)'),
+                        borderRadius:'var(--radius)',
+                        cursor:'pointer',
+                        color: glyph === g ? color : 'var(--ink)',
+                        fontSize:14,
+                      }}>
+                {g}
+              </button>
+            ))}
+          </div>
+        </label>
+        <label>
+          <div className="label" style={{marginBottom:4}}>Color</div>
+          <div style={{display:'flex', flexWrap:'wrap', gap:4}}>
+            {IR_ROLE_COLOR_PRESETS.map(c => (
+              <button key={c.id} type="button"
+                      onClick={() => setColor(c.value)}
+                      title={c.label}
+                      style={{
+                        padding:'6px 12px',
+                        background: color === c.value ? 'var(--bg-0)' : 'transparent',
+                        border: '1px solid ' + (color === c.value ? c.value : 'var(--line-soft)'),
+                        borderRadius:'var(--radius)',
+                        cursor:'pointer',
+                        color: c.value,
+                        fontSize:11,
+                        fontFamily:"'JetBrains Mono', monospace",
+                      }}>
+                ● {c.label}
+              </button>
+            ))}
+          </div>
+        </label>
+      </div>
+
+      <label>
+        <div className="label" style={{marginBottom:4}}>Description</div>
+        <input type="text" value={description}
+               onChange={(e) => setDesc(e.target.value)}
+               placeholder="What this role is for — e.g. 'Read-only audit access across findings + dispositions'"
+               style={formInputStyle}/>
+      </label>
+
+      <div>
+        <div className="label" style={{marginBottom:6, display:'flex', alignItems:'center', gap:8}}>
+          Permissions
+          <span className="mono" style={{fontSize:10, color:'var(--ink-dim)'}}>
+            {perms.length} of {allPerms.length} selected
+          </span>
+        </div>
+        <div style={{
+          display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(220px, 1fr))',
+          gap:10,
+          padding:'10px 12px',
+          background:'var(--bg-1)',
+          border:'1px solid var(--line-soft)',
+          borderRadius:'var(--radius)',
+          maxHeight:260, overflowY:'auto',
+        }}>
+          {grouped.map(([resource, list]) => (
+            <div key={resource}>
+              <div className="mono" style={{
+                fontSize:10, color:'var(--ink-soft)',
+                letterSpacing:'0.08em', textTransform:'uppercase',
+                marginBottom:4,
+              }}>{resource}</div>
+              {list.map(p => {
+                const on = perms.includes(p);
+                return (
+                  <label key={p}
+                         style={{
+                           display:'flex', alignItems:'center', gap:6,
+                           padding:'2px 0',
+                           cursor:'pointer',
+                           fontSize:11,
+                           fontFamily:"'JetBrains Mono', monospace",
+                           color: on ? 'var(--ink-bright)' : 'var(--ink)',
+                         }}>
+                    <input type="checkbox" checked={on}
+                           onChange={() => togglePerm(p)}
+                           style={{margin:0}}/>
+                    {p}
+                  </label>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {err && (
+        <div style={{
+          padding:'8px 10px',
+          background:'var(--red-wash)',
+          border:'1px solid var(--threat)',
+          color:'var(--threat)',
+          borderRadius:'var(--radius)',
+          fontSize:12,
+        }}>{err}</div>
+      )}
+
+      <div style={{display:'flex', gap:8, justifyContent:'flex-end'}}>
+        <button type="button" className="btn ghost" onClick={onCancel} style={{fontSize:12}}>
+          Cancel
+        </button>
+        <button type="submit" className="btn primary" style={{fontSize:12}}>
+          Create role
+        </button>
+      </div>
+    </form>
+  );
+}
+
 // ─── Roles section · R2b2 ──────────────────────────────────────
 // Lives inside UsersSurface between the users table and the
 // permission matrix. Reads the live role store + user roster so
@@ -9165,6 +9375,7 @@ function RolesSection() {
   // Subscribe to user changes so the in-use counter refreshes
   // when a role is swapped on a row via R1a's menu.
   const users = useUsersList();
+  const [createOpen, setCreateOpen] = React.useState(false);
 
   const roles = getRoles();
   const entries = Object.entries(roles)
@@ -9179,12 +9390,27 @@ function RolesSection() {
     <div className="box">
       <div className="box-title">
         <span className="t">Roles</span>
-        <span className="k mono" style={{fontSize:11}}>
-          {entries.length} total ·{' '}
-          {entries.filter(([, r]) => r.system).length} system ·{' '}
-          {entries.filter(([, r]) => !r.system).length} custom
+        <span className="k" style={{display:'flex', alignItems:'center', gap:10}}>
+          <span className="mono" style={{fontSize:11}}>
+            {entries.length} total ·{' '}
+            {entries.filter(([, r]) => r.system).length} system ·{' '}
+            {entries.filter(([, r]) => !r.system).length} custom
+          </span>
+          {canManage && (
+            <button className="btn primary"
+                    onClick={() => setCreateOpen(o => !o)}
+                    style={{fontSize:11, padding:'5px 10px'}}>
+              {createOpen ? '× Cancel' : '+ Create role'}
+            </button>
+          )}
         </span>
       </div>
+
+      {createOpen && canManage && (
+        <CreateRoleForm onCancel={() => setCreateOpen(false)}
+                        onCreated={() => setCreateOpen(false)}/>
+      )}
+
       <div>
         <div style={{
           display:'grid',
