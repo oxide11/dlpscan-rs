@@ -1158,6 +1158,32 @@ async fn overrides_apply(
 
     let path = state.overrides_path.as_path();
 
+    // Create the parent directory if it's missing. Fresh local-dev
+    // setups (SIPHON_OVERRIDES_PATH=/etc/siphon/overrides.json on a
+    // macOS host that doesn't have /etc/siphon) otherwise hit
+    // "temp write failed: No such file or directory" at the first
+    // Apply. Fails loudly rather than silently — directory creation
+    // is expected to succeed on any writable path.
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!(
+                            "could not create overrides directory {}: {e}. Fix: run the pod \
+                             with SIPHON_OVERRIDES_PATH pointing at a writable path, or \
+                             `mkdir -p {}` first.",
+                            parent.display(),
+                            parent.display()
+                        ),
+                    }),
+                ));
+            }
+            tracing::info!(parent = %parent.display(), "created SIPHON_OVERRIDES_PATH parent dir");
+        }
+    }
+
     // Backup the previous file if one exists. Name carries a nanosecond
     // timestamp so concurrent applies (unlikely, but possible) don't
     // clobber each other's backups. Phase 7 (history) will index these.

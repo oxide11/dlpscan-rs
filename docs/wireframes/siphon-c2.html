@@ -14234,6 +14234,16 @@ function LiveScan() {
       </div>
 
       {result && result.trace && <TracePanel trace={result.trace} />}
+      {result && traceOn && !result.trace && (
+        <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', marginTop:'var(--gap)', fontSize:12, lineHeight:1.6}}>
+          <b>Trace requested but not returned.</b> The pod at{' '}
+          <span className="mono">{mode === 'file' ? fsUrl : apiUrl}</span> responded without a{' '}
+          <span className="mono">trace</span> array —{' '}
+          {mode === 'file'
+            ? <>likely a stale siphon-fs binary. Rebuild with <span className="mono">cargo build -p siphon-fs</span>, then STOP + START siphon-fs in the Local Launcher panel.</>
+            : <>likely a stale siphon-api binary. Rebuild with <span className="mono">cargo build -p siphon-api</span>, then restart the pod.</>}
+        </div>
+      )}
     </div>
   );
 }
