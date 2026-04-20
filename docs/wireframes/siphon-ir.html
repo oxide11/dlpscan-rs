@@ -2462,6 +2462,7 @@ const IR_SURFACES = [
   { id: 'exhibits',       workspace: 'evidence',  icon: '▣',  title: 'Exhibits',         sub: 'attached artifacts' },
   { id: 'export',         workspace: 'evidence',  icon: '↧',  title: 'Export Bundle',    sub: 'package case for handoff' },
   // ── SETTINGS ─────────────────────────────────────────────────
+  { id: 'integrations',   workspace: 'settings',  icon: '⇄',  title: 'Integrations',     sub: 'XSOAR · Splunk HEC' },
   { id: 'ir-settings',    workspace: 'settings',  icon: '⚙',  title: 'Responder Prefs',  sub: 'filters · notifications' },
   { id: 'ir-deployment',  workspace: 'settings',  icon: '⚿',  title: 'Pod Registry',     sub: 'shared with admin console' },
 ];
@@ -2588,23 +2589,57 @@ function Stub({ title, description }) {
 }
 
 // ─── Findings Queue ─────────────────────────────────────────────
-// The core Respond surface — unioned findings from every pod in the
-// registry (siphon-api + siphon-fs rings + whatever else the analyst
-// has added). Client-side filters layer on top of the fetched set;
-// `limit` drives how many records each pod returns.
+// The core Respond surface. DLP analyst workflow per finding:
+//   1. Review the 5W detail: who uploaded/sent/logged it, what was
+//      detected, where (channel), when, why (pattern + policy).
+//   2. Add investigator notes capturing the rationale.
+//   3. Dispose:
+//        · Close Event           — benign activity, log + archive
+//        · False Positive        — submit to admin-console FP queue
+//                                  so detection engineering can tune
+//        · Escalate to XSOAR     — hand off to SOAR pipeline for
+//                                  remediation (open modal with JSON
+//                                  payload + optional webhook POST)
 //
-// Actions (Ack / Escalate / Mark FP) are stubbed for MVP: they flash
-// a local confirmation and persist a per-finding marker in
-// localStorage, so the analyst can triage across reloads even before
-// the server-side acknowledge endpoint lands.
-const IR_ACK_KEY = 'ir:acks';
-function readAcks() {
-  try { return JSON.parse(localStorage.getItem(IR_ACK_KEY) || '{}') || {}; }
+// Dispositions live in localStorage[ir:dispositions] (persists across
+// reloads) and False-Positive submissions additionally write to the
+// shared localStorage[c2:fpQueue] bucket that the admin console's FP
+// Queue surface reads.
+const IR_DISPO_KEY = 'ir:dispositions';
+const FP_QUEUE_KEY = 'c2:fpQueue';
+const XSOAR_CFG_KEY = 'ir:xsoar';
+
+// Four legal dispositions. 'open' means untriaged (no record in the
+// disposition map). Values in records use the 4 below + a free-text
+// `notes` field.
+const DISPO = {
+  event:    { label: 'Event closed',       chip: 'safe',  short: 'event' },
+  fp:       { label: 'False positive',     chip: 'ghost', short: 'fp'    },
+  escalate: { label: 'Escalated · XSOAR',  chip: 'warn',  short: 'esc'   },
+};
+
+function readDispo() {
+  try { return JSON.parse(localStorage.getItem(IR_DISPO_KEY) || '{}') || {}; }
   catch { return {}; }
 }
-function writeAcks(m) {
-  try { localStorage.setItem(IR_ACK_KEY, JSON.stringify(m)); } catch {}
+function writeDispo(m) {
+  try { localStorage.setItem(IR_DISPO_KEY, JSON.stringify(m)); } catch {}
 }
+function readFpQueue() {
+  try { return JSON.parse(localStorage.getItem(FP_QUEUE_KEY) || '[]') || []; }
+  catch { return []; }
+}
+function writeFpQueue(list) {
+  try { localStorage.setItem(FP_QUEUE_KEY, JSON.stringify(list)); } catch {}
+}
+function readXsoarCfg() {
+  try { return JSON.parse(localStorage.getItem(XSOAR_CFG_KEY) || '{}') || {}; }
+  catch { return {}; }
+}
+function writeXsoarCfg(cfg) {
+  try { localStorage.setItem(XSOAR_CFG_KEY, JSON.stringify(cfg)); } catch {}
+}
+
 const SEVERITY_RANK = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
 function severityChip(sev) {
   const cls = {
@@ -2612,6 +2647,37 @@ function severityChip(sev) {
     low: 'warn', info: 'ghost',
   }[sev] || 'ghost';
   return <span className={`chip chip--${cls}`} style={{fontSize:10}}>{sev || 'info'}</span>;
+}
+
+// Derive Who / What / Where / When / Why from whatever the finding
+// carries. siphon-fs findings smuggle the filename through
+// `source_ip`; siphon-api findings carry the real caller IP. Channel
+// can be inferred from pod kind. Rich metadata (actor, email subject,
+// etc.) isn't captured today — left as 'unknown' so the analyst
+// annotates in the notes field.
+function deriveContext(f) {
+  const md = f.metadata || {};
+  const pod = f.source_pod || '';
+  const isFile = pod === 'siphon-fs' || md.filename;
+  const who =
+    md.actor || md.user || md.sender ||
+    (isFile
+      ? (f.source_ip && f.source_ip !== '<anon-upload>' ? `uploader of ${f.source_ip}` : 'anonymous upload')
+      : (f.source_ip || 'unknown'));
+  const what = `${f.category || '—'}${f.sub_category ? ' / ' + f.sub_category : ''}`;
+  const where =
+    md.channel || md.source_type ||
+    (isFile ? 'file upload (siphon-fs)'
+            : pod === 'siphon-api' ? 'API submission (siphon-api)'
+            : pod ? `pod: ${pod}` : 'unknown channel');
+  const when = f.ts || 'unknown';
+  const why =
+    (f.confidence != null ? `confidence ${f.confidence.toFixed(2)}` : 'no confidence')
+    + (f.has_context ? ' · keyword-context confirmed'
+                     : f.confidence != null ? ' · no context keyword nearby' : '')
+    + (md.list_matched ? ` · match-list "${md.list_matched}" (${md.list_action || '—'})` : '')
+    + (md.unique_count_breach ? ` · unique-count breach` : '');
+  return { who, what, where, when, why, isFile, filename: md.filename || (isFile ? f.source_ip : null) };
 }
 
 function FindingsQueue() {
@@ -2624,8 +2690,10 @@ function FindingsQueue() {
     catch { return 100; }
   });
   const [expanded, setExpanded] = React.useState(null);
-  const [acks, setAcks] = React.useState(readAcks);
-  const [flash, setFlash] = React.useState(null); // short-lived toast
+  const [dispo, setDispo] = React.useState(readDispo);
+  const [notesDraft, setNotesDraft] = React.useState({});
+  const [xsoarFor, setXsoarFor] = React.useState(null); // finding being escalated
+  const [flash, setFlash] = React.useState(null);
 
   React.useEffect(() => {
     try { localStorage.setItem('ir:queueFilters', JSON.stringify(filters)); } catch {}
@@ -2637,8 +2705,6 @@ function FindingsQueue() {
   const findings = window.useFindingsUnion('?limit=' + limit);
   const all = (findings.data && findings.data.findings) || [];
 
-  // Derive filter options from the live set so the dropdowns track
-  // whatever's actually in the ring, rather than a hardcoded list.
   const categories = React.useMemo(
     () => Array.from(new Set(all.map(f => f.category).filter(Boolean))).sort(),
     [all]
@@ -2650,9 +2716,6 @@ function FindingsQueue() {
 
   const filtered = React.useMemo(() => {
     const s = (filters.search || '').toLowerCase();
-    const needFp = filters.ack === 'hide-fp';
-    const needAck = filters.ack === 'hide-ack';
-    const needOpen = filters.ack === 'open';
     return all.filter(f => {
       if (filters.severity && filters.severity !== 'all' && f.severity !== filters.severity) return false;
       if (filters.category && filters.category !== 'all' && f.category !== filters.category) return false;
@@ -2660,52 +2723,86 @@ function FindingsQueue() {
       if (s && !(f.text || '').toLowerCase().includes(s)
           && !(f.category || '').toLowerCase().includes(s)
           && !(f.sub_category || '').toLowerCase().includes(s)) return false;
-      const ack = acks[f.id];
-      if (needFp && ack && ack.kind === 'fp') return false;
-      if (needAck && ack && ack.kind === 'ack') return false;
-      if (needOpen && ack) return false;
+      const d = dispo[f.id];
+      if (filters.state === 'open' && d) return false;
+      if (filters.state === 'hide-event' && d && d.kind === 'event') return false;
+      if (filters.state === 'hide-fp' && d && d.kind === 'fp') return false;
+      if (filters.state === 'only-escalated' && (!d || d.kind !== 'escalate')) return false;
       return true;
     }).sort((a, b) => {
-      // Severity-then-recency sort feels right for a triage queue.
       const sa = SEVERITY_RANK[a.severity] || 0;
       const sb = SEVERITY_RANK[b.severity] || 0;
       if (sa !== sb) return sb - sa;
       return (b.ts || '').localeCompare(a.ts || '');
     });
-  }, [all, filters, acks]);
+  }, [all, filters, dispo]);
 
-  const doAck = (finding, kind) => {
-    const next = { ...acks, [finding.id]: {
-      kind, at: new Date().toISOString(), by: 'local-user',
-    }};
-    setAcks(next);
-    writeAcks(next);
-    setFlash({
-      id: finding.id,
-      label: kind === 'fp' ? 'Marked false-positive'
-           : kind === 'esc' ? 'Escalated'
-           : 'Acknowledged',
-    });
+  // Record a disposition. Always stamps who/when + carries the
+  // analyst's note (pulled from notesDraft[id]). FP dispositions also
+  // fan out to the shared FP queue the admin console watches.
+  const dispose = (finding, kind, extra) => {
+    const note = (notesDraft[finding.id] || '').trim();
+    const record = {
+      kind,
+      at: new Date().toISOString(),
+      by: 'local-analyst',
+      notes: note || null,
+      ...extra,
+    };
+    const next = { ...dispo, [finding.id]: record };
+    setDispo(next);
+    writeDispo(next);
+
+    if (kind === 'fp') {
+      // Append to the cross-console FP queue so detection engineering
+      // (admin console → Engineering → FP Queue) can triage.
+      const queue = readFpQueue();
+      // Dedup by finding id — re-submitting overwrites the note + ts
+      // rather than stacking duplicates.
+      const existing = queue.findIndex(x => x.finding_id === finding.id);
+      const entry = {
+        finding_id: finding.id,
+        category: finding.category,
+        sub_category: finding.sub_category,
+        text: finding.text,
+        confidence: finding.confidence,
+        severity: finding.severity,
+        source_pod: finding.source_pod,
+        submitted_at: record.at,
+        submitted_by: record.by,
+        notes: note,
+        // Full finding for future rescanning / pattern-tuning context.
+        finding,
+      };
+      if (existing >= 0) queue[existing] = entry;
+      else queue.push(entry);
+      writeFpQueue(queue);
+    }
+
+    setFlash({ id: finding.id, label: DISPO[kind].label });
     setTimeout(() => setFlash(null), 1800);
+    setNotesDraft(d => { const c = { ...d }; delete c[finding.id]; return c; });
   };
-  const clearAck = (finding) => {
-    const next = { ...acks };
+
+  const clearDispo = (finding) => {
+    const next = { ...dispo };
     delete next[finding.id];
-    setAcks(next);
-    writeAcks(next);
+    setDispo(next);
+    writeDispo(next);
+    // If this was an FP, remove from the cross-console queue too.
+    const q = readFpQueue().filter(x => x.finding_id !== finding.id);
+    writeFpQueue(q);
   };
 
   const counts = React.useMemo(() => {
-    const c = { open: 0, ack: 0, fp: 0, esc: 0 };
+    const c = { open: 0, event: 0, fp: 0, escalate: 0 };
     for (const f of all) {
-      const a = acks[f.id];
-      if (!a) c.open += 1;
-      else if (a.kind === 'fp')  c.fp += 1;
-      else if (a.kind === 'esc') c.esc += 1;
-      else                       c.ack += 1;
+      const d = dispo[f.id];
+      if (!d) c.open += 1;
+      else if (c[d.kind] != null) c[d.kind] += 1;
     }
     return c;
-  }, [all, acks]);
+  }, [all, dispo]);
 
   const fmtTs = (ts) => ts ? ts.replace('T', ' ').replace('Z', '').slice(0, 19) : '—';
 
@@ -2728,13 +2825,17 @@ function FindingsQueue() {
         <div style={{padding:'10px 14px', display:'flex', gap:8, flexWrap:'wrap', borderBottom:'1px solid var(--line-soft)', alignItems:'center'}}>
           <span className="muted mono" style={{fontSize:11, marginRight:4}}>queue:</span>
           <span className="chip chip--red" style={{fontSize:10, cursor:'pointer'}}
-                onClick={() => setFilters({...filters, ack: filters.ack === 'open' ? 'all' : 'open'})}
+                onClick={() => setFilters({...filters, state: filters.state === 'open' ? 'all' : 'open'})}
                 title="show only not-yet-triaged findings">
             {counts.open} open
           </span>
-          <span className="chip chip--warn" style={{fontSize:10}}>{counts.esc} escalated</span>
-          <span className="chip chip--safe" style={{fontSize:10}}>{counts.ack} acknowledged</span>
-          <span className="chip chip--ghost" style={{fontSize:10}}>{counts.fp} false-positive</span>
+          <span className="chip chip--warn" style={{fontSize:10, cursor:'pointer'}}
+                onClick={() => setFilters({...filters, state: filters.state === 'only-escalated' ? 'all' : 'only-escalated'})}
+                title="show only findings escalated to XSOAR">
+            {counts.escalate} escalated
+          </span>
+          <span className="chip chip--safe" style={{fontSize:10}}>{counts.event} closed-events</span>
+          <span className="chip chip--ghost" style={{fontSize:10}}>{counts.fp} fp-submitted</span>
           {findings.perPod && findings.perPod.length > 0 && (
             <span className="muted mono" style={{fontSize:10.5, marginLeft:'auto'}}>
               {findings.perPod.filter(p => p.ok).length}/{findings.perPod.length} pods reachable
@@ -2779,13 +2880,14 @@ function FindingsQueue() {
               {pods.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           )}
-          <select value={filters.ack || 'all'}
-                  onChange={e => setFilters({...filters, ack: e.target.value})}
+          <select value={filters.state || 'all'}
+                  onChange={e => setFilters({...filters, state: e.target.value})}
                   style={{fontSize:11, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}>
             <option value="all">all triage states</option>
             <option value="open">only open</option>
-            <option value="hide-ack">hide acknowledged</option>
-            <option value="hide-fp">hide false-positive</option>
+            <option value="only-escalated">only escalated</option>
+            <option value="hide-event">hide closed-events</option>
+            <option value="hide-fp">hide fp-submitted</option>
           </select>
           <select value={limit}
                   onChange={e => setLimit(parseInt(e.target.value, 10))}
@@ -2845,12 +2947,13 @@ function FindingsQueue() {
         )}
 
         {filtered.map(f => {
-          const ack = acks[f.id];
+          const d = dispo[f.id];
           const isOpen = expanded === f.id;
-          const rowTint = ack && ack.kind === 'fp' ? 'var(--bg-1)'
-                        : ack && ack.kind === 'esc' ? 'var(--amber-wash, var(--bg-2))'
+          const rowTint = d && d.kind === 'fp' ? 'var(--bg-1)'
+                        : d && d.kind === 'escalate' ? 'var(--amber-wash, var(--bg-2))'
                         : 'transparent';
-          const opacity = ack && ack.kind === 'fp' ? 0.5 : 1;
+          const opacity = d && d.kind === 'fp' ? 0.5 : 1;
+          const ctx = deriveContext(f);
           return (
             <div key={f.id} style={{borderBottom:'1px solid var(--line-soft)'}}>
               <div onClick={() => setExpanded(isOpen ? null : f.id)}
@@ -2861,7 +2964,7 @@ function FindingsQueue() {
                      cursor:'pointer', background: rowTint, opacity,
                      fontFamily:"'JetBrains Mono', monospace",
                    }}
-                   title="click to expand">
+                   title="click to review">
                 <span style={{color:'var(--ink-soft)'}}>{fmtTs(f.ts)}</span>
                 <span className="chip chip--ghost" style={{fontSize:9, justifySelf:'start'}}>
                   {f.source_pod || '—'}
@@ -2881,60 +2984,120 @@ function FindingsQueue() {
                   {f.confidence != null ? f.confidence.toFixed(2) : '—'}
                 </span>
                 <span>{severityChip(f.severity)}</span>
-                <span style={{display:'flex', gap:4, justifySelf:'end'}}
-                      onClick={e => e.stopPropagation()}>
-                  {!ack && (
-                    <>
-                      <button className="btn ghost" onClick={() => doAck(f, 'ack')}
-                              title="acknowledge · stays in queue, marked triaged"
-                              style={{fontSize:10, padding:'3px 6px'}}>ack</button>
-                      <button className="btn ghost" onClick={() => doAck(f, 'esc')}
-                              title="escalate · flag for follow-up"
-                              style={{fontSize:10, padding:'3px 6px', color:'var(--amber)'}}>esc</button>
-                      <button className="btn ghost" onClick={() => doAck(f, 'fp')}
-                              title="mark as false-positive"
-                              style={{fontSize:10, padding:'3px 6px', color:'var(--ink-soft)'}}>fp</button>
-                    </>
+                <span style={{display:'flex', gap:4, justifySelf:'end', alignItems:'center'}}>
+                  {!d && (
+                    <span className="muted mono" style={{fontSize:10}}>
+                      ↓ review →
+                    </span>
                   )}
-                  {ack && (
+                  {d && (
                     <>
-                      <span className={`chip chip--${ack.kind === 'fp' ? 'ghost' : ack.kind === 'esc' ? 'warn' : 'safe'}`}
-                            style={{fontSize:9}}>{ack.kind}</span>
-                      <button className="btn ghost" onClick={() => clearAck(f)}
-                              title="undo triage"
+                      <span className={`chip chip--${DISPO[d.kind].chip}`}
+                            title={`${DISPO[d.kind].label}${d.notes ? '\n\n' + d.notes : ''}`}
+                            style={{fontSize:9}}>{DISPO[d.kind].short}</span>
+                      <button className="btn ghost" onClick={(e) => { e.stopPropagation(); clearDispo(f); }}
+                              title="undo disposition"
                               style={{fontSize:10, padding:'3px 6px'}}>↶</button>
                     </>
                   )}
                   {flash && flash.id === f.id && (
                     <span className="mono" style={{fontSize:10, color:'var(--safe)'}}>
-                      ✓ {flash.label}
+                      ✓
                     </span>
                   )}
                 </span>
               </div>
               {isOpen && (
-                <div style={{padding:'12px 14px 16px 14px', background:'var(--bg-1)', fontSize:11.5, borderTop:'1px dashed var(--line-soft)'}}>
-                  <div style={{display:'grid', gridTemplateColumns:'160px 1fr', gap:'6px 14px', fontFamily:"'JetBrains Mono', monospace"}}>
-                    <span className="muted">finding id</span>
-                    <span className="mono">{f.id}</span>
-                    <span className="muted">request id</span>
-                    <span className="mono">{f.request_id || '—'}</span>
-                    <span className="muted">source</span>
-                    <span className="mono">{f.source_ip || '—'} <span className="muted">via</span> {f.source_pod || '—'}</span>
-                    <span className="muted">span</span>
-                    <span className="mono">{f.span ? f.span.join('..') : '—'}</span>
-                    <span className="muted">has context</span>
-                    <span>{f.has_context ? <span className="chip chip--safe" style={{fontSize:9}}>yes</span> : <span className="chip chip--ghost" style={{fontSize:9}}>no</span>}</span>
-                    {f.metadata && Object.keys(f.metadata).length > 0 && (
-                      <>
-                        <span className="muted">metadata</span>
-                        <span className="mono" style={{whiteSpace:'pre-wrap', wordBreak:'break-word'}}>
-                          {Object.entries(f.metadata).map(([k, v]) => `${k} = ${v}`).join('\n')}
-                        </span>
-                      </>
-                    )}
+                <div style={{padding:'14px 16px 18px 16px', background:'var(--bg-1)', fontSize:12, borderTop:'1px dashed var(--line-soft)'}}>
+                  {/* ── 5W review grid ──────────────────────────── */}
+                  <div className="label" style={{marginBottom:8}}>
+                    Event context · who · what · where · when · why
                   </div>
-                  <div style={{marginTop:12, display:'flex', gap:8, flexWrap:'wrap'}}>
+                  <div style={{display:'grid', gridTemplateColumns:'70px 1fr', gap:'8px 14px', fontFamily:"'JetBrains Mono', monospace", fontSize:11.5, marginBottom:14}}>
+                    <span className="muted">who</span>
+                    <span style={{color:'var(--ink-bright)'}}>{ctx.who}</span>
+                    <span className="muted">what</span>
+                    <span>
+                      <span style={{color:'var(--accent)'}}>{ctx.what}</span>
+                      {f.text && <> · matched <span className="mono" style={{color:'var(--ink-bright)', background:'var(--bg-3)', padding:'1px 6px', borderRadius:3}}>{f.text}</span></>}
+                    </span>
+                    <span className="muted">where</span>
+                    <span>{ctx.where}{ctx.filename && <> · file <span className="mono">{ctx.filename}</span></>}</span>
+                    <span className="muted">when</span>
+                    <span className="mono">{fmtTs(ctx.when)}</span>
+                    <span className="muted">why</span>
+                    <span>{ctx.why}</span>
+                  </div>
+
+                  {/* ── Raw fields (collapsed grid below 5W) ──── */}
+                  <details style={{marginBottom:14, fontSize:11, fontFamily:"'JetBrains Mono', monospace"}}>
+                    <summary className="muted" style={{cursor:'pointer', padding:'4px 0'}}>raw finding fields</summary>
+                    <div style={{display:'grid', gridTemplateColumns:'140px 1fr', gap:'4px 12px', paddingTop:6}}>
+                      <span className="muted">finding id</span>
+                      <span className="mono">{f.id}</span>
+                      <span className="muted">request id</span>
+                      <span className="mono">{f.request_id || '—'}</span>
+                      <span className="muted">span</span>
+                      <span className="mono">{f.span ? f.span.join('..') : '—'}</span>
+                      <span className="muted">has context</span>
+                      <span>{f.has_context ? <span className="chip chip--safe" style={{fontSize:9}}>yes</span> : <span className="chip chip--ghost" style={{fontSize:9}}>no</span>}</span>
+                      {f.metadata && Object.keys(f.metadata).length > 0 && (
+                        <>
+                          <span className="muted">metadata</span>
+                          <span className="mono" style={{whiteSpace:'pre-wrap', wordBreak:'break-word'}}>
+                            {Object.entries(f.metadata).map(([k, v]) => `${k} = ${v}`).join('\n')}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </details>
+
+                  {/* ── Notes + disposition ─────────────────────── */}
+                  <div className="label" style={{marginBottom:4}}>Investigator notes</div>
+                  <textarea
+                    value={notesDraft[f.id] ?? (d && d.notes) ?? ''}
+                    onChange={e => setNotesDraft({ ...notesDraft, [f.id]: e.target.value })}
+                    placeholder="Why is this a TP/FP? What did you verify? Who did you contact?"
+                    rows={3}
+                    className="mono"
+                    style={{
+                      width:'100%', boxSizing:'border-box', fontSize:11.5,
+                      padding:'8px 10px', background:'var(--bg-2)', color:'var(--ink)',
+                      border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                      resize:'vertical',
+                    }}
+                  />
+
+                  {d && (
+                    <div className="note" style={{marginTop:8, fontSize:11,
+                                                   borderColor: d.kind === 'escalate' ? 'var(--amber)' : 'var(--line-strong)',
+                                                   background: 'var(--bg-2)', color: 'var(--ink)'}}>
+                      <b>{DISPO[d.kind].label}</b>
+                      <span className="muted"> · {d.at.slice(0, 19).replace('T',' ')} · {d.by || 'analyst'}</span>
+                      {d.kind === 'escalate' && d.xsoar_status && (
+                        <> · <span className="mono">{d.xsoar_status}</span></>
+                      )}
+                      {d.notes && <div style={{marginTop:4, whiteSpace:'pre-wrap'}}>{d.notes}</div>}
+                    </div>
+                  )}
+
+                  {/* ── Action row: 3 dispositions + tune detection ── */}
+                  <div style={{marginTop:12, display:'flex', gap:8, flexWrap:'wrap', alignItems:'center'}}>
+                    <button className="btn" onClick={() => dispose(f, 'event')}
+                            title="benign activity — close the event. Disposition persisted locally.">
+                      ✓ Close event
+                    </button>
+                    <button className="btn ghost" onClick={() => dispose(f, 'fp')}
+                            title="submit to the admin-console FP Queue for detection engineering to tune"
+                            style={{color:'var(--ink-soft)'}}>
+                      ⚑ Mark false-positive
+                    </button>
+                    <button className="btn primary" onClick={() => setXsoarFor(f)}
+                            title="hand off to XSOAR for remediation (configure webhook in Settings → Integrations)"
+                            style={{background:'var(--amber)', borderColor:'var(--amber)', color:'#000'}}>
+                      ↗ Escalate to XSOAR
+                    </button>
+                    <span className="spacer" style={{flex:1}} />
                     <a className="btn ghost"
                        href={`siphon-c2.html#patterns/${encodeURIComponent(f.category)}/${encodeURIComponent(f.sub_category || '')}`}
                        target="_blank" rel="noopener"
@@ -2947,18 +3110,360 @@ function FindingsQueue() {
                       setFlash({ id: f.id, label: 'Copied JSON' });
                       setTimeout(() => setFlash(null), 1200);
                     }} style={{fontSize:11}}>⎘ Copy JSON</button>
-                    {ack && ack.at && (
-                      <span className="muted mono" style={{fontSize:10.5, alignSelf:'center'}}>
-                        triaged {ack.at.slice(0, 19).replace('T', ' ')}
-                        {ack.by && ack.by !== 'local-user' ? ` by ${ack.by}` : ''}
-                      </span>
-                    )}
                   </div>
                 </div>
               )}
             </div>
           );
         })}
+      </div>
+
+      {/* XSOAR escalate modal — opens when `xsoarFor` is set. Reads
+          the configured XSOAR webhook from localStorage[ir:xsoar]
+          (managed under Settings → Integrations). If none configured,
+          the modal shows a CTA to go configure it; the analyst can
+          still Copy JSON for manual handoff. */}
+      {xsoarFor && (
+        <XsoarEscalateModal
+          finding={xsoarFor}
+          note={notesDraft[xsoarFor.id] || ''}
+          onClose={() => setXsoarFor(null)}
+          onDone={(statusText) => {
+            dispose(xsoarFor, 'escalate', { xsoar_status: statusText });
+            setXsoarFor(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── XSOAR escalate modal ───────────────────────────────────────
+// Builds a JSON payload from the finding + investigator notes and
+// lets the analyst send it to the XSOAR webhook configured under
+// Settings → Integrations, or copy it for manual submission. Send
+// failures annotate the disposition but don't block it — the
+// analyst may have already handed off by other means.
+function XsoarEscalateModal({ finding, note, onClose, onDone }) {
+  const [cfg] = React.useState(readXsoarCfg);
+  const [sending, setSending] = React.useState(false);
+  const [sendErr, setSendErr] = React.useState(null);
+  const [sendOk, setSendOk] = React.useState(null);
+
+  const payload = React.useMemo(() => ({
+    source: 'siphon-ir',
+    submitted_at: new Date().toISOString(),
+    submitted_by: 'local-analyst',
+    investigator_notes: note || null,
+    finding: {
+      id: finding.id,
+      ts: finding.ts,
+      category: finding.category,
+      sub_category: finding.sub_category,
+      text: finding.text,
+      confidence: finding.confidence,
+      has_context: finding.has_context,
+      severity: finding.severity,
+      source_ip: finding.source_ip,
+      source_pod: finding.source_pod,
+      request_id: finding.request_id,
+      span: finding.span,
+      metadata: finding.metadata || {},
+    },
+    context: deriveContext(finding),
+  }), [finding, note]);
+
+  const copyPayload = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      setSendOk('Copied to clipboard');
+      setTimeout(() => setSendOk(null), 1500);
+    } catch (e) { setSendErr(String(e.message || e)); }
+  };
+
+  const sendWebhook = async () => {
+    if (!cfg.webhook) return;
+    setSending(true); setSendErr(null); setSendOk(null);
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (cfg.apiKey) headers['Authorization'] = cfg.authHeader === 'api-key'
+        ? cfg.apiKey
+        : 'Bearer ' + cfg.apiKey;
+      const r = await fetch(cfg.webhook, {
+        method: 'POST', headers, body: JSON.stringify(payload),
+      });
+      if (!r.ok) {
+        const body = await r.text();
+        throw new Error('HTTP ' + r.status + (body ? ': ' + body.slice(0, 200) : ''));
+      }
+      setSendOk('POST ' + r.status);
+      setTimeout(() => onDone('POST ' + r.status), 600);
+    } catch (e) {
+      setSendErr(String(e.message || e));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div style={{
+      position:'fixed', inset:0, background:'rgba(0,0,0,0.7)',
+      display:'flex', alignItems:'center', justifyContent:'center',
+      zIndex:100,
+    }} onClick={onClose}>
+      <div className="box" style={{width:'min(820px, 90vw)', maxHeight:'90vh', overflow:'auto', margin:0}}
+           onClick={e => e.stopPropagation()}>
+        <div className="box-title">
+          <span className="t">Escalate to XSOAR</span>
+          <span className="k">
+            {cfg.webhook
+              ? <span className="mono" style={{fontSize:10, color:'var(--ink-soft)'}}>target: {(new URL(cfg.webhook)).host}</span>
+              : <span className="chip chip--warn" style={{fontSize:9}}>no webhook configured</span>}
+          </span>
+        </div>
+        <div style={{padding:14}}>
+          {!cfg.webhook && (
+            <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', marginBottom:12, fontSize:12}}>
+              <b>XSOAR webhook not configured.</b> Set the URL + credentials under{' '}
+              <a onClick={() => { onClose(); window.__ir_go && window.__ir_go('integrations'); }}
+                 style={{color:'var(--accent)', cursor:'pointer'}}>Settings → Integrations</a>.
+              In the meantime, copy the payload and submit via another channel.
+            </div>
+          )}
+          <div className="label" style={{marginBottom:4}}>
+            Finding · <span className="mono">{finding.id}</span>{' '}
+            <span className="muted">· {finding.category}/{finding.sub_category}</span>
+          </div>
+          <pre style={{
+            background:'var(--bg-1)', padding:10, border:'1px solid var(--line-soft)',
+            borderRadius:'var(--radius)', fontSize:11, maxHeight:320, overflow:'auto',
+            fontFamily:"'JetBrains Mono', monospace", whiteSpace:'pre', margin:0,
+          }}>{JSON.stringify(payload, null, 2)}</pre>
+
+          {sendErr && (
+            <div className="note" style={{borderColor:'var(--red)', background:'var(--red-wash)', color:'var(--red)', fontSize:12, marginTop:10}}>
+              <b>Send failed:</b> {sendErr} · disposition not recorded
+            </div>
+          )}
+          {sendOk && (
+            <div className="note" style={{borderColor:'var(--safe)', background:'var(--accent-wash)', color:'var(--ink)', fontSize:12, marginTop:10}}>
+              <b>{sendOk}</b>
+            </div>
+          )}
+
+          <div style={{marginTop:14, display:'flex', gap:8, flexWrap:'wrap', justifyContent:'flex-end'}}>
+            <button className="btn ghost" onClick={onClose}>Cancel</button>
+            <button className="btn ghost" onClick={copyPayload}>⎘ Copy JSON</button>
+            <button className="btn ghost" onClick={() => onDone('handed off manually')}
+                    title="record disposition without POSTing (analyst will submit via another channel)">
+              Record as escalated
+            </button>
+            <button className="btn primary" onClick={sendWebhook}
+                    disabled={!cfg.webhook || sending}
+                    style={{background:'var(--amber)', borderColor:'var(--amber)', color:'#000'}}>
+              {sending ? 'Sending…' : '↗ POST to XSOAR'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Settings → Integrations ────────────────────────────────────
+// Centralises the XSOAR + Splunk HEC configuration. Other IR
+// surfaces read these from localStorage (ir:xsoar, ir:splunk). The
+// 'Test' buttons validate the endpoint is reachable before a real
+// escalation tries.
+function IntegrationsSurface() {
+  const [xsoar, setXsoar] = React.useState(() => ({
+    webhook: '', apiKey: '', authHeader: 'bearer', ...readXsoarCfg(),
+  }));
+  const [splunk, setSplunk] = React.useState(() => {
+    try { return JSON.parse(localStorage.getItem('ir:splunk') || '{}') || { hec: '', token: '', index: 'dlp_ir' }; }
+    catch { return { hec: '', token: '', index: 'dlp_ir' }; }
+  });
+  const [xsoarSaved, setXsoarSaved] = React.useState(false);
+  const [splunkSaved, setSplunkSaved] = React.useState(false);
+  const [xsoarTest, setXsoarTest] = React.useState(null);
+  const [splunkTest, setSplunkTest] = React.useState(null);
+
+  const saveXsoar = () => {
+    writeXsoarCfg(xsoar);
+    setXsoarSaved(true);
+    setTimeout(() => setXsoarSaved(false), 1500);
+  };
+  const saveSplunk = () => {
+    try { localStorage.setItem('ir:splunk', JSON.stringify(splunk)); } catch {}
+    setSplunkSaved(true);
+    setTimeout(() => setSplunkSaved(false), 1500);
+  };
+
+  const testXsoar = async () => {
+    setXsoarTest({ state: 'running' });
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (xsoar.apiKey) headers['Authorization'] = xsoar.authHeader === 'api-key'
+        ? xsoar.apiKey
+        : 'Bearer ' + xsoar.apiKey;
+      const r = await fetch(xsoar.webhook, {
+        method: 'POST', headers,
+        body: JSON.stringify({ source: 'siphon-ir', kind: 'test', submitted_at: new Date().toISOString() }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      setXsoarTest({ state: 'ok', status: r.status });
+    } catch (e) {
+      setXsoarTest({ state: 'fail', error: String(e.message || e) });
+    }
+  };
+  const testSplunk = async () => {
+    setSplunkTest({ state: 'running' });
+    try {
+      const r = await fetch(splunk.hec, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Splunk ' + (splunk.token || ''),
+        },
+        body: JSON.stringify({
+          event: { source: 'siphon-ir', kind: 'test', ts: new Date().toISOString() },
+          sourcetype: 'siphon:ir:test',
+          index: splunk.index || 'main',
+        }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      setSplunkTest({ state: 'ok', status: r.status });
+    } catch (e) {
+      setSplunkTest({ state: 'fail', error: String(e.message || e) });
+    }
+  };
+
+  const fieldStyle = {
+    flex:1, minWidth:280, fontFamily:"'JetBrains Mono', monospace", fontSize:12,
+    padding:'6px 10px', background:'var(--bg-1)', color:'var(--ink)',
+    border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+  };
+
+  return (
+    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
+      {/* ── XSOAR ───────────────────────────────────────────────── */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">XSOAR · SOAR / remediation pipeline</span>
+          <span className="k">
+            {xsoar.webhook ? <span className="chip chip--safe" style={{fontSize:9}}>configured</span>
+                           : <span className="chip chip--ghost" style={{fontSize:9}}>not configured</span>}
+          </span>
+        </div>
+        <div style={{padding:14, display:'grid', gap:10, fontSize:12}}>
+          <div className="muted" style={{fontSize:11.5, lineHeight:1.6}}>
+            Webhook endpoint XSOAR listens on (Cortex XSOAR playbook trigger, or a generic webhook
+            that feeds into your playbook engine). Escalate actions POST the finding + 5W context +
+            investigator notes as JSON.
+          </div>
+          <div>
+            <div className="label" style={{marginBottom:4}}>Webhook URL</div>
+            <input type="text" value={xsoar.webhook}
+                   onChange={e => setXsoar({ ...xsoar, webhook: e.target.value })}
+                   placeholder="https://xsoar.example.com/instance/execute/siphon_ir_webhook"
+                   style={fieldStyle} />
+          </div>
+          <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
+            <div style={{flex:2, minWidth:280}}>
+              <div className="label" style={{marginBottom:4}}>API key / token</div>
+              <input type="password" value={xsoar.apiKey}
+                     onChange={e => setXsoar({ ...xsoar, apiKey: e.target.value })}
+                     placeholder="bearer token or raw api-key"
+                     style={fieldStyle} autoComplete="off" />
+            </div>
+            <div style={{flex:1, minWidth:160}}>
+              <div className="label" style={{marginBottom:4}}>Auth header</div>
+              <select value={xsoar.authHeader}
+                      onChange={e => setXsoar({ ...xsoar, authHeader: e.target.value })}
+                      style={{...fieldStyle, width:'100%'}}>
+                <option value="bearer">Authorization: Bearer …</option>
+                <option value="api-key">Authorization: &lt;key&gt;</option>
+              </select>
+            </div>
+          </div>
+          <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
+            <button className="btn" onClick={saveXsoar}>{xsoarSaved ? 'Saved' : 'Save'}</button>
+            <button className="btn ghost" onClick={testXsoar}
+                    disabled={!xsoar.webhook || (xsoarTest && xsoarTest.state === 'running')}>
+              {xsoarTest && xsoarTest.state === 'running' ? 'Testing…' : 'Send test event'}
+            </button>
+            {xsoarTest && xsoarTest.state === 'ok' && (
+              <span className="chip chip--safe" style={{fontSize:10}}>test OK · {xsoarTest.status}</span>
+            )}
+            {xsoarTest && xsoarTest.state === 'fail' && (
+              <span className="chip chip--red" style={{fontSize:10}} title={xsoarTest.error}>
+                test failed: {xsoarTest.error.slice(0, 80)}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Splunk HEC ──────────────────────────────────────────── */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Splunk HEC · event forwarder</span>
+          <span className="k">
+            {splunk.hec ? <span className="chip chip--safe" style={{fontSize:9}}>configured</span>
+                        : <span className="chip chip--ghost" style={{fontSize:9}}>not configured</span>}
+          </span>
+        </div>
+        <div style={{padding:14, display:'grid', gap:10, fontSize:12}}>
+          <div className="muted" style={{fontSize:11.5, lineHeight:1.6}}>
+            When configured, every analyst disposition (Close Event / Mark FP / Escalate) mirrors
+            into Splunk via HEC for reporting + long-term audit. Complements the admin console's
+            SIEM forwarders (which stream detections); this stream carries the triage outcomes.
+          </div>
+          <div>
+            <div className="label" style={{marginBottom:4}}>HEC URL</div>
+            <input type="text" value={splunk.hec}
+                   onChange={e => setSplunk({ ...splunk, hec: e.target.value })}
+                   placeholder="https://splunk.example.com:8088/services/collector"
+                   style={fieldStyle} />
+          </div>
+          <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
+            <div style={{flex:2, minWidth:280}}>
+              <div className="label" style={{marginBottom:4}}>HEC token</div>
+              <input type="password" value={splunk.token}
+                     onChange={e => setSplunk({ ...splunk, token: e.target.value })}
+                     placeholder="e.g. B5A79AAD-D822-46CC-80D1-…"
+                     style={fieldStyle} autoComplete="off" />
+            </div>
+            <div style={{flex:1, minWidth:140}}>
+              <div className="label" style={{marginBottom:4}}>Index</div>
+              <input type="text" value={splunk.index}
+                     onChange={e => setSplunk({ ...splunk, index: e.target.value })}
+                     placeholder="dlp_ir"
+                     style={fieldStyle} />
+            </div>
+          </div>
+          <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
+            <button className="btn" onClick={saveSplunk}>{splunkSaved ? 'Saved' : 'Save'}</button>
+            <button className="btn ghost" onClick={testSplunk}
+                    disabled={!splunk.hec || (splunkTest && splunkTest.state === 'running')}>
+              {splunkTest && splunkTest.state === 'running' ? 'Testing…' : 'Send test event'}
+            </button>
+            {splunkTest && splunkTest.state === 'ok' && (
+              <span className="chip chip--safe" style={{fontSize:10}}>test OK · {splunkTest.status}</span>
+            )}
+            {splunkTest && splunkTest.state === 'fail' && (
+              <span className="chip chip--red" style={{fontSize:10}} title={splunkTest.error}>
+                test failed: {splunkTest.error.slice(0, 80)}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="muted" style={{fontSize:11, lineHeight:1.7, padding:'0 2px'}}>
+        Both configurations live in this browser's localStorage only. Clear them with the browser's
+        site-data panel. For a shared multi-analyst setup, back these with a server-side secret store
+        and a /v1/integrations endpoint on siphon-api — Phase 7 of the IR roadmap.
       </div>
     </div>
   );
@@ -2992,6 +3497,7 @@ const SURFACE_COMPONENTS = {
                               description="Attached artifacts: original file, extracted text, finding metadata, investigator notes." />,
   export:         () => <Stub title="Export Bundle"
                               description="Package a case into a zip for handoff (findings JSON, extracted text, exhibits, custody log, signed manifest)." />,
+  integrations:   () => <IntegrationsSurface />,
   'ir-settings':  () => <Stub title="Responder Preferences"
                               description="Default queue filters, notification channels, team membership, theme." />,
   'ir-deployment':() => <Stub title="Pod Registry"
