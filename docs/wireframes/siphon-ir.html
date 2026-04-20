@@ -6708,7 +6708,7 @@ function DashboardSurface() {
 const CRYPTO_TABS = [
   { id: 'inspector',  label: 'File Inspector',  hint: 'magic bytes · entropy · hex dump · type detect' },
   { id: 'hasher',     label: 'Hash Computer',   hint: 'MD5 / SHA-1 / SHA-256 / SHA-384 / SHA-512 (WebCrypto)' },
-  { id: 'zipattack',  label: 'Password Attack', hint: 'dictionary attack against encrypted zips / pdfs (in-browser)' },
+  { id: 'zipattack',  label: 'Password Attack', hint: 'dictionary attack against encrypted zips / pdfs / office docs (in-browser)' },
 ];
 
 // ── File drop zone — shared primitive the Workbench tabs reuse.
@@ -7721,6 +7721,29 @@ function loadZipJs() {
   return window.__irZipJsLoading;
 }
 
+// Lazy-load officecrypto-tool — CommonJS in origin form, so we
+// pull the jsDelivr +esm endpoint which does runtime bundle-to-ESM
+// conversion (and also resolves the node-ish deps: `cfb`,
+// `crypto-js`, `xml2js`). Uses `new Function('return import(u)')`
+// so Babel-standalone leaves the dynamic import untouched. Covers
+// legacy Office (.doc / .xls / .ppt) AND agile-encrypted modern
+// OOXML (.docx / .xlsx / .pptx) — both land in a CFB wrapper.
+function loadOfficeCrypto() {
+  if (window.__irOfficeCrypto) return Promise.resolve(window.__irOfficeCrypto);
+  if (window.__irOfficeCryptoLoading) return window.__irOfficeCryptoLoading;
+  const dynImport = new Function('u', 'return import(u)');
+  window.__irOfficeCryptoLoading = dynImport('https://cdn.jsdelivr.net/npm/officecrypto-tool@0.0.19/+esm')
+    .then(mod => {
+      const lib = mod.default || mod;
+      if (typeof lib.decrypt !== 'function') {
+        throw new Error('officecrypto-tool: decrypt() missing from module export');
+      }
+      window.__irOfficeCrypto = lib;
+      return lib;
+    });
+  return window.__irOfficeCryptoLoading;
+}
+
 // Lazy-load Mozilla pdf.js (legacy UMD build). Same lazy pattern as
 // zip.js — only pulled on first PDF attack. Workers also come from
 // jsDelivr so the page doesn't need same-origin copies.
@@ -7823,11 +7846,9 @@ function CryptoPasswordAttack() {
     return out;
   }, [wordlistSource, wordlistText, wordlistFileText]);
 
-  // A supported file is one we have a verifier for. CFB (agile-
-  // encrypted Office) is detected but not yet attackable, so it's
-  // intentionally excluded here — the note below the drop zone
-  // explains why.
-  const supported = !!file && (format === 'zip' || format === 'pdf');
+  // A supported file is one we have a verifier for. All three
+  // format branches below handle it.
+  const supported = !!file && (format === 'zip' || format === 'pdf' || format === 'cfb');
 
   // Reset attack state when the file, format, or wordlist changes.
   React.useEffect(() => {
@@ -7915,6 +7936,43 @@ function CryptoPasswordAttack() {
         cleanup: () => {},
       };
     }
+    if (format === 'cfb') {
+      const officeCrypto = await loadOfficeCrypto();
+      const buf = await file.arrayBuffer();
+      const input = new Uint8Array(buf);
+      // isEncrypted tells us whether this CFB file is actually
+      // password-protected (vs. a plain legacy .doc without
+      // encryption). Without this check, every password would
+      // "succeed" on an unencrypted file and leave the analyst
+      // confused. Some builds of the library don't export it —
+      // fall back to just running decrypt().
+      if (typeof officeCrypto.isEncrypted === 'function') {
+        try {
+          if (!officeCrypto.isEncrypted(input)) {
+            throw new Error("this office document isn't password-protected");
+          }
+        } catch (e) {
+          // Re-throw our own error; swallow any false positive from
+          // isEncrypted throwing on unfamiliar CFB variants.
+          if (/not password-protected/.test(e.message || '')) throw e;
+        }
+      }
+      return {
+        verify: async (pw) => {
+          try {
+            // decrypt() resolves with a decrypted buffer on the
+            // right password, throws on the wrong one. Agile
+            // Encryption uses PBKDF2 with ~100k iterations, so
+            // each attempt is much slower than zip/pdf — that's
+            // surfaced in the UI warning below.
+            await officeCrypto.decrypt(input, { password: pw });
+            return true;
+          } catch { return false; }
+        },
+        onSuccess: () => [], // No per-entry manifest for CFB
+        cleanup: () => {},
+      };
+    }
     throw new Error('unsupported format');
   };
 
@@ -7982,7 +8040,7 @@ function CryptoPasswordAttack() {
   return (
     <div style={{padding:16, display:'grid', gap:14}}>
       <CryptoFileDrop file={file} onFile={setFile}
-                      label="drop an encrypted file · .zip / .pdf / .docx / .xlsx / .pptx / .jar"/>
+                      label="drop an encrypted file · .zip / .pdf / .docx / .xlsx / .pptx / .doc / .xls / .ppt / .jar"/>
 
       {/* Format badge — only renders once a file's magic bytes
           have been read. Gives the analyst an at-a-glance reason
@@ -7993,11 +8051,11 @@ function CryptoPasswordAttack() {
           <span className={'chip chip--' + (
             format === 'pdf' ? 'teal'
             : format === 'zip' ? 'safe'
-            : format === 'cfb' ? 'warn'
+            : format === 'cfb' ? 'teal'
             : 'ghost')}>
             {format === 'pdf' ? 'PDF'
              : format === 'zip' ? 'ZIP / OOXML'
-             : format === 'cfb' ? 'OLE / CFB'
+             : format === 'cfb' ? 'OLE / CFB · Office'
              : 'UNKNOWN'}
           </span>
           <span className="muted mono" style={{fontSize:11}}>{file.name}</span>
@@ -8006,18 +8064,18 @@ function CryptoPasswordAttack() {
 
       {file && format === 'cfb' && (
         <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:12}}>
-          <b>OLE Compound File detected.</b> This is the wrapper used by legacy Office
-          (.doc / .xls / .ppt) and by agile-encrypted modern Office documents. The
-          in-browser attacker doesn't decode CFB + Agile Encryption yet — export the
-          hash via <span className="mono">office2john.py</span> and run hashcat /
-          john the ripper instead.
+          <b>Agile / Standard Encryption uses PBKDF2.</b> Each attempt is 10–100×
+          slower than ZIP or PDF (~50–200 ms per password vs. sub-millisecond
+          elsewhere). The built-in wordlist will take a minute or two; real
+          wordlists should be routed to <span className="mono">office2john.py</span>{' '}
+          + hashcat for real throughput.
         </div>
       )}
       {file && format === 'unknown' && (
         <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:12}}>
           <b>Unrecognised container.</b> Magic bytes don't match any format we can attack
-          (ZIP / PDF). 7z, RAR, and encrypted archives wrapped in other containers
-          aren't wired yet.
+          (ZIP / PDF / OLE). 7z, RAR, and encrypted archives wrapped in other
+          containers aren't wired yet.
         </div>
       )}
 
@@ -8104,8 +8162,7 @@ function CryptoPasswordAttack() {
                     onClick={start}
                     disabled={!supported || candidates.length === 0}
                     title={!file ? 'pick an encrypted file first'
-                         : format === 'cfb' ? 'OLE / agile-encrypted Office not supported yet'
-                         : !supported ? 'unrecognised container · need ZIP or PDF'
+                         : !supported ? 'unrecognised container · need ZIP / PDF / OLE'
                          : candidates.length === 0 ? 'add candidates to the wordlist first'
                          : 'start the dictionary attack'}>
               {attack.status === 'idle' ? '▶ Start attack' : '↻ Run again'}
@@ -8121,7 +8178,7 @@ function CryptoPasswordAttack() {
           <span className="muted mono" style={{fontSize:11}}>
             {supported && candidates.length > 0
               ? <>{format.toUpperCase()} · {candidates.length.toLocaleString()} candidates</>
-              : 'pick a zip or pdf + wordlist to enable'}
+              : 'pick a zip / pdf / office file + wordlist to enable'}
           </span>
         </div>
 
@@ -8266,8 +8323,9 @@ function CryptoPasswordAttack() {
           Triage-scale only — browser-side AES decrypt, not a GPU cluster. Good for
           the 'probably a weak password' case; for real throughput, export the hash
           and run hashcat / john the ripper. Files never leave the browser.{' '}
-          <span className="mono">zip.js</span> (~80 KB) and <span className="mono">pdf.js</span>{' '}
-          (~350 KB) lazy-load from jsDelivr on first attack of that format.
+          <span className="mono">zip.js</span> (~80 KB), <span className="mono">pdf.js</span>{' '}
+          (~350 KB), and <span className="mono">officecrypto-tool</span> (~500 KB)
+          lazy-load from jsDelivr on first attack of that format.
         </div>
       </div>
     </div>
