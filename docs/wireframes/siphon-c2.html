@@ -11249,6 +11249,14 @@ function EvadexAdversarial() {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       setRunStatus(data.status || 'running');
+      if (data.status === 'failed') {
+        // Surface the bridge's error + stderr tail so the operator can
+        // see what actually went wrong without opening the server log.
+        const msg = data.error
+          || (data.stderr && data.stderr.trim().split('\n').slice(-2).join(' · '))
+          || `exit ${data.exit_code}`;
+        setRunErr(msg);
+      }
       if (data.status === 'completed' || data.status === 'failed') {
         // Refresh metrics so the new run appears in history / trends.
         fetchMetrics();
