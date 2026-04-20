@@ -64,7 +64,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Metrics
-prometheus = { version = "0.13", default-features = false, features = ["process"], optional = true }
+prometheus = { version = "0.14", default-features = false, features = ["process"], optional = true }
 
 # Config
 toml = "0.8"
