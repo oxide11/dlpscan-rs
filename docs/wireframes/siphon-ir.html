@@ -7525,7 +7525,7 @@ function CryptoFileInspector() {
                   })()}
                 </div>
               )}
-              {file.size > firstBytes.length && (
+              {firstBytes && file.size > firstBytes.length && (
                 <div className="muted mono" style={{fontSize:10.5, marginTop:8, textAlign:'right'}}>
                   … {(file.size - firstBytes.length).toLocaleString()} more bytes not shown
                 </div>
