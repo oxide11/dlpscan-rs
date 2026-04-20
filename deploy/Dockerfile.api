@@ -16,6 +16,13 @@ COPY src/ src/
 # file has to be present at image-build time even though it isn't
 # compiled in the release profile.
 COPY benches/ benches/
+# siphon-api's main.rs embeds README.md + the entire docs/ tree
+# via include_str!() for its /v1/docs endpoint (49 files). Cargo
+# resolves these at compile time relative to the source file, so
+# both paths must exist inside the builder image or compilation
+# dies with "couldn't read ../../../README.md".
+COPY README.md ./
+COPY docs/ docs/
 
 # --features k8s-roll pulls in kube + k8s-openapi so /v1/overrides/roll
 # can patch Deployment annotations from inside the cluster. Omit the
