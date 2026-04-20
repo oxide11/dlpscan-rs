@@ -2766,7 +2766,7 @@ const DEMO_CHANNELS = [
 // unless the analyst explicitly regenerates.
 function generateDemoFindings(seed) {
   const rng = mulberry32(seed);
-  const n = 120; // enough for meaningful dashboard charts
+  const n = 420; // 400+ days of history so YoY trending has data
   const now = Date.now();
   const findings = [];
   for (let i = 0; i < n; i++) {
@@ -2775,7 +2775,10 @@ function generateDemoFindings(seed) {
     const channel = wpick(rng, DEMO_CHANNELS);
     // Skew timestamps so most findings are in the last week; some
     // trail back up to 30 days for the longer-horizon chart.
-    const ageDays = Math.pow(rng(), 2) * 30;
+    // Skewed so most findings land in the last 30 days but a long
+    // tail reaches 400+ for YoY comparisons. Cube power puts ~60%
+    // of findings in the last 30 days, ~90% in the last year.
+    const ageDays = Math.pow(rng(), 3) * 420;
     const ts = new Date(now - ageDays * 86400e3).toISOString();
     const confidence = 0.55 + rng() * 0.44;
     const hasContext = rng() > 0.15;
@@ -5485,13 +5488,384 @@ function IrHBar({ label, value, max, color, right, onClick, labelTint }) {
   );
 }
 
+// ── Finding Density heatmap (ported from siphon-c2) ─────────
+// 24h × 1h bucket heatmap per category group. Each row is a
+// category family (PCI · PII · CRED · PHI · SECRET · CLASSIFIED
+// · OTHER + regional groups) — opacity scales by density so the
+// analyst reads a time-of-day pattern at a glance.
+const IR_REGION_GROUPS = ['North America', 'Europe', 'Asia-Pacific', 'Latin America', 'Middle East', 'Africa'];
+const IR_CAT_GROUPS = [...IR_REGION_GROUPS, 'PCI', 'PII', 'CRED', 'PHI', 'SECRET', 'CLASSIFIED', 'OTHER'];
+const IR_CAT_GROUP_COLOR = {
+  'North America':  '#94d0ff',
+  'Europe':         '#ba91ff',
+  'Asia-Pacific':   '#ffb432',
+  'Latin America':  '#ff9cce',
+  'Middle East':    '#5ef38c',
+  'Africa':         '#d7ffd0',
+  PCI:        '#ff5c6c',
+  PII:        '#94d0ff',
+  CRED:       '#ffb432',
+  PHI:        '#ba91ff',
+  SECRET:     '#ff9cce',
+  CLASSIFIED: '#d7ffd0',
+  OTHER:      '#8ba58a',
+};
+function catGroup(category) {
+  const dash = (category || '').indexOf(' - ');
+  if (dash > 0) {
+    const region = category.slice(0, dash);
+    if (IR_REGION_GROUPS.includes(region)) return region;
+  }
+  const c = (category || '').toLowerCase();
+  if (c.includes('credit card') || c.includes('iban') || c.includes('bank')) return 'PCI';
+  if (c.includes('medical') || c.includes('health') || c.includes('phi')) return 'PHI';
+  if (c.includes('cloud provider secret') || c.includes('code platform secret')) return 'CRED';
+  if (c.includes('credential') || c.includes('auth token') || c.includes('aws')) return 'CRED';
+  if (c.includes('private key') || c.includes('session') || c.includes('encryption')) return 'SECRET';
+  if (c.includes('classif') || c.includes('marking') || c.includes('traffic light')) return 'CLASSIFIED';
+  if (c.includes('personal') || c.includes('contact') || c.includes('email')) return 'PII';
+  return 'OTHER';
+}
+
+function FindingsDensity({ findings }) {
+  const BUCKETS = 24;
+  const WINDOW_MIN = 24 * 60;
+
+  const rows = React.useMemo(() => {
+    const zeros = () => Array.from({ length: BUCKETS }, () => 0);
+    const matrix = {};
+    IR_CAT_GROUPS.forEach(g => { matrix[g] = zeros(); });
+
+    const now = Date.now();
+    const bucketMs = (WINDOW_MIN * 60 * 1000) / BUCKETS;
+    (findings || []).forEach(f => {
+      const t = new Date(f.ts).getTime();
+      if (isNaN(t)) return;
+      const delta = now - t;
+      if (delta < 0 || delta > WINDOW_MIN * 60 * 1000) return;
+      const idx = BUCKETS - 1 - Math.floor(delta / bucketMs);
+      if (idx < 0 || idx >= BUCKETS) return;
+      const g = catGroup(f.category);
+      matrix[g][idx]++;
+    });
+    return IR_CAT_GROUPS
+      .map(g => ({
+        group: g,
+        buckets: matrix[g],
+        total: matrix[g].reduce((a, b) => a + b, 0),
+      }))
+      .filter(r => r.total > 0);
+  }, [findings]);
+
+  const maxCell = Math.max(1, ...rows.flatMap(r => r.buckets));
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Finding density</span>
+        <span className="k">by category · last 24h · 1h buckets</span>
+      </div>
+      <div style={{padding:14}}>
+        {rows.length === 0 ? (
+          <div className="muted mono" style={{padding:20, textAlign:'center', fontSize:12}}>
+            — no findings in the last 24h —
+          </div>
+        ) : (<>
+          {rows.map(row => (
+            <div key={row.group} style={{display:'grid', gridTemplateColumns:'130px 1fr 50px', alignItems:'center', gap:10, marginBottom:4}}>
+              <div style={{
+                fontFamily:"'JetBrains Mono', monospace",
+                fontSize:11, fontWeight:600,
+                color: IR_CAT_GROUP_COLOR[row.group] || 'var(--ink)',
+                overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+              }} title={row.group}>
+                {row.group}
+              </div>
+              <div style={{display:'flex', gap:1, height:14}}>
+                {row.buckets.map((v, i) => {
+                  const opacity = v === 0 ? 0.06 : Math.max(0.18, v / maxCell);
+                  return (
+                    <div key={i}
+                         title={`${v} finding${v === 1 ? '' : 's'} in hour bucket ${i}`}
+                         style={{
+                           flex: 1,
+                           background: IR_CAT_GROUP_COLOR[row.group] || 'var(--accent)',
+                           opacity,
+                           borderRadius: 1,
+                         }}/>
+                  );
+                })}
+              </div>
+              <div className="mono" style={{textAlign:'right', fontSize:11.5, color:'var(--ink)'}}>{row.total}</div>
+            </div>
+          ))}
+          <div style={{display:'grid', gridTemplateColumns:'130px 1fr 50px', alignItems:'center', gap:10, marginTop:8}}>
+            <div />
+            <div style={{display:'flex', gap:1, fontFamily:"'JetBrains Mono', monospace", fontSize:9, color:'var(--ink-dim)'}}>
+              {Array.from({length: BUCKETS}).map((_, i) => (
+                <span key={i} style={{flex:1, textAlign:'center'}}>
+                  {i % 6 === 0 ? i + ':00' : '·'}
+                </span>
+              ))}
+            </div>
+            <div />
+          </div>
+        </>)}
+      </div>
+    </div>
+  );
+}
+
+// ── Trending graph with YoY / QoQ / MoM comparison ────────────
+// Bucket counts by day (short windows) or by week/month (long).
+// When a comparison mode is set, overlay a dashed series for the
+// prior equivalent period + show a delta chip in the panel header.
+const IR_COMPARISONS = [
+  { id: 'none',  label: 'Current',     days: null },
+  { id: 'mom',   label: 'MoM',         days: 30,  pretty: '30 days vs prior 30' },
+  { id: 'qoq',   label: 'QoQ',         days: 90,  pretty: '90 days vs prior 90' },
+  { id: 'yoy',   label: 'YoY',         days: 365, pretty: '365 days vs prior 365' },
+];
+
+function bucketByDay(findings, fromMs, toMs) {
+  const dayMs = 86400000;
+  const spanMs = toMs - fromMs;
+  // Pick bucket width: daily for ≤45 days, weekly ≤180, monthly beyond.
+  let bucketMs, bucketCount;
+  if (spanMs <= 45 * dayMs)       { bucketMs = dayMs;         bucketCount = Math.ceil(spanMs / bucketMs); }
+  else if (spanMs <= 180 * dayMs) { bucketMs = 7 * dayMs;     bucketCount = Math.ceil(spanMs / bucketMs); }
+  else                            { bucketMs = 30 * dayMs;    bucketCount = Math.ceil(spanMs / bucketMs); }
+  const buckets = Array.from({length: bucketCount}, (_, i) => ({
+    t0: fromMs + i * bucketMs,
+    t1: fromMs + (i + 1) * bucketMs,
+    count: 0,
+  }));
+  for (const f of findings) {
+    const t = new Date(f.ts || 0).getTime();
+    if (t < fromMs || t > toMs) continue;
+    const idx = Math.min(bucketCount - 1, Math.floor((t - fromMs) / bucketMs));
+    if (idx >= 0) buckets[idx].count += 1;
+  }
+  return { buckets, bucketMs };
+}
+
+function TrendingGraph({ findings, comparison }) {
+  const now = Date.now();
+  const cmp = IR_COMPARISONS.find(c => c.id === comparison) || IR_COMPARISONS[0];
+  // If no comparison: default to last 90d trend. Otherwise use the
+  // comparison window.
+  const rangeDays = cmp.days || 90;
+  const fromCurrent = now - rangeDays * 86400000;
+  const currentBuckets = bucketByDay(findings, fromCurrent, now).buckets;
+
+  let priorBuckets = null;
+  let currentTotal = 0, priorTotal = 0;
+  currentBuckets.forEach(b => { currentTotal += b.count; });
+  if (cmp.id !== 'none') {
+    const priorFrom = fromCurrent - rangeDays * 86400000;
+    const priorTo = fromCurrent;
+    priorBuckets = bucketByDay(findings, priorFrom, priorTo).buckets;
+    priorBuckets.forEach(b => { priorTotal += b.count; });
+  }
+  const delta = priorBuckets && priorTotal > 0
+    ? ((currentTotal - priorTotal) / priorTotal) * 100
+    : null;
+
+  // SVG geometry — fixed viewBox, scales with container.
+  const W = 800, H = 190;
+  const pad = { top: 18, right: 18, bottom: 32, left: 44 };
+  const series = [
+    { name: 'current', color: '#5ef38c', buckets: currentBuckets, dashed: false },
+    ...(priorBuckets ? [{ name: 'prior',   color: '#8ba58a', buckets: priorBuckets, dashed: true }] : []),
+  ];
+  const allCounts = series.flatMap(s => s.buckets.map(b => b.count));
+  const maxVal = Math.max(1, ...allCounts);
+  const xStep = (W - pad.left - pad.right) / Math.max(1, Math.max(...series.map(s => s.buckets.length - 1)));
+  const yForCount = (c) => H - pad.bottom - (c / maxVal) * (H - pad.top - pad.bottom);
+  const pointsFor = (buckets) => buckets.map((b, i) => {
+    const x = pad.left + i * xStep;
+    return `${x},${yForCount(b.count)}`;
+  }).join(' ');
+  const areaFor = (buckets) => {
+    if (buckets.length === 0) return '';
+    const points = buckets.map((b, i) => `${pad.left + i * xStep},${yForCount(b.count)}`);
+    return `M ${pad.left},${H - pad.bottom} L ${points.join(' L ')} L ${pad.left + (buckets.length - 1) * xStep},${H - pad.bottom} Z`;
+  };
+
+  // Axis ticks: 4 x-ticks evenly spaced, 4 y-ticks.
+  const xTickCount = 4;
+  const xTicks = Array.from({length: xTickCount + 1}, (_, i) => {
+    const b = currentBuckets[Math.round(i * (currentBuckets.length - 1) / xTickCount)];
+    return b ? { x: pad.left + (b === currentBuckets[currentBuckets.length - 1] ? currentBuckets.length - 1 : currentBuckets.indexOf(b)) * xStep, label: new Date(b.t0).toISOString().slice(5, 10) } : null;
+  }).filter(Boolean);
+  const yTickCount = 4;
+  const yTicks = Array.from({length: yTickCount + 1}, (_, i) => {
+    const v = Math.round(maxVal * (i / yTickCount));
+    return { y: yForCount(v), label: v };
+  });
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Trending</span>
+        <span className="k" style={{display:'flex', alignItems:'center', gap:10, flexWrap:'wrap'}}>
+          <span className="mono" style={{fontSize:11}}>{cmp.pretty || `last ${rangeDays} days`}</span>
+          {delta != null && (
+            <span className={`chip chip--${delta >= 0 ? 'warn' : 'safe'}`}
+                  style={{fontSize:10, fontFamily:"'JetBrains Mono', monospace"}}
+                  title={`current ${currentTotal} · prior ${priorTotal}`}>
+              {delta >= 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(1)}%
+            </span>
+          )}
+          <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
+            <span style={{color:'#5ef38c'}}>●</span> current {currentTotal}
+            {priorBuckets && <> · <span style={{color:'#8ba58a'}}>●</span> prior {priorTotal}</>}
+          </span>
+        </span>
+      </div>
+      <div style={{padding:14}}>
+        <svg viewBox={`0 0 ${W} ${H}`} style={{width:'100%', height:200, display:'block'}}>
+          {/* grid */}
+          {yTicks.map((t, i) => (
+            <g key={'y'+i}>
+              <line x1={pad.left} y1={t.y} x2={W - pad.right} y2={t.y}
+                    stroke="var(--line-soft)" strokeWidth="0.5"/>
+              <text x={pad.left - 6} y={t.y + 3} textAnchor="end"
+                    fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-dim)">
+                {t.label}
+              </text>
+            </g>
+          ))}
+          {/* x-axis labels */}
+          {xTicks.map((t, i) => (
+            <text key={'x'+i} x={t.x} y={H - pad.bottom + 16} textAnchor="middle"
+                  fontFamily="JetBrains Mono" fontSize="9" fill="var(--ink-dim)">
+              {t.label}
+            </text>
+          ))}
+          {/* x-axis line */}
+          <line x1={pad.left} y1={H - pad.bottom} x2={W - pad.right} y2={H - pad.bottom}
+                stroke="var(--line)" strokeWidth="1"/>
+
+          {/* area fills (subtle) */}
+          {series.map((s, i) => (
+            <path key={'area'+i} d={areaFor(s.buckets)}
+                  fill={s.color} opacity={s.dashed ? 0.06 : 0.12}/>
+          ))}
+          {/* polylines */}
+          {series.map((s, i) => (
+            <polyline key={'line'+i}
+                      fill="none" stroke={s.color} strokeWidth="1.6"
+                      strokeDasharray={s.dashed ? '5 4' : 'none'}
+                      points={pointsFor(s.buckets)}/>
+          ))}
+          {/* data points */}
+          {currentBuckets.map((b, i) => (
+            <circle key={'pt'+i}
+                    cx={pad.left + i * xStep} cy={yForCount(b.count)}
+                    r="2" fill="#5ef38c"
+                    title={`${new Date(b.t0).toISOString().slice(0,10)} · ${b.count} findings`}/>
+          ))}
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+// ── Region map — stylised continent blocks by count ───────────
+// Real world map would balloon the file; this uses five positioned
+// rectangles laid out roughly geographically so the analyst reads
+// 'where in the world' at a glance. Fill opacity tracks count.
+const IR_REGION_LAYOUT = [
+  { id: 'NA',    label: 'North America',         left:  3, top:  8, w: 28, h: 40 },
+  { id: 'EU',    label: 'Europe',                left: 40, top:  8, w: 16, h: 28 },
+  { id: 'APAC',  label: 'Asia-Pacific',          left: 60, top:  4, w: 37, h: 54 },
+  { id: 'LATAM', label: 'Latin America',         left: 10, top: 52, w: 22, h: 42 },
+  { id: 'MEA',   label: 'Middle East · Africa',  left: 40, top: 40, w: 22, h: 54 },
+];
+function RegionMap({ regions, onFilter }) {
+  const byId = {};
+  regions.forEach(r => { byId[r.region] = r.count; });
+  const maxCount = Math.max(1, ...regions.map(r => r.count));
+  const intensity = (n) => !n ? 0 : Math.max(0.18, 0.2 + (n / maxCount) * 0.6);
+
+  return (
+    <div style={{
+      position:'relative', width:'100%', aspectRatio:'2 / 1',
+      minHeight: 240,
+      background:'var(--bg-1)',
+      border:'1px solid var(--line-soft)',
+      borderRadius:'var(--radius)',
+      overflow:'hidden',
+    }}>
+      {/* Grid backdrop for map aesthetic */}
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none"
+           style={{position:'absolute', inset:0, width:'100%', height:'100%', opacity:0.18, pointerEvents:'none'}}>
+        {Array.from({length: 11}).map((_, i) => (
+          <line key={'h'+i} x1="0" y1={i*10} x2="100" y2={i*10}
+                stroke="var(--line-strong)" strokeWidth="0.08"/>
+        ))}
+        {Array.from({length: 21}).map((_, i) => (
+          <line key={'v'+i} x1={i*5} y1="0" x2={i*5} y2="100"
+                stroke="var(--line-strong)" strokeWidth="0.04"/>
+        ))}
+      </svg>
+      {IR_REGION_LAYOUT.map(r => {
+        const count = byId[r.id] || 0;
+        const alpha = intensity(count);
+        const border = count > 0 ? 'var(--accent)' : 'var(--line-strong)';
+        const labelColor = count >= maxCount * 0.66 ? '#ffb432'
+                         : count >= maxCount * 0.33 ? '#5ef38c'
+                         : 'var(--ink-bright)';
+        return (
+          <div key={r.id}
+               onClick={() => count > 0 && onFilter && onFilter(r.id)}
+               title={`${r.label} · ${count} findings in range`}
+               style={{
+                 position:'absolute',
+                 left: r.left + '%', top: r.top + '%',
+                 width: r.w + '%', height: r.h + '%',
+                 background: `rgba(94, 243, 140, ${alpha})`,
+                 border: '1px solid ' + border,
+                 borderRadius: 4,
+                 cursor: count > 0 ? 'pointer' : 'default',
+                 display:'flex', flexDirection:'column',
+                 alignItems:'center', justifyContent:'center',
+                 padding: 6,
+                 transition: 'background 200ms ease-out',
+               }}>
+            <span style={{
+              fontFamily:"'Space Grotesk', sans-serif",
+              fontWeight:700, fontSize: Math.max(18, Math.min(40, r.w * 1.2)),
+              lineHeight:1, color: labelColor,
+            }}>{count || '—'}</span>
+            <span className="muted mono" style={{
+              fontSize:10, marginTop:5,
+              textTransform:'uppercase', letterSpacing:'0.1em',
+              textAlign:'center',
+            }}>
+              {r.label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function DashboardSurface() {
   const [range, setRange] = React.useState(() => {
     try { return localStorage.getItem('ir:dashRange') || '7d'; } catch { return '7d'; }
   });
+  const [comparison, setComparison] = React.useState(() => {
+    try { return localStorage.getItem('ir:dashCmp') || 'none'; } catch { return 'none'; }
+  });
   React.useEffect(() => {
     try { localStorage.setItem('ir:dashRange', range); } catch {}
   }, [range]);
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:dashCmp', comparison); } catch {}
+  }, [comparison]);
 
   const findings = window.useIrFindings('?limit=1000');
   const [dispo, setDispo] = React.useState(readDispo);
@@ -5587,9 +5961,9 @@ function DashboardSurface() {
 
   return (
     <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
-      {/* Time range + live source chip */}
+      {/* Time range + comparison + live source chip */}
       <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
-        <span className="label" style={{marginRight:6}}>Time range</span>
+        <span className="label" style={{marginRight:6}}>Range</span>
         {IR_TIME_RANGES.map(r => (
           <button key={r.id}
                   className={`btn ${range === r.id ? 'primary' : 'ghost'}`}
@@ -5598,8 +5972,19 @@ function DashboardSurface() {
             {r.label}
           </button>
         ))}
+        <span style={{borderLeft:'1px solid var(--line)', height:22, margin:'0 6px'}}/>
+        <span className="label" style={{marginRight:6}}>Compare</span>
+        {IR_COMPARISONS.map(c => (
+          <button key={c.id}
+                  className={`btn ${comparison === c.id ? 'primary' : 'ghost'}`}
+                  onClick={() => setComparison(c.id)}
+                  title={c.pretty || 'current range only'}
+                  style={{fontSize:11, padding:'5px 12px'}}>
+            {c.label}
+          </button>
+        ))}
         <span className="muted mono" style={{fontSize:11, marginLeft:10}}>
-          {stats.total} findings in range
+          {stats.total} in range
         </span>
         <span style={{flex:1}}/>
         {isDemoMode() && (
@@ -5633,6 +6018,12 @@ function DashboardSurface() {
                  hint={`median · p90 ${fmtMinutes(stats.p90Remediate)} · n=${stats.remediateCount}`}
                  tint="var(--accent)" />
       </div>
+
+      {/* Findings density — last 24h heatmap (full width) */}
+      <FindingsDensity findings={all} />
+
+      {/* Trending — current vs prior (full width) */}
+      <TrendingGraph findings={all} comparison={comparison} />
 
       {/* Breakdowns grid */}
       <div style={{display:'grid', gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)', gap:'var(--gap)'}}>
@@ -5708,11 +6099,11 @@ function DashboardSurface() {
           </div>
         </div>
 
-        {/* By region — horizontal bars */}
+        {/* By region — stylised world map */}
         <div className="box">
           <div className="box-title">
             <span className="t">By region</span>
-            <span className="k">geographical breakdown</span>
+            <span className="k">click a region to filter the queue</span>
           </div>
           <div style={{padding:14}}>
             {stats.regions.length === 0 && (
@@ -5720,15 +6111,21 @@ function DashboardSurface() {
                 — no region metadata in range · upstream emitter should set metadata.region —
               </div>
             )}
-            {stats.regions.map(r => {
-              const max = stats.regions[0].count;
-              return (
-                <IrHBar key={r.region}
-                        label={r.region}
-                        value={r.count} max={max}
-                        color="var(--accent)" />
-              );
-            })}
+            {stats.regions.length > 0 && (
+              <RegionMap regions={stats.regions}
+                         onFilter={(region) => irPivotToQueue({ search: region })} />
+            )}
+            {/* Small legend row for the regions not in the map (if any) */}
+            {stats.regions.filter(r => !IR_REGION_LAYOUT.find(l => l.id === r.region)).length > 0 && (
+              <div style={{marginTop:10, display:'flex', gap:6, flexWrap:'wrap', fontSize:10.5}}>
+                <span className="muted mono" style={{marginRight:4}}>other:</span>
+                {stats.regions.filter(r => !IR_REGION_LAYOUT.find(l => l.id === r.region)).map(r => (
+                  <span key={r.region} className="chip chip--ghost" style={{fontSize:9}}>
+                    {r.region} · {r.count}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
