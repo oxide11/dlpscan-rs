@@ -2482,7 +2482,7 @@ function firstSurfaceOf(wsId) {
 // Mirrors siphon-c2's topbar layout so muscle memory carries over.
 // The brand chip reads "IR" instead of "C2" — the only visual
 // difference so the user always knows which console they're in.
-function Topbar({ tweaks, setTweak }) {
+function Topbar({ tweaks, setTweak, openPlaybooks }) {
   return (
     <div className="topbar">
       <div className="brand">
@@ -2491,6 +2491,14 @@ function Topbar({ tweaks, setTweak }) {
       </div>
       <ConsoleChip />
       <span className="spacer" />
+      {/* Playbooks — always visible, muscle-memory close to the
+          admin link. Keyboard 'p' also opens it (handled by App). */}
+      <button className="tb-theme"
+              onClick={() => openPlaybooks && openPlaybooks()}
+              title="Playbooks · analyst procedures + runbooks (press 'p')"
+              style={{fontSize:11, color:'var(--accent)'}}>
+        ❖ Playbooks
+      </button>
       <button className="tb-theme" onClick={() => {
         const order = ['phosphor','amber','ice','light'];
         const next = order[(order.indexOf(tweaks.theme)+1) % order.length];
@@ -6819,6 +6827,303 @@ function EngineeringSurface() {
       </div>
     </div>
   );
+}
+
+// ─── Playbooks · data + markdown renderer ──────────────────────
+// Data the drawer consumes (wired in a later commit). Each entry:
+//   id         — stable key
+//   title      — human label
+//   categories — array of finding.category strings this playbook
+//                covers, used by the drawer's auto-select when the
+//                analyst opens it from a FindingDetail
+//   tags       — surfaces the playbook in keyword search
+//   markdown   — playbook body
+const IR_PLAYBOOKS = [
+  {
+    id: 'pb-cc',
+    title: 'Credit Card Exposure · PCI-DSS',
+    categories: ['Credit Card Numbers'],
+    tags: ['pci', 'cc', 'cardholder', 'pan'],
+    markdown: `
+# Credit Card Exposure · PCI-DSS response
+
+## Immediate actions
+- Confirm the matched value is a real PAN (Luhn checksum passes).
+- Check the **recipient** / **destination** — internal or external?
+- If external → **Escalate** immediately. Do NOT close as event.
+
+## Triage questions
+1. Who is the sender? Is this a known business process?
+2. What channel (email outbound / upload / print)?
+3. Is there a legitimate reason to share PAN externally? (Usually no.)
+4. Are other findings in the same scan related?
+
+## Decision tree
+- **External destination** → Escalate to XSOAR · PCI-DSS breach
+- **Internal**, **redacted or tokenised** → Close event
+- **Internal**, **raw PAN in email body** → Escalate (policy violation)
+- **False match** (test data, public PAN) → Mark FP with note
+
+## Handoff
+- XSOAR playbook: \`pci_exposure_v3\`
+- Legal / compliance watch-list if > \$50k transaction context
+`,
+  },
+  {
+    id: 'pb-phi',
+    title: 'PHI Exposure · HIPAA',
+    categories: ['Healthcare'],
+    tags: ['phi', 'hipaa', 'medical', 'patient'],
+    markdown: `
+# PHI Exposure · HIPAA response
+
+## Immediate actions
+- Identify the **patient** (from context, not from the PHI itself).
+- Determine if the disclosure is authorised (treatment / payment / operations).
+- If unauthorised AND external → **Escalate** + notify Privacy Officer.
+
+## HIPAA triage questions
+1. Is the recipient a **business associate** with a signed BAA?
+2. Was the minimum necessary standard applied?
+3. Is this part of a known authorised disclosure?
+4. How many patients are affected? (Breach notification triggers.)
+
+## Decision tree
+- **Authorised** (BAA, consent, TPO) → Close event with authorisation note
+- **Unauthorised** AND < 500 records → Escalate · breach-notification-low
+- **Unauthorised** AND ≥ 500 records → Escalate · breach-notification-HHS
+- **False match** (de-identified dataset) → Mark FP with note
+
+## Handoff
+- XSOAR playbook: \`hipaa_breach_v2\`
+- Privacy Officer + HIPAA counsel auto-notified via the playbook
+`,
+  },
+  {
+    id: 'pb-credential',
+    title: 'Credential Exposure',
+    categories: ['AWS Credentials', 'Authentication Tokens', 'Banking Authentication'],
+    tags: ['credential', 'secret', 'token', 'key'],
+    markdown: `
+# Credential Exposure · secret in motion
+
+## Immediate actions
+- **Rotate the credential** first, triage after. Every minute is exposure.
+- Identify the secret type: AWS key / session token / HSM key / API key / PIN.
+- Find the owner system (from metadata or log correlation).
+
+## Containment
+- AWS keys → disable in IAM, rotate, audit CloudTrail for abuse
+- OAuth tokens → revoke, force re-auth of the user
+- Database passwords → rotate, audit connection logs
+- Signing / HSM keys → emergency rotation, certificate revocation
+
+## Triage questions
+1. Was this committed to version control? (GitHub history dump?)
+2. Was the channel external? (Internal → still bad but scoped.)
+3. Is the credential high-privilege (admin) or scoped?
+4. How long has it been exposed?
+
+## Decision tree
+- **Any external exfil** → Escalate · credential-breach
+- **Internal-only, rotated, no abuse** → Close event + rotation log
+- **Rotation in progress** → Escalate with "awaiting rotation" note
+- **Honeypot / test credential** → Mark FP with note
+
+## Handoff
+- XSOAR playbook: \`credential_breach_v4\`
+- Security Engineering auto-paged for high-privilege secrets
+`,
+  },
+  {
+    id: 'pb-tlp',
+    title: 'TLP Classification Violation',
+    categories: ['Traffic Light Protocol'],
+    tags: ['tlp', 'classification', 'sharing', 'first'],
+    markdown: `
+# TLP Classification Violation
+
+Traffic Light Protocol (FIRST.org TLP 2.0) marks documents with
+sharing restrictions. A TLP-marked document leaving the permitted
+sharing boundary is a handling-policy violation.
+
+## TLP levels (refresher)
+- **TLP:RED** — named recipients only, no further sharing
+- **TLP:AMBER+STRICT** — recipient organisation only, limited
+- **TLP:AMBER** — recipient organisation + those with need-to-know
+- **TLP:GREEN** — community, not public
+- **TLP:CLEAR** / WHITE — no restriction
+
+## Triage questions
+1. What level did the document carry?
+2. Where was it going? (Email external / upload / public channel?)
+3. Is the recipient on the original distribution list?
+4. Is the document correctly marked, or was it mis-labelled?
+
+## Decision tree
+- **TLP:RED to non-listed recipient** → Escalate · high-priority
+- **TLP:AMBER to external domain** → Escalate · policy-breach
+- **TLP:AMBER+STRICT outside org** → Escalate · high-priority
+- **TLP:GREEN to public channel** → Event (warn the sender)
+- **Mis-marked document** → Mark FP, notify originator to re-mark
+
+## Handoff
+- XSOAR playbook: \`tlp_violation_v1\`
+- Threat intel team notified for TLP:RED / AMBER+STRICT violations
+`,
+  },
+  {
+    id: 'pb-ssn',
+    title: 'SSN / National ID Exposure',
+    categories: [
+      'North America - United States',
+      'North America - Canada',
+      'Asia-Pacific - Australia',
+    ],
+    tags: ['ssn', 'itin', 'sin', 'tfn', 'national id', 'pii'],
+    markdown: `
+# SSN / National ID Exposure
+
+## Immediate actions
+- Verify checksum (SSN has no checksum, SIN passes Luhn, TFN passes mod-11).
+- Identify the individual if possible (from surrounding context).
+- Check the channel for external exfil.
+
+## Triage questions
+1. Is this a legitimate business flow? (HR, tax, background check?)
+2. Is the recipient authorised for this data element?
+3. How many identifiers in the same scan? (Bulk = worse.)
+4. Was the channel encrypted?
+
+## Decision tree
+- **Bulk (>10 IDs) to external** → Escalate · mass-exposure
+- **Single ID, external, not per policy** → Escalate · policy-breach
+- **Authorised flow** (HR, tax) → Close event + flow note
+- **Training / sample data** → Mark FP with note
+
+## Regional handoff
+- US → XSOAR playbook \`us_ssn_exposure_v2\` + HR coordination
+- Canada → PIPEDA breach notification trigger + Privacy Commissioner
+- Australia → Notifiable Data Breach scheme trigger
+`,
+  },
+  {
+    id: 'pb-external',
+    title: 'External Recipient · general procedure',
+    categories: [],
+    tags: ['external', 'exfil', 'recipient'],
+    markdown: `
+# External Recipient · generic DLP response
+
+When the destination is outside the corporate domain (gmail,
+competitor, personal email, unknown partner). Applies across
+finding categories when the Who/Where panels flag the recipient
+as external.
+
+## Standard triage
+1. Does the sender have authorisation to email this recipient?
+2. Is there a signed contract / NDA / BAA with the recipient org?
+3. Is the data classification consistent with the sharing allowed?
+4. How recent is the sender's history of external communications?
+
+## Red flags that escalate
+- Sender recently left the org (check HR system)
+- Unusually large volume to external in the last 7 days
+- Recipient domain never seen before in audit ring
+- Matched value is credential / PCI / PHI / TLP-marked
+
+## Decision tree
+- **Any red flag** → Escalate with red-flag citations
+- **Authorised external (partner in MSA)** → Close event
+- **Unauthorised, no red flags** → Escalate · policy-breach
+- **Benign (personal finance to self)** → Close event + note
+
+## Handoff
+- XSOAR generic: \`external_recipient_review_v1\`
+`,
+  },
+];
+
+// Minimal markdown renderer — handles the subset the playbooks use:
+// headings (# / ## / ###), unordered lists (- / *), inline **bold**
+// and `code`, plus plain paragraphs. No raw HTML passthrough so
+// operator-authored markdown can't inject script tags.
+function renderIrMarkdown(src) {
+  if (!src) return '';
+  const lines = src.split('\n');
+  const out = [];
+  let para = [];
+  let list = null;
+
+  // Inline transformations: code spans first (so ** inside `code`
+  // stays literal), then bold, then paragraph-internal escapes.
+  const renderInline = (s) => {
+    // Escape first so innerHTML is safe for the spans we emit
+    // below. Every non-escaped substitution knows it's operating
+    // on already-escaped content.
+    const esc = s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    return esc
+      .replace(/`([^`]+)`/g, '<code style="background:var(--bg-3);color:var(--accent);padding:1px 5px;border-radius:2px;font-size:0.92em;font-family:\'JetBrains Mono\',monospace">$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<b style="color:var(--ink-bright)">$1</b>');
+  };
+  const flushPara = () => {
+    if (para.length) {
+      out.push('<p style="margin:8px 0;line-height:1.6;color:var(--ink)">' + renderInline(para.join(' ')) + '</p>');
+      para = [];
+    }
+  };
+  const flushList = () => {
+    if (list) {
+      out.push('<ul style="margin:8px 0;padding-left:22px;line-height:1.7;color:var(--ink)">' +
+        list.map(i => '<li style="margin:3px 0">' + renderInline(i) + '</li>').join('') +
+        '</ul>');
+      list = null;
+    }
+  };
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '');
+    if (!line.trim()) {
+      flushPara();
+      flushList();
+      continue;
+    }
+    const h = /^(#{1,3})\s+(.*)$/.exec(line);
+    if (h) {
+      flushPara();
+      flushList();
+      const level = h[1].length;
+      const sizes = { 1: 18, 2: 15, 3: 13 };
+      const margins = { 1: '16px 0 10px', 2: '14px 0 8px', 3: '10px 0 6px' };
+      out.push(`<h${level} style="font-family:'Space Grotesk',sans-serif;font-weight:700;color:var(--ink-bright);font-size:${sizes[level]}px;margin:${margins[level]};letter-spacing:${level === 1 ? '-0.01em' : '0'}">${renderInline(h[2])}</h${level}>`);
+      continue;
+    }
+    const li = /^\s*[-*]\s+(.*)$/.exec(line);
+    if (li) {
+      flushPara();
+      if (!list) list = [];
+      list.push(li[1]);
+      continue;
+    }
+    flushList();
+    para.push(line.trim());
+  }
+  flushPara();
+  flushList();
+  return out.join('');
+}
+
+// Lookup helper used by the drawer in a later commit: given a
+// finding's category, return the best-matching playbook (or null).
+// Falls back to the 'External Recipient' generic playbook when a
+// category has no dedicated entry.
+function matchPlaybookForCategory(cat) {
+  if (!cat) return null;
+  return IR_PLAYBOOKS.find(p => p.categories && p.categories.includes(cat))
+      || IR_PLAYBOOKS.find(p => p.id === 'pb-external')
+      || null;
 }
 
 // ─── App ────────────────────────────────────────────────────────
