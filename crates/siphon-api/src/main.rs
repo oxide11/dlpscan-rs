@@ -2298,17 +2298,14 @@ async fn main() {
                 base.allow_origin(AllowOrigin::list(allowed))
             }
         }
-        _ => CorsLayer::new()
-            .allow_methods([axum::http::Method::POST, axum::http::Method::GET])
-            .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
-            // No SIPHON_CORS_ORIGINS set → local-dev default. The admin
-            // console is typically served from file:// or a sibling
-            // origin (lab ingress, 127.0.0.1:<other-port>), so without
-            // this every browser fetch 'Load failed's on CORS. Production
-            // deployments should set SIPHON_CORS_ORIGINS to a specific
-            // origin list; this default mirrors siphon-fs's
-            // CorsLayer::permissive() for parity.
-            .allow_origin(AllowOrigin::any()),
+        // No SIPHON_CORS_ORIGINS set → local-dev default. The admin
+        // console is typically served from file:// (Origin: null) or a
+        // sibling origin like the lab ingress, so without a permissive
+        // default every browser fetch 'Load failed's on CORS. Matches
+        // siphon-fs exactly for parity. Production deployments should
+        // set SIPHON_CORS_ORIGINS to a specific origin list — the
+        // explicit branch above takes precedence.
+        _ => CorsLayer::permissive(),
     };
 
     // Optional policies directory — loaded once at startup. Endpoints that
