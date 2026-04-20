@@ -6864,23 +6864,74 @@ function looksLikeText(bytes) {
   return printable / sample.length >= 0.95;
 }
 
+// Shannon entropy over 8-bit bytes. 0–8 range. Each byte is one of
+// 256 values so max entropy = log2(256) = 8. Tier map is opinionated
+// for forensic triage rather than theoretically precise.
+function shannonEntropy(bytes) {
+  if (!bytes || bytes.length === 0) return 0;
+  const counts = new Uint32Array(256);
+  for (let i = 0; i < bytes.length; i++) counts[bytes[i]]++;
+  let H = 0;
+  const n = bytes.length;
+  for (let i = 0; i < 256; i++) {
+    if (!counts[i]) continue;
+    const p = counts[i] / n;
+    H -= p * Math.log2(p);
+  }
+  return H;
+}
+function entropyTier(H) {
+  if (H < 2.5) return { label: 'very redundant', hint: 'lots of repeating bytes — text with long runs, empty-ish padding, or fixed-value binary', color: 'var(--ink-soft)' };
+  if (H < 5.5) return { label: 'text · structured', hint: 'typical of plain text, JSON, XML, CSV, HTML, source code', color: '#94d0ff' };
+  if (H < 7.0) return { label: 'mixed · lightly compressed', hint: 'document formats (PDF, Office), light compression, or native binaries', color: 'var(--accent)' };
+  if (H < 7.8) return { label: 'compressed · binary', hint: 'archives (zip / gzip / 7z / rar), media (jpeg / mp3 / mp4), packed binaries', color: 'var(--amber)' };
+  return { label: 'high entropy · likely encrypted', hint: 'random or near-random bytes — true encryption, compressed+encrypted, or cryptographic keys', color: 'var(--red)' };
+}
+
 // ── File Inspector tab — picker + metadata + magic-byte
-//    identification. Entropy + hex dump land in 3d.
+//    identification + Shannon entropy + hex dump.
 function CryptoFileInspector() {
   const [file, setFile] = React.useState(null);
   const [firstBytes, setFirstBytes] = React.useState(null);
+  const [entropy, setEntropy] = React.useState(null);
+  const [computing, setComputing] = React.useState(false);
   const [readError, setReadError] = React.useState(null);
 
-  // Read the first 64 bytes of the file whenever it changes.
-  // ArrayBuffer → Uint8Array. 64 is enough for every signature in
-  // MAGIC_SIGNATURES and for the 3d hex-dump preview.
+  // Read up to 512 bytes for the hex-dump preview + magic check,
+  // plus up to 4 MiB for entropy. Both runs share a cancellation
+  // flag so switching files mid-load doesn't stamp stale state.
   React.useEffect(() => {
-    if (!file) { setFirstBytes(null); setReadError(null); return; }
+    if (!file) {
+      setFirstBytes(null); setEntropy(null); setComputing(false); setReadError(null);
+      return;
+    }
     let cancelled = false;
     setReadError(null);
-    file.slice(0, 64).arrayBuffer()
-      .then(buf => { if (!cancelled) setFirstBytes(new Uint8Array(buf)); })
-      .catch(e => { if (!cancelled) setReadError(String(e && e.message || e)); });
+    setEntropy(null);
+    setComputing(true);
+
+    const dumpSize    = Math.min(512, file.size);
+    const entropySize = Math.min(4 * 1024 * 1024, file.size);
+
+    Promise.all([
+      file.slice(0, dumpSize).arrayBuffer().then(buf => new Uint8Array(buf)),
+      file.slice(0, entropySize).arrayBuffer().then(buf => new Uint8Array(buf)),
+    ]).then(([dump, full]) => {
+      if (cancelled) return;
+      setFirstBytes(dump);
+      setEntropy({
+        value: shannonEntropy(full),
+        sampled: entropySize < file.size,
+        sampleSize: entropySize,
+        fileSize: file.size,
+      });
+      setComputing(false);
+    }).catch(e => {
+      if (cancelled) return;
+      setReadError(String(e && e.message || e));
+      setComputing(false);
+    });
+
     return () => { cancelled = true; };
   }, [file]);
 
@@ -7063,6 +7114,198 @@ function CryptoFileInspector() {
                     );
                   })()}
                 </>
+              )}
+            </div>
+          </div>
+
+          {/* Shannon entropy */}
+          <div className="box">
+            <div className="box-title">
+              <span className="t">Shannon entropy</span>
+              <span className="k">
+                8-bit bytes · 0–8 range · high values suggest encryption / compression
+              </span>
+            </div>
+            <div style={{padding:14}}>
+              {computing && (
+                <div className="muted mono" style={{fontSize:11, textAlign:'center', padding:10}}>
+                  computing…
+                </div>
+              )}
+              {!computing && entropy && (() => {
+                const H = entropy.value;
+                const tier = entropyTier(H);
+                return (
+                  <>
+                    <div style={{display:'flex', alignItems:'center', gap:14, flexWrap:'wrap', marginBottom:12}}>
+                      <span style={{
+                        fontFamily:"'Space Grotesk', sans-serif",
+                        fontSize:28, fontWeight:700, lineHeight:1,
+                        color: tier.color,
+                      }}>
+                        {H.toFixed(3)}
+                      </span>
+                      <span className="muted mono" style={{fontSize:11}}>bits/byte</span>
+                      <span className="chip" style={{
+                        fontSize:10, padding:'4px 10px',
+                        color: tier.color,
+                        border: '1px solid ' + tier.color,
+                        background: 'transparent',
+                        fontFamily:"'Space Grotesk', sans-serif",
+                        fontWeight: 600, textTransform: 'uppercase',
+                        letterSpacing: '0.08em',
+                      }}>
+                        {tier.label}
+                      </span>
+                    </div>
+
+                    {/* Entropy bar with tier markers */}
+                    <div style={{position:'relative', height: 20, background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)', overflow:'hidden'}}>
+                      <div style={{
+                        position:'absolute', inset:0,
+                        background: `linear-gradient(to right,
+                          var(--ink-soft) 0%,
+                          var(--ink-soft) 31%,
+                          #94d0ff 31%,
+                          #94d0ff 68%,
+                          var(--accent) 68%,
+                          var(--accent) 87%,
+                          var(--amber) 87%,
+                          var(--amber) 97%,
+                          var(--red) 97%,
+                          var(--red) 100%)`,
+                        opacity: 0.2,
+                      }}/>
+                      <div style={{
+                        position:'absolute', top: 0, left: 0, bottom: 0,
+                        width: Math.max(0, Math.min(100, (H / 8) * 100)) + '%',
+                        background: tier.color, opacity: 0.6,
+                        transition: 'width 200ms ease-out',
+                      }}/>
+                      {/* Ticks */}
+                      {[2.5, 5.5, 7.0, 7.8].map(t => (
+                        <div key={t} style={{
+                          position:'absolute', top: 0, bottom: 0,
+                          left: (t / 8 * 100) + '%',
+                          width: 1, background: 'var(--line-strong)',
+                        }}/>
+                      ))}
+                      {/* Current-value arrow */}
+                      <div style={{
+                        position:'absolute', top:'50%', transform:'translateY(-50%)',
+                        left: Math.max(0, Math.min(100, (H / 8) * 100)) + '%',
+                        width: 2, height: '100%',
+                        background: 'var(--ink-bright)', marginLeft: -1,
+                      }}/>
+                    </div>
+                    <div style={{display:'flex', justifyContent:'space-between', fontFamily:"'JetBrains Mono', monospace", fontSize:9.5, color:'var(--ink-dim)', marginTop:4, letterSpacing:'0.08em'}}>
+                      <span>0</span>
+                      <span>2.5 · text</span>
+                      <span>5.5 · structured</span>
+                      <span>7.0 · mixed</span>
+                      <span>7.8 · compressed</span>
+                      <span>8 · encrypted</span>
+                    </div>
+
+                    <div className="muted" style={{fontSize:11, lineHeight:1.6, marginTop:12, padding:'8px 10px', background:'var(--bg-1)', borderLeft:'2px solid ' + tier.color, borderRadius:2}}>
+                      {tier.hint}
+                    </div>
+
+                    {entropy.sampled && (
+                      <div className="muted mono" style={{fontSize:10.5, marginTop:8, textAlign:'right'}}>
+                        computed on first <span style={{color:'var(--ink)'}}>{(entropy.sampleSize / 1048576).toFixed(1)} MiB</span>
+                        {' of '}<span style={{color:'var(--ink)'}}>{(entropy.fileSize / 1048576).toFixed(1)} MiB</span>
+                        {' · large-file sampling'}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* Hex dump — first 512 bytes */}
+          <div className="box">
+            <div className="box-title">
+              <span className="t">Hex dump</span>
+              <span className="k">
+                first {firstBytes ? firstBytes.length : 0} bytes · offset · hex · ASCII
+              </span>
+            </div>
+            <div style={{padding:14}}>
+              {firstBytes && firstBytes.length > 0 && (
+                <div style={{
+                  fontFamily:"'JetBrains Mono', monospace",
+                  fontSize: 11, lineHeight: 1.55,
+                  background:'var(--bg-1)',
+                  border:'1px solid var(--line-soft)',
+                  borderRadius: 'var(--radius)',
+                  padding: 10,
+                  overflowX: 'auto',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {(() => {
+                    const rows = [];
+                    const bytes = firstBytes;
+                    // 16 bytes per row, magic highlight inside the
+                    // matched prefix.
+                    const magicLen = magic ? magic.offset + magic.bytes.length : 0;
+                    for (let off = 0; off < bytes.length; off += 16) {
+                      const rowBytes = bytes.slice(off, Math.min(off + 16, bytes.length));
+                      rows.push({ off, rowBytes });
+                    }
+                    return rows.map(({ off, rowBytes }) => {
+                      return (
+                        <div key={off} style={{display:'grid', gridTemplateColumns:'70px 1fr 170px', gap:16}}>
+                          <span style={{color:'var(--ink-dim)'}}>
+                            {off.toString(16).padStart(8, '0').toUpperCase()}
+                          </span>
+                          <span>
+                            {Array.from(rowBytes).map((b, i) => {
+                              const absPos = off + i;
+                              const inMagic = magic && absPos >= magic.offset && absPos < magic.offset + magic.bytes.length;
+                              return (
+                                <span key={i} style={{
+                                  color: inMagic ? '#5ef38c' : 'var(--ink)',
+                                  fontWeight: inMagic ? 600 : 400,
+                                  background: inMagic ? 'rgba(94,243,140,0.18)' : 'transparent',
+                                  padding: '0 2px',
+                                  marginRight: i === 7 ? 8 : 1,
+                                }}>
+                                  {b.toString(16).padStart(2, '0').toUpperCase()}
+                                </span>
+                              );
+                            })}
+                          </span>
+                          <span style={{
+                            color: 'var(--ink-soft)',
+                            borderLeft: '1px solid var(--line-soft)',
+                            paddingLeft: 10,
+                          }}>
+                            {Array.from(rowBytes).map((b, i) => {
+                              const ch = (b >= 0x20 && b <= 0x7E) ? String.fromCharCode(b) : '·';
+                              const absPos = off + i;
+                              const inMagic = magic && absPos >= magic.offset && absPos < magic.offset + magic.bytes.length;
+                              return (
+                                <span key={i} style={{
+                                  color: inMagic ? '#5ef38c' : 'inherit',
+                                  fontWeight: inMagic ? 600 : 400,
+                                }}>
+                                  {ch}
+                                </span>
+                              );
+                            })}
+                          </span>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              )}
+              {file.size > firstBytes.length && (
+                <div className="muted mono" style={{fontSize:10.5, marginTop:8, textAlign:'right'}}>
+                  … {(file.size - firstBytes.length).toLocaleString()} more bytes not shown
+                </div>
               )}
             </div>
           </div>
