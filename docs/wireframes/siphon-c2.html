@@ -2189,6 +2189,7 @@ const SURFACES = [
   // ── ASSURE ───────────────────────────────────────────────────
   { id: 'assurance',      workspace: 'assure',  icon: '◈',  title: 'Overview', sub: 'availability · coverage · efficacy', cluster: true },
   { id: 'testing',        workspace: 'assure',  icon: '⚔',  title: 'Adversarial Tests', cluster: true },
+  { id: 'adversarial',    workspace: 'assure',  icon: '⟁',  title: 'Adversarial Testing', sub: 'evadex · live' },
   { id: 'corpora',        workspace: 'assure',  icon: '❖',  title: 'Test Corpora',       cluster: true },
   { id: 'compliance',     workspace: 'assure',  icon: '✓',  title: 'Compliance' },
   { id: 'audit',          workspace: 'assure',  icon: '∎',  title: 'Audit Log' },
@@ -11105,7 +11106,368 @@ function Testing() {
   );
 }
 
-Object.assign(window, { Testing, TEST_LIBRARY, RECENT_RUNS, AssureOverview });
+/* ===== surfaces/adversarial.jsx =====
+   Evadex adversarial-testing surface. Backend (evadex HTTP bridge) is not
+   wired yet — metrics render a "connecting…" state, form controls are
+   interactive so the workflow is reviewable, and actions that would hit
+   the bridge are disabled. */
+
+// Tiny self-contained sparkline — kept local so the surface does not
+// depend on MiniSpark being exported from the Dashboard script block.
+function EvadexSpark({ data, height, color }) {
+  const safe = Array.isArray(data) && data.length ? data : [0];
+  const max = Math.max(1, ...safe);
+  const min = Math.min(...safe);
+  const range = Math.max(1, max - min);
+  const h = height || 24;
+  const points = safe
+    .map((v, i) => `${(i / Math.max(1, safe.length - 1)) * 100},${h - ((v - min) / range) * (h - 2) - 1}`)
+    .join(' ');
+  return (
+    <svg viewBox={`0 0 100 ${h}`} preserveAspectRatio="none" style={{width:'100%', height:h, display:'block'}}>
+      <polyline points={points} fill="none" stroke={color || 'var(--accent)'} strokeWidth="1.5"/>
+    </svg>
+  );
+}
+
+function EvadexAdversarial() {
+  const { PageBar } = window;
+
+  // ── Run control state ──────────────────────────────────────
+  const [profile,  setProfile]  = React.useState('banking-pci-ca');
+  const [tier,     setTier]     = React.useState('core');
+  const [evasion,  setEvasion]  = React.useState('weighted');
+  const [schedule, setSchedule] = React.useState(true);
+
+  // ── File generator state ───────────────────────────────────
+  const [fmt,       setFmt]       = React.useState('xlsx');
+  const [genTier,   setGenTier]   = React.useState('banking');
+  const [genCat,    setGenCat]    = React.useState('PCI');
+  const [count,     setCount]     = React.useState(250);
+  const [evRate,    setEvRate]    = React.useState(30);
+  const [lang,      setLang]      = React.useState('EN');
+  const [template,  setTemplate]  = React.useState('banking-statement');
+
+  // ── Category results (placeholder shape — fills in once the
+  //     evadex bridge lands). Values intentionally '—' to signal
+  //     the pending state without hiding the columns.
+  const CATEGORIES = ['PCI', 'PII', 'PHI', 'CRED', 'SECRET', 'CRYPTO', 'CLASSIFIED'];
+
+  // ── History placeholder — 10 rows of pending runs so the table
+  //     shape, sparkline, and export flow are reviewable.
+  const HISTORY = Array.from({length: 10}, (_, i) => ({
+    run:   `R-${String(48500 - i).padStart(5, '0')}`,
+    when:  `pending · slot ${i + 1}`,
+    prof:  ['banking-pci-ca','hr-ca-core','finance-regional','banking-pci-ca','full-sweep','banking-pci-ca','hr-ca-core','finance-regional','banking-pci-ca','full-sweep'][i],
+    det:   '—',
+  }));
+
+  return (
+    <div>
+      <PageBar
+        crumbs={['Assure', 'Adversarial Testing']}
+        title="Adversarial Testing"
+        subtitle="Evadex evasion harness · detection · false-positive · coverage against Siphon detectors"
+        actions={<>
+          <span className="chip chip--warn">evadex · connecting</span>
+          <button className="btn ghost" disabled title="bridge not wired">Open archive</button>
+          <button className="btn primary" disabled title="bridge not wired">＋ New suite</button>
+        </>}
+      />
+
+      {/* ══════════ SECTION 1 — Overview metrics ══════════ */}
+      <div className="grid grid-3" style={{marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Detection Rate</span>
+            <span className="k">recall · overall % across all categories</span>
+          </div>
+          <div className="stat">
+            <span className="s-label">current</span>
+            <span className="s-val" style={{color:'var(--ink-dim)', fontFamily:"'JetBrains Mono', monospace"}}>connecting…</span>
+            <span className="s-delta muted">vs last run · —</span>
+          </div>
+          <div style={{marginTop:8, opacity:0.35}}>
+            <EvadexSpark data={[0,0,0,0,0,0,0,0]} color="var(--safe)" height={28} />
+          </div>
+        </div>
+
+        <div className="box">
+          <div className="box-title">
+            <span className="t">False Positive Rate</span>
+            <span className="k">precision metric · benign flagged</span>
+          </div>
+          <div className="stat">
+            <span className="s-label">current</span>
+            <span className="s-val" style={{color:'var(--ink-dim)', fontFamily:"'JetBrains Mono', monospace"}}>connecting…</span>
+            <span className="s-delta muted">vs last run · —</span>
+          </div>
+          <div style={{marginTop:8, opacity:0.35}}>
+            <EvadexSpark data={[0,0,0,0,0,0,0,0]} color="var(--amber)" height={28} />
+          </div>
+        </div>
+
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Coverage</span>
+            <span className="k">% of Siphon patterns tested</span>
+          </div>
+          <div className="stat">
+            <span className="s-label">current</span>
+            <span className="s-val" style={{color:'var(--ink-dim)', fontFamily:"'JetBrains Mono', monospace"}}>connecting…</span>
+            <span className="s-delta muted">— / — patterns</span>
+          </div>
+          <div style={{marginTop:8, opacity:0.35}}>
+            <EvadexSpark data={[0,0,0,0,0,0,0,0]} color="var(--accent)" height={28} />
+          </div>
+        </div>
+      </div>
+
+      {/* ══════════ SECTION 2 — Run Controls ══════════ */}
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title">
+          <span className="t">Run controls</span>
+          <span className="k">configure an evadex run · profile · tier · evasion mode</span>
+        </div>
+
+        <div className="grid" style={{gridTemplateColumns:'1fr 1fr 1fr', gap:'var(--gap)'}}>
+          <div>
+            <div className="label" style={{marginBottom:4}}>Profile</div>
+            <select value={profile} onChange={e => setProfile(e.target.value)}
+                    style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+              <option value="banking-pci-ca">banking-pci-ca · PCI + PII (CA)</option>
+              <option value="hr-ca-core">hr-ca-core · SIN + PHI</option>
+              <option value="finance-regional">finance-regional · wire + swift</option>
+              <option value="finance-core">finance-core · account + routing</option>
+              <option value="full-sweep">full-sweep · every active detector</option>
+            </select>
+          </div>
+          <div>
+            <div className="label" style={{marginBottom:4}}>Tier</div>
+            <select value={tier} onChange={e => setTier(e.target.value)}
+                    style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+              <option value="banking">banking</option>
+              <option value="core">core</option>
+              <option value="regional">regional</option>
+              <option value="full">full</option>
+            </select>
+          </div>
+          <div>
+            <div className="label" style={{marginBottom:4}}>Evasion mode</div>
+            <select value={evasion} onChange={e => setEvasion(e.target.value)}
+                    style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+              <option value="random">random · uniform sampling</option>
+              <option value="weighted">weighted · tactic-frequency prior</option>
+              <option value="adversarial">adversarial · gradient / search</option>
+            </select>
+          </div>
+        </div>
+
+        <hr className="sep" />
+
+        <div className="row" style={{gap:12, alignItems:'center', flexWrap:'wrap'}}>
+          <button className="btn primary" disabled title="bridge not wired">▶ Run now</button>
+          <label style={{display:'inline-flex', alignItems:'center', gap:6, cursor:'pointer'}}>
+            <input type="checkbox" checked={schedule} onChange={e => setSchedule(e.target.checked)} />
+            <span className="label" style={{margin:0}}>schedule · nightly 04:00 UTC</span>
+          </label>
+          <span className="right row" style={{gap:14, alignItems:'center'}}>
+            <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
+              last run · <span className="muted">—</span>
+            </span>
+            <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
+              next · {schedule ? 'tonight 04:00' : 'off'}
+            </span>
+          </span>
+        </div>
+      </div>
+
+      {/* ══════════ SECTION 3 — Results table ══════════ */}
+      <div className="grid" style={{gridTemplateColumns:'1.8fr 1fr', gap:'var(--gap)', marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Per-category results</span>
+            <span className="k">TP · FN · FP · recall · precision · last run</span>
+          </div>
+          <div style={{display:'grid', gridTemplateColumns:'90px 70px 70px 70px 90px 90px', gap:8, fontSize:13, alignItems:'center'}}>
+            <span className="label">Category</span>
+            <span className="label">TP</span>
+            <span className="label">FN</span>
+            <span className="label">FP</span>
+            <span className="label">Recall</span>
+            <span className="label">Precision</span>
+            {CATEGORIES.flatMap((c, i) => [
+              <span key={'a'+i}><span className={`chip chip--${c==='PCI'?'red':c==='PII'||c==='PHI'?'warn':c==='CRED'||c==='SECRET'?'teal':'ghost'}`}>{c}</span></span>,
+              <span key={'b'+i} className="mono" style={{fontSize:11, color:'var(--ink-dim)'}}>—</span>,
+              <span key={'c'+i} className="mono" style={{fontSize:11, color:'var(--ink-dim)'}}>—</span>,
+              <span key={'d'+i} className="mono" style={{fontSize:11, color:'var(--ink-dim)'}}>—</span>,
+              <span key={'e'+i} className="mono" style={{fontSize:11, color:'var(--ink-dim)'}}>—</span>,
+              <span key={'f'+i} className="mono" style={{fontSize:11, color:'var(--ink-dim)'}}>—</span>,
+            ])}
+          </div>
+        </div>
+
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Top evasions bypassing detection</span>
+            <span className="k">ranked · last completed run</span>
+          </div>
+          <div style={{display:'grid', gridTemplateColumns:'1fr 70px', gap:6, fontSize:12}}>
+            {[
+              'nfkc + fullwidth mix',
+              'zero-width joiner splits',
+              'homoglyph · cyrillic a/о',
+              'b64-nested · triple wrap',
+              'prompt-leak · "forget previous"',
+              'gzip + b64 compound',
+              'csv injection · leading =',
+            ].map((t, i) => (
+              <React.Fragment key={i}>
+                <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{t}</span>
+                <span className="mono" style={{fontSize:11, color:'var(--ink-dim)', textAlign:'right'}}>—</span>
+              </React.Fragment>
+            ))}
+          </div>
+          <hr className="sep" />
+          <div className="note" style={{fontSize:11}}>
+            Rankings populate once evadex posts a completed run.
+          </div>
+        </div>
+      </div>
+
+      {/* ══════════ SECTION 4 — File Generator ══════════ */}
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title">
+          <span className="t">Synthetic file generator</span>
+          <span className="k">produce realistic test artefacts · run them through Siphon · measure leak-through</span>
+        </div>
+
+        <div className="grid" style={{gridTemplateColumns:'repeat(4, 1fr)', gap:'var(--gap)'}}>
+          <div>
+            <div className="label" style={{marginBottom:4}}>Format</div>
+            <select value={fmt} onChange={e => setFmt(e.target.value)}
+                    style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+              {['xlsx','docx','pdf','csv','json','eml','txt','html'].map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+          </div>
+          <div>
+            <div className="label" style={{marginBottom:4}}>Tier</div>
+            <select value={genTier} onChange={e => setGenTier(e.target.value)}
+                    style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+              {['banking','core','regional','full'].map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <div className="label" style={{marginBottom:4}}>Category</div>
+            <select value={genCat} onChange={e => setGenCat(e.target.value)}
+                    style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+              {['PCI','PII','PHI','CRED','SECRET','CRYPTO','MIXED'].map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div>
+            <div className="label" style={{marginBottom:4}}>Count</div>
+            <input type="number" min="1" max="10000" value={count}
+                   onChange={e => setCount(Number(e.target.value) || 0)}
+                   style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}} />
+          </div>
+        </div>
+
+        <hr className="sep" />
+
+        <div className="grid" style={{gridTemplateColumns:'2fr 1fr 1.5fr', gap:'var(--gap)', alignItems:'end'}}>
+          <div>
+            <div className="label" style={{marginBottom:4}}>
+              Evasion rate · <span className="mono" style={{color:'var(--accent)'}}>{evRate}%</span>
+            </div>
+            <input type="range" min="0" max="100" value={evRate}
+                   onChange={e => setEvRate(Number(e.target.value))}
+                   style={{width:'100%'}} />
+            <div className="muted" style={{fontSize:10, marginTop:2}}>0 = clean · 100 = every record mutated</div>
+          </div>
+          <div>
+            <div className="label" style={{marginBottom:4}}>Language</div>
+            <div className="row" style={{gap:0, border:'1px solid var(--line)', borderRadius:'var(--radius)', overflow:'hidden', width:'fit-content'}}>
+              {['EN','FR-CA'].map(l => (
+                <button key={l} onClick={() => setLang(l)}
+                        className="btn ghost"
+                        style={{
+                          padding:'5px 12px', border:'none', borderRadius:0,
+                          background: lang === l ? 'var(--accent)' : 'transparent',
+                          color:    lang === l ? '#e8efe6'       : 'var(--ink)',
+                          fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+                        }}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div className="label" style={{marginBottom:4}}>Template</div>
+            <select value={template} onChange={e => setTemplate(e.target.value)}
+                    style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+              <option value="banking-statement">banking-statement · monthly</option>
+              <option value="hr-record">hr-record · employee file</option>
+              <option value="invoice">invoice · accounts payable</option>
+              <option value="medical-referral">medical-referral · PHI</option>
+              <option value="credential-dump">credential-dump · sim</option>
+              <option value="generic">generic · mixed tokens</option>
+            </select>
+          </div>
+        </div>
+
+        <hr className="sep" />
+
+        <div className="row" style={{gap:10, alignItems:'center'}}>
+          <button className="btn primary" disabled title="bridge not wired">⬇ Generate + Download</button>
+          <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
+            {count} × {fmt} · {genTier}/{genCat} · {evRate}% evasion · {lang} · {template}
+          </span>
+          <span className="right"><span className="chip chip--warn">evadex · pending</span></span>
+        </div>
+      </div>
+
+      {/* ══════════ SECTION 5 — History ══════════ */}
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title">
+          <span className="t">Run history</span>
+          <span className="k">last 10 evadex runs · detection trend</span>
+        </div>
+
+        <div className="grid" style={{gridTemplateColumns:'2fr 1fr', gap:'var(--gap)', alignItems:'center', marginBottom:'var(--gap)'}}>
+          <div style={{opacity:0.35}}>
+            <EvadexSpark data={[0,0,0,0,0,0,0,0,0,0]} color="var(--safe)" height={40} />
+            <div className="muted" style={{fontSize:10, marginTop:2}}>detection-rate trend · last 10 runs</div>
+          </div>
+          <div className="row" style={{justifyContent:'flex-end'}}>
+            <button className="btn ghost" disabled title="bridge not wired">⬇ Export report</button>
+          </div>
+        </div>
+
+        <div style={{display:'grid', gridTemplateColumns:'110px 1fr 1.4fr 120px', gap:8, fontSize:13, alignItems:'center'}}>
+          <span className="label">Run</span>
+          <span className="label">When</span>
+          <span className="label">Profile</span>
+          <span className="label">Detection</span>
+          {HISTORY.flatMap((r, i) => [
+            <span key={'a'+i} className="mono" style={{fontSize:11}}>{r.run}</span>,
+            <span key={'b'+i} className="muted" style={{fontSize:11}}>{r.when}</span>,
+            <span key={'c'+i} className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{r.prof}</span>,
+            <span key={'d'+i} className="mono" style={{fontSize:11, color:'var(--ink-dim)'}}>{r.det}</span>,
+          ])}
+        </div>
+
+        <hr className="sep" />
+        <div className="note" style={{maxWidth: 760, fontSize:11}}>
+          <b>evadex backend integration is coming.</b> Controls above are live so the
+          workflow is reviewable; runs, downloads, and reports require the evadex bridge
+          — planned endpoints: <span className="mono">POST /v1/evadex/run</span> ·
+          <span className="mono"> GET /v1/evadex/metrics</span> ·
+          <span className="mono"> POST /v1/evadex/generate</span>.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { Testing, TEST_LIBRARY, RECENT_RUNS, AssureOverview, EvadexAdversarial });
 
 </script>
 
@@ -16662,6 +17024,7 @@ function App() {
           Compliance, Testing, AssureOverview, DetectOverview, Settings, Logs, Topbar, WorkspaceBar, SurfaceBar, TweaksPanel,
           Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users,
           LiveScan, CorpusRunner, ApiExplorer, ScanDiff, ProcessState, FPTool, FpQueue, Profiles,
+          EvadexAdversarial,
           DocsSurface, HelpModal } = window;
 
   // expose go() globally so nested surfaces (e.g. DetectOverview cards) can navigate.
@@ -16701,6 +17064,7 @@ function App() {
       assets:         <Assets />,
       tokenization:   <Tokenization />,
       testing:        <Testing />,
+      adversarial:    <EvadexAdversarial />,
       assurance:      <AssureOverview />,
       corpora:        <Corpora />,
       settings:       <Settings tweaks={tweaks} setTweak={setTweak} />,
