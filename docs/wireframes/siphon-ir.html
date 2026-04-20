@@ -6698,6 +6698,119 @@ function DashboardSurface() {
 // Each surface is its own function below. MVP phases fill them in
 // one at a time; this dispatcher lets us ship the shell and the
 // first real surface (Findings Queue) without touching the rest.
+// ─── Crypto Workbench (Analyze → Crypto) ───────────────────────
+// Forensic workbench for the analyst investigating encrypted
+// artefacts: passworded zip files, PDF-encrypted docs, suspicious
+// binaries. Ships as a tabbed surface so each tool stays focused.
+// This commit (phase 3a) lands the shell + tab navigation; each
+// tab renders a stub describing what it'll carry. Subsequent
+// commits fill them in one at a time.
+const CRYPTO_TABS = [
+  { id: 'inspector',  label: 'File Inspector',  hint: 'magic bytes · entropy · hex dump · type detect' },
+  { id: 'hasher',     label: 'Hash Computer',   hint: 'MD5 / SHA-1 / SHA-256 / SHA-384 / SHA-512 (WebCrypto)' },
+  { id: 'zipattack',  label: 'Zip Password',    hint: 'dictionary attack against encrypted zips (in-browser)' },
+];
+
+function CryptoWorkbench() {
+  const [tab, setTab] = React.useState(() => {
+    try { return localStorage.getItem('ir:crypto:tab') || 'inspector'; }
+    catch { return 'inspector'; }
+  });
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:crypto:tab', tab); } catch {}
+  }, [tab]);
+
+  const TabStub = ({ title, description }) => (
+    <div style={{padding:'24px', textAlign:'center', color:'var(--ink-soft)'}}>
+      <div style={{
+        fontFamily:"'Space Grotesk', sans-serif", fontSize:16, fontWeight:700,
+        color:'var(--ink)', marginBottom:10,
+      }}>{title}</div>
+      <div style={{fontSize:12.5, lineHeight:1.7, maxWidth:560, margin:'0 auto'}}>
+        {description}
+      </div>
+    </div>
+  );
+
+  let tabBody;
+  if (tab === 'inspector') {
+    tabBody = (
+      <TabStub title="File Inspector"
+               description={<>
+                 Drop a file to see its magic-byte signature, computed Shannon entropy
+                 (8-bit, 0–8 range — high numbers suggest encryption or compression),
+                 a hex/ASCII dump of the leading bytes, and a best-guess MIME / type
+                 identification. Fills in next commit (phase 3b-d).
+               </>}/>
+    );
+  } else if (tab === 'hasher') {
+    tabBody = (
+      <TabStub title="Hash Computer"
+               description={<>
+                 Drop a file; compute MD5 / SHA-1 / SHA-256 / SHA-384 / SHA-512 via
+                 WebCrypto (MD5 via a bundled fallback). Copy hashes or check them
+                 against known-bad / malware sets. Lands in phase 4.
+               </>}/>
+    );
+  } else if (tab === 'zipattack') {
+    tabBody = (
+      <TabStub title="Zip Password Attack"
+               description={<>
+                 Dictionary-attack an encrypted zip in the browser using zip.js's
+                 WebCrypto-backed decrypt. Upload zip + wordlist (or use a built-in
+                 common-password list); see the first password that successfully
+                 decrypts an entry. Phase 5 — explicitly scoped for triage-sized
+                 wordlists, not cluster-scale cracking.
+               </>}/>
+    );
+  }
+
+  return (
+    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
+      <div className="box" style={{overflow:'hidden'}}>
+        <div className="box-title">
+          <span className="t">Crypto Workbench</span>
+          <span className="k">forensic tooling for encrypted artefacts</span>
+        </div>
+
+        {/* Tab header — click-to-switch, active tab carries the
+            accent bottom border. */}
+        <div style={{
+          display:'flex', borderBottom:'1px solid var(--line-soft)',
+          background:'var(--bg-2)',
+        }}>
+          {CRYPTO_TABS.map(t => {
+            const active = tab === t.id;
+            return (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                      title={t.hint}
+                      style={{
+                        background:'transparent', border:'none',
+                        padding:'12px 18px',
+                        cursor:'pointer',
+                        color: active ? 'var(--ink-bright)' : 'var(--ink-soft)',
+                        borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+                        fontFamily:"'Space Grotesk', sans-serif",
+                        fontWeight: active ? 700 : 500,
+                        fontSize: 13,
+                        letterSpacing: '0.02em',
+                      }}>
+                {t.label}
+              </button>
+            );
+          })}
+          <span style={{flex:1, borderBottom:'2px solid transparent'}}/>
+          <span className="muted mono" style={{alignSelf:'center', padding:'0 14px', fontSize:10.5}}>
+            {CRYPTO_TABS.find(t => t.id === tab)?.hint}
+          </span>
+        </div>
+
+        {tabBody}
+      </div>
+    </div>
+  );
+}
+
 const SURFACE_COMPONENTS = {
   dashboard:      () => <DashboardSurface />,
   findings:       () => <FindingsQueue />,
@@ -6707,8 +6820,7 @@ const SURFACE_COMPONENTS = {
                               description="Case view — group findings, annotate, assign." />,
   handoffs:       () => <Stub title="Handoffs"
                               description="Tickets and escalations to downstream tools (Jira, ServiceNow, email)." />,
-  crypto:         () => <Stub title="Crypto Workbench"
-                              description="Forensic tools for encrypted archives and documents: zip password attack, PDF/Office decrypt, hash compute, entropy + magic-byte inspection. Phase 3-5 of the IR MVP." />,
+  crypto:         () => <CryptoWorkbench />,
   extractor:      () => <Stub title="File Extractor"
                               description="Point-and-shoot at any file siphon-fs recognises (PDF, DOCX, XLSX, PPTX, ZIP/RAR/7z, Parquet, SQLite, EML, MSG, QR)." />,
   timeline:       () => <Stub title="Timeline"
