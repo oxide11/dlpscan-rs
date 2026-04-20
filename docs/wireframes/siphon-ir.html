@@ -2446,6 +2446,7 @@ const IR_WORKSPACES = [
 
 const IR_SURFACES = [
   // ── RESPOND ──────────────────────────────────────────────────
+  { id: 'dashboard',      workspace: 'respond',   icon: '◈',  title: 'Overview',         sub: 'MTTR · totals · breakdowns · repeat occurrences' },
   { id: 'findings',       workspace: 'respond',   icon: '≋',  title: 'Findings Queue',   sub: 'live ring from all pods' },
   { id: 'alerts',         workspace: 'respond',   icon: '!',  title: 'Alerts',           sub: 'threshold-breach signal' },
   { id: 'investigations', workspace: 'respond',   icon: '⌖',  title: 'Investigations',   sub: 'case view · grouping' },
@@ -5266,11 +5267,436 @@ function IntegrationsSurface() {
   );
 }
 
+// ─── Dashboard (Respond → Overview) ─────────────────────────────
+// Operational metrics: MTTR-respond / MTTR-remediate, totals by
+// disposition, breakdowns by analyst / incident type / region, and
+// Repeat Occurrences (users with ≥3 findings in the window).
+// Charts are SVG-free, plain CSS horizontal bars; palette reuses
+// the preview pane's CATEGORY_COLORS so colour coding is
+// consistent across surfaces.
+
+const IR_TIME_RANGES = [
+  { id: '24h', label: '24h',     days: 1 },
+  { id: '7d',  label: '7 days',  days: 7 },
+  { id: '30d', label: '30 days', days: 30 },
+  { id: 'all', label: 'all',     days: 36500 },
+];
+
+function irMedian(arr) {
+  if (!arr.length) return null;
+  const s = arr.slice().sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+function irPercentile(arr, p) {
+  if (!arr.length) return null;
+  const s = arr.slice().sort((a, b) => a - b);
+  const idx = Math.max(0, Math.min(s.length - 1, Math.floor(p * s.length)));
+  return s[idx];
+}
+function fmtMinutes(m) {
+  if (m == null || isNaN(m)) return '—';
+  if (m < 1)    return Math.round(m * 60) + 's';
+  if (m < 60)   return Math.round(m) + 'm';
+  if (m < 1440) return (m / 60).toFixed(1) + 'h';
+  return (m / 1440).toFixed(1) + 'd';
+}
+
+// KPI tile. Renders a big number + uppercase label + optional hint
+// sub-line + accent color. Flex:1 so a row of them distributes
+// evenly across the available width.
+function KpiTile({ label, value, hint, tint }) {
+  return (
+    <div className="box" style={{padding:'16px 18px', flex:'1 1 180px', minWidth:160}}>
+      <div className="muted" style={{
+        fontSize: 10, textTransform:'uppercase', letterSpacing:'0.12em',
+        fontWeight: 600,
+      }}>{label}</div>
+      <div style={{
+        fontFamily:"'Space Grotesk', sans-serif",
+        fontSize: 32, fontWeight: 700, lineHeight: 1.1,
+        color: tint || 'var(--ink-bright)',
+        marginTop: 6,
+      }}>{value}</div>
+      {hint && (
+        <div className="muted mono" style={{fontSize:10.5, marginTop:4}}>
+          {hint}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Horizontal-bar row.
+function IrHBar({ label, value, max, color, right, onClick, labelTint }) {
+  const pct = max > 0 ? (value / max * 100) : 0;
+  return (
+    <div onClick={onClick}
+         style={{
+           display:'grid', gridTemplateColumns:'160px 1fr 60px',
+           gap: 10, alignItems:'center', padding:'5px 0',
+           fontSize: 11.5, fontFamily:"'JetBrains Mono', monospace",
+           cursor: onClick ? 'pointer' : 'default',
+           borderBottom: '1px solid var(--line-soft)',
+         }}>
+      <span style={{
+        overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+        color: labelTint || 'var(--ink-bright)',
+      }} title={label}>
+        {label}
+      </span>
+      <div style={{
+        background:'var(--bg-3)', height: 12, borderRadius: 2,
+        overflow:'hidden', border:'1px solid var(--line-soft)',
+      }}>
+        <div style={{
+          background: color || 'var(--accent)',
+          height:'100%', width: pct + '%', transition: 'width 250ms ease-out',
+        }}/>
+      </div>
+      <span className="mono" style={{textAlign:'right', color:'var(--ink-soft)', fontSize:11}}>
+        {right != null ? right : value}
+      </span>
+    </div>
+  );
+}
+
+function DashboardSurface() {
+  const [range, setRange] = React.useState(() => {
+    try { return localStorage.getItem('ir:dashRange') || '7d'; } catch { return '7d'; }
+  });
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:dashRange', range); } catch {}
+  }, [range]);
+
+  const findings = window.useIrFindings('?limit=1000');
+  const [dispo, setDispo] = React.useState(readDispo);
+  React.useEffect(() => {
+    const resync = () => setDispo(readDispo());
+    window.addEventListener('ir:demoChanged', resync);
+    window.addEventListener('storage', resync);
+    return () => {
+      window.removeEventListener('ir:demoChanged', resync);
+      window.removeEventListener('storage', resync);
+    };
+  }, []);
+
+  const cutoff = React.useMemo(() => {
+    const def = IR_TIME_RANGES.find(r => r.id === range) || IR_TIME_RANGES[1];
+    return Date.now() - def.days * 86400e3;
+  }, [range]);
+
+  const all = (findings.data && findings.data.findings) || [];
+  const windowed = React.useMemo(
+    () => all.filter(f => new Date(f.ts || 0).getTime() >= cutoff),
+    [all, cutoff]
+  );
+
+  const stats = React.useMemo(() => {
+    let open = 0, events = 0, fps = 0, escalated = 0;
+    const respondTimes = [];
+    const remediateTimes = [];
+    const byAnalyst = new Map();
+    const byCategory = new Map();
+    const byRegion = new Map();
+    const byUser = new Map();
+
+    for (const f of windowed) {
+      const d = dispo[f.id];
+      if (!d) open += 1;
+      else if (d.kind === 'event')   events += 1;
+      else if (d.kind === 'fp')      fps += 1;
+      else if (d.kind === 'escalate') escalated += 1;
+
+      if (d) {
+        if (typeof d.respond_min === 'number')   respondTimes.push(d.respond_min);
+        if (typeof d.remediate_min === 'number') remediateTimes.push(d.remediate_min);
+        const who = d.by || d.by_id || 'unknown';
+        if (!byAnalyst.has(who)) byAnalyst.set(who, { name: who, event: 0, fp: 0, escalate: 0 });
+        if (byAnalyst.get(who)[d.kind] != null) byAnalyst.get(who)[d.kind] += 1;
+      }
+
+      if (f.category) byCategory.set(f.category, (byCategory.get(f.category) || 0) + 1);
+      const md = f.metadata || {};
+      if (md.region) byRegion.set(md.region, (byRegion.get(md.region) || 0) + 1);
+      const user = md.user || md.sender;
+      if (user) {
+        if (!byUser.has(user)) {
+          byUser.set(user, {
+            user, count: 0, region: md.region, dept: md.department,
+            sev: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+            escalated: 0,
+          });
+        }
+        const e = byUser.get(user);
+        e.count += 1;
+        if (e.sev[f.severity] != null) e.sev[f.severity] += 1;
+        if (d && d.kind === 'escalate') e.escalated += 1;
+      }
+    }
+
+    const analysts = Array.from(byAnalyst.values())
+      .map(a => ({ ...a, total: a.event + a.fp + a.escalate }))
+      .sort((a, b) => b.total - a.total);
+    const categories = Array.from(byCategory.entries())
+      .map(([cat, count]) => ({ cat, count }))
+      .sort((a, b) => b.count - a.count);
+    const regions = Array.from(byRegion.entries())
+      .map(([region, count]) => ({ region, count }))
+      .sort((a, b) => b.count - a.count);
+    const repeats = Array.from(byUser.values())
+      .filter(u => u.count >= 3)
+      .sort((a, b) => b.count - a.count);
+
+    return {
+      total: windowed.length, open, events, fps, escalated,
+      investigations: open + escalated,
+      medianRespond: irMedian(respondTimes),
+      p90Respond: irPercentile(respondTimes, 0.9),
+      medianRemediate: irMedian(remediateTimes),
+      p90Remediate: irPercentile(remediateTimes, 0.9),
+      analysts, categories, regions, repeats,
+      respondCount: respondTimes.length,
+      remediateCount: remediateTimes.length,
+    };
+  }, [windowed, dispo]);
+
+  return (
+    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
+      {/* Time range + live source chip */}
+      <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
+        <span className="label" style={{marginRight:6}}>Time range</span>
+        {IR_TIME_RANGES.map(r => (
+          <button key={r.id}
+                  className={`btn ${range === r.id ? 'primary' : 'ghost'}`}
+                  onClick={() => setRange(r.id)}
+                  style={{fontSize:11, padding:'5px 12px'}}>
+            {r.label}
+          </button>
+        ))}
+        <span className="muted mono" style={{fontSize:11, marginLeft:10}}>
+          {stats.total} findings in range
+        </span>
+        <span style={{flex:1}}/>
+        {isDemoMode() && (
+          <span className="chip chip--warn" style={{fontSize:10}}>
+            DEMO DATA · seeded fixtures
+          </span>
+        )}
+        <window.LivePill source={findings.source} onClick={findings.refetch}
+                         title="refetch across pods"/>
+      </div>
+
+      {/* KPI row */}
+      <div style={{display:'flex', gap:'var(--gap)', flexWrap:'wrap'}}>
+        <KpiTile label="Open queue"
+                 value={stats.open}
+                 hint={`of ${stats.total} total`}
+                 tint="var(--red)" />
+        <KpiTile label="Incidents · escalated"
+                 value={stats.escalated}
+                 hint="handed off to XSOAR"
+                 tint="var(--amber)" />
+        <KpiTile label="Investigations · active"
+                 value={stats.investigations}
+                 hint="open + escalated" />
+        <KpiTile label="MTTR · respond"
+                 value={fmtMinutes(stats.medianRespond)}
+                 hint={`median · p90 ${fmtMinutes(stats.p90Respond)} · n=${stats.respondCount}`}
+                 tint="var(--accent)" />
+        <KpiTile label="MTTR · remediate"
+                 value={fmtMinutes(stats.medianRemediate)}
+                 hint={`median · p90 ${fmtMinutes(stats.p90Remediate)} · n=${stats.remediateCount}`}
+                 tint="var(--accent)" />
+      </div>
+
+      {/* Breakdowns grid */}
+      <div style={{display:'grid', gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)', gap:'var(--gap)'}}>
+
+        {/* By analyst — stacked bar per analyst */}
+        <div className="box">
+          <div className="box-title">
+            <span className="t">By analyst</span>
+            <span className="k">dispositions in range · {stats.analysts.length} active</span>
+          </div>
+          <div style={{padding:14}}>
+            {stats.analysts.length === 0 && (
+              <div className="muted mono" style={{fontSize:11, padding:10, textAlign:'center'}}>
+                — no dispositions recorded in this range —
+              </div>
+            )}
+            {stats.analysts.map(a => {
+              const max = stats.analysts[0].total || 1;
+              const part = (n) => max ? (n / max * 100) : 0;
+              return (
+                <div key={a.name} style={{
+                  display:'grid', gridTemplateColumns:'160px 1fr 56px',
+                  gap:10, alignItems:'center', padding:'6px 0',
+                  borderBottom:'1px solid var(--line-soft)',
+                  fontSize:11.5, fontFamily:"'JetBrains Mono', monospace",
+                }}>
+                  <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:'var(--ink-bright)'}} title={a.name}>
+                    {a.name}
+                  </span>
+                  <div style={{display:'flex', height:14, borderRadius:2, overflow:'hidden', border:'1px solid var(--line-soft)', background:'var(--bg-3)'}}>
+                    <div title={`${a.escalate} escalated`} style={{background:'var(--amber)', width: part(a.escalate) + '%'}}/>
+                    <div title={`${a.event} events closed`} style={{background:'var(--safe)', width: part(a.event) + '%'}}/>
+                    <div title={`${a.fp} false positives`} style={{background:'var(--ink-soft)', width: part(a.fp) + '%'}}/>
+                  </div>
+                  <span className="mono" style={{textAlign:'right', color:'var(--ink-soft)'}}>{a.total}</span>
+                </div>
+              );
+            })}
+            <div style={{marginTop:10, display:'flex', gap:12, fontSize:10, color:'var(--ink-soft)', fontFamily:"'JetBrains Mono', monospace"}}>
+              <span><span style={{display:'inline-block', width:10, height:10, background:'var(--amber)', verticalAlign:'middle', marginRight:4, borderRadius:1}}/>escalate</span>
+              <span><span style={{display:'inline-block', width:10, height:10, background:'var(--safe)', verticalAlign:'middle', marginRight:4, borderRadius:1}}/>event</span>
+              <span><span style={{display:'inline-block', width:10, height:10, background:'var(--ink-soft)', verticalAlign:'middle', marginRight:4, borderRadius:1}}/>fp</span>
+            </div>
+          </div>
+        </div>
+
+        {/* By incident type — horizontal bars, palette from preview */}
+        <div className="box">
+          <div className="box-title">
+            <span className="t">By incident type</span>
+            <span className="k">{stats.categories.length} distinct categories</span>
+          </div>
+          <div style={{padding:14, maxHeight:400, overflowY:'auto'}}>
+            {stats.categories.length === 0 && (
+              <div className="muted mono" style={{fontSize:11, padding:10, textAlign:'center'}}>
+                — no findings in range —
+              </div>
+            )}
+            {stats.categories.slice(0, 14).map(c => {
+              const palette = CATEGORY_COLORS[c.cat] || MATCH_COLOR_DEFAULT;
+              const max = stats.categories[0].count;
+              return (
+                <IrHBar key={c.cat} label={c.cat} value={c.count} max={max}
+                        color={palette.border}
+                        onClick={() => irPivotToQueue({ category: c.cat })} />
+              );
+            })}
+            {stats.categories.length > 14 && (
+              <div className="muted" style={{fontSize:10.5, marginTop:8, textAlign:'center'}}>
+                + {stats.categories.length - 14} more categories
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* By region — horizontal bars */}
+        <div className="box">
+          <div className="box-title">
+            <span className="t">By region</span>
+            <span className="k">geographical breakdown</span>
+          </div>
+          <div style={{padding:14}}>
+            {stats.regions.length === 0 && (
+              <div className="muted mono" style={{fontSize:11, padding:10, textAlign:'center'}}>
+                — no region metadata in range · upstream emitter should set metadata.region —
+              </div>
+            )}
+            {stats.regions.map(r => {
+              const max = stats.regions[0].count;
+              return (
+                <IrHBar key={r.region}
+                        label={r.region}
+                        value={r.count} max={max}
+                        color="var(--accent)" />
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Repeat Occurrences */}
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Repeat Occurrences</span>
+            <span className="k">
+              {stats.repeats.length} user{stats.repeats.length === 1 ? '' : 's'} with ≥3 findings
+            </span>
+          </div>
+          <div style={{padding:14, maxHeight:400, overflowY:'auto'}}>
+            {stats.repeats.length === 0 && (
+              <div className="muted mono" style={{fontSize:11, padding:10, textAlign:'center'}}>
+                — no repeat occurrences in this range —
+              </div>
+            )}
+            {stats.repeats.map(u => (
+              <div key={u.user}
+                   onClick={() => irPivotToQueue({ search: u.user })}
+                   style={{
+                     padding:'8px 0', borderBottom:'1px solid var(--line-soft)',
+                     fontSize:11.5, fontFamily:"'JetBrains Mono', monospace",
+                     cursor:'pointer',
+                   }}
+                   title="click to filter queue to this user">
+                <div style={{display:'flex', alignItems:'center', gap:10}}>
+                  <span style={{color:'var(--accent)', flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                    {u.user}
+                  </span>
+                  <span className={`chip chip--${u.count >= 8 ? 'red' : 'warn'}`} style={{fontSize:9.5}}>
+                    {u.count} findings
+                  </span>
+                  {u.escalated > 0 && (
+                    <span className="chip chip--amber" style={{fontSize:9.5}}
+                          title={`${u.escalated} escalated to XSOAR`}>
+                      ↗ {u.escalated}
+                    </span>
+                  )}
+                </div>
+                <div style={{display:'flex', gap:10, marginTop:4, fontSize:10, color:'var(--ink-soft)', flexWrap:'wrap'}}>
+                  {u.region && (
+                    <span>
+                      <span style={{textTransform:'uppercase', letterSpacing:'0.08em', marginRight:3}}>region</span>
+                      <span style={{color:'var(--ink)'}}>{u.region}</span>
+                    </span>
+                  )}
+                  {u.dept && (
+                    <span>
+                      <span style={{textTransform:'uppercase', letterSpacing:'0.08em', marginRight:3}}>dept</span>
+                      <span style={{color:'var(--ink)'}}>{u.dept}</span>
+                    </span>
+                  )}
+                  <span style={{display:'inline-flex', gap:4, alignItems:'center'}}>
+                    {Object.entries(u.sev)
+                      .filter(([,n]) => n > 0)
+                      .sort(([a], [b]) => (SEVERITY_RANK[b] || 0) - (SEVERITY_RANK[a] || 0))
+                      .map(([sev, n]) => (
+                        <span key={sev} style={{display:'inline-flex', alignItems:'center', gap:3}}>
+                          {severityChip(sev)}
+                          <span className="mono" style={{fontSize:10}}>×{n}</span>
+                        </span>
+                      ))}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+      </div>
+
+      {stats.total === 0 && (
+        <div className="note" style={{
+          borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)',
+          fontSize:12, lineHeight:1.6,
+        }}>
+          <b>No findings in range.</b> Pick a longer window above, or turn on demo data under
+          Settings → Engineering to populate the dashboard with a seeded set (120 findings,
+          8 analysts, 5 regions, 3 repeat offenders).
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Surface registry ───────────────────────────────────────────
 // Each surface is its own function below. MVP phases fill them in
 // one at a time; this dispatcher lets us ship the shell and the
 // first real surface (Findings Queue) without touching the rest.
 const SURFACE_COMPONENTS = {
+  dashboard:      () => <DashboardSurface />,
   findings:       () => <FindingsQueue />,
   alerts:         () => <Stub title="Alerts"
                               description="Threshold-breach signals routed from siphon-api's audit ring." />,
@@ -5419,7 +5845,7 @@ const TWEAK_DEFAULTS = {
 
 function App() {
   const [surface, setSurface] = React.useState(() => {
-    try { return localStorage.getItem('ir:surface') || 'findings'; } catch { return 'findings'; }
+    try { return localStorage.getItem('ir:surface') || 'dashboard'; } catch { return 'dashboard'; }
   });
   // Sub-route for detail pages. Shape: "finding:<id>" opens the
   // FindingDetail view under the 'findings' surface. Persisted so a
