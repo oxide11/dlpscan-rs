@@ -7315,6 +7315,168 @@ function CryptoFileInspector() {
   );
 }
 
+// Convert an ArrayBuffer / Uint8Array to a lowercase hex string.
+function bytesToHex(buf) {
+  const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  const out = new Array(b.length);
+  for (let i = 0; i < b.length; i++) out[i] = b[i].toString(16).padStart(2, '0');
+  return out.join('');
+}
+
+// Algorithms surfaced in the Hash Computer tab. WebCrypto handles
+// SHA-1 / SHA-256 / SHA-384 / SHA-512 natively; MD5 gets wired in
+// 4b via a bundled implementation since WebCrypto doesn't ship it.
+const HASH_ALGOS = [
+  { id: 'SHA-1',   label: 'SHA-1',   webcrypto: 'SHA-1',   note: 'legacy · broken for collisions · fine for malware catalogues' },
+  { id: 'SHA-256', label: 'SHA-256', webcrypto: 'SHA-256', note: 'industry standard · 64 hex chars' },
+  { id: 'SHA-384', label: 'SHA-384', webcrypto: 'SHA-384', note: 'SHA-2 truncated · 96 hex chars' },
+  { id: 'SHA-512', label: 'SHA-512', webcrypto: 'SHA-512', note: '128 hex chars' },
+];
+
+// ── Hash Computer tab ─────────────────────────────────────────
+// Picks a file, streams it into WebCrypto.subtle.digest for each
+// algorithm, renders each hash with a copy-to-clipboard button.
+// Future 4b will add MD5 via a bundled impl; 4c adds a 'compare
+// against known hash' input for malware-catalogue checks.
+function CryptoHashComputer() {
+  const [file, setFile] = React.useState(null);
+  const [hashes, setHashes] = React.useState({});
+  const [computing, setComputing] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [flash, setFlash] = React.useState(null);
+  const ping = (m) => { setFlash(m); setTimeout(() => setFlash(null), 1100); };
+
+  // Compute every hash in parallel when the file changes. WebCrypto
+  // accepts an ArrayBuffer — we read the file once and reuse for
+  // every algorithm, so the file's only pulled off disk once.
+  React.useEffect(() => {
+    if (!file) {
+      setHashes({}); setComputing(false); setError(null);
+      return;
+    }
+    let cancelled = false;
+    setHashes({}); setError(null); setComputing(true);
+
+    file.arrayBuffer()
+      .then(buf => Promise.all(HASH_ALGOS.map(a =>
+        crypto.subtle.digest(a.webcrypto, buf)
+          .then(d => ({ id: a.id, hex: bytesToHex(d) }))
+          .catch(e => ({ id: a.id, error: String(e && e.message || e) }))
+      )))
+      .then(results => {
+        if (cancelled) return;
+        const map = {};
+        for (const r of results) map[r.id] = r;
+        setHashes(map);
+        setComputing(false);
+      })
+      .catch(e => {
+        if (cancelled) return;
+        setError(String(e && e.message || e));
+        setComputing(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [file]);
+
+  const copyHash = (id, hex) => {
+    try {
+      navigator.clipboard.writeText(hex);
+      ping('Copied ' + id);
+    } catch {
+      ping('Copy failed');
+    }
+  };
+
+  return (
+    <div style={{padding:16, display:'grid', gap:14}}>
+      <CryptoFileDrop file={file} onFile={setFile}
+                      label="or click to pick · file streamed to WebCrypto · no network upload"/>
+
+      {!file && (
+        <div className="muted" style={{fontSize:11.5, lineHeight:1.7, padding:'0 4px'}}>
+          Pick any file. SHA-1 / SHA-256 / SHA-384 / SHA-512 compute in the browser
+          via WebCrypto. MD5 lands next (phase 4b) via a bundled implementation —
+          WebCrypto doesn't include it. 'Compare against known hash' input for
+          malware-catalogue checks lands in 4c.
+        </div>
+      )}
+
+      {error && (
+        <div className="note" style={{borderColor:'var(--red)', background:'var(--red-wash)', color:'var(--red)', fontSize:12}}>
+          <b>Hash failed:</b> {error}
+        </div>
+      )}
+
+      {file && (
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Content hashes</span>
+            <span className="k">
+              {computing
+                ? <span className="mono" style={{fontSize:11}}>computing…</span>
+                : <>
+                    <span className="mono" style={{fontSize:11}}>{Object.keys(hashes).length} of {HASH_ALGOS.length} ready</span>
+                    {flash && <span className="mono" style={{fontSize:10.5, color:'var(--safe)', marginLeft:8}}>✓ {flash}</span>}
+                  </>}
+            </span>
+          </div>
+          <div style={{padding:14, display:'grid', gap:10}}>
+            {HASH_ALGOS.map(a => {
+              const h = hashes[a.id];
+              return (
+                <div key={a.id} style={{
+                  padding: '10px 12px',
+                  background: 'var(--bg-1)',
+                  border: '1px solid var(--line-soft)',
+                  borderRadius: 'var(--radius)',
+                }}>
+                  <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
+                    <span className="chip chip--ghost"
+                          style={{fontSize:10, padding:'3px 8px',
+                                  fontFamily:"'Space Grotesk', sans-serif", fontWeight:600,
+                                  letterSpacing:'0.06em'}}>
+                      {a.label}
+                    </span>
+                    <span className="muted" style={{fontSize:11, flex:1, lineHeight:1.4}}>{a.note}</span>
+                    {h && h.hex && (
+                      <button onClick={() => copyHash(a.id, h.hex)}
+                              title="copy to clipboard"
+                              style={{
+                                background:'transparent',
+                                border:'1px solid var(--line-strong)',
+                                color:'var(--ink)',
+                                padding:'4px 10px', fontSize:11,
+                                fontFamily:"'JetBrains Mono', monospace",
+                                borderRadius:'var(--radius)', cursor:'pointer',
+                              }}>
+                        ⎘ Copy
+                      </button>
+                    )}
+                  </div>
+                  <div style={{
+                    fontFamily:"'JetBrains Mono', monospace",
+                    fontSize: 11, lineHeight: 1.5,
+                    color: h && h.hex ? 'var(--ink-bright)' : 'var(--ink-dim)',
+                    wordBreak: 'break-all',
+                    userSelect: 'all',
+                  }}>
+                    {h && h.error
+                      ? <span style={{color:'var(--red)'}}>error: {h.error}</span>
+                      : h && h.hex
+                        ? h.hex
+                        : <span className="muted">computing…</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CryptoWorkbench() {
   const [tab, setTab] = React.useState(() => {
     try { return localStorage.getItem('ir:crypto:tab') || 'inspector'; }
@@ -7340,14 +7502,7 @@ function CryptoWorkbench() {
   if (tab === 'inspector') {
     tabBody = <CryptoFileInspector />;
   } else if (tab === 'hasher') {
-    tabBody = (
-      <TabStub title="Hash Computer"
-               description={<>
-                 Drop a file; compute MD5 / SHA-1 / SHA-256 / SHA-384 / SHA-512 via
-                 WebCrypto (MD5 via a bundled fallback). Copy hashes or check them
-                 against known-bad / malware sets. Lands in phase 4.
-               </>}/>
-    );
+    tabBody = <CryptoHashComputer />;
   } else if (tab === 'zipattack') {
     tabBody = (
       <TabStub title="Zip Password Attack"
