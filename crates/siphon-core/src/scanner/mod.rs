@@ -264,6 +264,7 @@ fn effective_specificity(
 fn effective_context_required(
     category: &str,
     sub_category: &str,
+    def_context_required: bool,
     overrides: Option<&Arc<HashMap<(String, String), crate::overrides::PatternOverride>>>,
 ) -> bool {
     if let Some(map) = overrides {
@@ -273,7 +274,13 @@ fn effective_context_required(
             }
         }
     }
-    crate::models::is_context_required(sub_category)
+    // Primary source: the PatternDef field. Secondary: the hardcoded
+    // is_context_required() runtime list, which lived independently
+    // for years. The two are kept in lockstep by
+    // `context_required_drift_zero` in tests/audit_spec.rs; the OR
+    // is defense-in-depth so a new pattern added to only one place
+    // still gates until the drift test catches it.
+    def_context_required || crate::models::is_context_required(sub_category)
 }
 
 /// Substring-search context check for runtime (custom) patterns.
@@ -747,6 +754,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 let ctx_required = effective_context_required(
                     pat.category,
                     pat.sub_category,
+                    pat.context_required,
                     config.pattern_field_overrides.as_ref(),
                 );
 
@@ -934,6 +942,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 if effective_context_required(
                     cp.def.category,
                     cp.def.sub_category,
+                    cp.def.context_required,
                     config.pattern_field_overrides.as_ref(),
                 ) {
                     continue;
