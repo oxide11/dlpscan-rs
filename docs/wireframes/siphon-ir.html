@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=1360" />
+<title>Siphon · IR console</title>
+<!-- Shared stylesheet (theme, layout primitives, chips, boxes, buttons). -->
+<!-- Both consoles source from the same file so tweaks propagate. -->
+<link rel="stylesheet" href="siphon-shared.css" />
+</head>
+<body>
+<div id="root"></div>
+<script>
+// ResizeObserver benign-loop shim (same as siphon-c2). Swallows the
+// "ResizeObserver loop completed with undelivered notifications"
+// warning that browsers surface as an uncaught error in dev.
+window.addEventListener('error', (e) => {
+  if (e.message && e.message.includes('ResizeObserver')) { e.stopImmediatePropagation(); e.preventDefault(); return false; }
+});
+const _RO = window.ResizeObserver;
+if (_RO) {
+  window.ResizeObserver = class extends _RO {
+    constructor(cb) { super((entries, o) => { requestAnimationFrame(() => { try { cb(entries, o); } catch {} }); }); }
+  };
+}
+</script>
+
+<!-- React + Babel from CDN (same versions siphon-c2 uses). -->
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" crossorigin="anonymous"></script>
+
+<!-- Shared primitives (URLs, auth, pod registry, useFindingsUnion, LivePill). -->
+<!-- Plain-JS file — loaded BEFORE any Babel-transpiled block so React -->
+<!-- globals exist when it runs. -->
+<script src="siphon-shared.js"></script>
+
+<script type="text/babel" data-presets="react">
+/* ===== siphon-ir shell ========================================= */
+// Incident-response console. Persona: security analyst triaging
+// findings, analysing artifacts, managing evidence. Separate from
+// the detection-engineering console (siphon-c2.html) — the two share
+// primitives via siphon-shared.{css,js} but have their own IA.
+//
+// Workspaces: Respond · Analyze · Correlate · Evidence · Settings.
+
+const IR_WORKSPACES = [
+  { id: 'respond',   label: 'Respond',   hint: 'findings · alerts · investigations', glyph: '◈' },
+  { id: 'analyze',   label: 'Analyze',   hint: 'crypto · extractor · timeline',      glyph: '⧩' },
+  { id: 'correlate', label: 'Correlate', hint: 'pivots · ioc · cross-finding',       glyph: '⇌' },
+  { id: 'evidence',  label: 'Evidence',  hint: 'custody · exhibits · export',        glyph: '∎' },
+  { id: 'settings',  label: 'Settings',  hint: 'responder prefs · notifications',    glyph: '⚙' },
+];
+
+const IR_SURFACES = [
+  // ── RESPOND ──────────────────────────────────────────────────
+  { id: 'findings',       workspace: 'respond',   icon: '≋',  title: 'Findings Queue',   sub: 'live ring from all pods' },
+  { id: 'alerts',         workspace: 'respond',   icon: '!',  title: 'Alerts',           sub: 'threshold-breach signal' },
+  { id: 'investigations', workspace: 'respond',   icon: '⌖',  title: 'Investigations',   sub: 'case view · grouping' },
+  { id: 'handoffs',       workspace: 'respond',   icon: '⇉',  title: 'Handoffs',         sub: 'tickets · escalations' },
+  // ── ANALYZE ──────────────────────────────────────────────────
+  { id: 'crypto',         workspace: 'analyze',   icon: '⎔',  title: 'Crypto Workbench', sub: 'zip · pdf · office · hash' },
+  { id: 'extractor',      workspace: 'analyze',   icon: '⊞',  title: 'File Extractor',   sub: 'any siphon-fs format' },
+  { id: 'timeline',       workspace: 'analyze',   icon: '⧗',  title: 'Timeline',         sub: 'reconstruct by ts + span' },
+  // ── CORRELATE ────────────────────────────────────────────────
+  { id: 'pivots',         workspace: 'correlate', icon: '⇌',  title: 'Pivots',           sub: 'same-document · same-source' },
+  { id: 'ioc',            workspace: 'correlate', icon: '◉',  title: 'IOC Lookup',       sub: 'cross-reference indicators' },
+  // ── EVIDENCE ─────────────────────────────────────────────────
+  { id: 'custody',        workspace: 'evidence',  icon: '∎',  title: 'Chain of Custody', sub: 'per-finding history' },
+  { id: 'exhibits',       workspace: 'evidence',  icon: '▣',  title: 'Exhibits',         sub: 'attached artifacts' },
+  { id: 'export',         workspace: 'evidence',  icon: '↧',  title: 'Export Bundle',    sub: 'package case for handoff' },
+  // ── SETTINGS ─────────────────────────────────────────────────
+  { id: 'ir-settings',    workspace: 'settings',  icon: '⚙',  title: 'Responder Prefs',  sub: 'filters · notifications' },
+  { id: 'ir-deployment',  workspace: 'settings',  icon: '⚿',  title: 'Pod Registry',     sub: 'shared with admin console' },
+];
+
+function workspaceOf(surfaceId) {
+  const s = IR_SURFACES.find(x => x.id === surfaceId);
+  return s ? s.workspace : 'respond';
+}
+function firstSurfaceOf(wsId) {
+  const s = IR_SURFACES.find(x => x.workspace === wsId);
+  return s ? s.id : 'findings';
+}
+
+// ─── Topbar ─────────────────────────────────────────────────────
+// Mirrors siphon-c2's topbar layout so muscle memory carries over.
+// The brand chip reads "IR" instead of "C2" — the only visual
+// difference so the user always knows which console they're in.
+function Topbar({ tweaks, setTweak }) {
+  return (
+    <div className="topbar">
+      <div className="brand">
+        <span style={{fontWeight:700, letterSpacing:'0.08em'}}>POLYGON SIPHON</span>
+        <span className="c2" style={{color:'var(--threat)'}}>· IR</span>
+      </div>
+      <ConsoleChip />
+      <span className="spacer" />
+      <button className="tb-theme" onClick={() => {
+        const order = ['phosphor','amber','ice','light'];
+        const next = order[(order.indexOf(tweaks.theme)+1) % order.length];
+        setTweak('theme', next);
+      }} title="Cycle theme">
+        {({phosphor:'◉ PHOSPHOR', amber:'◉ AMBER', ice:'◉ ICE', light:'◉ DAY'})[tweaks.theme] || '◉ PHOSPHOR'}
+      </button>
+      <a href="siphon-c2.html"
+         className="tb-theme"
+         title="Switch to admin console (detection engineering)"
+         style={{fontSize:11, textDecoration:'none'}}>
+        ⇄ admin
+      </a>
+      <span className="tb-user">IR analyst</span>
+    </div>
+  );
+}
+
+// Console chip — IR-flavoured equivalent of siphon-c2's DeploymentChip.
+// Red accent so the operator instantly knows this is the IR console,
+// not the admin surface.
+function ConsoleChip() {
+  return (
+    <span
+      title="Incident-response console · reads findings from every pod in the registry"
+      style={{
+        padding: '2px 8px', fontSize: 10,
+        fontFamily: "'JetBrains Mono', monospace",
+        letterSpacing: '0.12em', fontWeight: 700, textTransform: 'uppercase',
+        border: '1px solid var(--threat)',
+        color: 'var(--threat)',
+        background: 'var(--threat-wash, var(--red-wash))',
+        borderRadius: 'var(--radius)',
+      }}>
+      RESPONDER · LIVE
+    </span>
+  );
+}
+
+// ─── WorkspaceBar ───────────────────────────────────────────────
+function WorkspaceBar({ current, go }) {
+  const activeW = workspaceOf(current);
+  return (
+    <div className="wsbar">
+      {IR_WORKSPACES.filter(w => !w.hidden).map(w => (
+        <button
+          key={w.id}
+          className={`wsbar-btn ${activeW === w.id ? 'active' : ''}`}
+          onClick={() => go(firstSurfaceOf(w.id))}
+          title={w.hint}>
+          <span className="wsbar-topline">
+            <span className="wsbar-glyph">{w.glyph}</span>
+            <span className="wsbar-label">{w.label}</span>
+          </span>
+          <span className="wsbar-hint">{w.hint}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── SurfaceBar (horizontal, sits under wsbar) ──────────────────
+function SurfaceBar({ current, go }) {
+  const activeW = workspaceOf(current);
+  const items = IR_SURFACES.filter(s => s.workspace === activeW);
+  return (
+    <nav className="surfacebar" aria-label="Surfaces">
+      {items.map(s => (
+        <a key={s.id}
+           className={current === s.id ? 'active' : ''}
+           onClick={() => go(s.id)}>
+          <span className="icn">{s.icon}</span>
+          <span className="t">{s.title}</span>
+          {s.sub && <span className="sub">· {s.sub}</span>}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+// ─── Placeholder surface ────────────────────────────────────────
+// Every workspace that isn't built yet renders this. Keeps the shell
+// navigable and tells the operator exactly what's coming.
+function Stub({ title, description }) {
+  return (
+    <div style={{padding:'var(--gap)'}}>
+      <div className="box">
+        <div className="box-title">
+          <span className="t">{title}</span>
+          <span className="k">coming soon</span>
+        </div>
+        <div className="muted" style={{padding:16, lineHeight:1.7, fontSize:13}}>
+          {description}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Surface registry ───────────────────────────────────────────
+// Each surface is its own function below. MVP phases fill them in
+// one at a time; this dispatcher lets us ship the shell and the
+// first real surface (Findings Queue) without touching the rest.
+const SURFACE_COMPONENTS = {
+  findings:       () => <Stub title="Findings Queue"
+                              description="Live ring from every pod in the registry. Phase 2 of the IR MVP." />,
+  alerts:         () => <Stub title="Alerts"
+                              description="Threshold-breach signals routed from siphon-api's audit ring." />,
+  investigations: () => <Stub title="Investigations"
+                              description="Case view — group findings, annotate, assign." />,
+  handoffs:       () => <Stub title="Handoffs"
+                              description="Tickets and escalations to downstream tools (Jira, ServiceNow, email)." />,
+  crypto:         () => <Stub title="Crypto Workbench"
+                              description="Forensic tools for encrypted archives and documents: zip password attack, PDF/Office decrypt, hash compute, entropy + magic-byte inspection. Phase 3-5 of the IR MVP." />,
+  extractor:      () => <Stub title="File Extractor"
+                              description="Point-and-shoot at any file siphon-fs recognises (PDF, DOCX, XLSX, PPTX, ZIP/RAR/7z, Parquet, SQLite, EML, MSG, QR)." />,
+  timeline:       () => <Stub title="Timeline"
+                              description="Reconstruct a finding sequence by timestamp + document span." />,
+  pivots:         () => <Stub title="Pivots"
+                              description="Jump from a finding to every other finding in the same document, same source, same pod, same category." />,
+  ioc:            () => <Stub title="IOC Lookup"
+                              description="Cross-reference matched values against known indicator sets (URLhaus, MISP, custom)." />,
+  custody:        () => <Stub title="Chain of Custody"
+                              description="Per-finding history: who acted, when, what action (acknowledge, escalate, mark FP, export)." />,
+  exhibits:       () => <Stub title="Exhibits"
+                              description="Attached artifacts: original file, extracted text, finding metadata, investigator notes." />,
+  export:         () => <Stub title="Export Bundle"
+                              description="Package a case into a zip for handoff (findings JSON, extracted text, exhibits, custody log, signed manifest)." />,
+  'ir-settings':  () => <Stub title="Responder Preferences"
+                              description="Default queue filters, notification channels, team membership, theme." />,
+  'ir-deployment':() => <Stub title="Pod Registry"
+                              description="Shared with the admin console — registered pods appear in both. Edits under Settings → Deployment on siphon-c2.html." />,
+};
+
+// ─── App ────────────────────────────────────────────────────────
+const TWEAK_DEFAULTS = {
+  theme: 'phosphor',
+  density: 'cozy',
+  nav: 'split',
+};
+
+function App() {
+  const [surface, setSurface] = React.useState(() => {
+    try { return localStorage.getItem('ir:surface') || 'findings'; } catch { return 'findings'; }
+  });
+  const [tweaks, setTweaks] = React.useState(() => {
+    // Share tweaks with the admin console so the operator's theme
+    // choice follows them between consoles. Key matches siphon-c2's.
+    let stored = {};
+    try { stored = JSON.parse(localStorage.getItem('c2:tweaks') || '{}'); } catch {}
+    return { ...TWEAK_DEFAULTS, ...stored };
+  });
+
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:surface', surface); } catch {}
+  }, [surface]);
+  React.useEffect(() => {
+    try { localStorage.setItem('c2:tweaks', JSON.stringify(tweaks)); } catch {}
+  }, [tweaks]);
+  React.useEffect(() => {
+    document.documentElement.setAttribute('data-theme', tweaks.theme || 'phosphor');
+  }, [tweaks.theme]);
+
+  // Cross-tab sync: if the admin console flips the theme, follow it.
+  React.useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== 'c2:tweaks') return;
+      try {
+        const parsed = JSON.parse(e.newValue || '{}');
+        setTweaks(t => ({ ...t, ...parsed }));
+      } catch {}
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  const setTweak = (k, v) => setTweaks(t => ({ ...t, [k]: v }));
+  const go = (id) => setSurface(id);
+  window.__ir_go = go;
+
+  const renderSurface = SURFACE_COMPONENTS[surface] || SURFACE_COMPONENTS.findings;
+
+  return (
+    <div className="shell" data-density={tweaks.density} data-theme={tweaks.theme}>
+      <Topbar tweaks={tweaks} setTweak={setTweak} />
+      <WorkspaceBar current={surface} go={go} />
+      <SurfaceBar current={surface} go={go} />
+      <main className="page">{renderSurface()}</main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
