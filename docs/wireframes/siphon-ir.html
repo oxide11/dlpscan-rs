@@ -7421,7 +7421,42 @@ function CryptoHashComputer() {
   const [computing, setComputing] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [flash, setFlash] = React.useState(null);
+  const [compareInput, setCompareInput] = React.useState('');
   const ping = (m) => { setFlash(m); setTimeout(() => setFlash(null), 1100); };
+
+  // Auto-detect the algorithm from hex-string length. Normalises
+  // whitespace + strips common prefixes ("sha256:" / "md5=") so
+  // paste-from-VirusTotal-style hashes just work.
+  const compareResult = React.useMemo(() => {
+    const raw = (compareInput || '').trim();
+    if (!raw) return null;
+    const cleaned = raw
+      .replace(/^[A-Za-z0-9-]+\s*[:=]\s*/, '') // strip "sha256:" / "md5 = "
+      .replace(/\s+/g, '')                     // strip internal whitespace
+      .toLowerCase();
+    if (!/^[0-9a-f]+$/.test(cleaned)) {
+      return { state: 'invalid', reason: 'hash must be hex only (0-9, a-f)' };
+    }
+    const byLen = {
+      32:  'MD5',
+      40:  'SHA-1',
+      64:  'SHA-256',
+      96:  'SHA-384',
+      128: 'SHA-512',
+    };
+    const algo = byLen[cleaned.length];
+    if (!algo) {
+      return { state: 'invalid', reason: cleaned.length + ' hex chars doesn\'t match any known algorithm (32/40/64/96/128)' };
+    }
+    const h = hashes[algo];
+    if (!h || !h.hex) {
+      return { state: 'pending', algo, input: cleaned };
+    }
+    return {
+      state: cleaned === h.hex ? 'match' : 'mismatch',
+      algo, input: cleaned, computed: h.hex,
+    };
+  }, [compareInput, hashes]);
 
   // Compute every hash in parallel when the file changes. WebCrypto
   // accepts an ArrayBuffer — we read the file once and reuse for
@@ -7492,6 +7527,84 @@ function CryptoHashComputer() {
       {error && (
         <div className="note" style={{borderColor:'var(--red)', background:'var(--red-wash)', color:'var(--red)', fontSize:12}}>
           <b>Hash failed:</b> {error}
+        </div>
+      )}
+
+      {file && (
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Compare against known hash</span>
+            <span className="k">paste a hash · algorithm auto-detected by length</span>
+          </div>
+          <div style={{padding:14}}>
+            <input type="text"
+                   value={compareInput}
+                   onChange={(e) => setCompareInput(e.target.value)}
+                   placeholder="e.g. d41d8cd98f00b204e9800998ecf8427e · or sha256:… · or MD5 = …"
+                   className="mono"
+                   style={{
+                     width:'100%', boxSizing:'border-box',
+                     padding:'8px 10px', fontSize:12,
+                     background:'var(--bg-1)', color:'var(--ink-bright)',
+                     border:'1px solid ' + (
+                       !compareResult ? 'var(--line-strong)' :
+                       compareResult.state === 'match' ? 'var(--safe)' :
+                       compareResult.state === 'mismatch' ? 'var(--red)' :
+                       compareResult.state === 'invalid' ? 'var(--amber)' :
+                       'var(--line-strong)'
+                     ),
+                     borderRadius:'var(--radius)',
+                   }}/>
+            {compareResult && (
+              <div style={{marginTop:10, fontSize:12, lineHeight:1.6, fontFamily:"'JetBrains Mono', monospace"}}>
+                {compareResult.state === 'match' && (
+                  <div style={{padding:'10px 12px', background:'var(--accent-wash)', border:'1px solid var(--safe)', borderRadius:'var(--radius)'}}>
+                    <div>
+                      <span className="chip chip--safe" style={{fontSize:10, marginRight:8}}>MATCH</span>
+                      <b style={{color:'var(--ink-bright)'}}>{compareResult.algo}</b>
+                      <span className="muted"> · this file matches the given hash</span>
+                    </div>
+                    <div className="muted" style={{fontSize:10.5, marginTop:6}}>
+                      Useful for verifying a downloaded sample, confirming evidence integrity,
+                      or matching against a known-indicator feed.
+                    </div>
+                  </div>
+                )}
+                {compareResult.state === 'mismatch' && (
+                  <div style={{padding:'10px 12px', background:'var(--red-wash)', border:'1px solid var(--red)', borderRadius:'var(--radius)'}}>
+                    <div>
+                      <span className="chip chip--red" style={{fontSize:10, marginRight:8}}>NO MATCH</span>
+                      <b style={{color:'var(--ink-bright)'}}>{compareResult.algo}</b>
+                      <span className="muted"> · this file's {compareResult.algo} differs</span>
+                    </div>
+                    <div style={{marginTop:8, fontSize:10.5, color:'var(--ink-soft)', display:'grid', gridTemplateColumns:'80px 1fr', gap:'2px 10px'}}>
+                      <span>given</span>    <span style={{color:'var(--red)', wordBreak:'break-all'}}>{compareResult.input}</span>
+                      <span>computed</span> <span style={{color:'var(--accent)', wordBreak:'break-all'}}>{compareResult.computed}</span>
+                    </div>
+                  </div>
+                )}
+                {compareResult.state === 'invalid' && (
+                  <div className="muted" style={{padding:'8px 10px', fontSize:11}}>
+                    <span className="chip chip--amber" style={{fontSize:9, marginRight:8}}>CHECK</span>
+                    {compareResult.reason}
+                  </div>
+                )}
+                {compareResult.state === 'pending' && (
+                  <div className="muted" style={{padding:'8px 10px', fontSize:11}}>
+                    detected <b style={{color:'var(--ink-bright)'}}>{compareResult.algo}</b> · waiting for that hash to finish computing…
+                  </div>
+                )}
+              </div>
+            )}
+            {!compareResult && (
+              <div className="muted" style={{fontSize:11, marginTop:8, lineHeight:1.6}}>
+                Paste a hash from VirusTotal / MalwareBazaar / a reference checksum — the
+                algorithm is inferred from its length. Common prefixes
+                (<span className="mono">sha256:</span>, <span className="mono">md5=</span>,
+                etc.) are stripped automatically.
+              </div>
+            )}
+          </div>
         </div>
       )}
 
