@@ -4,7 +4,7 @@ version = "2.1.0"
 edition = "2021"
 description = "Polygon Siphon launcher — local-dev process manager for siphon-api / siphon-fs"
 license = "MIT"
-rust-version = "1.75"
+rust-version = "1.82"
 
 [[bin]]
 name = "siphon-launcher"

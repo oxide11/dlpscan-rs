@@ -941,7 +941,7 @@ pub fn is_valid_us_phone(phone: &str) -> bool {
     }
     let ex_digits = &digits[3..6];
     let sub_digits = &digits[6..10];
-    if ex_digits == "555" && sub_digits >= "0100" && sub_digits <= "0199" {
+    if ex_digits == "555" && ("0100"..="0199").contains(&sub_digits) {
         return false;
     }
     true
@@ -1051,10 +1051,10 @@ pub fn is_valid_iccid(iccid: &str) -> bool {
 }
 
 /// Validate a Legal Entity Identifier (LEI) using mod-97 (ISO 17442).
-/// LEI is 20 characters: 4 alphanumeric (LOU prefix) + `00` (reserved)
-/// + 12 alphanumeric (entity ID) + 2 digit check. The check is
-/// computed identically to IBAN: convert letters to 2-digit numbers
-/// (A=10..Z=35), form the big number, and verify mod 97 == 1.
+/// LEI is 20 characters: 4 alphanumeric (LOU prefix) + `00` (reserved) +
+/// 12 alphanumeric (entity ID) + 2 digit check. The check is computed
+/// identically to IBAN: convert letters to 2-digit numbers (A=10..Z=35),
+/// form the big number, and verify mod 97 == 1.
 pub fn is_valid_lei(lei: &str) -> bool {
     let chars: Vec<char> = lei.chars().collect();
     if chars.len() != 20 {
@@ -1371,17 +1371,19 @@ pub fn is_valid_uli(uli: &str) -> bool {
 ///
 /// Algorithm:
 ///
-///   1. Transliterate each character to a numeric value:
-///        digits 0..9    → 0..9
-///        A=1 B=2 C=3 D=4 E=5 F=6 G=7 H=8
-///        J=1 K=2 L=3 M=4 N=5 P=7 R=9
-///        S=2 T=3 U=4 V=5 W=6 X=7 Y=8 Z=9
-///   2. Multiply each position by its weight:
-///        positions 0..16 → [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2]
-///      The 0 at position 8 means the check digit doesn't contribute
-///      to its own checksum.
-///   3. Take the sum mod 11. Result 10 maps to the letter `X`;
-///      0..9 map to the corresponding digit.
+/// ```text
+/// 1. Transliterate each character to a numeric value:
+///      digits 0..9    → 0..9
+///      A=1 B=2 C=3 D=4 E=5 F=6 G=7 H=8
+///      J=1 K=2 L=3 M=4 N=5 P=7 R=9
+///      S=2 T=3 U=4 V=5 W=6 X=7 Y=8 Z=9
+/// 2. Multiply each position by its weight:
+///      positions 0..16 → [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2]
+///    The 0 at position 8 means the check digit doesn't contribute
+///    to its own checksum.
+/// 3. Take the sum mod 11. Result 10 maps to the letter `X`;
+///    0..9 map to the corresponding digit.
+/// ```
 ///   4. The mapped value must equal the character at position 8.
 ///
 /// Without this validator, the bare `\b[A-HJ-NPR-Z0-9]{17}\b` regex
@@ -1597,7 +1599,7 @@ pub fn is_valid_ipv6(addr: &str) -> bool {
         let parts: Vec<&str> = lower.split(':').collect();
         if parts.len() >= 2 {
             if let Ok(second) = u16::from_str_radix(parts[1], 16) {
-                if second == 0x0db8 || second == 0xdb8 {
+                if second == 0x0db8 {
                     return false;
                 }
             }
@@ -1929,14 +1931,13 @@ fn extract_secret_value(matched: &str) -> &str {
     };
     let trimmed = after.trim();
     // Peel a single layer of matching quotes, if present.
-    let unquoted = if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
         || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
     {
         &trimmed[1..trimmed.len().saturating_sub(1)]
     } else {
         trimmed
-    };
-    unquoted
+    }
 }
 
 /// Shared structural rejection rules for both generic-secret validators.
@@ -2472,7 +2473,7 @@ pub fn is_valid_spain_dni(dni: &str) -> bool {
         return false;
     }
     let check_char = bytes[8].to_ascii_uppercase();
-    if !(b'A'..=b'Z').contains(&check_char) {
+    if !check_char.is_ascii_uppercase() {
         return false;
     }
     // Determine whether this is a DNI or NIE and compute the
@@ -3326,9 +3327,7 @@ fn base58_decode(input: &str, alphabet: &[u8; 58]) -> Option<Vec<u8>> {
         .bytes()
         .take_while(|&c| c == leading_zero_char)
         .count();
-    for _ in 0..leading_zeros {
-        output.push(0);
-    }
+    output.resize(output.len() + leading_zeros, 0);
 
     output.reverse();
     Some(output)
@@ -3531,7 +3530,7 @@ pub fn is_valid_bitcoin_cash(addr: &str) -> bool {
     // Split off optional prefix.
     let (prefix, body) = match addr.split_once(':') {
         Some((p, b)) => {
-            if p.to_ascii_lowercase() != "bitcoincash" {
+            if !p.eq_ignore_ascii_case("bitcoincash") {
                 return false;
             }
             ("bitcoincash", b)

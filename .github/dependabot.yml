@@ -1,0 +1,68 @@
+# Dependabot keeps GitHub Actions + Cargo dependencies current
+# without anyone having to remember. Weekly schedule per
+# ecosystem with small open-PR caps so the PR queue stays sane —
+# bump the limits if we find ourselves wanting more throughput.
+
+version: 2
+updates:
+  # ── GitHub Actions ────────────────────────────────────────────
+  # Picks up Node-24 majors from docker/* + actions/* as they
+  # release. Also catches security advisories on workflow deps.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/New_York
+    commit-message:
+      prefix: "ci"
+      include: scope
+    labels:
+      - dependencies
+      - ci
+    open-pull-requests-limit: 5
+
+  # ── Cargo · workspace root ────────────────────────────────────
+  # The workspace resolves across every member Cargo.toml, so one
+  # entry is enough.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/New_York
+    commit-message:
+      prefix: "deps"
+      include: scope
+    labels:
+      - dependencies
+      - rust
+    open-pull-requests-limit: 10
+    # Group non-breaking updates so reviewers aren't drowned in
+    # 20 patch-level PRs every Monday. Major bumps still come as
+    # individual PRs so each one can be reviewed on its own.
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # ── Docker base images ────────────────────────────────────────
+  # rust:1.85-bookworm + debian:bookworm-slim. Weekly check for
+  # security updates + newer rust minors.
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule:
+      interval: weekly
+      day: monday
+      time: "08:00"
+      timezone: America/New_York
+    commit-message:
+      prefix: "ci"
+      include: scope
+    labels:
+      - dependencies
+      - docker
+    open-pull-requests-limit: 3

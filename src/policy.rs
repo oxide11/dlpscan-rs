@@ -298,7 +298,7 @@ fn redact_text(text: &str, findings: &[&Match], ch: char) -> String {
     for finding in sorted {
         let (start, end) = finding.span;
         if start < result.len() && end <= result.len() {
-            let replacement: String = std::iter::repeat(ch).take(end - start).collect();
+            let replacement: String = std::iter::repeat_n(ch, end - start).collect();
             result.replace_range(start..end, &replacement);
         }
     }
@@ -594,7 +594,7 @@ min_confidence = 0.8
         // regardless of sort algorithm stability. apply_policy uses
         // sort_by(priority desc).then(original_index asc); verify the
         // same composite comparator here.
-        let rules = vec![
+        let rules = [
             PolicyRule {
                 name: "first".to_string(),
                 match_categories: vec!["Cards".to_string()],

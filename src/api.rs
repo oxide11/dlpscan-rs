@@ -766,7 +766,7 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
     use http_body_util::BodyExt;
     use hyper::body::Incoming;
     use hyper::service::service_fn;
-    use hyper::{Request, Response, StatusCode};
+    use hyper::{Request, StatusCode};
     use hyper_util::rt::{TokioExecutor, TokioIo};
     use hyper_util::server::conn::auto::Builder as HttpBuilder;
     use std::sync::Arc;
@@ -907,7 +907,7 @@ pub async fn serve(config: ApiConfig) -> Result<(), Box<dyn std::error::Error>> 
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
     // Single shared HTTP builder reused across connections (matches the
     // upstream hyper-util `server_graceful` example).
-    let http_builder = HttpBuilder::new(TokioExecutor::new());
+    let _http_builder = HttpBuilder::new(TokioExecutor::new());
 
     loop {
         tokio::select! {
@@ -1810,6 +1810,7 @@ mod tests {
         AppState {
             api_key_hash: RwLock::new(api_key.map(hash_api_key)),
             rate_limiter: RwLock::new(RateLimiter::new(10_000, 60)),
+            redis_rate_limiter: None,
             vaults: RwLock::new(HashMap::new()),
             custom_patterns: RwLock::new(Vec::new()),
             start_time: Instant::now(),
