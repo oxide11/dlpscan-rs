@@ -3858,15 +3858,14 @@ End of extracted preview.
   };
 }
 
-// Locate every match + keyword range in `body`, merge overlaps
-// (matches win), and emit a list of render-ready segments. Each
-// segment is either `{ kind: 'plain', text }` or
-// `{ kind: 'match'|'keyword', text, ... }`.
-function applyHighlights(body, findings, keywords) {
+// Locate every match + keyword + find range in `body`, merge
+// overlaps by priority (find > match > keyword), and emit a flat
+// list of render-ready segments. Each segment is either
+// `{ kind: 'plain', text }` or a highlight segment with metadata.
+function applyHighlights(body, findings, keywords, findText) {
   const ranges = [];
 
-  // Matches — indexOf-loop so we catch every occurrence of each
-  // finding's text in the preview.
+  // Regex matches from the scanner — priority 2.
   for (const f of findings) {
     if (!f.text) continue;
     let from = 0;
@@ -3875,14 +3874,14 @@ function applyHighlights(body, findings, keywords) {
       if (at === -1) break;
       ranges.push({
         start: at, end: at + f.text.length,
-        kind: 'match', category: f.category, sub_category: f.sub_category,
+        kind: 'match', prio: 2,
+        category: f.category, sub_category: f.sub_category,
       });
       from = at + f.text.length;
     }
   }
 
-  // Keywords — case-insensitive, word-boundary. Regex special
-  // chars in the keyword get escaped so 'c++' doesn't blow up.
+  // Context keywords — priority 1.
   for (const kw of keywords) {
     const escaped = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const rx = new RegExp('\\b' + escaped + '\\b', 'gi');
@@ -3890,25 +3889,37 @@ function applyHighlights(body, findings, keywords) {
     while ((m = rx.exec(body)) !== null) {
       ranges.push({
         start: m.index, end: m.index + m[0].length,
-        kind: 'keyword', keyword: kw,
+        kind: 'keyword', prio: 1, keyword: kw,
       });
     }
   }
 
-  // Sort: earlier start first, then matches win over keywords at
-  // the same position.
-  ranges.sort((a, b) => a.start - b.start
-    || (a.kind === 'match' ? -1 : 1));
+  // Find hits — priority 3 (wins over both). Indexed so the UI
+  // can wire prev/next jumps.
+  let findCounter = 0;
+  if (findText) {
+    const escaped = findText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rx = new RegExp(escaped, 'gi');
+    let m;
+    while ((m = rx.exec(body)) !== null) {
+      ranges.push({
+        start: m.index, end: m.index + m[0].length,
+        kind: 'find', prio: 3, findIdx: findCounter++,
+      });
+      if (m.index === rx.lastIndex) rx.lastIndex++; // avoid infinite loop
+    }
+  }
 
-  // Drop any range that's fully inside a prior one. Matches take
-  // precedence when a match swallows a keyword.
+  // Sort: earlier start first, higher priority on ties.
+  ranges.sort((a, b) => a.start - b.start || b.prio - a.prio);
+
+  // Drop any range fully inside a higher-priority prior one.
   const kept = [];
   let furthest = 0;
   for (const r of ranges) {
     if (r.start < furthest) {
       const prev = kept[kept.length - 1];
-      if (prev && r.kind === 'keyword' && prev.kind === 'match') continue;
-      if (prev && r.start < prev.end) continue; // collision, keep the earlier one
+      if (prev && prev.prio >= r.prio) continue;
     }
     kept.push(r);
     furthest = Math.max(furthest, r.end);
@@ -3925,6 +3936,15 @@ function applyHighlights(body, findings, keywords) {
   return segs;
 }
 
+// Standardised highlight palette for preview. Regex-hits always
+// green, keyword hits always purple, find-in-document hits amber.
+// Swaps the previous per-category palette — category chromatics
+// live on the dashboard charts where multi-colour semantics help;
+// inside the document they were noisy + hard to scan.
+const REGEX_HL   = { bg: 'rgba(94,243,140,0.18)',  border: '#5ef38c' };
+const KEYWORD_HL = { bg: 'rgba(186,145,255,0.14)', border: '#ba91ff' };
+const FIND_HL    = { bg: 'rgba(255,180,50,0.55)',  border: '#ffb432' };
+
 function DocumentPreview({ finding, sameReq }) {
   const preview = React.useMemo(
     () => generatePreviewText(finding, sameReq),
@@ -3935,8 +3955,6 @@ function DocumentPreview({ finding, sameReq }) {
     [finding.id, (sameReq || []).length]
   );
 
-  // View controls — persisted per-analyst so analysts keep their
-  // preferred font / wrap / highlight state between findings.
   const [fontSize, setFontSize] = React.useState(() => {
     try { return parseFloat(localStorage.getItem('ir:preview:font')) || 12; }
     catch { return 12; }
@@ -3951,31 +3969,37 @@ function DocumentPreview({ finding, sameReq }) {
     try { return parseInt(localStorage.getItem('ir:preview:h'), 10) || 480; }
     catch { return 480; }
   });
+  const [findText, setFindText] = React.useState('');
+  const [findIdx, setFindIdx] = React.useState(0);
   const [flash, setFlash] = React.useState(null);
   const ping = (m) => { setFlash(m); setTimeout(() => setFlash(null), 1200); };
   React.useEffect(() => { try { localStorage.setItem('ir:preview:font', String(fontSize)); } catch {} }, [fontSize]);
   React.useEffect(() => { try { localStorage.setItem('ir:preview:wrap', wrap ? 'on' : 'off'); } catch {} }, [wrap]);
   React.useEffect(() => { try { localStorage.setItem('ir:preview:hl',   showHl ? 'on' : 'off'); } catch {} }, [showHl]);
 
-  // Track the <pre>'s resize via ResizeObserver so we can persist
-  // the height. User drags the CSS resize handle; observer fires;
-  // we stash the new height.
   const preRef = React.useRef(null);
-  React.useEffect(() => {
-    const el = preRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      for (const e of entries) {
-        const h = Math.round(e.contentRect.height);
-        if (h && Math.abs(h - height) > 2) {
-          setHeight(h);
-          try { localStorage.setItem('ir:preview:h', String(h)); } catch {}
-        }
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Custom resize handle — mouse-driven drag below the body.
+  // Replaces the CSS `resize: vertical` which was fighting the
+  // React render cycle via ResizeObserver.
+  const onResizeStart = (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = height;
+    let lastH = startH;
+    const move = (ev) => {
+      const h = Math.max(200, Math.min(2000, startH + (ev.clientY - startY)));
+      lastH = h;
+      setHeight(h);
+    };
+    const up = () => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      try { localStorage.setItem('ir:preview:h', String(lastH)); } catch {}
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  };
 
   const categories = Array.from(new Set(allFindings.map(f => f.category).filter(Boolean)));
   const keywords = React.useMemo(() => {
@@ -3987,9 +4011,21 @@ function DocumentPreview({ finding, sameReq }) {
   }, [categories.join('|')]);
 
   const segs = React.useMemo(
-    () => applyHighlights(preview.body, allFindings, keywords),
-    [preview.body, allFindings.length, keywords.length]
+    () => applyHighlights(preview.body, allFindings, keywords, findText),
+    [preview.body, allFindings.length, keywords.length, findText]
   );
+
+  // Find-hit count for the toolbar counter. Resets idx when the
+  // query changes.
+  const findHitCount = React.useMemo(() => segs.filter(s => s.kind === 'find').length, [segs]);
+  React.useEffect(() => { setFindIdx(0); }, [findText]);
+
+  // Scroll the current find-hit into view when idx or query change.
+  React.useEffect(() => {
+    if (!findHitCount) return;
+    const el = preRef.current && preRef.current.querySelector('[data-find-idx="' + findIdx + '"]');
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [findIdx, findHitCount]);
 
   const download = () => {
     const lines = [];
@@ -4025,6 +4061,35 @@ function DocumentPreview({ finding, sameReq }) {
     }
   };
 
+  // Copy-as-redacted — replaces every regex-match span with X's of
+  // the same length. Handy for pasting into a ticket / handoff
+  // without leaking the sensitive value.
+  const copyRedacted = () => {
+    const redactSpan = (s) => 'X'.repeat(s.length);
+    const redacted = segs.map(s => s.kind === 'match' ? redactSpan(s.text) : s.text).join('');
+    const lines = [];
+    if (preview.headers) {
+      for (const [k, v] of Object.entries(preview.headers)) lines.push(`${k}: ${v}`);
+      lines.push('');
+    }
+    lines.push(redacted);
+    try {
+      navigator.clipboard.writeText(lines.join('\n'));
+      ping('Copied redacted');
+    } catch {
+      ping('Copy failed');
+    }
+  };
+
+  // Rescan — stuff the raw body into c2:livescan-text and open
+  // the admin console. Lets the analyst re-run siphon-api's
+  // detection pipeline with trace=on and verify what fires.
+  const sendToLiveScan = () => {
+    try { localStorage.setItem('c2:livescan-text', preview.body); } catch {}
+    window.open('siphon-c2.html', '_blank');
+    ping('Opened admin console');
+  };
+
   const kindIcon = {
     email: '✉', slack: '💬', print: '🖨', file: '📄', api: '⟨/⟩', text: '☰',
   }[preview.kind] || '☰';
@@ -4037,24 +4102,25 @@ function DocumentPreview({ finding, sameReq }) {
     text: 'Text',
   }[preview.kind] || preview.kind;
 
-  const usedCategories = Array.from(new Set(
-    segs.filter(s => s.kind === 'match').map(s => s.category)
-  ));
-  const hasKeywordHits = segs.some(s => s.kind === 'keyword');
+  const matchCount = segs.filter(s => s.kind === 'match').length;
+  const keywordCount = segs.filter(s => s.kind === 'keyword').length;
 
-  // Small toolbar button — keeps the edge strip visually consistent.
-  const ToolBtn = ({ onClick, title, active, children, danger }) => (
+  // Larger square toolbar button — 32×32 for icons, keeps the
+  // rails legible at a glance.
+  const ToolBtn = ({ onClick, title, active, children, danger, wide }) => (
     <button
       onClick={onClick}
       title={title}
       style={{
         background: active ? 'var(--accent-wash)' : 'transparent',
-        color: danger ? 'var(--red)' : active ? 'var(--accent)' : 'var(--ink)',
-        border: '1px solid ' + (active ? 'var(--accent)' : 'var(--line-soft)'),
-        padding: '4px 9px',
-        fontSize: 11, fontFamily: "'JetBrains Mono', monospace",
+        color: danger ? 'var(--red)' : active ? 'var(--accent)' : 'var(--ink-bright)',
+        border: '1px solid ' + (active ? 'var(--accent)' : 'var(--line-strong)'),
+        width: wide ? 'auto' : 32, height: 32,
+        padding: wide ? '0 10px' : 0,
+        fontSize: 14, fontFamily: "'JetBrains Mono', monospace", fontWeight: 500,
         borderRadius: 'var(--radius)',
         cursor: 'pointer', lineHeight: 1,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
       }}>
       {children}
     </button>
@@ -4069,7 +4135,7 @@ function DocumentPreview({ finding, sameReq }) {
             synthesised · future /v1/findings/{'{'}id{'}'}/payload will serve the real capture
           </span>
         </span>
-        <span className="k" style={{display:'flex', alignItems:'center', gap:6}}>
+        <span className="k" style={{display:'flex', alignItems:'center', gap:8}}>
           <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
             {preview.size.toLocaleString()} bytes
           </span>
@@ -4097,26 +4163,102 @@ function DocumentPreview({ finding, sameReq }) {
         ))}
       </div>
 
+      {/* ── SECONDARY TOOLBAR — find + actions ──────────────────
+          Brings in-document actions inside the preview window
+          itself. Find navigates through matches; the three action
+          buttons replace the equivalents that used to live in
+          the How panel for preview-scoped work. */}
+      <div style={{
+        display:'flex', alignItems:'center', gap:10,
+        padding:'8px 12px', borderBottom:'1px solid var(--line-soft)',
+        background:'var(--bg-2)', flexWrap:'wrap',
+      }}>
+        {/* Find input */}
+        <div style={{
+          display:'flex', alignItems:'center', gap:6,
+          padding:'3px 8px',
+          background:'var(--bg-1)', border:'1px solid var(--line-strong)',
+          borderRadius:'var(--radius)', minWidth:240, flex:'0 1 320px',
+        }}>
+          <span className="muted mono" style={{fontSize:11}}>⌕</span>
+          <input type="text" value={findText}
+                 onChange={e => setFindText(e.target.value)}
+                 placeholder="find in document"
+                 className="mono"
+                 style={{
+                   flex:1, border:'none', outline:'none', background:'transparent',
+                   color:'var(--ink-bright)', fontSize:12, padding:'3px 2px',
+                   fontFamily:"'JetBrains Mono', monospace",
+                 }}/>
+          {findText && findHitCount > 0 && (
+            <span className="mono" style={{fontSize:10.5, color:'var(--amber)'}}>
+              {findIdx + 1}/{findHitCount}
+            </span>
+          )}
+          {findText && findHitCount === 0 && (
+            <span className="mono" style={{fontSize:10.5, color:'var(--red)'}}>
+              no hits
+            </span>
+          )}
+          {findText && (
+            <button onClick={() => setFindText('')}
+                    title="clear"
+                    style={{background:'transparent', border:'none', cursor:'pointer', color:'var(--ink-soft)', fontSize:13, lineHeight:1, padding:0}}>
+              ×
+            </button>
+          )}
+        </div>
+        <button onClick={() => findHitCount && setFindIdx((findIdx - 1 + findHitCount) % findHitCount)}
+                disabled={!findHitCount}
+                title="previous hit"
+                style={{width:28, height:28, background:'transparent', color:'var(--ink-bright)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', cursor: findHitCount ? 'pointer' : 'not-allowed', opacity: findHitCount ? 1 : 0.4, fontFamily:"'JetBrains Mono', monospace"}}>↑</button>
+        <button onClick={() => findHitCount && setFindIdx((findIdx + 1) % findHitCount)}
+                disabled={!findHitCount}
+                title="next hit"
+                style={{width:28, height:28, background:'transparent', color:'var(--ink-bright)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', cursor: findHitCount ? 'pointer' : 'not-allowed', opacity: findHitCount ? 1 : 0.4, fontFamily:"'JetBrains Mono', monospace"}}>↓</button>
+
+        <span style={{flex:1}}/>
+
+        {/* In-document action buttons */}
+        <ToolBtn wide onClick={sendToLiveScan}
+                 title="open this body in siphon-c2 Live Scan with trace on — re-runs the detection pipeline so you can verify what fires + at what confidence">
+          ▶ Rescan
+        </ToolBtn>
+        <ToolBtn wide onClick={copyRedacted}
+                 title="copy the body to clipboard with every match span replaced by X's of the same length — safe for tickets / handoff">
+          ▦ Copy redacted
+        </ToolBtn>
+        {(preview.kind === 'file' || (preview.headers && preview.headers.Filename)) && (
+          <ToolBtn wide
+                   onClick={() => { window.__ir_go && window.__ir_go('crypto', ''); ping('Opened Crypto Workbench'); }}
+                   title="open Analyze → Crypto Workbench (Phase 3) for encrypted-file forensics">
+            ⎔ To Crypto
+          </ToolBtn>
+        )}
+      </div>
+
       {/* ── BODY ROW: left rail + pre + right rail ─────────────── */}
       <div style={{
         display:'grid',
-        gridTemplateColumns:'40px 1fr 40px',
+        gridTemplateColumns:'48px 1fr 48px',
         background:'var(--bg-1)',
       }}>
-        {/* LEFT EDGE — primary actions */}
+        {/* LEFT RAIL — primary actions */}
         <div style={{
           display:'flex', flexDirection:'column', alignItems:'center',
-          gap:6, padding:'10px 4px',
+          gap:8, padding:'12px 0',
           borderRight:'1px solid var(--line-soft)', background:'var(--bg-2)',
         }}>
           <ToolBtn onClick={download} title="download preview as plain-text file">↓</ToolBtn>
           <ToolBtn onClick={copyBody} title="copy preview body to clipboard">⎘</ToolBtn>
-          <ToolBtn onClick={() => setShowHl(!showHl)} title={showHl ? 'turn off highlights' : 'turn on highlights'} active={showHl}>
-            {showHl ? '◉' : '○'}
+          <ToolBtn onClick={() => setShowHl(!showHl)}
+                   title={showHl ? 'turn off highlights' : 'turn on highlights'}
+                   active={showHl}>
+            {showHl ? '●' : '○'}
           </ToolBtn>
         </div>
 
-        {/* PREVIEW BODY — resizable */}
+        {/* PREVIEW BODY — fixed height driven by custom resize handle */}
         <pre ref={preRef}
              style={{
                margin:0, padding:16,
@@ -4127,48 +4269,66 @@ function DocumentPreview({ finding, sameReq }) {
                wordBreak: wrap ? 'break-word' : 'normal',
                height: height,
                minHeight: 200,
-               resize: 'vertical',
                overflow:'auto',
                background:'var(--bg-1)',
              }}>
           {segs.map((s, i) => {
-            if (s.kind === 'plain' || !showHl) return <span key={i}>{s.text}</span>;
+            if (s.kind === 'plain') return <span key={i}>{s.text}</span>;
+            if (!showHl && s.kind !== 'find') return <span key={i}>{s.text}</span>;
             if (s.kind === 'match') {
-              const c = CATEGORY_COLORS[s.category] || MATCH_COLOR_DEFAULT;
-              const title = `${s.category}${s.sub_category ? ' / ' + s.sub_category : ''} · detected match`;
-              // Leave color: inherit so the text itself stays
-              // readable — don't override foreground. Background
-              // wash + thick bottom underline carries the colour.
               return (
-                <mark key={i} title={title} style={{
-                  background: c.bg,
-                  color: 'inherit',
-                  borderBottom: '2.5px solid ' + c.border,
-                  padding: '0 1px',
-                  borderRadius: 0,
-                }}>{s.text}</mark>
+                <mark key={i}
+                      title="regex match · detected by siphon-core"
+                      style={{
+                        background: REGEX_HL.bg,
+                        color: 'inherit',
+                        borderBottom: '2.5px solid ' + REGEX_HL.border,
+                        padding: '0 1px',
+                        borderRadius: 0,
+                      }}>{s.text}</mark>
               );
             }
-            // keyword — dashed underline, no background
-            return (
-              <span key={i} title={`context keyword · "${s.keyword}"`} style={{
-                color: 'inherit',
-                borderBottom: '1px dashed ' + KEYWORD_COLOR.border,
-                padding: '0 1px',
-              }}>{s.text}</span>
-            );
+            if (s.kind === 'keyword') {
+              return (
+                <span key={i}
+                      title={`context keyword · "${s.keyword}"`}
+                      style={{
+                        background: KEYWORD_HL.bg,
+                        color: 'inherit',
+                        borderBottom: '2px dashed ' + KEYWORD_HL.border,
+                        padding: '0 1px',
+                      }}>{s.text}</span>
+              );
+            }
+            if (s.kind === 'find') {
+              return (
+                <mark key={i}
+                      data-find-idx={s.findIdx}
+                      title={`find · "${findText}"`}
+                      style={{
+                        background: FIND_HL.bg,
+                        color: '#000',
+                        border: '1px solid ' + FIND_HL.border,
+                        padding: '0 2px',
+                        borderRadius: 2,
+                        fontWeight: 600,
+                        outline: s.findIdx === findIdx ? '2px solid var(--ink-bright)' : 'none',
+                      }}>{s.text}</mark>
+              );
+            }
+            return <span key={i}>{s.text}</span>;
           })}
         </pre>
 
-        {/* RIGHT EDGE — view controls */}
+        {/* RIGHT RAIL — view controls */}
         <div style={{
           display:'flex', flexDirection:'column', alignItems:'center',
-          gap:6, padding:'10px 4px',
+          gap:8, padding:'12px 0',
           borderLeft:'1px solid var(--line-soft)', background:'var(--bg-2)',
         }}>
           <ToolBtn onClick={() => setFontSize(Math.min(18, fontSize + 1))} title="larger font">A+</ToolBtn>
           <ToolBtn onClick={() => setFontSize(Math.max(9, fontSize - 1))} title="smaller font">A−</ToolBtn>
-          <ToolBtn onClick={() => setWrap(!wrap)} title={wrap ? 'disable word-wrap (horizontal scroll)' : 'enable word-wrap'} active={wrap}>
+          <ToolBtn onClick={() => setWrap(!wrap)} title={wrap ? 'disable word-wrap' : 'enable word-wrap'} active={wrap}>
             ⏎
           </ToolBtn>
           <ToolBtn onClick={() => {
@@ -4176,49 +4336,85 @@ function DocumentPreview({ finding, sameReq }) {
                      try { localStorage.setItem('ir:preview:h', '480'); } catch {}
                    }}
                    title="reset preview height to 480px">
-            ↕
+            ⇌
           </ToolBtn>
         </div>
       </div>
 
-      {/* Legend */}
-      {(usedCategories.length > 0 || hasKeywordHits) && (
+      {/* ── CUSTOM RESIZE HANDLE ───────────────────────────────── */}
+      <div onMouseDown={onResizeStart}
+           title="drag to resize preview"
+           style={{
+             height: 10, background: 'var(--bg-2)',
+             borderTop: '1px solid var(--line-soft)',
+             cursor: 'ns-resize',
+             display: 'flex', alignItems: 'center', justifyContent: 'center',
+             color: 'var(--ink-soft)',
+             userSelect: 'none',
+           }}>
+        <span style={{fontFamily:"'JetBrains Mono', monospace", fontSize:10, letterSpacing:4, lineHeight:1}}>
+          ═══
+        </span>
+      </div>
+
+      {/* ── LEGEND — standard two-colour scheme ─────────────────
+          Regex green, keywords purple, find amber. Readable text
+          (ink-bright) on a darker chip background so chips don't
+          wash out. */}
+      {(matchCount > 0 || keywordCount > 0 || (findText && findHitCount > 0)) && (
         <div style={{
           padding:'10px 14px', borderTop:'1px solid var(--line-soft)',
           background:'var(--bg-2)', display:'flex', alignItems:'center',
-          gap:10, flexWrap:'wrap', fontSize:10.5,
+          gap:10, flexWrap:'wrap', fontSize:11,
         }}>
-          <span className="muted mono" style={{textTransform:'uppercase', letterSpacing:'0.1em'}}>
+          <span className="muted mono" style={{textTransform:'uppercase', letterSpacing:'0.12em', fontSize:10}}>
             legend
           </span>
-          {usedCategories.map(cat => {
-            const c = CATEGORY_COLORS[cat] || MATCH_COLOR_DEFAULT;
-            return (
-              <span key={cat} style={{
-                display:'inline-flex', alignItems:'center', gap:6,
-                padding:'3px 8px',
-                background: c.bg, border:'1px solid ' + c.border,
-                borderRadius: 2, color: c.fg,
-                fontFamily:"'JetBrains Mono', monospace",
-                fontSize: 10,
-              }}>
-                <span style={{width:8, height:8, background: c.border, borderRadius: 2, display:'inline-block'}}/>
-                {cat}
-              </span>
-            );
-          })}
-          {hasKeywordHits && (
+          {matchCount > 0 && (
             <span style={{
               display:'inline-flex', alignItems:'center', gap:6,
-              padding:'3px 8px',
-              background: KEYWORD_COLOR.bg,
-              borderBottom: '1px dashed ' + KEYWORD_COLOR.border,
-              color: KEYWORD_COLOR.fg,
+              padding:'4px 10px', background:'var(--bg-1)',
+              border:'1px solid ' + REGEX_HL.border,
+              borderRadius:'var(--radius)',
               fontFamily:"'JetBrains Mono', monospace",
-              fontSize: 10,
+              fontSize: 11, color:'var(--ink-bright)',
             }}>
-              <span style={{width:8, height:8, borderBottom: '2px dashed ' + KEYWORD_COLOR.border, display:'inline-block'}}/>
-              context keywords
+              <span style={{width:12, height:12, background: REGEX_HL.border, borderRadius:2, display:'inline-block'}}/>
+              Regex matches
+              <span style={{color:'var(--ink-soft)', marginLeft:2}}>· {matchCount}</span>
+            </span>
+          )}
+          {keywordCount > 0 && (
+            <span style={{
+              display:'inline-flex', alignItems:'center', gap:6,
+              padding:'4px 10px', background:'var(--bg-1)',
+              border:'1px solid ' + KEYWORD_HL.border,
+              borderRadius:'var(--radius)',
+              fontFamily:"'JetBrains Mono', monospace",
+              fontSize: 11, color:'var(--ink-bright)',
+            }}>
+              <span style={{
+                width:12, height:12,
+                borderBottom: '2px dashed ' + KEYWORD_HL.border,
+                background: KEYWORD_HL.bg,
+                display:'inline-block',
+              }}/>
+              Context keywords
+              <span style={{color:'var(--ink-soft)', marginLeft:2}}>· {keywordCount}</span>
+            </span>
+          )}
+          {findText && findHitCount > 0 && (
+            <span style={{
+              display:'inline-flex', alignItems:'center', gap:6,
+              padding:'4px 10px', background:'var(--bg-1)',
+              border:'1px solid ' + FIND_HL.border,
+              borderRadius:'var(--radius)',
+              fontFamily:"'JetBrains Mono', monospace",
+              fontSize: 11, color:'var(--ink-bright)',
+            }}>
+              <span style={{width:12, height:12, background: FIND_HL.border, borderRadius:2, display:'inline-block'}}/>
+              Find · "{findText}"
+              <span style={{color:'var(--ink-soft)', marginLeft:2}}>· {findHitCount}</span>
             </span>
           )}
         </div>
@@ -5403,10 +5599,11 @@ function IntegrationsSurface() {
 // consistent across surfaces.
 
 const IR_TIME_RANGES = [
-  { id: '24h', label: '24h',     days: 1 },
-  { id: '7d',  label: '7 days',  days: 7 },
-  { id: '30d', label: '30 days', days: 30 },
-  { id: 'all', label: 'all',     days: 36500 },
+  { id: '24h',    label: '24h',     days: 1 },
+  { id: '7d',     label: '7 days',  days: 7 },
+  { id: '30d',    label: '30 days', days: 30 },
+  { id: 'all',    label: 'all',     days: 36500 },
+  { id: 'custom', label: 'custom',  days: null },
 ];
 
 function irMedian(arr) {
@@ -5860,12 +6057,31 @@ function DashboardSurface() {
   const [comparison, setComparison] = React.useState(() => {
     try { return localStorage.getItem('ir:dashCmp') || 'none'; } catch { return 'none'; }
   });
+  // Custom date range. Defaults to the last 30 days so a fresh
+  // 'custom' click lands on a sensible window the analyst can then
+  // adjust with the date inputs.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const daysAgoIso = (d) => new Date(Date.now() - d * 86400000).toISOString().slice(0, 10);
+  const [customFrom, setCustomFrom] = React.useState(() => {
+    try { return localStorage.getItem('ir:dashCustomFrom') || daysAgoIso(30); }
+    catch { return daysAgoIso(30); }
+  });
+  const [customTo, setCustomTo] = React.useState(() => {
+    try { return localStorage.getItem('ir:dashCustomTo') || todayIso; }
+    catch { return todayIso; }
+  });
   React.useEffect(() => {
     try { localStorage.setItem('ir:dashRange', range); } catch {}
   }, [range]);
   React.useEffect(() => {
     try { localStorage.setItem('ir:dashCmp', comparison); } catch {}
   }, [comparison]);
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:dashCustomFrom', customFrom); } catch {}
+  }, [customFrom]);
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:dashCustomTo', customTo); } catch {}
+  }, [customTo]);
 
   const findings = window.useIrFindings('?limit=1000');
   const [dispo, setDispo] = React.useState(readDispo);
@@ -5879,15 +6095,29 @@ function DashboardSurface() {
     };
   }, []);
 
-  const cutoff = React.useMemo(() => {
-    const def = IR_TIME_RANGES.find(r => r.id === range) || IR_TIME_RANGES[1];
-    return Date.now() - def.days * 86400e3;
-  }, [range]);
+  // Compute the lower / upper bounds of the active window. Preset
+  // ranges run from (now - days) to now. Custom range pulls its
+  // bounds from the date inputs; to-date is inclusive of the full
+  // day (end of day UTC).
+  const [lowerMs, upperMs, effectiveDays] = React.useMemo(() => {
+    if (range === 'custom') {
+      const from = new Date(customFrom + 'T00:00:00').getTime();
+      const to   = new Date(customTo   + 'T23:59:59').getTime();
+      const lo = Math.min(from, to);
+      const hi = Math.max(from, to);
+      return [lo, hi, Math.max(1, Math.round((hi - lo) / 86400e3))];
+    }
+    const def = IR_TIME_RANGES.find(r => r.id === range && r.days != null) || IR_TIME_RANGES[1];
+    return [Date.now() - def.days * 86400e3, Date.now(), def.days];
+  }, [range, customFrom, customTo]);
 
   const all = (findings.data && findings.data.findings) || [];
   const windowed = React.useMemo(
-    () => all.filter(f => new Date(f.ts || 0).getTime() >= cutoff),
-    [all, cutoff]
+    () => all.filter(f => {
+      const t = new Date(f.ts || 0).getTime();
+      return t >= lowerMs && t <= upperMs;
+    }),
+    [all, lowerMs, upperMs]
   );
 
   const stats = React.useMemo(() => {
@@ -5972,6 +6202,35 @@ function DashboardSurface() {
             {r.label}
           </button>
         ))}
+        {range === 'custom' && (
+          <span style={{display:'inline-flex', alignItems:'center', gap:6, marginLeft:4, padding:'3px 8px', background:'var(--bg-2)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}>
+            <input type="date"
+                   value={customFrom}
+                   max={customTo}
+                   onChange={e => setCustomFrom(e.target.value)}
+                   style={{
+                     background:'var(--bg-1)', color:'var(--ink-bright)',
+                     border:'1px solid var(--line-soft)', borderRadius:'var(--radius)',
+                     padding:'3px 6px', fontSize:11,
+                     fontFamily:"'JetBrains Mono', monospace",
+                     colorScheme: 'dark',
+                   }}/>
+            <span className="muted mono" style={{fontSize:10}}>→</span>
+            <input type="date"
+                   value={customTo}
+                   min={customFrom}
+                   max={todayIso}
+                   onChange={e => setCustomTo(e.target.value)}
+                   style={{
+                     background:'var(--bg-1)', color:'var(--ink-bright)',
+                     border:'1px solid var(--line-soft)', borderRadius:'var(--radius)',
+                     padding:'3px 6px', fontSize:11,
+                     fontFamily:"'JetBrains Mono', monospace",
+                     colorScheme: 'dark',
+                   }}/>
+            <span className="muted mono" style={{fontSize:10.5}}>· {effectiveDays}d</span>
+          </span>
+        )}
         <span style={{borderLeft:'1px solid var(--line)', height:22, margin:'0 6px'}}/>
         <span className="label" style={{marginRight:6}}>Compare</span>
         {IR_COMPARISONS.map(c => (
