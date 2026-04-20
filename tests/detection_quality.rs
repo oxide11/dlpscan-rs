@@ -297,10 +297,7 @@ impl QualityReport {
             (total_tp as f64 / total as f64) * 100.0
         };
         eprintln!();
-        eprintln!(
-            "Overall recall:  {}/{}  ({:.2}%)",
-            total_tp, total, overall
-        );
+        eprintln!("Overall recall:  {}/{}  ({:.2}%)", total_tp, total, overall);
 
         eprintln!();
         eprintln!("False positives on negative corpus:");
@@ -355,17 +352,16 @@ fn run_harness() -> QualityReport {
                 let text = fs::read_to_string(path).unwrap_or_else(|e| {
                     panic!("could not read positive doc {}: {}", path.display(), e)
                 });
-                let matches = scan_text_with_config(&text, &config).unwrap_or_else(|e| {
-                    panic!("scanner error on {}: {}", path.display(), e)
-                });
+                let matches = scan_text_with_config(&text, &config)
+                    .unwrap_or_else(|e| panic!("scanner error on {}: {}", path.display(), e));
 
                 for exp in expected {
                     // A labeled finding is satisfied if at least one
                     // scanner match has the same sub_category and the
                     // labeled text is a substring of the match's text.
-                    let found = matches.iter().any(|m| {
-                        m.sub_category == exp.sub_category && m.text.contains(&exp.text)
-                    });
+                    let found = matches
+                        .iter()
+                        .any(|m| m.sub_category == exp.sub_category && m.text.contains(&exp.text));
                     if found {
                         *report
                             .recall_tp
@@ -391,9 +387,8 @@ fn run_harness() -> QualityReport {
                 let text = fs::read_to_string(path).unwrap_or_else(|e| {
                     panic!("could not read negative doc {}: {}", path.display(), e)
                 });
-                let matches = scan_text_with_config(&text, &config).unwrap_or_else(|e| {
-                    panic!("scanner error on {}: {}", path.display(), e)
-                });
+                let matches = scan_text_with_config(&text, &config)
+                    .unwrap_or_else(|e| panic!("scanner error on {}: {}", path.display(), e));
 
                 for m in &matches {
                     if forbidden.iter().any(|f| f == &m.sub_category) {

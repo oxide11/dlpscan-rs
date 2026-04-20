@@ -104,8 +104,13 @@ mod tests {
     #[test]
     fn test_event_from_scan() {
         let scan_result = dirty_scan_result("SSN");
-        let event =
-            event_from_scan(&scan_result, "redact", Some("cli"), Some(12.3), Some("alice"));
+        let event = event_from_scan(
+            &scan_result,
+            "redact",
+            Some("cli"),
+            Some(12.3),
+            Some("alice"),
+        );
         assert_eq!(event.event_type, "REDACT");
         assert_eq!(event.action.as_deref(), Some("redact"));
         assert_eq!(event.source.as_deref(), Some("cli"));

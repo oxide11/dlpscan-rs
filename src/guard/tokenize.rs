@@ -196,7 +196,10 @@ mod tests {
         let t2 = v.tokenize("4532015112830366", "Credit Card");
         let text = format!("User {t1} paid with {t2}.");
         let restored = v.detokenize_text(&text);
-        assert_eq!(restored, "User alice@example.com paid with 4532015112830366.");
+        assert_eq!(
+            restored,
+            "User alice@example.com paid with 4532015112830366."
+        );
     }
 
     #[test]

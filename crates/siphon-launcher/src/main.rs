@@ -168,7 +168,11 @@ async fn list_processes(State(state): State<AppState>) -> JsonResponse<ListRespo
                 tp.exited_at = Some(siphon_core::audit::iso8601_now());
             }
         }
-        let status = if tp.exit_code.is_some() { "exited" } else { "running" };
+        let status = if tp.exit_code.is_some() {
+            "exited"
+        } else {
+            "running"
+        };
         processes.push(ManagedProcess {
             id: tp.id.clone(),
             kind: tp.kind.clone(),
@@ -216,13 +220,7 @@ struct ErrorBody {
 }
 
 fn err(code: StatusCode, msg: impl Into<String>) -> Response {
-    (
-        code,
-        JsonResponse(ErrorBody {
-            error: msg.into(),
-        }),
-    )
-        .into_response()
+    (code, JsonResponse(ErrorBody { error: msg.into() })).into_response()
 }
 
 async fn start_process(State(state): State<AppState>, Json(req): Json<StartRequest>) -> Response {
@@ -410,7 +408,7 @@ struct StopRequest {
 struct StopResponse {
     id: String,
     pid: u32,
-    signal: &'static str,   // "SIGTERM" | "SIGKILL"
+    signal: &'static str, // "SIGTERM" | "SIGKILL"
     graceful: bool,
     waited_ms: u128,
 }
@@ -449,7 +447,8 @@ async fn stop_process(State(state): State<AppState>, Json(req): Json<StopRequest
                 },
                 "exit_code": tombstone_exit,
             })),
-        ).into_response();
+        )
+            .into_response();
     };
 
     let t0 = std::time::Instant::now();

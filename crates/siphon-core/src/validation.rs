@@ -121,8 +121,8 @@ static SWIFT_FALSE_POSITIVES: &[&str] = &[
     "VACUUMED", "VALIDATE", "VALUABLE", "VARIABLE", "VENTURES", "VERIFIED", "VERTICAL", "VIEWPORT",
     "VIOLATES", "VIOLENCE", "VIRGINIA", "VISITORS", "VITAMINS", "VOLATILE", "VOLTAGES", "WELCOMES",
     "WHATEVER", "WHENEVER", "WHEREVER", "WICKEDLY", "WILDCARD", "WIRELESS", "WITHHOLD", "WONDERFU",
-    "WOODLAND", "WORKSHOP", "XCONTEXT", "XXXXXXXX", "YEARBOOK", "YOURSELF", "Zimbabwe",
-    "CAFEBABE", "DEADBEEF", "FEEDFACE", "BAADF00D", "CAFED00D",
+    "WOODLAND", "WORKSHOP", "XCONTEXT", "XXXXXXXX", "YEARBOOK", "YOURSELF", "Zimbabwe", "CAFEBABE",
+    "DEADBEEF", "FEEDFACE", "BAADF00D", "CAFED00D",
 ];
 
 /// Check if a SWIFT/BIC match is likely a false positive.
@@ -233,22 +233,85 @@ pub fn is_valid_australia_tfn(tfn: &str) -> bool {
 /// outside this table so `XX99...` with a fake country code can't
 /// pass validation even when the mod-97 check happens to equal 1.
 static IBAN_LENGTHS: &[(&str, usize)] = &[
-    ("AD", 24), ("AE", 23), ("AL", 28), ("AT", 20), ("AZ", 28),
-    ("BA", 20), ("BE", 16), ("BG", 22), ("BH", 22), ("BR", 29),
-    ("BY", 28), ("CH", 21), ("CR", 22), ("CY", 28), ("CZ", 24),
-    ("DE", 22), ("DK", 18), ("DO", 28), ("EE", 20), ("EG", 29),
-    ("ES", 24), ("FI", 18), ("FO", 18), ("FR", 27), ("GB", 22),
-    ("GE", 22), ("GI", 23), ("GL", 18), ("GR", 27), ("GT", 28),
-    ("HR", 21), ("HU", 28), ("IE", 22), ("IL", 23), ("IQ", 23),
-    ("IS", 26), ("IT", 27), ("JO", 30), ("KW", 30), ("KZ", 20),
-    ("LB", 28), ("LC", 32), ("LI", 21), ("LT", 20), ("LU", 20),
-    ("LV", 21), ("LY", 25), ("MC", 27), ("MD", 24), ("ME", 22),
-    ("MK", 19), ("MR", 27), ("MT", 31), ("MU", 30), ("NL", 18),
-    ("NO", 15), ("PK", 24), ("PL", 28), ("PS", 29), ("PT", 25),
-    ("QA", 29), ("RO", 24), ("RS", 22), ("SA", 24), ("SC", 31),
-    ("SD", 18), ("SE", 24), ("SI", 19), ("SK", 24), ("SM", 27),
-    ("ST", 25), ("SV", 28), ("TL", 23), ("TN", 24), ("TR", 26),
-    ("UA", 29), ("VA", 22), ("VG", 24), ("XK", 20),
+    ("AD", 24),
+    ("AE", 23),
+    ("AL", 28),
+    ("AT", 20),
+    ("AZ", 28),
+    ("BA", 20),
+    ("BE", 16),
+    ("BG", 22),
+    ("BH", 22),
+    ("BR", 29),
+    ("BY", 28),
+    ("CH", 21),
+    ("CR", 22),
+    ("CY", 28),
+    ("CZ", 24),
+    ("DE", 22),
+    ("DK", 18),
+    ("DO", 28),
+    ("EE", 20),
+    ("EG", 29),
+    ("ES", 24),
+    ("FI", 18),
+    ("FO", 18),
+    ("FR", 27),
+    ("GB", 22),
+    ("GE", 22),
+    ("GI", 23),
+    ("GL", 18),
+    ("GR", 27),
+    ("GT", 28),
+    ("HR", 21),
+    ("HU", 28),
+    ("IE", 22),
+    ("IL", 23),
+    ("IQ", 23),
+    ("IS", 26),
+    ("IT", 27),
+    ("JO", 30),
+    ("KW", 30),
+    ("KZ", 20),
+    ("LB", 28),
+    ("LC", 32),
+    ("LI", 21),
+    ("LT", 20),
+    ("LU", 20),
+    ("LV", 21),
+    ("LY", 25),
+    ("MC", 27),
+    ("MD", 24),
+    ("ME", 22),
+    ("MK", 19),
+    ("MR", 27),
+    ("MT", 31),
+    ("MU", 30),
+    ("NL", 18),
+    ("NO", 15),
+    ("PK", 24),
+    ("PL", 28),
+    ("PS", 29),
+    ("PT", 25),
+    ("QA", 29),
+    ("RO", 24),
+    ("RS", 22),
+    ("SA", 24),
+    ("SC", 31),
+    ("SD", 18),
+    ("SE", 24),
+    ("SI", 19),
+    ("SK", 24),
+    ("SM", 27),
+    ("ST", 25),
+    ("SV", 28),
+    ("TL", 23),
+    ("TN", 24),
+    ("TR", 26),
+    ("UA", 29),
+    ("VA", 22),
+    ("VG", 24),
+    ("XK", 20),
 ];
 
 /// Validate an IBAN (International Bank Account Number) using the
@@ -266,10 +329,7 @@ static IBAN_LENGTHS: &[(&str, usize)] = &[
 /// Returns `true` if the IBAN is structurally valid.
 pub fn is_valid_iban(iban: &str) -> bool {
     // Strip spaces and non-ASCII. IBANs are uppercase ASCII only.
-    let compact: String = iban
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .collect();
+    let compact: String = iban.chars().filter(|c| !c.is_whitespace()).collect();
     let bytes = compact.as_bytes();
     if bytes.len() < 15 || bytes.len() > 34 {
         return false;
@@ -301,10 +361,7 @@ pub fn is_valid_iban(iban: &str) -> bool {
     }
     // Rearrange: move first 4 chars to the end, then convert letters
     // to digits (A=10..Z=35).
-    let rearranged: String = compact[4..]
-        .chars()
-        .chain(compact[..4].chars())
-        .collect();
+    let rearranged: String = compact[4..].chars().chain(compact[..4].chars()).collect();
     let mut numeric = String::with_capacity(rearranged.len() * 2);
     for c in rearranged.chars() {
         if let Some(d) = c.to_digit(10) {
@@ -352,7 +409,11 @@ pub fn is_valid_canada_sin(sin: &str) -> bool {
         .map(|(idx, &d)| {
             if idx % 2 == 1 {
                 let doubled = d * 2;
-                if doubled > 9 { doubled - 9 } else { doubled }
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
             } else {
                 d
             }
@@ -403,7 +464,11 @@ pub fn is_valid_isin(isin: &str) -> bool {
         .map(|(idx, &d)| {
             if idx % 2 == 1 {
                 let doubled = d * 2;
-                if doubled > 9 { doubled - 9 } else { doubled }
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
             } else {
                 d
             }
@@ -494,77 +559,229 @@ pub fn is_plausible_phone(phone: &str) -> bool {
 /// reasonable maintenance cadence.
 static E164_COUNTRY_CODES: &[(&str, u8, u8)] = &[
     // 1-digit
-    ("1", 10, 10),    // NANP (US/CA/Caribbean) — exactly 10
-    ("7", 10, 10),    // Russia, Kazakhstan
+    ("1", 10, 10), // NANP (US/CA/Caribbean) — exactly 10
+    ("7", 10, 10), // Russia, Kazakhstan
     // 2-digit
-    ("20", 9, 10),    ("27", 9, 9),     ("30", 10, 10),   ("31", 9, 9),
-    ("32", 8, 9),     ("33", 9, 9),     ("34", 9, 9),     ("36", 8, 9),
-    ("39", 9, 11),    ("40", 9, 9),     ("41", 9, 9),     ("43", 10, 13),
-    ("44", 9, 10),    ("45", 8, 8),     ("46", 7, 13),    ("47", 8, 8),
-    ("48", 9, 9),     ("49", 7, 13),    ("51", 9, 11),    ("52", 10, 11),
-    ("53", 6, 8),     ("54", 10, 11),   ("55", 10, 11),   ("56", 9, 9),
-    ("57", 10, 10),   ("58", 10, 10),   ("60", 7, 10),    ("61", 5, 15),
-    ("62", 7, 12),    ("63", 8, 10),    ("64", 3, 10),    ("65", 8, 8),
-    ("66", 8, 9),     ("81", 9, 10),    ("82", 9, 11),    ("84", 9, 10),
-    ("86", 5, 13),    ("90", 10, 10),   ("91", 10, 10),   ("92", 9, 10),
-    ("93", 9, 9),     ("94", 9, 9),     ("95", 8, 10),    ("98", 10, 10),
+    ("20", 9, 10),
+    ("27", 9, 9),
+    ("30", 10, 10),
+    ("31", 9, 9),
+    ("32", 8, 9),
+    ("33", 9, 9),
+    ("34", 9, 9),
+    ("36", 8, 9),
+    ("39", 9, 11),
+    ("40", 9, 9),
+    ("41", 9, 9),
+    ("43", 10, 13),
+    ("44", 9, 10),
+    ("45", 8, 8),
+    ("46", 7, 13),
+    ("47", 8, 8),
+    ("48", 9, 9),
+    ("49", 7, 13),
+    ("51", 9, 11),
+    ("52", 10, 11),
+    ("53", 6, 8),
+    ("54", 10, 11),
+    ("55", 10, 11),
+    ("56", 9, 9),
+    ("57", 10, 10),
+    ("58", 10, 10),
+    ("60", 7, 10),
+    ("61", 5, 15),
+    ("62", 7, 12),
+    ("63", 8, 10),
+    ("64", 3, 10),
+    ("65", 8, 8),
+    ("66", 8, 9),
+    ("81", 9, 10),
+    ("82", 9, 11),
+    ("84", 9, 10),
+    ("86", 5, 13),
+    ("90", 10, 10),
+    ("91", 10, 10),
+    ("92", 9, 10),
+    ("93", 9, 9),
+    ("94", 9, 9),
+    ("95", 8, 10),
+    ("98", 10, 10),
     // 3-digit: Africa
-    ("211", 9, 9),    ("212", 9, 9),    ("213", 9, 9),    ("216", 8, 8),
-    ("218", 9, 10),   ("220", 7, 7),    ("221", 9, 9),    ("222", 8, 8),
-    ("223", 8, 8),    ("224", 9, 9),    ("225", 10, 10),  ("226", 8, 8),
-    ("227", 8, 8),    ("228", 8, 8),    ("229", 8, 8),    ("230", 7, 8),
-    ("231", 7, 8),    ("232", 8, 8),    ("233", 9, 9),    ("234", 8, 10),
-    ("235", 8, 8),    ("236", 8, 8),    ("237", 9, 9),    ("238", 7, 7),
-    ("239", 7, 7),    ("240", 9, 9),    ("241", 7, 8),    ("242", 9, 9),
-    ("243", 9, 9),    ("244", 9, 9),    ("245", 7, 7),    ("246", 7, 7),
-    ("247", 4, 4),    ("248", 7, 7),    ("249", 9, 9),    ("250", 9, 9),
-    ("251", 9, 9),    ("252", 7, 9),    ("253", 8, 8),    ("254", 9, 10),
-    ("255", 9, 9),    ("256", 9, 9),    ("257", 8, 8),    ("258", 9, 9),
-    ("260", 9, 9),    ("261", 9, 10),   ("262", 9, 9),    ("263", 9, 10),
-    ("264", 8, 9),    ("265", 9, 9),    ("266", 8, 8),    ("267", 7, 8),
-    ("268", 8, 8),    ("269", 7, 7),    ("290", 4, 4),    ("291", 7, 7),
-    ("297", 7, 7),    ("298", 6, 6),    ("299", 6, 6),
+    ("211", 9, 9),
+    ("212", 9, 9),
+    ("213", 9, 9),
+    ("216", 8, 8),
+    ("218", 9, 10),
+    ("220", 7, 7),
+    ("221", 9, 9),
+    ("222", 8, 8),
+    ("223", 8, 8),
+    ("224", 9, 9),
+    ("225", 10, 10),
+    ("226", 8, 8),
+    ("227", 8, 8),
+    ("228", 8, 8),
+    ("229", 8, 8),
+    ("230", 7, 8),
+    ("231", 7, 8),
+    ("232", 8, 8),
+    ("233", 9, 9),
+    ("234", 8, 10),
+    ("235", 8, 8),
+    ("236", 8, 8),
+    ("237", 9, 9),
+    ("238", 7, 7),
+    ("239", 7, 7),
+    ("240", 9, 9),
+    ("241", 7, 8),
+    ("242", 9, 9),
+    ("243", 9, 9),
+    ("244", 9, 9),
+    ("245", 7, 7),
+    ("246", 7, 7),
+    ("247", 4, 4),
+    ("248", 7, 7),
+    ("249", 9, 9),
+    ("250", 9, 9),
+    ("251", 9, 9),
+    ("252", 7, 9),
+    ("253", 8, 8),
+    ("254", 9, 10),
+    ("255", 9, 9),
+    ("256", 9, 9),
+    ("257", 8, 8),
+    ("258", 9, 9),
+    ("260", 9, 9),
+    ("261", 9, 10),
+    ("262", 9, 9),
+    ("263", 9, 10),
+    ("264", 8, 9),
+    ("265", 9, 9),
+    ("266", 8, 8),
+    ("267", 7, 8),
+    ("268", 8, 8),
+    ("269", 7, 7),
+    ("290", 4, 4),
+    ("291", 7, 7),
+    ("297", 7, 7),
+    ("298", 6, 6),
+    ("299", 6, 6),
     // 3-digit: Europe
-    ("350", 8, 8),    ("351", 9, 11),   ("352", 8, 11),   ("353", 7, 11),
-    ("354", 7, 9),    ("355", 8, 9),    ("356", 8, 8),    ("357", 8, 11),
-    ("358", 5, 12),   ("359", 8, 9),    ("370", 8, 8),    ("371", 8, 8),
-    ("372", 7, 10),   ("373", 8, 8),    ("374", 8, 8),    ("375", 9, 10),
-    ("376", 6, 9),    ("377", 8, 9),    ("378", 6, 10),   ("379", 6, 10),
-    ("380", 9, 9),    ("381", 8, 10),   ("382", 8, 8),    ("383", 8, 9),
-    ("385", 8, 12),   ("386", 8, 8),    ("387", 8, 8),    ("389", 8, 8),
-    ("420", 9, 9),    ("421", 9, 9),    ("423", 7, 13),
+    ("350", 8, 8),
+    ("351", 9, 11),
+    ("352", 8, 11),
+    ("353", 7, 11),
+    ("354", 7, 9),
+    ("355", 8, 9),
+    ("356", 8, 8),
+    ("357", 8, 11),
+    ("358", 5, 12),
+    ("359", 8, 9),
+    ("370", 8, 8),
+    ("371", 8, 8),
+    ("372", 7, 10),
+    ("373", 8, 8),
+    ("374", 8, 8),
+    ("375", 9, 10),
+    ("376", 6, 9),
+    ("377", 8, 9),
+    ("378", 6, 10),
+    ("379", 6, 10),
+    ("380", 9, 9),
+    ("381", 8, 10),
+    ("382", 8, 8),
+    ("383", 8, 9),
+    ("385", 8, 12),
+    ("386", 8, 8),
+    ("387", 8, 8),
+    ("389", 8, 8),
+    ("420", 9, 9),
+    ("421", 9, 9),
+    ("423", 7, 13),
     // 3-digit: Latin America + Caribbean non-NANP
-    ("500", 5, 5),    ("501", 7, 7),    ("502", 8, 8),    ("503", 8, 11),
-    ("504", 8, 8),    ("505", 8, 8),    ("506", 8, 8),    ("507", 7, 8),
-    ("508", 6, 6),    ("509", 8, 9),    ("590", 9, 9),    ("591", 8, 9),
-    ("592", 7, 7),    ("593", 8, 9),    ("594", 9, 9),    ("595", 9, 9),
-    ("596", 9, 9),    ("597", 6, 7),    ("598", 7, 8),    ("599", 7, 8),
+    ("500", 5, 5),
+    ("501", 7, 7),
+    ("502", 8, 8),
+    ("503", 8, 11),
+    ("504", 8, 8),
+    ("505", 8, 8),
+    ("506", 8, 8),
+    ("507", 7, 8),
+    ("508", 6, 6),
+    ("509", 8, 9),
+    ("590", 9, 9),
+    ("591", 8, 9),
+    ("592", 7, 7),
+    ("593", 8, 9),
+    ("594", 9, 9),
+    ("595", 9, 9),
+    ("596", 9, 9),
+    ("597", 6, 7),
+    ("598", 7, 8),
+    ("599", 7, 8),
     // 3-digit: Oceania + Asia (670-692)
-    ("670", 7, 8),    ("672", 5, 6),    ("673", 7, 7),    ("674", 7, 7),
-    ("675", 7, 8),    ("676", 5, 7),    ("677", 5, 7),    ("678", 5, 7),
-    ("679", 7, 7),    ("680", 7, 7),    ("681", 6, 6),    ("682", 5, 5),
-    ("683", 4, 4),    ("685", 5, 7),    ("686", 5, 8),    ("687", 6, 6),
-    ("688", 5, 6),    ("689", 6, 6),    ("690", 4, 4),    ("691", 7, 7),
+    ("670", 7, 8),
+    ("672", 5, 6),
+    ("673", 7, 7),
+    ("674", 7, 7),
+    ("675", 7, 8),
+    ("676", 5, 7),
+    ("677", 5, 7),
+    ("678", 5, 7),
+    ("679", 7, 7),
+    ("680", 7, 7),
+    ("681", 6, 6),
+    ("682", 5, 5),
+    ("683", 4, 4),
+    ("685", 5, 7),
+    ("686", 5, 8),
+    ("687", 6, 6),
+    ("688", 5, 6),
+    ("689", 6, 6),
+    ("690", 4, 4),
+    ("691", 7, 7),
     ("692", 7, 7),
     // 3-digit: East Asia + South Asia
-    ("850", 8, 13),   ("852", 4, 9),    ("853", 7, 8),    ("855", 8, 9),
-    ("856", 8, 10),   ("880", 6, 10),   ("886", 8, 9),
+    ("850", 8, 13),
+    ("852", 4, 9),
+    ("853", 7, 8),
+    ("855", 8, 9),
+    ("856", 8, 10),
+    ("880", 6, 10),
+    ("886", 8, 9),
     // 3-digit: Middle East + Central Asia
-    ("960", 7, 7),    ("961", 7, 8),    ("962", 8, 9),    ("963", 8, 9),
-    ("964", 9, 10),   ("965", 7, 8),    ("966", 8, 9),    ("967", 6, 9),
-    ("968", 7, 8),    ("970", 8, 9),    ("971", 8, 9),    ("972", 8, 9),
-    ("973", 8, 8),    ("974", 7, 8),    ("975", 7, 8),    ("976", 7, 8),
-    ("977", 9, 10),   ("992", 9, 9),    ("993", 8, 8),    ("994", 8, 9),
-    ("995", 9, 9),    ("996", 9, 9),    ("998", 9, 9),
+    ("960", 7, 7),
+    ("961", 7, 8),
+    ("962", 8, 9),
+    ("963", 8, 9),
+    ("964", 9, 10),
+    ("965", 7, 8),
+    ("966", 8, 9),
+    ("967", 6, 9),
+    ("968", 7, 8),
+    ("970", 8, 9),
+    ("971", 8, 9),
+    ("972", 8, 9),
+    ("973", 8, 8),
+    ("974", 7, 8),
+    ("975", 7, 8),
+    ("976", 7, 8),
+    ("977", 9, 10),
+    ("992", 9, 9),
+    ("993", 8, 8),
+    ("994", 8, 9),
+    ("995", 9, 9),
+    ("996", 9, 9),
+    ("998", 9, 9),
     // Special services (non-geographic)
-    ("800", 8, 8),    // Universal International Freephone
-    ("808", 8, 8),    // Shared-cost
-    ("870", 9, 9),    // Inmarsat
-    ("878", 12, 12),  // UPT
-    ("881", 8, 12),   // GMSS (satellite)
-    ("882", 5, 13),   // International networks
-    ("883", 9, 15),   // International networks
-    ("888", 11, 11),  // ITU-T reserved
+    ("800", 8, 8),   // Universal International Freephone
+    ("808", 8, 8),   // Shared-cost
+    ("870", 9, 9),   // Inmarsat
+    ("878", 12, 12), // UPT
+    ("881", 8, 12),  // GMSS (satellite)
+    ("882", 5, 13),  // International networks
+    ("883", 9, 15),  // International networks
+    ("888", 11, 11), // ITU-T reserved
 ];
 
 /// Validate that a 3-digit NANP area code (NPA) is a structurally
@@ -716,7 +933,10 @@ pub fn is_valid_us_phone(phone: &str) -> bool {
         return false;
     }
     let subscriber = &digits[6..10];
-    if subscriber.chars().all(|c| c == subscriber.chars().next().unwrap()) {
+    if subscriber
+        .chars()
+        .all(|c| c == subscriber.chars().next().unwrap())
+    {
         return false;
     }
     let ex_digits = &digits[3..6];
@@ -756,7 +976,20 @@ pub fn is_valid_dea_number(dea: &str) -> bool {
     // Valid first-letter registrant type codes.
     if !matches!(
         bytes[0],
-        b'A' | b'B' | b'C' | b'D' | b'E' | b'F' | b'G' | b'H' | b'J' | b'K' | b'L' | b'M' | b'P' | b'R' | b'X'
+        b'A' | b'B'
+            | b'C'
+            | b'D'
+            | b'E'
+            | b'F'
+            | b'G'
+            | b'H'
+            | b'J'
+            | b'K'
+            | b'L'
+            | b'M'
+            | b'P'
+            | b'R'
+            | b'X'
     ) {
         return false;
     }
@@ -804,7 +1037,11 @@ pub fn is_valid_iccid(iccid: &str) -> bool {
         .map(|(idx, &d)| {
             if idx % 2 == 1 {
                 let doubled = d * 2;
-                if doubled > 9 { doubled - 9 } else { doubled }
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
             } else {
                 d
             }
@@ -823,14 +1060,15 @@ pub fn is_valid_lei(lei: &str) -> bool {
     if chars.len() != 20 {
         return false;
     }
-    if !chars.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+    if !chars
+        .iter()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    {
         return false;
     }
     // Mod-97 check: convert the entire 20-char string to numeric
     // (A=10..Z=35) and compute mod 97. Result must be 1.
-    let rearranged: String = chars[..20]
-        .iter()
-        .collect();
+    let rearranged: String = chars[..20].iter().collect();
     let mut numeric = String::with_capacity(40);
     for c in rearranged.chars() {
         if let Some(d) = c.to_digit(10) {
@@ -862,7 +1100,10 @@ pub fn is_valid_figi(figi: &str) -> bool {
     if !chars[..3].iter().collect::<String>().eq("BBG") {
         return false;
     }
-    if !chars.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+    if !chars
+        .iter()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    {
         return false;
     }
     // Expand characters to digit sequences: digits stay, letters
@@ -892,7 +1133,11 @@ pub fn is_valid_figi(figi: &str) -> bool {
         .map(|(idx, &d)| {
             if idx % 2 == 1 {
                 let doubled = d * 2;
-                if doubled > 9 { doubled - 9 } else { doubled }
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
             } else {
                 d
             }
@@ -954,7 +1199,10 @@ pub fn is_valid_india_pan(pan: &str) -> bool {
     // P=Person, C=Company, H=HUF, A=AOP, B=BOI, G=Government,
     // J=AJP, L=Local Authority, F=Firm, T=Trust.
     let entity = chars[3];
-    matches!(entity, 'P' | 'C' | 'H' | 'A' | 'B' | 'G' | 'J' | 'L' | 'F' | 'T')
+    matches!(
+        entity,
+        'P' | 'C' | 'H' | 'A' | 'B' | 'G' | 'J' | 'L' | 'F' | 'T'
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -1000,7 +1248,11 @@ pub fn is_valid_south_africa_id(id: &str) -> bool {
         .map(|(idx, &d)| {
             if idx % 2 == 1 {
                 let doubled = d * 2;
-                if doubled > 9 { doubled - 9 } else { doubled }
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
             } else {
                 d
             }
@@ -1031,7 +1283,11 @@ pub fn is_valid_mers_min(min: &str) -> bool {
         .map(|(idx, &d)| {
             if idx % 2 == 1 {
                 let doubled = d * 2;
-                if doubled > 9 { doubled - 9 } else { doubled }
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
             } else {
                 d
             }
@@ -1080,7 +1336,10 @@ pub fn is_valid_uli(uli: &str) -> bool {
     if chars.len() < 23 || chars.len() > 45 {
         return false;
     }
-    if !chars.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+    if !chars
+        .iter()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    {
         return false;
     }
     // Mod-97 check over the entire identifier.
@@ -1663,9 +1922,7 @@ const SECRET_VALUE_PLACEHOLDERS: &[&str] = &[
 /// are treated as "value is the entire matched text" which is
 /// conservative (the entropy check still fires on it).
 fn extract_secret_value(matched: &str) -> &str {
-    let split_pos = matched
-        .char_indices()
-        .find(|(_, c)| *c == '=' || *c == ':');
+    let split_pos = matched.char_indices().find(|(_, c)| *c == '=' || *c == ':');
     let after = match split_pos {
         Some((idx, _)) => &matched[idx + 1..],
         None => matched,
@@ -1821,7 +2078,11 @@ pub fn is_valid_brazil_cpf(cpf: &str) -> bool {
         .sum();
     let check1 = {
         let r = (sum1 * 10) % 11;
-        if r == 10 { 0 } else { r }
+        if r == 10 {
+            0
+        } else {
+            r
+        }
     };
     if digits[9] != check1 {
         return false;
@@ -1835,7 +2096,11 @@ pub fn is_valid_brazil_cpf(cpf: &str) -> bool {
         .sum();
     let check2 = {
         let r = (sum2 * 10) % 11;
-        if r == 10 { 0 } else { r }
+        if r == 10 {
+            0
+        } else {
+            r
+        }
     };
     digits[10] == check2
 }
@@ -2162,7 +2427,10 @@ pub fn is_valid_italy_codice_fiscale(cf: &str) -> bool {
     if chars.len() != 16 {
         return false;
     }
-    if !chars.iter().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+    if !chars
+        .iter()
+        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+    {
         return false;
     }
     let mut sum: u32 = 0;
@@ -2198,10 +2466,7 @@ static DNI_LETTERS: &[u8; 23] = b"TRWAGMYFPDXBNJZSQVHLCKE";
 /// match exactly.
 pub fn is_valid_spain_dni(dni: &str) -> bool {
     // Strip any whitespace / hyphens the regex might have left.
-    let compact: String = dni
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect();
+    let compact: String = dni.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     let bytes = compact.as_bytes();
     if bytes.len() != 9 {
         return false;
@@ -2406,7 +2671,11 @@ pub fn is_valid_china_resident_id(id: &str) -> bool {
     }
     // Weighted mod-11.
     let weights: [u32; 17] = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2];
-    let sum: u32 = digits.iter().zip(weights.iter()).map(|(&d, &w)| d * w).sum();
+    let sum: u32 = digits
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
     let remainder = sum % 11;
     let check_table = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2'];
     let expected = check_table[remainder as usize];
@@ -2480,10 +2749,7 @@ pub fn is_valid_south_korea_rrn(rrn: &str) -> bool {
 /// payload.
 pub fn is_valid_france_nir(nir: &str) -> bool {
     // Strip spaces but keep letters for Corsica substitution.
-    let compact: String = nir
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect();
+    let compact: String = nir.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     if compact.len() != 15 {
         return false;
     }
@@ -2639,7 +2905,11 @@ pub fn is_valid_sweden_pin(pin: &str) -> bool {
         .map(|(idx, &d)| {
             if idx % 2 == 1 {
                 let doubled = d * 2;
-                if doubled > 9 { doubled - 9 } else { doubled }
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
             } else {
                 d
             }
@@ -2729,17 +2999,36 @@ pub fn is_valid_argentina_cuil(id: &str) -> bool {
 /// isn't recognised.
 fn singapore_id_check_letter(prefix: char, digits: &[u32; 7]) -> Option<char> {
     let weights = [2u32, 7, 6, 5, 4, 3, 2];
-    let base_sum: u32 = digits.iter().zip(weights.iter()).map(|(&d, &w)| d * w).sum();
+    let base_sum: u32 = digits
+        .iter()
+        .zip(weights.iter())
+        .map(|(&d, &w)| d * w)
+        .sum();
     // Prefix-specific offset.
     let (offset, table) = match prefix {
         // NRIC: S = pre-2000 resident, T = 2000+ resident.
-        'S' => (0u32, ['J', 'Z', 'I', 'H', 'G', 'F', 'E', 'D', 'C', 'B', 'A']),
-        'T' => (4u32, ['J', 'Z', 'I', 'H', 'G', 'F', 'E', 'D', 'C', 'B', 'A']),
+        'S' => (
+            0u32,
+            ['J', 'Z', 'I', 'H', 'G', 'F', 'E', 'D', 'C', 'B', 'A'],
+        ),
+        'T' => (
+            4u32,
+            ['J', 'Z', 'I', 'H', 'G', 'F', 'E', 'D', 'C', 'B', 'A'],
+        ),
         // FIN: F = pre-2000 foreign, G = 2000+ foreign, M =
         // post-2022 foreign. F/G share a table; M uses its own.
-        'F' => (0u32, ['X', 'W', 'U', 'T', 'R', 'Q', 'P', 'N', 'J', 'L', 'K']),
-        'G' => (4u32, ['X', 'W', 'U', 'T', 'R', 'Q', 'P', 'N', 'J', 'L', 'K']),
-        'M' => (3u32, ['K', 'L', 'J', 'N', 'P', 'Q', 'R', 'T', 'U', 'W', 'X']),
+        'F' => (
+            0u32,
+            ['X', 'W', 'U', 'T', 'R', 'Q', 'P', 'N', 'J', 'L', 'K'],
+        ),
+        'G' => (
+            4u32,
+            ['X', 'W', 'U', 'T', 'R', 'Q', 'P', 'N', 'J', 'L', 'K'],
+        ),
+        'M' => (
+            3u32,
+            ['K', 'L', 'J', 'N', 'P', 'Q', 'R', 'T', 'U', 'W', 'X'],
+        ),
         _ => return None,
     };
     let idx = ((base_sum + offset) % 11) as usize;
@@ -2812,10 +3101,7 @@ pub fn is_valid_singapore_fin(fin: &str) -> bool {
 pub fn is_valid_hong_kong_id(id: &str) -> bool {
     // Strip common formatting characters (parentheses around the
     // check digit, whitespace between letter and digits).
-    let compact: String = id
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect();
+    let compact: String = id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     let chars: Vec<char> = compact.chars().collect();
     // 1-letter form: 8 chars total (L + 6 digits + check).
     // 2-letter form: 9 chars total (LL + 6 digits + check).
@@ -2868,7 +3154,11 @@ pub fn is_valid_hong_kong_id(id: &str) -> bool {
         digits[4],
         digits[5],
     ];
-    let sum: u32 = values.iter().zip(weights.iter()).map(|(&v, &w)| v * w).sum();
+    let sum: u32 = values
+        .iter()
+        .zip(weights.iter())
+        .map(|(&v, &w)| v * w)
+        .sum();
     (sum + check_val) % 11 == 0
 }
 
@@ -2904,7 +3194,11 @@ pub fn is_valid_us_npi(npi: &str) -> bool {
         .map(|(idx, &d)| {
             if idx % 2 == 1 {
                 let doubled = d * 2;
-                if doubled > 9 { doubled - 9 } else { doubled }
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
             } else {
                 d
             }
@@ -2940,7 +3234,11 @@ pub fn is_valid_uae_emirates_id(id: &str) -> bool {
         .map(|(idx, &d)| {
             if idx % 2 == 1 {
                 let doubled = d * 2;
-                if doubled > 9 { doubled - 9 } else { doubled }
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
             } else {
                 d
             }
@@ -3024,7 +3322,10 @@ fn base58_decode(input: &str, alphabet: &[u8; 58]) -> Option<Vec<u8>> {
     // Leading "zero" characters in the input (the alphabet's first char)
     // map to leading zero bytes in the output.
     let leading_zero_char = alphabet[0];
-    let leading_zeros = input.bytes().take_while(|&c| c == leading_zero_char).count();
+    let leading_zeros = input
+        .bytes()
+        .take_while(|&c| c == leading_zero_char)
+        .count();
     for _ in 0..leading_zeros {
         output.push(0);
     }
@@ -3192,7 +3493,11 @@ const CASHADDR_CHARSET: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 /// generator polynomial and a larger state (40 bits vs 30 bits).
 fn cashaddr_polymod(values: &[u8]) -> u64 {
     const GEN: [u64; 5] = [
-        0x98f2bc8e61, 0x79b76d99e2, 0xf33e5fb3c4, 0xae2eabe2a8, 0x1e4f43e470,
+        0x98f2bc8e61,
+        0x79b76d99e2,
+        0xf33e5fb3c4,
+        0xae2eabe2a8,
+        0x1e4f43e470,
     ];
     let mut c: u64 = 1;
     for &v in values {
@@ -3336,10 +3641,7 @@ pub fn is_valid_germany_tax_id(tax_id: &str) -> bool {
 ///   check = "0" if remainder == 11 else "K" if remainder == 10 else digit(remainder)
 pub fn is_valid_chile_rut(rut: &str) -> bool {
     // Strip separators and find the check character.
-    let compact: String = rut
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .collect();
+    let compact: String = rut.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     if compact.len() < 8 || compact.len() > 9 {
         return false;
     }
@@ -3426,10 +3728,7 @@ pub fn is_valid_quebec_hc(hc: &str) -> bool {
     if !bytes[4..].iter().all(|b| b.is_ascii_digit()) {
         return false;
     }
-    let digits: Vec<u32> = bytes[4..]
-        .iter()
-        .map(|&b| (b - b'0') as u32)
-        .collect();
+    let digits: Vec<u32> = bytes[4..].iter().map(|&b| (b - b'0') as u32).collect();
     let month = digits[2] * 10 + digits[3];
     let day = digits[4] * 10 + digits[5];
     // Month: 01..12 male, 51..62 female.
@@ -3482,65 +3781,425 @@ pub fn is_valid_ssn(ssn: &str) -> bool {
 }
 
 static VALID_TLDS: &[&str] = &[
-    "com", "org", "net", "edu", "gov", "mil", "int",
-    "info", "biz", "name", "pro", "aero", "coop", "museum",
-    "jobs", "travel", "cat", "mobi", "tel", "asia",
-    "io", "co", "ai", "dev", "app", "cloud", "tech", "online",
-    "store", "site", "xyz", "top", "icu", "vip", "club",
-    "shop", "work", "ltd", "group", "live", "me", "tv", "cc",
-    "us", "uk", "ca", "au", "de", "fr", "it", "es", "nl",
-    "be", "at", "ch", "se", "no", "dk", "fi", "ie", "pt",
-    "pl", "cz", "sk", "hu", "ro", "bg", "hr", "si", "lt",
-    "lv", "ee", "gr", "cy", "mt", "lu", "li", "is",
-    "ru", "ua", "by", "kz", "uz", "ge", "am", "az",
-    "cn", "jp", "kr", "in", "sg", "hk", "tw", "th", "my",
-    "id", "ph", "vn", "bd", "pk", "lk", "np",
-    "br", "mx", "ar", "cl", "co", "pe", "ve", "ec", "uy",
-    "za", "ng", "ke", "eg", "ma", "tn", "gh", "et",
-    "ae", "sa", "il", "tr", "qa", "kw", "bh", "om", "jo", "lb",
-    "nz", "au",
-    "eu", "ac", "ad", "ag", "al", "an", "ao", "aq",
-    "aw", "ax", "ba", "bb", "bf", "bi", "bj", "bm", "bn",
-    "bo", "bs", "bt", "bv", "bw", "bz", "cd", "cf", "cg",
-    "ci", "ck", "cm", "cr", "cu", "cv", "cw", "cx",
-    "dj", "dm", "do", "dz", "er", "fj", "fk", "fm",
-    "fo", "ga", "gd", "gf", "gg", "gi", "gl", "gm", "gn",
-    "gp", "gq", "gs", "gt", "gu", "gw", "gy", "hm", "hn",
-    "ht", "im", "iq", "ir", "je", "jm", "kg", "kh", "ki",
-    "km", "kn", "kp", "ky", "la", "lc", "lr", "ls", "ly",
-    "mc", "md", "mg", "mh", "mk", "ml", "mm", "mn", "mo",
-    "mp", "mq", "mr", "ms", "mu", "mv", "mw", "mz",
-    "na", "nc", "ne", "nf", "ni", "nr", "nu",
-    "pa", "pf", "pg", "pm", "pn", "pr", "ps", "pw", "py",
-    "re", "rs", "rw", "sb", "sc", "sd", "sh", "sj",
-    "sl", "sm", "sn", "so", "sr", "ss", "st", "sv", "sx",
-    "sy", "sz", "tc", "td", "tf", "tg", "tj", "tk", "tl",
-    "tm", "to", "tt", "tz", "ug", "um", "vc", "vi",
-    "vg", "vu", "wf", "ws", "ye", "yt", "zm", "zw",
-    "web", "blog", "page", "news", "health", "space", "design",
-    "money", "fund", "team", "world", "city", "email", "plus",
-    "digital", "media", "agency", "studio", "global", "network",
-    "systems", "solutions", "services", "company", "center",
-    "consulting", "engineering", "technology", "software",
-    "computer", "science", "academy", "university", "school",
-    "institute", "education", "foundation", "charity",
-    "church", "social", "community", "support", "help",
-    "legal", "law", "tax", "insurance", "finance", "bank",
-    "market", "trade", "exchange", "capital", "ventures",
-    "properties", "realty", "estate", "land", "house", "home",
-    "builders", "construction", "energy", "solar", "green",
-    "eco", "bio", "farm", "garden", "food", "kitchen",
-    "restaurant", "bar", "cafe", "pizza", "wine", "beer",
-    "hotel", "holiday", "voyage", "flights", "cruises",
-    "rent", "auto", "car", "bike", "taxi", "fit", "yoga",
-    "run", "play", "game", "games", "bet", "poker", "casino",
-    "lol", "wtf", "foo", "buzz", "zone", "life", "style",
-    "fashion", "beauty", "hair", "skin", "art", "photo",
-    "video", "film", "music", "band", "dance", "show",
-    "theater", "tickets", "events", "party", "dating",
-    "chat", "forum", "wiki", "guide", "tips", "how",
-    "review", "best", "one", "now", "today", "new",
-    "gg", "gl", "gd",
+    "com",
+    "org",
+    "net",
+    "edu",
+    "gov",
+    "mil",
+    "int",
+    "info",
+    "biz",
+    "name",
+    "pro",
+    "aero",
+    "coop",
+    "museum",
+    "jobs",
+    "travel",
+    "cat",
+    "mobi",
+    "tel",
+    "asia",
+    "io",
+    "co",
+    "ai",
+    "dev",
+    "app",
+    "cloud",
+    "tech",
+    "online",
+    "store",
+    "site",
+    "xyz",
+    "top",
+    "icu",
+    "vip",
+    "club",
+    "shop",
+    "work",
+    "ltd",
+    "group",
+    "live",
+    "me",
+    "tv",
+    "cc",
+    "us",
+    "uk",
+    "ca",
+    "au",
+    "de",
+    "fr",
+    "it",
+    "es",
+    "nl",
+    "be",
+    "at",
+    "ch",
+    "se",
+    "no",
+    "dk",
+    "fi",
+    "ie",
+    "pt",
+    "pl",
+    "cz",
+    "sk",
+    "hu",
+    "ro",
+    "bg",
+    "hr",
+    "si",
+    "lt",
+    "lv",
+    "ee",
+    "gr",
+    "cy",
+    "mt",
+    "lu",
+    "li",
+    "is",
+    "ru",
+    "ua",
+    "by",
+    "kz",
+    "uz",
+    "ge",
+    "am",
+    "az",
+    "cn",
+    "jp",
+    "kr",
+    "in",
+    "sg",
+    "hk",
+    "tw",
+    "th",
+    "my",
+    "id",
+    "ph",
+    "vn",
+    "bd",
+    "pk",
+    "lk",
+    "np",
+    "br",
+    "mx",
+    "ar",
+    "cl",
+    "co",
+    "pe",
+    "ve",
+    "ec",
+    "uy",
+    "za",
+    "ng",
+    "ke",
+    "eg",
+    "ma",
+    "tn",
+    "gh",
+    "et",
+    "ae",
+    "sa",
+    "il",
+    "tr",
+    "qa",
+    "kw",
+    "bh",
+    "om",
+    "jo",
+    "lb",
+    "nz",
+    "au",
+    "eu",
+    "ac",
+    "ad",
+    "ag",
+    "al",
+    "an",
+    "ao",
+    "aq",
+    "aw",
+    "ax",
+    "ba",
+    "bb",
+    "bf",
+    "bi",
+    "bj",
+    "bm",
+    "bn",
+    "bo",
+    "bs",
+    "bt",
+    "bv",
+    "bw",
+    "bz",
+    "cd",
+    "cf",
+    "cg",
+    "ci",
+    "ck",
+    "cm",
+    "cr",
+    "cu",
+    "cv",
+    "cw",
+    "cx",
+    "dj",
+    "dm",
+    "do",
+    "dz",
+    "er",
+    "fj",
+    "fk",
+    "fm",
+    "fo",
+    "ga",
+    "gd",
+    "gf",
+    "gg",
+    "gi",
+    "gl",
+    "gm",
+    "gn",
+    "gp",
+    "gq",
+    "gs",
+    "gt",
+    "gu",
+    "gw",
+    "gy",
+    "hm",
+    "hn",
+    "ht",
+    "im",
+    "iq",
+    "ir",
+    "je",
+    "jm",
+    "kg",
+    "kh",
+    "ki",
+    "km",
+    "kn",
+    "kp",
+    "ky",
+    "la",
+    "lc",
+    "lr",
+    "ls",
+    "ly",
+    "mc",
+    "md",
+    "mg",
+    "mh",
+    "mk",
+    "ml",
+    "mm",
+    "mn",
+    "mo",
+    "mp",
+    "mq",
+    "mr",
+    "ms",
+    "mu",
+    "mv",
+    "mw",
+    "mz",
+    "na",
+    "nc",
+    "ne",
+    "nf",
+    "ni",
+    "nr",
+    "nu",
+    "pa",
+    "pf",
+    "pg",
+    "pm",
+    "pn",
+    "pr",
+    "ps",
+    "pw",
+    "py",
+    "re",
+    "rs",
+    "rw",
+    "sb",
+    "sc",
+    "sd",
+    "sh",
+    "sj",
+    "sl",
+    "sm",
+    "sn",
+    "so",
+    "sr",
+    "ss",
+    "st",
+    "sv",
+    "sx",
+    "sy",
+    "sz",
+    "tc",
+    "td",
+    "tf",
+    "tg",
+    "tj",
+    "tk",
+    "tl",
+    "tm",
+    "to",
+    "tt",
+    "tz",
+    "ug",
+    "um",
+    "vc",
+    "vi",
+    "vg",
+    "vu",
+    "wf",
+    "ws",
+    "ye",
+    "yt",
+    "zm",
+    "zw",
+    "web",
+    "blog",
+    "page",
+    "news",
+    "health",
+    "space",
+    "design",
+    "money",
+    "fund",
+    "team",
+    "world",
+    "city",
+    "email",
+    "plus",
+    "digital",
+    "media",
+    "agency",
+    "studio",
+    "global",
+    "network",
+    "systems",
+    "solutions",
+    "services",
+    "company",
+    "center",
+    "consulting",
+    "engineering",
+    "technology",
+    "software",
+    "computer",
+    "science",
+    "academy",
+    "university",
+    "school",
+    "institute",
+    "education",
+    "foundation",
+    "charity",
+    "church",
+    "social",
+    "community",
+    "support",
+    "help",
+    "legal",
+    "law",
+    "tax",
+    "insurance",
+    "finance",
+    "bank",
+    "market",
+    "trade",
+    "exchange",
+    "capital",
+    "ventures",
+    "properties",
+    "realty",
+    "estate",
+    "land",
+    "house",
+    "home",
+    "builders",
+    "construction",
+    "energy",
+    "solar",
+    "green",
+    "eco",
+    "bio",
+    "farm",
+    "garden",
+    "food",
+    "kitchen",
+    "restaurant",
+    "bar",
+    "cafe",
+    "pizza",
+    "wine",
+    "beer",
+    "hotel",
+    "holiday",
+    "voyage",
+    "flights",
+    "cruises",
+    "rent",
+    "auto",
+    "car",
+    "bike",
+    "taxi",
+    "fit",
+    "yoga",
+    "run",
+    "play",
+    "game",
+    "games",
+    "bet",
+    "poker",
+    "casino",
+    "lol",
+    "wtf",
+    "foo",
+    "buzz",
+    "zone",
+    "life",
+    "style",
+    "fashion",
+    "beauty",
+    "hair",
+    "skin",
+    "art",
+    "photo",
+    "video",
+    "film",
+    "music",
+    "band",
+    "dance",
+    "show",
+    "theater",
+    "tickets",
+    "events",
+    "party",
+    "dating",
+    "chat",
+    "forum",
+    "wiki",
+    "guide",
+    "tips",
+    "how",
+    "review",
+    "best",
+    "one",
+    "now",
+    "today",
+    "new",
+    "gg",
+    "gl",
+    "gd",
 ];
 
 pub fn is_valid_email(email: &str) -> bool {
@@ -4211,27 +4870,41 @@ mod tests {
         // 1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2 — the genesis block
         // coinbase address (Satoshi's original). Canonical P2PKH
         // with version byte 0x00.
-        assert!(is_valid_bitcoin_legacy("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"));
+        assert!(is_valid_bitcoin_legacy(
+            "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"
+        ));
         // 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa — another published
         // Satoshi address.
-        assert!(is_valid_bitcoin_legacy("1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"));
+        assert!(is_valid_bitcoin_legacy(
+            "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"
+        ));
         // 3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy — a published P2SH
         // address (version byte 0x05).
-        assert!(is_valid_bitcoin_legacy("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"));
+        assert!(is_valid_bitcoin_legacy(
+            "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"
+        ));
     }
 
     #[test]
     fn test_bitcoin_legacy_invalid() {
         // Bumped last char — checksum fails.
-        assert!(!is_valid_bitcoin_legacy("1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN3"));
+        assert!(!is_valid_bitcoin_legacy(
+            "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN3"
+        ));
         // Wrong version byte (2... is testnet P2PKH — 0x6f, not 0x00).
-        assert!(!is_valid_bitcoin_legacy("2MzQwSSnBHWHqSAqtTVQ6v47XtaisrJa1Vc"));
+        assert!(!is_valid_bitcoin_legacy(
+            "2MzQwSSnBHWHqSAqtTVQ6v47XtaisrJa1Vc"
+        ));
         // Random base58 string that doesn't checksum.
-        assert!(!is_valid_bitcoin_legacy("1234567890ABCDEFGHJKmnopqrstuvwxyz"));
+        assert!(!is_valid_bitcoin_legacy(
+            "1234567890ABCDEFGHJKmnopqrstuvwxyz"
+        ));
         // Wrong length (too short).
         assert!(!is_valid_bitcoin_legacy("1BvBMSEYstWetqT"));
         // Contains a forbidden Base58 character (`0`, `O`, `I`, `l`).
-        assert!(!is_valid_bitcoin_legacy("10vBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"));
+        assert!(!is_valid_bitcoin_legacy(
+            "10vBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"
+        ));
     }
 
     #[test]
@@ -4694,7 +5367,7 @@ mod tests {
         assert!(!is_valid_aba_routing("441234567")); // prefix 44 not allocated
         assert!(!is_valid_aba_routing("991234567")); // prefix 99 not allocated
         assert!(!is_valid_aba_routing("501234567")); // prefix 50 not allocated
-        // All-same sentinel.
+                                                     // All-same sentinel.
         assert!(!is_valid_aba_routing("000000000"));
         assert!(!is_valid_aba_routing("111111111"));
         // Wrong length.
@@ -4846,7 +5519,9 @@ mod tests {
         // Real MICR strings include the U+2446..U+2449 control
         // characters. Only one is required for the gate; real
         // check MICR has at least three.
-        assert!(is_valid_micr_line("\u{2446}123456789\u{2446}\u{2448}1234567\u{2448}\u{2449}0000001000\u{2449}"));
+        assert!(is_valid_micr_line(
+            "\u{2446}123456789\u{2446}\u{2448}1234567\u{2448}\u{2449}0000001000\u{2449}"
+        ));
         // Minimal case: just the transit symbol around a routing
         // number.
         assert!(is_valid_micr_line("\u{2446}021000021\u{2446}"));
@@ -4910,7 +5585,7 @@ mod tests {
         assert!(is_valid_nanp_npa("310")); // LA
         assert!(is_valid_nanp_npa("416")); // Toronto
         assert!(is_valid_nanp_npa("441")); // Bermuda
-        // Non-geographic but assigned.
+                                           // Non-geographic but assigned.
         assert!(is_valid_nanp_npa("800")); // toll-free
         assert!(is_valid_nanp_npa("888")); // toll-free
         assert!(is_valid_nanp_npa("900")); // premium-rate
@@ -4944,10 +5619,10 @@ mod tests {
         assert!(is_valid_e164_phone("+14155552671"));
         assert!(is_valid_e164_phone("+12125551234"));
         assert!(is_valid_e164_phone("+14165551234")); // Toronto
-        // UK: +44 + 9-10 digits.
-        assert!(is_valid_e164_phone("+442079460007"));  // Landline: 10
-        assert!(is_valid_e164_phone("+447912345678"));  // Mobile: 10
-        // Germany: +49 + 7-13.
+                                                      // UK: +44 + 9-10 digits.
+        assert!(is_valid_e164_phone("+442079460007")); // Landline: 10
+        assert!(is_valid_e164_phone("+447912345678")); // Mobile: 10
+                                                       // Germany: +49 + 7-13.
         assert!(is_valid_e164_phone("+4930901820"));
         // France: +33 + exactly 9.
         assert!(is_valid_e164_phone("+33142685300"));
@@ -4975,7 +5650,7 @@ mod tests {
         assert!(!is_valid_e164_phone("+11111111111")); // NPA 111
         assert!(!is_valid_e164_phone("+19110000000")); // NPA 911 (N11)
         assert!(!is_valid_e164_phone("+19990000000")); // NPA 999 (triple)
-        // +44 with too-short NSN (UK min 9).
+                                                       // +44 with too-short NSN (UK min 9).
         assert!(!is_valid_e164_phone("+441234567"));
         // +33 with NSN length 7 (France requires exactly 9).
         assert!(!is_valid_e164_phone("+331234567"));
@@ -5002,14 +5677,14 @@ mod tests {
     #[test]
     fn test_us_phone_invalid() {
         // Invalid NPA.
-        assert!(!is_valid_us_phone("0155552671"));  // NPA 015
-        assert!(!is_valid_us_phone("9115552671"));  // NPA 911 (N11)
-        // Invalid exchange code (first digit 0 or 1).
-        assert!(!is_valid_us_phone("4150555267"));  // exchange 055
-        assert!(!is_valid_us_phone("4151555267"));  // exchange 155
-        // N11 exchange.
+        assert!(!is_valid_us_phone("0155552671")); // NPA 015
+        assert!(!is_valid_us_phone("9115552671")); // NPA 911 (N11)
+                                                   // Invalid exchange code (first digit 0 or 1).
+        assert!(!is_valid_us_phone("4150555267")); // exchange 055
+        assert!(!is_valid_us_phone("4151555267")); // exchange 155
+                                                   // N11 exchange.
         assert!(!is_valid_us_phone("4152115555")); // exchange 211
-        // All-same garbage.
+                                                   // All-same garbage.
         assert!(!is_valid_us_phone("0000000000"));
         assert!(!is_valid_us_phone("9999999999"));
         // Wrong length.
@@ -5040,7 +5715,7 @@ mod tests {
         // Invalid registrant-type prefix letter.
         assert!(!is_valid_dea_number("NB1234563")); // N not in valid set
         assert!(!is_valid_dea_number("OB1234563")); // O not in valid set
-        // Non-digit in the numeric portion.
+                                                    // Non-digit in the numeric portion.
         assert!(!is_valid_dea_number("AB12345A3"));
         // Wrong length.
         assert!(!is_valid_dea_number("AB123456"));
@@ -5192,7 +5867,7 @@ mod tests {
         // Wrong length.
         assert!(!is_valid_vin("1HGCM82633A00435")); // 16
         assert!(!is_valid_vin("1HGCM82633A0043522")); // 18
-        // All-same sentinel.
+                                                      // All-same sentinel.
         assert!(!is_valid_vin("AAAAAAAAAAAAAAAAA"));
         assert!(!is_valid_vin("00000000000000000"));
         // Lowercase — VIN is uppercase only.
@@ -5253,9 +5928,7 @@ mod tests {
         // Real public IPv6 addresses (examples).
         assert!(is_valid_ipv6("2606:4700:4700::1111")); // Cloudflare DNS
         assert!(is_valid_ipv6("2001:4860:4860::8888")); // Google DNS
-        assert!(is_valid_ipv6(
-            "2a00:1450:4009:80f:0000:0000:0000:200e"
-        ));
+        assert!(is_valid_ipv6("2a00:1450:4009:80f:0000:0000:0000:200e"));
     }
 
     #[test]
@@ -5445,9 +6118,7 @@ mod tests {
     #[test]
     fn test_plausible_slack_webhook_valid_runtime_construction() {
         let host = ["https://hooks", ".slack", ".com"].concat();
-        let url = format!(
-            "{host}/services/T12345ABCD/B98765WXYZ/abcdefghijklmnopqrstuvwx"
-        );
+        let url = format!("{host}/services/T12345ABCD/B98765WXYZ/abcdefghijklmnopqrstuvwx");
         assert!(is_plausible_slack_webhook(&url));
     }
 
@@ -5480,9 +6151,7 @@ mod tests {
     #[test]
     fn test_is_plausible_api_key_valid() {
         // AWS-style real-shape key (entropy ~3.77).
-        assert!(is_plausible_api_key(
-            "api_key = \"AKIAIOSFODNN7EXAMPLE\""
-        ));
+        assert!(is_plausible_api_key("api_key = \"AKIAIOSFODNN7EXAMPLE\""));
         // Random alphanumeric (entropy ~4.5+).
         assert!(is_plausible_api_key(
             "api_key = \"7xqjL9kJm8nPvR2tE4fW6sY1bN3c\""
@@ -5496,40 +6165,24 @@ mod tests {
             "api_secret = \"4eC39HqLyjWDarjtT1zdp7dcXyZmNqAb\""
         ));
         // Without surrounding quotes (regex allows this).
-        assert!(is_plausible_api_key(
-            "api_key = AKIAIOSFODNN7EXAMPLE"
-        ));
+        assert!(is_plausible_api_key("api_key = AKIAIOSFODNN7EXAMPLE"));
         // With colon separator instead of `=`.
-        assert!(is_plausible_api_key(
-            "apikey: 7xqjL9kJm8nPvR2tE4fW6sY1bN3c"
-        ));
+        assert!(is_plausible_api_key("apikey: 7xqjL9kJm8nPvR2tE4fW6sY1bN3c"));
     }
 
     #[test]
     fn test_is_plausible_api_key_invalid() {
         // Documentation placeholder (in stop-list).
-        assert!(!is_plausible_api_key(
-            "api_key = \"your_api_key_here\""
-        ));
-        assert!(!is_plausible_api_key(
-            "api_key = \"YOUR_API_KEY_HERE\""
-        ));
+        assert!(!is_plausible_api_key("api_key = \"your_api_key_here\""));
+        assert!(!is_plausible_api_key("api_key = \"YOUR_API_KEY_HERE\""));
         assert!(!is_plausible_api_key("api_key = \"placeholder12345\""));
         // All-same character.
-        assert!(!is_plausible_api_key(
-            "api_key = \"xxxxxxxxxxxxxxxx\""
-        ));
-        assert!(!is_plausible_api_key(
-            "api_key = \"0000000000000000\""
-        ));
+        assert!(!is_plausible_api_key("api_key = \"xxxxxxxxxxxxxxxx\""));
+        assert!(!is_plausible_api_key("api_key = \"0000000000000000\""));
         // Below the entropy floor (3.0). "abababab..." has entropy 1.0.
-        assert!(!is_plausible_api_key(
-            "api_key = \"abababababababab\""
-        ));
+        assert!(!is_plausible_api_key("api_key = \"abababababababab\""));
         // Below the entropy floor — `1212121212121212` has entropy 1.0.
-        assert!(!is_plausible_api_key(
-            "api_key = \"1212121212121212\""
-        ));
+        assert!(!is_plausible_api_key("api_key = \"1212121212121212\""));
         // Below the regex/validator length floor (16 chars).
         // Note: in practice the regex would not match this, but the
         // validator should reject it defensively.
@@ -5550,9 +6203,7 @@ mod tests {
             "secret = \"7xqjL9kJm8nPvR2tE4fW\""
         ));
         // 12-char minimum.
-        assert!(is_plausible_secret_assignment(
-            "token = \"abcDEF12345!\""
-        ));
+        assert!(is_plausible_secret_assignment("token = \"abcDEF12345!\""));
     }
 
     #[test]
@@ -5561,12 +6212,8 @@ mod tests {
         assert!(!is_plausible_secret_assignment(
             "password = \"your_password\""
         ));
-        assert!(!is_plausible_secret_assignment(
-            "password = \"changeme\""
-        ));
-        assert!(!is_plausible_secret_assignment(
-            "secret = \"placeholder\""
-        ));
+        assert!(!is_plausible_secret_assignment("password = \"changeme\""));
+        assert!(!is_plausible_secret_assignment("secret = \"placeholder\""));
         // All-same character.
         assert!(!is_plausible_secret_assignment(
             "password = \"xxxxxxxxxxxx\""
@@ -5575,9 +6222,7 @@ mod tests {
             "password = \"000000000000\""
         ));
         // Below 12-char floor.
-        assert!(!is_plausible_secret_assignment(
-            "password = \"abcDEF12\""
-        ));
+        assert!(!is_plausible_secret_assignment("password = \"abcDEF12\""));
         // Below entropy floor 2.5 — `ababababababab` has entropy 1.0.
         assert!(!is_plausible_secret_assignment(
             "password = \"abababababab\""

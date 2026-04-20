@@ -44,10 +44,10 @@ use siphon_core::audit::{
     audit_event, iso8601_now, set_audit_logger, AuditEvent, AuditHandler, AuditLogger,
     FileAuditHandler, RotatingFileAuditHandler,
 };
-use siphon_core::findings_ring::{
-    filter_findings, severity_for, FindingRecord, FindingsRing,
+use siphon_core::findings_ring::{filter_findings, severity_for, FindingRecord, FindingsRing};
+use siphon_core::overrides::{
+    CompiledList, PatternOverride, PatternOverrides, Regex, RuntimePattern,
 };
-use siphon_core::overrides::{CompiledList, PatternOverride, PatternOverrides, Regex, RuntimePattern};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
@@ -218,8 +218,11 @@ impl RateLimiter {
         let window = Duration::from_secs(60);
 
         if now.duration_since(self.last_cleanup) > Duration::from_secs(300) {
-            self.windows
-                .retain(|_, timestamps| timestamps.last().is_some_and(|t| now.duration_since(*t) < window));
+            self.windows.retain(|_, timestamps| {
+                timestamps
+                    .last()
+                    .is_some_and(|t| now.duration_since(*t) < window)
+            });
             self.last_cleanup = now;
         }
 
@@ -357,16 +360,16 @@ async fn auth_middleware(
                             .with_action("auth")
                             .with_outcome("rejected")
                             .with_source_ip(&addr.ip().to_string())
-                            .with_metadata(
-                                "reason",
-                                serde_json::json!("invalid_api_key"),
-                            ),
+                            .with_metadata("reason", serde_json::json!("invalid_api_key")),
                     );
                 }
                 return (
                     StatusCode::UNAUTHORIZED,
-                    Json(ErrorResponse { error: "invalid API key".into() }),
-                ).into_response();
+                    Json(ErrorResponse {
+                        error: "invalid API key".into(),
+                    }),
+                )
+                    .into_response();
             }
             next.run(request).await
         }
@@ -383,8 +386,11 @@ async fn auth_middleware(
             (
                 StatusCode::UNAUTHORIZED,
                 [(header::WWW_AUTHENTICATE, "Bearer")],
-                Json(ErrorResponse { error: "API key required".into() }),
-            ).into_response()
+                Json(ErrorResponse {
+                    error: "API key required".into(),
+                }),
+            )
+                .into_response()
         }
     }
 }
@@ -419,8 +425,11 @@ async fn rate_limit_middleware(
         return (
             StatusCode::TOO_MANY_REQUESTS,
             [(header::RETRY_AFTER, "60")],
-            Json(ErrorResponse { error: "rate limit exceeded".into() }),
-        ).into_response();
+            Json(ErrorResponse {
+                error: "rate limit exceeded".into(),
+            }),
+        )
+            .into_response();
     }
 
     next.run(request).await
@@ -433,7 +442,10 @@ async fn rate_limit_middleware(
 async fn security_headers(request: Request<Body>, next: Next) -> Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
-    headers.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
     headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
     headers.insert("x-xss-protection", HeaderValue::from_static("0"));
     headers.insert(
@@ -509,13 +521,13 @@ struct Finding {
 // uptime_secs help spot recent restarts (e.g. after a Phase 6 roll).
 struct HealthResponse {
     status: &'static str,
-    pod: &'static str,                // legacy alias — kept so older
-                                       // C2 builds keep parsing
-    pod_type: &'static str,           // "siphon-api" | "siphon-fs"
-    pod_id: String,                   // uuidv4, generated at startup
-    version: &'static str,            // crate version of this binary
-    core_version: &'static str,       // siphon-core crate version
-    started_at: String,               // ISO8601, captured at startup
+    pod: &'static str, // legacy alias — kept so older
+    // C2 builds keep parsing
+    pod_type: &'static str,     // "siphon-api" | "siphon-fs"
+    pod_id: String,             // uuidv4, generated at startup
+    version: &'static str,      // crate version of this binary
+    core_version: &'static str, // siphon-core crate version
+    started_at: String,         // ISO8601, captured at startup
     uptime_secs: u64,
 }
 
@@ -587,13 +599,19 @@ async fn scan(
     // released immediately — the cloned Arcs are stable for the
     // scan's lifetime even if Apply swaps the block in the middle.
     let ov = {
-        let g = state.live_overrides.read().expect("live_overrides lock poisoned");
+        let g = state
+            .live_overrides
+            .read()
+            .expect("live_overrides lock poisoned");
         g.clone()
     };
 
     let mut config = ScanConfig {
         min_confidence: req.options.min_confidence.unwrap_or(0.0),
-        categories: req.options.categories.map(|c| c.into_iter().collect::<HashSet<_>>()),
+        categories: req
+            .options
+            .categories
+            .map(|c| c.into_iter().collect::<HashSet<_>>()),
         require_context: req.options.require_context.unwrap_or(false),
         baseline_only: req.options.baseline_only.unwrap_or(false),
         deduplicate: req.options.deduplicate.unwrap_or(true),
@@ -623,7 +641,10 @@ async fn scan(
     let start = Instant::now();
 
     let matches = scan_text_with_config(&req.text, &config).map_err(|e| {
-        state.metrics.scan_errors_total.fetch_add(1, Ordering::Relaxed);
+        state
+            .metrics
+            .scan_errors_total
+            .fetch_add(1, Ordering::Relaxed);
         tracing::error!(request_id = %request_id, error = %e, "scan_failed");
         if let Ok(event) = AuditEvent::new("SCAN") {
             emit_audit(
@@ -661,7 +682,10 @@ async fn scan(
 
     let count = findings.len();
     state.metrics.scans_total.fetch_add(1, Ordering::Relaxed);
-    state.metrics.findings_total.fetch_add(count as u64, Ordering::Relaxed);
+    state
+        .metrics
+        .findings_total
+        .fetch_add(count as u64, Ordering::Relaxed);
 
     // Push each finding into the in-memory ring so /v1/findings can surface
     // the live stream without touching disk. Reuse the audit module's
@@ -702,7 +726,11 @@ async fn scan(
     );
 
     if let Ok(event) = AuditEvent::new("SCAN") {
-        let outcome = if count == 0 { "success" } else { "findings_detected" };
+        let outcome = if count == 0 {
+            "success"
+        } else {
+            "findings_detected"
+        };
         emit_audit(
             event
                 .with_action("scan")
@@ -719,9 +747,9 @@ async fn scan(
 
     // Drain the trace sink (if tracing was requested). Cloning out of
     // the Arc<Mutex> keeps the response owned.
-    let trace = trace_sink.as_ref().and_then(|s| {
-        s.lock().ok().map(|g| g.clone())
-    });
+    let trace = trace_sink
+        .as_ref()
+        .and_then(|s| s.lock().ok().map(|g| g.clone()));
 
     Ok(Json(ScanResponse {
         source_pod: "siphon-api",
@@ -842,8 +870,7 @@ async fn list_categories() -> Json<CategoriesResponse> {
         .into_iter()
         .map(|c| {
             let pats = siphon_core::patterns::patterns_for_category(c);
-            let sub_categories: Vec<&'static str> =
-                pats.iter().map(|p| p.sub_category).collect();
+            let sub_categories: Vec<&'static str> = pats.iter().map(|p| p.sub_category).collect();
             CategoryItem {
                 category: c,
                 pattern_count: pats.len(),
@@ -906,19 +933,19 @@ struct RolesResponse {
 
 async fn list_roles() -> Json<RolesResponse> {
     const ROLES: [(Role, &str, &str); 4] = [
-        (Role::Admin,    "admin",    "Full control. All permissions."),
-        (Role::Analyst,  "analyst",  "Scan + detokenize + read status."),
+        (Role::Admin, "admin", "Full control. All permissions."),
+        (Role::Analyst, "analyst", "Scan + detokenize + read status."),
         (Role::Operator, "operator", "Scan + read status."),
-        (Role::Viewer,   "viewer",   "Read status only."),
+        (Role::Viewer, "viewer", "Read status only."),
     ];
     const PERMS: [(Permission, &str); 7] = [
-        (Permission::Scan,            "Scan"),
-        (Permission::BatchScan,       "BatchScan"),
-        (Permission::ManagePatterns,  "ManagePatterns"),
-        (Permission::Detokenize,      "Detokenize"),
-        (Permission::ExportVault,     "ExportVault"),
-        (Permission::ViewStatus,      "ViewStatus"),
-        (Permission::AdminAction,     "AdminAction"),
+        (Permission::Scan, "Scan"),
+        (Permission::BatchScan, "BatchScan"),
+        (Permission::ManagePatterns, "ManagePatterns"),
+        (Permission::Detokenize, "Detokenize"),
+        (Permission::ExportVault, "ExportVault"),
+        (Permission::ViewStatus, "ViewStatus"),
+        (Permission::AdminAction, "AdminAction"),
     ];
     let roles: Vec<RoleItem> = ROLES
         .iter()
@@ -1021,7 +1048,11 @@ async fn version() -> Json<VersionResponse> {
         core_version: siphon_core::VERSION,
         target_triple: option_env!("TARGET").unwrap_or("unknown"),
         rust_version: option_env!("RUSTC_VERSION").unwrap_or(env!("CARGO_PKG_RUST_VERSION")),
-        build_profile: if cfg!(debug_assertions) { "debug" } else { "release" },
+        build_profile: if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        },
         patterns_loaded: siphon_core::patterns::PATTERNS.len(),
         categories_loaded: siphon_core::patterns::categories().len(),
     })
@@ -1460,7 +1491,10 @@ async fn overrides_apply(
                 .with_action("overrides_apply")
                 .with_outcome("applied")
                 .with_source_ip(&addr.ip().to_string())
-                .with_metadata("disabled_patterns", serde_json::json!(summary.disabled_patterns))
+                .with_metadata(
+                    "disabled_patterns",
+                    serde_json::json!(summary.disabled_patterns),
+                )
                 .with_metadata(
                     "pattern_overrides",
                     serde_json::json!(summary.pattern_overrides),
@@ -1499,7 +1533,8 @@ async fn overrides_apply(
         summary,
         hot_reloaded,
         restart_required: !hot_reloaded,
-        note: "overrides written to disk and hot-reloaded · scans on this pod now use the new ruleset",
+        note:
+            "overrides written to disk and hot-reloaded · scans on this pod now use the new ruleset",
     }))
 }
 
@@ -1674,12 +1709,11 @@ async fn overrides_roll(
     (
         StatusCode::NOT_IMPLEMENTED,
         Json(ErrorResponse {
-            error:
-                "siphon-api was built without the `k8s-roll` feature — \
+            error: "siphon-api was built without the `k8s-roll` feature — \
                  rebuild with `cargo build --features k8s-roll` or roll \
                  manually with `kubectl -n <ns> rollout restart \
                  deployment/siphon-api deployment/siphon-fs`"
-                    .to_string(),
+                .to_string(),
         }),
     )
 }
@@ -1721,9 +1755,7 @@ async fn overrides_roll(
         (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(ErrorResponse {
-                error: format!(
-                    "kube client init failed — not in a cluster? no kubeconfig? · {e}"
-                ),
+                error: format!("kube client init failed — not in a cluster? no kubeconfig? · {e}"),
             }),
         )
     })?;
@@ -1749,10 +1781,7 @@ async fn overrides_roll(
 
     let mut outcomes = Vec::with_capacity(deployments.len());
     for name in &deployments {
-        match api
-            .patch(name, &pp, &Patch::Strategic(&patch))
-            .await
-        {
+        match api.patch(name, &pp, &Patch::Strategic(&patch)).await {
             Ok(_) => outcomes.push(RollOutcome {
                 deployment: name.clone(),
                 namespace: namespace.clone(),
@@ -1914,7 +1943,13 @@ fn format_iso8601(secs: i64, nanos: u32) -> String {
     let s = secs_today % 60;
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
-        y, m + 1, days + 1, h, mn, s, nanos / 1_000_000
+        y,
+        m + 1,
+        days + 1,
+        h,
+        mn,
+        s,
+        nanos / 1_000_000
     )
 }
 
@@ -1932,9 +1967,7 @@ async fn overrides_history(
 
     // Current file first (if present) with version id "current".
     if path.exists() {
-        if let (Ok(meta), Ok(bytes)) =
-            (std::fs::metadata(path), std::fs::read(path))
-        {
+        if let (Ok(meta), Ok(bytes)) = (std::fs::metadata(path), std::fs::read(path)) {
             let parsed = siphon_core::overrides::PatternOverrides::from_bytes(&bytes).ok();
             let ts = meta
                 .modified()
@@ -2015,7 +2048,10 @@ async fn overrides_content(
                 (
                     StatusCode::BAD_REQUEST,
                     Json(ErrorResponse {
-                        error: format!("bad version {:?}; expected 'current' or 'v<nanos>'", q.version),
+                        error: format!(
+                            "bad version {:?}; expected 'current' or 'v<nanos>'",
+                            q.version
+                        ),
                     }),
                 )
             })?;
@@ -2209,54 +2245,198 @@ async fn overrides_revert(
 
 const DOCS_INDEX: &[(&str, &str)] = &[
     ("README.md", include_str!("../../../README.md")),
-    ("docs/ARCHITECTURE.md", include_str!("../../../docs/ARCHITECTURE.md")),
-    ("docs/BENCHMARKS.md", include_str!("../../../docs/BENCHMARKS.md")),
-    ("docs/CHANGELOG.md", include_str!("../../../docs/CHANGELOG.md")),
-    ("docs/KEYWORDS.md", include_str!("../../../docs/KEYWORDS.md")),
-    ("docs/PATTERNS.md", include_str!("../../../docs/PATTERNS.md")),
-    ("docs/advanced_techniques.md", include_str!("../../../docs/advanced_techniques.md")),
-    ("docs/api-reference.md", include_str!("../../../docs/api-reference.md")),
-    ("docs/architecture/context-matching.md", include_str!("../../../docs/architecture/context-matching.md")),
-    ("docs/architecture/extending.md", include_str!("../../../docs/architecture/extending.md")),
-    ("docs/architecture/microservices.md", include_str!("../../../docs/architecture/microservices.md")),
-    ("docs/architecture/normalization.md", include_str!("../../../docs/architecture/normalization.md")),
-    ("docs/architecture/pipeline.md", include_str!("../../../docs/architecture/pipeline.md")),
-    ("docs/architecture/validation.md", include_str!("../../../docs/architecture/validation.md")),
-    ("docs/architecture/zero-trust.md", include_str!("../../../docs/architecture/zero-trust.md")),
-    ("docs/baselines/ABOUT-BASELINES.md", include_str!("../../../docs/baselines/ABOUT-BASELINES.md")),
-    ("docs/baselines/BASELINE-CONFIGURATION-REFERENCE.md", include_str!("../../../docs/baselines/BASELINE-CONFIGURATION-REFERENCE.md")),
-    ("docs/baselines/confidential-documents.md", include_str!("../../../docs/baselines/confidential-documents.md")),
-    ("docs/baselines/index.md", include_str!("../../../docs/baselines/index.md")),
-    ("docs/baselines/internal-financial.md", include_str!("../../../docs/baselines/internal-financial.md")),
-    ("docs/baselines/pci.md", include_str!("../../../docs/baselines/pci.md")),
-    ("docs/baselines/phi-keywords.md", include_str!("../../../docs/baselines/phi-keywords.md")),
-    ("docs/baselines/phi-patterns.md", include_str!("../../../docs/baselines/phi-patterns.md")),
-    ("docs/baselines/phi.md", include_str!("../../../docs/baselines/phi.md")),
-    ("docs/baselines/pii-keywords.md", include_str!("../../../docs/baselines/pii-keywords.md")),
-    ("docs/baselines/pii-patterns.md", include_str!("../../../docs/baselines/pii-patterns.md")),
-    ("docs/baselines/pii.md", include_str!("../../../docs/baselines/pii.md")),
-    ("docs/baselines/source-code-secrets.md", include_str!("../../../docs/baselines/source-code-secrets.md")),
-    ("docs/deployment/cicd.md", include_str!("../../../docs/deployment/cicd.md")),
-    ("docs/deployment/docker.md", include_str!("../../../docs/deployment/docker.md")),
-    ("docs/deployment/pre-commit.md", include_str!("../../../docs/deployment/pre-commit.md")),
-    ("docs/deployment/pypi.md", include_str!("../../../docs/deployment/pypi.md")),
-    ("docs/enterprise/api.md", include_str!("../../../docs/enterprise/api.md")),
-    ("docs/enterprise/audit.md", include_str!("../../../docs/enterprise/audit.md")),
-    ("docs/enterprise/batch.md", include_str!("../../../docs/enterprise/batch.md")),
-    ("docs/enterprise/classification.md", include_str!("../../../docs/enterprise/classification.md")),
-    ("docs/enterprise/compliance.md", include_str!("../../../docs/enterprise/compliance.md")),
-    ("docs/enterprise/env-config.md", include_str!("../../../docs/enterprise/env-config.md")),
-    ("docs/enterprise/observability.md", include_str!("../../../docs/enterprise/observability.md")),
-    ("docs/enterprise/rate-limiting.md", include_str!("../../../docs/enterprise/rate-limiting.md")),
-    ("docs/enterprise/rbac.md", include_str!("../../../docs/enterprise/rbac.md")),
-    ("docs/enterprise/security.md", include_str!("../../../docs/enterprise/security.md")),
-    ("docs/enterprise/siem.md", include_str!("../../../docs/enterprise/siem.md")),
-    ("docs/evasion_defenses.md", include_str!("../../../docs/evasion_defenses.md")),
-    ("docs/evasion_techniques.md", include_str!("../../../docs/evasion_techniques.md")),
-    ("docs/getting-started/concepts.md", include_str!("../../../docs/getting-started/concepts.md")),
-    ("docs/getting-started/configuration.md", include_str!("../../../docs/getting-started/configuration.md")),
-    ("docs/getting-started/installation.md", include_str!("../../../docs/getting-started/installation.md")),
-    ("docs/getting-started/quickstart.md", include_str!("../../../docs/getting-started/quickstart.md")),
+    (
+        "docs/ARCHITECTURE.md",
+        include_str!("../../../docs/ARCHITECTURE.md"),
+    ),
+    (
+        "docs/BENCHMARKS.md",
+        include_str!("../../../docs/BENCHMARKS.md"),
+    ),
+    (
+        "docs/CHANGELOG.md",
+        include_str!("../../../docs/CHANGELOG.md"),
+    ),
+    (
+        "docs/KEYWORDS.md",
+        include_str!("../../../docs/KEYWORDS.md"),
+    ),
+    (
+        "docs/PATTERNS.md",
+        include_str!("../../../docs/PATTERNS.md"),
+    ),
+    (
+        "docs/advanced_techniques.md",
+        include_str!("../../../docs/advanced_techniques.md"),
+    ),
+    (
+        "docs/api-reference.md",
+        include_str!("../../../docs/api-reference.md"),
+    ),
+    (
+        "docs/architecture/context-matching.md",
+        include_str!("../../../docs/architecture/context-matching.md"),
+    ),
+    (
+        "docs/architecture/extending.md",
+        include_str!("../../../docs/architecture/extending.md"),
+    ),
+    (
+        "docs/architecture/microservices.md",
+        include_str!("../../../docs/architecture/microservices.md"),
+    ),
+    (
+        "docs/architecture/normalization.md",
+        include_str!("../../../docs/architecture/normalization.md"),
+    ),
+    (
+        "docs/architecture/pipeline.md",
+        include_str!("../../../docs/architecture/pipeline.md"),
+    ),
+    (
+        "docs/architecture/validation.md",
+        include_str!("../../../docs/architecture/validation.md"),
+    ),
+    (
+        "docs/architecture/zero-trust.md",
+        include_str!("../../../docs/architecture/zero-trust.md"),
+    ),
+    (
+        "docs/baselines/ABOUT-BASELINES.md",
+        include_str!("../../../docs/baselines/ABOUT-BASELINES.md"),
+    ),
+    (
+        "docs/baselines/BASELINE-CONFIGURATION-REFERENCE.md",
+        include_str!("../../../docs/baselines/BASELINE-CONFIGURATION-REFERENCE.md"),
+    ),
+    (
+        "docs/baselines/confidential-documents.md",
+        include_str!("../../../docs/baselines/confidential-documents.md"),
+    ),
+    (
+        "docs/baselines/index.md",
+        include_str!("../../../docs/baselines/index.md"),
+    ),
+    (
+        "docs/baselines/internal-financial.md",
+        include_str!("../../../docs/baselines/internal-financial.md"),
+    ),
+    (
+        "docs/baselines/pci.md",
+        include_str!("../../../docs/baselines/pci.md"),
+    ),
+    (
+        "docs/baselines/phi-keywords.md",
+        include_str!("../../../docs/baselines/phi-keywords.md"),
+    ),
+    (
+        "docs/baselines/phi-patterns.md",
+        include_str!("../../../docs/baselines/phi-patterns.md"),
+    ),
+    (
+        "docs/baselines/phi.md",
+        include_str!("../../../docs/baselines/phi.md"),
+    ),
+    (
+        "docs/baselines/pii-keywords.md",
+        include_str!("../../../docs/baselines/pii-keywords.md"),
+    ),
+    (
+        "docs/baselines/pii-patterns.md",
+        include_str!("../../../docs/baselines/pii-patterns.md"),
+    ),
+    (
+        "docs/baselines/pii.md",
+        include_str!("../../../docs/baselines/pii.md"),
+    ),
+    (
+        "docs/baselines/source-code-secrets.md",
+        include_str!("../../../docs/baselines/source-code-secrets.md"),
+    ),
+    (
+        "docs/deployment/cicd.md",
+        include_str!("../../../docs/deployment/cicd.md"),
+    ),
+    (
+        "docs/deployment/docker.md",
+        include_str!("../../../docs/deployment/docker.md"),
+    ),
+    (
+        "docs/deployment/pre-commit.md",
+        include_str!("../../../docs/deployment/pre-commit.md"),
+    ),
+    (
+        "docs/deployment/pypi.md",
+        include_str!("../../../docs/deployment/pypi.md"),
+    ),
+    (
+        "docs/enterprise/api.md",
+        include_str!("../../../docs/enterprise/api.md"),
+    ),
+    (
+        "docs/enterprise/audit.md",
+        include_str!("../../../docs/enterprise/audit.md"),
+    ),
+    (
+        "docs/enterprise/batch.md",
+        include_str!("../../../docs/enterprise/batch.md"),
+    ),
+    (
+        "docs/enterprise/classification.md",
+        include_str!("../../../docs/enterprise/classification.md"),
+    ),
+    (
+        "docs/enterprise/compliance.md",
+        include_str!("../../../docs/enterprise/compliance.md"),
+    ),
+    (
+        "docs/enterprise/env-config.md",
+        include_str!("../../../docs/enterprise/env-config.md"),
+    ),
+    (
+        "docs/enterprise/observability.md",
+        include_str!("../../../docs/enterprise/observability.md"),
+    ),
+    (
+        "docs/enterprise/rate-limiting.md",
+        include_str!("../../../docs/enterprise/rate-limiting.md"),
+    ),
+    (
+        "docs/enterprise/rbac.md",
+        include_str!("../../../docs/enterprise/rbac.md"),
+    ),
+    (
+        "docs/enterprise/security.md",
+        include_str!("../../../docs/enterprise/security.md"),
+    ),
+    (
+        "docs/enterprise/siem.md",
+        include_str!("../../../docs/enterprise/siem.md"),
+    ),
+    (
+        "docs/evasion_defenses.md",
+        include_str!("../../../docs/evasion_defenses.md"),
+    ),
+    (
+        "docs/evasion_techniques.md",
+        include_str!("../../../docs/evasion_techniques.md"),
+    ),
+    (
+        "docs/getting-started/concepts.md",
+        include_str!("../../../docs/getting-started/concepts.md"),
+    ),
+    (
+        "docs/getting-started/configuration.md",
+        include_str!("../../../docs/getting-started/configuration.md"),
+    ),
+    (
+        "docs/getting-started/installation.md",
+        include_str!("../../../docs/getting-started/installation.md"),
+    ),
+    (
+        "docs/getting-started/quickstart.md",
+        include_str!("../../../docs/getting-started/quickstart.md"),
+    ),
 ];
 
 fn doc_by_path(path: &str) -> Option<&'static str> {
@@ -2288,14 +2468,16 @@ fn doc_title(content: &str, path: &str) -> String {
 }
 
 fn doc_section(path: &str) -> &'static str {
-    if path == "README.md" { return "root"; }
+    if path == "README.md" {
+        return "root";
+    }
     let rest = path.strip_prefix("docs/").unwrap_or(path);
     if let Some(slash) = rest.find('/') {
         match &rest[..slash] {
             "architecture" => "architecture",
-            "baselines"    => "baselines",
-            "deployment"   => "deployment",
-            "enterprise"   => "enterprise",
+            "baselines" => "baselines",
+            "deployment" => "deployment",
+            "enterprise" => "enterprise",
             "getting-started" => "getting-started",
             _ => "other",
         }
@@ -2364,15 +2546,30 @@ async fn docs_content(
 // Legacy shortcut handlers — kept so older UI callers don't break.
 async fn doc_changelog() -> Json<DocResponse> {
     let c = doc_by_path("docs/CHANGELOG.md").unwrap_or("");
-    Json(DocResponse { path: "docs/CHANGELOG.md", format: "markdown", content: c, bytes: c.len() })
+    Json(DocResponse {
+        path: "docs/CHANGELOG.md",
+        format: "markdown",
+        content: c,
+        bytes: c.len(),
+    })
 }
 async fn doc_architecture() -> Json<DocResponse> {
     let c = doc_by_path("docs/ARCHITECTURE.md").unwrap_or("");
-    Json(DocResponse { path: "docs/ARCHITECTURE.md", format: "markdown", content: c, bytes: c.len() })
+    Json(DocResponse {
+        path: "docs/ARCHITECTURE.md",
+        format: "markdown",
+        content: c,
+        bytes: c.len(),
+    })
 }
 async fn doc_readme() -> Json<DocResponse> {
     let c = doc_by_path("README.md").unwrap_or("");
-    Json(DocResponse { path: "README.md", format: "markdown", content: c, bytes: c.len() })
+    Json(DocResponse {
+        path: "README.md",
+        format: "markdown",
+        content: c,
+        bytes: c.len(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -2425,7 +2622,11 @@ async fn cache_stats() -> Json<CacheStatsResponse> {
     if let Some(cache) = guard.as_ref() {
         let s = cache.stats();
         let total = s.hits + s.misses;
-        let hit_rate = if total == 0 { 0.0 } else { s.hits as f64 / total as f64 };
+        let hit_rate = if total == 0 {
+            0.0
+        } else {
+            s.hits as f64 / total as f64
+        };
         Json(CacheStatsResponse {
             enabled: true,
             hits: s.hits,
@@ -2501,11 +2702,11 @@ async fn list_integrations() -> Json<IntegrationsResponse> {
     let url = std::env::var("DLPSCAN_SIEM_URL").ok();
     let host = std::env::var("DLPSCAN_SIEM_HOST").ok();
     let all: Vec<(&str, fn() -> Option<String>)> = vec![
-        ("splunk",        || std::env::var("DLPSCAN_SIEM_URL").ok()),
+        ("splunk", || std::env::var("DLPSCAN_SIEM_URL").ok()),
         ("elasticsearch", || std::env::var("DLPSCAN_SIEM_URL").ok()),
-        ("syslog",        || std::env::var("DLPSCAN_SIEM_HOST").ok()),
-        ("webhook",       || std::env::var("DLPSCAN_SIEM_URL").ok()),
-        ("datadog",       || std::env::var("DLPSCAN_SIEM_SITE").ok()),
+        ("syslog", || std::env::var("DLPSCAN_SIEM_HOST").ok()),
+        ("webhook", || std::env::var("DLPSCAN_SIEM_URL").ok()),
+        ("datadog", || std::env::var("DLPSCAN_SIEM_SITE").ok()),
     ];
     let active = siem_type.as_deref();
     let integrations: Vec<IntegrationItem> = all
@@ -2684,12 +2885,15 @@ async fn main() {
 
     // Install the global audit logger with the ring handler always, and
     // the rotating-file handler if SIPHON_AUDIT_LOG_PATH is set.
-    let ring_handler: Box<dyn AuditHandler> = Box::new(
-        RingBufferAuditHandler::new(audit_ring.clone(), audit_ring_cap),
-    );
+    let ring_handler: Box<dyn AuditHandler> = Box::new(RingBufferAuditHandler::new(
+        audit_ring.clone(),
+        audit_ring_cap,
+    ));
     let logger = match build_audit_logger(
         std::env::var("SIPHON_AUDIT_LOG_PATH").ok().as_deref(),
-        std::env::var("SIPHON_AUDIT_SIGNING_KEY_HEX").ok().as_deref(),
+        std::env::var("SIPHON_AUDIT_SIGNING_KEY_HEX")
+            .ok()
+            .as_deref(),
         std::env::var("SIPHON_AUDIT_TAIL_PATH").ok().as_deref(),
     ) {
         Some(mut l) => {
@@ -2706,14 +2910,32 @@ async fn main() {
         Ok(path) if !path.is_empty() => match std::fs::read_to_string(&path) {
             Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
                 Ok(v) => {
-                    let texts = v.get("texts").and_then(|x| x.as_array())
-                        .map(|arr| arr.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                    let texts = v
+                        .get("texts")
+                        .and_then(|x| x.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|s| s.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
-                    let patterns = v.get("patterns").and_then(|x| x.as_array())
-                        .map(|arr| arr.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                    let patterns = v
+                        .get("patterns")
+                        .and_then(|x| x.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|s| s.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
-                    let paths = v.get("paths").and_then(|x| x.as_array())
-                        .map(|arr| arr.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                    let paths = v
+                        .get("paths")
+                        .and_then(|x| x.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|s| s.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default();
                     let texts: Vec<String> = texts;
                     let patterns: Vec<String> = patterns;
@@ -2870,8 +3092,10 @@ async fn main() {
         .route("/v1/overrides/reload", post(overrides_reload))
         .route("/v1/overrides/history", get(overrides_history))
         .route("/v1/overrides/content", get(overrides_content))
-        .route("/v1/pipeline/stages",
-               get(pipeline_stages_get).patch(pipeline_stages_patch))
+        .route(
+            "/v1/pipeline/stages",
+            get(pipeline_stages_get).patch(pipeline_stages_patch),
+        )
         .route("/v1/overrides/revert", post(overrides_revert))
         .route("/v1/overrides/roll", post(overrides_roll))
         .route("/v1/docs", get(docs_index))
@@ -3085,9 +3309,12 @@ mod tests {
     fn test_build_audit_logger_invalid_hex_key_falls_back_to_unsigned() {
         let dir = tempfile::tempdir().unwrap();
         let log_path = dir.path().join("audit.jsonl");
-        let logger =
-            build_audit_logger(Some(log_path.to_str().unwrap()), Some("not-valid-hex!"), None)
-                .expect("logger should still be built, just unsigned");
+        let logger = build_audit_logger(
+            Some(log_path.to_str().unwrap()),
+            Some("not-valid-hex!"),
+            None,
+        )
+        .expect("logger should still be built, just unsigned");
         logger.log(&AuditEvent::new("SCAN").unwrap());
         let content = std::fs::read_to_string(&log_path).unwrap();
         let event: AuditEvent = serde_json::from_str(content.lines().next().unwrap()).unwrap();

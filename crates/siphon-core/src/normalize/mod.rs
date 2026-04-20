@@ -773,10 +773,11 @@ fn validate_decoded(decoded_bytes: &[u8]) -> Option<String> {
 fn try_decode_base64(token: &str) -> Option<String> {
     use base64::{engine::general_purpose, Engine};
     // Only attempt if the token uses base64-standard alphabet.
-    if token
-        .bytes()
-        .any(|b| b == b'_' || b == b'-' || (!b.is_ascii_alphanumeric() && b != b'+' && b != b'/' && b != b'='))
-    {
+    if token.bytes().any(|b| {
+        b == b'_'
+            || b == b'-'
+            || (!b.is_ascii_alphanumeric() && b != b'+' && b != b'/' && b != b'=')
+    }) {
         return None;
     }
     let bytes = if let Ok(b) = general_purpose::STANDARD.decode(token) {
@@ -825,10 +826,17 @@ fn try_decode_base32(token: &str) -> Option<String> {
     // Base32 uses only uppercase A-Z and digits 2-7. Reject if the
     // token contains lowercase, digits 0/1/8/9, or special chars.
     let stripped = token.trim_end_matches('=');
-    if stripped
-        .bytes()
-        .any(|b| b.is_ascii_lowercase() || b == b'0' || b == b'1' || b == b'8' || b == b'9' || b == b'+' || b == b'/' || b == b'_' || b == b'-')
-    {
+    if stripped.bytes().any(|b| {
+        b.is_ascii_lowercase()
+            || b == b'0'
+            || b == b'1'
+            || b == b'8'
+            || b == b'9'
+            || b == b'+'
+            || b == b'/'
+            || b == b'_'
+            || b == b'-'
+    }) {
         return None;
     }
     // Reuse the existing base32 decoder in this module.
@@ -843,7 +851,10 @@ fn super_base32_decode(input: &[u8]) -> Option<Vec<u8>> {
 
 /// Try hex decode (0-9a-fA-F, even length, optional 0x prefix).
 fn try_decode_hex(token: &str) -> Option<String> {
-    let hex_str = token.strip_prefix("0x").or_else(|| token.strip_prefix("0X")).unwrap_or(token);
+    let hex_str = token
+        .strip_prefix("0x")
+        .or_else(|| token.strip_prefix("0X"))
+        .unwrap_or(token);
     // Must be even length and all hex digits.
     if hex_str.len() % 2 != 0 {
         return None;

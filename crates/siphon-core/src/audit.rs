@@ -258,9 +258,7 @@ pub fn iso8601_now() -> String {
     // Days since 1970-01-01 to calendar date (Gregorian).
     let (year, month, day) = days_to_ymd(days);
 
-    format!(
-        "{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}.{millis:03}Z"
-    )
+    format!("{year:04}-{month:02}-{day:02}T{hours:02}:{minutes:02}:{seconds:02}.{millis:03}Z")
 }
 
 /// Convert days since 1970-01-01 to (year, month, day).
@@ -1073,8 +1071,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("audit.jsonl");
         let key = b"chain-test-key-32-bytes-aaaaaaaa";
-        let handler =
-            RotatingFileAuditHandler::new(path.to_str().unwrap(), 1024 * 1024, 5).with_chain_key(key);
+        let handler = RotatingFileAuditHandler::new(path.to_str().unwrap(), 1024 * 1024, 5)
+            .with_chain_key(key);
 
         handler.handle(&AuditEvent::new("SCAN").unwrap().with_user("a"));
         handler.handle(&AuditEvent::new("SCAN").unwrap().with_user("b"));
@@ -1145,7 +1143,10 @@ mod tests {
             events[1].signature.as_deref(),
             "third event (post-restart) must link to second event (pre-restart)"
         );
-        assert_eq!(events[2].prev_signature.as_deref(), Some(tail_after_first.as_str()));
+        assert_eq!(
+            events[2].prev_signature.as_deref(),
+            Some(tail_after_first.as_str())
+        );
         for e in &events {
             assert!(e.verify(key));
         }
@@ -1185,8 +1186,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("audit.jsonl");
         let key = b"chain-tamper-key-32-bytes-bbbbbb";
-        let handler =
-            RotatingFileAuditHandler::new(path.to_str().unwrap(), 1024 * 1024, 5).with_chain_key(key);
+        let handler = RotatingFileAuditHandler::new(path.to_str().unwrap(), 1024 * 1024, 5)
+            .with_chain_key(key);
 
         handler.handle(&AuditEvent::new("SCAN").unwrap().with_user("victim"));
         handler.handle(&AuditEvent::new("SCAN").unwrap().with_user("witness"));

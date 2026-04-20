@@ -88,11 +88,9 @@ fn test_category_filter() {
         categories: Some(["Contact Information".to_string()].into_iter().collect()),
         ..Default::default()
     };
-    let matches = siphon::scanner::scan_text_with_config(
-        "Email: test@example.com SSN: 425-71-3482",
-        &config,
-    )
-    .unwrap();
+    let matches =
+        siphon::scanner::scan_text_with_config("Email: test@example.com SSN: 425-71-3482", &config)
+            .unwrap();
     assert!(
         matches.iter().all(|m| m.category == "Contact Information"),
         "Category filter should exclude non-contact matches"
@@ -1104,7 +1102,10 @@ fn test_classification_does_not_block_tlp_green() {
     let guard = InputGuard::new();
     // TLP:GREEN maps to Internal, below the Confidential threshold.
     let result = guard.scan("Weekly status. TLP:GREEN").unwrap();
-    assert!(result.findings.iter().any(|m| m.sub_category == "TLP:GREEN"));
+    assert!(result
+        .findings
+        .iter()
+        .any(|m| m.sub_category == "TLP:GREEN"));
     assert_eq!(
         result.classification_level,
         Some(siphon::classification::ClassificationLevel::Internal)
