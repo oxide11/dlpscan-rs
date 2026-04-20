@@ -42,40 +42,64 @@ use tracing::{info, warn};
 const POD_NAME: &str = "siphon-fs";
 const FINDINGS_RING_CAP: usize = 500;
 
+/// Upload body cap in bytes, read once at startup. Default 100 MB to
+/// match siphon::extractors::extract_text's per-file limit. Override
+/// via SIPHON_FS_BODY_LIMIT_MB (integer MB, e.g. "200" for 200 MB).
+fn body_limit_bytes() -> usize {
+    std::env::var("SIPHON_FS_BODY_LIMIT_MB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|mb| mb * 1024 * 1024)
+        .unwrap_or(100 * 1024 * 1024)
+}
+
 // ─── shared app state ────────────────────────────────────────────
 // FindingsRing is owned by this pod — each siphon-fs replica keeps
 // its own local ring. Multi-replica convergence (e.g. gossiping
 // findings across replicas) is beyond the Phase 0 lab; the admin
 // console queries the Service IP which load-balances across replicas.
 //
-// `disabled_patterns` is the pre-computed HashSet from the loaded
-// PatternOverrides file. Built once at startup and shared via Arc
-// across every scan request. A k8s rolling restart (Phase 6) is what
-// picks up overrides edits — no live reload here.
+// Overrides hot-reload: the pre-computed PatternOverrides views live
+// behind an RwLock so `POST /v1/overrides/reload` can swap them at
+// runtime. Scan handlers take a read snapshot once per request.
+#[derive(Clone)]
+struct LiveOverrides {
+    disabled_patterns: Arc<HashSet<(String, String)>>,
+    pattern_field_overrides: Arc<HashMap<(String, String), PatternOverride>>,
+    runtime_patterns: Arc<Vec<RuntimePattern>>,
+    pattern_regex_overrides: Arc<HashMap<(String, String), Regex>>,
+    list_bindings: Arc<Vec<(String, CompiledList)>>,
+    unique_thresholds: Arc<HashMap<(String, String), usize>>,
+    loaded_overrides: Arc<PatternOverrides>,
+}
+
+impl LiveOverrides {
+    fn from_path(path: &std::path::Path) -> Self {
+        let overrides = PatternOverrides::from_file_or_empty(&path.display().to_string());
+        Self::from_doc(overrides)
+    }
+
+    fn from_doc(overrides: PatternOverrides) -> Self {
+        Self {
+            disabled_patterns: Arc::new(overrides.disabled_set()),
+            pattern_field_overrides: Arc::new(overrides.override_lookup()),
+            runtime_patterns: Arc::new(overrides.compile_runtime_patterns()),
+            pattern_regex_overrides: Arc::new(overrides.compile_pattern_regex_overrides()),
+            list_bindings: Arc::new(overrides.compile_active_list_bindings()),
+            unique_thresholds: Arc::new(overrides.compile_unique_thresholds()),
+            loaded_overrides: Arc::new(overrides),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct AppState {
     findings: Arc<FindingsRing>,
-    disabled_patterns: Arc<HashSet<(String, String)>>,
-    /// Pre-computed (category, sub_category) → PatternOverride map
-    /// from PatternOverrides::override_lookup(). Scanner consults
-    /// this at scoring + context-gating time (Phase 3c).
-    pattern_field_overrides: Arc<HashMap<(String, String), PatternOverride>>,
-    /// Compiled runtime patterns from custom_categories. Evaluated
-    /// after the static scan loop (Phase 3d.1).
-    runtime_patterns: Arc<Vec<RuntimePattern>>,
-    /// Compiled per-pattern regex overrides for compile-time
-    /// patterns. Scanner swaps the static regex for an entry from
-    /// this map when present (Phase 3d.2).
-    pattern_regex_overrides: Arc<HashMap<(String, String), Regex>>,
-    /// Scanner-active list bindings resolved from
-    /// PatternOverrides::active_list_bindings at startup (Phase 4.7c.3).
-    /// Each (action, CompiledList) tuple is consulted at emit time;
-    /// allow drops, others annotate metadata.
-    list_bindings: Arc<Vec<(String, CompiledList)>>,
-    /// Per-(category, sub_category) distinct-value thresholds
-    /// (Phase 9). Built from PatternOverrides::compile_unique_thresholds()
-    /// at startup; scanner tags breaches with metadata.
-    unique_thresholds: Arc<HashMap<(String, String), usize>>,
+    /// Hot-reloadable overrides. See LiveOverrides above.
+    live_overrides: Arc<std::sync::RwLock<LiveOverrides>>,
+    /// Path on disk to the overrides file — used by /v1/overrides/reload
+    /// to re-read on operator command.
+    overrides_path: Arc<std::path::PathBuf>,
     /// Stable identifier for this pod instance (uuidv4, generated at
     /// startup). Returned by /health so the C2 can deduplicate
     /// replicas of the same Service.
@@ -158,11 +182,14 @@ async fn capabilities(State(state): State<AppState>) -> JsonResponse<Capabilitie
     exts.sort_unstable();
     exts.dedup();
 
-    // Re-parse overrides on demand so the summary reflects whatever
-    // is current (this is rare, admin-console-triggered; cheap).
-    let overrides_path = std::env::var("SIPHON_OVERRIDES_PATH")
-        .unwrap_or_else(|_| "/etc/siphon/overrides.json".to_string());
-    let overrides = PatternOverrides::from_file_or_empty(&overrides_path);
+    // Snapshot the current in-memory overrides so the summary
+    // reflects whatever's loaded right now (including any hot-reload
+    // that happened since startup).
+    let summary = state
+        .live_overrides
+        .read()
+        .map(|g| g.loaded_overrides.summary())
+        .unwrap_or_else(|_| PatternOverrides::empty().summary());
 
     JsonResponse(CapabilitiesResponse {
         pod_type: POD_NAME,
@@ -182,7 +209,7 @@ async fn capabilities(State(state): State<AppState>) -> JsonResponse<Capabilitie
         patterns_loaded: siphon_core::patterns::PATTERNS.len(),
         categories_loaded: siphon_core::patterns::categories().len(),
         findings_ring_capacity: state.findings.capacity(),
-        overrides_summary: overrides.summary(),
+        overrides_summary: summary,
         policies_loaded: None,
         supported_extensions: Some(exts),
     })
@@ -373,13 +400,18 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
         None
     };
 
+    // Snapshot the hot-reloadable overrides once per scan.
+    let ov = {
+        let g = state.live_overrides.read().expect("live_overrides lock poisoned");
+        g.clone()
+    };
     let mut config = ScanConfig {
-        disabled_patterns: Some(state.disabled_patterns.clone()),
-        pattern_field_overrides: Some(state.pattern_field_overrides.clone()),
-        runtime_patterns: Some(state.runtime_patterns.clone()),
-        pattern_regex_overrides: Some(state.pattern_regex_overrides.clone()),
-        list_bindings: Some(state.list_bindings.clone()),
-        max_unique_per_subcategory: Some(state.unique_thresholds.clone()),
+        disabled_patterns: Some(ov.disabled_patterns.clone()),
+        pattern_field_overrides: Some(ov.pattern_field_overrides.clone()),
+        runtime_patterns: Some(ov.runtime_patterns.clone()),
+        pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
+        list_bindings: Some(ov.list_bindings.clone()),
+        max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
         trace: trace_sink.clone(),
         ..Default::default()
     };
@@ -533,6 +565,48 @@ async fn list_findings(
     })
 }
 
+// ─── /v1/overrides/reload handler ───────────────────────────────
+// Re-reads SIPHON_OVERRIDES_PATH and swaps the in-memory LiveOverrides.
+// Called by the admin-console Apply fan-out so siphon-fs picks up
+// siphon-api-authored edits without a restart. No body.
+
+#[derive(Serialize)]
+struct ReloadResponse {
+    status: &'static str,
+    path: String,
+    summary: siphon_core::overrides::OverridesSummary,
+}
+
+async fn overrides_reload(State(state): State<AppState>) -> Response {
+    let path = state.overrides_path.as_path();
+    let fresh = LiveOverrides::from_path(path);
+    let summary = fresh.loaded_overrides.summary();
+    match state.live_overrides.write() {
+        Ok(mut guard) => {
+            *guard = fresh;
+        }
+        Err(e) => {
+            return err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("live_overrides lock poisoned: {e}"),
+            );
+        }
+    };
+    info!(
+        path = %path.display(),
+        disabled = summary.disabled_patterns,
+        field_overrides = summary.pattern_overrides,
+        custom_categories = summary.custom_categories,
+        "overrides reloaded"
+    );
+    JsonResponse(ReloadResponse {
+        status: "reloaded",
+        path: path.display().to_string(),
+        summary,
+    })
+    .into_response()
+}
+
 fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -540,9 +614,13 @@ fn build_router(state: AppState) -> Router {
         .route("/scan", post(scan))
         .route("/v1/findings", get(list_findings))
         .route("/v1/capabilities", get(capabilities))
+        .route("/v1/overrides/reload", post(overrides_reload))
         .with_state(state)
-        // 64MB upload cap — overridable once we decide on real limits.
-        .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
+        // 100 MB upload cap. Matches siphon::extractors::extract_text's
+        // own per-file limit so a larger payload is rejected at the
+        // HTTP edge rather than wasting the extract path. Override via
+        // SIPHON_FS_BODY_LIMIT_MB for ad-hoc testing.
+        .layer(DefaultBodyLimit::max(body_limit_bytes()))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
 }
@@ -569,16 +647,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| "/etc/siphon/overrides.json".to_string());
     let overrides = PatternOverrides::from_file_or_empty(&overrides_path);
     let summary = overrides.summary();
-    let disabled_patterns = Arc::new(overrides.disabled_set());
-    let pattern_field_overrides = Arc::new(overrides.override_lookup());
-    let runtime_patterns = Arc::new(overrides.compile_runtime_patterns());
-    let runtime_pattern_count = runtime_patterns.len();
-    let pattern_regex_overrides = Arc::new(overrides.compile_pattern_regex_overrides());
-    let regex_override_count = pattern_regex_overrides.len();
-    let list_bindings = Arc::new(overrides.compile_active_list_bindings());
-    let list_binding_count = list_bindings.len();
-    let unique_thresholds = Arc::new(overrides.compile_unique_thresholds());
-    let unique_threshold_count = unique_thresholds.len();
+    let live_overrides = LiveOverrides::from_doc(overrides);
+    let runtime_pattern_count = live_overrides.runtime_patterns.len();
+    let regex_override_count = live_overrides.pattern_regex_overrides.len();
+    let list_binding_count = live_overrides.list_bindings.len();
+    let unique_threshold_count = live_overrides.unique_thresholds.len();
 
     let pod_id = Arc::new(uuid::Uuid::new_v4().to_string());
     let started_at = Instant::now();
@@ -586,12 +659,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = AppState {
         findings: Arc::new(FindingsRing::new(FINDINGS_RING_CAP)),
-        disabled_patterns,
-        pattern_field_overrides,
-        runtime_patterns,
-        pattern_regex_overrides,
-        list_bindings,
-        unique_thresholds,
+        live_overrides: Arc::new(std::sync::RwLock::new(live_overrides)),
+        overrides_path: Arc::new(std::path::PathBuf::from(&overrides_path)),
         pod_id: pod_id.clone(),
         started_at_iso,
         started_at,
