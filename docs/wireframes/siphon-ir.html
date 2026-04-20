@@ -8361,6 +8361,302 @@ function EngineeringSurface() {
   );
 }
 
+// ─── RBAC · users, roles, per-user settings ─────────────────────
+// U1 · data layer only. No UI change this commit — the Users &
+// Roles surface lands in U3; the topbar user switcher in U7.
+//
+// Storage model
+//   ir:users          — array of user records (canonical source)
+//   ir:currentUserId  — which user the console renders as
+// Both keys stay local to this browser; server-backed RBAC is a
+// later-phase task.
+const IR_USERS_KEY        = 'ir:users';
+const IR_CURRENT_USER_KEY = 'ir:currentUserId';
+
+// Role catalogue. Each role has a glyph + description + default
+// list of permissions it carries; U2 wires `canDo(role, action)`
+// against these. The permission strings are deliberately loose
+// (verb.resource) so future surfaces can cite them without
+// refactoring the catalogue.
+const IR_ROLES = {
+  admin: {
+    label: 'Administrator',
+    glyph: '★',
+    color: 'var(--red)',
+    description: 'Full access · user management · integrations · everything responders and engineers see.',
+    permissions: [
+      'users.view', 'users.create', 'users.invite', 'users.update', 'users.disable',
+      'findings.view', 'findings.dispose', 'findings.escalate',
+      'playbooks.view', 'playbooks.edit',
+      'integrations.view', 'integrations.edit',
+      'engineering.view', 'crypto.use',
+      'dashboard.view',
+    ],
+  },
+  analyst: {
+    label: 'Incident Responder',
+    glyph: '◈',
+    color: 'var(--accent)',
+    description: 'Primary DLP triage role · review + dispose findings · escalate to XSOAR · use the crypto workbench.',
+    permissions: [
+      'findings.view', 'findings.dispose', 'findings.escalate',
+      'playbooks.view',
+      'crypto.use',
+      'dashboard.view',
+    ],
+  },
+  viewer: {
+    label: 'Viewer',
+    glyph: '◯',
+    color: 'var(--ink-soft)',
+    description: 'Read-only access · stakeholder dashboards + audit reviews · cannot triage or escalate.',
+    permissions: [
+      'findings.view',
+      'playbooks.view',
+      'dashboard.view',
+    ],
+  },
+  engineer: {
+    label: 'Detection Engineer',
+    glyph: '⌁',
+    color: 'var(--amber)',
+    description: 'Pattern authors · FP queue review · crosses into siphon-c2 for tuning.',
+    permissions: [
+      'findings.view', 'findings.fp',
+      'playbooks.view', 'playbooks.edit',
+      'integrations.view',
+      'engineering.view', 'crypto.use',
+      'dashboard.view',
+    ],
+  },
+};
+function irRoleMeta(id) {
+  return IR_ROLES[id] || { label: id, glyph: '?', color: 'var(--ink-soft)', description: '', permissions: [] };
+}
+
+// Timezone catalogue — short list covering the regions analysts
+// commonly work from. Enough for the profile picker in U6; users
+// can pick their browser-detected default too.
+const IR_TIMEZONES = [
+  { id: 'browser',           label: 'Browser default',     offset: null },
+  { id: 'UTC',               label: 'UTC',                 offset: 0 },
+  { id: 'America/New_York',  label: 'New York · EST/EDT',  offset: -5 },
+  { id: 'America/Chicago',   label: 'Chicago · CST/CDT',   offset: -6 },
+  { id: 'America/Denver',    label: 'Denver · MST/MDT',    offset: -7 },
+  { id: 'America/Los_Angeles', label: 'Los Angeles · PST/PDT', offset: -8 },
+  { id: 'America/Sao_Paulo', label: 'São Paulo · BRT',     offset: -3 },
+  { id: 'Europe/London',     label: 'London · GMT/BST',    offset: 0 },
+  { id: 'Europe/Berlin',     label: 'Berlin · CET/CEST',   offset: 1 },
+  { id: 'Europe/Paris',      label: 'Paris · CET/CEST',    offset: 1 },
+  { id: 'Asia/Dubai',        label: 'Dubai · GST',         offset: 4 },
+  { id: 'Asia/Kolkata',      label: 'Kolkata · IST',       offset: 5.5 },
+  { id: 'Asia/Singapore',    label: 'Singapore · SGT',     offset: 8 },
+  { id: 'Asia/Tokyo',        label: 'Tokyo · JST',         offset: 9 },
+  { id: 'Australia/Sydney',  label: 'Sydney · AEST/AEDT',  offset: 10 },
+];
+
+// Default per-user settings the profile form (U6) edits + every
+// surface respects (U8 applies timezone to timestamps).
+function defaultUserSettings() {
+  return {
+    timezone: 'browser',
+    theme: null,                // null = follow global c2:tweaks
+    density: null,
+    notifications: {
+      new_finding:       true,
+      my_assignment:     true,
+      fp_submission:     false,
+      escalation_done:   true,
+      playbook_update:   false,
+    },
+    default_filters: {},        // future use — saved queue filters
+  };
+}
+
+// Seed roster. Mirrors the demo-data analyst names (A. Rao, etc.)
+// so the Dashboard's by-analyst chart ties back to real User
+// records, plus an admin + engineer + viewer so every role has
+// at least one member out of the box.
+function seedUsers() {
+  return [
+    {
+      id: 'u-admin',
+      name: 'R. Solanki',
+      email: 'r.solanki@corp.example',
+      role: 'admin',
+      status: 'active',
+      invited_at: null,
+      joined_at: '2024-01-14T09:00:00Z',
+      last_active: new Date().toISOString(),
+      avatar: 'RS',
+      settings: { ...defaultUserSettings(), timezone: 'America/New_York' },
+    },
+    {
+      id: 'u-a.rao',    name: 'A. Rao',    email: 'a.rao@corp.example',
+      role: 'analyst', status: 'active',
+      invited_at: '2024-02-03T10:00:00Z', joined_at: '2024-02-04T08:12:00Z',
+      last_active: new Date(Date.now() - 3 * 3600e3).toISOString(),
+      avatar: 'AR',
+      settings: { ...defaultUserSettings(), timezone: 'Asia/Singapore' },
+    },
+    {
+      id: 'u-b.smith',  name: 'B. Smith',  email: 'b.smith@corp.example',
+      role: 'analyst', status: 'active',
+      invited_at: '2024-01-22T14:00:00Z', joined_at: '2024-01-23T11:04:00Z',
+      last_active: new Date(Date.now() - 40 * 60e3).toISOString(),
+      avatar: 'BS',
+      settings: { ...defaultUserSettings(), timezone: 'America/New_York' },
+    },
+    {
+      id: 'u-c.nguyen', name: 'C. Nguyen', email: 'c.nguyen@corp.example',
+      role: 'analyst', status: 'active',
+      invited_at: '2024-03-11T14:00:00Z', joined_at: '2024-03-12T09:22:00Z',
+      last_active: new Date(Date.now() - 9 * 3600e3).toISOString(),
+      avatar: 'CN',
+      settings: { ...defaultUserSettings(), timezone: 'Asia/Singapore' },
+    },
+    {
+      id: 'u-d.patel',  name: 'D. Patel',  email: 'd.patel@corp.example',
+      role: 'analyst', status: 'active',
+      invited_at: '2024-04-01T09:00:00Z', joined_at: '2024-04-02T08:45:00Z',
+      last_active: new Date(Date.now() - 26 * 3600e3).toISOString(),
+      avatar: 'DP',
+      settings: { ...defaultUserSettings(), timezone: 'Europe/London' },
+    },
+    {
+      id: 'u-e.moreno', name: 'E. Moreno', email: 'e.moreno@corp.example',
+      role: 'analyst', status: 'active',
+      invited_at: '2024-05-20T09:00:00Z', joined_at: '2024-05-21T12:00:00Z',
+      last_active: new Date(Date.now() - 6 * 3600e3).toISOString(),
+      avatar: 'EM',
+      settings: { ...defaultUserSettings(), timezone: 'America/Sao_Paulo' },
+    },
+    {
+      id: 'u-f.ito',    name: 'F. Ito',    email: 'f.ito@corp.example',
+      role: 'analyst', status: 'active',
+      invited_at: '2024-06-15T09:00:00Z', joined_at: '2024-06-16T08:30:00Z',
+      last_active: new Date(Date.now() - 55 * 60e3).toISOString(),
+      avatar: 'FI',
+      settings: { ...defaultUserSettings(), timezone: 'Asia/Tokyo' },
+    },
+    {
+      id: 'u-g.volkov', name: 'G. Volkov', email: 'g.volkov@corp.example',
+      role: 'analyst', status: 'active',
+      invited_at: '2024-07-08T09:00:00Z', joined_at: '2024-07-09T14:02:00Z',
+      last_active: new Date(Date.now() - 14 * 3600e3).toISOString(),
+      avatar: 'GV',
+      settings: { ...defaultUserSettings(), timezone: 'Europe/Berlin' },
+    },
+    {
+      id: 'u-h.mbeki',  name: 'H. Mbeki',  email: 'h.mbeki@corp.example',
+      role: 'analyst', status: 'active',
+      invited_at: '2024-08-19T09:00:00Z', joined_at: '2024-08-20T10:30:00Z',
+      last_active: new Date(Date.now() - 2 * 86400e3).toISOString(),
+      avatar: 'HM',
+      settings: { ...defaultUserSettings(), timezone: 'UTC' },
+    },
+    {
+      id: 'u-eng1',     name: 'M. Chen',   email: 'm.chen@corp.example',
+      role: 'engineer', status: 'active',
+      invited_at: '2023-11-04T10:00:00Z', joined_at: '2023-11-05T09:00:00Z',
+      last_active: new Date(Date.now() - 18 * 3600e3).toISOString(),
+      avatar: 'MC',
+      settings: { ...defaultUserSettings(), timezone: 'America/Los_Angeles' },
+    },
+    {
+      id: 'u-view1',    name: 'J. Ward',   email: 'j.ward@audit.example',
+      role: 'viewer', status: 'active',
+      invited_at: '2024-09-30T09:00:00Z', joined_at: '2024-10-02T14:15:00Z',
+      last_active: new Date(Date.now() - 5 * 86400e3).toISOString(),
+      avatar: 'JW',
+      settings: { ...defaultUserSettings(), timezone: 'Europe/London' },
+    },
+    {
+      id: 'u-pending',  name: 'S. Lee',    email: 's.lee@corp.example',
+      role: 'analyst', status: 'invited',
+      invited_at: new Date(Date.now() - 2 * 86400e3).toISOString(), joined_at: null,
+      last_active: null,
+      avatar: 'SL',
+      invite_token: 'tok_' + Math.random().toString(36).slice(2, 10),
+      settings: defaultUserSettings(),
+    },
+  ];
+}
+
+function readUsers() {
+  try {
+    const raw = localStorage.getItem(IR_USERS_KEY);
+    if (!raw) {
+      const seeded = seedUsers();
+      localStorage.setItem(IR_USERS_KEY, JSON.stringify(seeded));
+      return seeded;
+    }
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : seedUsers();
+  } catch {
+    return seedUsers();
+  }
+}
+function writeUsers(list) {
+  try { localStorage.setItem(IR_USERS_KEY, JSON.stringify(list)); } catch {}
+  window.dispatchEvent(new CustomEvent('ir:usersChanged'));
+}
+
+function getCurrentUser() {
+  let users;
+  try { users = readUsers(); } catch { return null; }
+  let id;
+  try { id = localStorage.getItem(IR_CURRENT_USER_KEY); } catch { id = null; }
+  // Default to the admin seed when nothing's been picked yet —
+  // matches what the topbar showed before RBAC landed.
+  if (!id) id = 'u-admin';
+  return users.find(u => u.id === id) || users[0] || null;
+}
+function setCurrentUser(id) {
+  try { localStorage.setItem(IR_CURRENT_USER_KEY, id); } catch {}
+  window.dispatchEvent(new CustomEvent('ir:currentUserChanged'));
+}
+
+// CRUD helpers — surface code uses these so nobody reaches into
+// the raw array.
+function createUser({ name, email, role, timezone }) {
+  const users = readUsers();
+  const id = 'u-' + (email || name || Math.random().toString(36)).toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').slice(0, 40) + '-' + Math.random().toString(36).slice(2, 6);
+  const u = {
+    id,
+    name: name || email || '(unnamed)',
+    email: email || '',
+    role: role || 'analyst',
+    status: 'invited',
+    invited_at: new Date().toISOString(),
+    joined_at: null,
+    last_active: null,
+    avatar: (name || email || '?').trim().slice(0, 2).toUpperCase(),
+    invite_token: 'tok_' + Math.random().toString(36).slice(2, 10),
+    settings: { ...defaultUserSettings(), timezone: timezone || 'browser' },
+  };
+  writeUsers([...users, u]);
+  return u;
+}
+function updateUser(id, patch) {
+  const users = readUsers();
+  const next = users.map(u => u.id === id ? { ...u, ...patch } : u);
+  writeUsers(next);
+  return next.find(u => u.id === id) || null;
+}
+function deleteUser(id) {
+  const users = readUsers();
+  writeUsers(users.filter(u => u.id !== id));
+}
+function updateCurrentUserSettings(patch) {
+  const cur = getCurrentUser();
+  if (!cur) return null;
+  return updateUser(cur.id, {
+    settings: { ...cur.settings, ...patch },
+  });
+}
+
 // ─── Playbooks · data + markdown renderer ──────────────────────
 // Data the drawer consumes (wired in a later commit). Each entry:
 //   id         — stable key
