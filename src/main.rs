@@ -19,7 +19,9 @@ use siphon::scanner;
 
 #[derive(Parser)]
 #[command(name = "siphon", version = "2.1.0")]
-#[command(about = "Polygon Siphon — high-performance DLP scanner to detect, redact, and protect sensitive data")]
+#[command(
+    about = "Polygon Siphon — high-performance DLP scanner to detect, redact, and protect sensitive data"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

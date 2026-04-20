@@ -27,10 +27,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use siphon_core::audit::iso8601_now;
-use siphon_core::findings_ring::{
-    filter_findings, severity_for, FindingRecord, FindingsRing,
+use siphon_core::findings_ring::{filter_findings, severity_for, FindingRecord, FindingsRing};
+use siphon_core::overrides::{
+    CompiledList, PatternOverride, PatternOverrides, Regex, RuntimePattern,
 };
-use siphon_core::overrides::{CompiledList, PatternOverride, PatternOverrides, Regex, RuntimePattern};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -117,9 +117,9 @@ struct AppState {
 #[derive(Serialize)]
 struct HealthResponse {
     status: &'static str,
-    service: &'static str,    // legacy alias kept for older C2 builds
-    pod_type: &'static str,   // "siphon-fs"
-    pod_id: String,           // uuidv4, generated at startup
+    service: &'static str,  // legacy alias kept for older C2 builds
+    pod_type: &'static str, // "siphon-fs"
+    pod_id: String,         // uuidv4, generated at startup
     version: &'static str,
     core_version: &'static str,
     started_at: String,
@@ -197,14 +197,21 @@ async fn capabilities(State(state): State<AppState>) -> JsonResponse<Capabilitie
         version: env!("CARGO_PKG_VERSION"),
         core_version: siphon_core::VERSION,
         scanner_pipeline: vec![
-            "regex", "validation", "context",
-            "ctx_required", "require_context",
-            "min_confidence", "emit",
+            "regex",
+            "validation",
+            "context",
+            "ctx_required",
+            "require_context",
+            "min_confidence",
+            "emit",
         ],
         entropy_modes: vec!["off", "gated", "assignment", "all"],
         overrides_features: vec![
-            "disabled_patterns", "pattern_overrides",
-            "custom_categories", "regex_overrides", "list_bindings",
+            "disabled_patterns",
+            "pattern_overrides",
+            "custom_categories",
+            "regex_overrides",
+            "list_bindings",
         ],
         patterns_loaded: siphon_core::patterns::PATTERNS.len(),
         categories_loaded: siphon_core::patterns::categories().len(),
@@ -303,17 +310,15 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
                     // /scan body shape). Malformed → 400; missing is
                     // fine, options stays at Default.
                     match field.text().await {
-                        Ok(s) if !s.is_empty() => {
-                            match serde_json::from_str::<ScanOptions>(&s) {
-                                Ok(o) => options = o,
-                                Err(e) => {
-                                    return err(
-                                        StatusCode::BAD_REQUEST,
-                                        format!("options JSON parse failed: {e}"),
-                                    );
-                                }
+                        Ok(s) if !s.is_empty() => match serde_json::from_str::<ScanOptions>(&s) {
+                            Ok(o) => options = o,
+                            Err(e) => {
+                                return err(
+                                    StatusCode::BAD_REQUEST,
+                                    format!("options JSON parse failed: {e}"),
+                                );
                             }
-                        }
+                        },
                         Ok(_) => {}
                         Err(e) => {
                             return err(
@@ -402,7 +407,10 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
 
     // Snapshot the hot-reloadable overrides once per scan.
     let ov = {
-        let g = state.live_overrides.read().expect("live_overrides lock poisoned");
+        let g = state
+            .live_overrides
+            .read()
+            .expect("live_overrides lock poisoned");
         g.clone()
     };
     let mut config = ScanConfig {
@@ -500,9 +508,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
 
     // Drain the trace sink after the scan completes. The scanner only
     // writes to it mid-pipeline, so unlocking here is race-free.
-    let trace = trace_sink.and_then(|s| {
-        s.lock().ok().map(|g| g.clone())
-    });
+    let trace = trace_sink.and_then(|s| s.lock().ok().map(|g| g.clone()));
 
     JsonResponse(ScanResponse {
         request_id,

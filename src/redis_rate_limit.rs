@@ -84,7 +84,12 @@ impl RedisRateLimiter {
             .map_err(|e| e.to_string())?
             .as_secs();
         let bucket = now / self.window_secs;
-        let key = format!("{}{}:{}", self.prefix, bucket, sanitize_client_id(client_id));
+        let key = format!(
+            "{}{}:{}",
+            self.prefix,
+            bucket,
+            sanitize_client_id(client_id)
+        );
 
         let mut conn = self
             .conn

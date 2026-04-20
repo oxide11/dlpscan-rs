@@ -4827,7 +4827,9 @@ mod tests {
             }
         }
         eprintln!();
-        eprintln!("CONTEXT_REQUIRED mismatches (PatternDef.context_required vs is_context_required):");
+        eprintln!(
+            "CONTEXT_REQUIRED mismatches (PatternDef.context_required vs is_context_required):"
+        );
         if ctx_mismatches.is_empty() {
             eprintln!("  (none)");
         } else {

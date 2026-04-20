@@ -283,7 +283,10 @@ impl std::fmt::Display for LoadError {
             LoadError::Io(e) => write!(f, "io: {e}"),
             LoadError::Parse(e) => write!(f, "parse: {e}"),
             LoadError::Version { found, expected } => {
-                write!(f, "schema version {found} not supported (expected {expected})")
+                write!(
+                    f,
+                    "schema version {found} not supported (expected {expected})"
+                )
             }
         }
     }
@@ -324,8 +327,8 @@ impl PatternOverrides {
     }
 
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, LoadError> {
-        let parsed: Self = serde_json::from_slice(bytes)
-            .map_err(|e| LoadError::Parse(e.to_string()))?;
+        let parsed: Self =
+            serde_json::from_slice(bytes).map_err(|e| LoadError::Parse(e.to_string()))?;
         if parsed.version != CURRENT_VERSION {
             return Err(LoadError::Version {
                 found: parsed.version,
@@ -454,9 +457,7 @@ impl PatternOverrides {
     /// honoured — those would require rebuilding the static
     /// Aho-Corasick context matcher in `crate::context`. Disable +
     /// custom-category-clone is the workaround today.
-    pub fn compile_pattern_regex_overrides(
-        &self,
-    ) -> HashMap<(String, String), Regex> {
+    pub fn compile_pattern_regex_overrides(&self) -> HashMap<(String, String), Regex> {
         let mut out = HashMap::new();
         for (wire_key, po) in &self.pattern_overrides {
             let Some((cat, sub)) = wire_key.split_once('/') else {
@@ -612,7 +613,10 @@ fn compile_path_glob(pat: &str) -> Option<regex::Regex> {
     while i < bytes.len() {
         // /**/ → optional path components (collapses /x/y/ or to just /)
         if i + 3 < bytes.len()
-            && bytes[i] == b'/' && bytes[i + 1] == b'*' && bytes[i + 2] == b'*' && bytes[i + 3] == b'/'
+            && bytes[i] == b'/'
+            && bytes[i + 1] == b'*'
+            && bytes[i + 2] == b'*'
+            && bytes[i + 3] == b'/'
         {
             rx.push_str("/(?:.*/)?");
             i += 4;
@@ -620,7 +624,9 @@ fn compile_path_glob(pat: &str) -> Option<regex::Regex> {
         }
         // Trailing /** (i == len-3) → "/..." or nothing.
         if i + 2 < bytes.len()
-            && bytes[i] == b'/' && bytes[i + 1] == b'*' && bytes[i + 2] == b'*'
+            && bytes[i] == b'/'
+            && bytes[i + 1] == b'*'
+            && bytes[i + 2] == b'*'
             && i + 3 == bytes.len()
         {
             rx.push_str("(?:/.*)?");
@@ -628,10 +634,7 @@ fn compile_path_glob(pat: &str) -> Option<regex::Regex> {
             continue;
         }
         // Leading **/ (only when at start) → zero-or-more components.
-        if i == 0
-            && bytes.len() >= 3
-            && bytes[0] == b'*' && bytes[1] == b'*' && bytes[2] == b'/'
-        {
+        if i == 0 && bytes.len() >= 3 && bytes[0] == b'*' && bytes[1] == b'*' && bytes[2] == b'/' {
             rx.push_str("(?:.*/)?");
             i += 3;
             continue;
@@ -771,9 +774,10 @@ impl CompiledList {
                 // Glob matches first (precompiled); fall back to the
                 // naive substring for plain-string entries.
                 self.path_globs.iter().any(|rx| rx.is_match(&lower))
-                    || self.entries.iter().any(|e| {
-                        !(e.contains('*') || e.contains('?')) && lower.contains(e)
-                    })
+                    || self
+                        .entries
+                        .iter()
+                        .any(|e| !(e.contains('*') || e.contains('?')) && lower.contains(e))
             }
             ListKind::Ip => {
                 // Try the parsed CIDR ranges first — that's what
@@ -794,9 +798,7 @@ impl CompiledList {
                 }
                 self.entries.iter().any(|e| lower == *e)
             }
-            ListKind::Hash | ListKind::Other => {
-                self.entries.iter().any(|e| lower == *e)
-            }
+            ListKind::Hash | ListKind::Other => self.entries.iter().any(|e| lower == *e),
         }
     }
 
@@ -893,7 +895,13 @@ mod tests {
     fn rejects_future_versions() {
         let json = r#"{"version":99}"#;
         let err = PatternOverrides::from_bytes(json.as_bytes()).unwrap_err();
-        assert!(matches!(err, LoadError::Version { found: 99, expected: 0 }));
+        assert!(matches!(
+            err,
+            LoadError::Version {
+                found: 99,
+                expected: 0
+            }
+        ));
     }
 
     #[test]
@@ -969,7 +977,9 @@ mod tests {
         let map = o.compile_pattern_regex_overrides();
         // Only the well-formed override with a regex compiles in.
         assert_eq!(map.len(), 1);
-        let re = map.get(&("PCI".to_string(), "visa.v3".to_string())).unwrap();
+        let re = map
+            .get(&("PCI".to_string(), "visa.v3".to_string()))
+            .unwrap();
         assert!(re.is_match("4111111111111111"));
         assert!(!re.is_match("411111111"));
     }
@@ -1012,7 +1022,8 @@ mod tests {
     #[test]
     fn compiled_list_keyword_substring_case_insensitive() {
         let list = MatchList {
-            id: "x".into(), kind: ListKind::Keyword,
+            id: "x".into(),
+            kind: ListKind::Keyword,
             entries: vec!["Project Icarus".into(), "shell access".into()],
             ..Default::default()
         };
@@ -1025,53 +1036,57 @@ mod tests {
     #[test]
     fn compiled_list_domain_suffix_match() {
         let list = MatchList {
-            id: "p".into(), kind: ListKind::Domain,
+            id: "p".into(),
+            kind: ListKind::Domain,
             entries: vec!["example.com".into(), "globex.eu".into()],
             ..Default::default()
         };
         let c = CompiledList::from_list(&list);
         assert!(c.matches("example.com"));
-        assert!(c.matches("Foo.Example.COM"));          // case-insensitive
-        assert!(c.matches("mail.globex.eu"));            // subdomain
-        assert!(c.matches("alice@example.com"));         // email at domain
-        assert!(c.matches("Alice@mail.example.com"));    // email at subdomain
-        assert!(!c.matches("notexample.com"));            // no false suffix
-        assert!(!c.matches("test@nope.com"));             // wrong domain
+        assert!(c.matches("Foo.Example.COM")); // case-insensitive
+        assert!(c.matches("mail.globex.eu")); // subdomain
+        assert!(c.matches("alice@example.com")); // email at domain
+        assert!(c.matches("Alice@mail.example.com")); // email at subdomain
+        assert!(!c.matches("notexample.com")); // no false suffix
+        assert!(!c.matches("test@nope.com")); // wrong domain
     }
 
     #[test]
     fn compiled_list_email_with_domain_fallback() {
         let list = MatchList {
-            id: "e".into(), kind: ListKind::Email,
+            id: "e".into(),
+            kind: ListKind::Email,
             entries: vec!["alice@corp.com".into(), "@partner.io".into()],
             ..Default::default()
         };
         let c = CompiledList::from_list(&list);
         assert!(c.matches("alice@corp.com"));
         assert!(c.matches("ALICE@CORP.com"));
-        assert!(c.matches("anyone@partner.io"));         // domain fallback
+        assert!(c.matches("anyone@partner.io")); // domain fallback
         assert!(!c.matches("alice@other.com"));
     }
 
     #[test]
     fn compiled_list_hash_exact_lowercased() {
         let list = MatchList {
-            id: "h".into(), kind: ListKind::Hash,
+            id: "h".into(),
+            kind: ListKind::Hash,
             entries: vec!["5d41402ABC4b2a76B9719D911017c592".into()],
             ..Default::default()
         };
         let c = CompiledList::from_list(&list);
-        assert!(c.matches("5d41402abc4b2a76b9719d911017c592"));  // upper/lower round-trip
+        assert!(c.matches("5d41402abc4b2a76b9719d911017c592")); // upper/lower round-trip
         assert!(!c.matches("deadbeef"));
     }
 
     #[test]
     fn compiled_list_ip_cidr_ipv4() {
         let list = MatchList {
-            id: "ip".into(), kind: ListKind::Ip,
+            id: "ip".into(),
+            kind: ListKind::Ip,
             entries: vec![
                 "10.0.0.0/8".into(),
-                "192.168.1.1".into(),     // bare IP = /32
+                "192.168.1.1".into(), // bare IP = /32
                 "203.0.113.0/24".into(),
             ],
             ..Default::default()
@@ -1095,7 +1110,8 @@ mod tests {
     #[test]
     fn compiled_list_ip_falls_back_to_exact_for_ipv6() {
         let list = MatchList {
-            id: "ip6".into(), kind: ListKind::Ip,
+            id: "ip6".into(),
+            kind: ListKind::Ip,
             entries: vec!["2001:db8::1".into()],
             ..Default::default()
         };
@@ -1107,12 +1123,13 @@ mod tests {
     #[test]
     fn compiled_list_path_glob() {
         let list = MatchList {
-            id: "p".into(), kind: ListKind::Path,
+            id: "p".into(),
+            kind: ListKind::Path,
             entries: vec![
-                "/var/log/*.log".into(),   // single-level glob
-                "/srv/**/secret".into(),   // cross-dir glob
-                "/tmp/ab?.txt".into(),     // ? single-char
-                "/etc/config".into(),       // literal, no wildcard — substring fallback
+                "/var/log/*.log".into(), // single-level glob
+                "/srv/**/secret".into(), // cross-dir glob
+                "/tmp/ab?.txt".into(),   // ? single-char
+                "/etc/config".into(),    // literal, no wildcard — substring fallback
             ],
             ..Default::default()
         };

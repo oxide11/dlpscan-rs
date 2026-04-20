@@ -457,7 +457,9 @@ mod tests {
 
     #[test]
     fn test_allow_private_destinations_default_off() {
-        let _guard = TEST_OVERRIDE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_OVERRIDE_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         TEST_OVERRIDE.store(0, Ordering::Relaxed);
         assert!(!allow_private_destinations());
         assert!(!is_safe_url("http://127.0.0.1/test"));
@@ -468,7 +470,9 @@ mod tests {
 
     #[test]
     fn test_allow_private_destinations_opt_in() {
-        let _guard = TEST_OVERRIDE_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_OVERRIDE_GUARD
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         TEST_OVERRIDE.store(1, Ordering::Relaxed);
         assert!(allow_private_destinations());
         // Loopback and RFC1918 now accepted at pre-resolution stage.

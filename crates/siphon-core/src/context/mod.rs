@@ -47,11 +47,7 @@ impl ContextHitIndex {
             .iter()
             .enumerate()
             .filter(|(_, positions)| !positions.is_empty())
-            .filter_map(|(pid, _)| {
-                CONTEXT_KEYWORDS
-                    .get(pid)
-                    .map(|&(cat, sub, _)| (cat, sub))
-            })
+            .filter_map(|(pid, _)| CONTEXT_KEYWORDS.get(pid).map(|&(cat, sub, _)| (cat, sub)))
     }
 
     /// Check if any keyword for (category, sub_category) was found in the given byte range.

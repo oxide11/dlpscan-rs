@@ -234,10 +234,18 @@ fn resolve_list_verdict(
             _ => {}
         }
     }
-    if let Some(id) = block { return Some(("block", id)); }
-    if let Some(id) = allow { return Some(("allow", id)); }
-    if let Some(id) = mask  { return Some(("mask",  id)); }
-    if let Some(id) = tag   { return Some(("tag",   id)); }
+    if let Some(id) = block {
+        return Some(("block", id));
+    }
+    if let Some(id) = allow {
+        return Some(("allow", id));
+    }
+    if let Some(id) = mask {
+        return Some(("mask", id));
+    }
+    if let Some(id) = tag {
+        return Some(("tag", id));
+    }
     None
 }
 
@@ -704,9 +712,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
             let active_regex: &Regex = config
                 .pattern_regex_overrides
                 .as_ref()
-                .and_then(|map| {
-                    map.get(&(pat.category.to_string(), pat.sub_category.to_string()))
-                })
+                .and_then(|map| map.get(&(pat.category.to_string(), pat.sub_category.to_string())))
                 .unwrap_or(&cp.regex);
 
             for mat in active_regex.find_iter(&normalized) {
@@ -720,25 +726,46 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
 
                 // Stage 1 — regex hit.
                 emit_trace(
-                    &config.trace, "primary", "regex", "pass",
-                    pat.category, pat.sub_category, cand_span, matched_text,
-                    None, None,
+                    &config.trace,
+                    "primary",
+                    "regex",
+                    "pass",
+                    pat.category,
+                    pat.sub_category,
+                    cand_span,
+                    matched_text,
+                    None,
+                    None,
                 );
 
                 // Structural validation (Luhn, SWIFT, CUSIP, SEDOL, TFN, SSN)
                 if !crate::validation::validate_match(pat.category, pat.sub_category, matched_text)
                 {
                     emit_trace(
-                        &config.trace, "primary", "validation", "drop",
-                        pat.category, pat.sub_category, cand_span, matched_text,
-                        None, Some("structural validation failed (Luhn / checksum / format)"),
+                        &config.trace,
+                        "primary",
+                        "validation",
+                        "drop",
+                        pat.category,
+                        pat.sub_category,
+                        cand_span,
+                        matched_text,
+                        None,
+                        Some("structural validation failed (Luhn / checksum / format)"),
                     );
                     continue;
                 }
                 emit_trace(
-                    &config.trace, "primary", "validation", "pass",
-                    pat.category, pat.sub_category, cand_span, matched_text,
-                    None, None,
+                    &config.trace,
+                    "primary",
+                    "validation",
+                    "pass",
+                    pat.category,
+                    pat.sub_category,
+                    cand_span,
+                    matched_text,
+                    None,
+                    None,
                 );
 
                 // Context checking
@@ -760,25 +787,49 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
 
                 if ctx_required && !has_context {
                     emit_trace(
-                        &config.trace, "primary", "ctx_required", "drop",
-                        pat.category, pat.sub_category, cand_span, matched_text,
-                        None, Some("pattern requires a context keyword nearby; none found"),
+                        &config.trace,
+                        "primary",
+                        "ctx_required",
+                        "drop",
+                        pat.category,
+                        pat.sub_category,
+                        cand_span,
+                        matched_text,
+                        None,
+                        Some("pattern requires a context keyword nearby; none found"),
                     );
                     continue;
                 }
                 if config.require_context && !has_context {
                     emit_trace(
-                        &config.trace, "primary", "require_context", "drop",
-                        pat.category, pat.sub_category, cand_span, matched_text,
-                        None, Some("caller set require_context=true and no context keyword was found"),
+                        &config.trace,
+                        "primary",
+                        "require_context",
+                        "drop",
+                        pat.category,
+                        pat.sub_category,
+                        cand_span,
+                        matched_text,
+                        None,
+                        Some("caller set require_context=true and no context keyword was found"),
                     );
                     continue;
                 }
                 emit_trace(
-                    &config.trace, "primary", "context", "pass",
-                    pat.category, pat.sub_category, cand_span, matched_text,
+                    &config.trace,
+                    "primary",
+                    "context",
+                    "pass",
+                    pat.category,
+                    pat.sub_category,
+                    cand_span,
+                    matched_text,
                     None,
-                    Some(if has_context { "context keyword matched" } else { "no context required" }),
+                    Some(if has_context {
+                        "context keyword matched"
+                    } else {
+                        "no context required"
+                    }),
                 );
 
                 let spec = effective_specificity(
@@ -786,11 +837,18 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     pat.sub_category,
                     config.pattern_field_overrides.as_ref(),
                 );
-                let confidence = crate::scoring::compute_confidence_with(spec, has_context, ctx_required);
+                let confidence =
+                    crate::scoring::compute_confidence_with(spec, has_context, ctx_required);
                 if confidence < config.min_confidence {
                     emit_trace(
-                        &config.trace, "primary", "min_confidence", "drop",
-                        pat.category, pat.sub_category, cand_span, matched_text,
+                        &config.trace,
+                        "primary",
+                        "min_confidence",
+                        "drop",
+                        pat.category,
+                        pat.sub_category,
+                        cand_span,
+                        matched_text,
                         Some(confidence),
                         Some("below caller min_confidence threshold"),
                     );
@@ -865,9 +923,16 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 }
 
                 emit_trace(
-                    &config.trace, "primary", "emit", "emit",
-                    pat.category, pat.sub_category, cand_span, matched_text,
-                    Some(m.confidence), Some("match emitted to primary result set"),
+                    &config.trace,
+                    "primary",
+                    "emit",
+                    "emit",
+                    pat.category,
+                    pat.sub_category,
+                    cand_span,
+                    matched_text,
+                    Some(m.confidence),
+                    Some("match emitted to primary result set"),
                 );
                 local_matches.push(m);
             }
@@ -975,9 +1040,16 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                         matched_text,
                     ) {
                         emit_trace(
-                            &config.trace, "alt", "alt_validation", "drop",
-                            cp.def.category, cp.def.sub_category, alt_span, matched_text,
-                            None, Some("structural validation failed on alt decoding"),
+                            &config.trace,
+                            "alt",
+                            "alt_validation",
+                            "drop",
+                            cp.def.category,
+                            cp.def.sub_category,
+                            alt_span,
+                            matched_text,
+                            None,
+                            Some("structural validation failed on alt decoding"),
                         );
                         continue;
                     }
@@ -986,19 +1058,34 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                         cp.def.sub_category,
                         config.pattern_field_overrides.as_ref(),
                     );
-                    let confidence = crate::scoring::compute_confidence_with(alt_spec, false, false);
+                    let confidence =
+                        crate::scoring::compute_confidence_with(alt_spec, false, false);
                     if confidence < config.min_confidence {
                         emit_trace(
-                            &config.trace, "alt", "alt_confidence", "drop",
-                            cp.def.category, cp.def.sub_category, alt_span, matched_text,
-                            Some(confidence), Some("below caller min_confidence threshold"),
+                            &config.trace,
+                            "alt",
+                            "alt_confidence",
+                            "drop",
+                            cp.def.category,
+                            cp.def.sub_category,
+                            alt_span,
+                            matched_text,
+                            Some(confidence),
+                            Some("below caller min_confidence threshold"),
                         );
                         continue;
                     }
                     emit_trace(
-                        &config.trace, "alt", "alt_emit", "emit",
-                        cp.def.category, cp.def.sub_category, alt_span, matched_text,
-                        Some(confidence * 0.9), Some("alt decoding match emitted (confidence multiplied by 0.9)"),
+                        &config.trace,
+                        "alt",
+                        "alt_emit",
+                        "emit",
+                        cp.def.category,
+                        cp.def.sub_category,
+                        alt_span,
+                        matched_text,
+                        Some(confidence * 0.9),
+                        Some("alt decoding match emitted (confidence multiplied by 0.9)"),
                     );
                     matches.push(Match::new(
                         matched_text.to_string(),
@@ -1105,27 +1192,36 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 let has_context = if rp.context_keywords.is_empty() {
                     false
                 } else {
-                    runtime_context_hit(
-                        text,
-                        span,
-                        &rp.context_keywords,
-                        rp.proximity_chars,
-                    )
+                    runtime_context_hit(text, span, &rp.context_keywords, rp.proximity_chars)
                 };
 
                 if rp.context_required && !has_context {
                     emit_trace(
-                        &config.trace, "runtime", "ctx_required", "drop",
-                        &rp.category, &rp.sub_category, span, matched_text,
-                        None, Some("custom pattern requires a keyword nearby; none found"),
+                        &config.trace,
+                        "runtime",
+                        "ctx_required",
+                        "drop",
+                        &rp.category,
+                        &rp.sub_category,
+                        span,
+                        matched_text,
+                        None,
+                        Some("custom pattern requires a keyword nearby; none found"),
                     );
                     continue;
                 }
                 if config.require_context && !has_context {
                     emit_trace(
-                        &config.trace, "runtime", "require_context", "drop",
-                        &rp.category, &rp.sub_category, span, matched_text,
-                        None, Some("caller set require_context=true and no context keyword was found"),
+                        &config.trace,
+                        "runtime",
+                        "require_context",
+                        "drop",
+                        &rp.category,
+                        &rp.sub_category,
+                        span,
+                        matched_text,
+                        None,
+                        Some("caller set require_context=true and no context keyword was found"),
                     );
                     continue;
                 }
@@ -1137,17 +1233,31 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 );
                 if confidence < config.min_confidence {
                     emit_trace(
-                        &config.trace, "runtime", "min_confidence", "drop",
-                        &rp.category, &rp.sub_category, span, matched_text,
-                        Some(confidence), Some("below caller min_confidence threshold"),
+                        &config.trace,
+                        "runtime",
+                        "min_confidence",
+                        "drop",
+                        &rp.category,
+                        &rp.sub_category,
+                        span,
+                        matched_text,
+                        Some(confidence),
+                        Some("below caller min_confidence threshold"),
                     );
                     continue;
                 }
 
                 emit_trace(
-                    &config.trace, "runtime", "emit", "emit",
-                    &rp.category, &rp.sub_category, span, matched_text,
-                    Some(confidence), Some("custom pattern emitted"),
+                    &config.trace,
+                    "runtime",
+                    "emit",
+                    "emit",
+                    &rp.category,
+                    &rp.sub_category,
+                    span,
+                    matched_text,
+                    Some(confidence),
+                    Some("custom pattern emitted"),
                 );
 
                 matches.push(Match::new(
@@ -1180,7 +1290,8 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 }
                 // Annotate for downstream consumers. metadata is
                 // HashMap<String,String> — trivial inserts.
-                m.metadata.insert("list_action".to_string(), action.to_string());
+                m.metadata
+                    .insert("list_action".to_string(), action.to_string());
                 m.metadata.insert("list_matched".to_string(), list_id);
                 true
             });
@@ -1204,13 +1315,19 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
             // Now tag every match whose tuple exceeded the threshold.
             for m in matches.iter_mut() {
                 let key = (m.category.clone(), m.sub_category.clone());
-                let Some(limit) = thresholds.get(&key) else { continue; };
-                let Some(set) = distinct.get(&key) else { continue; };
+                let Some(limit) = thresholds.get(&key) else {
+                    continue;
+                };
+                let Some(set) = distinct.get(&key) else {
+                    continue;
+                };
                 let n = set.len();
                 if n > *limit {
                     m.metadata.insert("unique_count".to_string(), n.to_string());
-                    m.metadata.insert("unique_count_limit".to_string(), limit.to_string());
-                    m.metadata.insert("unique_count_breach".to_string(), "true".to_string());
+                    m.metadata
+                        .insert("unique_count_limit".to_string(), limit.to_string());
+                    m.metadata
+                        .insert("unique_count_breach".to_string(), "true".to_string());
                     m.metadata.insert("action".to_string(), "block".to_string());
                 }
             }
@@ -1225,9 +1342,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     // helps the admin console explain WHY a pattern didn't fire.
     if let Some(disabled) = config.disabled_patterns.as_ref() {
         if !disabled.is_empty() {
-            matches.retain(|m| {
-                !disabled.contains(&(m.category.clone(), m.sub_category.clone()))
-            });
+            matches.retain(|m| !disabled.contains(&(m.category.clone(), m.sub_category.clone())));
         }
     }
 
@@ -1321,9 +1436,8 @@ static ASSIGNMENT_RE: Lazy<Regex> = Lazy::new(|| {
 /// iteration. `\s` matches Unicode whitespace (same as the previous
 /// char-based closure), and the explicit character class covers the
 /// same literal delimiters the old code listed.
-static ENTROPY_TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"[^\s,;'"()\[\]{}=:]+"#).expect("entropy token regex must compile")
-});
+static ENTROPY_TOKEN_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r#"[^\s,;'"()\[\]{}=:]+"#).expect("entropy token regex must compile"));
 
 /// Scan for high-entropy tokens using the configured gating mode.
 fn scan_high_entropy_tokens(
@@ -1542,9 +1656,11 @@ mod tests {
 
         // Baseline: scan without overrides, capture the email
         // finding's confidence value.
-        let baseline =
-            scan_text_with_config("Contact us at test@example.com for info.", &ScanConfig::default())
-                .unwrap();
+        let baseline = scan_text_with_config(
+            "Contact us at test@example.com for info.",
+            &ScanConfig::default(),
+        )
+        .unwrap();
         let email_baseline = baseline
             .iter()
             .find(|m| m.sub_category == "Email Address")
@@ -1573,8 +1689,7 @@ mod tests {
             ..Default::default()
         };
         let overridden =
-            scan_text_with_config("Contact us at test@example.com for info.", &cfg)
-                .unwrap();
+            scan_text_with_config("Contact us at test@example.com for info.", &cfg).unwrap();
         let email_overridden = overridden
             .iter()
             .find(|m| m.sub_category == "Email Address")
@@ -1614,7 +1729,10 @@ mod tests {
         // so the gate now drops the candidate.
         let mut overrides = HashMap::new();
         overrides.insert(
-            ("Contact Information".to_string(), "Email Address".to_string()),
+            (
+                "Contact Information".to_string(),
+                "Email Address".to_string(),
+            ),
             PatternOverride {
                 context_required: Some(true),
                 ..Default::default()
@@ -1625,8 +1743,7 @@ mod tests {
             ..Default::default()
         };
         let gated =
-            scan_text_with_config("Just an address: solo@example.com appears here", &cfg)
-                .unwrap();
+            scan_text_with_config("Just an address: solo@example.com appears here", &cfg).unwrap();
         assert!(
             !gated.iter().any(|m| m.sub_category == "Email Address"),
             "context_required override should suppress emit when no keyword is in range"
@@ -1641,9 +1758,7 @@ mod tests {
         // Email Address regex.
         let baseline =
             scan_text_with_config("Reach me at j@x.io anytime.", &ScanConfig::default()).unwrap();
-        let baseline_email = baseline
-            .iter()
-            .find(|m| m.sub_category == "Email Address");
+        let baseline_email = baseline.iter().find(|m| m.sub_category == "Email Address");
         assert!(baseline_email.is_some(), "static email pattern fires");
         let baseline_cat = baseline_email.unwrap().category.clone();
 
@@ -1666,8 +1781,7 @@ mod tests {
             pattern_regex_overrides: Some(regex_overrides),
             ..Default::default()
         };
-        let overridden =
-            scan_text_with_config("Reach me at j@x.io anytime.", &cfg).unwrap();
+        let overridden = scan_text_with_config("Reach me at j@x.io anytime.", &cfg).unwrap();
         let leftovers: Vec<&Match> = overridden
             .iter()
             .filter(|m| m.sub_category == "Email Address")
@@ -1676,15 +1790,19 @@ mod tests {
             leftovers.is_empty(),
             "override regex (≥3-char local) should suppress 'j@x.io', got {} leftover: {:?}",
             leftovers.len(),
-            leftovers.iter().map(|m| (m.category.clone(), m.text.clone())).collect::<Vec<_>>()
+            leftovers
+                .iter()
+                .map(|m| (m.category.clone(), m.text.clone()))
+                .collect::<Vec<_>>()
         );
 
         // The same override against an address with a long enough
         // local part should still fire.
-        let still_fires =
-            scan_text_with_config("Reach me at jane@x.io anytime.", &cfg).unwrap();
+        let still_fires = scan_text_with_config("Reach me at jane@x.io anytime.", &cfg).unwrap();
         assert!(
-            still_fires.iter().any(|m| m.sub_category == "Email Address"),
+            still_fires
+                .iter()
+                .any(|m| m.sub_category == "Email Address"),
             "override regex should still match 'jane@x.io'"
         );
     }
@@ -1727,7 +1845,11 @@ mod tests {
             .iter()
             .filter(|m| m.category == "MYORG_SECRETS")
             .collect();
-        assert_eq!(custom.len(), 2, "both EMP- ids should fire (case-insensitive)");
+        assert_eq!(
+            custom.len(),
+            2,
+            "both EMP- ids should fire (case-insensitive)"
+        );
         assert!(custom.iter().any(|m| m.text == "EMP-123456"));
         assert!(custom.iter().any(|m| m.text == "emp-654321"));
         // Specificity 0.85, no context → confidence is 0.85 unchanged
@@ -1786,7 +1908,10 @@ mod tests {
         // + action=block in metadata. None are dropped.
         let mut t: HashMap<(String, String), usize> = HashMap::new();
         t.insert(
-            ("Contact Information".to_string(), "Email Address".to_string()),
+            (
+                "Contact Information".to_string(),
+                "Email Address".to_string(),
+            ),
             2,
         );
         let cfg = ScanConfig {
@@ -1803,7 +1928,10 @@ mod tests {
         for m in &emails {
             assert_eq!(m.metadata.get("unique_count"), Some(&"3".to_string()));
             assert_eq!(m.metadata.get("unique_count_limit"), Some(&"2".to_string()));
-            assert_eq!(m.metadata.get("unique_count_breach"), Some(&"true".to_string()));
+            assert_eq!(
+                m.metadata.get("unique_count_breach"),
+                Some(&"true".to_string())
+            );
             assert_eq!(m.metadata.get("action"), Some(&"block".to_string()));
         }
     }
@@ -1815,7 +1943,10 @@ mod tests {
         // is a pass.
         let mut t: HashMap<(String, String), usize> = HashMap::new();
         t.insert(
-            ("Contact Information".to_string(), "Email Address".to_string()),
+            (
+                "Contact Information".to_string(),
+                "Email Address".to_string(),
+            ),
             2,
         );
         let cfg = ScanConfig {
@@ -1834,12 +1965,15 @@ mod tests {
         // Same email repeated 5 times → distinct count is 1.
         let mut t: HashMap<(String, String), usize> = HashMap::new();
         t.insert(
-            ("Contact Information".to_string(), "Email Address".to_string()),
+            (
+                "Contact Information".to_string(),
+                "Email Address".to_string(),
+            ),
             2,
         );
         let cfg = ScanConfig {
             max_unique_per_subcategory: Some(Arc::new(t)),
-            deduplicate: false,  // keep dupes in output
+            deduplicate: false, // keep dupes in output
             ..Default::default()
         };
         let text = "alice@x.io alice@x.io alice@x.io";
@@ -1901,8 +2035,14 @@ mod tests {
             .iter()
             .find(|m| m.sub_category == "Email Address")
             .expect("email fires");
-        assert_eq!(email.metadata.get("list_action"), Some(&"block".to_string()));
-        assert_eq!(email.metadata.get("list_matched"), Some(&"ml_bad".to_string()));
+        assert_eq!(
+            email.metadata.get("list_action"),
+            Some(&"block".to_string())
+        );
+        assert_eq!(
+            email.metadata.get("list_matched"),
+            Some(&"ml_bad".to_string())
+        );
     }
 
     #[test]
@@ -1910,12 +2050,14 @@ mod tests {
         use crate::overrides::{CompiledList, ListKind, MatchList};
 
         let allow_list = CompiledList::from_list(&MatchList {
-            id: "ml_partners".into(), kind: ListKind::Domain,
+            id: "ml_partners".into(),
+            kind: ListKind::Domain,
             entries: vec!["example.com".into()],
             ..Default::default()
         });
         let block_list = CompiledList::from_list(&MatchList {
-            id: "ml_leaked".into(), kind: ListKind::Email,
+            id: "ml_leaked".into(),
+            kind: ListKind::Email,
             entries: vec!["known@example.com".into()],
             ..Default::default()
         });
@@ -1933,7 +2075,10 @@ mod tests {
             .iter()
             .find(|m| m.sub_category == "Email Address")
             .expect("email survives despite allow match because block wins");
-        assert_eq!(email.metadata.get("list_action"), Some(&"block".to_string()));
+        assert_eq!(
+            email.metadata.get("list_action"),
+            Some(&"block".to_string())
+        );
     }
 
     #[test]
@@ -1941,9 +2086,11 @@ mod tests {
         // Pick the (category, sub_category) tuple that the email scan
         // emits, then prove a config carrying that tuple in
         // disabled_patterns suppresses it.
-        let baseline =
-            scan_text_with_config("Contact us at test@example.com for info.", &ScanConfig::default())
-                .unwrap();
+        let baseline = scan_text_with_config(
+            "Contact us at test@example.com for info.",
+            &ScanConfig::default(),
+        )
+        .unwrap();
         let email = baseline
             .iter()
             .find(|m| m.sub_category == "Email Address")
@@ -1955,11 +2102,8 @@ mod tests {
             disabled_patterns: Some(Arc::new(disabled)),
             ..Default::default()
         };
-        let filtered = scan_text_with_config(
-            "Contact us at test@example.com for info.",
-            &cfg,
-        )
-        .unwrap();
+        let filtered =
+            scan_text_with_config("Contact us at test@example.com for info.", &cfg).unwrap();
         assert!(
             !filtered.iter().any(|m| m.sub_category == "Email Address"),
             "disabled email pattern should not appear in results"
@@ -1987,9 +2131,7 @@ mod tests {
         for input in inputs {
             let matches = scan_text(input).unwrap();
             assert!(
-                matches
-                    .iter()
-                    .any(|m| m.sub_category == "Email Address"),
+                matches.iter().any(|m| m.sub_category == "Email Address"),
                 "expected email match in {input:?}"
             );
             for m in &matches {

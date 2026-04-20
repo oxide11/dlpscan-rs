@@ -11,7 +11,11 @@ use crate::models::{pattern_specificity, Match};
 /// - Context keyword presence (boosts by 0.20)
 /// - Context required but missing (caps at base * 0.3)
 pub fn compute_confidence(sub_category: &str, has_context: bool, context_required: bool) -> f64 {
-    compute_confidence_with(pattern_specificity(sub_category), has_context, context_required)
+    compute_confidence_with(
+        pattern_specificity(sub_category),
+        has_context,
+        context_required,
+    )
 }
 
 /// Same scoring formula as `compute_confidence`, but the caller
