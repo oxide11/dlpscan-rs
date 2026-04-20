@@ -8767,7 +8767,14 @@ function seedUsers() {
       invite_token: 'tok_' + Math.random().toString(36).slice(2, 10),
       settings: defaultUserSettings(),
     },
-  ];
+  ].map(u => u.status === 'invited'
+    // Invited users have no password until they accept; the
+    // invite_token is their gating credential.
+    ? u
+    // Active seed users share a single default password so the
+    // demo login page can surface one clear hint. A4 forces a
+    // change on first login, which swaps this for a real hash.
+    : { ...u, default_password: IR_SEED_DEFAULT_PASSWORD, must_change_password: true });
 }
 
 function readUsers() {
@@ -8806,7 +8813,7 @@ function setCurrentUser(id) {
 
 // CRUD helpers — surface code uses these so nobody reaches into
 // the raw array.
-function createUser({ name, email, role, timezone }) {
+function createUser({ name, email, role, timezone, default_password }) {
   const users = readUsers();
   const id = 'u-' + (email || name || Math.random().toString(36)).toLowerCase()
     .replace(/[^a-z0-9]+/g, '-').slice(0, 40) + '-' + Math.random().toString(36).slice(2, 6);
@@ -8823,6 +8830,14 @@ function createUser({ name, email, role, timezone }) {
     invite_token: 'tok_' + Math.random().toString(36).slice(2, 10),
     settings: { ...defaultUserSettings(), timezone: timezone || 'browser' },
   };
+  // Admin-set initial password (optional). When present, the
+  // new user logs in with it directly and is forced to change
+  // on first login. When absent, they must use the invite_token
+  // (magic link) to set their first password.
+  if (default_password) {
+    u.default_password = default_password;
+    u.must_change_password = true;
+  }
   writeUsers([...users, u]);
   return u;
 }
@@ -8842,6 +8857,114 @@ function updateCurrentUserSettings(patch) {
   return updateUser(cur.id, {
     settings: { ...cur.settings, ...patch },
   });
+}
+
+// ─── Password primitives · A1 ──────────────────────────────────
+// PBKDF2-SHA256 via WebCrypto. 100k iterations is what the demo
+// uses — slow enough to resist casual brute-force, fast enough
+// that login feels instant (~60 ms on a laptop). Seeded users
+// carry a plain `default_password` that the login flow accepts
+// on first login before swapping it out for a real hash on
+// forced change (wired in A4).
+const IR_PBKDF2_ITERS = 100000;
+
+function __b64(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s);
+}
+function __unb64(s) {
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function irPasswordHash(password, saltBytes, iters) {
+  const salt = saltBytes || crypto.getRandomValues(new Uint8Array(16));
+  const i = iters || IR_PBKDF2_ITERS;
+  const enc = new TextEncoder();
+  const keyMat = await crypto.subtle.importKey(
+    'raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveBits'],
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: i, hash: 'SHA-256' },
+    keyMat, 256,
+  );
+  return {
+    algo: 'PBKDF2-SHA256',
+    iters: i,
+    salt: __b64(salt),
+    hash: __b64(new Uint8Array(bits)),
+    last_changed: new Date().toISOString(),
+  };
+}
+
+// Timing-safe-ish byte compare. JS can't do this truly constant-
+// time without heroics, but the OR-accumulator at least won't
+// short-circuit on the first mismatch.
+function __bytesEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+async function irVerifyPassword(password, rec) {
+  if (!rec || !rec.salt || !rec.hash) return false;
+  const salt  = __unb64(rec.salt);
+  const want  = __unb64(rec.hash);
+  const check = await irPasswordHash(password, salt, rec.iters || IR_PBKDF2_ITERS);
+  return __bytesEqual(__unb64(check.hash), want);
+}
+
+// Every seeded user starts with this default password; the login
+// page surfaces it in a "demo credentials" hint. A4 forces a
+// change on first login which replaces default_password with a
+// real PBKDF2 hash.
+const IR_SEED_DEFAULT_PASSWORD = 'ChangeMe!2026';
+
+// Login check used by the login page (A2). Returns one of:
+//   { ok: true, user }
+//   { ok: false, reason: 'no-such-user' | 'wrong-password' | 'disabled' | 'invited' }
+// If the user logs in with their seed default password, the
+// caller should send them through the forced-change flow (A4).
+async function irAuthenticate(emailOrId, password) {
+  const users = readUsers();
+  const needle = (emailOrId || '').trim().toLowerCase();
+  const user = users.find(u =>
+       (u.email || '').toLowerCase() === needle
+    || (u.id    || '').toLowerCase() === needle
+    || (u.name  || '').toLowerCase() === needle,
+  );
+  if (!user) return { ok: false, reason: 'no-such-user' };
+  if (user.status === 'disabled') return { ok: false, reason: 'disabled', user };
+  if (user.status === 'invited' && !user.auth && !user.default_password) {
+    return { ok: false, reason: 'invited', user };
+  }
+  if (user.auth) {
+    const ok = await irVerifyPassword(password, user.auth);
+    return ok ? { ok: true, user } : { ok: false, reason: 'wrong-password', user };
+  }
+  if (user.default_password && password === user.default_password) {
+    return { ok: true, user, default_password_used: true };
+  }
+  return { ok: false, reason: 'wrong-password', user };
+}
+
+// Replace a user's password with a fresh PBKDF2 hash. Clears
+// default_password and must_change_password so re-login doesn't
+// keep nagging. Async because hashing is async.
+async function irSetPassword(userId, newPassword) {
+  const rec = await irPasswordHash(newPassword);
+  const users = readUsers();
+  const next = users.map(u => u.id === userId
+    ? { ...u, auth: rec, default_password: undefined, must_change_password: false,
+        joined_at: u.joined_at || new Date().toISOString(),
+        status: u.status === 'invited' ? 'active' : u.status }
+    : u);
+  writeUsers(next);
+  return next.find(u => u.id === userId) || null;
 }
 
 // ─── Playbooks · data + markdown renderer ──────────────────────
