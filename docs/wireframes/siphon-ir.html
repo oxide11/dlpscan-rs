@@ -6698,6 +6698,1267 @@ function DashboardSurface() {
 // Each surface is its own function below. MVP phases fill them in
 // one at a time; this dispatcher lets us ship the shell and the
 // first real surface (Findings Queue) without touching the rest.
+// ─── Crypto Workbench (Analyze → Crypto) ───────────────────────
+// Forensic workbench for the analyst investigating encrypted
+// artefacts: passworded zip files, PDF-encrypted docs, suspicious
+// binaries. Ships as a tabbed surface so each tool stays focused.
+// This commit (phase 3a) lands the shell + tab navigation; each
+// tab renders a stub describing what it'll carry. Subsequent
+// commits fill them in one at a time.
+const CRYPTO_TABS = [
+  { id: 'inspector',  label: 'File Inspector',  hint: 'magic bytes · entropy · hex dump · type detect' },
+  { id: 'hasher',     label: 'Hash Computer',   hint: 'MD5 / SHA-1 / SHA-256 / SHA-384 / SHA-512 (WebCrypto)' },
+  { id: 'zipattack',  label: 'Zip Password',    hint: 'dictionary attack against encrypted zips (in-browser)' },
+];
+
+// ── File drop zone — shared primitive the Workbench tabs reuse.
+// Thin wrapper around <input type=file> + drag/drop handlers. The
+// child render-prop receives the picked File (or null) so each
+// tab only deals with the picked-file state, not the event wiring.
+function CryptoFileDrop({ file, onFile, label }) {
+  const [dragging, setDragging] = React.useState(false);
+  const inputRef = React.useRef(null);
+
+  const onDrop = (e) => {
+    e.preventDefault();
+    setDragging(false);
+    const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) onFile && onFile(f);
+  };
+
+  const humanSize = (n) => {
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KiB';
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MiB';
+    return (n / 1073741824).toFixed(2) + ' GiB';
+  };
+
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+      onClick={() => inputRef.current && inputRef.current.click()}
+      style={{
+        border: '2px dashed ' + (dragging ? 'var(--accent)' : 'var(--line-strong)'),
+        background: dragging ? 'var(--accent-wash)' : 'var(--bg-1)',
+        padding: file ? '12px 16px' : '36px 20px',
+        textAlign: 'center', cursor: 'pointer',
+        borderRadius: 'var(--radius)',
+        transition: 'border-color 180ms ease-out, background 180ms ease-out',
+      }}>
+      <input type="file" ref={inputRef}
+             onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) onFile(f); }}
+             style={{display:'none'}}/>
+      {!file && (
+        <>
+          <div style={{
+            fontFamily:"'Space Grotesk', sans-serif",
+            fontSize: 14, color:'var(--ink-bright)', fontWeight: 600, marginBottom: 6,
+          }}>
+            Drop a file here
+          </div>
+          <div className="muted" style={{fontSize:11.5, lineHeight:1.6}}>
+            {label || 'or click to pick · files stay in the browser, nothing uploads'}
+          </div>
+        </>
+      )}
+      {file && (
+        <div style={{
+          display:'grid', gridTemplateColumns:'auto 1fr auto', alignItems:'center',
+          gap: 14, textAlign: 'left', fontFamily:"'JetBrains Mono', monospace",
+        }}>
+          <span style={{fontSize: 22}}>📄</span>
+          <div style={{minWidth:0}}>
+            <div style={{
+              fontSize: 12.5, color:'var(--ink-bright)', fontWeight: 600,
+              overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+            }} title={file.name}>{file.name}</div>
+            <div className="muted" style={{fontSize:11, marginTop: 3}}>
+              <span className="mono">{humanSize(file.size)}</span>
+              {file.type && <> · <span className="mono">{file.type}</span></>}
+              {file.lastModified && <> · <span className="mono">{new Date(file.lastModified).toISOString().slice(0, 19).replace('T', ' ')}</span></>}
+            </div>
+          </div>
+          <button onClick={(e) => { e.stopPropagation(); onFile(null); }}
+                  title="clear"
+                  style={{
+                    background:'transparent', border:'1px solid var(--line-strong)',
+                    color:'var(--ink)', padding:'4px 10px',
+                    fontSize:11, fontFamily:"'JetBrains Mono', monospace",
+                    borderRadius:'var(--radius)', cursor:'pointer',
+                  }}>× clear</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Magic-byte signature table. Each entry tests a fixed prefix at a
+// fixed offset; the first match wins. Not exhaustive — targeted at
+// the file kinds IR analysts actually see (Office docs, archives,
+// executables, images, OLE2). Add entries as needed; order matters
+// because earlier entries take precedence on ambiguous prefixes.
+const MAGIC_SIGNATURES = [
+  { name: 'PDF',            bytes: [0x25,0x50,0x44,0x46,0x2D], offset: 0, mime: 'application/pdf',
+    note: 'Adobe PDF — may be password-protected; use the decrypt tool if the body renders as cipher.' },
+  { name: 'ZIP / Office (docx/xlsx/pptx)', bytes: [0x50,0x4B,0x03,0x04], offset: 0, mime: 'application/zip',
+    note: 'PK archive · OOXML Office docs are ZIPs — extract to see internals.' },
+  { name: 'ZIP (empty archive)', bytes: [0x50,0x4B,0x05,0x06], offset: 0, mime: 'application/zip' },
+  { name: 'ZIP (spanned archive)', bytes: [0x50,0x4B,0x07,0x08], offset: 0, mime: 'application/zip' },
+  { name: '7z',             bytes: [0x37,0x7A,0xBC,0xAF,0x27,0x1C], offset: 0, mime: 'application/x-7z-compressed' },
+  { name: 'RAR 4',          bytes: [0x52,0x61,0x72,0x21,0x1A,0x07,0x00], offset: 0, mime: 'application/vnd.rar' },
+  { name: 'RAR 5',          bytes: [0x52,0x61,0x72,0x21,0x1A,0x07,0x01,0x00], offset: 0, mime: 'application/vnd.rar' },
+  { name: 'gzip',           bytes: [0x1F,0x8B], offset: 0, mime: 'application/gzip' },
+  { name: 'bzip2',          bytes: [0x42,0x5A,0x68], offset: 0, mime: 'application/x-bzip2' },
+  { name: 'xz',             bytes: [0xFD,0x37,0x7A,0x58,0x5A,0x00], offset: 0, mime: 'application/x-xz' },
+  { name: 'PNG',            bytes: [0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A], offset: 0, mime: 'image/png' },
+  { name: 'JPEG',           bytes: [0xFF,0xD8,0xFF], offset: 0, mime: 'image/jpeg' },
+  { name: 'GIF 87a',        bytes: [0x47,0x49,0x46,0x38,0x37,0x61], offset: 0, mime: 'image/gif' },
+  { name: 'GIF 89a',        bytes: [0x47,0x49,0x46,0x38,0x39,0x61], offset: 0, mime: 'image/gif' },
+  { name: 'BMP',            bytes: [0x42,0x4D], offset: 0, mime: 'image/bmp' },
+  { name: 'WebP',           bytes: [0x52,0x49,0x46,0x46], offset: 0, mime: 'image/webp',
+    note: 'RIFF container — also WAV / AVI; check bytes 8-11 for format tag.' },
+  { name: 'PE (Windows EXE/DLL)', bytes: [0x4D,0x5A], offset: 0, mime: 'application/vnd.microsoft.portable-executable',
+    note: 'MS-DOS stub · PE header at offset in bytes 60-63.' },
+  { name: 'ELF (Linux/Unix binary)', bytes: [0x7F,0x45,0x4C,0x46], offset: 0, mime: 'application/x-executable' },
+  { name: 'Mach-O (32)',    bytes: [0xFE,0xED,0xFA,0xCE], offset: 0, mime: 'application/x-mach-binary' },
+  { name: 'Mach-O (64)',    bytes: [0xFE,0xED,0xFA,0xCF], offset: 0, mime: 'application/x-mach-binary' },
+  { name: 'Mach-O (universal)', bytes: [0xCA,0xFE,0xBA,0xBE], offset: 0, mime: 'application/x-mach-binary' },
+  { name: 'OLE2 (legacy Office · doc/xls/msg)', bytes: [0xD0,0xCF,0x11,0xE0,0xA1,0xB1,0x1A,0xE1], offset: 0, mime: 'application/x-ole-storage',
+    note: 'Legacy Office compound file · Outlook MSG, DOC, XLS all use this.' },
+  { name: 'SQLite 3',       bytes: [0x53,0x51,0x4C,0x69,0x74,0x65,0x20,0x66,0x6F,0x72,0x6D,0x61,0x74,0x20,0x33,0x00], offset: 0, mime: 'application/x-sqlite3' },
+  { name: 'Parquet',        bytes: [0x50,0x41,0x52,0x31], offset: 0, mime: 'application/vnd.apache.parquet' },
+  { name: 'Java class',     bytes: [0xCA,0xFE,0xBA,0xBE], offset: 0, mime: 'application/java-vm' },
+  { name: 'MP3',            bytes: [0x49,0x44,0x33], offset: 0, mime: 'audio/mpeg' },
+  { name: 'MP4',            bytes: [0x66,0x74,0x79,0x70], offset: 4, mime: 'video/mp4' },
+  { name: 'MKV / WebM',     bytes: [0x1A,0x45,0xDF,0xA3], offset: 0, mime: 'video/x-matroska' },
+  { name: 'Plain text (UTF-8 BOM)', bytes: [0xEF,0xBB,0xBF], offset: 0, mime: 'text/plain' },
+];
+
+function identifyMagic(bytes) {
+  if (!bytes || !bytes.length) return null;
+  for (const sig of MAGIC_SIGNATURES) {
+    if (bytes.length < sig.offset + sig.bytes.length) continue;
+    let hit = true;
+    for (let i = 0; i < sig.bytes.length; i++) {
+      if (bytes[sig.offset + i] !== sig.bytes[i]) { hit = false; break; }
+    }
+    if (hit) return sig;
+  }
+  return null;
+}
+
+// Heuristic guess for plain text when no magic matched. Samples the
+// first 512 bytes and checks that >= 95% are printable ASCII +
+// common whitespace. Skips BOM-prefixed UTF-8 (handled by the
+// signature table).
+function looksLikeText(bytes) {
+  if (!bytes || !bytes.length) return false;
+  const sample = bytes.slice(0, Math.min(512, bytes.length));
+  let printable = 0;
+  for (const b of sample) {
+    if (b === 0x09 || b === 0x0A || b === 0x0D) printable++;
+    else if (b >= 0x20 && b <= 0x7E) printable++;
+  }
+  return printable / sample.length >= 0.95;
+}
+
+// Shannon entropy over 8-bit bytes. 0–8 range. Each byte is one of
+// 256 values so max entropy = log2(256) = 8. Tier map is opinionated
+// for forensic triage rather than theoretically precise.
+function shannonEntropy(bytes) {
+  if (!bytes || bytes.length === 0) return 0;
+  const counts = new Uint32Array(256);
+  for (let i = 0; i < bytes.length; i++) counts[bytes[i]]++;
+  let H = 0;
+  const n = bytes.length;
+  for (let i = 0; i < 256; i++) {
+    if (!counts[i]) continue;
+    const p = counts[i] / n;
+    H -= p * Math.log2(p);
+  }
+  return H;
+}
+function entropyTier(H) {
+  if (H < 2.5) return { label: 'very redundant', hint: 'lots of repeating bytes — text with long runs, empty-ish padding, or fixed-value binary', color: 'var(--ink-soft)' };
+  if (H < 5.5) return { label: 'text · structured', hint: 'typical of plain text, JSON, XML, CSV, HTML, source code', color: '#94d0ff' };
+  if (H < 7.0) return { label: 'mixed · lightly compressed', hint: 'document formats (PDF, Office), light compression, or native binaries', color: 'var(--accent)' };
+  if (H < 7.8) return { label: 'compressed · binary', hint: 'archives (zip / gzip / 7z / rar), media (jpeg / mp3 / mp4), packed binaries', color: 'var(--amber)' };
+  return { label: 'high entropy · likely encrypted', hint: 'random or near-random bytes — true encryption, compressed+encrypted, or cryptographic keys', color: 'var(--red)' };
+}
+
+// ── File Inspector tab — picker + metadata + magic-byte
+//    identification + Shannon entropy + hex dump.
+function CryptoFileInspector() {
+  const [file, setFile] = React.useState(null);
+  const [firstBytes, setFirstBytes] = React.useState(null);
+  const [entropy, setEntropy] = React.useState(null);
+  const [computing, setComputing] = React.useState(false);
+  const [readError, setReadError] = React.useState(null);
+
+  // Read up to 512 bytes for the hex-dump preview + magic check,
+  // plus up to 4 MiB for entropy. Both runs share a cancellation
+  // flag so switching files mid-load doesn't stamp stale state.
+  React.useEffect(() => {
+    if (!file) {
+      setFirstBytes(null); setEntropy(null); setComputing(false); setReadError(null);
+      return;
+    }
+    let cancelled = false;
+    setReadError(null);
+    setEntropy(null);
+    setComputing(true);
+
+    const dumpSize    = Math.min(512, file.size);
+    const entropySize = Math.min(4 * 1024 * 1024, file.size);
+
+    Promise.all([
+      file.slice(0, dumpSize).arrayBuffer().then(buf => new Uint8Array(buf)),
+      file.slice(0, entropySize).arrayBuffer().then(buf => new Uint8Array(buf)),
+    ]).then(([dump, full]) => {
+      if (cancelled) return;
+      setFirstBytes(dump);
+      setEntropy({
+        value: shannonEntropy(full),
+        sampled: entropySize < file.size,
+        sampleSize: entropySize,
+        fileSize: file.size,
+      });
+      setComputing(false);
+    }).catch(e => {
+      if (cancelled) return;
+      setReadError(String(e && e.message || e));
+      setComputing(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [file]);
+
+  const magic = firstBytes ? identifyMagic(firstBytes) : null;
+  const extension = file
+    ? (() => {
+        const i = file.name.lastIndexOf('.');
+        return i >= 0 && i < file.name.length - 1 ? file.name.slice(i + 1).toLowerCase() : null;
+      })()
+    : null;
+  const mimeMatches = magic && file && file.type
+    ? (magic.mime === file.type
+       || (magic.mime === 'application/zip' && /vnd\.openxmlformats/.test(file.type)))
+    : null;
+
+  const hexByte = (b) => b.toString(16).padStart(2, '0').toUpperCase();
+
+  return (
+    <div style={{padding:16, display:'grid', gap:14}}>
+      <CryptoFileDrop file={file} onFile={setFile}
+                      label="or click to pick · files stay in the browser · no network upload"/>
+
+      {!file && (
+        <div className="muted" style={{fontSize:11.5, lineHeight:1.7, padding:'0 4px'}}>
+          Pick any file to see its browser-reported metadata, magic-byte signature,
+          and a best-guess file-type identification. Entropy + hex dump land in the
+          next commit (3d).
+        </div>
+      )}
+
+      {readError && (
+        <div className="note" style={{borderColor:'var(--red)', background:'var(--red-wash)', color:'var(--red)', fontSize:12}}>
+          <b>Read failed:</b> {readError}
+        </div>
+      )}
+
+      {file && (
+        <>
+          {/* Metadata (unchanged from 3b) */}
+          <div className="box">
+            <div className="box-title">
+              <span className="t">Reported metadata</span>
+              <span className="k mono" style={{fontSize:11}}>browser File object</span>
+            </div>
+            <div style={{padding:14}}>
+              <div className="kv" style={{gridTemplateColumns:'180px 1fr', gap:'6px 12px', fontSize:12}}>
+                <span className="k">Filename</span>
+                <span className="v mono">{file.name}</span>
+                <span className="k">Size</span>
+                <span className="v mono">
+                  {file.size.toLocaleString()} bytes
+                  <span className="muted"> · {
+                    file.size < 1024 ? file.size + ' B' :
+                    file.size < 1048576 ? (file.size / 1024).toFixed(1) + ' KiB' :
+                    file.size < 1073741824 ? (file.size / 1048576).toFixed(1) + ' MiB' :
+                    (file.size / 1073741824).toFixed(2) + ' GiB'
+                  }</span>
+                </span>
+                <span className="k">MIME type (browser)</span>
+                <span className="v mono">
+                  {file.type || <span className="muted">— not set —</span>}
+                </span>
+                <span className="k">Last modified</span>
+                <span className="v mono">
+                  {file.lastModified
+                    ? new Date(file.lastModified).toISOString().slice(0, 19).replace('T', ' ') + ' UTC'
+                    : <span className="muted">—</span>}
+                </span>
+                <span className="k">Extension</span>
+                <span className="v mono">{extension ? '.' + extension : <span className="muted">— none —</span>}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Magic-byte identification */}
+          <div className="box">
+            <div className="box-title">
+              <span className="t">Magic-byte signature</span>
+              <span className="k">first {firstBytes ? firstBytes.length : 0} bytes · content-based type identification</span>
+            </div>
+            <div style={{padding:14}}>
+              {!firstBytes && (
+                <div className="muted mono" style={{fontSize:11, textAlign:'center', padding:10}}>
+                  reading…
+                </div>
+              )}
+              {firstBytes && (
+                <>
+                  <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:12, flexWrap:'wrap'}}>
+                    {magic ? (
+                      <>
+                        <span className="chip chip--safe" style={{fontSize:11, padding:'4px 10px', fontFamily:"'Space Grotesk', sans-serif", fontWeight:600}}>
+                          {magic.name}
+                        </span>
+                        {magic.mime && (
+                          <span className="muted mono" style={{fontSize:11}}>
+                            → <span style={{color:'var(--ink-bright)'}}>{magic.mime}</span>
+                          </span>
+                        )}
+                        {mimeMatches === false && (
+                          <span className="chip chip--red" style={{fontSize:10}}
+                                title={`browser reports ${file.type} but magic bytes say ${magic.mime}`}>
+                            ⚠ MIME / content mismatch
+                          </span>
+                        )}
+                      </>
+                    ) : looksLikeText(firstBytes) ? (
+                      <>
+                        <span className="chip chip--ghost" style={{fontSize:11, padding:'4px 10px', fontFamily:"'Space Grotesk', sans-serif", fontWeight:600}}>
+                          Plain text (heuristic)
+                        </span>
+                        <span className="muted" style={{fontSize:11}}>
+                          no magic matched; ≥95% of the first 512 bytes are printable ASCII
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="chip chip--warn" style={{fontSize:11, padding:'4px 10px', fontFamily:"'Space Grotesk', sans-serif", fontWeight:600}}>
+                          Unknown / possibly encrypted
+                        </span>
+                        <span className="muted" style={{fontSize:11}}>
+                          no matching signature · high-entropy files produce this
+                        </span>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Matched bytes visualisation */}
+                  {magic && (
+                    <div style={{
+                      padding:10, background:'var(--bg-1)',
+                      border:'1px dashed var(--line-soft)', borderRadius:'var(--radius)',
+                      fontFamily:"'JetBrains Mono', monospace", fontSize:11.5,
+                      display:'flex', alignItems:'baseline', gap:12, flexWrap:'wrap',
+                    }}>
+                      <span className="muted" style={{fontSize:10.5, textTransform:'uppercase', letterSpacing:'0.1em'}}>matched</span>
+                      <span>
+                        {magic.bytes.map((b, i) => (
+                          <span key={i} style={{
+                            color:'var(--safe, var(--accent))',
+                            background:'var(--accent-wash)',
+                            padding:'2px 4px', margin:'0 2px',
+                            borderRadius:2, fontWeight:600,
+                          }}>{hexByte(b)}</span>
+                        ))}
+                      </span>
+                      {magic.offset > 0 && (
+                        <span className="muted" style={{fontSize:10.5}}>at offset +{magic.offset}</span>
+                      )}
+                    </div>
+                  )}
+
+                  {magic && magic.note && (
+                    <div className="muted" style={{fontSize:11, lineHeight:1.6, marginTop:10, padding:'8px 10px', background:'var(--bg-1)', borderLeft:'2px solid var(--accent)', borderRadius:2}}>
+                      {magic.note}
+                    </div>
+                  )}
+
+                  {/* Extension vs magic sanity check */}
+                  {magic && extension && (() => {
+                    const extHints = {
+                      'pdf': 'PDF', 'zip': 'ZIP', '7z': '7z', 'rar': 'RAR',
+                      'gz': 'gzip', 'xz': 'xz', 'bz2': 'bzip2',
+                      'png': 'PNG', 'jpg': 'JPEG', 'jpeg': 'JPEG', 'gif': 'GIF',
+                      'docx': 'ZIP / Office', 'xlsx': 'ZIP / Office', 'pptx': 'ZIP / Office',
+                      'doc': 'OLE2', 'xls': 'OLE2', 'msg': 'OLE2', 'ppt': 'OLE2',
+                      'exe': 'PE', 'dll': 'PE',
+                      'sqlite': 'SQLite 3', 'db': 'SQLite 3',
+                    };
+                    const expected = extHints[extension];
+                    if (!expected) return null;
+                    const agrees = magic.name.startsWith(expected);
+                    return (
+                      <div className="muted" style={{fontSize:11, lineHeight:1.6, marginTop:10}}>
+                        extension <span className="mono" style={{color:'var(--ink-bright)'}}>.{extension}</span>{' '}
+                        {agrees
+                          ? <span className="chip chip--safe" style={{fontSize:9, marginLeft:4}}>matches magic</span>
+                          : <span className="chip chip--red" style={{fontSize:9, marginLeft:4}}>disagrees with magic (possible spoofing)</span>}
+                      </div>
+                    );
+                  })()}
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Shannon entropy */}
+          <div className="box">
+            <div className="box-title">
+              <span className="t">Shannon entropy</span>
+              <span className="k">
+                8-bit bytes · 0–8 range · high values suggest encryption / compression
+              </span>
+            </div>
+            <div style={{padding:14}}>
+              {computing && (
+                <div className="muted mono" style={{fontSize:11, textAlign:'center', padding:10}}>
+                  computing…
+                </div>
+              )}
+              {!computing && entropy && (() => {
+                const H = entropy.value;
+                const tier = entropyTier(H);
+                return (
+                  <>
+                    <div style={{display:'flex', alignItems:'center', gap:14, flexWrap:'wrap', marginBottom:12}}>
+                      <span style={{
+                        fontFamily:"'Space Grotesk', sans-serif",
+                        fontSize:28, fontWeight:700, lineHeight:1,
+                        color: tier.color,
+                      }}>
+                        {H.toFixed(3)}
+                      </span>
+                      <span className="muted mono" style={{fontSize:11}}>bits/byte</span>
+                      <span className="chip" style={{
+                        fontSize:10, padding:'4px 10px',
+                        color: tier.color,
+                        border: '1px solid ' + tier.color,
+                        background: 'transparent',
+                        fontFamily:"'Space Grotesk', sans-serif",
+                        fontWeight: 600, textTransform: 'uppercase',
+                        letterSpacing: '0.08em',
+                      }}>
+                        {tier.label}
+                      </span>
+                    </div>
+
+                    {/* Entropy bar with tier markers */}
+                    <div style={{position:'relative', height: 20, background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:'var(--radius)', overflow:'hidden'}}>
+                      <div style={{
+                        position:'absolute', inset:0,
+                        background: `linear-gradient(to right,
+                          var(--ink-soft) 0%,
+                          var(--ink-soft) 31%,
+                          #94d0ff 31%,
+                          #94d0ff 68%,
+                          var(--accent) 68%,
+                          var(--accent) 87%,
+                          var(--amber) 87%,
+                          var(--amber) 97%,
+                          var(--red) 97%,
+                          var(--red) 100%)`,
+                        opacity: 0.2,
+                      }}/>
+                      <div style={{
+                        position:'absolute', top: 0, left: 0, bottom: 0,
+                        width: Math.max(0, Math.min(100, (H / 8) * 100)) + '%',
+                        background: tier.color, opacity: 0.6,
+                        transition: 'width 200ms ease-out',
+                      }}/>
+                      {/* Ticks */}
+                      {[2.5, 5.5, 7.0, 7.8].map(t => (
+                        <div key={t} style={{
+                          position:'absolute', top: 0, bottom: 0,
+                          left: (t / 8 * 100) + '%',
+                          width: 1, background: 'var(--line-strong)',
+                        }}/>
+                      ))}
+                      {/* Current-value arrow */}
+                      <div style={{
+                        position:'absolute', top:'50%', transform:'translateY(-50%)',
+                        left: Math.max(0, Math.min(100, (H / 8) * 100)) + '%',
+                        width: 2, height: '100%',
+                        background: 'var(--ink-bright)', marginLeft: -1,
+                      }}/>
+                    </div>
+                    <div style={{display:'flex', justifyContent:'space-between', fontFamily:"'JetBrains Mono', monospace", fontSize:9.5, color:'var(--ink-dim)', marginTop:4, letterSpacing:'0.08em'}}>
+                      <span>0</span>
+                      <span>2.5 · text</span>
+                      <span>5.5 · structured</span>
+                      <span>7.0 · mixed</span>
+                      <span>7.8 · compressed</span>
+                      <span>8 · encrypted</span>
+                    </div>
+
+                    <div className="muted" style={{fontSize:11, lineHeight:1.6, marginTop:12, padding:'8px 10px', background:'var(--bg-1)', borderLeft:'2px solid ' + tier.color, borderRadius:2}}>
+                      {tier.hint}
+                    </div>
+
+                    {entropy.sampled && (
+                      <div className="muted mono" style={{fontSize:10.5, marginTop:8, textAlign:'right'}}>
+                        computed on first <span style={{color:'var(--ink)'}}>{(entropy.sampleSize / 1048576).toFixed(1)} MiB</span>
+                        {' of '}<span style={{color:'var(--ink)'}}>{(entropy.fileSize / 1048576).toFixed(1)} MiB</span>
+                        {' · large-file sampling'}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          </div>
+
+          {/* Hex dump — first 512 bytes */}
+          <div className="box">
+            <div className="box-title">
+              <span className="t">Hex dump</span>
+              <span className="k">
+                first {firstBytes ? firstBytes.length : 0} bytes · offset · hex · ASCII
+              </span>
+            </div>
+            <div style={{padding:14}}>
+              {firstBytes && firstBytes.length > 0 && (
+                <div style={{
+                  fontFamily:"'JetBrains Mono', monospace",
+                  fontSize: 11, lineHeight: 1.55,
+                  background:'var(--bg-1)',
+                  border:'1px solid var(--line-soft)',
+                  borderRadius: 'var(--radius)',
+                  padding: 10,
+                  overflowX: 'auto',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {(() => {
+                    const rows = [];
+                    const bytes = firstBytes;
+                    // 16 bytes per row, magic highlight inside the
+                    // matched prefix.
+                    const magicLen = magic ? magic.offset + magic.bytes.length : 0;
+                    for (let off = 0; off < bytes.length; off += 16) {
+                      const rowBytes = bytes.slice(off, Math.min(off + 16, bytes.length));
+                      rows.push({ off, rowBytes });
+                    }
+                    return rows.map(({ off, rowBytes }) => {
+                      return (
+                        <div key={off} style={{display:'grid', gridTemplateColumns:'70px 1fr 170px', gap:16}}>
+                          <span style={{color:'var(--ink-dim)'}}>
+                            {off.toString(16).padStart(8, '0').toUpperCase()}
+                          </span>
+                          <span>
+                            {Array.from(rowBytes).map((b, i) => {
+                              const absPos = off + i;
+                              const inMagic = magic && absPos >= magic.offset && absPos < magic.offset + magic.bytes.length;
+                              return (
+                                <span key={i} style={{
+                                  color: inMagic ? '#5ef38c' : 'var(--ink)',
+                                  fontWeight: inMagic ? 600 : 400,
+                                  background: inMagic ? 'rgba(94,243,140,0.18)' : 'transparent',
+                                  padding: '0 2px',
+                                  marginRight: i === 7 ? 8 : 1,
+                                }}>
+                                  {b.toString(16).padStart(2, '0').toUpperCase()}
+                                </span>
+                              );
+                            })}
+                          </span>
+                          <span style={{
+                            color: 'var(--ink-soft)',
+                            borderLeft: '1px solid var(--line-soft)',
+                            paddingLeft: 10,
+                          }}>
+                            {Array.from(rowBytes).map((b, i) => {
+                              const ch = (b >= 0x20 && b <= 0x7E) ? String.fromCharCode(b) : '·';
+                              const absPos = off + i;
+                              const inMagic = magic && absPos >= magic.offset && absPos < magic.offset + magic.bytes.length;
+                              return (
+                                <span key={i} style={{
+                                  color: inMagic ? '#5ef38c' : 'inherit',
+                                  fontWeight: inMagic ? 600 : 400,
+                                }}>
+                                  {ch}
+                                </span>
+                              );
+                            })}
+                          </span>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              )}
+              {file.size > firstBytes.length && (
+                <div className="muted mono" style={{fontSize:10.5, marginTop:8, textAlign:'right'}}>
+                  … {(file.size - firstBytes.length).toLocaleString()} more bytes not shown
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Convert an ArrayBuffer / Uint8Array to a lowercase hex string.
+function bytesToHex(buf) {
+  const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  const out = new Array(b.length);
+  for (let i = 0; i < b.length; i++) out[i] = b[i].toString(16).padStart(2, '0');
+  return out.join('');
+}
+
+// MD5 — RFC 1321, ~2 KiB of bundled code because WebCrypto
+// deliberately doesn't ship it. Operates on a Uint8Array input
+// and returns a 16-byte Uint8Array digest. Correctness spot-
+// checked against the RFC test vectors:
+//   md5("")    = d41d8cd98f00b204e9800998ecf8427e
+//   md5("a")   = 0cc175b9c0f1b6a831c399e269772661
+//   md5("abc") = 900150983cd24fb0d6963f7d28e17f72
+const MD5_K = (() => {
+  const k = new Uint32Array(64);
+  for (let i = 0; i < 64; i++) {
+    k[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 0x100000000) >>> 0;
+  }
+  return k;
+})();
+const MD5_S = [
+  7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+  5,  9, 14, 20, 5,  9, 14, 20, 5,  9, 14, 20, 5,  9, 14, 20,
+  4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+  6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+];
+function md5(bytes) {
+  const msgLen = bytes.length;
+  // Padded length: msg + 0x80 + zeros + 8-byte length, rounded up
+  // to a multiple of 64.
+  const padLen = ((msgLen + 9 + 63) >>> 6) << 6;
+  const msg = new Uint8Array(padLen);
+  msg.set(bytes);
+  msg[msgLen] = 0x80;
+  // 64-bit little-endian bit length. Upper 32 bits stay zero for
+  // inputs below 2^29 bytes (~512 MiB) — well above any file the
+  // browser will hash in one pass anyway.
+  const bitLen = msgLen * 8;
+  msg[padLen - 8] = bitLen         & 0xff;
+  msg[padLen - 7] = (bitLen >>>  8) & 0xff;
+  msg[padLen - 6] = (bitLen >>> 16) & 0xff;
+  msg[padLen - 5] = (bitLen >>> 24) & 0xff;
+
+  let a = 0x67452301, b = 0xefcdab89, c = 0x98badcfe, d = 0x10325476;
+  const rotl = (x, n) => ((x << n) | (x >>> (32 - n))) >>> 0;
+
+  const M = new Uint32Array(16);
+  for (let off = 0; off < padLen; off += 64) {
+    for (let i = 0; i < 16; i++) {
+      M[i] = (msg[off + i*4])
+           | (msg[off + i*4 + 1] << 8)
+           | (msg[off + i*4 + 2] << 16)
+           | (msg[off + i*4 + 3] << 24);
+    }
+    let A = a, B = b, C = c, D = d;
+    for (let i = 0; i < 64; i++) {
+      let F, g;
+      if (i < 16)      { F = (B & C) | (~B & D);        g = i; }
+      else if (i < 32) { F = (D & B) | (~D & C);        g = (5*i + 1) % 16; }
+      else if (i < 48) { F = B ^ C ^ D;                 g = (3*i + 5) % 16; }
+      else             { F = C ^ (B | ~D);              g = (7*i) % 16; }
+      F = (F + A + MD5_K[i] + M[g]) >>> 0;
+      A = D; D = C; C = B;
+      B = (B + rotl(F, MD5_S[i])) >>> 0;
+    }
+    a = (a + A) >>> 0;
+    b = (b + B) >>> 0;
+    c = (c + C) >>> 0;
+    d = (d + D) >>> 0;
+  }
+
+  const out = new Uint8Array(16);
+  const w = (v, off) => {
+    out[off]   =  v         & 0xff;
+    out[off+1] = (v >>>  8) & 0xff;
+    out[off+2] = (v >>> 16) & 0xff;
+    out[off+3] = (v >>> 24) & 0xff;
+  };
+  w(a, 0); w(b, 4); w(c, 8); w(d, 12);
+  return out;
+}
+
+// Algorithms surfaced in the Hash Computer tab. SHA-family delegate
+// to WebCrypto; MD5 uses the bundled impl above (WebCrypto
+// deliberately omits it).
+const HASH_ALGOS = [
+  { id: 'MD5',     label: 'MD5',     md5: true,             note: 'legacy · fast malware-catalogue lookup (VirusTotal, MalwareBazaar)' },
+  { id: 'SHA-1',   label: 'SHA-1',   webcrypto: 'SHA-1',    note: 'legacy · broken for collisions · fine for malware catalogues' },
+  { id: 'SHA-256', label: 'SHA-256', webcrypto: 'SHA-256',  note: 'industry standard · 64 hex chars' },
+  { id: 'SHA-384', label: 'SHA-384', webcrypto: 'SHA-384',  note: 'SHA-2 truncated · 96 hex chars' },
+  { id: 'SHA-512', label: 'SHA-512', webcrypto: 'SHA-512',  note: '128 hex chars' },
+];
+
+// ── Hash Computer tab ─────────────────────────────────────────
+// Picks a file, streams it into WebCrypto.subtle.digest for each
+// algorithm, renders each hash with a copy-to-clipboard button.
+// Future 4b will add MD5 via a bundled impl; 4c adds a 'compare
+// against known hash' input for malware-catalogue checks.
+function CryptoHashComputer() {
+  const [file, setFile] = React.useState(null);
+  const [hashes, setHashes] = React.useState({});
+  const [computing, setComputing] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [flash, setFlash] = React.useState(null);
+  const [compareInput, setCompareInput] = React.useState('');
+  const ping = (m) => { setFlash(m); setTimeout(() => setFlash(null), 1100); };
+
+  // Auto-detect the algorithm from hex-string length. Normalises
+  // whitespace + strips common prefixes ("sha256:" / "md5=") so
+  // paste-from-VirusTotal-style hashes just work.
+  const compareResult = React.useMemo(() => {
+    const raw = (compareInput || '').trim();
+    if (!raw) return null;
+    const cleaned = raw
+      .replace(/^[A-Za-z0-9-]+\s*[:=]\s*/, '') // strip "sha256:" / "md5 = "
+      .replace(/\s+/g, '')                     // strip internal whitespace
+      .toLowerCase();
+    if (!/^[0-9a-f]+$/.test(cleaned)) {
+      return { state: 'invalid', reason: 'hash must be hex only (0-9, a-f)' };
+    }
+    const byLen = {
+      32:  'MD5',
+      40:  'SHA-1',
+      64:  'SHA-256',
+      96:  'SHA-384',
+      128: 'SHA-512',
+    };
+    const algo = byLen[cleaned.length];
+    if (!algo) {
+      return { state: 'invalid', reason: cleaned.length + ' hex chars doesn\'t match any known algorithm (32/40/64/96/128)' };
+    }
+    const h = hashes[algo];
+    if (!h || !h.hex) {
+      return { state: 'pending', algo, input: cleaned };
+    }
+    return {
+      state: cleaned === h.hex ? 'match' : 'mismatch',
+      algo, input: cleaned, computed: h.hex,
+    };
+  }, [compareInput, hashes]);
+
+  // Compute every hash in parallel when the file changes. WebCrypto
+  // accepts an ArrayBuffer — we read the file once and reuse for
+  // every algorithm, so the file's only pulled off disk once.
+  React.useEffect(() => {
+    if (!file) {
+      setHashes({}); setComputing(false); setError(null);
+      return;
+    }
+    let cancelled = false;
+    setHashes({}); setError(null); setComputing(true);
+
+    file.arrayBuffer()
+      .then(buf => Promise.all(HASH_ALGOS.map(a => {
+        // MD5 goes through the bundled impl (WebCrypto doesn't
+        // support it); SHA-family go through crypto.subtle. Both
+        // paths return Uint8Array — bytesToHex handles either.
+        if (a.md5) {
+          try {
+            return Promise.resolve({ id: a.id, hex: bytesToHex(md5(new Uint8Array(buf))) });
+          } catch (e) {
+            return Promise.resolve({ id: a.id, error: String(e && e.message || e) });
+          }
+        }
+        return crypto.subtle.digest(a.webcrypto, buf)
+          .then(d => ({ id: a.id, hex: bytesToHex(d) }))
+          .catch(e => ({ id: a.id, error: String(e && e.message || e) }));
+      })))
+      .then(results => {
+        if (cancelled) return;
+        const map = {};
+        for (const r of results) map[r.id] = r;
+        setHashes(map);
+        setComputing(false);
+      })
+      .catch(e => {
+        if (cancelled) return;
+        setError(String(e && e.message || e));
+        setComputing(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [file]);
+
+  const copyHash = (id, hex) => {
+    try {
+      navigator.clipboard.writeText(hex);
+      ping('Copied ' + id);
+    } catch {
+      ping('Copy failed');
+    }
+  };
+
+  return (
+    <div style={{padding:16, display:'grid', gap:14}}>
+      <CryptoFileDrop file={file} onFile={setFile}
+                      label="or click to pick · file streamed to WebCrypto · no network upload"/>
+
+      {!file && (
+        <div className="muted" style={{fontSize:11.5, lineHeight:1.7, padding:'0 4px'}}>
+          Pick any file. SHA-1 / SHA-256 / SHA-384 / SHA-512 compute in the browser
+          via WebCrypto. MD5 lands next (phase 4b) via a bundled implementation —
+          WebCrypto doesn't include it. 'Compare against known hash' input for
+          malware-catalogue checks lands in 4c.
+        </div>
+      )}
+
+      {error && (
+        <div className="note" style={{borderColor:'var(--red)', background:'var(--red-wash)', color:'var(--red)', fontSize:12}}>
+          <b>Hash failed:</b> {error}
+        </div>
+      )}
+
+      {file && (
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Compare against known hash</span>
+            <span className="k">paste a hash · algorithm auto-detected by length</span>
+          </div>
+          <div style={{padding:14}}>
+            <input type="text"
+                   value={compareInput}
+                   onChange={(e) => setCompareInput(e.target.value)}
+                   placeholder="e.g. d41d8cd98f00b204e9800998ecf8427e · or sha256:… · or MD5 = …"
+                   className="mono"
+                   style={{
+                     width:'100%', boxSizing:'border-box',
+                     padding:'8px 10px', fontSize:12,
+                     background:'var(--bg-1)', color:'var(--ink-bright)',
+                     border:'1px solid ' + (
+                       !compareResult ? 'var(--line-strong)' :
+                       compareResult.state === 'match' ? 'var(--safe)' :
+                       compareResult.state === 'mismatch' ? 'var(--red)' :
+                       compareResult.state === 'invalid' ? 'var(--amber)' :
+                       'var(--line-strong)'
+                     ),
+                     borderRadius:'var(--radius)',
+                   }}/>
+            {compareResult && (
+              <div style={{marginTop:10, fontSize:12, lineHeight:1.6, fontFamily:"'JetBrains Mono', monospace"}}>
+                {compareResult.state === 'match' && (
+                  <div style={{padding:'10px 12px', background:'var(--accent-wash)', border:'1px solid var(--safe)', borderRadius:'var(--radius)'}}>
+                    <div>
+                      <span className="chip chip--safe" style={{fontSize:10, marginRight:8}}>MATCH</span>
+                      <b style={{color:'var(--ink-bright)'}}>{compareResult.algo}</b>
+                      <span className="muted"> · this file matches the given hash</span>
+                    </div>
+                    <div className="muted" style={{fontSize:10.5, marginTop:6}}>
+                      Useful for verifying a downloaded sample, confirming evidence integrity,
+                      or matching against a known-indicator feed.
+                    </div>
+                  </div>
+                )}
+                {compareResult.state === 'mismatch' && (
+                  <div style={{padding:'10px 12px', background:'var(--red-wash)', border:'1px solid var(--red)', borderRadius:'var(--radius)'}}>
+                    <div>
+                      <span className="chip chip--red" style={{fontSize:10, marginRight:8}}>NO MATCH</span>
+                      <b style={{color:'var(--ink-bright)'}}>{compareResult.algo}</b>
+                      <span className="muted"> · this file's {compareResult.algo} differs</span>
+                    </div>
+                    <div style={{marginTop:8, fontSize:10.5, color:'var(--ink-soft)', display:'grid', gridTemplateColumns:'80px 1fr', gap:'2px 10px'}}>
+                      <span>given</span>    <span style={{color:'var(--red)', wordBreak:'break-all'}}>{compareResult.input}</span>
+                      <span>computed</span> <span style={{color:'var(--accent)', wordBreak:'break-all'}}>{compareResult.computed}</span>
+                    </div>
+                  </div>
+                )}
+                {compareResult.state === 'invalid' && (
+                  <div className="muted" style={{padding:'8px 10px', fontSize:11}}>
+                    <span className="chip chip--amber" style={{fontSize:9, marginRight:8}}>CHECK</span>
+                    {compareResult.reason}
+                  </div>
+                )}
+                {compareResult.state === 'pending' && (
+                  <div className="muted" style={{padding:'8px 10px', fontSize:11}}>
+                    detected <b style={{color:'var(--ink-bright)'}}>{compareResult.algo}</b> · waiting for that hash to finish computing…
+                  </div>
+                )}
+              </div>
+            )}
+            {!compareResult && (
+              <div className="muted" style={{fontSize:11, marginTop:8, lineHeight:1.6}}>
+                Paste a hash from VirusTotal / MalwareBazaar / a reference checksum — the
+                algorithm is inferred from its length. Common prefixes
+                (<span className="mono">sha256:</span>, <span className="mono">md5=</span>,
+                etc.) are stripped automatically.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {file && (
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Content hashes</span>
+            <span className="k">
+              {computing
+                ? <span className="mono" style={{fontSize:11}}>computing…</span>
+                : <>
+                    <span className="mono" style={{fontSize:11}}>{Object.keys(hashes).length} of {HASH_ALGOS.length} ready</span>
+                    {flash && <span className="mono" style={{fontSize:10.5, color:'var(--safe)', marginLeft:8}}>✓ {flash}</span>}
+                  </>}
+            </span>
+          </div>
+          <div style={{padding:14, display:'grid', gap:10}}>
+            {HASH_ALGOS.map(a => {
+              const h = hashes[a.id];
+              return (
+                <div key={a.id} style={{
+                  padding: '10px 12px',
+                  background: 'var(--bg-1)',
+                  border: '1px solid var(--line-soft)',
+                  borderRadius: 'var(--radius)',
+                }}>
+                  <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
+                    <span className="chip chip--ghost"
+                          style={{fontSize:10, padding:'3px 8px',
+                                  fontFamily:"'Space Grotesk', sans-serif", fontWeight:600,
+                                  letterSpacing:'0.06em'}}>
+                      {a.label}
+                    </span>
+                    <span className="muted" style={{fontSize:11, flex:1, lineHeight:1.4}}>{a.note}</span>
+                    {h && h.hex && (
+                      <button onClick={() => copyHash(a.id, h.hex)}
+                              title="copy to clipboard"
+                              style={{
+                                background:'transparent',
+                                border:'1px solid var(--line-strong)',
+                                color:'var(--ink)',
+                                padding:'4px 10px', fontSize:11,
+                                fontFamily:"'JetBrains Mono', monospace",
+                                borderRadius:'var(--radius)', cursor:'pointer',
+                              }}>
+                        ⎘ Copy
+                      </button>
+                    )}
+                  </div>
+                  <div style={{
+                    fontFamily:"'JetBrains Mono', monospace",
+                    fontSize: 11, lineHeight: 1.5,
+                    color: h && h.hex ? 'var(--ink-bright)' : 'var(--ink-dim)',
+                    wordBreak: 'break-all',
+                    userSelect: 'all',
+                  }}>
+                    {h && h.error
+                      ? <span style={{color:'var(--red)'}}>error: {h.error}</span>
+                      : h && h.hex
+                        ? h.hex
+                        : <span className="muted">computing…</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Built-in wordlist — short by design. The analyst pastes / uploads
+// a proper list for anything serious. 100 entries covers the 'yes
+// the file was password-protected but the password is "password"'
+// case the analyst encounters depressingly often.
+const IR_BUILTIN_WORDLIST = [
+  '123456', 'password', '12345678', 'qwerty', '123456789', '12345',
+  '1234', '111111', '1234567', 'dragon', '123123', 'baseball',
+  'abc123', 'football', 'monkey', 'letmein', '696969', 'shadow',
+  'master', '666666', 'qwertyuiop', '123321', 'mustang', '1234567890',
+  'michael', '654321', 'pussy', 'superman', '1qaz2wsx', '7777777',
+  'fuckyou', '121212', '000000', 'qazwsx', '123qwe', 'killer',
+  'trustno1', 'jordan', 'jennifer', 'zxcvbnm', 'asdfgh', 'hunter',
+  'buster', 'soccer', 'harley', 'batman', 'andrew', 'tigger',
+  'sunshine', 'iloveyou', '2000', 'charlie', 'robert', 'thomas',
+  'hockey', 'ranger', 'daniel', 'starwars', 'klaster', '112233',
+  'george', 'computer', 'michelle', 'jessica', 'pepper', '1111',
+  'zxcvbn', '555555', '11111111', '131313', 'freedom', '777777',
+  'pass', 'maggie', '159753', 'aaaaaa', 'ginger', 'princess',
+  'joshua', 'cheese', 'amanda', 'summer', 'love', 'ashley',
+  '6969', 'nicole', 'chelsea', 'biteme', 'matthew', 'access',
+  'yankees', '987654321', 'dallas', 'austin', 'thunder', 'taylor',
+  'matrix', 'mobilemail', 'mom', 'monitor', 'monitoring', 'montana',
+  'admin', 'administrator', 'changeme', 'welcome', 'secret', 'backup',
+  // Common DLP-triage shapes observed in demo corpora
+  'confidential', 'internal', 'P@ssw0rd', 'Welcome1', 'Summer2024',
+  'Password1', 'abc12345', 'qwerty123', 'corporate', 'partner',
+];
+
+// ── Zip Password Attack tab · 5a · UI shell ───────────────────
+// Picker for the encrypted zip + a wordlist source (paste /
+// upload / use built-in). Start button currently shows a
+// 'attack engine lands in 5b' banner; 5b wires zip.js and runs
+// the dictionary loop.
+function CryptoZipAttack() {
+  const [file, setFile] = React.useState(null);
+  const [wordlistSource, setWordlistSource] = React.useState('builtin'); // builtin | paste | file
+  const [wordlistText, setWordlistText] = React.useState('');
+  const [wordlistFile, setWordlistFile] = React.useState(null);
+  const [wordlistFileText, setWordlistFileText] = React.useState(null);
+  const [stubFlash, setStubFlash] = React.useState(false);
+
+  // When the analyst picks a wordlist file, read it as text once
+  // and cache so the attack loop doesn't re-read per password.
+  React.useEffect(() => {
+    if (!wordlistFile) { setWordlistFileText(null); return; }
+    let cancelled = false;
+    wordlistFile.text().then(t => { if (!cancelled) setWordlistFileText(t); });
+    return () => { cancelled = true; };
+  }, [wordlistFile]);
+
+  // Resolve the active wordlist into an array of candidates. Keeps
+  // duplicates out (Set) but preserves order of first appearance.
+  const candidates = React.useMemo(() => {
+    let text = '';
+    if (wordlistSource === 'builtin') {
+      return IR_BUILTIN_WORDLIST.slice();
+    }
+    if (wordlistSource === 'paste') text = wordlistText;
+    if (wordlistSource === 'file') text = wordlistFileText || '';
+    const seen = new Set();
+    const out = [];
+    for (const line of text.split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t) continue;
+      if (seen.has(t)) continue;
+      seen.add(t);
+      out.push(t);
+    }
+    return out;
+  }, [wordlistSource, wordlistText, wordlistFileText]);
+
+  const isZip = file && (
+    /\.(zip|docx|xlsx|pptx|odt|ods|odp|jar|war|apk|ipa)$/i.test(file.name)
+    || file.type === 'application/zip'
+    || file.type === 'application/x-zip-compressed'
+  );
+
+  const start = () => {
+    // Actual attack engine lands in 5b; for now flash a note so
+    // the analyst can still test the shell wiring.
+    setStubFlash(true);
+    setTimeout(() => setStubFlash(false), 2400);
+  };
+
+  return (
+    <div style={{padding:16, display:'grid', gap:14}}>
+      <CryptoFileDrop file={file} onFile={setFile}
+                      label="drop an encrypted zip · .zip / .docx / .xlsx / .pptx / .jar — all ZIP containers"/>
+
+      {file && !isZip && (
+        <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:12}}>
+          <b>Not a ZIP container.</b> The file extension / MIME don't look like a zip-family
+          format. The attack tool only handles ZIP-family files today — PDF / Office
+          non-ZIP / 7z / RAR aren't wired yet.
+        </div>
+      )}
+
+      {/* Wordlist source picker */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Wordlist</span>
+          <span className="k">
+            <span className="mono" style={{fontSize:11}}>{candidates.length} candidates loaded</span>
+          </span>
+        </div>
+        <div style={{padding:14, display:'grid', gap:12}}>
+          {/* Source tabs */}
+          <div style={{display:'flex', gap:2, borderBottom:'1px solid var(--line-soft)'}}>
+            {[
+              ['builtin', 'Built-in',    IR_BUILTIN_WORDLIST.length + ' common passwords'],
+              ['paste',   'Paste list',  'one password per line'],
+              ['file',    'Upload file', 'text file · rockyou-style wordlists'],
+            ].map(([id, label, hint]) => {
+              const active = wordlistSource === id;
+              return (
+                <button key={id}
+                        onClick={() => setWordlistSource(id)}
+                        title={hint}
+                        style={{
+                          background:'transparent', border:'none',
+                          padding:'8px 14px', cursor:'pointer',
+                          color: active ? 'var(--ink-bright)' : 'var(--ink-soft)',
+                          borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+                          fontFamily:"'Space Grotesk', sans-serif",
+                          fontWeight: active ? 700 : 500, fontSize:12,
+                        }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          {wordlistSource === 'builtin' && (
+            <div className="muted" style={{fontSize:11.5, lineHeight:1.7}}>
+              Short curated list covering the most common weak passwords plus a
+              handful of DLP-triage shapes (<span className="mono">confidential</span>,{' '}
+              <span className="mono">Welcome1</span>, etc.). Good first pass; paste a
+              real wordlist if this doesn't crack it.
+            </div>
+          )}
+          {wordlistSource === 'paste' && (
+            <textarea value={wordlistText}
+                      onChange={(e) => setWordlistText(e.target.value)}
+                      placeholder={`password\nqwerty\n...`}
+                      rows={6}
+                      className="mono"
+                      style={{
+                        width:'100%', boxSizing:'border-box', fontSize:11.5,
+                        padding:'8px 10px', background:'var(--bg-1)', color:'var(--ink)',
+                        border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                        resize:'vertical', fontFamily:"'JetBrains Mono', monospace",
+                      }}/>
+          )}
+          {wordlistSource === 'file' && (
+            <>
+              <CryptoFileDrop file={wordlistFile} onFile={setWordlistFile}
+                              label="drop a .txt wordlist · one password per line · files stay in the browser"/>
+              {wordlistFile && wordlistFileText != null && (
+                <div className="muted mono" style={{fontSize:11}}>
+                  loaded <span style={{color:'var(--ink-bright)'}}>{candidates.length.toLocaleString()}</span> unique passwords
+                  from <span style={{color:'var(--ink)'}}>{wordlistFile.name}</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Attack control */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Attack</span>
+          <span className="k">in-browser dictionary · WebCrypto-backed AES decrypt (via zip.js · phase 5b)</span>
+        </div>
+        <div style={{padding:14, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap'}}>
+          <button className="btn primary"
+                  onClick={start}
+                  disabled={!file || !isZip || candidates.length === 0}
+                  title={!file ? 'pick an encrypted zip first'
+                       : !isZip ? 'file must be a ZIP-family container'
+                       : candidates.length === 0 ? 'add candidates to the wordlist first'
+                       : 'start the dictionary attack'}>
+            ▶ Start attack
+          </button>
+          <span className="muted mono" style={{fontSize:11}}>
+            {file && isZip && candidates.length > 0
+              ? <>{file.name} · {candidates.length.toLocaleString()} candidates</>
+              : 'pick a zip + wordlist to enable'}
+          </span>
+          {stubFlash && (
+            <span className="chip chip--warn" style={{fontSize:10}}>
+              attack engine lands in 5b (zip.js integration)
+            </span>
+          )}
+        </div>
+        <div className="muted" style={{padding:'0 14px 14px', fontSize:10.5, lineHeight:1.7}}>
+          Triage-scale only — this is browser-side AES decrypt, not a GPU cluster.
+          Useful for the 'probably a weak password' case; not a replacement for
+          hashcat / john the ripper when you need throughput. Files never leave
+          the browser.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CryptoWorkbench() {
+  const [tab, setTab] = React.useState(() => {
+    try { return localStorage.getItem('ir:crypto:tab') || 'inspector'; }
+    catch { return 'inspector'; }
+  });
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:crypto:tab', tab); } catch {}
+  }, [tab]);
+
+  const TabStub = ({ title, description }) => (
+    <div style={{padding:'24px', textAlign:'center', color:'var(--ink-soft)'}}>
+      <div style={{
+        fontFamily:"'Space Grotesk', sans-serif", fontSize:16, fontWeight:700,
+        color:'var(--ink)', marginBottom:10,
+      }}>{title}</div>
+      <div style={{fontSize:12.5, lineHeight:1.7, maxWidth:560, margin:'0 auto'}}>
+        {description}
+      </div>
+    </div>
+  );
+
+  let tabBody;
+  if (tab === 'inspector') {
+    tabBody = <CryptoFileInspector />;
+  } else if (tab === 'hasher') {
+    tabBody = <CryptoHashComputer />;
+  } else if (tab === 'zipattack') {
+    tabBody = <CryptoZipAttack />;
+  }
+
+  return (
+    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
+      <div className="box" style={{overflow:'hidden'}}>
+        <div className="box-title">
+          <span className="t">Crypto Workbench</span>
+          <span className="k">forensic tooling for encrypted artefacts</span>
+        </div>
+
+        {/* Tab header — click-to-switch, active tab carries the
+            accent bottom border. */}
+        <div style={{
+          display:'flex', borderBottom:'1px solid var(--line-soft)',
+          background:'var(--bg-2)',
+        }}>
+          {CRYPTO_TABS.map(t => {
+            const active = tab === t.id;
+            return (
+              <button key={t.id} onClick={() => setTab(t.id)}
+                      title={t.hint}
+                      style={{
+                        background:'transparent', border:'none',
+                        padding:'12px 18px',
+                        cursor:'pointer',
+                        color: active ? 'var(--ink-bright)' : 'var(--ink-soft)',
+                        borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+                        fontFamily:"'Space Grotesk', sans-serif",
+                        fontWeight: active ? 700 : 500,
+                        fontSize: 13,
+                        letterSpacing: '0.02em',
+                      }}>
+                {t.label}
+              </button>
+            );
+          })}
+          <span style={{flex:1, borderBottom:'2px solid transparent'}}/>
+          <span className="muted mono" style={{alignSelf:'center', padding:'0 14px', fontSize:10.5}}>
+            {CRYPTO_TABS.find(t => t.id === tab)?.hint}
+          </span>
+        </div>
+
+        {tabBody}
+      </div>
+    </div>
+  );
+}
+
 const SURFACE_COMPONENTS = {
   dashboard:      () => <DashboardSurface />,
   findings:       () => <FindingsQueue />,
@@ -6707,8 +7968,7 @@ const SURFACE_COMPONENTS = {
                               description="Case view — group findings, annotate, assign." />,
   handoffs:       () => <Stub title="Handoffs"
                               description="Tickets and escalations to downstream tools (Jira, ServiceNow, email)." />,
-  crypto:         () => <Stub title="Crypto Workbench"
-                              description="Forensic tools for encrypted archives and documents: zip password attack, PDF/Office decrypt, hash compute, entropy + magic-byte inspection. Phase 3-5 of the IR MVP." />,
+  crypto:         () => <CryptoWorkbench />,
   extractor:      () => <Stub title="File Extractor"
                               description="Point-and-shoot at any file siphon-fs recognises (PDF, DOCX, XLSX, PPTX, ZIP/RAR/7z, Parquet, SQLite, EML, MSG, QR)." />,
   timeline:       () => <Stub title="Timeline"
