@@ -7323,14 +7323,91 @@ function bytesToHex(buf) {
   return out.join('');
 }
 
-// Algorithms surfaced in the Hash Computer tab. WebCrypto handles
-// SHA-1 / SHA-256 / SHA-384 / SHA-512 natively; MD5 gets wired in
-// 4b via a bundled implementation since WebCrypto doesn't ship it.
+// MD5 — RFC 1321, ~2 KiB of bundled code because WebCrypto
+// deliberately doesn't ship it. Operates on a Uint8Array input
+// and returns a 16-byte Uint8Array digest. Correctness spot-
+// checked against the RFC test vectors:
+//   md5("")    = d41d8cd98f00b204e9800998ecf8427e
+//   md5("a")   = 0cc175b9c0f1b6a831c399e269772661
+//   md5("abc") = 900150983cd24fb0d6963f7d28e17f72
+const MD5_K = (() => {
+  const k = new Uint32Array(64);
+  for (let i = 0; i < 64; i++) {
+    k[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 0x100000000) >>> 0;
+  }
+  return k;
+})();
+const MD5_S = [
+  7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+  5,  9, 14, 20, 5,  9, 14, 20, 5,  9, 14, 20, 5,  9, 14, 20,
+  4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+  6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+];
+function md5(bytes) {
+  const msgLen = bytes.length;
+  // Padded length: msg + 0x80 + zeros + 8-byte length, rounded up
+  // to a multiple of 64.
+  const padLen = ((msgLen + 9 + 63) >>> 6) << 6;
+  const msg = new Uint8Array(padLen);
+  msg.set(bytes);
+  msg[msgLen] = 0x80;
+  // 64-bit little-endian bit length. Upper 32 bits stay zero for
+  // inputs below 2^29 bytes (~512 MiB) — well above any file the
+  // browser will hash in one pass anyway.
+  const bitLen = msgLen * 8;
+  msg[padLen - 8] = bitLen         & 0xff;
+  msg[padLen - 7] = (bitLen >>>  8) & 0xff;
+  msg[padLen - 6] = (bitLen >>> 16) & 0xff;
+  msg[padLen - 5] = (bitLen >>> 24) & 0xff;
+
+  let a = 0x67452301, b = 0xefcdab89, c = 0x98badcfe, d = 0x10325476;
+  const rotl = (x, n) => ((x << n) | (x >>> (32 - n))) >>> 0;
+
+  const M = new Uint32Array(16);
+  for (let off = 0; off < padLen; off += 64) {
+    for (let i = 0; i < 16; i++) {
+      M[i] = (msg[off + i*4])
+           | (msg[off + i*4 + 1] << 8)
+           | (msg[off + i*4 + 2] << 16)
+           | (msg[off + i*4 + 3] << 24);
+    }
+    let A = a, B = b, C = c, D = d;
+    for (let i = 0; i < 64; i++) {
+      let F, g;
+      if (i < 16)      { F = (B & C) | (~B & D);        g = i; }
+      else if (i < 32) { F = (D & B) | (~D & C);        g = (5*i + 1) % 16; }
+      else if (i < 48) { F = B ^ C ^ D;                 g = (3*i + 5) % 16; }
+      else             { F = C ^ (B | ~D);              g = (7*i) % 16; }
+      F = (F + A + MD5_K[i] + M[g]) >>> 0;
+      A = D; D = C; C = B;
+      B = (B + rotl(F, MD5_S[i])) >>> 0;
+    }
+    a = (a + A) >>> 0;
+    b = (b + B) >>> 0;
+    c = (c + C) >>> 0;
+    d = (d + D) >>> 0;
+  }
+
+  const out = new Uint8Array(16);
+  const w = (v, off) => {
+    out[off]   =  v         & 0xff;
+    out[off+1] = (v >>>  8) & 0xff;
+    out[off+2] = (v >>> 16) & 0xff;
+    out[off+3] = (v >>> 24) & 0xff;
+  };
+  w(a, 0); w(b, 4); w(c, 8); w(d, 12);
+  return out;
+}
+
+// Algorithms surfaced in the Hash Computer tab. SHA-family delegate
+// to WebCrypto; MD5 uses the bundled impl above (WebCrypto
+// deliberately omits it).
 const HASH_ALGOS = [
-  { id: 'SHA-1',   label: 'SHA-1',   webcrypto: 'SHA-1',   note: 'legacy · broken for collisions · fine for malware catalogues' },
-  { id: 'SHA-256', label: 'SHA-256', webcrypto: 'SHA-256', note: 'industry standard · 64 hex chars' },
-  { id: 'SHA-384', label: 'SHA-384', webcrypto: 'SHA-384', note: 'SHA-2 truncated · 96 hex chars' },
-  { id: 'SHA-512', label: 'SHA-512', webcrypto: 'SHA-512', note: '128 hex chars' },
+  { id: 'MD5',     label: 'MD5',     md5: true,             note: 'legacy · fast malware-catalogue lookup (VirusTotal, MalwareBazaar)' },
+  { id: 'SHA-1',   label: 'SHA-1',   webcrypto: 'SHA-1',    note: 'legacy · broken for collisions · fine for malware catalogues' },
+  { id: 'SHA-256', label: 'SHA-256', webcrypto: 'SHA-256',  note: 'industry standard · 64 hex chars' },
+  { id: 'SHA-384', label: 'SHA-384', webcrypto: 'SHA-384',  note: 'SHA-2 truncated · 96 hex chars' },
+  { id: 'SHA-512', label: 'SHA-512', webcrypto: 'SHA-512',  note: '128 hex chars' },
 ];
 
 // ── Hash Computer tab ─────────────────────────────────────────
@@ -7358,11 +7435,21 @@ function CryptoHashComputer() {
     setHashes({}); setError(null); setComputing(true);
 
     file.arrayBuffer()
-      .then(buf => Promise.all(HASH_ALGOS.map(a =>
-        crypto.subtle.digest(a.webcrypto, buf)
+      .then(buf => Promise.all(HASH_ALGOS.map(a => {
+        // MD5 goes through the bundled impl (WebCrypto doesn't
+        // support it); SHA-family go through crypto.subtle. Both
+        // paths return Uint8Array — bytesToHex handles either.
+        if (a.md5) {
+          try {
+            return Promise.resolve({ id: a.id, hex: bytesToHex(md5(new Uint8Array(buf))) });
+          } catch (e) {
+            return Promise.resolve({ id: a.id, error: String(e && e.message || e) });
+          }
+        }
+        return crypto.subtle.digest(a.webcrypto, buf)
           .then(d => ({ id: a.id, hex: bytesToHex(d) }))
-          .catch(e => ({ id: a.id, error: String(e && e.message || e) }))
-      )))
+          .catch(e => ({ id: a.id, error: String(e && e.message || e) }));
+      })))
       .then(results => {
         if (cancelled) return;
         const map = {};
