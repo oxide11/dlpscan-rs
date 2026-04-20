@@ -5101,6 +5101,16 @@ function FindingDetail({ id, back }) {
   // finding — otherwise the draft leaks across investigations.
   React.useEffect(() => { setNotesDraft(''); }, [id]);
 
+  // Publish the current finding's category as a window-level hint
+  // so App's Playbooks drawer can auto-select the matching
+  // playbook. Cleared on unmount so opening Playbooks from a
+  // non-detail surface doesn't re-use a stale category.
+  React.useEffect(() => {
+    const f = all.find(x => x.id === id);
+    if (f && f.category) window.__ir_currentFindingCategory = f.category;
+    return () => { delete window.__ir_currentFindingCategory; };
+  }, [id, all.length]);
+
   if (!findings.loading && !f) {
     return (
       <div>
@@ -7394,11 +7404,49 @@ function App() {
   // always-visible ❖ Playbooks button has a real handler.
   const [playbooksOpen, setPlaybooksOpen] = React.useState(false);
   // initialPlaybookId seeds PlaybookDrawer with a pre-selected
-  // playbook. Wired in C5 from the finding-in-view's category;
-  // always null until then.
-  const [playbooksInitial] = React.useState(null);
-  const openPlaybooks = React.useCallback(() => setPlaybooksOpen(true), []);
+  // playbook. Recomputed each time the drawer opens so the
+  // analyst always lands on the playbook matched to the finding
+  // currently in view.
+  const [playbooksInitial, setPlaybooksInitial] = React.useState(null);
+  const openPlaybooks = React.useCallback(() => {
+    // FindingDetail stashes window.__ir_currentFindingCategory
+    // while it's mounted. When absent (dashboard / queue / any
+    // non-detail surface) auto-select falls through to the
+    // drawer's default (first playbook in the list).
+    const cat = typeof window !== 'undefined' ? window.__ir_currentFindingCategory : null;
+    const match = cat ? matchPlaybookForCategory(cat) : null;
+    setPlaybooksInitial(match ? match.id : null);
+    setPlaybooksOpen(true);
+  }, []);
   const closePlaybooks = React.useCallback(() => setPlaybooksOpen(false), []);
+
+  // Keyboard shortcut · 'p' toggles the drawer. Ignored when the
+  // focus is in an input / textarea / select / contenteditable so
+  // the analyst can type 'p' in the Findings-Queue search without
+  // hijacking it. Escape-to-close already lives inside the drawer.
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key !== 'p' && e.key !== 'P') return;
+      const t = e.target;
+      if (t && (
+        /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable
+      )) return;
+      e.preventDefault();
+      // Route through openPlaybooks on open so the shortcut also
+      // picks up the current finding's auto-selected playbook;
+      // close is a direct setState.
+      setPlaybooksOpen(currentlyOpen => {
+        if (currentlyOpen) return false;
+        const cat = typeof window !== 'undefined' ? window.__ir_currentFindingCategory : null;
+        const match = cat ? matchPlaybookForCategory(cat) : null;
+        setPlaybooksInitial(match ? match.id : null);
+        return true;
+      });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
     <div className="shell" data-density={tweaks.density} data-theme={tweaks.theme}>
