@@ -11203,41 +11203,38 @@ function InviteAcceptPage({ token, onAccepted }) {
               padding: '28px 28px 22px',
               fontFamily: "'Space Grotesk', sans-serif",
             }}>
-        <div style={{marginBottom:20}}>
+        <AuthBrandHeader
+          kicker="ACCEPT INVITE"
+          title="Set your password"
+          subtitle={matchedUser ? <>
+            This invite provisions{' '}
+            <span className="mono" style={{color:'var(--ink)'}}>{matchedUser.email || matchedUser.name}</span>
+            {' '}as{' '}
+            <span className="chip"
+                  style={{
+                    fontSize:10, padding:'2px 8px',
+                    borderColor: role.color, color: role.color,
+                    background:'var(--bg-1)',
+                    whiteSpace:'nowrap',
+                  }}>{role.glyph} {role.label}</span>.
+            Pick a password to activate the account.
+          </> : null}/>
+
+        {/* Invalid-token banner lives outside the brand header —
+            it's a full-width warning card, not subtitle text. */}
+        {!matchedUser && (
           <div style={{
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize:11, color:'var(--accent)', letterSpacing:'0.1em',
-          }}>ACCEPT INVITE</div>
-          <div style={{
-            fontSize:22, fontWeight:700, color:'var(--ink-bright)',
-            letterSpacing:'-0.01em', marginTop:4,
-          }}>Set your password</div>
-          {matchedUser ? (
-            <div style={{fontSize:12, color:'var(--ink-soft)', marginTop:10, lineHeight:1.6}}>
-              This invite provisions{' '}
-              <span className="mono" style={{color:'var(--ink)'}}>{matchedUser.email || matchedUser.name}</span>
-              {' '}as{' '}
-              <span className="chip"
-                    style={{
-                      fontSize:10, padding:'2px 8px',
-                      borderColor: role.color, color: role.color,
-                      background:'var(--bg-1)',
-                    }}>{role.glyph} {role.label}</span>.
-              Pick a password to activate the account.
-            </div>
-          ) : (
-            <div style={{
-              fontSize:12, color:'var(--threat)',
-              marginTop:10, padding:'8px 10px',
-              background:'var(--red-wash)',
-              border:'1px solid var(--threat)',
-              borderRadius:'var(--radius)',
-            }}>
-              This invite link isn't valid — it's been accepted already, or the
-              token was revoked. Ask an administrator for a new invite.
-            </div>
-          )}
-        </div>
+            fontSize:12, color:'var(--threat)',
+            marginTop:-6, marginBottom:18,
+            padding:'10px 12px',
+            background:'var(--red-wash)',
+            border:'1px solid var(--threat)',
+            borderRadius:'var(--radius)',
+          }}>
+            This invite link isn't valid — it's been accepted already, or the
+            token was revoked. Ask an administrator for a new invite.
+          </div>
+        )}
 
         {matchedUser && (
           <>
