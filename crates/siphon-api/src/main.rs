@@ -52,7 +52,7 @@ use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -113,6 +113,13 @@ struct AppState {
     /// Path on disk to the overrides file. Apply + disk-read handlers
     /// use this directly; no writes happen anywhere else.
     overrides_path: Arc<std::path::PathBuf>,
+    /// Runtime, per-pod pipeline-stage overrides. Each entry in the
+    /// set forces the corresponding stage into its most permissive
+    /// behaviour, regardless of what the caller sent in req.options
+    /// or what's baked into the policy/overrides. Controlled via
+    /// GET/PATCH /v1/pipeline/stages. Not persisted — restart clears.
+    /// Diagnostic-only; production pods should leave this empty.
+    disabled_stages: Arc<RwLock<HashSet<String>>>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -543,7 +550,17 @@ async fn scan(
         None
     };
 
-    let config = ScanConfig {
+    // Snapshot the runtime stage-disable set once per scan so a
+    // concurrent PATCH /v1/pipeline/stages can't flip a toggle
+    // mid-scan and leave us with an inconsistent config. Read-lock +
+    // clone of the small HashSet is cheap.
+    let stage_disabled: HashSet<String> = state
+        .disabled_stages
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+
+    let mut config = ScanConfig {
         min_confidence: req.options.min_confidence.unwrap_or(0.0),
         categories: req.options.categories.map(|c| c.into_iter().collect::<HashSet<_>>()),
         require_context: req.options.require_context.unwrap_or(false),
@@ -560,6 +577,16 @@ async fn scan(
         max_unique_per_subcategory: Some(state.unique_thresholds.clone()),
         ..Default::default()
     };
+    // Force each disabled stage into its most permissive behaviour.
+    // Done AFTER req.options so the toggle can't be bypassed by a
+    // caller setting require_context=true — analyst-facing
+    // diagnostic switch wins.
+    if stage_disabled.contains("min_confidence") {
+        config.min_confidence = 0.0;
+    }
+    if stage_disabled.contains("require_context") {
+        config.require_context = false;
+    }
 
     let request_id = uuid::Uuid::new_v4().to_string();
     let start = Instant::now();
@@ -1056,6 +1083,130 @@ async fn capabilities(State(state): State<Arc<AppState>>) -> Json<CapabilitiesRe
 // (Phase 6 automates that via kube-rs; until then it's a manual step).
 // The response always carries restart_required + an honest note.
 // ---------------------------------------------------------------------------
+// Per-pod pipeline stage toggles (Phase 9c)
+// ---------------------------------------------------------------------------
+// Runtime diagnostic knob — lets an operator force a specific scanner
+// stage into its most permissive behaviour on one pod without
+// redeploying. Useful for A/B comparisons ("same doc scanned with and
+// without require_context") and for quickly widening detection during
+// incident response. Not persisted; restart clears.
+
+/// Stages the pod recognises as toggleable. Mirrored by
+/// /v1/capabilities.scanner_pipeline so the admin console doesn't
+/// have to hardcode a list.
+const TOGGLEABLE_STAGES: &[&str] = &["min_confidence", "require_context"];
+
+#[derive(Serialize)]
+struct StageState {
+    stage: &'static str,
+    /// `true` when the stage runs normally. `false` means it's been
+    /// bypassed by an operator PATCH and every scan gets the stage's
+    /// permissive default (min_confidence=0.0, require_context=false).
+    enabled: bool,
+}
+
+#[derive(Serialize)]
+struct StagesResponse {
+    total: usize,
+    stages: Vec<StageState>,
+}
+
+async fn pipeline_stages_get(State(state): State<Arc<AppState>>) -> Json<StagesResponse> {
+    let disabled: HashSet<String> = state
+        .disabled_stages
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let stages: Vec<StageState> = TOGGLEABLE_STAGES
+        .iter()
+        .map(|s| StageState {
+            stage: s,
+            enabled: !disabled.contains(*s),
+        })
+        .collect();
+    Json(StagesResponse {
+        total: stages.len(),
+        stages,
+    })
+}
+
+#[derive(Deserialize)]
+struct StagesPatchRequest {
+    stage: String,
+    enabled: bool,
+}
+
+async fn pipeline_stages_patch(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(req): Json<StagesPatchRequest>,
+) -> Response {
+    if !TOGGLEABLE_STAGES.contains(&req.stage.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!(
+                    "stage {:?} is not toggleable; accepted: {:?}",
+                    req.stage, TOGGLEABLE_STAGES
+                ),
+            }),
+        )
+            .into_response();
+    }
+    {
+        let mut guard = match state.disabled_stages.write() {
+            Ok(g) => g,
+            Err(_) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "disabled_stages lock poisoned".into(),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+        if req.enabled {
+            guard.remove(&req.stage);
+        } else {
+            guard.insert(req.stage.clone());
+        }
+    }
+    tracing::warn!(
+        stage = %req.stage,
+        enabled = req.enabled,
+        source_ip = %addr.ip(),
+        "pipeline stage toggled"
+    );
+    if let Ok(event) = AuditEvent::new("CONFIG") {
+        emit_audit(
+            event
+                .with_action("pipeline_stage_toggle")
+                .with_outcome(if req.enabled { "enabled" } else { "disabled" })
+                .with_source_ip(&addr.ip().to_string())
+                .with_metadata("stage", serde_json::json!(req.stage)),
+        );
+    }
+    // Rebuild inline rather than re-invoking pipeline_stages_get — no
+    // need to take another lock when we already know the final state.
+    let disabled: HashSet<String> = state
+        .disabled_stages
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let stages: Vec<StageState> = TOGGLEABLE_STAGES
+        .iter()
+        .map(|s| StageState {
+            stage: s,
+            enabled: !disabled.contains(*s),
+        })
+        .collect();
+    Json(StagesResponse {
+        total: stages.len(),
+        stages,
+    })
+    .into_response()
+}
 
 #[derive(Serialize)]
 struct OverridesStateResponse {
@@ -2586,6 +2737,7 @@ async fn main() {
         started_at,
         loaded_overrides,
         overrides_path: overrides_path_arc,
+        disabled_stages: Arc::new(RwLock::new(HashSet::new())),
     });
 
     let app = Router::new()
@@ -2614,6 +2766,8 @@ async fn main() {
         .route("/v1/overrides/apply", post(overrides_apply))
         .route("/v1/overrides/history", get(overrides_history))
         .route("/v1/overrides/content", get(overrides_content))
+        .route("/v1/pipeline/stages",
+               get(pipeline_stages_get).patch(pipeline_stages_patch))
         .route("/v1/overrides/revert", post(overrides_revert))
         .route("/v1/overrides/roll", post(overrides_roll))
         .route("/v1/docs", get(docs_index))

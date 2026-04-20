@@ -11858,8 +11858,87 @@ function PodHealthRow({ pod, onToggle, onRemove, isSeed }) {
             )}
           </div>
         )}
+        {c && c.pod_type === 'siphon-api' && (
+          <PipelineStagesControl baseUrl={pod.url} />
+        )}
       </div>
     )}
+    </div>
+  );
+}
+
+// Runtime pipeline-stage toggle control (Phase 9c). Only applies to
+// siphon-api pods — siphon-fs doesn't expose the endpoint yet. Small
+// per-pod panel under the capabilities grid; polls once on mount + on
+// every user flip. 'Disabled' means 'this stage is bypassed on this
+// pod only, right now' (not persisted across restart).
+function PipelineStagesControl({ baseUrl }) {
+  const [state, setState] = React.useState({ loading: true, stages: [], error: null });
+  const [busy, setBusy] = React.useState(null);
+  const fetchStages = React.useCallback(async () => {
+    setState(s => ({ ...s, loading: true, error: null }));
+    try {
+      const r = await window.siphonFetch(baseUrl.replace(/\/$/, '') + '/v1/pipeline/stages');
+      if (!r.ok) {
+        if (r.status === 404) {
+          // Pod predates Phase 9c — don't show the panel at all.
+          setState({ loading: false, stages: [], error: 'not-supported' });
+          return;
+        }
+        throw new Error('HTTP ' + r.status);
+      }
+      const j = await r.json();
+      setState({ loading: false, stages: j.stages || [], error: null });
+    } catch (e) {
+      setState({ loading: false, stages: [], error: String(e.message || e) });
+    }
+  }, [baseUrl]);
+  React.useEffect(() => { fetchStages(); }, [fetchStages]);
+
+  const toggle = async (stage, enabled) => {
+    setBusy(stage);
+    try {
+      const r = await window.siphonFetch(baseUrl.replace(/\/$/, '') + '/v1/pipeline/stages', {
+        method: 'PATCH',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ stage, enabled }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      setState(s => ({ ...s, stages: j.stages || [] }));
+    } catch (e) {
+      setState(s => ({ ...s, error: String(e.message || e) }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (state.error === 'not-supported') return null;
+  return (
+    <div style={{marginTop:10, paddingTop:10, borderTop:'1px solid var(--line-soft)'}}>
+      <div className="label" style={{marginBottom:6}}>
+        Pipeline stages <span className="muted" style={{textTransform:'none', letterSpacing:0}}>— diagnostic per-pod toggles (not persisted)</span>
+      </div>
+      {state.error && state.error !== 'not-supported' && (
+        <div className="muted" style={{color:'var(--red)', fontSize:11}}>{state.error}</div>
+      )}
+      <div style={{display:'flex', flexWrap:'wrap', gap:8, fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>
+        {state.stages.map(s => {
+          const on = s.enabled;
+          return (
+            <label key={s.stage}
+                   style={{display:'inline-flex', alignItems:'center', gap:6, padding:'4px 8px', background:'var(--bg-1)', border:'1px solid var(--line-soft)', borderRadius:2, cursor:'pointer'}}
+                   title={on ? 'click to bypass this stage — scans on this pod skip the filter' : 'click to re-enable normal behaviour'}>
+              <input type="checkbox"
+                     checked={on}
+                     disabled={busy === s.stage}
+                     onChange={e => toggle(s.stage, e.target.checked)} />
+              <span style={{color: on ? 'var(--ink)' : 'var(--amber)'}}>{s.stage}</span>
+              {busy === s.stage && <span className="muted">…</span>}
+            </label>
+          );
+        })}
+      </div>
     </div>
   );
 }
