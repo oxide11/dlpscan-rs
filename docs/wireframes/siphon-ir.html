@@ -3639,6 +3639,220 @@ function WhatPanel({ f }) {
   );
 }
 
+// ── Where panel ───────────────────────────────────────────────
+// Source → channel → destination flow. Simpler than siphon-c2's
+// SVG version — the IR surface cares less about integrations and
+// more about 'what path did this take'. External-domain recipients
+// flag in amber so exfil shapes surface at a glance.
+function WherePanel({ f }) {
+  const md = f.metadata || {};
+  const sender = md.sender || null;
+  const recipient = md.recipient || null;
+  const destUrl = md.dest_url || null;
+  const filename = md.filename || (f.source_pod === 'siphon-fs' ? f.source_ip : null);
+  const channelLabel = md.channel || (f.source_pod === 'siphon-fs'
+    ? 'file upload'
+    : f.source_pod === 'siphon-api' ? 'http POST /scan' : f.source_pod || 'unknown');
+  const srcIp = md.src_ip || (f.source_pod !== 'siphon-fs' ? f.source_ip : null);
+  // Heuristic exfil detector. Matches the Who/subtitle logic so the
+  // analyst gets the same signal in both places.
+  const externalish = (v) => v && /(external|gmail|rival|personal|competitor)\.example/i.test(v);
+  const destExt = externalish(recipient) || externalish(destUrl);
+
+  const Node = ({ label, value, accent, small }) => (
+    <div style={{
+      flex: '1 1 180px', minWidth: 0,
+      padding:'10px 12px',
+      background: accent ? 'var(--amber-wash)' : 'var(--bg-1)',
+      border: '1px solid ' + (accent ? 'var(--amber)' : 'var(--line-soft)'),
+      borderRadius: 'var(--radius)',
+    }}>
+      <div style={{fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:'var(--ink-soft)', marginBottom:4}}>
+        {label}
+      </div>
+      <div className="mono" style={{
+        fontSize: small ? 11.5 : 13,
+        color: accent ? 'var(--amber)' : 'var(--ink-bright)',
+        wordBreak: 'break-all',
+      }}>{value || '—'}</div>
+    </div>
+  );
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Where</span>
+        <span className="k">source → channel → destination</span>
+      </div>
+      <div style={{padding:14}}>
+        <div style={{display:'flex', gap:8, alignItems:'stretch', flexWrap:'wrap'}}>
+          <Node label="Source"
+                value={sender || srcIp || filename || '—'}
+                small={!sender} />
+          <div style={{display:'flex', alignItems:'center', color:'var(--ink-soft)', fontSize:16, padding:'0 2px'}}>→</div>
+          <Node label="Channel"
+                value={channelLabel} />
+          <div style={{display:'flex', alignItems:'center', color:'var(--ink-soft)', fontSize:16, padding:'0 2px'}}>→</div>
+          <Node label="Destination"
+                value={recipient || destUrl || '(captured)'}
+                accent={destExt} />
+        </div>
+
+        <div className="kv" style={{marginTop:14, gridTemplateColumns:'140px 1fr', gap:'6px 12px', fontSize:12}}>
+          <span className="k">Detection pod</span>
+          <span className="v"><span className="chip chip--ghost" style={{fontSize:10}}>{f.source_pod || 'unknown'}</span></span>
+          {filename && (<>
+            <span className="k">File</span>
+            <span className="v mono" style={{fontSize:11.5}}>{filename}</span>
+          </>)}
+          {md.department && (<>
+            <span className="k">Department</span>
+            <span className="v">{md.department}</span>
+          </>)}
+          {md.region && (<>
+            <span className="k">Region</span>
+            <span className="v"><span className="chip chip--ghost" style={{fontSize:10}}>{md.region}</span></span>
+          </>)}
+          {destExt && (<>
+            <span className="k">Signal</span>
+            <span className="v">
+              <span className="chip chip--red" style={{fontSize:10}}>external destination</span>
+              <span className="muted" style={{marginLeft:8, fontSize:11}}>
+                recipient / URL outside the corporate domain — possible exfil
+              </span>
+            </span>
+          </>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Why panel ─────────────────────────────────────────────────
+// The detection rationale. Rather than re-run /scan with trace (as
+// siphon-c2's DetectionPipeline does) we render an illustrative
+// pipeline statically — in demo mode the trace endpoint has no
+// relevant finding, and in live mode the rescan would invalidate
+// the audit trail. If we later wire a /v1/findings/{id}/trace
+// endpoint this panel consumes it the same way.
+const WHY_STAGES = [
+  { key: 'regex',          label: 'Regex',          note: 'pattern match on normalised text' },
+  { key: 'validation',     label: 'Validate',       note: 'checksum / structural validator' },
+  { key: 'context',        label: 'Context',        note: 'Aho-Corasick keyword proximity' },
+  { key: 'min_confidence', label: 'Min-confidence', note: 'threshold filter' },
+  { key: 'emit',           label: 'Emit',           note: 'finding written to ring + audit' },
+];
+
+function WhyPanel({ f }) {
+  const md = f.metadata || {};
+  const emitted = true; // by definition, this finding was emitted
+  const ctx = f.has_context;
+  const conf = f.confidence;
+
+  // Status per stage: 'pass' | 'warn' | 'skip' | 'block'. Since the
+  // finding was emitted, every stage passed. `context` is 'pass'
+  // when has_context, otherwise 'skip' (the pattern wasn't
+  // context-gated).
+  const stageStatus = {
+    regex: 'pass',
+    validation: 'pass',
+    context: ctx ? 'pass' : 'skip',
+    min_confidence: conf != null && conf >= 0 ? 'pass' : 'skip',
+    emit: 'pass',
+  };
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Why</span>
+        <span className="k">pattern · pipeline · policy</span>
+      </div>
+      <div style={{padding:14}}>
+        {/* Verdict + pattern summary row */}
+        <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:10, flexWrap:'wrap'}}>
+          <span className="chip chip--safe" style={{fontSize:10}}>EMIT</span>
+          <a href={`siphon-c2.html#patterns/${encodeURIComponent(f.category)}/${encodeURIComponent(f.sub_category || '')}`}
+             target="_blank" rel="noopener"
+             style={{fontFamily:"'JetBrains Mono', monospace", fontSize:12, color:'var(--accent)', textDecoration:'none'}}>
+            {f.category}
+            {f.sub_category && <><span className="muted"> / </span>{f.sub_category}</>}
+            <span style={{marginLeft:4, fontSize:10}}>↗</span>
+          </a>
+          {conf != null && (
+            <span className="muted mono" style={{fontSize:11}}>conf {conf.toFixed(3)}</span>
+          )}
+        </div>
+
+        {/* Pipeline strip */}
+        <div style={{display:'flex', gap:2, marginBottom:10, flexWrap:'wrap', alignItems:'center'}}>
+          {WHY_STAGES.map((s, i) => {
+            const st = stageStatus[s.key];
+            const color = st === 'pass' ? { bg: 'var(--accent-wash)', fg: 'var(--accent)', border: 'var(--accent)' }
+                        : st === 'skip' ? { bg: 'var(--bg-3)', fg: 'var(--ink-soft)', border: 'var(--line)' }
+                        : { bg: 'var(--red-wash)', fg: 'var(--red)', border: 'var(--red)' };
+            return (
+              <React.Fragment key={s.key}>
+                <span title={`${s.label} · ${st}\n${s.note}`}
+                      style={{
+                        padding:'4px 10px',
+                        fontFamily:"'JetBrains Mono', monospace",
+                        fontSize:10, fontWeight: 600,
+                        letterSpacing:'0.06em', textTransform:'uppercase',
+                        border:'1px solid ' + color.border,
+                        color: color.fg, background: color.bg,
+                        borderRadius:'var(--radius)',
+                        borderStyle: st === 'skip' ? 'dashed' : 'solid',
+                      }}>
+                  {s.label}
+                </span>
+                {i < WHY_STAGES.length - 1 && (
+                  <span style={{color: 'var(--ink-soft)', fontSize: 12, padding: '0 1px'}}>→</span>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </div>
+
+        <div className="muted mono" style={{fontSize:10.5, marginBottom:12}}>
+          Pipeline above is illustrative. A future /v1/findings/{'{'}id{'}'}/trace endpoint
+          will replace this with the actual per-stage trace that fired this finding.
+        </div>
+
+        <div className="kv" style={{gridTemplateColumns:'140px 1fr', gap:'6px 12px', fontSize:12}}>
+          <span className="k">Context gate</span>
+          <span className="v">
+            {ctx ? <span className="chip chip--safe" style={{fontSize:10}}>keyword matched</span>
+                 : <span className="chip chip--ghost" style={{fontSize:10}}>no keyword required · always-run pattern</span>}
+          </span>
+          <span className="k">Specificity</span>
+          <span className="v mono">
+            {conf != null ? (conf >= 0.9 ? 'high' : conf >= 0.7 ? 'medium' : 'low') : '—'}
+          </span>
+          {md.list_matched && (<>
+            <span className="k">List match</span>
+            <span className="v">
+              <span className="chip chip--warn" style={{fontSize:10}}>{md.list_matched}</span>
+              <span className="muted"> · action <span className="mono">{md.list_action || 'tag'}</span></span>
+            </span>
+          </>)}
+          {md.unique_count_breach === 'true' && (<>
+            <span className="k">Unique breach</span>
+            <span className="v">
+              <span className="chip chip--red" style={{fontSize:10}}>breached</span>
+              <span className="muted"> · {md.unique_count || '?'} distinct values in scan</span>
+            </span>
+          </>)}
+          <span className="k">Policy</span>
+          <span className="v muted" style={{fontSize:11.5}}>
+            No per-finding policy attribution yet · siphon-api's policy engine runs at scan time
+            but doesn't tag findings with the policy that fired. Future enhancement.
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Timeline panel ────────────────────────────────────────────
 // Ported from siphon-c2's FindingTimeline. Walks the known event
 // sequence for this finding: request accepted → match detected →
@@ -4144,28 +4358,12 @@ function FindingDetail({ id, back }) {
         <WhoPanel f={f} all={all} />
         <WhatPanel f={f} />
 
-        <PanelStub title="Where" question="Where did this happen?">
-          <div className="muted" style={{fontSize:11.5}}>Channel:</div>
-          <div style={{marginTop:6, fontSize:13}}>{ctx.where}</div>
-          {ctx.filename && <div style={{fontSize:12, marginTop:4}}>File: <span className="mono">{ctx.filename}</span></div>}
-          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
-            Full panel (commit 3): source → destination diagram (IP + URL for network channels,
-            sender → recipient for email), pod the detection came from, full filesystem path.
-          </div>
-        </PanelStub>
+        <WherePanel f={f} />
 
         <FindingTimeline finding={f}
                          sameReq={all.filter(x => x.id !== f.id && x.request_id === f.request_id)} />
 
-        <PanelStub title="Why" question="Why did detection fire?">
-          <div className="muted" style={{fontSize:11.5}}>Signal summary:</div>
-          <div style={{marginTop:6, fontSize:12, lineHeight:1.6}}>{ctx.why}</div>
-          <div className="muted" style={{fontSize:11, marginTop:14, lineHeight:1.7}}>
-            Full panel (commit 4): pattern (category/sub) with link to Patterns browser, policy that
-            fired, detection-pipeline narrative (regex → validation → context → emit),
-            list-binding match if applicable, runtime overrides that were applied.
-          </div>
-        </PanelStub>
+        <WhyPanel f={f} />
 
         <QuickActions f={f} />
       </div>
