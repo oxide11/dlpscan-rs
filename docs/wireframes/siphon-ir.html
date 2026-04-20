@@ -4637,6 +4637,203 @@ function WhyPanel({ f }) {
   );
 }
 
+// ── Related findings panel ─────────────────────────────────────
+// Adapted from siphon-c2's RelatedFindings. Scores each other
+// finding in the ring by how many correlation axes it shares with
+// the one on screen: same request (strongest · 10), same user (6),
+// same recipient (5), same source IP (4), same category (2), ±5min
+// temporal (1). Sorted by score then recency.
+//
+// IR-specific vs c2: adds `user` and `recipient` axes (IR flows
+// through email/upload channels where metadata.user /
+// metadata.recipient identify the actor — c2 runs against raw
+// source_ip only). Uses window.useIrFindings so demo mode works.
+function RelatedFindingsPanel({ finding, onJump }) {
+  const fx = window.useIrFindings('?limit=1000');
+  const list = (fx.data && fx.data.findings) || [];
+  const selfTs = new Date(finding.ts).getTime();
+  const WINDOW_MS = 5 * 60 * 1000;
+
+  const md = finding.metadata || {};
+  const selfUser = md.user || md.sender || null;
+  const selfRecipient = md.recipient || null;
+
+  const axes = React.useMemo(() => {
+    const out = { request: [], user: [], recipient: [], source: [], category: [], temporal: [] };
+    for (const r of list) {
+      if (r.id === finding.id) continue;
+      const rmd = r.metadata || {};
+      if (r.request_id && r.request_id === finding.request_id) out.request.push(r);
+      const ruser = rmd.user || rmd.sender;
+      if (selfUser && ruser === selfUser) out.user.push(r);
+      if (selfRecipient && rmd.recipient && rmd.recipient === selfRecipient) out.recipient.push(r);
+      if (r.source_ip && r.source_ip === finding.source_ip) out.source.push(r);
+      if (r.category && r.category === finding.category) out.category.push(r);
+      const rt = new Date(r.ts).getTime();
+      if (!isNaN(rt) && Math.abs(rt - selfTs) <= WINDOW_MS) out.temporal.push(r);
+    }
+    return out;
+  }, [list, finding]);
+
+  const clustered = React.useMemo(() => {
+    const map = new Map();
+    const tag = (arr, axis, weight) => {
+      for (const r of arr) {
+        const e = map.get(r.id) || { finding: r, axes: new Set(), score: 0 };
+        if (!e.axes.has(axis)) { e.axes.add(axis); e.score += weight; }
+        map.set(r.id, e);
+      }
+    };
+    tag(axes.request,   'request',   10);
+    tag(axes.user,      'user',       6);
+    tag(axes.recipient, 'recipient',  5);
+    tag(axes.source,    'source',     4);
+    tag(axes.category,  'category',   2);
+    tag(axes.temporal,  'temporal',   1);
+    return [...map.values()].sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return new Date(b.finding.ts).getTime() - new Date(a.finding.ts).getTime();
+    });
+  }, [axes]);
+
+  const AXIS_META = {
+    request:   { label: 'same scan',      color: '#5ef38c', hint: 'same request_id' },
+    user:      { label: 'same user',      color: '#ba91ff', hint: 'same metadata.user / .sender' },
+    recipient: { label: 'same recipient', color: '#ffb432', hint: 'same metadata.recipient' },
+    source:    { label: 'same source',    color: '#94d0ff', hint: 'same source_ip' },
+    category:  { label: 'same category',  color: '#ffb432', hint: 'same category' },
+    temporal:  { label: '±5 min',         color: 'var(--ink-soft)', hint: 'within ±5 minutes' },
+  };
+
+  const counts = {
+    request:   axes.request.length,
+    user:      axes.user.length,
+    recipient: axes.recipient.length,
+    source:    axes.source.length,
+    category:  axes.category.length,
+    temporal:  axes.temporal.length,
+  };
+
+  const offsetLabel = (ts) => {
+    const ms = new Date(ts).getTime() - selfTs;
+    if (isNaN(ms)) return '—';
+    const abs = Math.abs(ms);
+    const sign = ms >= 0 ? '+' : '−';
+    if (abs < 1000)    return sign + abs + 'ms';
+    if (abs < 60000)   return sign + (abs / 1000).toFixed(1) + 's';
+    if (abs < 3600000) return sign + Math.round(abs / 60000) + 'm';
+    if (abs < 86400000) return sign + Math.round(abs / 3600000) + 'h';
+    return sign + Math.round(abs / 86400000) + 'd';
+  };
+
+  const sevChip = (sev) => {
+    const cls = {critical:'red', high:'red', medium:'amber', low:'warn', info:'ghost'}[sev] || 'ghost';
+    return <span className={`chip chip--${cls}`} style={{fontSize:9, padding:'2px 6px'}}>{sev || 'info'}</span>;
+  };
+
+  if (fx.loading && clustered.length === 0) {
+    return (
+      <div className="box">
+        <div className="box-title"><span className="t">Related findings</span><span className="k">loading…</span></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="box">
+      <div className="box-title">
+        <span className="t">Related findings</span>
+        <span className="k" style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>
+          {clustered.length} related
+          {' · '}scan <b style={{color:'var(--ink-bright)'}}>{counts.request}</b>
+          {selfUser      && <> · user <b style={{color:'var(--ink-bright)'}}>{counts.user}</b></>}
+          {selfRecipient && <> · recipient <b style={{color:'var(--ink-bright)'}}>{counts.recipient}</b></>}
+          {' · '}source <b style={{color:'var(--ink-bright)'}}>{counts.source}</b>
+          {' · '}category <b style={{color:'var(--ink-bright)'}}>{counts.category}</b>
+          {' · '}±5m <b style={{color:'var(--ink-bright)'}}>{counts.temporal}</b>
+        </span>
+      </div>
+
+      <div style={{padding:14}}>
+        {clustered.length === 0 ? (
+          <div className="muted mono" style={{fontSize:11.5, padding:'6px 0', lineHeight:1.7}}>
+            No other findings in the ring share this finding's
+            scan, user, recipient, source, category, or ±5 min window.
+          </div>
+        ) : (
+          <div style={{
+            display:'grid',
+            gridTemplateColumns:'auto 140px 1fr auto',
+            rowGap: 7, columnGap: 12,
+            alignItems:'center',
+            fontFamily:"'JetBrains Mono', monospace", fontSize: 11.5,
+          }}>
+            {clustered.slice(0, 15).map(({ finding: r, axes: hits }) => (
+              <React.Fragment key={r.id}>
+                {sevChip(r.severity)}
+                <span>
+                  <a onClick={(e) => { e.preventDefault(); onJump && onJump(r.id); }}
+                     style={{
+                       color: 'var(--ink-bright)', textDecoration: 'none',
+                       borderBottom: '1px dashed var(--line-strong)',
+                       cursor: 'pointer', fontWeight: 600,
+                     }}>
+                    {r.id}
+                  </a>
+                </span>
+                <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', minWidth:0}}
+                      title={`${r.category} / ${r.sub_category || ''} · ${r.text || ''}`}>
+                  <span style={{color:'#94d0ff'}}>{r.category}</span>
+                  {r.sub_category && <span className="muted"> / {r.sub_category}</span>}
+                  <span className="muted"> · </span>
+                  <span style={{color:'var(--accent)'}}>{r.text}</span>
+                </span>
+                <span style={{display:'flex', gap:4, alignItems:'center', flexWrap:'wrap', justifyContent:'flex-end'}}>
+                  {[...hits].map(a => (
+                    <span key={a}
+                          title={AXIS_META[a].hint}
+                          style={{
+                            fontSize: 9, padding: '2px 6px',
+                            border: '1px solid ' + AXIS_META[a].color,
+                            color: AXIS_META[a].color,
+                            borderRadius: 2, letterSpacing: 0.5,
+                            fontWeight: 600,
+                          }}>
+                      {AXIS_META[a].label}
+                    </span>
+                  ))}
+                  <span className="muted" style={{fontSize: 10, marginLeft: 4}} title={r.ts}>
+                    {offsetLabel(r.ts)}
+                  </span>
+                </span>
+              </React.Fragment>
+            ))}
+          </div>
+        )}
+
+        {clustered.length > 15 && (
+          <div className="muted" style={{fontSize:11, paddingTop:10, marginTop:8, borderTop:'1px dashed var(--line-soft)'}}>
+            … {clustered.length - 15} more related findings hidden.{' '}
+            <a onClick={() => {
+                 try { irPivotToQueue({ search: finding.request_id || selfUser || '' }); }
+                 catch {}
+               }}
+               style={{color:'var(--accent)', cursor:'pointer'}}>
+              Open in queue
+            </a>{' '}to see the full set.
+          </div>
+        )}
+
+        <div className="muted" style={{fontSize:10.5, marginTop:12, lineHeight:1.7, paddingTop:8, borderTop:'1px dashed var(--line-soft)'}}>
+          Ring is bounded ({fx.data ? fx.data.capacity : '—'}) — only findings still in-memory
+          are correlated. Scoring: request ×10 · user ×6 · recipient ×5 · source ×4 ·
+          category ×2 · temporal ×1.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Timeline panel ────────────────────────────────────────────
 // Ported from siphon-c2's FindingTimeline. Walks the known event
 // sequence for this finding: request accepted → match detected →
@@ -5161,6 +5358,14 @@ function FindingDetail({ id, back }) {
         <WhyPanel f={f} />
 
         <QuickActions f={f} />
+      </div>
+
+      {/* Related findings — full-width correlation view. Sits
+          below the 5W+H grid so it pulls from the full analyst
+          context + the preview content above. */}
+      <div style={{padding:'0 var(--gap) var(--gap) var(--gap)'}}>
+        <RelatedFindingsPanel finding={f}
+                              onJump={(fid) => window.__ir_goFinding && window.__ir_goFinding(fid)} />
       </div>
 
       {/* Investigator notes — writes on the next disposition click. */}
