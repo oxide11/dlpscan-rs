@@ -8998,6 +8998,15 @@ function UserRowActions({ user, canUpdate, canDisable }) {
     updateUser(user.id, { role: roleId });
     setOpen(false);
   };
+  const toggleStatus = () => {
+    const next = user.status === 'active' ? 'disabled' : 'active';
+    updateUser(user.id, { status: next });
+    setOpen(false);
+  };
+  // Invited rows shouldn't show disable — they're not active yet.
+  // Disabled rows get the "Enable" label instead.
+  const statusToggleLabel = user.status === 'active' ? 'Disable user' : 'Enable user';
+  const showStatusToggle = canDisable && user.status !== 'invited';
 
   return (
     <div style={{position:'relative', display:'flex', justifyContent:'flex-end'}}>
@@ -9063,6 +9072,27 @@ function UserRowActions({ user, canUpdate, canDisable }) {
                   </button>
                 );
               })}
+            </>
+          )}
+
+          {showStatusToggle && (
+            <>
+              {canUpdate && (
+                <div style={{
+                  borderTop:'1px solid var(--line-soft)',
+                  margin:'4px 0',
+                }}/>
+              )}
+              <button onClick={toggleStatus}
+                      style={{
+                        ...menuItemStyle,
+                        color: user.status === 'active' ? 'var(--amber)' : 'var(--safe)',
+                      }}>
+                <span style={{marginRight:8}}>
+                  {user.status === 'active' ? '⊘' : '↻'}
+                </span>
+                {statusToggleLabel}
+              </button>
             </>
           )}
         </div>
