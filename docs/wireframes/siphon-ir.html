@@ -8993,6 +8993,25 @@ async function irAuthenticate(emailOrId, password) {
   return { ok: false, reason: 'wrong-password', user };
 }
 
+// Password-policy check. Deliberately loose for a wireframe — the
+// actual floor for a production deployment would be enforced by
+// the server. Returns { ok: true } or { ok: false, reason }.
+function irValidatePassword(pw, confirm) {
+  if (typeof pw !== 'string' || pw.length < 10) {
+    return { ok: false, reason: 'password must be at least 10 characters' };
+  }
+  if (!/[A-Za-z]/.test(pw) || !/[0-9]/.test(pw)) {
+    return { ok: false, reason: 'password must include at least one letter and one digit' };
+  }
+  if (pw === IR_SEED_DEFAULT_PASSWORD) {
+    return { ok: false, reason: "can't reuse the seeded default password" };
+  }
+  if (confirm != null && pw !== confirm) {
+    return { ok: false, reason: "the two passwords don't match" };
+  }
+  return { ok: true };
+}
+
 // Replace a user's password with a fresh PBKDF2 hash. Clears
 // default_password and must_change_password so re-login doesn't
 // keep nagging. Async because hashing is async.
@@ -9717,6 +9736,137 @@ function LoginPage({ onLogin }) {
   );
 }
 
+// ─── ForceChangePassword · A4 ──────────────────────────────────
+// Shown immediately after a successful login when the user record
+// still carries must_change_password=true — i.e. the seeded
+// default, an admin-set initial password, or an admin-forced
+// rotation. Same full-page layout as LoginPage so the flow feels
+// continuous. Submission calls irSetPassword, which replaces the
+// default_password fallback with a real PBKDF2 hash and flips
+// must_change_password off.
+function ForceChangePassword({ user, onDone }) {
+  const [pw1, setPw1] = React.useState('');
+  const [pw2, setPw2] = React.useState('');
+  const [err, setErr] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+
+  const submit = async (e) => {
+    if (e) e.preventDefault();
+    setErr(null);
+    const v = irValidatePassword(pw1, pw2);
+    if (!v.ok) return setErr(v.reason);
+    setBusy(true);
+    try {
+      await irSetPassword(user.id, pw1);
+      onDone();
+    } catch (ex) {
+      setErr('could not save password · ' + (ex.message || ex));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      background: 'var(--bg-0)',
+      display: 'grid', placeItems: 'center',
+      padding: '32px',
+    }}>
+      <form onSubmit={submit}
+            style={{
+              width: '100%', maxWidth: 460,
+              background: 'var(--bg-1)',
+              border: '1px solid var(--line-strong)',
+              borderRadius: 'var(--radius)',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.35)',
+              padding: '28px 28px 22px',
+              fontFamily: "'Space Grotesk', sans-serif",
+            }}>
+        <div style={{marginBottom:20}}>
+          <div style={{
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 11, color:'var(--amber)', letterSpacing:'0.1em',
+          }}>FORCED · FIRST LOGIN</div>
+          <div style={{
+            fontSize: 22, fontWeight: 700, color:'var(--ink-bright)',
+            letterSpacing:'-0.01em', marginTop: 4,
+          }}>Set a new password</div>
+          <div style={{fontSize:12, color:'var(--ink-soft)', marginTop:8, lineHeight:1.6}}>
+            Signed in as <span className="mono" style={{color:'var(--ink)'}}>{user.email || user.id}</span>.
+            You need to replace the default/initial password before the console
+            is accessible.
+          </div>
+        </div>
+
+        <label style={{display:'block', marginBottom:12}}>
+          <div className="label" style={{marginBottom:4}}>New password</div>
+          <input type="password"
+                 value={pw1}
+                 onChange={(e) => setPw1(e.target.value)}
+                 autoComplete="new-password"
+                 autoFocus
+                 placeholder="at least 10 characters · letters + digits"
+                 style={{
+                   width:'100%', boxSizing:'border-box',
+                   padding:'10px 12px', fontSize:13,
+                   background:'var(--bg-0)', color:'var(--ink)',
+                   border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                   fontFamily:"'JetBrains Mono', monospace",
+                 }}/>
+        </label>
+
+        <label style={{display:'block', marginBottom:14}}>
+          <div className="label" style={{marginBottom:4}}>Confirm password</div>
+          <input type="password"
+                 value={pw2}
+                 onChange={(e) => setPw2(e.target.value)}
+                 autoComplete="new-password"
+                 placeholder="re-enter the same password"
+                 style={{
+                   width:'100%', boxSizing:'border-box',
+                   padding:'10px 12px', fontSize:13,
+                   background:'var(--bg-0)', color:'var(--ink)',
+                   border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                   fontFamily:"'JetBrains Mono', monospace",
+                 }}/>
+        </label>
+
+        {err && (
+          <div style={{
+            padding:'8px 10px', marginBottom:12,
+            background:'var(--red-wash)',
+            border:'1px solid var(--threat)',
+            color:'var(--threat)',
+            borderRadius:'var(--radius)',
+            fontSize:12,
+          }}>{err}</div>
+        )}
+
+        <button type="submit"
+                className="btn primary"
+                disabled={busy}
+                style={{width:'100%', padding:'10px 0', fontSize:13, fontWeight:600}}>
+          {busy ? 'saving…' : 'Set password & continue'}
+        </button>
+
+        <div style={{
+          marginTop:14, padding:'8px 10px',
+          background:'var(--bg-2)',
+          border:'1px dashed var(--line-soft)',
+          borderRadius:'var(--radius)',
+          fontSize:11, color:'var(--ink-soft)',
+          lineHeight:1.6,
+        }}>
+          <b style={{color:'var(--ink)'}}>Policy</b> · ≥ 10 characters, at least one
+          letter and one digit, can't reuse the seeded default. Production would
+          layer on server-side checks (breach-corpus, HIBP, etc.).
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function LoginDemoHint() {
   // Only surface the hint while at least one seeded user still
   // carries the default password. Once everyone's rotated, the
@@ -9881,16 +10031,55 @@ function App() {
     return <LoginPage onLogin={handleLogin} />;
   }
 
+  // Second gate: if the signed-in user still carries a forced-
+  // change flag (seeded default, admin-set initial password, or
+  // admin-forced rotation), trap them on the change form until
+  // they set a real password. useChangeTick re-reads the user
+  // record on ir:usersChanged so the gate releases the moment
+  // irSetPassword writes.
+  return <GatedShell session={session}
+                     tweaks={tweaks} setTweak={setTweak}
+                     surface={surface} setSurface={setSurface}
+                     sub={sub} setSub={setSub}
+                     go={go}
+                     playbooksOpen={playbooksOpen}
+                     closePlaybooks={closePlaybooks}
+                     openPlaybooks={openPlaybooks}
+                     playbooksInitial={playbooksInitial}
+                     body={body} />;
+}
+
+// Splits the mandatory-change gate out so GatedShell can subscribe
+// to user updates and re-evaluate without rebuilding the rest of
+// App's state. It consumes the pre-computed `body` + nav wiring
+// and just decides between "change password first" and the full
+// console shell.
+function GatedShell(props) {
+  const [tick, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => setTick(t => t + 1);
+    window.addEventListener('ir:usersChanged',       refresh);
+    window.addEventListener('ir:currentUserChanged', refresh);
+    return () => {
+      window.removeEventListener('ir:usersChanged',       refresh);
+      window.removeEventListener('ir:currentUserChanged', refresh);
+    };
+  }, []);
+  const user = getCurrentUser();
+  if (user && user.must_change_password) {
+    return <ForceChangePassword user={user}
+                                onDone={() => setTick(t => t + 1)} />;
+  }
   return (
-    <div className="shell" data-density={tweaks.density} data-theme={tweaks.theme}>
-      <Topbar tweaks={tweaks} setTweak={setTweak}
-              openPlaybooks={openPlaybooks} />
-      <WorkspaceBar current={surface} go={go} />
-      <SurfaceBar current={surface} go={go} />
-      <main className="page">{body}</main>
-      <PlaybookDrawer open={playbooksOpen}
-                      onClose={closePlaybooks}
-                      initialPlaybookId={playbooksInitial} />
+    <div className="shell" data-density={props.tweaks.density} data-theme={props.tweaks.theme}>
+      <Topbar tweaks={props.tweaks} setTweak={props.setTweak}
+              openPlaybooks={props.openPlaybooks} />
+      <WorkspaceBar current={props.surface} go={props.go} />
+      <SurfaceBar current={props.surface} go={props.go} />
+      <main className="page">{props.body}</main>
+      <PlaybookDrawer open={props.playbooksOpen}
+                      onClose={props.closePlaybooks}
+                      initialPlaybookId={props.playbooksInitial} />
     </div>
   );
 }
