@@ -2159,10 +2159,10 @@ const WORKSPACES = [
   { id: 'detect',      label: 'Detect',      hint: 'rules · patterns · models',      glyph: '⤷' },
   { id: 'assure',      label: 'Assure',      hint: 'test · comply · audit',          glyph: '✓' },
   // 'admin' is still the internal workspace id so surface routing
-  // (crumbs, SurfaceBar filter) keeps working; label is now 'Settings'
-  // and `hidden: true` removes the tile from the top workspace bar
-  // now that the gear icon in the Topbar is the primary entry.
-  { id: 'admin',       label: 'Settings',    hint: 'users · system · integrations',  glyph: '⚙', hidden: true },
+  // (crumbs, SurfaceBar filter) keeps working; label is 'Settings'.
+  // Visible in the top workspace bar AND reachable via the topbar
+  // gear icon — operator muscle-memory goes both ways.
+  { id: 'admin',       label: 'Settings',    hint: 'users · system · integrations',  glyph: '⚙' },
   { id: 'engineering', label: 'Engineering', hint: 'dev tools · live API',           glyph: '⌁' },
   // Docs is reachable via the HelpIcon popovers and the Settings →
   // Docs button; hidden from the top workspace bar to keep primary
@@ -8196,30 +8196,75 @@ function PendingChangesBanner({ customCategories: customCategoriesProp }) {
       // active_list_bindings by hand isn't clobbered.
       active_list_bindings: syncBindings ? syncedBindings : currentActiveBindings,
     };
+    // Fan-out strategy:
+    //   1. Apply to the primary siphon-api (writes SIPHON_OVERRIDES_PATH
+    //      on its host + hot-reloads in-memory).
+    //   2. For every OTHER enabled pod in the registry, POST
+    //      /v1/overrides/reload so the pod re-reads the same file and
+    //      swaps its LiveOverrides. Works for shared mounts (ConfigMap,
+    //      launcher-provisioned .siphon/overrides.json) where one write
+    //      is visible to every pod.
+    //   3. Report a per-pod roll-up so the operator sees which pods
+    //      picked up the change.
+    const registry = (window.usePodRegistry ? [] : []); // can't call hook here; use raw read
+    let registered = [];
     try {
-      const url = window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/overrides/apply';
-      const r = await window.siphonFetch(url, {
+      registered = JSON.parse(localStorage.getItem('c2:pods') || '[]') || [];
+    } catch { registered = []; }
+    const enabledPods = registered.filter(p => !p.disabled);
+    const primaryUrl = window.SIPHON_API_URL().replace(/\/$/, '');
+    const reloadTargets = enabledPods
+      .map(p => p.url.replace(/\/$/, ''))
+      .filter(u => u !== primaryUrl);
+
+    try {
+      const applyUrl = primaryUrl + '/v1/overrides/apply';
+      const r = await window.siphonFetch(applyUrl, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(doc),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-      setApply({ loading: false, error: null, success: j });
-      // Stash the pre-apply startup timestamp so the banner can
-      // detect when the pod has actually rolled (Phase 4c). Keyed by
-      // pod URL so multi-pod (Phase 4.5) stays clean.
-      const priorStart = health.data && health.data.started_at;
-      if (priorStart) {
-        const pending = readApplyPending();
-        pending[podUrl] = {
-          apply_time: new Date().toISOString(),
-          prior_started_at: priorStart,
-          prior_pod_id: health.data.pod_id,
-          written_path: j.written_path,
-          backup_path: j.backup_path || null,
-        };
-        writeApplyPending(pending);
+
+      // Fan out the reload. Failures here are non-fatal — the primary
+      // write succeeded and the operator will see which pods missed
+      // the reload in the per-pod roll-up.
+      const reloadResults = await Promise.all(reloadTargets.map(async (url) => {
+        try {
+          const rr = await window.siphonFetch(url + '/v1/overrides/reload', { method: 'POST' });
+          if (!rr.ok) {
+            const body = await rr.text();
+            return { url, ok: false, error: 'HTTP ' + rr.status + (body ? ': ' + body.slice(0, 100) : '') };
+          }
+          const rj = await rr.json();
+          return { url, ok: true, summary: rj.summary };
+        } catch (e) {
+          return { url, ok: false, error: String(e.message || e) };
+        }
+      }));
+
+      setApply({
+        loading: false,
+        error: null,
+        success: { ...j, reloaded_pods: reloadResults, primary_url: primaryUrl },
+      });
+      // Hot-reload means the pod is already serving the new ruleset —
+      // no restart-pending banner needed unless the pod explicitly
+      // reported hot_reloaded=false (lock poisoned edge case).
+      if (j.hot_reloaded === false) {
+        const priorStart = health.data && health.data.started_at;
+        if (priorStart) {
+          const pending = readApplyPending();
+          pending[podUrl] = {
+            apply_time: new Date().toISOString(),
+            prior_started_at: priorStart,
+            prior_pod_id: health.data.pod_id,
+            written_path: j.written_path,
+            backup_path: j.backup_path || null,
+          };
+          writeApplyPending(pending);
+        }
       }
       current.refetch();
       bump();
@@ -8285,11 +8330,13 @@ function PendingChangesBanner({ customCategories: customCategoriesProp }) {
     );
   }
 
-  // Recent-apply success banner — shows briefly after the pod rolls
-  // (picked up by the rolled useEffect above) until dirty flips back
-  // to false. Once /current reflects the applied state, dirty is
-  // false, so this branch disappears on the next render.
+  // Recent-apply success banner — shows briefly after hot-reload
+  // lands. Includes a per-pod roll-up of the fan-out reload so the
+  // operator knows which siblings picked up the change.
   if (apply.success && !dirty && !podPending) {
+    const reloaded = apply.success.reloaded_pods || [];
+    const reloadedOk = reloaded.filter(r => r.ok);
+    const reloadedFail = reloaded.filter(r => !r.ok);
     return (
       <div className="note" style={{
         borderColor:'var(--safe)', background:'var(--accent-wash)', color:'var(--ink)',
@@ -8297,10 +8344,22 @@ function PendingChangesBanner({ customCategories: customCategoriesProp }) {
       }}>
         <b>✓ Applied and live.</b> Overrides written to <span className="mono">{apply.success.written_path}</span>
         {apply.success.backup_path && <> · previous file backed up to <span className="mono">{apply.success.backup_path}</span></>}
-        {health.data && health.data.started_at && (
-          <> · picked up by pod at <span className="mono">{health.data.started_at}</span></>
-        )}
+        {apply.success.hot_reloaded !== false && <> · hot-reloaded on <span className="mono">{apply.success.primary_url}</span> (no restart)</>}
         .
+        {reloaded.length > 0 && (
+          <div style={{marginTop:6, fontSize:11, fontFamily:"'JetBrains Mono', monospace", color:'var(--ink-soft)'}}>
+            Fan-out: {reloadedOk.length} reloaded{reloadedFail.length ? `, ${reloadedFail.length} failed` : ''} across {reloaded.length} sibling pod{reloaded.length === 1 ? '' : 's'}.
+            {reloadedFail.length > 0 && (
+              <div style={{marginTop:4}}>
+                {reloadedFail.map(r => (
+                  <div key={r.url} style={{color:'var(--red)'}}>
+                    ⚠ <span className="mono">{r.url}</span> — {r.error}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
