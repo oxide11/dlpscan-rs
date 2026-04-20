@@ -2465,6 +2465,7 @@ const IR_SURFACES = [
   { id: 'integrations',   workspace: 'settings',  icon: '⇄',  title: 'Integrations',     sub: 'XSOAR · Splunk HEC' },
   { id: 'ir-settings',    workspace: 'settings',  icon: '⚙',  title: 'Responder Prefs',  sub: 'filters · notifications' },
   { id: 'ir-deployment',  workspace: 'settings',  icon: '⚿',  title: 'Pod Registry',     sub: 'shared with admin console' },
+  { id: 'ir-engineering', workspace: 'settings',  icon: '⌁',  title: 'Engineering',      sub: 'demo data · dev toggles' },
 ];
 
 function workspaceOf(surfaceId) {
@@ -2606,8 +2607,40 @@ function Stub({ title, description }) {
 // shared localStorage[c2:fpQueue] bucket that the admin console's FP
 // Queue surface reads.
 const IR_DISPO_KEY = 'ir:dispositions';
+const IR_DEMO_DISPO_KEY = 'ir:demoDispositions';
 const FP_QUEUE_KEY = 'c2:fpQueue';
 const XSOAR_CFG_KEY = 'ir:xsoar';
+const IR_DEMO_MODE_KEY = 'ir:demoMode';
+const IR_DEMO_SEED_KEY = 'ir:demoSeed';
+
+// ─── Demo-mode plumbing ─────────────────────────────────────────
+// Toggle lives under Settings → Engineering. When on, the Findings
+// Queue and dashboard read from a seeded fixture set instead of the
+// live pod union. Dispositions made in demo mode are stored in a
+// separate localStorage key so the analyst's real triage state never
+// collides with the demo state.
+
+function isDemoMode() {
+  try { return localStorage.getItem(IR_DEMO_MODE_KEY) === 'on'; }
+  catch { return false; }
+}
+function readDemoSeed() {
+  try {
+    const v = localStorage.getItem(IR_DEMO_SEED_KEY);
+    if (v) return parseInt(v, 10);
+  } catch {}
+  // Default stable-but-non-obvious seed so the first load always
+  // renders the same demo set for screenshot + doc purposes.
+  return 0x51D705C4;
+}
+function writeDemoSeed(seed) {
+  try { localStorage.setItem(IR_DEMO_SEED_KEY, String(seed >>> 0)); } catch {}
+}
+function setDemoMode(on) {
+  try { localStorage.setItem(IR_DEMO_MODE_KEY, on ? 'on' : 'off'); } catch {}
+  // Same-tab notifier — other tabs get the 'storage' event for free.
+  window.dispatchEvent(new CustomEvent('ir:demoChanged', { detail: { on } }));
+}
 
 // Four legal dispositions. 'open' means untriaged (no record in the
 // disposition map). Values in records use the 4 below + a free-text
@@ -2618,12 +2651,15 @@ const DISPO = {
   escalate: { label: 'Escalated · XSOAR',  chip: 'warn',  short: 'esc'   },
 };
 
+// Dispo read/write route through the current mode so demo triage and
+// real triage never stomp each other. Same contract either way.
+function dispoKey() { return isDemoMode() ? IR_DEMO_DISPO_KEY : IR_DISPO_KEY; }
 function readDispo() {
-  try { return JSON.parse(localStorage.getItem(IR_DISPO_KEY) || '{}') || {}; }
+  try { return JSON.parse(localStorage.getItem(dispoKey()) || '{}') || {}; }
   catch { return {}; }
 }
 function writeDispo(m) {
-  try { localStorage.setItem(IR_DISPO_KEY, JSON.stringify(m)); } catch {}
+  try { localStorage.setItem(dispoKey(), JSON.stringify(m)); } catch {}
 }
 function readFpQueue() {
   try { return JSON.parse(localStorage.getItem(FP_QUEUE_KEY) || '[]') || []; }
@@ -2639,6 +2675,244 @@ function readXsoarCfg() {
 function writeXsoarCfg(cfg) {
   try { localStorage.setItem(XSOAR_CFG_KEY, JSON.stringify(cfg)); } catch {}
 }
+
+// ─── Seeded RNG + demo data generator ───────────────────────────
+// mulberry32 — small, good-enough, deterministic from a uint32 seed.
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = seed;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// Weighted pick — `items` is `[{...entry, weight: N}]`.
+function wpick(rng, items) {
+  const total = items.reduce((a, i) => a + (i.weight || 1), 0);
+  let r = rng() * total;
+  for (const i of items) {
+    r -= (i.weight || 1);
+    if (r <= 0) return i;
+  }
+  return items[items.length - 1];
+}
+
+// Catalog curated to give the dashboard something to chart. Each
+// entry maps a (category, sub) to a realistic-looking example match
+// + a default severity bucket.
+const DEMO_CATALOG = [
+  { cat: 'North America - United States',   sub: 'USA SSN',              ex: '123-45-6789',          sev: 'high',     weight: 5 },
+  { cat: 'Credit Card Numbers',             sub: 'Visa',                 ex: '4539 1488 0343 6467',  sev: 'high',     weight: 4 },
+  { cat: 'Credit Card Numbers',             sub: 'Mastercard',           ex: '5425 2334 3010 9903',  sev: 'high',     weight: 3 },
+  { cat: 'Credit Card Numbers',             sub: 'Amex',                 ex: '3782 822463 10005',    sev: 'high',     weight: 2 },
+  { cat: 'North America - United States',   sub: 'USA ITIN',             ex: '912-75-4321',          sev: 'high',     weight: 2 },
+  { cat: 'North America - United States',   sub: 'USA Passport',         ex: '985421364',            sev: 'critical', weight: 2 },
+  { cat: 'Healthcare',                      sub: 'Medical Record Number',ex: 'MRN-884213',           sev: 'critical', weight: 3 },
+  { cat: 'Banking Authentication',          sub: 'PIN Block',            ex: '3B7A9C12F41D00A7',     sev: 'critical', weight: 1 },
+  { cat: 'Authentication Tokens',           sub: 'Session ID',           ex: 'af9a1d94c3c2b6119a3c6b1d8e44de21', sev: 'medium', weight: 3 },
+  { cat: 'Email Addresses',                 sub: 'Email',                ex: 'alice.example@corp.example', sev: 'low', weight: 6 },
+  { cat: 'North America - Canada',          sub: 'Canada SIN',           ex: '046 454 286',          sev: 'high',     weight: 1 },
+  { cat: 'AWS Credentials',                 sub: 'Access Key ID',        ex: 'AKIAIOSFODNN7EXAMPLE',  sev: 'critical', weight: 1 },
+  { cat: 'Customer Financial Data',         sub: 'Account Balance',      ex: '$12,487.00',           sev: 'medium',   weight: 3 },
+  { cat: 'Dates',                           sub: 'Date ISO',             ex: '1984-07-12',           sev: 'low',      weight: 4 },
+  { cat: 'Traffic Light Protocol',          sub: 'TLP:AMBER+STRICT',     ex: 'TLP:AMBER+STRICT',     sev: 'high',     weight: 2 },
+];
+
+// Analyst pool. Each analyst gets their own dispo fingerprint in the
+// dashboard breakdown (e.g. A. Rao tends to escalate, B. Smith FPs a
+// lot). Weights shape who shows up most.
+const DEMO_ANALYSTS = [
+  { id: 'a.rao',    name: 'A. Rao',    region: 'APAC',  style: 'escalator', weight: 4 },
+  { id: 'b.smith',  name: 'B. Smith',  region: 'NA',    style: 'fp-heavy',  weight: 3 },
+  { id: 'c.nguyen', name: 'C. Nguyen', region: 'APAC',  style: 'balanced',  weight: 3 },
+  { id: 'd.patel',  name: 'D. Patel',  region: 'EU',    style: 'escalator', weight: 2 },
+  { id: 'e.moreno', name: 'E. Moreno', region: 'LATAM', style: 'balanced',  weight: 2 },
+  { id: 'f.ito',    name: 'F. Ito',    region: 'APAC',  style: 'event-heavy', weight: 2 },
+  { id: 'g.volkov', name: 'G. Volkov', region: 'EU',    style: 'balanced',  weight: 2 },
+  { id: 'h.mbeki',  name: 'H. Mbeki',  region: 'MEA',   style: 'balanced',  weight: 1 },
+];
+
+// Users (the people who triggered the finding, NOT the analysts).
+// Weights >= 5 become Repeat Occurrences on the dashboard.
+const DEMO_USERS = [
+  { id: 'alice.intern@corp.example',   region: 'NA',    dept: 'engineering',   weight: 10 },  // repeat offender
+  { id: 'bob.ceo@corp.example',        region: 'NA',    dept: 'executive',     weight: 8  },  // repeat offender
+  { id: 'carol.finance@corp.example',  region: 'EU',    dept: 'finance',       weight: 6  },  // repeat offender
+  { id: 'dave.legal@corp.example',     region: 'NA',    dept: 'legal',         weight: 2  },
+  { id: 'eve.ops@corp.example',        region: 'APAC',  dept: 'operations',    weight: 2  },
+  { id: 'frank.sales@corp.example',    region: 'LATAM', dept: 'sales',         weight: 2  },
+  { id: 'gina.mktg@corp.example',      region: 'EU',    dept: 'marketing',     weight: 1  },
+  { id: 'henry.hr@corp.example',       region: 'NA',    dept: 'hr',            weight: 1  },
+  { id: 'ian.support@corp.example',    region: 'APAC',  dept: 'support',       weight: 1  },
+  { id: 'julia.research@corp.example', region: 'MEA',   dept: 'research',      weight: 1  },
+];
+
+const DEMO_CHANNELS = [
+  { id: 'email-outbound',  label: 'email · outbound',      pod: 'siphon-api' },
+  { id: 'email-inbound',   label: 'email · inbound',       pod: 'siphon-api' },
+  { id: 'web-upload',      label: 'web upload',            pod: 'siphon-fs'  },
+  { id: 'slack-dm',        label: 'slack · DM',            pod: 'siphon-api' },
+  { id: 'sharepoint',      label: 'sharepoint upload',     pod: 'siphon-fs'  },
+  { id: 'usb-transfer',    label: 'usb / removable media', pod: 'siphon-fs'  },
+  { id: 'print',           label: 'print job',             pod: 'siphon-api' },
+  { id: 'api-post',        label: 'api POST',              pod: 'siphon-api' },
+];
+
+// Build a stable set of findings + dispositions from the seed. Same
+// seed → same output, so the dashboard always has the same numbers
+// unless the analyst explicitly regenerates.
+function generateDemoFindings(seed) {
+  const rng = mulberry32(seed);
+  const n = 120; // enough for meaningful dashboard charts
+  const now = Date.now();
+  const findings = [];
+  for (let i = 0; i < n; i++) {
+    const cat = wpick(rng, DEMO_CATALOG);
+    const user = wpick(rng, DEMO_USERS);
+    const channel = wpick(rng, DEMO_CHANNELS);
+    // Skew timestamps so most findings are in the last week; some
+    // trail back up to 30 days for the longer-horizon chart.
+    const ageDays = Math.pow(rng(), 2) * 30;
+    const ts = new Date(now - ageDays * 86400e3).toISOString();
+    const confidence = 0.55 + rng() * 0.44;
+    const hasContext = rng() > 0.15;
+    const ip = `10.${(rng() * 240 | 0) + 10}.${rng() * 256 | 0}.${rng() * 256 | 0}`;
+    const destUrl = rng() > 0.4
+      ? `https://${wpick(rng, [{w:'partner', weight:2}, {w:'personal', weight:1}, {w:'competitor', weight:1}, {w:'backup', weight:1}]).w}.example.com/upload/${rng().toString(36).slice(2, 10)}`
+      : null;
+    const hash = ((rng() * 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0')
+               + ((rng() * 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0')
+               + ((rng() * 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0')
+               + ((rng() * 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0');
+    findings.push({
+      id: 'f-demo-' + i.toString().padStart(4, '0'),
+      ts,
+      category: cat.cat,
+      sub_category: cat.sub,
+      text: cat.ex,
+      confidence,
+      has_context: hasContext,
+      span: [rng() * 2000 | 0, 0].map((v, j) => j === 0 ? v : v + cat.ex.length),
+      severity: cat.sev,
+      source_pod: channel.pod,
+      source_ip: channel.pod === 'siphon-fs'
+        ? `report_q${(rng() * 4 | 0) + 1}_${user.id.split('@')[0]}.xlsx`
+        : ip,
+      request_id: 'r-' + ((rng() * 0xFFFFFF) | 0).toString(16).padStart(6, '0'),
+      metadata: {
+        user: user.id,
+        region: user.region,
+        department: user.dept,
+        channel: channel.label,
+        src_ip: ip,
+        ...(destUrl ? { dest_url: destUrl } : {}),
+        ...(channel.id.startsWith('email') ? {
+          sender: user.id,
+          recipient: wpick(rng, [
+            { w: 'partner.vendor@external.example', weight: 2 },
+            { w: 'personal@gmail.example', weight: 2 },
+            { w: 'competitor.contact@rival.example', weight: 1 },
+          ]).w,
+        } : {}),
+        content_hash: 'sha256:' + hash,
+      },
+    });
+  }
+  return findings;
+}
+
+// Seed dispositions for ~65% of findings so the dashboard has real
+// numbers for MTTR / totals. Analyst pick is weighted by the analyst
+// table; the analyst's 'style' nudges disposition probabilities.
+function generateDemoDispositions(findings, seed) {
+  const rng = mulberry32(seed ^ 0xABCDEF);
+  const map = {};
+  for (const f of findings) {
+    if (rng() > 0.65) continue; // 35% stay open
+    const analyst = wpick(rng, DEMO_ANALYSTS);
+    let kindRoll = rng();
+    // Style bias.
+    if (analyst.style === 'escalator')   kindRoll *= 0.7;
+    if (analyst.style === 'fp-heavy')    kindRoll = 0.2 + kindRoll * 0.8;
+    if (analyst.style === 'event-heavy') kindRoll = 0.6 + kindRoll * 0.4;
+    let kind;
+    if (kindRoll < 0.35) kind = 'escalate';
+    else if (kindRoll < 0.7) kind = 'event';
+    else kind = 'fp';
+    // Respond-time = minutes between finding.ts and triage.
+    const respondMins = 2 + Math.pow(rng(), 1.5) * 240; // 2-240 min, skewed fast
+    const triagedAt = new Date(new Date(f.ts).getTime() + respondMins * 60e3).toISOString();
+    const record = {
+      kind,
+      at: triagedAt,
+      by: analyst.name,
+      by_id: analyst.id,
+      respond_min: respondMins,
+      notes: ({
+        event: 'Verified with user — legitimate business activity per policy.',
+        fp: 'Pattern false-fired on a public-record identifier. Submitted to detection engineering.',
+        escalate: 'Confirmed TP — data exfiltration candidate. Handed off to XSOAR for remediation.',
+      })[kind],
+    };
+    if (kind === 'escalate') {
+      record.xsoar_status = 'POST 202';
+      // Remediate-time = extra minutes after escalation before
+      // XSOAR closes the incident (not all are closed yet).
+      if (rng() > 0.3) {
+        const remediateMins = 30 + Math.pow(rng(), 1.8) * 720; // 30-720 min
+        record.remediated_at = new Date(new Date(triagedAt).getTime() + remediateMins * 60e3).toISOString();
+        record.remediate_min = remediateMins;
+      }
+    }
+    map[f.id] = record;
+  }
+  return map;
+}
+
+// React hook — findings source of truth for every IR surface. Honors
+// demo mode; returns the same { loading, data, error, source,
+// perPod, refetch } contract as window.useFindingsUnion so surfaces
+// don't care which backend is live.
+window.useIrFindings = function (qs) {
+  const [mode, setMode] = React.useState(isDemoMode);
+  const [seed, setSeed] = React.useState(readDemoSeed);
+  const [tick, setTick] = React.useState(0);
+
+  React.useEffect(() => {
+    const sync = () => { setMode(isDemoMode()); setSeed(readDemoSeed()); };
+    window.addEventListener('ir:demoChanged', sync);
+    const onStorage = (e) => {
+      if (e.key === IR_DEMO_MODE_KEY || e.key === IR_DEMO_SEED_KEY) sync();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('ir:demoChanged', sync);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
+  const live = window.useFindingsUnion(qs, [mode, seed, tick]);
+
+  if (!mode) return live;
+
+  const demoFindings = generateDemoFindings(seed);
+  const m = (qs || '').match(/[?&]limit=(\d+)/);
+  const limit = m ? parseInt(m[1], 10) : demoFindings.length;
+  const findings = demoFindings
+    .slice()
+    .sort((a, b) => (b.ts || '').localeCompare(a.ts || ''))
+    .slice(0, limit);
+  return {
+    loading: false,
+    data: { total: demoFindings.length, returned: findings.length, capacity: 1000, findings },
+    error: null,
+    source: 'fixture',
+    perPod: [{ url: 'demo://seeded', label: 'demo', role: 'demo', ok: true, data: null, error: null }],
+    refetch: () => setTick(t => t + 1),
+  };
+};
 
 const SEVERITY_RANK = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
 function severityChip(sev) {
@@ -2701,8 +2975,19 @@ function FindingsQueue() {
   React.useEffect(() => {
     try { localStorage.setItem('ir:queueLimit', String(limit)); } catch {}
   }, [limit]);
+  // Re-read dispositions when demo mode flips so the row chips flip
+  // between the real and seeded stores without a reload.
+  React.useEffect(() => {
+    const resync = () => setDispo(readDispo());
+    window.addEventListener('ir:demoChanged', resync);
+    window.addEventListener('storage', resync);
+    return () => {
+      window.removeEventListener('ir:demoChanged', resync);
+      window.removeEventListener('storage', resync);
+    };
+  }, []);
 
-  const findings = window.useFindingsUnion('?limit=' + limit);
+  const findings = window.useIrFindings('?limit=' + limit);
   const all = (findings.data && findings.data.findings) || [];
 
   const categories = React.useMemo(
@@ -2753,9 +3038,11 @@ function FindingsQueue() {
     setDispo(next);
     writeDispo(next);
 
-    if (kind === 'fp') {
+    if (kind === 'fp' && !isDemoMode()) {
       // Append to the cross-console FP queue so detection engineering
-      // (admin console → Engineering → FP Queue) can triage.
+      // (admin console → Engineering → FP Queue) can triage. Skipped
+      // in demo mode so seeded data doesn't contaminate the real
+      // admin-side queue.
       const queue = readFpQueue();
       // Dedup by finding id — re-submitting overwrites the note + ts
       // rather than stacking duplicates.
@@ -3502,7 +3789,116 @@ const SURFACE_COMPONENTS = {
                               description="Default queue filters, notification channels, team membership, theme." />,
   'ir-deployment':() => <Stub title="Pod Registry"
                               description="Shared with the admin console — registered pods appear in both. Edits under Settings → Deployment on siphon-c2.html." />,
+  'ir-engineering': () => <EngineeringSurface />,
 };
+
+// ─── Settings → Engineering ─────────────────────────────────────
+// Developer-facing toggles. Primary MVP tenant: the demo-data
+// switch, which backs every IR surface with seeded fixtures when
+// on. Live pod data resumes the moment the toggle flips off; the
+// two datasets never mix (separate disposition stores).
+function EngineeringSurface() {
+  const [mode, setMode] = React.useState(isDemoMode);
+  const [seed, setSeed] = React.useState(readDemoSeed);
+  const [demoDispoCount, setDemoDispoCount] = React.useState(() => Object.keys(JSON.parse(localStorage.getItem(IR_DEMO_DISPO_KEY) || '{}')).length);
+
+  // Seed demo dispositions the first time demo mode is turned on so
+  // the dashboard has MTTR data to chart. Re-seed happens only when
+  // the analyst explicitly clicks Regenerate.
+  React.useEffect(() => {
+    if (!mode) return;
+    const existing = localStorage.getItem(IR_DEMO_DISPO_KEY);
+    if (existing && existing !== '{}') return;
+    const findings = generateDemoFindings(seed);
+    const dispo = generateDemoDispositions(findings, seed);
+    localStorage.setItem(IR_DEMO_DISPO_KEY, JSON.stringify(dispo));
+    setDemoDispoCount(Object.keys(dispo).length);
+    window.dispatchEvent(new CustomEvent('ir:demoChanged', { detail: { reason: 'seeded' } }));
+  }, [mode, seed]);
+
+  const toggle = () => {
+    const next = !mode;
+    setMode(next);
+    setDemoMode(next);
+  };
+
+  const regenerate = () => {
+    if (!confirm('Regenerate demo data? Any triage actions you made in demo mode will be overwritten.')) return;
+    const newSeed = (Math.random() * 0xFFFFFFFF) >>> 0;
+    writeDemoSeed(newSeed);
+    setSeed(newSeed);
+    const findings = generateDemoFindings(newSeed);
+    const dispo = generateDemoDispositions(findings, newSeed);
+    localStorage.setItem(IR_DEMO_DISPO_KEY, JSON.stringify(dispo));
+    setDemoDispoCount(Object.keys(dispo).length);
+    window.dispatchEvent(new CustomEvent('ir:demoChanged', { detail: { reason: 'regenerate' } }));
+  };
+
+  const clearDemoOnly = () => {
+    if (!confirm('Clear demo dispositions? Your real (live-mode) triage state is NOT touched.')) return;
+    localStorage.removeItem(IR_DEMO_DISPO_KEY);
+    setDemoDispoCount(0);
+    window.dispatchEvent(new CustomEvent('ir:demoChanged', { detail: { reason: 'cleared' } }));
+  };
+
+  const findingsPreview = React.useMemo(() => generateDemoFindings(seed).length, [seed]);
+
+  return (
+    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Demo data</span>
+          <span className="k">
+            {mode ? <span className="chip chip--warn" style={{fontSize:9}}>DEMO MODE ACTIVE</span>
+                  : <span className="chip chip--safe" style={{fontSize:9}}>LIVE</span>}
+          </span>
+        </div>
+        <div style={{padding:14, display:'grid', gap:12, fontSize:12, lineHeight:1.7}}>
+          <div className="muted">
+            Swaps the Findings Queue + Dashboard data source from live pod unions to
+            a deterministic seeded set ({findingsPreview} findings across {DEMO_ANALYSTS.length} analysts
+            and {DEMO_USERS.length} end-users, with pre-triaged dispositions).
+            Useful for demos, screenshots, and dashboard tuning without
+            needing a real pod scanning real traffic.
+          </div>
+          <div className="muted" style={{fontSize:11.5, padding:'8px 10px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:'var(--radius)'}}>
+            <b>Isolation:</b> demo dispositions are stored under{' '}
+            <span className="mono">localStorage[ir:demoDispositions]</span>, separate from your
+            live triage state at <span className="mono">ir:dispositions</span>. They never mix.
+            The FP Queue handoff to the admin console also suppresses demo entries so you don't
+            pollute the real engineering queue.
+          </div>
+          <div style={{display:'flex', gap:10, alignItems:'center', flexWrap:'wrap'}}>
+            <label style={{display:'inline-flex', alignItems:'center', gap:8, cursor:'pointer'}}>
+              <input type="checkbox" checked={mode} onChange={toggle} />
+              <span style={{fontWeight:600}}>Use demo data</span>
+            </label>
+            <span className="muted mono" style={{fontSize:11}}>
+              seed <span className="mono" style={{color:'var(--ink)'}}>{(seed >>> 0).toString(16).padStart(8, '0')}</span>
+              {' · '}{demoDispoCount} demo dispositions
+            </span>
+          </div>
+          <div style={{display:'flex', gap:8, flexWrap:'wrap', paddingTop:4}}>
+            <button className="btn ghost" onClick={regenerate}
+                    title="reshuffle the seed and re-seed dispositions">
+              ↻ Regenerate seed
+            </button>
+            <button className="btn ghost" onClick={clearDemoOnly}
+                    title="wipe demo dispositions · live state not touched"
+                    style={{color:'var(--red)'}}>
+              ✕ Clear demo dispositions
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="muted" style={{fontSize:11, lineHeight:1.7, padding:'0 2px'}}>
+        More developer toggles will live here: mock XSOAR/Splunk responses, synthetic webhook
+        replay, fast-forward clock for MTTR testing.
+      </div>
+    </div>
+  );
+}
 
 // ─── App ────────────────────────────────────────────────────────
 const TWEAK_DEFAULTS = {
