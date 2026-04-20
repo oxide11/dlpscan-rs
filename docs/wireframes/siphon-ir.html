@@ -7677,6 +7677,212 @@ function CryptoHashComputer() {
   );
 }
 
+// Built-in wordlist — short by design. The analyst pastes / uploads
+// a proper list for anything serious. 100 entries covers the 'yes
+// the file was password-protected but the password is "password"'
+// case the analyst encounters depressingly often.
+const IR_BUILTIN_WORDLIST = [
+  '123456', 'password', '12345678', 'qwerty', '123456789', '12345',
+  '1234', '111111', '1234567', 'dragon', '123123', 'baseball',
+  'abc123', 'football', 'monkey', 'letmein', '696969', 'shadow',
+  'master', '666666', 'qwertyuiop', '123321', 'mustang', '1234567890',
+  'michael', '654321', 'pussy', 'superman', '1qaz2wsx', '7777777',
+  'fuckyou', '121212', '000000', 'qazwsx', '123qwe', 'killer',
+  'trustno1', 'jordan', 'jennifer', 'zxcvbnm', 'asdfgh', 'hunter',
+  'buster', 'soccer', 'harley', 'batman', 'andrew', 'tigger',
+  'sunshine', 'iloveyou', '2000', 'charlie', 'robert', 'thomas',
+  'hockey', 'ranger', 'daniel', 'starwars', 'klaster', '112233',
+  'george', 'computer', 'michelle', 'jessica', 'pepper', '1111',
+  'zxcvbn', '555555', '11111111', '131313', 'freedom', '777777',
+  'pass', 'maggie', '159753', 'aaaaaa', 'ginger', 'princess',
+  'joshua', 'cheese', 'amanda', 'summer', 'love', 'ashley',
+  '6969', 'nicole', 'chelsea', 'biteme', 'matthew', 'access',
+  'yankees', '987654321', 'dallas', 'austin', 'thunder', 'taylor',
+  'matrix', 'mobilemail', 'mom', 'monitor', 'monitoring', 'montana',
+  'admin', 'administrator', 'changeme', 'welcome', 'secret', 'backup',
+  // Common DLP-triage shapes observed in demo corpora
+  'confidential', 'internal', 'P@ssw0rd', 'Welcome1', 'Summer2024',
+  'Password1', 'abc12345', 'qwerty123', 'corporate', 'partner',
+];
+
+// ── Zip Password Attack tab · 5a · UI shell ───────────────────
+// Picker for the encrypted zip + a wordlist source (paste /
+// upload / use built-in). Start button currently shows a
+// 'attack engine lands in 5b' banner; 5b wires zip.js and runs
+// the dictionary loop.
+function CryptoZipAttack() {
+  const [file, setFile] = React.useState(null);
+  const [wordlistSource, setWordlistSource] = React.useState('builtin'); // builtin | paste | file
+  const [wordlistText, setWordlistText] = React.useState('');
+  const [wordlistFile, setWordlistFile] = React.useState(null);
+  const [wordlistFileText, setWordlistFileText] = React.useState(null);
+  const [stubFlash, setStubFlash] = React.useState(false);
+
+  // When the analyst picks a wordlist file, read it as text once
+  // and cache so the attack loop doesn't re-read per password.
+  React.useEffect(() => {
+    if (!wordlistFile) { setWordlistFileText(null); return; }
+    let cancelled = false;
+    wordlistFile.text().then(t => { if (!cancelled) setWordlistFileText(t); });
+    return () => { cancelled = true; };
+  }, [wordlistFile]);
+
+  // Resolve the active wordlist into an array of candidates. Keeps
+  // duplicates out (Set) but preserves order of first appearance.
+  const candidates = React.useMemo(() => {
+    let text = '';
+    if (wordlistSource === 'builtin') {
+      return IR_BUILTIN_WORDLIST.slice();
+    }
+    if (wordlistSource === 'paste') text = wordlistText;
+    if (wordlistSource === 'file') text = wordlistFileText || '';
+    const seen = new Set();
+    const out = [];
+    for (const line of text.split(/\r?\n/)) {
+      const t = line.trim();
+      if (!t) continue;
+      if (seen.has(t)) continue;
+      seen.add(t);
+      out.push(t);
+    }
+    return out;
+  }, [wordlistSource, wordlistText, wordlistFileText]);
+
+  const isZip = file && (
+    /\.(zip|docx|xlsx|pptx|odt|ods|odp|jar|war|apk|ipa)$/i.test(file.name)
+    || file.type === 'application/zip'
+    || file.type === 'application/x-zip-compressed'
+  );
+
+  const start = () => {
+    // Actual attack engine lands in 5b; for now flash a note so
+    // the analyst can still test the shell wiring.
+    setStubFlash(true);
+    setTimeout(() => setStubFlash(false), 2400);
+  };
+
+  return (
+    <div style={{padding:16, display:'grid', gap:14}}>
+      <CryptoFileDrop file={file} onFile={setFile}
+                      label="drop an encrypted zip · .zip / .docx / .xlsx / .pptx / .jar — all ZIP containers"/>
+
+      {file && !isZip && (
+        <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', fontSize:12}}>
+          <b>Not a ZIP container.</b> The file extension / MIME don't look like a zip-family
+          format. The attack tool only handles ZIP-family files today — PDF / Office
+          non-ZIP / 7z / RAR aren't wired yet.
+        </div>
+      )}
+
+      {/* Wordlist source picker */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Wordlist</span>
+          <span className="k">
+            <span className="mono" style={{fontSize:11}}>{candidates.length} candidates loaded</span>
+          </span>
+        </div>
+        <div style={{padding:14, display:'grid', gap:12}}>
+          {/* Source tabs */}
+          <div style={{display:'flex', gap:2, borderBottom:'1px solid var(--line-soft)'}}>
+            {[
+              ['builtin', 'Built-in',    IR_BUILTIN_WORDLIST.length + ' common passwords'],
+              ['paste',   'Paste list',  'one password per line'],
+              ['file',    'Upload file', 'text file · rockyou-style wordlists'],
+            ].map(([id, label, hint]) => {
+              const active = wordlistSource === id;
+              return (
+                <button key={id}
+                        onClick={() => setWordlistSource(id)}
+                        title={hint}
+                        style={{
+                          background:'transparent', border:'none',
+                          padding:'8px 14px', cursor:'pointer',
+                          color: active ? 'var(--ink-bright)' : 'var(--ink-soft)',
+                          borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
+                          fontFamily:"'Space Grotesk', sans-serif",
+                          fontWeight: active ? 700 : 500, fontSize:12,
+                        }}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+
+          {wordlistSource === 'builtin' && (
+            <div className="muted" style={{fontSize:11.5, lineHeight:1.7}}>
+              Short curated list covering the most common weak passwords plus a
+              handful of DLP-triage shapes (<span className="mono">confidential</span>,{' '}
+              <span className="mono">Welcome1</span>, etc.). Good first pass; paste a
+              real wordlist if this doesn't crack it.
+            </div>
+          )}
+          {wordlistSource === 'paste' && (
+            <textarea value={wordlistText}
+                      onChange={(e) => setWordlistText(e.target.value)}
+                      placeholder={`password\nqwerty\n...`}
+                      rows={6}
+                      className="mono"
+                      style={{
+                        width:'100%', boxSizing:'border-box', fontSize:11.5,
+                        padding:'8px 10px', background:'var(--bg-1)', color:'var(--ink)',
+                        border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+                        resize:'vertical', fontFamily:"'JetBrains Mono', monospace",
+                      }}/>
+          )}
+          {wordlistSource === 'file' && (
+            <>
+              <CryptoFileDrop file={wordlistFile} onFile={setWordlistFile}
+                              label="drop a .txt wordlist · one password per line · files stay in the browser"/>
+              {wordlistFile && wordlistFileText != null && (
+                <div className="muted mono" style={{fontSize:11}}>
+                  loaded <span style={{color:'var(--ink-bright)'}}>{candidates.length.toLocaleString()}</span> unique passwords
+                  from <span style={{color:'var(--ink)'}}>{wordlistFile.name}</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Attack control */}
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Attack</span>
+          <span className="k">in-browser dictionary · WebCrypto-backed AES decrypt (via zip.js · phase 5b)</span>
+        </div>
+        <div style={{padding:14, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap'}}>
+          <button className="btn primary"
+                  onClick={start}
+                  disabled={!file || !isZip || candidates.length === 0}
+                  title={!file ? 'pick an encrypted zip first'
+                       : !isZip ? 'file must be a ZIP-family container'
+                       : candidates.length === 0 ? 'add candidates to the wordlist first'
+                       : 'start the dictionary attack'}>
+            ▶ Start attack
+          </button>
+          <span className="muted mono" style={{fontSize:11}}>
+            {file && isZip && candidates.length > 0
+              ? <>{file.name} · {candidates.length.toLocaleString()} candidates</>
+              : 'pick a zip + wordlist to enable'}
+          </span>
+          {stubFlash && (
+            <span className="chip chip--warn" style={{fontSize:10}}>
+              attack engine lands in 5b (zip.js integration)
+            </span>
+          )}
+        </div>
+        <div className="muted" style={{padding:'0 14px 14px', fontSize:10.5, lineHeight:1.7}}>
+          Triage-scale only — this is browser-side AES decrypt, not a GPU cluster.
+          Useful for the 'probably a weak password' case; not a replacement for
+          hashcat / john the ripper when you need throughput. Files never leave
+          the browser.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CryptoWorkbench() {
   const [tab, setTab] = React.useState(() => {
     try { return localStorage.getItem('ir:crypto:tab') || 'inspector'; }
@@ -7704,16 +7910,7 @@ function CryptoWorkbench() {
   } else if (tab === 'hasher') {
     tabBody = <CryptoHashComputer />;
   } else if (tab === 'zipattack') {
-    tabBody = (
-      <TabStub title="Zip Password Attack"
-               description={<>
-                 Dictionary-attack an encrypted zip in the browser using zip.js's
-                 WebCrypto-backed decrypt. Upload zip + wordlist (or use a built-in
-                 common-password list); see the first password that successfully
-                 decrypts an entry. Phase 5 — explicitly scoped for triage-sized
-                 wordlists, not cluster-scale cracking.
-               </>}/>
-    );
+    tabBody = <CryptoZipAttack />;
   }
 
   return (
