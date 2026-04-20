@@ -58,6 +58,7 @@ pub struct StageEvent {
 /// don't opt in.
 pub type TraceSink = Option<Arc<Mutex<Vec<StageEvent>>>>;
 
+#[allow(clippy::too_many_arguments)]
 fn emit_trace(
     sink: &TraceSink,
     pass: &str,

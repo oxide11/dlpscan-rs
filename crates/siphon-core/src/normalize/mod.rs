@@ -961,9 +961,9 @@ fn decode_encoded_tokens(input: &str, in_offsets: &[usize]) -> (String, Vec<usiz
             let prev_is_dot = start > 0 && bytes[start - 1] == b'.';
             let next_is_dot = i < bytes.len() && bytes[i] == b'.';
             if prev_is_dot || next_is_dot {
-                for j in start..i {
-                    out.push(bytes[j]);
-                    offsets.push(orig_offset(in_offsets, j));
+                for (j, b) in bytes[start..i].iter().enumerate() {
+                    out.push(*b);
+                    offsets.push(orig_offset(in_offsets, start + j));
                 }
                 continue;
             }
@@ -989,9 +989,9 @@ fn decode_encoded_tokens(input: &str, in_offsets: &[usize]) -> (String, Vec<usiz
             }
 
             // Token wasn't decoded — emit the original bytes unchanged.
-            for j in start..i {
-                out.push(bytes[j]);
-                offsets.push(orig_offset(in_offsets, j));
+            for (j, b) in bytes[start..i].iter().enumerate() {
+                out.push(*b);
+                offsets.push(orig_offset(in_offsets, start + j));
             }
         } else {
             out.push(bytes[i]);

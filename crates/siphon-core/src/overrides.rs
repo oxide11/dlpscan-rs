@@ -146,10 +146,11 @@ pub struct CustomCategory {
 /// case-insensitive substring for keywords, suffix match for domains,
 /// etc. Serialises as lowercase ("keyword", "domain", …) so the wire
 /// file stays readable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ListKind {
     /// Free-text words/phrases. Case-insensitive substring match.
+    #[default]
     Keyword,
     /// Fully-qualified domains. Suffix match so `example.com` in the
     /// list also matches `foo.example.com`. Case-insensitive.
@@ -172,12 +173,6 @@ pub enum ListKind {
     /// Generic fallback for kinds not yet modelled; matcher treats
     /// entries as case-insensitive exact strings.
     Other,
-}
-
-impl Default for ListKind {
-    fn default() -> Self {
-        ListKind::Keyword
-    }
 }
 
 /// An attachment of a match list to an action, scoped globally —
@@ -796,9 +791,9 @@ impl CompiledList {
                         }
                     }
                 }
-                self.entries.iter().any(|e| lower == *e)
+                self.entries.contains(&lower)
             }
-            ListKind::Hash | ListKind::Other => self.entries.iter().any(|e| lower == *e),
+            ListKind::Hash | ListKind::Other => self.entries.contains(&lower),
         }
     }
 

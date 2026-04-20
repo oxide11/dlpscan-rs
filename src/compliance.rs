@@ -451,7 +451,7 @@ mod tests {
     fn test_compliance_all_pass() {
         let reporter = ComplianceReporter::new("Test Report");
         let report = reporter.generate();
-        for (_framework, pass) in &report.compliance_status {
+        for pass in report.compliance_status.values() {
             assert!(pass);
         }
     }
@@ -462,8 +462,8 @@ mod tests {
         let findings = vec![make_match("Credit Card Numbers", "visa", 0.9)];
         reporter.add_scan_result(&findings, "test");
         let report = reporter.generate();
-        assert_eq!(report.compliance_status["PCI-DSS"], false);
-        assert_eq!(report.compliance_status["HIPAA"], true);
+        assert!(!report.compliance_status["PCI-DSS"]);
+        assert!(report.compliance_status["HIPAA"]);
     }
 
     #[test]

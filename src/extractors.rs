@@ -1751,11 +1751,9 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
         .map_err(|e| format!("Failed to open RAR: {}", e))?;
 
     let mut file_names = Vec::new();
-    for entry in archive {
-        if let Ok(entry) = entry {
-            file_count += 1;
-            file_names.push(entry.filename.to_string_lossy().to_string());
-        }
+    for entry in archive.flatten() {
+        file_count += 1;
+        file_names.push(entry.filename.to_string_lossy().to_string());
     }
 
     text.push_str(&format!("RAR Archive ({} files):\n", file_count));
@@ -1956,7 +1954,7 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
         } else {
             continue;
         }
-        if let Some(rel) = f.strip_prefix(tmp_dir.path()).ok() {
+        if let Ok(rel) = f.strip_prefix(tmp_dir.path()) {
             text.push_str(&format!("  {}\n", rel.display()));
         }
         file_count += 1;
@@ -2928,7 +2926,7 @@ mod tests {
     fn test_extract_dat_binary_fallback() {
         let mut data = vec![0u8; 20];
         data.extend_from_slice(b"hidden credit card 4532015112830366 inside binary");
-        data.extend_from_slice(&vec![0xFF; 20]);
+        data.extend_from_slice(&[0xFF; 20]);
         let f = tempfile::Builder::new().suffix(".dat").tempfile().unwrap();
         std::fs::write(f.path(), &data).unwrap();
         let result = extract_dat(f.path().to_str().unwrap()).unwrap();

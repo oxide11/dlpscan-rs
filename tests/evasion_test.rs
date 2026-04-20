@@ -419,7 +419,7 @@ fn test_unknown_extension_binary_with_payload() {
     data.extend_from_slice(
         b"CONFIDENTIAL: SSN 219-09-9999 card 4532015112830366 API_KEY=sk_live_abc123def456",
     );
-    data.extend_from_slice(&vec![0xFF; 100]);
+    data.extend_from_slice(&[0xFF; 100]);
 
     let f = tempfile::Builder::new()
         .suffix(".xyz") // Unknown extension

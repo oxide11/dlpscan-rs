@@ -513,7 +513,7 @@ fn test_printable_string_extraction_from_binary() {
     // Create a DAT file with sensitive data embedded in binary
     let mut data = vec![0u8; 50];
     data.extend_from_slice(b"SSN: 425-71-3482 embedded in binary data here");
-    data.extend_from_slice(&vec![0xFF; 50]);
+    data.extend_from_slice(&[0xFF; 50]);
 
     let f = tempfile::Builder::new().suffix(".dat").tempfile().unwrap();
     std::fs::write(f.path(), &data).unwrap();
@@ -530,7 +530,7 @@ fn test_cab_extraction_with_mscf_header() {
     use siphon::extractors::extract_text;
 
     let mut data = b"MSCF".to_vec();
-    data.extend_from_slice(&vec![0u8; 20]);
+    data.extend_from_slice(&[0u8; 20]);
     data.extend_from_slice(b"credit card 4532015112830366 inside cabinet");
 
     let f = tempfile::Builder::new().suffix(".cab").tempfile().unwrap();

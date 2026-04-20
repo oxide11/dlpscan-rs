@@ -287,9 +287,11 @@ mod tests {
 
     #[test]
     fn metrics_serializes_to_json() {
-        let mut m = ScanMetrics::default();
-        m.files_scanned = 5;
-        m.error = Some("timeout".into());
+        let m = ScanMetrics {
+            files_scanned: 5,
+            error: Some("timeout".into()),
+            ..Default::default()
+        };
 
         let json = serde_json::to_string(&m).unwrap();
         assert!(json.contains("\"files_scanned\":5"));

@@ -520,7 +520,7 @@ pub mod app {
             .block(Block::default().borders(Borders::ALL));
         frame.render_widget(title, chunks[0]);
 
-        let config_items = vec![
+        let config_items = [
             format!("min_confidence:     {:.2}", app.config.min_confidence),
             format!("require_context:    {}", app.config.require_context),
             format!("deduplicate:        {}", app.config.deduplicate),

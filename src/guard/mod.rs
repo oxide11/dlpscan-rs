@@ -365,9 +365,8 @@ impl InputGuard {
                 // earlier (lower-index) findings processed afterward.
                 let full_chars = span_byte_len / redaction_byte_len;
                 let remainder = span_byte_len % redaction_byte_len;
-                let mut replacement: String = std::iter::repeat(self.redaction_char)
-                    .take(full_chars)
-                    .collect();
+                let mut replacement: String =
+                    std::iter::repeat_n(self.redaction_char, full_chars).collect();
                 // Pad any remaining bytes with spaces to keep exact byte length
                 for _ in 0..remainder {
                     replacement.push(' ');
