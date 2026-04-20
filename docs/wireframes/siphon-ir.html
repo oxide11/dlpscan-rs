@@ -7388,12 +7388,28 @@ function App() {
     body = renderSurface();
   }
 
+  // ── Playbooks drawer wiring (Phase C · C3) ─────────────────
+  // State lives in App so the drawer survives surface + sub
+  // navigation. openPlaybooks threads through Topbar so the
+  // always-visible ❖ Playbooks button has a real handler.
+  const [playbooksOpen, setPlaybooksOpen] = React.useState(false);
+  // initialPlaybookId seeds PlaybookDrawer with a pre-selected
+  // playbook. Wired in C5 from the finding-in-view's category;
+  // always null until then.
+  const [playbooksInitial] = React.useState(null);
+  const openPlaybooks = React.useCallback(() => setPlaybooksOpen(true), []);
+  const closePlaybooks = React.useCallback(() => setPlaybooksOpen(false), []);
+
   return (
     <div className="shell" data-density={tweaks.density} data-theme={tweaks.theme}>
-      <Topbar tweaks={tweaks} setTweak={setTweak} />
+      <Topbar tweaks={tweaks} setTweak={setTweak}
+              openPlaybooks={openPlaybooks} />
       <WorkspaceBar current={surface} go={go} />
       <SurfaceBar current={surface} go={go} />
       <main className="page">{body}</main>
+      <PlaybookDrawer open={playbooksOpen}
+                      onClose={closePlaybooks}
+                      initialPlaybookId={playbooksInitial} />
     </div>
   );
 }
