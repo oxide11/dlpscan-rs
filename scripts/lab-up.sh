@@ -39,18 +39,24 @@ fi
 kubectl cluster-info --context "kind-${CLUSTER_NAME}" >/dev/null
 
 # ── 2 · nginx ingress controller ─────────────────────────────────
-# Standard kind-hosted manifest. `--wait` on the rollout means the
-# ingress is ready by the time this block exits.
+# Standard kind-hosted manifest.
 if ! kubectl get ns ingress-nginx >/dev/null 2>&1; then
   bold "[2/6] installing nginx-ingress-controller"
   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
 else
   bold "[2/6] nginx-ingress-controller already installed"
 fi
-kubectl wait --namespace ingress-nginx \
-  --for=condition=ready pod \
-  --selector=app.kubernetes.io/component=controller \
-  --timeout=180s
+# `kubectl apply` returns before the controller pod is actually
+# scheduled, so a plain `kubectl wait --for=condition=ready pod`
+# can race and die with "no matching resources found". Wait for
+# the Deployment object to appear first, then let the rollout
+# machinery handle the ready-state check — that handles the
+# "pod doesn't exist yet" case natively.
+for _ in $(seq 1 30); do
+  kubectl -n ingress-nginx get deployment ingress-nginx-controller >/dev/null 2>&1 && break
+  sleep 1
+done
+kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=180s
 
 # ── 3 · build images ─────────────────────────────────────────────
 bold "[3/6] building ${API_IMAGE} + ${FS_IMAGE}"
