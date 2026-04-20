@@ -2238,6 +2238,12 @@ function Topbar({ tweaks, setTweak }) {
         onClick={() => window.__c2_go && window.__c2_go('settings')}
         title="Settings"
         style={{fontSize:14, lineHeight:1, padding:'3px 8px'}}>⚙</button>
+      <a href="siphon-ir.html"
+         className="tb-theme"
+         title="Switch to IR console (incident response)"
+         style={{fontSize:11, textDecoration:'none', color:'var(--threat)'}}>
+        ⇄ IR
+      </a>
       <span className="tb-user">R. Solanki · admin</span>
     </div>
   );
