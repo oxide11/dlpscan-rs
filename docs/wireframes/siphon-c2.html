@@ -8089,6 +8089,10 @@ function writeApplyPending(state) {
 function PendingChangesBanner({ customCategories: customCategoriesProp }) {
   const current = window.useSiphonApi('/v1/overrides/current');
   const health  = window.useSiphonApi('/health');
+  // Pulled so Apply can merge policy-declared list_bindings into
+  // the doc's active_list_bindings, opt-in. See computeActiveBindings
+  // below for the merge rules.
+  const policies = window.useSiphonApi('/v1/policies');
   // Read both staged sources internally so the banner can mount on
   // any surface (Patterns, Match Lists, future Policies) without
   // prop-drilling. Accept a prop override so the Patterns surface's
@@ -8097,6 +8101,20 @@ function PendingChangesBanner({ customCategories: customCategoriesProp }) {
   const customCategories = customCategoriesProp || customCategoriesFromHook;
   const matchLists = window.useMatchLists ? window.useMatchLists() : [];
   const [apply, setApply] = React.useState({ loading: false, error: null, success: null });
+  // Opt-in: merge loaded policies' list_bindings into
+  // active_list_bindings on Apply so scanner enforcement follows
+  // policy declarations. Default on — the common case is 'analyst
+  // authored the lists + policies together, wants them live'. Persisted
+  // so the default survives reloads once the analyst sets it.
+  const [syncBindings, setSyncBindings] = React.useState(() => {
+    try {
+      const v = localStorage.getItem('c2:syncListBindings');
+      return v == null ? true : v === 'true';
+    } catch { return true; }
+  });
+  React.useEffect(() => {
+    try { localStorage.setItem('c2:syncListBindings', String(syncBindings)); } catch {}
+  }, [syncBindings]);
   // Restart-pending bookkeeping persisted across reloads. Key by pod
   // URL so multiple pods (Phase 4.5) don't trample each other.
   const podUrl = window.SIPHON_API_URL();
@@ -8110,9 +8128,36 @@ function PendingChangesBanner({ customCategories: customCategoriesProp }) {
   const currentCatsWire = __siphonCustomCatsForWire(currentOverrides.custom_categories);
   const stagedListsWire  = __siphonListsForWire(matchLists);
   const currentListsWire = __siphonListsForWire(currentOverrides.lists);
+  // Merge every loaded policy's list_bindings into a single
+  // active_list_bindings vec. Dedup by list_id; on conflicting actions
+  // the higher-severity one wins (block > mask > tag > allow). Note
+  // from the first policy that bound it is preserved so the analyst
+  // can see which policy drove the attachment.
+  const computeActiveBindings = React.useCallback(() => {
+    const loaded = (policies.data && policies.data.policies) || [];
+    const severity = { block: 4, mask: 3, tag: 2, allow: 1 };
+    const byList = new Map();
+    for (const p of loaded) {
+      for (const b of (p.list_bindings || [])) {
+        const existing = byList.get(b.list_id);
+        if (!existing || (severity[b.action] || 0) > (severity[existing.action] || 0)) {
+          byList.set(b.list_id, {
+            list_id: b.list_id,
+            action: b.action,
+            note: b.note || (existing ? existing.note : '') || `via policy: ${p.name}`,
+          });
+        }
+      }
+    }
+    return Array.from(byList.values());
+  }, [policies.data]);
+  const syncedBindings = syncBindings ? computeActiveBindings() : [];
+  const currentActiveBindings = currentOverrides.active_list_bindings || [];
+  const dirtyBindings = syncBindings
+    && JSON.stringify(syncedBindings) !== JSON.stringify(currentActiveBindings);
   const dirtyCats  = !__siphonCatsEqual(stagedCatsWire,  currentCatsWire);
   const dirtyLists = !__siphonCatsEqual(stagedListsWire, currentListsWire);
-  const dirty = dirtyCats || dirtyLists;
+  const dirty = dirtyCats || dirtyLists || dirtyBindings;
 
   // Roll detection: if the pod's started_at moved past the apply
   // timestamp (or away from the pre-apply baseline), the pod has
@@ -8146,6 +8191,10 @@ function PendingChangesBanner({ customCategories: customCategoriesProp }) {
       pattern_overrides: currentOverrides.pattern_overrides || {},
       custom_categories: stagedCatsWire,
       lists: stagedListsWire,
+      // Sync policies → active_list_bindings when opt-in is on. Off
+      // preserves the current on-disk value so an analyst who curates
+      // active_list_bindings by hand isn't clobbered.
+      active_list_bindings: syncBindings ? syncedBindings : currentActiveBindings,
     };
     try {
       const url = window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/overrides/apply';
@@ -8266,13 +8315,11 @@ function PendingChangesBanner({ customCategories: customCategoriesProp }) {
           {dirty ? (
             <>
               <b>Pending changes</b> staged locally ·{' '}
-              {dirtyCats && (
-                <>{catCount} custom categor{catCount === 1 ? 'y' : 'ies'} / {patCount} pattern{patCount === 1 ? '' : 's'}</>
-              )}
-              {dirtyCats && dirtyLists && ' · '}
-              {dirtyLists && (
-                <>{listCount} list{listCount === 1 ? '' : 's'} / {listEntryCount} entr{listEntryCount === 1 ? 'y' : 'ies'}</>
-              )}
+              {[
+                dirtyCats && `${catCount} custom categor${catCount === 1 ? 'y' : 'ies'} / ${patCount} pattern${patCount === 1 ? '' : 's'}`,
+                dirtyLists && `${listCount} list${listCount === 1 ? '' : 's'} / ${listEntryCount} entr${listEntryCount === 1 ? 'y' : 'ies'}`,
+                dirtyBindings && `${syncedBindings.length} active list binding${syncedBindings.length === 1 ? '' : 's'}`,
+              ].filter(Boolean).join(' · ')}
               . Nothing has been written to <span className="mono">SIPHON_OVERRIDES_PATH</span> yet.
             </>
           ) : (
@@ -8286,6 +8333,27 @@ function PendingChangesBanner({ customCategories: customCategoriesProp }) {
           title={dirty ? 'Write staged overrides to SIPHON_OVERRIDES_PATH' : 'no pending changes'}>
           {apply.loading ? 'Applying…' : '⇪ Apply'}
         </button>
+      </div>
+      <div style={{marginTop:8, display:'flex', alignItems:'center', gap:10, flexWrap:'wrap', fontSize:11.5}}>
+        <label style={{display:'inline-flex', alignItems:'center', gap:6, cursor:'pointer'}}
+               title="On: merge every loaded policy's list_bindings into active_list_bindings on Apply so the scanner enforces them. Off: leave active_list_bindings as-is (hand-curated workflow).">
+          <input
+            type="checkbox"
+            checked={syncBindings}
+            onChange={e => setSyncBindings(e.target.checked)} />
+          <span>Sync policy list_bindings → active_list_bindings</span>
+        </label>
+        {syncBindings && policies.data && (
+          <span className="muted mono" style={{fontSize:11}}>
+            {syncedBindings.length} binding{syncedBindings.length === 1 ? '' : 's'} resolved
+            {' · '}
+            {(() => {
+              const counts = { block:0, mask:0, tag:0, allow:0 };
+              syncedBindings.forEach(b => { counts[b.action] = (counts[b.action] || 0) + 1; });
+              return Object.entries(counts).filter(([,v]) => v > 0).map(([k,v]) => `${v} ${k}`).join(' · ') || '—';
+            })()}
+          </span>
+        )}
       </div>
       {apply.error && (
         <div style={{marginTop:8, color:'var(--red)', fontSize:12}}>
