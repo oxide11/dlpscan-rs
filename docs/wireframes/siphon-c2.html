@@ -3446,7 +3446,7 @@ function Users() {
           <div>
             <div style={{
               display:'grid',
-              gridTemplateColumns:'1.4fr 1.2fr 150px 110px 130px',
+              gridTemplateColumns:'1.4fr 1.2fr 200px 100px 130px',
               gap:10, padding:'6px 14px',
               borderBottom:'1.5px solid var(--line)',
               fontSize:10, letterSpacing:'0.05em', textTransform:'uppercase',
@@ -3480,7 +3480,7 @@ function Users() {
                   <div key={u.id || i}
                        style={{
                          display:'grid',
-                         gridTemplateColumns:'1.4fr 1.2fr 150px 110px 130px',
+                         gridTemplateColumns:'1.4fr 1.2fr 200px 100px 130px',
                          gap:10, padding:'8px 14px',
                          borderBottom:'1px solid var(--line-soft)',
                          alignItems:'center', fontSize:12,
@@ -3488,21 +3488,23 @@ function Users() {
                        }}>
                     <span style={{color:'var(--ink-bright)'}}>{u.name}</span>
                     <span className="muted">{u.email || u.id}</span>
-                    <span>
+                    <span style={{minWidth:0}}>
                       <span className="chip"
+                            title={r.label}
                             style={{
                               fontSize:9, padding:'2px 8px',
                               borderColor: r.color, color: r.color,
                               background: 'var(--bg-1)',
+                              whiteSpace:'nowrap',
                             }}>
                         {r.glyph} {r.label}
                       </span>
                     </span>
-                    <span>
+                    <span style={{minWidth:0}}>
                       <span className={'chip chip--' + (
                         u.status === 'active' ? 'safe'
                         : u.status === 'invited' ? 'warn'
-                        : 'red')} style={{fontSize:9}}>
+                        : 'red')} style={{fontSize:9, whiteSpace:'nowrap'}}>
                         {u.status}
                       </span>
                     </span>

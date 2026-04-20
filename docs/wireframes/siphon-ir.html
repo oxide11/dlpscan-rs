@@ -9102,7 +9102,7 @@ function UsersSurface() {
         <div style={{padding:0}}>
           <div style={{
             display:'grid',
-            gridTemplateColumns:'auto 1.4fr 1fr 110px 120px 120px',
+            gridTemplateColumns:'auto 1.4fr 1fr 180px 100px 130px',
             gap:0,
             fontSize:11, color:'var(--ink-soft)',
             padding:'8px 14px',
@@ -9124,7 +9124,7 @@ function UsersSurface() {
               <div key={u.id}
                    style={{
                      display:'grid',
-                     gridTemplateColumns:'auto 1.4fr 1fr 110px 120px 120px',
+                     gridTemplateColumns:'auto 1.4fr 1fr 180px 100px 130px',
                      gap:0,
                      alignItems:'center',
                      padding:'10px 14px',
@@ -9147,22 +9147,27 @@ function UsersSurface() {
                 <div className="mono" style={{fontSize:11, color:'var(--ink)'}}>
                   {u.email || <span className="muted">—</span>}
                 </div>
-                <div>
+                <div style={{minWidth:0}}>
                   <span className="chip"
+                        title={role.label}
                         style={{
                           fontSize:10,
                           borderColor:role.color, color:role.color,
                           background:'var(--bg-1)',
+                          whiteSpace:'nowrap',
+                          maxWidth:'100%',
+                          overflow:'hidden',
+                          textOverflow:'ellipsis',
                         }}>
                     {role.glyph} {role.label}
                   </span>
                 </div>
-                <div>
+                <div style={{minWidth:0}}>
                   <span className={'chip chip--' + (
                     u.status === 'active' ? 'safe'
                     : u.status === 'invited' ? 'warn'
                     : 'red')}
-                        style={{fontSize:10}}>
+                        style={{fontSize:10, whiteSpace:'nowrap'}}>
                     {u.status.toUpperCase()}
                   </span>
                 </div>
