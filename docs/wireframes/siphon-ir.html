@@ -3315,7 +3315,12 @@ function FindingsQueue() {
     return c;
   }, [all, dispo]);
 
-  const fmtTs = (ts) => ts ? ts.replace('T', ' ').replace('Z', '').slice(0, 19) : '—';
+  // Route through the TZ-aware formatter so profile-timezone
+  // changes land across every row without each call site doing
+  // the Intl dance. useUserTzTick() gives us a re-render when
+  // the current user swaps TZ.
+  useUserTzTick();
+  const fmtTs = (ts) => irFormatTimestamp(ts);
 
   return (
     <div style={{padding:'var(--gap)'}}>
@@ -3325,6 +3330,7 @@ function FindingsQueue() {
           <span className="k" style={{display:'flex', alignItems:'center', gap:8}}>
             <window.LivePill source={findings.source} onClick={findings.refetch}
                              title="click to refetch across all pods" />
+            <TzLabel />
             <span className="mono" style={{fontSize:11}}>
               {filtered.length} shown · {all.length} loaded
               {findings.data && findings.data.total > all.length ? ` · ${findings.data.total} in ring` : ''}
@@ -5347,7 +5353,12 @@ function FindingDetail({ id, back }) {
   const ctx = deriveContext(f);
   const d = dispo[f.id];
 
-  const fmtTs = (ts) => ts ? ts.replace('T', ' ').replace('Z', '').slice(0, 19) : '—';
+  // Route through the TZ-aware formatter so profile-timezone
+  // changes land across every row without each call site doing
+  // the Intl dance. useUserTzTick() gives us a re-render when
+  // the current user swaps TZ.
+  useUserTzTick();
+  const fmtTs = (ts) => irFormatTimestamp(ts);
 
   const dispose = (kind, extra) => {
     const note = notesDraft.trim() || (d && d.notes) || '';
@@ -10165,6 +10176,72 @@ function updateCurrentUserSettings(patch) {
   return updateUser(cur.id, {
     settings: { ...cur.settings, ...patch },
   });
+}
+
+// ─── Timezone formatter · U8 ───────────────────────────────────
+// Reads the current user's settings.timezone and formats any ISO
+// timestamp accordingly. Uses Intl.DateTimeFormat so DST is
+// handled correctly; falls back to browser default on 'browser'
+// or on invalid IANA ids.
+function irGetCurrentUserTz() {
+  try {
+    const u = getCurrentUser();
+    const tz = u && u.settings && u.settings.timezone;
+    return tz && tz !== 'browser' ? tz : null;
+  } catch { return null; }
+}
+function irFormatTimestamp(iso, opts) {
+  if (!iso) return '—';
+  const d = iso instanceof Date ? iso : new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const style = (opts && opts.style) || 'datetime';
+  const tz    = (opts && 'tz' in opts) ? opts.tz : irGetCurrentUserTz();
+  try {
+    const fmtOpts = style === 'date'
+      ? { year: 'numeric', month: '2-digit', day: '2-digit' }
+      : { year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+    if (tz) fmtOpts.timeZone = tz;
+    // en-CA gives YYYY-MM-DD and 24 h time — canonical and
+    // parse-able, which is what analysts want when comparing
+    // across pods.
+    return new Intl.DateTimeFormat('en-CA', fmtOpts).format(d).replace(', ', ' ');
+  } catch {
+    return (typeof iso === 'string' ? iso : d.toISOString())
+      .replace('T', ' ').replace('Z', '').slice(0, 19);
+  }
+}
+
+// Re-render trigger for surfaces that want their timestamps to
+// follow the user's current TZ setting without a manual refresh.
+// Components call this once (discard the return value); the tick
+// bumps whenever ir:currentUserChanged / ir:usersChanged fires,
+// forcing a re-render where irFormatTimestamp runs again.
+function useUserTzTick() {
+  const [, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const refresh = () => setTick(t => t + 1);
+    window.addEventListener('ir:currentUserChanged', refresh);
+    window.addEventListener('ir:usersChanged',       refresh);
+    return () => {
+      window.removeEventListener('ir:currentUserChanged', refresh);
+      window.removeEventListener('ir:usersChanged',       refresh);
+    };
+  }, []);
+}
+
+// Small chip component surfaces can drop into their box-title
+// kicker. Tells the analyst which TZ the shown timestamps sit in
+// so a quick glance distinguishes "stored in UTC" from "shown in
+// my Asia/Singapore profile".
+function TzLabel() {
+  useUserTzTick();
+  const tz = irGetCurrentUserTz();
+  return (
+    <span className="mono" style={{fontSize:10, color:'var(--ink-dim)'}}>
+      times · {tz || 'browser'}
+    </span>
+  );
 }
 
 // ─── Password primitives · A1 ──────────────────────────────────
