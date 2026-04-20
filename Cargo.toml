@@ -146,7 +146,7 @@ redis-rate-limit = ["dep:redis"]
 full = ["pdf", "office", "archives", "data-formats", "msg", "barcode", "bin-data", "tui", "async-support", "metrics", "tls", "yaml-config", "siem", "webhooks", "redis-rate-limit"]
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 tempfile = "3"
 
 [[bench]]
