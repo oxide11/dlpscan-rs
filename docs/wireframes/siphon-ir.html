@@ -7400,6 +7400,25 @@ function App() {
   const openPlaybooks = React.useCallback(() => setPlaybooksOpen(true), []);
   const closePlaybooks = React.useCallback(() => setPlaybooksOpen(false), []);
 
+  // Keyboard shortcut · 'p' toggles the drawer. Ignored when the
+  // focus is in an input / textarea / select / contenteditable so
+  // the analyst can type 'p' in the Findings-Queue search without
+  // hijacking it. Escape-to-close already lives inside the drawer.
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key !== 'p' && e.key !== 'P') return;
+      const t = e.target;
+      if (t && (
+        /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable
+      )) return;
+      e.preventDefault();
+      setPlaybooksOpen(o => !o);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   return (
     <div className="shell" data-density={tweaks.density} data-theme={tweaks.theme}>
       <Topbar tweaks={tweaks} setTweak={setTweak}
