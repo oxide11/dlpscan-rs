@@ -8176,7 +8176,15 @@ function CryptoPasswordAttack() {
     if (format === 'cfb') {
       const officeCrypto = await loadOfficeCrypto();
       const buf = await file.arrayBuffer();
-      const input = new Uint8Array(buf);
+      // Fresh copy per call. officecrypto-tool walks the CFB
+      // structure in-place (its cfb dep mutates the underlying
+      // Uint8Array as it parses), so reusing a single buffer
+      // means every attempt after the first sees corrupt data
+      // and "fails" regardless of password. buf.slice(0) gives
+      // us a fresh ArrayBuffer copy — small cost (~50 ms for a
+      // typical doc) next to the 100k-iter PBKDF2 per attempt.
+      const cloneInput = () => new Uint8Array(buf.slice(0));
+
       // isEncrypted tells us whether this CFB file is actually
       // password-protected (vs. a plain legacy .doc without
       // encryption). Without this check, every password would
@@ -8185,7 +8193,7 @@ function CryptoPasswordAttack() {
       // fall back to just running decrypt().
       if (typeof officeCrypto.isEncrypted === 'function') {
         try {
-          if (!officeCrypto.isEncrypted(input)) {
+          if (!officeCrypto.isEncrypted(cloneInput())) {
             throw new Error("this office document isn't password-protected");
           }
         } catch (e) {
@@ -8202,9 +8210,25 @@ function CryptoPasswordAttack() {
             // Encryption uses PBKDF2 with ~100k iterations, so
             // each attempt is much slower than zip/pdf — that's
             // surfaced in the UI warning below.
-            await officeCrypto.decrypt(input, { password: pw });
+            await officeCrypto.decrypt(cloneInput(), { password: pw });
             return true;
-          } catch { return false; }
+          } catch (e) {
+            // Discriminate wrong-password (expected, keep going)
+            // from everything else (library failure, unsupported
+            // cipher, etc. — abort so the user sees a real error
+            // instead of a false "exhausted" result).
+            const msg = String((e && e.message) || e || '');
+            if (/password.*(incorrect|invalid|wrong)/i.test(msg)
+                || /incorrect.*password/i.test(msg)
+                || /wrong.*password/i.test(msg)
+                || /bad.*decrypt/i.test(msg)) {
+              return false;
+            }
+            // Surface unexpected errors once to the console then
+            // re-throw so the attack loop's catch aborts.
+            try { console.warn('[siphon-ir] CFB verify error:', e); } catch {}
+            throw e;
+          }
         },
         onSuccess: () => [], // No per-entry manifest for CFB
         cleanup: () => {},
