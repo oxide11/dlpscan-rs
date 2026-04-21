@@ -6,6 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+# CI is read-only: fetches source, runs cargo build/test/clippy/fmt.
+# Declaring the minimum token scope closes the CodeQL
+# "Workflow does not contain permissions" finding and prevents a
+# compromised action from escalating to write access.
+permissions:
+  contents: read
+  actions: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1

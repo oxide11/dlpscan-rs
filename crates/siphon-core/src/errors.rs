@@ -40,6 +40,10 @@ pub enum DlpError {
         threshold: crate::classification::ClassificationLevel,
         labels: Vec<String>,
     },
+    /// User-supplied path could not be validated (malformed, canonicalize failed).
+    InvalidPath,
+    /// Canonicalized path escaped the allowed base directory.
+    PathTraversal,
     /// Generic error with message.
     Other(String),
 }
@@ -78,6 +82,8 @@ impl fmt::Display for DlpError {
                 threshold.label(),
                 labels.join(", ")
             ),
+            Self::InvalidPath => write!(f, "Invalid path"),
+            Self::PathTraversal => write!(f, "Path traversal rejected: resolved path escapes the allowed base directory"),
             Self::Other(msg) => write!(f, "{msg}"),
         }
     }
