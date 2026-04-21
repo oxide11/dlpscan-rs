@@ -1,11 +1,8 @@
 {
     "name": "Siphon Cloud Lab",
     "image": "mcr.microsoft.com/devcontainers/universal:2",
-    "features": {
-        "ghcr.io/devcontainers/features/docker-in-docker:1": {}
-    },
-    "overrideCommand": false,
-    "postCreateCommand": ".devcontainer/setup.sh"
+    "forwardPorts": [8080],
+    "postCreateCommand": "bash .devcontainer/setup.sh"
 }
 
 

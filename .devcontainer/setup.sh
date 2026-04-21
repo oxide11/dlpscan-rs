@@ -1,16 +1,18 @@
 #!/bin/bash
+set -e
 
-# 1. Install Minikube
-echo "Installing Minikube..."
-curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-sudo install minikube-linux-amd64 /usr/local/bin/minikube
+echo "--- 🛠️ Starting Manual Setup ---"
 
-# 2. Start Minikube
-echo "Starting Minikube..."
+# 1. Install Minikube if it's missing
+if ! command -v minikube &> /dev/null; then
+    echo "📥 Downloading Minikube..."
+    curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+    sudo install minikube-linux-amd64 /usr/local/bin/minikube
+    rm minikube-linux-amd64
+fi
+
+# 2. Start Minikube using the built-in Docker
+echo "🚀 Starting Kubernetes (Minikube)..."
 minikube start --driver=docker --memory=4096
 
-# 3. Setup Permissions
-sudo chmod 666 /var/run/docker.sock
-
-echo "Lab is ready!"
-
+echo "✅ Lab is ready!"
