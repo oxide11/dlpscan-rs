@@ -2139,6 +2139,19 @@ async fn overrides_revert(
         ));
     }
 
+    // req.version is attacker-controlled (JSON body). Reject anything
+    // that isn't a v<nanos> token — without this, a version like
+    // "../../etc/passwd" composes into the backup filename and
+    // dir.join() happily walks out of the overrides directory.
+    if !siphon_core::path_guard::is_safe_version_token(&req.version) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("invalid version {:?}; expected 'v<nanos>'", req.version),
+            }),
+        ));
+    }
+
     // Expected backup filename shape: "<stem>.<version>.bak"
     // (apply's with_extension() strips the original ext — see
     // parse_backup_entry for the symmetric decode).
@@ -2151,6 +2164,24 @@ async fn overrides_revert(
                 error: format!("no such backup: {}", backup_path.display()),
             }),
         ));
+    }
+    // Defense-in-depth: canonicalize and confirm the resolved file is
+    // still inside the overrides dir before we read it. Runs after
+    // the existence check so canonicalize has a real path to resolve
+    // symlinks against.
+    match (dir.canonicalize(), backup_path.canonicalize()) {
+        (Ok(canon_dir), Ok(canon_backup)) if canon_backup.starts_with(&canon_dir) => {}
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!(
+                        "backup path escapes overrides directory: {}",
+                        backup_path.display()
+                    ),
+                }),
+            ));
+        }
     }
     let bytes = std::fs::read(&backup_path).map_err(|e| {
         (

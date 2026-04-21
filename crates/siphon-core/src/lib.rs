@@ -19,6 +19,7 @@ pub mod lsh;
 pub mod models;
 pub mod normalize;
 pub mod overrides;
+pub mod path_guard;
 pub mod patterns;
 pub mod scanner;
 pub mod scoring;
