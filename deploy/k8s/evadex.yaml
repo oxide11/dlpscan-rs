@@ -1,0 +1,135 @@
+# evadex — adversarial-testing service that drives evadex runs from
+# siphon-c2 over HTTP and a daily CronJob that executes the
+# "banking-daily" profile. Deploys into the `siphon` namespace; the
+# dev-lab lives in `siphon-lab/` and has its own ConfigMap + RBAC —
+# apply this file once you have a production-ish siphon namespace to
+# join. Depends on: namespace `siphon` exists; PVC storage class
+# available for ReadWriteOnce; image `evadex:latest` reachable from
+# the node (pushed to GHCR or side-loaded into a local cluster).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evadex
+  namespace: siphon
+  labels:
+    app: evadex
+    component: adversarial-testing
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: evadex
+  template:
+    metadata:
+      labels:
+        app: evadex
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: evadex
+          image: evadex:latest
+          args: ["bridge", "--host", "0.0.0.0", "--port", "8081"]
+          ports:
+            - containerPort: 8081
+          env:
+            # Optional — if the `evadex-secrets/bridge-key` Secret
+            # exists, uvicorn will require matching x-api-key on
+            # every request. Omit the Secret for trusted-LAN dev.
+            - name: EVADEX_BRIDGE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: evadex-secrets
+                  key: bridge-key
+                  optional: true
+            - name: SIPHON_EXE
+              value: /usr/local/bin/siphon
+            - name: EVADEX_BRIDGE_ROOT
+              value: /results
+          volumeMounts:
+            - name: results
+              mountPath: /results
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: results
+          persistentVolumeClaim:
+            claimName: evadex-results
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: evadex
+  namespace: siphon
+spec:
+  selector:
+    app: evadex
+  ports:
+    - port: 8081
+      targetPort: 8081
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: evadex-results
+  namespace: siphon
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+# Daily run of the banking-daily profile. 06:00 UTC gives the team an
+# overnight baseline report sitting in /results by the start of the
+# work day. Bridge pod isn't reused here — the CronJob is a one-shot
+# `evadex profile run banking-daily` so a bridge crash doesn't block
+# the schedule.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: evadex-daily
+  namespace: siphon
+spec:
+  schedule: "0 6 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+          containers:
+            - name: evadex
+              image: evadex:latest
+              args:
+                - "profile"
+                - "run"
+                - "banking-daily"
+              env:
+                - name: EVADEX_BRIDGE_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: evadex-secrets
+                      key: bridge-key
+                      optional: true
+          restartPolicy: OnFailure

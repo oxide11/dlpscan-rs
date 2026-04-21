@@ -50,3 +50,52 @@ services:
     environment:
       - RUST_LOG=info
     command: ["guard", "--action", "redact", "--presets", "pci-dss,credentials"]
+
+  # evadex — adversarial testing bridge. FastAPI service that drives
+  # evadex runs from siphon-c2 and exposes /v1/evadex/{run,metrics,generate}.
+  # Builds from the sibling evadex repo (../evadex), so both checkouts
+  # need to live under the same parent directory for `docker compose up`.
+  evadex:
+    build:
+      # Relative to the repo root — matches the sibling dlpscan services
+      # above. Assumes the evadex checkout lives next to dlpscan-rs so
+      # `docker compose -f deploy/docker-compose.yml up` from the repo
+      # root can find ../evadex.
+      context: ../evadex
+      dockerfile: deploy/Dockerfile.bridge
+    image: evadex:latest
+    container_name: evadex
+    environment:
+      # Leave EVADEX_BRIDGE_KEY unset for trusted-network dev; set it
+      # in .env or via shell to require x-api-key on every request.
+      - EVADEX_BRIDGE_KEY=${EVADEX_BRIDGE_KEY:-}
+      - SIPHON_EXE=/usr/local/bin/siphon
+      - EVADEX_BRIDGE_ROOT=/results
+    volumes:
+      - evadex-results:/results
+    ports:
+      - "8081:8081"
+    depends_on:
+      - dlpscan
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  evadex-results:
