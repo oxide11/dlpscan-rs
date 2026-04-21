@@ -1,21 +1,15 @@
 {
-  "name": "Siphon Lab (Rust + K8s)",
+  "name": "Siphon Cloud Lab",
   "image": "mcr.microsoft.com/devcontainers/rust:1",
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:1": {},
     "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
-      "version": "latest"
-    }
-  },
-  "customizations": {
-    "vscode": {
-      "extensions": [
-        "rust-lang.rust-analyzer", 
-        "ms-kubernetes-tools.vscode-kubernetes-tools"
-      ]
+        "version": "latest",
+        "installMinikube": true
     }
   },
   "forwardPorts": [8080, 8081],
   "postCreateCommand": "minikube start --driver=docker"
 }
+
 
