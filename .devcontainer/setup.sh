@@ -1,18 +1,17 @@
 #!/bin/bash
 set -e
 
-echo "--- 🛠️ Starting Manual Setup ---"
-
-# 1. Install Minikube if it's missing
+# 1. Install & Start Minikube
 if ! command -v minikube &> /dev/null; then
-    echo "📥 Downloading Minikube..."
     curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
     sudo install minikube-linux-amd64 /usr/local/bin/minikube
-    rm minikube-linux-amd64
 fi
 
-# 2. Start Minikube using the built-in Docker
-echo "🚀 Starting Kubernetes (Minikube)..."
-minikube start --driver=docker --memory=4096
+# Start Minikube
+minikube start --driver=docker
 
-echo "✅ Lab is ready!"
+# 2. Start the Siphon API in the background
+echo "🚀 Auto-starting Siphon API..."
+nohup cargo run --bin siphon-api -- --host 0.0.0.0 > api.log 2>&1 &
+
+echo "✅ Environment fully automated!"
