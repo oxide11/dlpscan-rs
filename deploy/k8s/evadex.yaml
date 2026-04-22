@@ -111,8 +111,29 @@ metadata:
   namespace: siphon
 spec:
   schedule: "0 6 * * *"
+  # Pin the timezone so the schedule doesn't silently drift when the
+  # controller-manager node changes TZ. "0 6 * * *" without a zone
+  # is interpreted in the controller's local tz — Etc/UTC makes the
+  # intent explicit and matches the banking-daily profile.
+  timeZone: Etc/UTC
+  # Previous run must finish before the next fires. A full banking-
+  # tier scan can run multiple minutes on a loaded node; Forbid
+  # avoids piling up concurrent scans against siphon.
+  concurrencyPolicy: Forbid
+  # Prune job history so the namespace doesn't accumulate completed
+  # Jobs forever. Three of each gives enough retrospective for
+  # debugging without overwhelming `kubectl get jobs`.
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      # evadex has internal retry on the HTTP probe — one k8s-level
+      # retry on top is enough for a transient siphon restart.
+      backoffLimit: 1
+      # 45 min cap. Full banking-tier scan runs well under this in
+      # practice; the deadline keeps a stuck job from blocking the
+      # next schedule via concurrencyPolicy: Forbid.
+      activeDeadlineSeconds: 2700
       template:
         spec:
           securityContext:
