@@ -1,0 +1,21 @@
+# Next.js build output
+.next/
+out/
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Env
+.env
+.env*.local
+
+# Editor
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# TypeScript incremental state
+*.tsbuildinfo
