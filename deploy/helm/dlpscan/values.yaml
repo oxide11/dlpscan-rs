@@ -17,6 +17,13 @@ podAnnotations:
   prometheus.io/port: "9090"
   prometheus.io/path: "/metrics"
 
+# Linkerd service-mesh injection. When enabled, every pod in this
+# release gets a linkerd-proxy sidecar that handles mTLS to every
+# other meshed pod automatically. Requires the Linkerd control
+# plane to be installed in the cluster.
+linkerd:
+  enabled: false
+
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000
