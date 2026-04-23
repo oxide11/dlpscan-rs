@@ -44,8 +44,8 @@ uuid = { version = "1", features = ["v4"] }
 # stay lean. When the feature is off, /v1/overrides/roll responds
 # with 501 and a helpful note pointing at the feature + manual
 # `kubectl rollout restart` fallback.
-kube = { version = "0.88", optional = true, default-features = false, features = ["client", "rustls-tls"] }
-k8s-openapi = { version = "0.21", optional = true, features = ["latest"] }
+kube = { version = "3.1", optional = true, default-features = false, features = ["client", "rustls-tls"] }
+k8s-openapi = { version = "0.27", optional = true, features = ["v1_32"] }
 
 [features]
 default = []
