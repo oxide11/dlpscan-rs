@@ -59,7 +59,7 @@ impl DocumentVault {
     /// - `shingle_size`: Words per shingle
     pub fn new(num_hashes: usize, bands: usize, threshold: f64, shingle_size: usize) -> Self {
         assert!(
-            num_hashes % bands == 0,
+            num_hashes.is_multiple_of(bands),
             "num_hashes must be divisible by bands"
         );
         assert!(

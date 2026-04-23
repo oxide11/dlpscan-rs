@@ -856,7 +856,7 @@ fn try_decode_hex(token: &str) -> Option<String> {
         .or_else(|| token.strip_prefix("0X"))
         .unwrap_or(token);
     // Must be even length and all hex digits.
-    if hex_str.len() % 2 != 0 {
+    if !hex_str.len().is_multiple_of(2) {
         return None;
     }
     if !hex_str.bytes().all(|b| b.is_ascii_hexdigit()) {

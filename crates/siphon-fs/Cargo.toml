@@ -4,7 +4,7 @@ version = "2.1.0"
 edition = "2021"
 description = "Polygon Siphon FS — file-scanner HTTP service (multipart in, findings out)"
 license = "MIT"
-rust-version = "1.82"
+rust-version = "1.95"
 
 [[bin]]
 name = "siphon-fs"

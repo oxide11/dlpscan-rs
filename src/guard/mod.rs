@@ -350,7 +350,7 @@ impl InputGuard {
         let mut result = text.to_string();
         // Process findings from end to start to maintain positions
         let mut sorted: Vec<&Match> = findings.iter().collect();
-        sorted.sort_by(|a, b| b.span.0.cmp(&a.span.0));
+        sorted.sort_by_key(|m| std::cmp::Reverse(m.span.0));
 
         for finding in sorted {
             let (start, end) = finding.span;

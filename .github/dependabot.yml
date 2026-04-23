@@ -50,7 +50,7 @@ updates:
           - patch
 
   # ── Docker base images ────────────────────────────────────────
-  # rust:1.85-bookworm + debian:bookworm-slim. Weekly check for
+  # rust:1.95-bookworm + debian:bookworm-slim. Weekly check for
   # security updates + newer rust minors.
   - package-ecosystem: docker
     directory: /deploy
