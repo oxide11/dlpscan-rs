@@ -1,7 +1,8 @@
 //! Benchmarks for the scanning engine.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use siphon::scanner;
+use std::hint::black_box;
 
 fn generate_text(size: usize) -> String {
     let base = "The quick brown fox jumps over the lazy dog. \

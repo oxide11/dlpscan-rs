@@ -52,8 +52,8 @@ bytes = { version = "1", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 
 # Crypto (EDM, token vault)
-hmac = "0.12"
-sha2 = "0.10"
+hmac = "0.13"
+sha2 = "0.11"
 rand = "0.8"
 hex = "0.4"
 zeroize = { version = "1", features = ["derive"] }
@@ -64,19 +64,19 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Metrics
-prometheus = { version = "0.13", default-features = false, features = ["process"], optional = true }
+prometheus = { version = "0.14", default-features = false, features = ["process"], optional = true }
 
 # Config
-toml = "0.8"
+toml = "1.1"
 
 # Temp files (entropy extractor)
 tempfile = "3"
 
 # File extraction
 pdf-extract = { version = "0.10", optional = true }
-calamine = { version = "0.26", optional = true }
+calamine = { version = "0.34", optional = true }
 zip = "2"
-quick-xml = { version = "0.37", optional = true }
+quick-xml = { version = "0.39", optional = true }
 
 # Archive extraction
 sevenz-rust = { version = "0.6", optional = true }
@@ -108,7 +108,7 @@ rustls-pemfile = { version = "2", optional = true }
 serde_yaml = { version = "0.9", optional = true }
 
 # Redis (for distributed rate limiting)
-redis = { version = "0.27", optional = true, default-features = false }
+redis = { version = "1.2", optional = true, default-features = false }
 
 [features]
 default = [
@@ -146,7 +146,7 @@ redis-rate-limit = ["dep:redis"]
 full = ["pdf", "office", "archives", "data-formats", "msg", "barcode", "bin-data", "tui", "async-support", "metrics", "tls", "yaml-config", "siem", "webhooks", "redis-rate-limit"]
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 tempfile = "3"
 
 [[bench]]

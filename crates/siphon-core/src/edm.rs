@@ -4,7 +4,7 @@
 //! Values are hashed with HMAC-SHA256 and stored as hex digests. During scanning,
 //! text is tokenized and each token is checked against the hash set.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
