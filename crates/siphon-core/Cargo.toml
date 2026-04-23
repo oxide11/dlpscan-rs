@@ -19,7 +19,7 @@ sha2 = "0.11"
 hex = "0.4"
 base64 = "0.22"
 tracing = "0.1"
-toml = "0.8"
+toml = "1.1"
 strsim = "0.11"
 rand = "0.8"
 
