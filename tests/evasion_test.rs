@@ -376,7 +376,14 @@ fn test_corrupted_docx_renamed_txt() {
     {
         let file = std::fs::File::create(docx_f.path()).unwrap();
         let mut zip = zip::ZipWriter::new(file);
-        let options = zip::write::SimpleFileOptions::default();
+        // Store uncompressed so the sensitive substrings survive in the
+        // raw bytes after header corruption — the whole point of the
+        // test is "fallback text scanner picks up data from raw bytes",
+        // which requires the bytes to actually be there. Default
+        // compression varies with the deflate backend and can scramble
+        // the payload.
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
         zip.start_file("word/document.xml", options).unwrap();
         zip.write_all(b"<w:t>email: secret@example.com card: 4532015112830366</w:t>")
             .unwrap();
