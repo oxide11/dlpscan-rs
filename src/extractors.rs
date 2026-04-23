@@ -500,10 +500,8 @@ fn parse_rtf(input: &str) -> String {
                 // Hex escape: \'XX
                 // Actually this comes after backslash, handled above
             }
-            _ if !skip_group && depth >= 1 => {
-                if ch != '\r' && ch != '\n' {
-                    output.push(ch);
-                }
+            _ if !skip_group && depth >= 1 && ch != '\r' && ch != '\n' => {
+                output.push(ch);
             }
             _ => {}
         }

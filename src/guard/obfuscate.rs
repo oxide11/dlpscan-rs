@@ -46,7 +46,7 @@ pub fn obfuscate_matches(text: &str, matches: &[Match]) -> String {
         return text.to_string();
     }
     let mut sorted: Vec<&Match> = matches.iter().collect();
-    sorted.sort_by(|a, b| b.span.0.cmp(&a.span.0));
+    sorted.sort_by_key(|m| std::cmp::Reverse(m.span.0));
     let mut result = text.to_string();
     for m in sorted {
         let (start, end) = m.span;

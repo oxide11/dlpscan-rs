@@ -226,7 +226,7 @@ pub fn is_valid_australia_tfn(tfn: &str) -> bool {
         .zip(weights.iter())
         .map(|(&d, &w)| d * w)
         .sum();
-    sum % 11 == 0
+    sum.is_multiple_of(11)
 }
 
 /// Valid IBAN lengths by ISO 13616 country code. Rejects anything
@@ -419,7 +419,7 @@ pub fn is_valid_canada_sin(sin: &str) -> bool {
             }
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Validate an ISIN (International Securities Identification Number)
@@ -474,7 +474,7 @@ pub fn is_valid_isin(isin: &str) -> bool {
             }
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Structural sanity check for a phone number. Extracts the digits
@@ -1047,7 +1047,7 @@ pub fn is_valid_iccid(iccid: &str) -> bool {
             }
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Validate a Legal Entity Identifier (LEI) using mod-97 (ISO 17442).
@@ -1143,7 +1143,7 @@ pub fn is_valid_figi(figi: &str) -> bool {
             }
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Validate an Australian Medicare card number using the published
@@ -1258,7 +1258,7 @@ pub fn is_valid_south_africa_id(id: &str) -> bool {
             }
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Validate a MERS MIN (Mortgage Electronic Registration Systems
@@ -1293,7 +1293,7 @@ pub fn is_valid_mers_min(min: &str) -> bool {
             }
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Validate a Fedwire IMAD (Input Message Accountability Data)
@@ -2145,7 +2145,7 @@ pub fn is_valid_aba_routing(routing: &str) -> bool {
         .zip(weights.iter())
         .map(|(&d, &w)| d * w)
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Validate a Belgian Rijksregisternummer / Numéro national (NRN).
@@ -2527,7 +2527,7 @@ pub fn is_valid_israel_teudat_zehut(id: &str) -> bool {
         let prod = d * weight;
         total += if prod >= 10 { prod - 9 } else { prod };
     }
-    total % 10 == 0
+    total.is_multiple_of(10)
 }
 
 // ---------------------------------------------------------------------------
@@ -2916,7 +2916,7 @@ pub fn is_valid_sweden_pin(pin: &str) -> bool {
             }
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Validate a Danish CPR (Central Person Register) number. CPR is
@@ -3160,7 +3160,7 @@ pub fn is_valid_hong_kong_id(id: &str) -> bool {
         .zip(weights.iter())
         .map(|(&v, &w)| v * w)
         .sum();
-    (sum + check_val) % 11 == 0
+    (sum + check_val).is_multiple_of(11)
 }
 
 /// Validate a US National Provider Identifier (NPI). NPI is 10
@@ -3205,7 +3205,7 @@ pub fn is_valid_us_npi(npi: &str) -> bool {
             }
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 /// Validate a UAE Emirates ID (15 digits, fixed `784` prefix).
@@ -3245,7 +3245,7 @@ pub fn is_valid_uae_emirates_id(id: &str) -> bool {
             }
         })
         .sum();
-    sum % 10 == 0
+    sum.is_multiple_of(10)
 }
 
 // ---------------------------------------------------------------------------
@@ -4582,7 +4582,7 @@ pub fn is_luhn_valid(card_number: &str) -> bool {
         })
         .sum();
 
-    total % 10 == 0
+    total.is_multiple_of(10)
 }
 
 #[cfg(test)]

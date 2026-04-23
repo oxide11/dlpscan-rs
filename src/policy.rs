@@ -293,7 +293,7 @@ fn rule_matches(rule: &PolicyRule, finding: &Match) -> bool {
 fn redact_text(text: &str, findings: &[&Match], ch: char) -> String {
     let mut result = text.to_string();
     let mut sorted: Vec<&&Match> = findings.iter().collect();
-    sorted.sort_by(|a, b| b.span.0.cmp(&a.span.0));
+    sorted.sort_by_key(|m| std::cmp::Reverse(m.span.0));
 
     for finding in sorted {
         let (start, end) = finding.span;

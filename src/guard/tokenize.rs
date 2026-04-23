@@ -136,7 +136,7 @@ impl TokenVault {
         // Longest-first: prevents a shorter token from matching when a
         // longer token starting at the same position would also match.
         let mut tokens: Vec<(&String, &String)> = self.reverse.iter().collect();
-        tokens.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        tokens.sort_by_key(|t| std::cmp::Reverse(t.0.len()));
 
         let mut result = String::with_capacity(text.len());
         let mut remaining = text;

@@ -445,7 +445,7 @@ pub fn handle_tokenize(
 
     // Sort findings by position descending to replace from end to start
     let mut findings: Vec<_> = result.findings.iter().collect();
-    findings.sort_by(|a, b| b.span.0.cmp(&a.span.0));
+    findings.sort_by_key(|f| std::cmp::Reverse(f.span.0));
 
     for finding in &findings {
         let token = vault.tokenize(&finding.text, &finding.category);
