@@ -160,7 +160,7 @@ impl AuditEvent {
     /// verification: strip `signature`, re-serialize, and compare HMACs.
     /// Returns `Err` if serialization fails (never signs over empty data).
     pub fn sign(mut self, key: &[u8]) -> Result<Self, String> {
-        use hmac::{Hmac, Mac};
+        use hmac::{Hmac, KeyInit, Mac};
         use sha2::Sha256;
         // Clear signature before computing so it's not part of the signed data
         self.signature = None;
@@ -176,7 +176,7 @@ impl AuditEvent {
     /// Verify the HMAC-SHA256 signature of this event against `key`.
     /// Returns `true` if the signature is valid.
     pub fn verify(&self, key: &[u8]) -> bool {
-        use hmac::{Hmac, Mac};
+        use hmac::{Hmac, KeyInit, Mac};
         use sha2::Sha256;
         let sig = match &self.signature {
             Some(s) => s.clone(),
