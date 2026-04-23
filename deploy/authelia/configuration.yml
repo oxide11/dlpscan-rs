@@ -1,0 +1,201 @@
+# Authelia configuration for Siphon's OIDC / Passkey front-door.
+#
+# This file is a dev-friendly starter — stand it up against compose
+# or the `authelia` sub-chart, exercise the passkey / MFA flow, then
+# tighten before shipping to prod. The three production blockers are
+# called out inline:
+#
+#   - storage     → switch from local SQLite to PostgreSQL
+#   - notifier    → switch from filesystem to SMTP
+#   - secrets     → source JWT / session / storage keys from a real
+#                   secret store, not the SIPHON_AUTHELIA_* env vars
+#
+# Authelia reads env vars of the form AUTHELIA_<KEY>_FILE and
+# substitutes the file contents at startup; the Helm chart wires
+# those up from Secrets. For compose, the reference `.env.example`
+# ships beside this file.
+
+server:
+  address: "tcp://0.0.0.0:9091"
+  buffers:
+    read: 8192
+    write: 8192
+
+log:
+  level: info
+  format: json
+
+# --- identity ---------------------------------------------------------------
+# TOTP keeps the legacy fallback alive for clients that can't speak
+# WebAuthn (shared dev machines, CI runners). Passkeys are the
+# primary second factor.
+
+totp:
+  issuer: siphon.local
+  period: 30
+  skew: 1
+  algorithm: sha1   # RFC 6238 default — broadest authenticator support
+
+webauthn:
+  disable: false
+  display_name: Siphon
+  attestation_conveyance_preference: indirect
+  # "preferred" lets passkeys auto-present without extra UX; clients
+  # that lack a discoverable credential still fall back to password.
+  user_verification: preferred
+  timeout: 60s
+
+# --- authentication backend ------------------------------------------------
+# File backend for the dev stack. users_database.yml.example ships
+# alongside this config; copy it to users_database.yml and set real
+# Argon2 hashes (`authelia hash-password ...`) before use. In prod
+# swap to LDAP against your IdP of record.
+
+authentication_backend:
+  password_reset:
+    # Password-reset link emails are the legacy Basic Auth fallback
+    # the roadmap calls for. With the filesystem notifier below, the
+    # "email" is dropped into /config/notification.txt — tail it to
+    # grab the reset link during dev. Flip to SMTP for prod.
+    disable: false
+  file:
+    path: /config/users_database.yml
+    password:
+      algorithm: argon2id
+      iterations: 3
+      key_length: 32
+      salt_length: 16
+      memory: 65536
+      parallelism: 4
+
+# --- access control ---------------------------------------------------------
+# Bypass the Authelia endpoints themselves and the siphon health
+# probes (ingress LB needs them unauthenticated). Everything else
+# goes through MFA.
+#
+# The three /api/v1/* rules below map to siphon-api routes: public
+# health, operator-grade scan/batch, and admin-grade key rotation.
+# Tighten the `subject:` rules once you've wired real groups into
+# the auth backend.
+
+access_control:
+  default_policy: deny
+  rules:
+    - domain: "auth.siphon.local"
+      policy: bypass
+
+    - domain: "siphon.local"
+      resources:
+        - "^/health.*$"
+        - "^/metrics$"
+      policy: bypass
+
+    - domain: "siphon.local"
+      resources:
+        - "^/api/v1/admin/.*$"
+      policy: two_factor
+      subject: "group:admins"
+
+    - domain: "siphon.local"
+      resources:
+        - "^/api/v1/(scan|batch|tokenize|detokenize|obfuscate).*$"
+      policy: two_factor
+      subject: ["group:operators", "group:admins"]
+
+    - domain: "siphon.local"
+      policy: two_factor
+
+# --- sessions ---------------------------------------------------------------
+# Same-site cookie scoped to the apex so forward-auth works across
+# /api, /fs, and /ui. Redis is recommended for prod so a compromised
+# pod doesn't keep issuing cookies after eviction.
+
+session:
+  name: authelia_session
+  same_site: lax
+  expiration: 1h
+  inactivity: 15m
+  remember_me: 1M
+  cookies:
+    - domain: siphon.local
+      authelia_url: https://auth.siphon.local/
+      default_redirection_url: https://siphon.local/
+
+# --- regulation -------------------------------------------------------------
+# Lock a user for 5 min after 3 failed attempts in a 2-min window.
+# Tune to match your tolerance for legitimate password-fat-fingering.
+
+regulation:
+  max_retries: 3
+  find_time: 2m
+  ban_time: 5m
+
+# --- storage ---------------------------------------------------------------
+# PROD: replace with PostgreSQL. Authelia's local backend is fine for
+# single-node dev but doesn't survive a pod restart and has no HA
+# story.
+
+storage:
+  local:
+    path: /config/db.sqlite3
+
+# --- notifier --------------------------------------------------------------
+# PROD: replace with SMTP so reset links actually reach users. The
+# filesystem notifier writes every "email" to /config/notification.txt
+# which is ideal for local testing but obviously useless in prod.
+
+notifier:
+  disable_startup_check: false
+  filesystem:
+    filename: /config/notification.txt
+  # smtp:
+  #   host: smtp.example.com
+  #   port: 587
+  #   username: authelia@example.com
+  #   password: "see AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE"
+  #   sender: "Siphon <noreply@example.com>"
+  #   subject: "[Siphon] {title}"
+  #   startup_check_address: postmaster@example.com
+
+# --- OIDC -----------------------------------------------------------------
+# Exposes Authelia as the OIDC provider for siphon-api. The API key
+# auth already in siphon-api stays in place; this is the second
+# verification path for human users coming through the browser.
+#
+# hmac_secret / issuer_private_key / clients[*].secret all live in
+# the sealed secret referenced by the Helm chart. Regenerate them
+# with `authelia crypto pair rsa generate` before going to prod.
+
+identity_providers:
+  oidc:
+    hmac_secret: "placeholder-replace-me-32-bytes-minimum"
+    issuer_private_key: |
+      -----BEGIN RSA PRIVATE KEY-----
+      REPLACE-ME-WITH-A-REAL-2048-BIT-RSA-KEY
+      -----END RSA PRIVATE KEY-----
+    access_token_lifespan: 1h
+    authorize_code_lifespan: 1m
+    id_token_lifespan: 1h
+    refresh_token_lifespan: 90m
+    enable_client_debug_messages: false
+    clients:
+      - id: siphon-api
+        description: Siphon API (resource server)
+        # authelia crypto hash generate pbkdf2 --password <secret>
+        secret: "$pbkdf2-sha512$310000$REPLACE$REPLACE"
+        public: false
+        authorization_policy: two_factor
+        redirect_uris:
+          - https://siphon.local/auth/callback
+          - http://localhost:8080/auth/callback   # local dev
+        scopes:
+          - openid
+          - profile
+          - email
+          - groups
+        grant_types:
+          - authorization_code
+          - refresh_token
+        response_types:
+          - code
+        token_endpoint_auth_method: client_secret_post

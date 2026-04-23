@@ -1,0 +1,10 @@
+# Don't check in a populated user DB — copy the .example, replace
+# the placeholder hashes, keep it out of git.
+users_database.yml
+
+# Authelia runtime state (session sqlite, notification logs, issued
+# auth codes). These materialise when the container boots, so keep
+# the checked-in directory clean.
+db.sqlite3
+db.sqlite3-*
+notification.txt

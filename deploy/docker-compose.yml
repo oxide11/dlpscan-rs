@@ -1,5 +1,26 @@
 version: '3.8'
 
+# ---------------------------------------------------------------------------
+# Siphon compose stack.
+#
+# Top-half: the CLI / scanner / guard containers (the original lab
+# wiring).
+#
+# Bottom-half (siphon-api + siphon-fs + authelia + nginx): the Phase 2
+# "zero-trust" front door. Nginx terminates every request and checks
+# it against Authelia (OIDC + Passkeys) before routing to siphon-api
+# or siphon-fs. Everything is on the `siphon-net` bridge so service
+# names resolve via Docker DNS.
+#
+# Bring the auth stack up with:
+#
+#   docker compose -f deploy/docker-compose.yml \
+#     --profile auth up --build
+#
+# The CLI containers stay in the default profile so plain
+# `docker compose up` keeps today's behaviour.
+# ---------------------------------------------------------------------------
+
 services:
   dlpscan:
     build:
@@ -97,5 +118,94 @@ services:
       timeout: 5s
       retries: 3
 
+  # -------------------------------------------------------------------------
+  # Phase 2 — zero-trust front door
+  # -------------------------------------------------------------------------
+  siphon-api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    image: siphon-api:latest
+    profiles: [auth]
+    environment:
+      - SIPHON_API_BIND=0.0.0.0:8080
+      # Remove SIPHON_API_KEY to run the service in dev mode without
+      # a bearer-token check — Nginx + Authelia are the real front
+      # door in this stack.
+      - SIPHON_API_KEY=${SIPHON_API_KEY:-}
+      - RUST_LOG=info
+    expose: ["8080"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  siphon-fs:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.fs
+    image: siphon-fs:latest
+    profiles: [auth]
+    environment:
+      - SIPHON_FS_BIND=0.0.0.0:8081
+      - RUST_LOG=info
+    expose: ["8081"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  authelia:
+    image: authelia/authelia:4.38
+    profiles: [auth]
+    # Authelia runs as uid 1000 out of the box; mount the config
+    # directory read-write so it can materialise db.sqlite3 and the
+    # notification log next to the config it reads at startup.
+    volumes:
+      - ./authelia:/config
+      - authelia-data:/config/runtime
+    environment:
+      # Rotate these with AUTHELIA_*_FILE secrets in prod. For
+      # compose dev, pull defaults from the shell or an .env file.
+      - AUTHELIA_JWT_SECRET=${AUTHELIA_JWT_SECRET:-please-change-me-32bytes-minimum}
+      - AUTHELIA_SESSION_SECRET=${AUTHELIA_SESSION_SECRET:-please-change-me-32bytes-minimum}
+      - AUTHELIA_STORAGE_ENCRYPTION_KEY=${AUTHELIA_STORAGE_ENCRYPTION_KEY:-please-change-me-32bytes-minimum}
+    expose: ["9091"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9091/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    image: siphon-nginx:latest
+    profiles: [auth]
+    ports:
+      - "8080:80"
+      # - "8443:443"  # enable once TLS certs are mounted
+    depends_on:
+      authelia: { condition: service_healthy }
+      siphon-api: { condition: service_healthy }
+      siphon-fs: { condition: service_healthy }
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   evadex-results:
+  authelia-data:
+
+networks:
+  default:
+    name: siphon-net

@@ -5,3 +5,14 @@ metadata:
   labels:
     app.kubernetes.io/part-of: siphon
     env: lab
+  annotations:
+    # Linkerd namespace-level inject — every pod scheduled into
+    # siphon-lab gets a linkerd-proxy sidecar, which means every
+    # pod-to-pod call between siphon-api ↔ siphon-fs (and future
+    # Phase 2 components) is transparently mTLS'd with automatically-
+    # rotated mesh identities.
+    #
+    # Install prerequisite: `linkerd install | kubectl apply -f -`.
+    # To disable injection for a specific Pod, add
+    # `linkerd.io/inject: disabled` on the PodSpec template.
+    linkerd.io/inject: enabled
