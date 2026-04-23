@@ -1,6 +1,7 @@
 //! Benchmarks for the scanning engine.
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use std::hint::black_box;
 use siphon::scanner;
 
 fn generate_text(size: usize) -> String {
