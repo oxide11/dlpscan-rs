@@ -184,8 +184,13 @@ services:
 
   nginx:
     build:
-      context: ./nginx
-      dockerfile: Dockerfile
+      # Repo root is the build context so the multi-stage Dockerfile
+      # can see both `ui/` (Next.js source) and `deploy/nginx/` (the
+      # proxy config). Running `docker compose build` from the repo
+      # root already resolves `..` correctly because the compose
+      # file lives in deploy/.
+      context: ..
+      dockerfile: deploy/nginx/Dockerfile
     image: siphon-nginx:latest
     profiles: [auth]
     ports:
