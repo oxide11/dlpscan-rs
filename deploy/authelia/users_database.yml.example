@@ -1,0 +1,31 @@
+# Authelia file-backed user database — starter copy for dev only.
+#
+# Copy this file to `users_database.yml` in the same directory and
+# replace the placeholder password hashes. For prod, point
+# authentication_backend at LDAP or an OIDC IdP instead of this file.
+#
+# To mint a real password hash:
+#
+#   docker run --rm -it authelia/authelia:latest \
+#     authelia crypto hash generate argon2 --password 'your-pass'
+#
+# Never commit `users_database.yml` — it's .gitignored at this path.
+
+users:
+  admin:
+    disabled: false
+    displayname: "Siphon Admin"
+    # authelia crypto hash generate argon2 --password 'please-change-me'
+    password: "$argon2id$v=19$m=65536,t=3,p=4$REPLACE-ME$REPLACE-ME"
+    email: admin@siphon.local
+    groups:
+      - admins
+      - operators
+
+  analyst:
+    disabled: false
+    displayname: "Example Analyst"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$REPLACE-ME$REPLACE-ME"
+    email: analyst@siphon.local
+    groups:
+      - operators
