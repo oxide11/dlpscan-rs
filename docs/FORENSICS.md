@@ -107,6 +107,30 @@ From `word/settings.xml` (docx only):
 - `<w:rsidRoot>` → `rsids[0]`
 - `<w:rsid>` list → remaining entries
 
+### Legacy binary Office (doc / xls / ppt)
+
+Pre-2007 Office files are OLE Compound Files. Two well-known
+internal streams carry metadata:
+
+From `\x05SummaryInformation`:
+- Author (PID 0x04) → `creator`
+- Title (0x02) → `title`
+- Subject (0x03) → `subject`
+- Keywords (0x05) → `keywords`
+- Last Author (0x08) → `last_modified_by`
+- AppName (0x12) → `application`
+- CreateTime / LastSaveTime → `created_at` / `modified_at`
+  (FILETIME ticks → ISO-8601)
+
+From `\x05DocumentSummaryInformation`:
+- Company (0x0F) → `company`
+- Manager (0x0E) → `raw["ole:Manager"]`
+
+Anything else the streams carry (VT_LPSTR / VT_LPWSTR / VT_FILETIME
+values keyed by unknown property IDs) lands in
+`raw["ole:summary:<pid>"]` or `raw["ole:docsummary:<pid>"]` for
+manual review.
+
 ### PDF
 
 From the `/Info` dictionary:
@@ -119,17 +143,23 @@ From the `/Info` dictionary:
 From the trailer:
 - `/ID` array → `pdf_doc_id` (two lower-case hex tokens: creation, current)
 
-**Not yet parsed:** the XMP metadata stream (`/Catalog → /Metadata`).
-Planned for the second forensics sprint — it adds richer author
-info and Adobe's own history entries.
+From the XMP metadata stream (`/Root → /Metadata`):
+- `xmp:CreatorTool` → fills `application` if the Info dict left it empty
+- `xmpMM:DocumentID` → `raw["xmp:DocumentID"]` — UUID minted at
+  first save, persists across every edit. Strongest attribution
+  signal when the Info dict has been stripped.
+- `xmpMM:InstanceID` → `raw["xmp:InstanceID"]` — UUID that rotates
+  every save.
+- `dc:title` / `dc:creator` / `dc:subject` → fill the matching
+  first-class field if the Info dict didn't populate it. The Info
+  dict always wins when both sources disagree.
+- All other XMP tags land in `raw["xmp:<tag>"]`.
+
+Structural RDF nodes (`rdf:Description`, `Bag`, `Seq`, `Alt`, `li`,
+etc.) are skipped so the `raw` dump stays readable.
 
 ## Limits
 
-- **OOXML containers only.** The older binary Office formats (`.doc`,
-  `.xls`, `.ppt`) are not covered; they use a completely different
-  container layout that deserves its own parser. Scanner fallback
-  still reads them for PII detection, just not for attribution.
-- **No XMP yet** (see above).
 - **Generic producer strings are down-weighted**, not suppressed —
   "Microsoft Office Word" still contributes ~0.04. If your corpus
   is 100% Office docs, expect a small baseline score between every
@@ -138,16 +168,23 @@ info and Adobe's own history entries.
   `siphon forensics` doesn't invoke the PII pipeline; running
   `siphon scan` doesn't capture metadata. Invoke both when you
   need both.
+- **OLE property-set decoding covers the types Office actually
+  emits** (VT_LPSTR, VT_LPWSTR, VT_FILETIME). Custom properties
+  using exotic types (VT_BLOB, VT_CF) are skipped rather than
+  guessed at.
 
 ## Tests
 
-- `crates/siphon-core/src/forensics/tests.rs` — 10 unit tests
-  covering every extractor arm, attribution signal, and edge case
-  (malformed zip, missing entries, case-insensitive creator match,
-  score-cap clamp, order-independence).
-- `tests/forensics_test.rs` — 4 integration tests exercising the
-  public `extract_metadata` API against synthetic docx files and
-  verifying JSON serialization round-trips.
+- `crates/siphon-core/src/forensics/tests.rs` — 17 unit tests
+  covering every extractor arm (docx / PDF Info dict / PDF XMP /
+  legacy .doc OLE), attribution signal, and edge case
+  (malformed zip / OLE / PDF, missing entries, XMP doesn't
+  override populated Info fields, case-insensitive creator match,
+  score cap at 1.0, order-independence).
+- `tests/forensics_test.rs` — 5 integration tests exercising the
+  public `extract_metadata` API against synthetic docx + .doc OLE
+  files built on disk, verifying JSON serialization round-trips,
+  and the shared-rsidRoot attribution case end-to-end.
 
 CI runs both under the `forensics` feature in
 `.github/workflows/ci.yml`.

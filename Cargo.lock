@@ -4390,6 +4390,7 @@ version = "2.1.0"
 dependencies = [
  "aho-corasick",
  "base64",
+ "cfb",
  "hex",
  "hmac 0.13.0",
  "lopdf",
