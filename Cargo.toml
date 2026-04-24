@@ -120,6 +120,7 @@ default = [
     "msg",
     "bin-data",
     "data-formats",
+    "forensics",
 ]
 metrics = ["dep:prometheus"]
 pdf = ["dep:pdf-extract"]
@@ -129,6 +130,10 @@ data-formats = ["dep:parquet", "dep:arrow", "dep:rusqlite"]
 msg = ["dep:cfb"]
 barcode = ["dep:rxing", "dep:image"]
 bin-data = ["siphon-core/bin-data"]
+# Forensic metadata + author attribution (`siphon analyze forensics`).
+# Passthrough to siphon-core/forensics — zip + quick-xml + lopdf are
+# already transitively present via office/pdf.
+forensics = ["siphon-core/forensics"]
 tui = ["dep:ratatui", "dep:crossterm"]
 # SIEM forwarders (Splunk HEC, Elasticsearch, Syslog, Datadog, generic
 # webhook). Ships its own synchronous HTTP client, so there are no
@@ -143,7 +148,7 @@ tls = ["async-support", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile"]
 yaml-config = ["dep:serde_yaml"]
 python = ["dep:pyo3"]
 redis-rate-limit = ["dep:redis"]
-full = ["pdf", "office", "archives", "data-formats", "msg", "barcode", "bin-data", "tui", "async-support", "metrics", "tls", "yaml-config", "siem", "webhooks", "redis-rate-limit"]
+full = ["pdf", "office", "archives", "data-formats", "msg", "barcode", "bin-data", "tui", "async-support", "metrics", "tls", "yaml-config", "siem", "webhooks", "redis-rate-limit", "forensics"]
 
 [dev-dependencies]
 criterion = "0.8"
