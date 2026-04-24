@@ -7628,78 +7628,187 @@ Object.assign(window, { Logs });
 
 <script type="text/babel" data-presets="react">
 /* ===== surfaces/pods.jsx ===== */
-// Pod Inventory surface
+// Pod Inventory surface. Live-backed by siphon-api's
+// /v1/k8s/pods (gated by the chart's api.k8sRoll.enabled=true
+// Role). The endpoint distinguishes three product states:
+//   1. 200 { in_cluster: true, pods: [...] }  — normal, render rows
+//   2. 200 { in_cluster: false, pods: [] }    — siphon-api is
+//      running outside a cluster (typical local `cargo run`);
+//      render a calm informational panel, NOT a red error
+//   3. non-2xx                                — a real failure
+//      (RBAC denied, apiserver unreachable, feature flag off);
+//      render the error surface
 function Pods() {
-  const rows = [
-    ['siphon-fs',       'ok',   '1.8.2', 18, 12, 'CPU',  '  82 MB/s', 'us-east-1'],
-    ['siphon-api',      'ok',   '1.8.2', 42, 28, 'CPU',  ' p95 12ms', 'us-east-1'],
-    ['siphon-api',      'ok',   '1.8.2', 24, 18, 'CPU',  ' p95 18ms', 'eu-west-1'],
-    ['siphon-ds',       'warn', '1.8.1',  9,  7, 'CPU',  'lag 412',   'us-east-1'],
-    ['siphon-ds',       'ok',   '1.8.2',  6,  6, 'CPU',  'lag 8',     'eu-west-1'],
-    ['siphon-gw',       'ok',   '1.8.2', 12,  8, 'CPU',  ' p95 24ms', 'us-east-1'],
-    ['siphon-ml',       'ok',   '1.5.0',  6,  4, 'GPU',  'util 64%',  'us-east-1'],
-    ['siphon-vision',   'warn', '0.9.3',  4,  3, 'GPU',  'queue 412', 'us-east-1'],
-    ['siphon-vision',   'bad',  '0.9.2',  2,  0, 'GPU',  'OOM',       'eu-west-1'],
-    ['siphon-classify', 'ok',   '1.1.0',  3,  2, 'CPU',  'p95 9ms',   'us-east-1'],
-  ];
+  const px = window.useSiphonApi('/v1/k8s/pods', []);
+  // Poll at the same 5 s cadence the legacy Next.js Ops view
+  // used — matches kubelet's status push interval so anything
+  // faster just repeats the same snapshot.
+  React.useEffect(() => {
+    const t = setInterval(() => px.refetch(), 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  const data       = px.data;
+  const inCluster  = !!(data && data.in_cluster);
+  const pods       = (data && data.pods) || [];
+  const namespace  = (data && data.namespace) || null;
+
+  // Per-deployment roll-up. The API already tags each pod with
+  // its `app.kubernetes.io/component` label; fall back to a
+  // synthetic bucket so un-labelled pods still show up.
+  const byDeployment = React.useMemo(() => {
+    const m = new Map();
+    for (const p of pods) {
+      const key = p.deployment || '(unlabeled)';
+      const arr = m.get(key) || [];
+      arr.push(p);
+      m.set(key, arr);
+    }
+    return [...m.entries()].sort((a,b) => a[0].localeCompare(b[0]));
+  }, [pods]);
+
+  const total     = pods.length;
+  const ready     = pods.filter(p => p.ready).length;
+  const unhealthy = total - ready;
+  const restarts  = pods.reduce((a, p) => a + (p.restarts || 0), 0);
+
+  // LivePill: 'live' whenever the endpoint answered 200 — even
+  // when `in_cluster === false` the endpoint is live, there
+  // just aren't any pods to show. The info banner below carries
+  // the "why" so this chip stays simple and non-alarming.
+  const pillSource = px.loading ? 'loading'
+                   : px.error   ? 'offline'
+                   : 'live';
+
   return (
     <div>
       <div className="page-head">
         <div>
-          <div className="crumbs">Operate · Pod Inventory</div>
+          <div className="crumbs">Operate · Pod Inventory{namespace ? ' · ' + namespace : ''}</div>
           <h1>Pods</h1>
         </div>
         <div className="actions">
-          <window.FixtureBadge reason="no k8s/fleet — only siphon-api runs" />
-          <button className="btn ghost">Topology view</button>
-          <button className="btn">Config reload</button>
-          <button className="btn primary">Scale…</button>
+          <window.LivePill
+            source={pillSource}
+            onClick={() => px.refetch()}
+            title={px.error || (inCluster ? 'siphon-api is in-cluster' : 'siphon-api is not running in a cluster')}
+          />
+          <button className="btn ghost" onClick={() => px.refetch()}>Refresh</button>
         </div>
       </div>
+
       <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
-        <div className="box"><div className="stat"><span className="s-label">Total pods</span><span className="s-val">126</span><span className="s-delta">across 10 deployments</span></div></div>
-        <div className="box"><div className="stat"><span className="s-label">Healthy</span><span className="s-val" style={{color:'var(--safe)'}}>94</span><span className="s-delta">75%</span></div></div>
-        <div className="box"><div className="stat"><span className="s-label">Degraded</span><span className="s-val" style={{color:'var(--amber)'}}>6</span><span className="s-delta">5% — vision lag</span></div></div>
-        <div className="box"><div className="stat"><span className="s-label">Down</span><span className="s-val" style={{color:'var(--red)'}}>2</span><span className="s-delta">eu vision pods</span></div></div>
+        <div className="box"><div className="stat">
+          <span className="s-label">Pods total</span>
+          <span className="s-val">{px.loading && !data ? '…' : total}</span>
+          <span className="s-delta">{namespace || 'resolving namespace'}</span>
+        </div></div>
+        <div className="box"><div className="stat">
+          <span className="s-label">Ready</span>
+          <span className="s-val" style={{color: ready === total && total > 0 ? 'var(--safe)' : undefined}}>
+            {px.loading && !data ? '…' : ready}
+          </span>
+          <span className="s-delta">
+            {total === 0 ? '—' : Math.round((ready / total) * 100) + '% of fleet'}
+          </span>
+        </div></div>
+        <div className="box"><div className="stat">
+          <span className="s-label">Unhealthy</span>
+          <span className="s-val" style={{color: unhealthy > 0 ? 'var(--amber)' : undefined}}>
+            {px.loading && !data ? '…' : unhealthy}
+          </span>
+          <span className="s-delta">Failed, pending, or not-ready</span>
+        </div></div>
+        <div className="box"><div className="stat">
+          <span className="s-label">Restarts</span>
+          <span className="s-val" style={{color: restarts > 0 ? 'var(--amber)' : undefined}}>
+            {px.loading && !data ? '…' : restarts}
+          </span>
+          <span className="s-delta">Sum across pod containers</span>
+        </div></div>
       </div>
 
-      <div className="box">
-        <div className="box-title"><span className="t">Deployments</span><span className="k">gRPC health · versions · scaling</span></div>
-        <div className="pod-row label" style={{borderBottom:'1.5px solid var(--line)'}}>
-          <span>●</span><span>Pod · region</span><span>Replicas</span><span>Primary metric</span><span>Res</span><span>Stage</span><span></span>
-        </div>
-        {rows.map(([n,s,v,rep,ready,res,m,region],i)=>(
-          <div className="pod-row" key={i}>
-            <span className={`dot-k ${s}`} />
-            <span className="name">{n} <span className="v">v{v} · {region}</span></span>
-            <span className="mono">{ready}/{rep}</span>
-            <span className="mono">{m}</span>
-            <span className="mono">{res}</span>
-            <span className={`chip chip--${s==='ok'?'safe':s==='warn'?'warn':'red'}`}>{s==='ok'?'stable':s==='warn'?'canary':'down'}</span>
-            <span className="arrow">→</span>
+      {px.error ? (
+        <div className="box" style={{borderColor:'var(--red)', marginBottom:'var(--gap)'}}>
+          <div className="box-title">
+            <span className="t" style={{color:'var(--red)'}}>Pod discovery unavailable</span>
+            <span className="k">/v1/k8s/pods</span>
           </div>
-        ))}
-      </div>
-
-      <div className="grid grid-2" style={{marginTop:'var(--gap)'}}>
-        <div className="box">
-          <div className="box-title"><span className="t">Version spread</span><span className="k">rollout</span></div>
-          <div className="bar-row"><span className="hand-b">v1.8.2</span><span className="b"><i style={{width:'78%',background:'var(--safe)'}}/></span><span className="n">98</span></div>
-          <div className="bar-row"><span className="hand-b">v1.8.1</span><span className="b"><i style={{width:'14%',background:'var(--amber)'}}/></span><span className="n">18</span></div>
-          <div className="bar-row"><span className="hand-b">v1.5.0 · ml</span><span className="b"><i style={{width:'5%',background:'var(--cyan)'}}/></span><span className="n">6</span></div>
-          <div className="bar-row"><span className="hand-b">v0.9.x · vis</span><span className="b"><i style={{width:'3%',background:'var(--red)'}}/></span><span className="n">4</span></div>
-        </div>
-        <div className="box">
-          <div className="box-title"><span className="t">Events · 1h</span><span className="k">k8s + internal</span></div>
           <div className="mono" style={{fontSize:11, color:'var(--ink-soft)', lineHeight:1.6}}>
-            <div>12:41 <span style={{color:'var(--red)'}}>CrashLoopBackOff</span> siphon-vision-eu-8f4</div>
-            <div>12:33 Scaled siphon-api-us 32→42</div>
-            <div>12:28 <span style={{color:'var(--amber)'}}>HPA</span> siphon-ds queue depth &gt; threshold</div>
-            <div>12:15 Rollout siphon-fs 1.8.1→1.8.2 complete</div>
-            <div>12:02 Config reload: detector-routing.yaml</div>
+            <div>{px.error}</div>
+            <div style={{marginTop:6}}>
+              The Ops view needs siphon-api built with
+              <code> --features k8s-roll</code> and the Role provisioned
+              by the Helm chart (<code>api.k8sRoll.enabled=true</code>).
+            </div>
           </div>
         </div>
-      </div>
+      ) : null}
+
+      {!px.error && data && !inCluster ? (
+        <div className="box" style={{marginBottom:'var(--gap)'}}>
+          <div className="box-title">
+            <span className="t">Not running in a cluster</span>
+            <span className="k">standalone siphon-api</span>
+          </div>
+          <div className="mono" style={{fontSize:11, color:'var(--ink-soft)', lineHeight:1.6}}>
+            siphon-api couldn't find a kubeconfig or an in-cluster
+            service-account token, so there are no pods to list. This is
+            the expected state for a local
+            <code> cargo run</code> or a containerised siphon-api that
+            isn't deployed via the Helm chart. Deploy with
+            <code> api.k8sRoll.enabled=true</code> to populate this view.
+          </div>
+        </div>
+      ) : null}
+
+      {!px.error && data && inCluster && pods.length === 0 ? (
+        <div className="box" style={{marginBottom:'var(--gap)'}}>
+          <div className="box-title">
+            <span className="t">No Siphon pods visible</span>
+            <span className="k">{namespace || 'default'}</span>
+          </div>
+          <div className="mono" style={{fontSize:11, color:'var(--ink-soft)', lineHeight:1.6}}>
+            No pods in this namespace carry the
+            <code> app.kubernetes.io/part-of=siphon</code> label yet.
+            If you just installed the Helm chart this should populate
+            within a few seconds.
+          </div>
+        </div>
+      ) : null}
+
+      {pods.length > 0 ? (
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Deployments</span>
+            <span className="k">phase · ready · restarts · node</span>
+          </div>
+          <div className="pod-row label" style={{borderBottom:'1.5px solid var(--line)'}}>
+            <span>●</span><span>Deployment</span><span>Ready</span><span>Restarts</span><span>Image</span><span>Phase</span><span></span>
+          </div>
+          {byDeployment.map(([dep, group]) => {
+            const readyN = group.filter(p => p.ready).length;
+            const anyBad = group.some(p => p.phase === 'Failed' || p.phase === 'Unknown');
+            const tone   = readyN === group.length ? 'ok' : anyBad ? 'bad' : 'warn';
+            const restartsN = group.reduce((a, p) => a + (p.restarts || 0), 0);
+            const firstImage = (group[0] && group[0].image) || '—';
+            const phaseLabel = group.every(p => p.phase === 'Running') ? 'Running'
+                             : group.find(p => p.phase === 'Failed') ? 'Failed'
+                             : group[0] ? group[0].phase : '—';
+            return (
+              <div className="pod-row" key={dep}>
+                <span className={`dot-k ${tone}`} />
+                <span className="name">{dep} <span className="v">{group.length} {group.length === 1 ? 'pod' : 'pods'}</span></span>
+                <span className="mono">{readyN}/{group.length}</span>
+                <span className="mono">{restartsN}</span>
+                <span className="mono" title={firstImage} style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{firstImage}</span>
+                <span className={`chip chip--${tone === 'ok' ? 'safe' : tone === 'warn' ? 'warn' : 'red'}`}>{phaseLabel}</span>
+                <span className="arrow">→</span>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }
