@@ -55,6 +55,10 @@ spec:
               mountPath: /config/configuration.yml
               subPath: configuration.yml
               readOnly: true
+            - name: config
+              mountPath: /config/users_database.yml
+              subPath: users_database.yml
+              readOnly: true
             {{- if .Values.authelia.persistence.enabled }}
             - name: data
               mountPath: /config
