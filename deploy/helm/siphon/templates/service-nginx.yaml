@@ -1,0 +1,23 @@
+{{- if .Values.nginx.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "siphon.componentName" (dict "root" . "component" "nginx") }}
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "nginx") | nindent 4 }}
+spec:
+  type: {{ .Values.nginx.service.type }}
+  ports:
+    - port: {{ .Values.nginx.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+    {{- with .Values.nginx.service.tlsPort }}
+    - port: {{ . }}
+      targetPort: https
+      protocol: TCP
+      name: https
+    {{- end }}
+  selector:
+    {{- include "siphon.selectorLabels" (dict "root" . "component" "nginx") | nindent 4 }}
+{{- end }}

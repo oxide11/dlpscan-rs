@@ -38,21 +38,13 @@ v="$(awk -F\" '/^[[:space:]]*"version":/{print $4; exit}' ui/package.json)"
 check "ui/package.json" "${v}"
 
 # --- Helm Chart.yaml appVersion --------------------------------------------
-v="$(awk -F\" '/^appVersion:/{print $2; exit}' deploy/helm/dlpscan/Chart.yaml)"
-check "deploy/helm/dlpscan/Chart.yaml (appVersion)" "${v}"
-
-# --- Helm values image tag -------------------------------------------------
-v="$(awk '
-    in_image && /^[[:space:]]+tag:/ {
-        match($0, /"[^"]+"/)
-        if (RSTART) {
-            print substr($0, RSTART+1, RLENGTH-2)
-        }
-        exit
-    }
-    /^image:/ { in_image = 1 }
-' deploy/helm/dlpscan/values.yaml)"
-check "deploy/helm/dlpscan/values.yaml (image.tag)" "${v}"
+# The new siphon chart uses appVersion as the default image tag for
+# every first-party component (siphon-api, siphon-fs, siphon-nginx).
+# Per-component `image.tag` values in values.yaml are intentionally
+# empty strings so they fall back to appVersion — no separate tag
+# check needed.
+v="$(awk -F\" '/^appVersion:/{print $2; exit}' deploy/helm/siphon/Chart.yaml)"
+check "deploy/helm/siphon/Chart.yaml (appVersion)" "${v}"
 
 if [[ $fail -ne 0 ]]; then
     echo

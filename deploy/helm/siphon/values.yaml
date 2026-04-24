@@ -1,0 +1,339 @@
+# Siphon Helm values — the single source of operator-facing
+# configuration. Each top-level key groups settings for one
+# component; `global` carries cross-cutting concerns (image
+# registry, labels, RBAC).
+#
+# Secrets (API keys, Authelia JWT seed, session seed, storage
+# encryption key) are intentionally NOT set here. Stand them up out
+# of band via External Secrets Operator, Sealed Secrets, or
+# `kubectl create secret` and point the corresponding `*.secretRef`
+# at the result.
+
+# ---------------------------------------------------------------------------
+# Global — cross-cutting concerns
+# ---------------------------------------------------------------------------
+global:
+  # Common image registry + pull policy. Components can override
+  # their own `image.registry` if you run a split registry (e.g.
+  # Authelia from Docker Hub, Siphon from GHCR).
+  imageRegistry: ghcr.io
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+  # Labels propagated to every resource in the release. Handy for
+  # cost-allocation + multi-tenant clusters.
+  commonLabels: {}
+  commonAnnotations: {}
+
+  # Linkerd sidecar injection. When enabled, every pod picks up
+  # the `linkerd.io/inject: enabled` annotation and the Linkerd
+  # control plane adds a sidecar for automatic mTLS.
+  # Prerequisite: `linkerd install | kubectl apply -f -` in the cluster.
+  linkerd:
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# siphon-api — REST scanner + k8s discovery endpoints
+# ---------------------------------------------------------------------------
+api:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: oxide11/siphon-api
+    tag: ""  # defaults to Chart.appVersion
+    pullPolicy: ""  # inherits global.imagePullPolicy
+
+  service:
+    type: ClusterIP
+    port: 8080
+
+  # `k8sRoll` gates the cargo-build `k8s-roll` feature from the
+  # runtime side. When true, a Role + RoleBinding grants the
+  # siphon-api ServiceAccount the RBAC to list pods and patch
+  # Deployments in the release namespace, and the `/v1/k8s/*`
+  # and `/v1/overrides/roll` endpoints become live.
+  k8sRoll:
+    enabled: true
+    # Deployments the roller is allowed to patch. Leaving the list
+    # empty makes the Role wildcard — not recommended; the default
+    # restricts to Siphon's own Deployments.
+    deployments:
+      - siphon-api
+      - siphon-fs
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+  # Probes target the siphon-api /health and /ready endpoints
+  # (both unauthenticated by design — Authelia sits in front).
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 15
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http
+    initialDelaySeconds: 2
+    periodSeconds: 3
+    failureThreshold: 3
+
+  # Required in prod. Create the secret out of band; pass its
+  # name here. The secret must carry `api-key` as a 32+-byte
+  # random string.
+  #   kubectl create secret generic siphon-api-auth \
+  #     --from-literal=api-key="$(openssl rand -hex 32)"
+  auth:
+    secretName: ""     # e.g. "siphon-api-auth"
+    secretKey: "api-key"
+
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+# ---------------------------------------------------------------------------
+# siphon-fs — multipart file-scan service
+# ---------------------------------------------------------------------------
+fs:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: oxide11/siphon-fs
+    tag: ""
+    pullPolicy: ""
+
+  service:
+    type: ClusterIP
+    port: 8081
+
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 15
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http
+    initialDelaySeconds: 2
+    periodSeconds: 3
+    failureThreshold: 3
+
+  # siphon-fs can accept large multipart uploads. Scratch goes to
+  # an emptyDir by default; switch to a PVC via `persistentVolume`
+  # below if the cluster can't tolerate 1 GiB of tmpfs per pod.
+  scratchVolume:
+    # "emptyDir" | "pvc"
+    kind: emptyDir
+    sizeLimit: 1Gi
+    # Only consulted when kind == "pvc".
+    pvc:
+      storageClassName: ""
+      accessModes: [ReadWriteOnce]
+
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+
+  podDisruptionBudget:
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# UI (Next.js SPA) — served from the nginx Deployment below
+# ---------------------------------------------------------------------------
+# There is no standalone `ui` section. The reverse-proxy image
+# produced by `deploy/nginx/Dockerfile` is a multi-stage build:
+# Node compiles the SPA, nginx serves it out of `/srv/ui/`. Scaling
+# the SPA and scaling the forward-auth proxy go together — one
+# image, one Deployment, one scale knob (`nginx.replicaCount`).
+
+# ---------------------------------------------------------------------------
+# authelia — OIDC + passkey front door
+# ---------------------------------------------------------------------------
+authelia:
+  enabled: true
+  replicaCount: 1  # SQLite backend; bump to 2+ once you swap to postgres
+
+  image:
+    registry: docker.io  # Authelia isn't on GHCR
+    repository: authelia/authelia
+    tag: "4.38"
+    pullPolicy: ""
+
+  service:
+    type: ClusterIP
+    port: 9091
+
+  # PVC to hold SQLite DB, session store, and notification log.
+  persistence:
+    enabled: true
+    storageClassName: ""
+    size: 1Gi
+    accessModes: [ReadWriteOnce]
+
+  # Authelia needs three high-entropy secrets at startup. Create
+  # them out of band:
+  #   kubectl create secret generic siphon-authelia \
+  #     --from-literal=jwt_secret="$(openssl rand -hex 32)" \
+  #     --from-literal=session_secret="$(openssl rand -hex 32)" \
+  #     --from-literal=storage_encryption_key="$(openssl rand -hex 32)"
+  # then set authelia.secretName = "siphon-authelia".
+  secretName: ""
+
+  # ConfigMap mount — the chart packages deploy/authelia/
+  # configuration.yml as a ConfigMap. Override `configYaml` below
+  # to point at your own, or leave it null to use the shipped
+  # defaults.
+  configYaml: null
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+
+  livenessProbe:
+    httpGet:
+      path: /api/health
+      port: http
+    initialDelaySeconds: 10
+    periodSeconds: 20
+  readinessProbe:
+    httpGet:
+      path: /api/health
+      port: http
+    initialDelaySeconds: 2
+    periodSeconds: 5
+
+# ---------------------------------------------------------------------------
+# nginx — reverse proxy / forward-auth
+# ---------------------------------------------------------------------------
+nginx:
+  enabled: true
+  replicaCount: 2
+
+  image:
+    repository: oxide11/siphon-nginx
+    tag: ""
+    pullPolicy: ""
+
+  service:
+    type: ClusterIP
+    port: 80
+    # tlsPort: 443  # enable when TLS cert / key are mounted
+
+  # Upstream hostnames Nginx resolves to. Defaults match the
+  # Service names this chart creates — override if you front
+  # a siphon-api that lives in another namespace or cluster.
+  upstreams:
+    api: ""        # empty -> chart-default Service name
+    fs: ""
+    authelia: ""
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 500m
+      memory: 128Mi
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+# ---------------------------------------------------------------------------
+# ingress — single ingress for the proxy
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: ""   # "nginx", "traefik", etc.
+  annotations: {}
+  # The default assumes a single DNS entry for the whole stack
+  # (Nginx handles path-based routing). Set to your real hostname.
+  host: siphon.local
+  path: /
+  pathType: Prefix
+  tls:
+    enabled: false
+    secretName: ""
+
+# ---------------------------------------------------------------------------
+# Shared ConfigMap — overrides for siphon-api + siphon-fs
+# ---------------------------------------------------------------------------
+# Both the API and the file scanner read the same overrides JSON
+# so ruleset tweaks land in one place. Override keys here become
+# the ConfigMap contents.
+overrides:
+  # JSON as a string (Helm will render it into a ConfigMap key).
+  # Default is an empty-overrides shell — extend as needed.
+  config: |
+    {
+      "patterns": {},
+      "categories": {}
+    }
+
+# ---------------------------------------------------------------------------
+# Pod security (applies to every Deployment in the chart)
+# ---------------------------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+# ---------------------------------------------------------------------------
+# NetworkPolicy — default-deny + explicit allow-list
+# ---------------------------------------------------------------------------
+networkPolicy:
+  enabled: true
+  # Allow DNS + HTTPS egress by default (k8s API, OCSP responders,
+  # SMTP, OIDC clients). Extend for SIEM forwarders / webhooks /
+  # Redis etc.
+  extraEgress: []
+
+# ---------------------------------------------------------------------------
+# Common pod scheduling knobs
+# ---------------------------------------------------------------------------
+nodeSelector: {}
+tolerations: []
+affinity: {}

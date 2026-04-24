@@ -1,0 +1,44 @@
+apiVersion: v2
+name: siphon
+description: |
+  Siphon — enterprise DLP scanner, analyst UI, OIDC authentication,
+  and service mesh sidecars — as a single Helm release.
+
+  This chart replaces the legacy `dlpscan` chart. The per-service
+  Deployments (siphon-api, siphon-fs, ui, authelia, nginx) share
+  a ConfigMap + Secret for overrides and are wired together so one
+  `helm install` produces a working zero-trust stack.
+
+type: application
+# Chart version — bump when templates change. Tracks independently
+# of the image (appVersion) it deploys; the version-sync CI check
+# only gates appVersion against the workspace Cargo.toml.
+version: 2.0.0
+# appVersion pinned to the Rust workspace version. Update via
+# scripts/bump-version.sh so every declaration stays in lockstep.
+appVersion: "2.1.0"
+
+home: https://github.com/oxide11/dlpscan-rs
+sources:
+  - https://github.com/oxide11/dlpscan-rs
+
+keywords:
+  - dlp
+  - security
+  - compliance
+  - pii
+  - data-protection
+  - forensics
+  - siphon
+
+maintainers:
+  - name: Siphon Security Team
+    url: https://github.com/oxide11/dlpscan-rs
+
+# Authelia is embedded as a sub-component in this chart rather than
+# pulled in as a dependency. That trades a bit of template duplication
+# for one command to install/upgrade/delete the whole stack — which
+# matters when the stack is a tightly-coupled zero-trust front door.
+annotations:
+  category: Security
+  licenses: MIT

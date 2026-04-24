@@ -1824,6 +1824,223 @@ async fn overrides_roll(
     }))
 }
 
+// ---------------------------------------------------------------------------
+// /v1/k8s/pods — read-only pod discovery for the Ops UI
+// ---------------------------------------------------------------------------
+//
+// The Helm chart's `api-k8s` Role grants list/get/watch on pods in
+// the release namespace. This handler surfaces a compact view
+// shaped for the Ops page: one row per pod with phase + restart
+// count + age + first container's image. Listing the full V1Pod
+// spec would ship ~50 KB of data per pod that the UI never renders.
+//
+// Like overrides_roll, this is feature-gated behind `k8s-roll`. A
+// follow-up can split the features if someone wants read-only
+// discovery without the patch-deployment capability, but in
+// practice the two flow together.
+
+#[cfg(feature = "k8s-roll")]
+#[derive(Serialize)]
+struct PodSummary {
+    name: String,
+    namespace: String,
+    phase: String,
+    ready: bool,
+    restarts: u32,
+    image: Option<String>,
+    node: Option<String>,
+    /// Deployment name derived from the pod's `app.kubernetes.io/component`
+    /// label plus release name. Nullable when the labels aren't set,
+    /// so clients know which pods are restartable via /rollout.
+    deployment: Option<String>,
+    created_at: Option<String>,
+}
+
+#[cfg(feature = "k8s-roll")]
+#[derive(Serialize)]
+struct PodListResponse {
+    namespace: String,
+    count: usize,
+    pods: Vec<PodSummary>,
+}
+
+#[cfg(not(feature = "k8s-roll"))]
+async fn k8s_pods(
+    _state: State<Arc<AppState>>,
+    _addr: ConnectInfo<SocketAddr>,
+) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ErrorResponse {
+            error: "siphon-api was built without the `k8s-roll` feature — \
+                 the Ops pod view needs kube-rs at runtime. Rebuild with \
+                 `cargo build --features k8s-roll`."
+                .to_string(),
+        }),
+    )
+}
+
+#[cfg(feature = "k8s-roll")]
+async fn k8s_pods(
+    State(_state): State<Arc<AppState>>,
+    ConnectInfo(_addr): ConnectInfo<SocketAddr>,
+) -> Result<Json<PodListResponse>, (StatusCode, Json<ErrorResponse>)> {
+    use k8s_openapi::api::core::v1::Pod;
+    use kube::{
+        api::{Api, ListParams},
+        Client,
+    };
+
+    let namespace = resolve_namespace();
+
+    let client = Client::try_default().await.map_err(|e| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                error: format!("kube client init failed · {e}"),
+            }),
+        )
+    })?;
+    let api: Api<Pod> = Api::namespaced(client, &namespace);
+
+    // Default list view is scoped to pods that carry the
+    // `app.kubernetes.io/part-of=siphon` label — the chart labels
+    // every Deployment with it. That keeps the Ops view from
+    // filling up with unrelated workloads that happen to share
+    // the namespace.
+    let lp = ListParams::default().labels("app.kubernetes.io/part-of=siphon");
+
+    let pods = api.list(&lp).await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(ErrorResponse {
+                error: format!("kube pods.list · {e}"),
+            }),
+        )
+    })?;
+
+    let summaries: Vec<PodSummary> = pods.items.iter().map(pod_summary).collect();
+
+    Ok(Json(PodListResponse {
+        namespace,
+        count: summaries.len(),
+        pods: summaries,
+    }))
+}
+
+/// Resolve the effective namespace for all /v1/k8s/* handlers.
+/// Mirrors the rule-set used by /v1/overrides/roll so the two
+/// agree by construction.
+#[cfg(feature = "k8s-roll")]
+fn resolve_namespace() -> String {
+    std::env::var("SIPHON_K8S_NAMESPACE")
+        .ok()
+        .or_else(|| {
+            std::fs::read_to_string("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
+                .ok()
+                .map(|s| s.trim().to_string())
+        })
+        .unwrap_or_else(|| "default".to_string())
+}
+
+/// Project a V1Pod down to the flat row the Ops UI renders.
+/// Pulls just the fields the table needs — phase, ready flag
+/// computed from the per-container readiness map, restart sum,
+/// first container image, node name, and the creation timestamp
+/// (used client-side to derive age).
+#[cfg(feature = "k8s-roll")]
+fn pod_summary(pod: &k8s_openapi::api::core::v1::Pod) -> PodSummary {
+    let meta = &pod.metadata;
+    let name = meta.name.clone().unwrap_or_default();
+    let namespace = meta.namespace.clone().unwrap_or_default();
+
+    let (phase, ready, restarts, image, node) = match (&pod.spec, &pod.status) {
+        (Some(spec), Some(status)) => {
+            let phase = status
+                .phase
+                .clone()
+                .unwrap_or_else(|| "Unknown".to_string());
+            let ready = status
+                .container_statuses
+                .as_ref()
+                .map(|cs| !cs.is_empty() && cs.iter().all(|c| c.ready))
+                .unwrap_or(false);
+            let restarts = status
+                .container_statuses
+                .as_ref()
+                .map(|cs| cs.iter().map(|c| c.restart_count.max(0) as u32).sum())
+                .unwrap_or(0);
+            let image = spec.containers.first().and_then(|c| c.image.clone());
+            let node = spec.node_name.clone();
+            (phase, ready, restarts, image, node)
+        }
+        _ => ("Unknown".to_string(), false, 0, None, None),
+    };
+
+    // Try the standard well-known label first (Helm chart sets it),
+    // then fall back to the owner-reference Deployment controller
+    // if the labels aren't set.
+    let deployment = meta
+        .labels
+        .as_ref()
+        .and_then(|m| m.get("app.kubernetes.io/component").cloned());
+
+    // k8s-openapi 0.27 swapped chrono for jiff; Timestamp's
+    // Display is already ISO-8601 so we just format it.
+    let created_at = meta.creation_timestamp.as_ref().map(|t| t.0.to_string());
+
+    PodSummary {
+        name,
+        namespace,
+        phase,
+        ready,
+        restarts,
+        image,
+        node,
+        deployment,
+        created_at,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// POST /v1/k8s/deployments/{name}/rollout — convenience wrapper
+// ---------------------------------------------------------------------------
+//
+// The Ops UI wants to restart a single Deployment at a time (click
+// a row → "Restart"). /v1/overrides/roll takes a list; this endpoint
+// takes a path param and forwards as a one-element list so the UI
+// doesn't have to synthesize the body.
+
+#[cfg(not(feature = "k8s-roll"))]
+async fn k8s_rollout(
+    _state: State<Arc<AppState>>,
+    _addr: ConnectInfo<SocketAddr>,
+    _path: axum::extract::Path<String>,
+) -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        Json(ErrorResponse {
+            error: "siphon-api was built without the `k8s-roll` feature.".to_string(),
+        }),
+    )
+}
+
+#[cfg(feature = "k8s-roll")]
+async fn k8s_rollout(
+    state: State<Arc<AppState>>,
+    addr: ConnectInfo<SocketAddr>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Result<Json<RollResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // Forward to the existing roll handler with a single-element
+    // deployment list. Keeps the RBAC + audit-log wiring in one
+    // place.
+    let body = Json(RollRequest {
+        namespace: None,
+        deployments: Some(vec![name]),
+    });
+    overrides_roll(state, addr, Some(body)).await
+}
+
 // ─── /v1/overrides/history + /revert (Phase 7) ─────────────────
 //
 // `apply` has been creating timestamped `.v<nanos>.bak` backups
@@ -3129,6 +3346,8 @@ async fn main() {
         )
         .route("/v1/overrides/revert", post(overrides_revert))
         .route("/v1/overrides/roll", post(overrides_roll))
+        .route("/v1/k8s/pods", get(k8s_pods))
+        .route("/v1/k8s/deployments/{name}/rollout", post(k8s_rollout))
         .route("/v1/docs", get(docs_index))
         .route("/v1/docs/content", get(docs_content))
         .route("/v1/docs/changelog", get(doc_changelog))

@@ -1,0 +1,13 @@
+{{- if and .Values.nginx.enabled .Values.nginx.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "siphon.componentName" (dict "root" . "component" "nginx") }}
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "nginx") | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.nginx.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "siphon.selectorLabels" (dict "root" . "component" "nginx") | nindent 6 }}
+{{- end }}

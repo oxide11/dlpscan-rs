@@ -1,10 +1,20 @@
+"use client";
+
 import Link from "next/link";
-import { ArrowRight, Activity, FileSearch, ScanLine, ShieldCheck } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Activity,
+  AlertCircle,
+  ArrowRight,
+  ScanLine,
+  Server,
+  ShieldCheck,
+} from "lucide-react";
 
 import {
   SubHeader,
-  SubHeaderTitle,
   SubHeaderActions,
+  SubHeaderTitle,
 } from "@/components/layout/sub-header";
 import { ShellContent } from "@/components/layout/shell";
 import { Button } from "@/components/ui/button";
@@ -15,16 +25,78 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { api, ApiError, type PodSummary } from "@/lib/api";
+
+// Landing-page pod summary polls less aggressively than /pods
+// itself (15 s vs 5 s) — the Ops view is where you go when you
+// need live readings.
+const POLL_INTERVAL_MS = 15_000;
 
 export default function DashboardPage() {
+  const [pods, setPods] = useState<PodSummary[] | null>(null);
+  const [namespace, setNamespace] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api.pods();
+      setPods(res.pods);
+      setNamespace(res.namespace);
+      setError(null);
+    } catch (e) {
+      if (e instanceof ApiError) {
+        setError(`${e.status}: ${e.message}`);
+      } else if (e instanceof Error) {
+        setError(e.message);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    const id = setInterval(load, POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const summary = useMemo(() => {
+    if (!pods) return { total: 0, ready: 0, unhealthy: 0, restarts: 0 };
+    let ready = 0;
+    let unhealthy = 0;
+    let restarts = 0;
+    for (const p of pods) {
+      if (p.ready) ready++;
+      else unhealthy++;
+      restarts += p.restarts;
+    }
+    return { total: pods.length, ready, unhealthy, restarts };
+  }, [pods]);
+
+  const deployments = useMemo(() => {
+    const seen = new Set<string>();
+    for (const p of pods ?? []) {
+      if (p.deployment) seen.add(p.deployment);
+    }
+    return [...seen].sort();
+  }, [pods]);
+
   return (
     <>
       <SubHeader>
         <SubHeaderTitle
           title="Overview"
-          description="Operational snapshot of the Siphon fleet"
+          description={
+            namespace
+              ? `siphon cluster · ${namespace}`
+              : "Siphon operational overview"
+          }
         />
         <SubHeaderActions>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/pods">
+              Live pods
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+          </Button>
           <Button asChild variant="outline" size="sm">
             <Link href="/scan">
               New scan
@@ -37,53 +109,98 @@ export default function DashboardPage() {
       <ShellContent>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <StatCard
-            title="Scans (24h)"
-            value="—"
-            icon={ScanLine}
-            description="Wires to /api/v1/metrics in Phase 3"
+            title="Pods total"
+            value={pods === null && !error ? "…" : String(summary.total)}
+            icon={Server}
+            description={namespace ?? "resolving namespace"}
           />
           <StatCard
-            title="Findings (24h)"
-            value="—"
-            icon={FileSearch}
-            description="Total detections across the fleet"
-          />
-          <StatCard
-            title="Pods healthy"
-            value="—"
+            title="Ready"
+            value={pods === null && !error ? "…" : String(summary.ready)}
             icon={Activity}
-            description="Pulled from Linkerd viz in Phase 3"
+            description={
+              summary.total === 0
+                ? "—"
+                : `${Math.round((summary.ready / summary.total) * 100)}% of fleet`
+            }
           />
           <StatCard
-            title="Policy"
-            value="Audit"
+            title="Unhealthy"
+            value={pods === null && !error ? "…" : String(summary.unhealthy)}
             icon={ShieldCheck}
-            description="Siphon-C2 policy mode"
+            description="Failed, pending, or not-ready"
+            tone={summary.unhealthy > 0 ? "warn" : "ok"}
+          />
+          <StatCard
+            title="Restarts (total)"
+            value={pods === null && !error ? "…" : String(summary.restarts)}
+            icon={ScanLine}
+            description="Sum across pod containers"
           />
         </div>
 
+        {error ? (
+          <Card className="mt-6 border-destructive/50 bg-destructive/5">
+            <CardContent className="flex items-start gap-3 py-4">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
+              <div className="text-sm">
+                <div className="font-semibold text-destructive">
+                  Pod discovery unavailable
+                </div>
+                <div className="mt-0.5 text-muted-foreground">{error}</div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  The overview reads siphon-api&apos;s{" "}
+                  <code className="rounded bg-muted px-1">/v1/k8s/pods</code>,
+                  which requires the chart&apos;s{" "}
+                  <code className="rounded bg-muted px-1">
+                    api.k8sRoll.enabled=true
+                  </code>{" "}
+                  Role. Outside a cluster, the endpoint returns an
+                  init error.
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
         <Card className="mt-6">
           <CardHeader>
-            <CardTitle>App shell</CardTitle>
+            <CardTitle>Deployments</CardTitle>
             <CardDescription>
-              Phase 0 scaffold — header, sub-header, component
-              library. Stats above are placeholders until the
-              findings DB (Phase 3) lands.
+              Workloads the Ops Role is watching. Click through for
+              details and restart actions.
             </CardDescription>
           </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            <p>
-              The design-token system lives in{" "}
-              <code className="rounded bg-muted px-1 py-0.5">
-                app/globals.css
-              </code>
-              . Primitives in{" "}
-              <code className="rounded bg-muted px-1 py-0.5">
-                components/ui/
-              </code>{" "}
-              follow shadcn/ui conventions so swapping in a new
-              component from upstream is a copy.
-            </p>
+          <CardContent>
+            {deployments.length === 0 ? (
+              <p className="py-2 text-sm text-muted-foreground">
+                No Deployments labelled{" "}
+                <code className="rounded bg-muted px-1">
+                  app.kubernetes.io/part-of=siphon
+                </code>{" "}
+                visible in this namespace yet.
+              </p>
+            ) : (
+              <ul className="divide-y text-sm">
+                {deployments.map((name) => {
+                  const group = (pods ?? []).filter(
+                    (p) => p.deployment === name,
+                  );
+                  const ready = group.filter((p) => p.ready).length;
+                  return (
+                    <li
+                      key={name}
+                      className="flex items-center justify-between py-2"
+                    >
+                      <span className="font-mono">{name}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {ready}/{group.length} ready
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </CardContent>
         </Card>
       </ShellContent>
@@ -96,20 +213,37 @@ function StatCard({
   value,
   icon: Icon,
   description,
+  tone,
 }: {
   title: string;
   value: string;
   icon: React.ComponentType<{ className?: string }>;
   description: string;
+  tone?: "ok" | "warn";
 }) {
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        <Icon className="h-4 w-4 text-muted-foreground" aria-hidden />
+        <Icon
+          className={
+            tone === "warn"
+              ? "h-4 w-4 text-destructive"
+              : "h-4 w-4 text-muted-foreground"
+          }
+          aria-hidden
+        />
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-semibold">{value}</div>
+        <div
+          className={
+            tone === "warn"
+              ? "text-2xl font-semibold text-destructive"
+              : "text-2xl font-semibold"
+          }
+        >
+          {value}
+        </div>
         <p className="mt-1 text-xs text-muted-foreground">{description}</p>
       </CardContent>
     </Card>

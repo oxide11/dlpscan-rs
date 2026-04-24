@@ -8,8 +8,8 @@
 #   - Cargo.toml              ([package] version)
 #   - crates/*/Cargo.toml     ([package] version)
 #   - ui/package.json         (version)
-#   - deploy/helm/dlpscan/Chart.yaml      (appVersion)
-#   - deploy/helm/dlpscan/values.yaml     (image.tag)
+#   - deploy/helm/siphon/Chart.yaml      (appVersion)
+#   - deploy/helm/siphon/values.yaml     (image.tag)
 #   - Cargo.lock              (regenerated via `cargo update --workspace`)
 #   - ui/pnpm-lock.yaml       (regenerated so Node's lockfile matches)
 #
@@ -83,19 +83,12 @@ sed -E "s/(\"version\"[[:space:]]*:[[:space:]]*)\"[^\"]+\"/\\1\"${NEW_VERSION}\"
 awk -v v="${NEW_VERSION}" '
     /^appVersion:/ { print "appVersion: \"" v "\""; next }
     { print }
-' deploy/helm/dlpscan/Chart.yaml > deploy/helm/dlpscan/Chart.yaml.tmp \
-    && mv deploy/helm/dlpscan/Chart.yaml.tmp deploy/helm/dlpscan/Chart.yaml
+' deploy/helm/siphon/Chart.yaml > deploy/helm/siphon/Chart.yaml.tmp \
+    && mv deploy/helm/siphon/Chart.yaml.tmp deploy/helm/siphon/Chart.yaml
 
-awk -v v="${NEW_VERSION}" '
-    in_image && /^[[:space:]]+tag:/ {
-        sub(/"[^"]+"/, "\"" v "\"")
-        in_image = 0
-    }
-    /^image:/ { in_image = 1 }
-    /^[^[:space:]]/ && !/^image:/ { in_image = 0 }
-    { print }
-' deploy/helm/dlpscan/values.yaml > deploy/helm/dlpscan/values.yaml.tmp \
-    && mv deploy/helm/dlpscan/values.yaml.tmp deploy/helm/dlpscan/values.yaml
+# values.yaml tracks appVersion automatically — each component's
+# `image.tag` is intentionally empty so it falls back to the chart's
+# appVersion at render time. Nothing to rewrite here.
 
 # --- Regenerate lockfiles ---------------------------------------------------
 # Cargo.lock: cargo update -w rewrites just the workspace crates'
@@ -120,7 +113,7 @@ fi
 echo
 echo "Bumped to ${NEW_VERSION}. Diff summary:"
 git diff --stat Cargo.toml crates/*/Cargo.toml ui/package.json \
-    deploy/helm/dlpscan/Chart.yaml deploy/helm/dlpscan/values.yaml 2>/dev/null \
+    deploy/helm/siphon/Chart.yaml deploy/helm/siphon/values.yaml 2>/dev/null \
     || true
 echo
 echo "Next steps:"

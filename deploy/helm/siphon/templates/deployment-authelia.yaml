@@ -1,0 +1,106 @@
+{{- if .Values.authelia.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "siphon.componentName" (dict "root" . "component" "authelia") }}
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "authelia") | nindent 4 }}
+spec:
+  replicas: {{ .Values.authelia.replicaCount }}
+  # Authelia is stateful against the PVC — Recreate avoids two
+  # pods fighting over the same SQLite file. Swap to RollingUpdate
+  # once storage moves to Postgres.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "siphon.selectorLabels" (dict "root" . "component" "authelia") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "siphon.labels" (dict "root" . "component" "authelia") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-authelia.yaml") . | sha256sum }}
+        {{- include "siphon.podAnnotations" (dict "root" .) | nindent 8 }}
+    spec:
+      {{- with include "siphon.imagePullSecrets" (dict "root" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: authelia
+          image: {{ include "siphon.image" (dict "root" . "image" .Values.authelia.image) }}
+          imagePullPolicy: {{ default .Values.global.imagePullPolicy .Values.authelia.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.authelia.service.port }}
+              protocol: TCP
+          env:
+            {{- if .Values.authelia.secretName }}
+            # Authelia substitutes AUTHELIA_*_FILE at startup by
+            # reading the path in each env var. Feeds all three
+            # high-entropy secrets from a single k8s Secret so
+            # rotation is one kubectl edit.
+            - name: AUTHELIA_JWT_SECRET_FILE
+              value: /secrets/jwt_secret
+            - name: AUTHELIA_SESSION_SECRET_FILE
+              value: /secrets/session_secret
+            - name: AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE
+              value: /secrets/storage_encryption_key
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /config/configuration.yml
+              subPath: configuration.yml
+              readOnly: true
+            {{- if .Values.authelia.persistence.enabled }}
+            - name: data
+              mountPath: /config
+              # /config carries the SQLite DB + notification log +
+              # the mounted configuration.yml — the subPath above
+              # merges the file into the PVC-backed mount.
+            {{- end }}
+            {{- if .Values.authelia.secretName }}
+            - name: secrets
+              mountPath: /secrets
+              readOnly: true
+            {{- end }}
+          # Authelia doesn't behave well with read-only root FS —
+          # it drops a few runtime files in /tmp. Inherit the rest
+          # of the container security context but flip rofs off.
+          securityContext:
+            {{- $ctx := deepCopy .Values.containerSecurityContext -}}
+            {{- $_ := set $ctx "readOnlyRootFilesystem" false -}}
+            {{- toYaml $ctx | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.authelia.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.authelia.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.authelia.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "siphon.componentName" (dict "root" . "component" "authelia") }}
+        {{- if .Values.authelia.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "siphon.componentName" (dict "root" . "component" "authelia") }}
+        {{- end }}
+        {{- if .Values.authelia.secretName }}
+        - name: secrets
+          secret:
+            secretName: {{ .Values.authelia.secretName }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

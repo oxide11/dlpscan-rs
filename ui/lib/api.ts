@@ -79,6 +79,41 @@ export interface ScanResponse {
   };
 }
 
+// ----- k8s (Ops) ---------------------------------------------------------
+
+export interface PodSummary {
+  name: string;
+  namespace: string;
+  phase: string;
+  ready: boolean;
+  restarts: number;
+  image: string | null;
+  node: string | null;
+  deployment: string | null;
+  created_at: string | null;
+}
+
+export interface PodListResponse {
+  namespace: string;
+  count: number;
+  pods: PodSummary[];
+}
+
+export interface RollOutcome {
+  deployment: string;
+  namespace: string;
+  status: "rolled" | "skipped" | "error";
+  error: string | null;
+}
+
+export interface RollResponse {
+  status: string;
+  rolled_at: string;
+  namespace: string;
+  deployments: RollOutcome[];
+  note: string;
+}
+
 export const api = {
   scan: (text: string) =>
     request<ScanResponse>("/v1/scan", {
@@ -87,4 +122,15 @@ export const api = {
     }),
 
   health: () => request<{ status: string }>("/health"),
+
+  // k8s discovery + rollout. Both hit the `k8s-roll`-gated handlers
+  // in siphon-api and require the ServiceAccount Role provisioned
+  // by the Helm chart.
+  pods: () => request<PodListResponse>("/v1/k8s/pods"),
+
+  rollout: (deployment: string) =>
+    request<RollResponse>(
+      `/v1/k8s/deployments/${encodeURIComponent(deployment)}/rollout`,
+      { method: "POST" },
+    ),
 };
