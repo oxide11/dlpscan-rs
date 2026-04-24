@@ -166,6 +166,22 @@ helm upgrade --install siphon ./deploy/helm/siphon \
 
 BROWSE_URL="${PUBLIC_ORIGIN}"
 
+# helm upgrade doesn't roll a Deployment when the image tag is
+# unchanged (we always publish :dev) — so rebuilt images silently
+# never reach the running pods. After --rebuild, force a restart
+# of every image-backed Deployment so the new binary/config
+# actually ships. Chart-only edits (no --rebuild) skip this and
+# rely on the chart's own checksum/* annotations (ConfigMap hashes)
+# for rollout triggering.
+if ${REBUILD}; then
+    echo "▶ --rebuild requested — forcing rollout of image-baked deployments…"
+    kubectl -n "${NAMESPACE}" rollout restart \
+        deploy/siphon-api deploy/siphon-fs deploy/siphon-nginx
+    kubectl -n "${NAMESPACE}" rollout status \
+        deploy/siphon-api deploy/siphon-fs deploy/siphon-nginx \
+        --timeout=3m
+fi
+
 # --- 7. Print access hints ------------------------------------------------
 echo
 kubectl -n "${NAMESPACE}" get pods -o wide
