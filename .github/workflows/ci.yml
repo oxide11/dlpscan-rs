@@ -54,6 +54,8 @@ jobs:
         run: cargo test --test integration_test
       - name: Evasion tests
         run: cargo test --test evasion_test
+      - name: Forensics tests
+        run: cargo test --test forensics_test
 
   clippy:
     name: Clippy
