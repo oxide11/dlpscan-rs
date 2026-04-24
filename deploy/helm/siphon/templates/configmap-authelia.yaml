@@ -10,6 +10,23 @@ metadata:
   labels:
     {{- include "siphon.labels" (dict "root" . "component" "authelia") | nindent 4 }}
 data:
+  # Placeholder users database — file-backend Authelia reads this
+  # at login time. Ships a single admin user with a non-functional
+  # argon2id hash so the file is parseable but you can't actually
+  # log in with the default. For dev auth testing, replace the
+  # hash via:
+  #   authelia crypto hash generate argon2 --password '<pass>'
+  # and override `authelia.configYaml` or mount your own secret.
+  users_database.yml: |
+    users:
+      admin:
+        disabled: false
+        displayname: "Siphon Placeholder Admin"
+        password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHRzYWx0cw$k9e3JxbgxS9HfG6a3w/rvl+J8DPlCg0KsWgl8qoE5Rc"
+        email: admin@siphon.local
+        groups:
+          - admins
+          - operators
   configuration.yml: |
     {{- if .Values.authelia.configYaml }}
     {{- .Values.authelia.configYaml | nindent 4 }}
@@ -18,6 +35,15 @@ data:
     # deploy/authelia/configuration.yml into your own values override,
     # rotate every placeholder secret, and switch the storage / notifier
     # stanzas to Postgres + SMTP before pointing real users at it.
+    #
+    # `$host` falls back to siphon.local when ingress.host is empty
+    # (e.g. Codespace / dev install). Authelia rejects an empty
+    # session.cookies[].domain, so we need a value even when the
+    # deployment isn't actually fronted by real DNS. OIDC flows
+    # still won't work from a non-matching origin (Codespaces
+    # forwarded URL doesn't match siphon.local), but the pod
+    # starts and non-auth-gated endpoints respond.
+    {{- $host := .Values.ingress.host | default "siphon.local" }}
     server:
       address: "tcp://0.0.0.0:{{ .Values.authelia.service.port }}"
     log:
@@ -48,7 +74,7 @@ data:
     access_control:
       default_policy: two_factor
       rules:
-        - domain: "{{ .Values.ingress.host }}"
+        - domain: {{ $host | quote }}
           resources:
             - "^/health.*$"
             - "^/metrics$"
@@ -59,9 +85,9 @@ data:
       expiration: 1h
       inactivity: 15m
       cookies:
-        - domain: {{ .Values.ingress.host | quote }}
-          authelia_url: "https://{{ .Values.ingress.host }}/auth/"
-          default_redirection_url: "https://{{ .Values.ingress.host }}/"
+        - domain: {{ $host | quote }}
+          authelia_url: "https://{{ $host }}/auth/"
+          default_redirection_url: "https://{{ $host }}/"
     regulation:
       max_retries: 3
       find_time: 2m

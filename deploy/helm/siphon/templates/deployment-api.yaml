@@ -46,8 +46,15 @@ spec:
               containerPort: {{ .Values.api.service.port }}
               protocol: TCP
           env:
-            - name: SIPHON_API_BIND
-              value: "0.0.0.0:{{ .Values.api.service.port }}"
+            # siphon-api reads SIPHON_BIND + SIPHON_PORT; default bind
+            # is 127.0.0.1 which makes the pod unreachable from
+            # kubelet probes + the Service. Force 0.0.0.0 here. The
+            # binary has no clap CLI so `args:` is ignored — this
+            # env pair is the only supported configuration path.
+            - name: SIPHON_BIND
+              value: "0.0.0.0"
+            - name: SIPHON_PORT
+              value: {{ .Values.api.service.port | quote }}
             - name: SIPHON_OVERRIDES_PATH
               value: /etc/siphon/overrides.json
             - name: SIPHON_K8S_NAMESPACE

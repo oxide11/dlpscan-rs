@@ -77,20 +77,26 @@ api:
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
 
-  # Probes target the siphon-api /health and /ready endpoints
-  # (both unauthenticated by design — Authelia sits in front).
+  # Probes use tcpSocket rather than httpGet because siphon-api's
+  # auth_middleware requires Bearer auth on every route, including
+  # /health and /ready. kubelet probes don't carry the API key, so
+  # an httpGet probe gets 401, kubelet treats it as a failure, and
+  # the pod gets killed despite being healthy.
+  #
+  # tcpSocket on port 8080 confirms the binary is listening, which
+  # is enough to gate "is this pod alive". Follow-up: exempt /health
+  # + /ready from auth in siphon-api source so we can reinstate the
+  # richer httpGet checks. Tracked in the chart README.
   livenessProbe:
-    httpGet:
-      path: /health
+    tcpSocket:
       port: http
-    initialDelaySeconds: 5
+    initialDelaySeconds: 10
     periodSeconds: 15
   readinessProbe:
-    httpGet:
-      path: /ready
+    tcpSocket:
       port: http
-    initialDelaySeconds: 2
-    periodSeconds: 3
+    initialDelaySeconds: 5
+    periodSeconds: 5
     failureThreshold: 3
 
   # Required in prod. Create the secret out of band; pass its

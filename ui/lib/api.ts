@@ -19,8 +19,16 @@ export class ApiError extends Error {
   }
 }
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_SIPHON_API_BASE ?? "/api";
+const API_BASE = process.env.NEXT_PUBLIC_SIPHON_API_BASE ?? "/api";
+
+// Optional bearer token for the local-dev path. In production the
+// SPA is served behind nginx + Authelia, which attaches the
+// session cookie via `credentials: "include"` below; the API key
+// isn't needed and shouldn't be exposed to the browser. For
+// `pnpm dev` against a port-forwarded siphon-api, set this in
+// `ui/.env.local` so requests carry `Authorization: Bearer <key>`
+// and the dev session can hit the auth-gated endpoints.
+const API_KEY = process.env.NEXT_PUBLIC_SIPHON_API_KEY;
 
 type JsonBody = Record<string, unknown> | Array<unknown>;
 
@@ -31,13 +39,16 @@ type RequestOptions = Omit<RequestInit, "body"> & {
 async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const url = `${API_BASE}${path}`;
   const { body, headers, ...rest } = opts;
+  const baseHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  if (API_KEY) {
+    baseHeaders.Authorization = `Bearer ${API_KEY}`;
+  }
   const init: RequestInit = {
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      ...(headers ?? {}),
-    },
+    headers: { ...baseHeaders, ...(headers as Record<string, string> ?? {}) },
     ...rest,
   };
   if (body !== undefined) {
