@@ -333,6 +333,16 @@ async fn auth_middleware(
     request: Request<Body>,
     next: Next,
 ) -> Response {
+    // Kubelet probe paths are always unauthenticated — the kubelet
+    // can't carry a bearer token, and gating them behind auth just
+    // crashloops the pod on every rollout. This matches the chart's
+    // documented contract ("/health and /ready are unauthenticated
+    // by design — Authelia sits in front").
+    let path = request.uri().path();
+    if path == "/health" || path == "/ready" {
+        return next.run(request).await;
+    }
+
     let Some(expected_hash) = &state.api_key_hash else {
         return next.run(request).await;
     };
@@ -551,6 +561,16 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
         started_at: state.started_at_iso.clone(),
         uptime_secs: state.started_at.elapsed().as_secs(),
     })
+}
+
+/// Readiness probe. Distinct from /health so orchestrators can tell
+/// a crashed process apart from a live one that's still warming up.
+/// Currently both return 200 as soon as the router is up (pattern
+/// compilation + overrides load happen synchronously before serve),
+/// but keeping them as separate routes leaves room for gating ready
+/// on future async warm-up work without breaking liveness semantics.
+async fn ready() -> StatusCode {
+    StatusCode::OK
 }
 
 async fn scan(
@@ -3343,6 +3363,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/health", get(health))
+        .route("/ready", get(ready))
         .route("/scan", post(scan))
         .route("/v1/patterns", get(list_patterns))
         .route("/v1/categories", get(list_categories))
