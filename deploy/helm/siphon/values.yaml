@@ -215,6 +215,37 @@ authelia:
   # defaults.
   configYaml: null
 
+  # Scheme the browser uses to reach the Siphon host. Threads into
+  # Authelia's `session.cookies[*].authelia_url` and
+  # `default_redirection_url` when `externalUrl` below is empty.
+  # Default is https (prod). Set to "http" for local k3d where
+  # Nginx serves plaintext on localhost:8080.
+  scheme: "https"
+
+  # Cookie Domain= attribute Authelia sets on its session cookie.
+  # Empty -> falls back to `ingress.host`. Codespace / k3d deploys
+  # leave `ingress.host` empty (so the k8s Ingress matches any Host
+  # header) and set this to the browser-facing hostname only
+  # (no port, no scheme). Browsers reject ports in Domain=.
+  cookieDomain: ""
+
+  # Full browser-facing origin Authelia uses in its portal redirect
+  # URLs (`authelia_url`, `default_redirection_url`). Must match
+  # what the user actually types in the URL bar or the login loop
+  # never closes. Empty -> falls back to `{scheme}://{ingress.host}`.
+  # Examples:
+  #   http://localhost:8080
+  #   https://<codespace>-8080.app.github.dev
+  externalUrl: ""
+
+  # devBypass=true swaps Authelia's default_policy from two_factor
+  # to bypass, so every request is waved through the forward-auth
+  # sub-request without a real login. Intended for Codespace /
+  # k3d smoke-tests where there's no user directory seeded and the
+  # point is to exercise the rest of the stack. NEVER set this true
+  # in production — it defeats every access-control rule.
+  devBypass: false
+
   resources:
     requests:
       cpu: 100m

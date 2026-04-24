@@ -18,6 +18,27 @@ data:
     # deploy/authelia/configuration.yml into your own values override,
     # rotate every placeholder secret, and switch the storage / notifier
     # stanzas to Postgres + SMTP before pointing real users at it.
+    #
+    # Public-origin resolution. Authelia's cookie Domain= attribute
+    # and its login-portal redirect URLs both have to match what the
+    # browser types in the URL bar — otherwise the portal sets a
+    # cookie the browser refuses to send back and the login loop
+    # never closes.
+    #   * cookieDomain is the hostname only (no port, no scheme). If
+    #     unset, falls back to ingress.host — fine for prod where
+    #     the ingress matches a real DNS name.
+    #   * externalUrl is the full origin (scheme + host + optional
+    #     port). If unset, we build it from scheme + ingress.host,
+    #     which matches the pre-Codespace layout.
+    # Codespace / k3d deploys drive both via codespace-deploy.sh so
+    # the Ingress can keep ingress.host empty (match any Host) while
+    # Authelia still reflects the browser-facing origin.
+    {{- $scheme := default "https" .Values.authelia.scheme }}
+    {{- $cookieDomain := default .Values.ingress.host .Values.authelia.cookieDomain }}
+    {{- $externalUrl := .Values.authelia.externalUrl }}
+    {{- if not $externalUrl }}
+    {{-   $externalUrl = printf "%s://%s" $scheme .Values.ingress.host }}
+    {{- end }}
     server:
       address: "tcp://0.0.0.0:{{ .Values.authelia.service.port }}"
     log:
@@ -46,22 +67,32 @@ data:
           key_length: 32
           salt_length: 16
     access_control:
+      {{- if .Values.authelia.devBypass }}
+      # devBypass=true — every request is waved through the
+      # forward-auth sub-request. Intended for Codespace / k3d
+      # smoke-tests where there's no real user directory and the
+      # point is to exercise the rest of the stack, NOT the auth
+      # flow. Never ship this to production.
+      default_policy: bypass
+      rules: []
+      {{- else }}
       default_policy: two_factor
       rules:
-        - domain: "{{ .Values.ingress.host }}"
+        - domain: "{{ $cookieDomain }}"
           resources:
             - "^/health.*$"
             - "^/metrics$"
           policy: bypass
+      {{- end }}
     session:
       name: authelia_session
       same_site: lax
       expiration: 1h
       inactivity: 15m
       cookies:
-        - domain: {{ .Values.ingress.host | quote }}
-          authelia_url: "https://{{ .Values.ingress.host }}/auth/"
-          default_redirection_url: "https://{{ .Values.ingress.host }}/"
+        - domain: {{ $cookieDomain | quote }}
+          authelia_url: "{{ $externalUrl }}/auth/"
+          default_redirection_url: "{{ $externalUrl }}/"
     regulation:
       max_retries: 3
       find_time: 2m

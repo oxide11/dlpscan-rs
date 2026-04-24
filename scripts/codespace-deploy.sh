@@ -112,6 +112,39 @@ if ! kubectl -n "${NAMESPACE}" get secret siphon-authelia >/dev/null 2>&1; then
 fi
 
 # --- 6. Helm install/upgrade ---------------------------------------------
+#
+# Browser-origin resolution. Authelia bakes the cookie Domain= and
+# the portal redirect URLs at chart-install time, so they have to
+# match whatever the browser types in the URL bar — otherwise the
+# portal sets a cookie the browser refuses to send back.
+#
+#   * GitHub Codespaces: the forwarded port shows up at
+#     https://${CODESPACE_NAME}-<port>.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}
+#     (typically app.github.dev). Pulled from env.
+#   * Local k3d:          browser is on http://localhost:<port>.
+#     Cookie domain is `localhost` (no port — browsers reject ports
+#     in Set-Cookie Domain=).
+#
+# ingress.host stays empty in both cases so k3d's Traefik matches
+# any Host header. The browser-facing host is carried by
+# authelia.cookieDomain + authelia.externalUrl, which only feed the
+# Authelia ConfigMap.
+#
+# devBypass is forced on. This script is explicitly a dev/smoke-test
+# entrypoint; there's no user directory seeded, so leaving
+# two_factor on just locks everyone out. Production deploys should
+# run `helm upgrade` by hand with their own values override and
+# devBypass left false (the chart default).
+K3D_PORT="${K3D_HOST_PORT:-8080}"
+if [[ -n "${CODESPACE_NAME:-}" && -n "${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-}" ]]; then
+    PUBLIC_HOST="${CODESPACE_NAME}-${K3D_PORT}.${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}"
+    PUBLIC_ORIGIN="https://${PUBLIC_HOST}"
+    echo "▶ Detected Codespace — configuring browser origin ${PUBLIC_ORIGIN}"
+else
+    PUBLIC_HOST="localhost"
+    PUBLIC_ORIGIN="http://localhost:${K3D_PORT}"
+fi
+
 echo "▶ Installing chart (helm upgrade --install)…"
 helm upgrade --install siphon ./deploy/helm/siphon \
     --namespace "${NAMESPACE}" \
@@ -125,8 +158,13 @@ helm upgrade --install siphon ./deploy/helm/siphon \
     --set api.auth.secretName=siphon-api-auth \
     --set authelia.secretName=siphon-authelia \
     --set ingress.host= \
+    --set "authelia.cookieDomain=${PUBLIC_HOST}" \
+    --set "authelia.externalUrl=${PUBLIC_ORIGIN}" \
+    --set authelia.devBypass=true \
     --set global.imageRegistry= \
     --wait --timeout=5m
+
+BROWSE_URL="${PUBLIC_ORIGIN}"
 
 # --- 7. Print access hints ------------------------------------------------
 echo
@@ -135,17 +173,17 @@ cat <<EOF
 
 ✅ Siphon stack is live in namespace "${NAMESPACE}".
 
-Cluster LB maps to localhost:${K3D_HOST_PORT:-8080}. In a Codespace
-this pops up in the Ports panel. Browse:
+Browse (authelia.devBypass=true — no login required):
 
-  http://localhost:${K3D_HOST_PORT:-8080}/ui/      ← Next.js SPA
-  http://localhost:${K3D_HOST_PORT:-8080}/api/health
-  http://localhost:${K3D_HOST_PORT:-8080}/auth/    ← Authelia
+  ${BROWSE_URL}/ui/          ← Next.js SPA
+  ${BROWSE_URL}/api/health
+  ${BROWSE_URL}/auth/        ← Authelia portal (bypass mode)
 
 Useful commands:
 
   kubectl -n ${NAMESPACE} get pods            # list pods
-  kubectl -n ${NAMESPACE} logs deploy/siphon-siphon-api -f
+  kubectl -n ${NAMESPACE} logs deploy/siphon-api -f
+  kubectl -n ${NAMESPACE} logs deploy/siphon-nginx -f
   kubectl -n ${NAMESPACE} describe pod <name> # debug a pending pod
   helm -n ${NAMESPACE} uninstall siphon       # remove the release
 
