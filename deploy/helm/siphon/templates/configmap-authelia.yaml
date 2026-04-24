@@ -68,13 +68,17 @@ data:
           salt_length: 16
     access_control:
       {{- if .Values.authelia.devBypass }}
-      # devBypass=true — every request is waved through the
-      # forward-auth sub-request. Intended for Codespace / k3d
-      # smoke-tests where there's no real user directory and the
-      # point is to exercise the rest of the stack, NOT the auth
-      # flow. Never ship this to production.
-      default_policy: bypass
-      rules: []
+      # devBypass=true — every request to the configured
+      # cookieDomain is waved through the forward-auth sub-request.
+      # Authelia rejects `default_policy: bypass` with an empty
+      # rules list (4.38+), so we keep default_policy strict and
+      # express the bypass as a catch-all rule. Intended for
+      # Codespace / k3d smoke-tests where there's no real user
+      # directory; NEVER ship this to production.
+      default_policy: two_factor
+      rules:
+        - domain: "{{ $cookieDomain }}"
+          policy: bypass
       {{- else }}
       default_policy: two_factor
       rules:
