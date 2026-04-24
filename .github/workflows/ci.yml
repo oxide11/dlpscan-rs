@@ -82,6 +82,17 @@ jobs:
           components: rustfmt
       - run: cargo fmt --check
 
+  version-sync:
+    # Every place Siphon's version is declared — workspace crates,
+    # ui/package.json, Helm appVersion, Helm image tag — must agree
+    # with the root Cargo.toml. Runs on every push so a stale
+    # Helm tag or a forgotten UI bump lands as a red check.
+    name: Version sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: bash scripts/check-version-sync.sh
+
   ui:
     # Next.js static export + typecheck + lint. Runs on any change
     # so the SPA's type safety and bundle emit are verified every
