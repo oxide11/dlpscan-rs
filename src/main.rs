@@ -131,6 +131,18 @@ enum Commands {
     /// Live statistics dashboard (requires tui feature)
     #[cfg(feature = "tui")]
     Top,
+    /// Forensic metadata extraction and author attribution
+    #[cfg(feature = "forensics")]
+    Forensics {
+        /// Files to analyse. Give 1 file for a metadata dump; give
+        /// 2+ files to also print pairwise attribution scores.
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+
+        /// Emit JSON instead of the default human-friendly summary.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -941,6 +953,17 @@ fn main() {
         }
 
         // ---------------------------------------------------------------
+        // siphon forensics — Metadata extraction + attribution
+        // ---------------------------------------------------------------
+        #[cfg(feature = "forensics")]
+        Commands::Forensics { files, json } => {
+            if let Err(e) = run_forensics(&files, json) {
+                eprintln!("forensics: {e}");
+                process::exit(1);
+            }
+        }
+
+        // ---------------------------------------------------------------
         // siphon info — Show scanner info
         // ---------------------------------------------------------------
         Commands::Info => {
@@ -1269,5 +1292,113 @@ fn built_features() -> Vec<&'static str> {
     features.push("async-support");
     #[cfg(feature = "tls")]
     features.push("tls");
+    #[cfg(feature = "forensics")]
+    features.push("forensics");
     features
+}
+
+// ---------------------------------------------------------------------------
+// Forensics subcommand
+// ---------------------------------------------------------------------------
+#[cfg(feature = "forensics")]
+fn run_forensics(files: &[PathBuf], json: bool) -> Result<(), Box<dyn std::error::Error>> {
+    use siphon_core::forensics::{compare, extract_metadata, FileMetadata};
+
+    // Collect metadata for each input — skip any that fail so one
+    // unreadable file doesn't sink the whole batch.
+    let mut records: Vec<(PathBuf, FileMetadata)> = Vec::with_capacity(files.len());
+    for path in files {
+        match extract_metadata(path) {
+            Ok(meta) => records.push((path.clone(), meta)),
+            Err(e) => eprintln!("{}: {}", path.display(), e),
+        }
+    }
+    if records.is_empty() {
+        return Err("no files parsed successfully".into());
+    }
+
+    // Pairwise comparisons — O(n²/2) over `records`. Fine for the
+    // CLI's batch-of-a-dozen use case; if a caller wants a 10k
+    // matrix they should script against the library API directly.
+    let mut pairs = Vec::new();
+    for i in 0..records.len() {
+        for j in (i + 1)..records.len() {
+            let (a, b) = (&records[i].1, &records[j].1);
+            let score = compare(a, b);
+            pairs.push((records[i].0.clone(), records[j].0.clone(), score));
+        }
+    }
+
+    if json {
+        let payload = serde_json::json!({
+            "records": records.iter().map(|(_, m)| m).collect::<Vec<_>>(),
+            "pairs": pairs.iter().map(|(a, b, s)| serde_json::json!({
+                "a": a.display().to_string(),
+                "b": b.display().to_string(),
+                "score": s,
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+        return Ok(());
+    }
+
+    // Human-readable layout: metadata per file, then a score matrix.
+    for (path, meta) in &records {
+        println!("── {} ──", path.display());
+        print_meta_line("kind", &format!("{:?}", meta.kind));
+        print_meta_line("sha256", &meta.content_hash);
+        print_meta_line("size", &format!("{} bytes", meta.size_bytes));
+        if let Some(v) = &meta.creator {
+            print_meta_line("creator", v);
+        }
+        if let Some(v) = &meta.last_modified_by {
+            print_meta_line("last modified by", v);
+        }
+        if let Some(v) = &meta.application {
+            print_meta_line("application", v);
+        }
+        if let Some(v) = &meta.company {
+            print_meta_line("company", v);
+        }
+        if let Some(v) = &meta.title {
+            print_meta_line("title", v);
+        }
+        if let Some(v) = &meta.created_at {
+            print_meta_line("created", v);
+        }
+        if let Some(v) = &meta.modified_at {
+            print_meta_line("modified", v);
+        }
+        if !meta.rsids.is_empty() {
+            print_meta_line(
+                "rsids",
+                &format!(
+                    "{} sessions (root: {})",
+                    meta.rsids.len(),
+                    meta.rsids.first().cloned().unwrap_or_default()
+                ),
+            );
+        }
+        if let Some((id0, id1)) = &meta.pdf_doc_id {
+            print_meta_line("pdf /ID", &format!("{id0} / {id1}"));
+        }
+        println!();
+    }
+
+    if !pairs.is_empty() {
+        println!("── attribution ──");
+        for (a, b, score) in &pairs {
+            println!("{:>5.2}  {}  ↔  {}", score.total, a.display(), b.display());
+            for sig in &score.signals {
+                println!("        +{:.2}  {}", sig.weight, sig.detail);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "forensics")]
+fn print_meta_line(label: &str, value: &str) {
+    println!("  {:<18} {}", label, value);
 }

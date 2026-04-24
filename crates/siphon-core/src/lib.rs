@@ -25,6 +25,9 @@ pub mod scanner;
 pub mod scoring;
 pub mod validation;
 
+#[cfg(feature = "forensics")]
+pub mod forensics;
+
 pub use errors::DlpError;
 pub use models::{Match, PatternDef};
 
