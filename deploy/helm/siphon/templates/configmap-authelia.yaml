@@ -68,17 +68,21 @@ data:
           salt_length: 16
     access_control:
       {{- if .Values.authelia.devBypass }}
-      # devBypass=true — every request to the configured
-      # cookieDomain is waved through the forward-auth sub-request.
-      # Authelia rejects `default_policy: bypass` with an empty
-      # rules list (4.38+), so we keep default_policy strict and
-      # express the bypass as a catch-all rule. Intended for
-      # Codespace / k3d smoke-tests where there's no real user
-      # directory; NEVER ship this to production.
-      default_policy: two_factor
+      # devBypass=true — every request is waved through the
+      # forward-auth sub-request, regardless of host. Authelia
+      # 4.38 rejects `default_policy: bypass` with an empty rules
+      # list and its `domain:` matcher is exact-only (no universal
+      # wildcard), so the pattern is:
+      #   default_policy: bypass (reached for any host that doesn't
+      #                           match a rule — i.e. everything),
+      #   plus a single dummy rule pointing at a hostname that will
+      #   never resolve, solely to satisfy the validator.
+      # Intended for Codespace / k3d smoke-tests where there's no
+      # real user directory. NEVER ship this to production.
+      default_policy: bypass
       rules:
-        - domain: "{{ $cookieDomain }}"
-          policy: bypass
+        - domain: "authelia-devbypass.invalid"
+          policy: two_factor
       {{- else }}
       default_policy: two_factor
       rules:
