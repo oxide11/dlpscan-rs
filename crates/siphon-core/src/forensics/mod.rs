@@ -17,6 +17,7 @@
 #![cfg(feature = "forensics")]
 
 mod attribution;
+mod legacy_office;
 mod office;
 mod pdf;
 #[cfg(test)]
@@ -86,9 +87,14 @@ impl From<std::io::Error> for ForensicsError {
 #[serde(rename_all = "lowercase")]
 pub enum FileKind {
     Pdf,
+    // Modern OOXML
     Docx,
     Xlsx,
     Pptx,
+    // Legacy OLE Compound File — pre-2007 Office
+    Doc,
+    Xls,
+    Ppt,
     /// Anything else — extension preserved for the CLI to display.
     Other(String),
 }
@@ -106,6 +112,9 @@ impl FileKind {
             Some("docx") => FileKind::Docx,
             Some("xlsx") => FileKind::Xlsx,
             Some("pptx") => FileKind::Pptx,
+            Some("doc") => FileKind::Doc,
+            Some("xls") => FileKind::Xls,
+            Some("ppt") => FileKind::Ppt,
             Some(other) => FileKind::Other(other.to_string()),
             None => FileKind::Other(String::new()),
         }
@@ -193,6 +202,7 @@ pub fn extract_metadata(path: &Path) -> Result<FileMetadata, ForensicsError> {
     let mut meta = match &kind {
         FileKind::Pdf => pdf::extract(&bytes)?,
         FileKind::Docx | FileKind::Xlsx | FileKind::Pptx => office::extract(&bytes, &kind)?,
+        FileKind::Doc | FileKind::Xls | FileKind::Ppt => legacy_office::extract(&bytes)?,
         FileKind::Other(ext) => {
             return Err(ForensicsError::UnknownKind(ext.clone()));
         }
