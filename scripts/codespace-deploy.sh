@@ -80,8 +80,13 @@ if ${REBUILD} || [[ -z "$(docker images -q siphon-api:dev 2>/dev/null)" ]]; then
 fi
 
 # --- 4. Import images into the cluster ------------------------------------
+# `--mode=direct` bypasses the default shared-volume tarball path,
+# which is broken under Codespaces' Docker-outside-of-Docker
+# pattern. k3d silently reports success even when each node fails
+# to access the tarball; direct mode docker-execs a `ctr import`
+# into each node container instead. Slightly slower, always works.
 echo "▶ Importing images into k3d…"
-k3d image import -c "${CLUSTER_NAME}" \
+k3d image import -c "${CLUSTER_NAME}" --mode=direct \
     siphon-api:dev \
     siphon-fs:dev \
     siphon-nginx:dev
@@ -119,7 +124,7 @@ helm upgrade --install siphon ./deploy/helm/siphon \
     --set nginx.image.tag=dev \
     --set api.auth.secretName=siphon-api-auth \
     --set authelia.secretName=siphon-authelia \
-    --set ingress.host=siphon.local \
+    --set ingress.host= \
     --set global.imageRegistry= \
     --wait --timeout=5m
 

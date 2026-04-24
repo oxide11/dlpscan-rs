@@ -47,8 +47,32 @@ fi
 # Fetch without compiling so the first `cargo build` inside the
 # Codespace doesn't need to pull the dep tree over the Codespace's
 # network too.
+#
+# The universal:2 image ships Rust at /usr/local/cargo but the
+# env file isn't auto-sourced inside non-interactive shells like
+# `bash .devcontainer/setup.sh`. Source it explicitly so `cargo`
+# resolves. Silent if missing so this still runs on future base
+# images that expose cargo differently.
+if [[ -f /usr/local/cargo/env ]]; then
+    # shellcheck disable=SC1091
+    . /usr/local/cargo/env
+fi
 echo "▶ Warming Cargo registry (cargo fetch)…"
-cargo fetch || true
+cargo fetch || echo "  (cargo unavailable in postCreate shell — skipping; deploys build inside Docker anyway)"
+
+# ---- Persist PATH in shell rc ---------------------------------------------
+# Interactive shells in the Codespace already source cargo via the
+# image's /etc/bash.bashrc, but `bash -c` / one-shot scripts don't.
+# Adding a tiny export to the user's .bashrc keeps `cargo` +
+# `kubectl` + `helm` + `k3d` on PATH for every subsequent shell.
+RC="${HOME}/.bashrc"
+if [[ -w "${RC}" ]] && ! grep -q 'siphon-devcontainer' "${RC}"; then
+    cat >>"${RC}" <<'RCBLOCK'
+
+# siphon-devcontainer: make cargo + k8s tooling visible in every shell
+[ -f /usr/local/cargo/env ] && . /usr/local/cargo/env
+RCBLOCK
+fi
 
 cat <<'EOF'
 
