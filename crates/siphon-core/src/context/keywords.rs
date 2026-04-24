@@ -5138,10 +5138,19 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         ContextEntry {
             keywords: &[
                 "ramq",
+                "quebec hc",
                 "carte soleil",
                 "quebec health card",
-                "regie assurance maladie",
                 "health insurance quebec",
+                // French — common RAMQ card references. "carte
+                // d'assurance maladie" is the card's literal name
+                // on RAMQ issues; "numéro d'assurance maladie" is
+                // how French-Canadian forms ask for the number.
+                "carte d'assurance maladie",
+                "carte assurance maladie",
+                "numéro d'assurance maladie",
+                "regie assurance maladie",
+                "régie de l'assurance maladie",
             ],
             distance: 50,
         },
