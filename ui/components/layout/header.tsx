@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, ShieldCheck, ScanLine, FileSearch } from "lucide-react";
+import {
+  Activity,
+  FileSearch,
+  ScanLine,
+  Server,
+  ShieldCheck,
+} from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -16,6 +22,7 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { href: "/", label: "Overview", icon: Activity },
+  { href: "/pods", label: "Pods", icon: Server },
   { href: "/findings", label: "Findings", icon: FileSearch },
   { href: "/scan", label: "Scan", icon: ScanLine },
 ] as const;
