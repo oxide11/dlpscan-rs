@@ -41,22 +41,20 @@ spec:
         - name: siphon-api
           image: {{ include "siphon.image" (dict "root" . "image" .Values.api.image) }}
           imagePullPolicy: {{ default .Values.global.imagePullPolicy .Values.api.image.pullPolicy }}
-          # siphon-api takes --host / --port as CLI flags; defaults
-          # to 127.0.0.1 (loopback) which makes it unreachable from
-          # anywhere but the pod itself. Pass 0.0.0.0 explicitly so
-          # kubelet probes and other pods can hit the Service. Keep
-          # this ahead of the ports block so the rendered YAML
-          # ordering stays readable in `kubectl get deploy -o yaml`.
-          args:
-            - "--host"
-            - "0.0.0.0"
-            - "--port"
-            - {{ .Values.api.service.port | quote }}
           ports:
             - name: http
               containerPort: {{ .Values.api.service.port }}
               protocol: TCP
           env:
+            # siphon-api reads SIPHON_BIND + SIPHON_PORT; default bind
+            # is 127.0.0.1 which makes the pod unreachable from
+            # kubelet probes + the Service. Force 0.0.0.0 here. The
+            # binary has no clap CLI so `args:` is ignored — this
+            # env pair is the only supported configuration path.
+            - name: SIPHON_BIND
+              value: "0.0.0.0"
+            - name: SIPHON_PORT
+              value: {{ .Values.api.service.port | quote }}
             - name: SIPHON_OVERRIDES_PATH
               value: /etc/siphon/overrides.json
             - name: SIPHON_K8S_NAMESPACE
