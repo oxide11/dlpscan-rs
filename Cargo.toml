@@ -153,6 +153,11 @@ full = ["pdf", "office", "archives", "data-formats", "msg", "barcode", "bin-data
 [dev-dependencies]
 criterion = "0.8"
 tempfile = "3"
+# Used by tests/forensics_test.rs to hand-roll OLE Compound files
+# for the legacy .doc/.xls/.ppt extractor. `cfb` is already an
+# optional runtime dep (behind `msg`); adding it here unconditionally
+# keeps the test green on minimal builds too.
+cfb = "0.10"
 
 [[bench]]
 name = "scanning"

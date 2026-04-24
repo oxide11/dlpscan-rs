@@ -141,6 +141,82 @@ fn attribution_flags_shared_rsid_root_across_files() {
         .any(|s| s.kind == SignalKind::RsidRootMatch));
 }
 
+// Build a minimal .doc OLE compound file with a SummaryInformation
+// stream carrying known Author + Title + AppName. The test path
+// rides through extract_metadata's FileKind dispatch so a regression
+// in the .doc / .xls / .ppt wiring shows up immediately.
+fn write_legacy_doc(dir: &tempfile::TempDir, name: &str, author: &str, title: &str) -> PathBuf {
+    let path = dir.path().join(name);
+
+    // Hand-rolled OSPS property set — same layout as the
+    // siphon_core tests, scaled down to two properties.
+    let mut stream = Vec::new();
+    stream.extend_from_slice(&[0xFE, 0xFF, 0x00, 0x00]);
+    stream.extend_from_slice(&[0x00, 0x00, 0x02, 0x00]);
+    stream.extend_from_slice(&[0u8; 16]);
+    stream.extend_from_slice(&1u32.to_le_bytes());
+
+    let fmtid: [u8; 16] = [
+        0xE0, 0x85, 0x9F, 0xF2, 0xF9, 0x4F, 0x68, 0x10, 0xAB, 0x91, 0x08, 0x00, 0x2B, 0x27, 0xB3,
+        0xD9,
+    ];
+    stream.extend_from_slice(&fmtid);
+    stream.extend_from_slice(&(28u32 + 20u32).to_le_bytes());
+
+    let mut section = Vec::new();
+    section.extend_from_slice(&0u32.to_le_bytes()); // size placeholder
+    section.extend_from_slice(&2u32.to_le_bytes()); // 2 properties
+    let table_start = section.len();
+    section.extend_from_slice(&[0u8; 2 * 8]);
+
+    let append_lpstr = |section: &mut Vec<u8>, text: &str| -> u32 {
+        let off = section.len() as u32;
+        section.extend_from_slice(&0x0000_001E_u32.to_le_bytes()); // VT_LPSTR
+        let mut bytes = text.as_bytes().to_vec();
+        bytes.push(0);
+        section.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        section.extend_from_slice(&bytes);
+        while section.len() % 4 != 0 {
+            section.push(0);
+        }
+        off
+    };
+
+    let title_off = append_lpstr(&mut section, title);
+    let author_off = append_lpstr(&mut section, author);
+    // PID_TITLE = 0x02, PID_AUTHOR = 0x04.
+    section[table_start..table_start + 4].copy_from_slice(&0x02u32.to_le_bytes());
+    section[table_start + 4..table_start + 8].copy_from_slice(&title_off.to_le_bytes());
+    section[table_start + 8..table_start + 12].copy_from_slice(&0x04u32.to_le_bytes());
+    section[table_start + 12..table_start + 16].copy_from_slice(&author_off.to_le_bytes());
+
+    let size = section.len() as u32;
+    section[0..4].copy_from_slice(&size.to_le_bytes());
+    stream.extend_from_slice(&section);
+
+    let file = std::fs::File::create(&path).unwrap();
+    let mut comp = cfb::CompoundFile::create(file).unwrap();
+    {
+        let mut st = comp.create_stream("\u{5}SummaryInformation").unwrap();
+        st.write_all(&stream).unwrap();
+    }
+    comp.flush().unwrap();
+
+    path
+}
+
+#[test]
+fn extract_metadata_handles_legacy_binary_doc() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = write_legacy_doc(&tmp, "legacy.doc", "Ada Lovelace", "Secret Report");
+
+    let meta = extract_metadata(&path).unwrap();
+    assert_eq!(meta.kind, FileKind::Doc);
+    assert_eq!(meta.creator.as_deref(), Some("Ada Lovelace"));
+    assert_eq!(meta.title.as_deref(), Some("Secret Report"));
+    assert_eq!(meta.content_hash.len(), 64);
+}
+
 #[test]
 fn attribution_score_serializes_to_json() {
     let tmp = tempfile::tempdir().unwrap();
