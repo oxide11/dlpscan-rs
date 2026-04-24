@@ -46,8 +46,15 @@ spec:
               containerPort: {{ .Values.api.service.port }}
               protocol: TCP
           env:
-            - name: SIPHON_API_BIND
-              value: "0.0.0.0:{{ .Values.api.service.port }}"
+            # siphon-api reads SIPHON_BIND (IP) and SIPHON_PORT
+            # separately, not a combined host:port. Defaults to
+            # 127.0.0.1 when SIPHON_BIND is unset — binding to
+            # loopback means the kubelet's readiness probe against
+            # the pod IP never succeeds and the pod crashloops.
+            - name: SIPHON_BIND
+              value: "0.0.0.0"
+            - name: SIPHON_PORT
+              value: {{ .Values.api.service.port | quote }}
             - name: SIPHON_OVERRIDES_PATH
               value: /etc/siphon/overrides.json
             - name: SIPHON_K8S_NAMESPACE
