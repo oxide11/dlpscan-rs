@@ -215,6 +215,15 @@ authelia:
   # defaults.
   configYaml: null
 
+  # Raw YAML for Authelia's file-backed users_database.yml.
+  # Authelia refuses to start if this file is missing or empty,
+  # even when every request goes through devBypass. Defaults to a
+  # single admin user with the Authelia-project demo argon2id hash
+  # for the password `authelia` — useful for local smoke-tests,
+  # useless in prod. Replace with real entries (see
+  # deploy/authelia/users_database.yml.example) in production.
+  usersDatabase: null
+
   # Scheme the browser uses to reach the Siphon host. Threads into
   # Authelia's `session.cookies[*].authelia_url` and
   # `default_redirection_url` when `externalUrl` below is empty.
