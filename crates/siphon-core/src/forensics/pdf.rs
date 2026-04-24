@@ -1,15 +1,18 @@
 //! PDF metadata extractor.
 //!
-//! Two sources are read:
+//! Three sources are read:
 //!   1. The trailer's `/Info` dictionary — legacy pre-PDF-1.4
 //!      metadata. Still populated by every producer for back-compat.
 //!   2. The `/ID` array in the trailer — two 16-byte hex tokens:
 //!      original ID (stable across edits) + current ID (rotates).
-//!
-//! We deliberately do NOT parse the XMP metadata stream yet —
-//! pulling it requires walking the `/Catalog /Metadata` chain and
-//! decoding the embedded RDF/XML. When the forensics module grows
-//! a second sprint, that's the obvious next signal to add.
+//!   3. The XMP metadata stream, reachable via
+//!      `/Catalog -> /Metadata`. This is the richer Adobe-style
+//!      metadata — `xmp:CreatorTool`, `xmpMM:DocumentID`,
+//!      `xmpMM:InstanceID`, the full Dublin Core namespace, and
+//!      any photoshop / exif namespaces a producer embedded.
+//!      DocumentID in particular is a strong attribution signal —
+//!      it's a UUID assigned at first save and preserved across
+//!      every subsequent edit that didn't re-export the file.
 
 use lopdf::{Document, Object};
 
@@ -61,7 +64,142 @@ pub fn extract(bytes: &[u8]) -> Result<FileMetadata, ForensicsError> {
             .insert("pdf:version".to_string(), doc.version.clone());
     }
 
+    // --- XMP metadata stream ---------------------------------------------
+    // /Root -> /Metadata gives us a stream of RDF/XML. Producers
+    // that don't write XMP (old versions, scan-only pipelines)
+    // simply don't carry this reference — absence is not an error.
+    if let Some(xmp) = read_xmp_stream(&doc) {
+        parse_xmp(&xmp, &mut meta);
+    }
+
     Ok(meta)
+}
+
+/// Resolve /Root -> /Metadata, decode the stream bytes, and return
+/// them as a UTF-8 string. Returns None for any missing link or
+/// non-stream object in the chain — the caller treats absence as
+/// "no XMP metadata present" rather than a parse error.
+fn read_xmp_stream(doc: &Document) -> Option<String> {
+    let root_ref = doc.trailer.get(b"Root").ok()?;
+    let root_id = root_ref.as_reference().ok()?;
+    let root_obj = doc.get_object(root_id).ok()?;
+    let root_dict = root_obj.as_dict().ok()?;
+
+    let meta_ref = root_dict.get(b"Metadata").ok()?;
+    let (_, meta_obj) = doc.dereference(meta_ref).ok()?;
+    let stream = meta_obj.as_stream().ok()?;
+
+    // PDF streams can be FlateDecode, ASCII85Decode, etc. lopdf's
+    // decompressed_content walks the /Filter chain for us.
+    let bytes = stream.decompressed_content().ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Walk the XMP RDF/XML looking for the handful of tags that carry
+/// attribution value. Anything that doesn't map to a first-class
+/// FileMetadata field goes into `raw["xmp:*"]` for manual review.
+///
+/// XMP is nested RDF, but in practice every producer serialises the
+/// interesting values as simple `<ns:Tag>value</ns:Tag>` elements.
+/// A SAX-style walk keyed on the local tag name is more forgiving
+/// of namespace-prefix variation than a strict RDF parser — and the
+/// failure mode when a producer does something unusual is "miss one
+/// signal", not a crash.
+pub(crate) fn parse_xmp(xml: &str, meta: &mut FileMetadata) {
+    use quick_xml::events::Event;
+    use quick_xml::reader::Reader;
+
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
+
+    let mut cur: Option<String> = None;
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => {
+                cur = Some(tag_local_name(e.name().as_ref()));
+            }
+            Ok(Event::Text(e)) => {
+                if let Some(tag) = &cur {
+                    let text = String::from_utf8_lossy(e.as_ref()).trim().to_string();
+                    if text.is_empty() {
+                        continue;
+                    }
+                    assign_xmp(meta, tag, text);
+                }
+            }
+            // XMP also stores values inside rdf:Description attributes
+            // sometimes — pick them up here so we don't miss Adobe's
+            // compact form.
+            Ok(Event::Empty(e)) => {
+                for attr in e.attributes().flatten() {
+                    let key = tag_local_name(attr.key.as_ref());
+                    let val = String::from_utf8_lossy(&attr.value).into_owned();
+                    if !val.is_empty() {
+                        assign_xmp(meta, &key, val);
+                    }
+                }
+            }
+            Ok(Event::End(_)) => {
+                cur = None;
+            }
+            Ok(Event::Eof) => break,
+            // Any parse error — treat as "no more XMP signals" and
+            // return what we have. Don't fail the whole extract over
+            // a producer's malformed XML.
+            Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+}
+
+fn assign_xmp(meta: &mut FileMetadata, tag: &str, value: String) {
+    // Don't overwrite what the Info dict already populated —
+    // producers often disagree between Info and XMP, and the Info
+    // dict is the ordained legacy source.
+    match tag {
+        "creator" if meta.creator.is_none() => meta.creator = Some(value),
+        "title" if meta.title.is_none() => meta.title = Some(value),
+        "subject" if meta.subject.is_none() => meta.subject = Some(value),
+        "CreatorTool" if meta.application.is_none() => meta.application = Some(value),
+        "Producer" if meta.application.is_none() => meta.application = Some(value),
+        "CreateDate" if meta.created_at.is_none() => meta.created_at = Some(value),
+        "ModifyDate" if meta.modified_at.is_none() => meta.modified_at = Some(value),
+        // DocumentID is a UUID minted at first save and persists
+        // across every edit. Strongest PDF attribution signal after
+        // the /ID first token — investigators correlate it when the
+        // Info dict has been stripped.
+        "DocumentID" => {
+            meta.raw.insert("xmp:DocumentID".to_string(), value);
+        }
+        "InstanceID" => {
+            meta.raw.insert("xmp:InstanceID".to_string(), value);
+        }
+        other => {
+            // Only stash signal-bearing tags in `raw` — skip generic
+            // structural XML ("li", "Seq", "Bag", "Alt", "Description",
+            // "rdf", "xmpmeta") that carries no metadata value of its
+            // own. Keeps the `raw` dump readable in the CLI.
+            let structural = matches!(
+                other,
+                "li" | "Seq" | "Bag" | "Alt" | "Description" | "rdf" | "xmpmeta" | "RDF" | "x"
+            );
+            if !structural {
+                meta.raw.entry(format!("xmp:{other}")).or_insert(value);
+            }
+        }
+    }
+}
+
+/// Namespace-strip a tag name: `dc:creator` -> `creator`.
+fn tag_local_name(qname: &[u8]) -> String {
+    let full = std::str::from_utf8(qname).unwrap_or("");
+    match full.rfind(':') {
+        Some(i) => full[i + 1..].to_string(),
+        None => full.to_string(),
+    }
 }
 
 /// Drop an Info-dict value into the right FileMetadata field. Keys
