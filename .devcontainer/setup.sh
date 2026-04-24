@@ -1,17 +1,72 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# Devcontainer bootstrap for Siphon.
+#
+# The universal image already has Docker, Node, Rust, pnpm. We
+# add the k8s tooling needed to exercise `deploy/helm/siphon/`
+# end-to-end inside a Codespace:
+#
+#   k3d      — lightweight k8s-in-Docker (faster boot than minikube)
+#   kubectl  — chart install + port-forward + logs
+#   helm     — install the Siphon chart
+#
+# Deployment itself isn't run here — see scripts/codespace-deploy.sh
+# for a single-command build-and-install.
 
-# 1. Install & Start Minikube
-if ! command -v minikube &> /dev/null; then
-    curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-    sudo install minikube-linux-amd64 /usr/local/bin/minikube
+set -Eeuo pipefail
+
+echo "▶ Installing k8s tooling…"
+
+# ---- kubectl ---------------------------------------------------------------
+if ! command -v kubectl >/dev/null; then
+    K8S_VER="$(curl -sL https://dl.k8s.io/release/stable.txt)"
+    curl -sLo /tmp/kubectl "https://dl.k8s.io/release/${K8S_VER}/bin/linux/amd64/kubectl"
+    sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
 fi
 
-# Start Minikube
-minikube start --driver=docker
+# ---- helm ------------------------------------------------------------------
+if ! command -v helm >/dev/null; then
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+fi
 
-# 2. Start the Siphon API in the background
-echo "🚀 Auto-starting Siphon API..."
-nohup cargo run --bin siphon-api -- --host 0.0.0.0 > api.log 2>&1 &
+# ---- k3d -------------------------------------------------------------------
+# k3d boots a kind-ish cluster inside Docker-in-Docker in ~10s.
+# Lighter than minikube for Codespaces where the VM is already a VM.
+if ! command -v k3d >/dev/null; then
+    curl -sL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+fi
 
-echo "✅ Environment fully automated!"
+# ---- UI deps --------------------------------------------------------------
+# pnpm is in the universal image but the lockfile hasn't been
+# installed against this workspace copy yet.
+if [[ -d ui && -f ui/package.json ]]; then
+    echo "▶ Installing UI deps (pnpm install --frozen-lockfile)…"
+    (cd ui && pnpm install --frozen-lockfile) || true
+fi
+
+# ---- Cargo dep cache warm --------------------------------------------------
+# Fetch without compiling so the first `cargo build` inside the
+# Codespace doesn't need to pull the dep tree over the Codespace's
+# network too.
+echo "▶ Warming Cargo registry (cargo fetch)…"
+cargo fetch || true
+
+cat <<'EOF'
+
+✅ Devcontainer ready.
+
+Next steps — stand up the Siphon stack in a k3d cluster:
+
+  ./scripts/codespace-deploy.sh
+
+Then browse the forwarded 8080 port (Codespaces shows the URL in
+the Ports panel) and you'll land on the UI's /ui/ SPA.
+
+Rebuild + redeploy after edits:
+
+  ./scripts/codespace-deploy.sh --rebuild
+
+Tear down the cluster when done:
+
+  k3d cluster delete siphon
+
+EOF
