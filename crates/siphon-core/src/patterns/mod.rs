@@ -2172,12 +2172,26 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "North America - Canada",
         sub_category: "Quebec HC",
-        regex: r"\b[A-Z]{4}\d{8}\b",
+        // RAMQ numéro d'assurance maladie layout: 4-letter name
+        // prefix + YY + MM + DD + SS.
+        //
+        //   MM ranges are 01-12 (male) or 51-62 (female) — every
+        //   other month value is structurally invalid.
+        //   DD ranges are 01-31.
+        //
+        // The tighter char classes reject ~80% of shape-valid but
+        // month/day-invalid values at the regex layer, which in
+        // practice filters out most SKU / serial-number noise that
+        // happens to be 4-letters + 8-digits. A mod-10 check-digit
+        // validator is the follow-up to catch the remainder; for
+        // now we rely on the structural shape + context gate.
+        regex: r"\b[A-Z]{4}\d{2}(?:0[1-9]|1[0-2]|5[1-9]|6[0-2])(?:0[1-9]|[12]\d|3[01])\d{2}\b",
         case_insensitive: false,
         specificity: 0.55,
         // Context-gated (see models::is_context_required). 4-letter
-        // + 8-digit shape fires on serial numbers and SKUs without
-        // a healthcare keyword in range.
+        // + 8-digit shape still fires on serial numbers and SKUs
+        // whose numerical middle happens to line up with a valid
+        // month / day, so the healthcare keyword gate stays in.
         context_required: true,
     },
     PatternDef {
@@ -4139,10 +4153,15 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "Latin America - Chile",
         sub_category: "Chile RUN/RUT",
+        // Digit-only shape with optional separators is far too loose
+        // without context — any 8-9 digit sequence broken into groups
+        // (RAMQ health-card digits, phone numbers, order IDs) matches.
+        // Gate on the Chilean-locale keyword set instead; the regex
+        // alone at 0.65 specificity can't stand on its own.
         regex: r"\b\d{1,2}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?[\dkK]\b",
         case_insensitive: false,
         specificity: 0.65,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Latin America - Chile",
