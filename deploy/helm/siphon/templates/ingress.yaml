@@ -20,8 +20,13 @@ spec:
       secretName: {{ .Values.ingress.tls.secretName | quote }}
   {{- end }}
   rules:
-    - host: {{ .Values.ingress.host | quote }}
-      http:
+    # Omit `host:` entirely when ingress.host is empty so the rule
+    # matches any Host header. Required for Codespaces / anywhere
+    # the inbound Host doesn't match a fixed DNS name — Traefik /
+    # nginx-ingress / whoever returns 404 when there's a Host
+    # constraint it can't match.
+    - {{ if .Values.ingress.host }}host: {{ .Values.ingress.host | quote }}
+      {{ end }}http:
         paths:
           - path: {{ .Values.ingress.path }}
             pathType: {{ .Values.ingress.pathType }}

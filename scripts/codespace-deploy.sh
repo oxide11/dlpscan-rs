@@ -124,7 +124,7 @@ helm upgrade --install siphon ./deploy/helm/siphon \
     --set nginx.image.tag=dev \
     --set api.auth.secretName=siphon-api-auth \
     --set authelia.secretName=siphon-authelia \
-    --set ingress.host=siphon.local \
+    --set ingress.host= \
     --set global.imageRegistry= \
     --wait --timeout=5m
 
