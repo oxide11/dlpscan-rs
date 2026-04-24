@@ -1,0 +1,8 @@
+# Ship only the Next.js source — builds re-run inside the image.
+node_modules
+.next
+out
+.env
+.env*.local
+*.log
+README.md

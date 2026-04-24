@@ -81,3 +81,30 @@ jobs:
           toolchain: "1.95"
           components: rustfmt
       - run: cargo fmt --check
+
+  ui:
+    # Next.js static export + typecheck + lint. Runs on any change
+    # so the SPA's type safety and bundle emit are verified every
+    # push, independent of the Rust pipeline.
+    name: UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm build
