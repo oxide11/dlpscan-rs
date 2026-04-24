@@ -37,16 +37,20 @@ pub fn compute_confidence_with(specificity: f64, has_context: bool, context_requ
 ///
 /// Tiebreakers, in order:
 ///   1. Higher confidence wins.
-///   2. If confidence is tied (e.g. both patterns hit 1.0 after a
-///      context boost), prefer the pattern with higher base
-///      specificity. This is what keeps `JWT Token` (0.95) from being
-///      silently swallowed by a nested `Bearer Token` (0.80) match
-///      when the JWT sits inside an `Authorization: Bearer …` header:
-///      both match the same span with context, both clamp to 1.0
-///      confidence, and without the specificity tiebreaker the
-///      longer Bearer span would win even though the JWT is the
-///      more informative finding.
-///   3. If specificity is also tied, prefer the longer match.
+///   2. A context-gated match with its context satisfied beats an
+///      ungated one at equal confidence. Rationale: when an analyst
+///      writes `carte assurance maladie TREM85120123`, the Quebec HC
+///      pattern (spec 0.55, ctx-gated) boosts to 0.75 with context
+///      and ties ISIN's raw 0.75. The gated match is strictly more
+///      informative — it says "the surrounding prose corroborates
+///      this is a RAMQ card". Without this tiebreaker, the ungated
+///      ISIN would silently shadow every Quebec HC on the same span.
+///   3. If tied on confidence + gated-state, prefer the pattern with
+///      higher base specificity. This keeps `JWT Token` (0.95) from
+///      being silently swallowed by a nested `Bearer Token` (0.80)
+///      when both clamp to 1.0 confidence in an Authorization
+///      header.
+///   4. If specificity is also tied, prefer the longer match.
 pub fn deduplicate_overlapping(matches: &mut Vec<Match>) {
     if matches.is_empty() {
         return;
@@ -66,19 +70,25 @@ pub fn deduplicate_overlapping(matches: &mut Vec<Match>) {
     for m in matches.drain(..) {
         if let Some(prev) = result.last_mut() {
             if m.span.0 < prev.span.1 {
-                // Overlapping — apply the three-step tiebreaker.
+                // Overlapping — apply the four-step tiebreaker.
                 if m.confidence > prev.confidence {
                     *prev = m;
                 } else if (m.confidence - prev.confidence).abs() < f64::EPSILON {
-                    let m_spec = pattern_specificity(&m.sub_category);
-                    let prev_spec = pattern_specificity(&prev.sub_category);
-                    if m_spec > prev_spec {
+                    let m_gated = m.context_required && m.has_context;
+                    let prev_gated = prev.context_required && prev.has_context;
+                    if m_gated && !prev_gated {
                         *prev = m;
-                    } else if (m_spec - prev_spec).abs() < f64::EPSILON {
-                        let m_len = m.span.1 - m.span.0;
-                        let prev_len = prev.span.1 - prev.span.0;
-                        if m_len > prev_len {
+                    } else if m_gated == prev_gated {
+                        let m_spec = pattern_specificity(&m.sub_category);
+                        let prev_spec = pattern_specificity(&prev.sub_category);
+                        if m_spec > prev_spec {
                             *prev = m;
+                        } else if (m_spec - prev_spec).abs() < f64::EPSILON {
+                            let m_len = m.span.1 - m.span.0;
+                            let prev_len = prev.span.1 - prev.span.0;
+                            if m_len > prev_len {
+                                *prev = m;
+                            }
                         }
                     }
                 }
