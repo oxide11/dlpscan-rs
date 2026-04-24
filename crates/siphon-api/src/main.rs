@@ -1862,6 +1862,12 @@ struct PodListResponse {
     namespace: String,
     count: usize,
     pods: Vec<PodSummary>,
+    // `false` means siphon-api could not reach a Kubernetes
+    // apiserver at all (no kubeconfig, no in-cluster service
+    // account). The UI renders this as an informational
+    // "not running in a cluster" state rather than a hard error
+    // so a local `cargo run` doesn't look like it's crashing.
+    in_cluster: bool,
 }
 
 #[cfg(not(feature = "k8s-roll"))]
@@ -1893,14 +1899,35 @@ async fn k8s_pods(
 
     let namespace = resolve_namespace();
 
-    let client = Client::try_default().await.map_err(|e| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorResponse {
-                error: format!("kube client init failed · {e}"),
-            }),
-        )
-    })?;
+    // `Client::try_default` first tries a kubeconfig on disk and
+    // then falls back to the in-cluster service-account token. When
+    // both fail (typical for a `cargo run` on a laptop) kube-rs
+    // returns `Error::InferConfig`. Treat that as a product state
+    // — "siphon-api isn't running in a cluster" — not as an
+    // internal failure: return 200 with an empty list and
+    // `in_cluster=false` so the Ops UI can render a calm
+    // informational panel instead of a red "Load failed" banner.
+    // Real post-connection errors (RBAC denied, apiserver
+    // unreachable, list call failed) still bubble up as 502/503.
+    let client = match Client::try_default().await {
+        Ok(c) => c,
+        Err(kube::Error::InferConfig(_)) => {
+            return Ok(Json(PodListResponse {
+                namespace,
+                count: 0,
+                pods: Vec::new(),
+                in_cluster: false,
+            }));
+        }
+        Err(e) => {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: format!("kube client init failed · {e}"),
+                }),
+            ));
+        }
+    };
     let api: Api<Pod> = Api::namespaced(client, &namespace);
 
     // Default list view is scoped to pods that carry the
@@ -1925,6 +1952,7 @@ async fn k8s_pods(
         namespace,
         count: summaries.len(),
         pods: summaries,
+        in_cluster: true,
     }))
 }
 
