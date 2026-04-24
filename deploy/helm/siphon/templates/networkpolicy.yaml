@@ -1,0 +1,131 @@
+{{- if .Values.networkPolicy.enabled }}
+# Default-deny-ingress for every pod in the release, with
+# explicit allow-rules for the observed traffic patterns. Writing
+# it as one policy per component keeps the allow-lists readable.
+
+# --- nginx: ingress from Ingress controller + linkerd-proxy sidecar
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "siphon.fullname" . }}-nginx
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "nginx") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "siphon.selectorLabels" (dict "root" . "component" "nginx") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Allow any pod that lands on the http/https ports. Controllers
+    # in another namespace (nginx-ingress, traefik, contour) all
+    # work by accident of this broad allow — the Ingress itself is
+    # the trust boundary.
+    - ports:
+        - port: 80
+          protocol: TCP
+        {{- if .Values.nginx.service.tlsPort }}
+        - port: 443
+          protocol: TCP
+        {{- end }}
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ .Chart.Name }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      # nginx hits siphon-api, siphon-fs, authelia, ui — all in-chart.
+    - ports:
+        - port: 53
+          protocol: UDP
+---
+# --- siphon-api: ingress from nginx only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "siphon.fullname" . }}-api
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "api") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "siphon.selectorLabels" (dict "root" . "component" "api") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "siphon.selectorLabels" (dict "root" . "component" "nginx") | nindent 14 }}
+      ports:
+        - port: {{ .Values.api.service.port }}
+          protocol: TCP
+  egress:
+    # k8s API server for k8s-roll discovery + rollouts.
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 53
+          protocol: UDP
+    {{- with .Values.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+---
+# --- siphon-fs: same shape as api
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "siphon.fullname" . }}-fs
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "fs") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "siphon.selectorLabels" (dict "root" . "component" "fs") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "siphon.selectorLabels" (dict "root" . "component" "nginx") | nindent 14 }}
+      ports:
+        - port: {{ .Values.fs.service.port }}
+          protocol: TCP
+  egress:
+    - ports:
+        - port: 443
+          protocol: TCP
+        - port: 53
+          protocol: UDP
+    {{- with .Values.networkPolicy.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+---
+# --- authelia: ingress from nginx only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "siphon.fullname" . }}-authelia
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "authelia") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "siphon.selectorLabels" (dict "root" . "component" "authelia") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "siphon.selectorLabels" (dict "root" . "component" "nginx") | nindent 14 }}
+      ports:
+        - port: {{ .Values.authelia.service.port }}
+          protocol: TCP
+  egress:
+    # SMTP (25 / 465 / 587) for password-reset once the filesystem
+    # notifier is replaced with real mail, plus DNS. Postgres egress
+    # added when storage swaps off SQLite.
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 587
+          protocol: TCP
+{{- end }}

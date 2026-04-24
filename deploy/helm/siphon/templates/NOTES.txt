@@ -1,0 +1,79 @@
+Siphon {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}"
+in namespace "{{ .Release.Namespace }}".
+
+Components:
+{{- if .Values.api.enabled }}
+  ✓ siphon-api   ({{ include "siphon.componentName" (dict "root" . "component" "api") }})
+{{- end }}
+{{- if .Values.fs.enabled }}
+  ✓ siphon-fs    ({{ include "siphon.componentName" (dict "root" . "component" "fs") }})
+{{- end }}
+{{- if .Values.authelia.enabled }}
+  ✓ authelia     ({{ include "siphon.componentName" (dict "root" . "component" "authelia") }})
+{{- end }}
+{{- if .Values.nginx.enabled }}
+  ✓ nginx        ({{ include "siphon.componentName" (dict "root" . "component" "nginx") }})
+{{- end }}
+
+Next steps:
+
+1. Wait for every pod to report Ready:
+
+     kubectl -n {{ .Release.Namespace }} rollout status deploy \
+       -l app.kubernetes.io/instance={{ .Release.Name }}
+
+{{- if .Values.ingress.enabled }}
+
+2. Point your DNS at the Ingress IP and browse to:
+
+     {{- if .Values.ingress.tls.enabled }}
+     https://{{ .Values.ingress.host }}/ui/
+     {{- else }}
+     http://{{ .Values.ingress.host }}/ui/
+     {{- end }}
+
+{{- else }}
+
+2. Port-forward to the nginx Service to reach the UI locally:
+
+     kubectl -n {{ .Release.Namespace }} port-forward \
+       svc/{{ include "siphon.componentName" (dict "root" . "component" "nginx") }} 8080:80
+
+   Then browse http://localhost:8080/ui/
+
+{{- end }}
+
+{{- if not .Values.api.auth.secretName }}
+
+⚠ siphon-api is running WITHOUT a bearer-token secret. Machine
+  clients won't be able to authenticate through nginx. Create the
+  secret and set `api.auth.secretName`:
+
+    kubectl -n {{ .Release.Namespace }} create secret generic siphon-api-auth \
+      --from-literal=api-key="$(openssl rand -hex 32)"
+
+    helm upgrade {{ .Release.Name }} ./deploy/helm/siphon \
+      --set api.auth.secretName=siphon-api-auth
+{{- end }}
+
+{{- if and .Values.authelia.enabled (not .Values.authelia.secretName) }}
+
+⚠ Authelia is using placeholder JWT / session / storage seeds.
+  Create the secret and set `authelia.secretName`:
+
+    kubectl -n {{ .Release.Namespace }} create secret generic siphon-authelia \
+      --from-literal=jwt_secret="$(openssl rand -hex 32)" \
+      --from-literal=session_secret="$(openssl rand -hex 32)" \
+      --from-literal=storage_encryption_key="$(openssl rand -hex 32)"
+{{- end }}
+
+{{- if not .Values.global.linkerd.enabled }}
+
+ℹ Linkerd sidecar injection is OFF. For production-grade
+  pod-to-pod mTLS, install Linkerd's control plane and set
+  `global.linkerd.enabled=true`.
+{{- end }}
+
+Docs:
+  * https://github.com/oxide11/dlpscan-rs/blob/main/docs/AUTHENTICATION.md
+  * https://github.com/oxide11/dlpscan-rs/blob/main/deploy/helm/siphon/README.md

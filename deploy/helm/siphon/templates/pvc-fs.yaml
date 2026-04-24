@@ -1,0 +1,17 @@
+{{- if and .Values.fs.enabled (eq .Values.fs.scratchVolume.kind "pvc") }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "siphon.componentName" (dict "root" . "component" "fs") }}-scratch
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "fs") | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.fs.scratchVolume.pvc.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.fs.scratchVolume.sizeLimit }}
+  {{- with .Values.fs.scratchVolume.pvc.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}

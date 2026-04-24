@@ -1,0 +1,13 @@
+{{- if and .Values.fs.enabled .Values.fs.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "siphon.componentName" (dict "root" . "component" "fs") }}
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "fs") | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.fs.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "siphon.selectorLabels" (dict "root" . "component" "fs") | nindent 6 }}
+{{- end }}

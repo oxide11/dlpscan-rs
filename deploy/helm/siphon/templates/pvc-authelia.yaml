@@ -1,0 +1,17 @@
+{{- if and .Values.authelia.enabled .Values.authelia.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "siphon.componentName" (dict "root" . "component" "authelia") }}
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "authelia") | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.authelia.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.authelia.persistence.size }}
+  {{- with .Values.authelia.persistence.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}

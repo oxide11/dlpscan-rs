@@ -1,0 +1,12 @@
+# Shared overrides ConfigMap. Mounted into both siphon-api and
+# siphon-fs at /etc/siphon/overrides.json so ruleset tweaks ship
+# as a single config-map rollout rather than per-service edits.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "siphon.fullname" . }}-overrides
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "shared") | nindent 4 }}
+data:
+  overrides.json: |-
+    {{- .Values.overrides.config | nindent 4 }}
