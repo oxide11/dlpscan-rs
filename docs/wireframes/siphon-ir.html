@@ -2530,6 +2530,7 @@ const IR_SURFACES = [
   // ── ANALYZE ──────────────────────────────────────────────────
   { id: 'crypto',         workspace: 'analyze',   icon: '⎔',  title: 'Crypto Workbench', sub: 'zip · pdf · office · hash' },
   { id: 'extractor',      workspace: 'analyze',   icon: '⊞',  title: 'File Extractor',   sub: 'any siphon-fs format' },
+  { id: 'forensics',      workspace: 'analyze',   icon: '⌘',  title: 'Forensics',        sub: 'authorship · file metadata' },
   { id: 'timeline',       workspace: 'analyze',   icon: '⧗',  title: 'Timeline',         sub: 'reconstruct by ts + span' },
   // ── CORRELATE ────────────────────────────────────────────────
   { id: 'pivots',         workspace: 'correlate', icon: '⇌',  title: 'Pivots',           sub: 'same-document · same-source' },
@@ -9614,6 +9615,365 @@ function CryptoWorkbench() {
   );
 }
 
+// ─── Forensics · Authorship analysis ─────────────────────────────
+// Compares file metadata across a set of documents to surface
+// likely-same-author signals: shared dc:creator, RSID overlap in
+// Office files (each Word session emits a unique revision-save
+// id; files that share an RSID root were edited by the same Word
+// instance), shared PDF /Creator and /Producer, shared
+// application + version, etc. The wireframe here is fixture-
+// driven; the real surface will read metadata extracted by
+// siphon-fs (XML parsing for OOXML, PDF Info dict + XMP).
+//
+// What an analyst gets out of this:
+//   * Cluster files by primary author, then by secondary signals.
+//   * Spot the "two authors collaborating on a case" shape.
+//   * Spot the "external proposal disguised as internal" shape
+//     (different /Creator, different timezone in metadata
+//     timestamps).
+//   * Get a per-file metadata sheet for export / audit handoff.
+
+const FORENSICS_FIXTURE = [
+  {
+    filename: 'q1-customer-records.docx',
+    type: 'docx', size_kb: 24,
+    metadata: {
+      author: 'jdoe',
+      lastModifiedBy: 'jdoe',
+      revision: 14,
+      totalEditTime: '2h 18m',
+      created: '2026-04-12T09:15:23Z',
+      modified: '2026-04-12T11:32:01Z',
+      application: 'Microsoft Office Word',
+      appVersion: '16.0000',
+      // Same root across the two docx files below — strong
+      // same-Word-session signal.
+      rsidRoot: '00ABC123',
+      rsids: ['00ABC123', '00DEF456', '00BBE789'],
+      identifier: '6e7d1a44e9c08bd2f1...',
+    },
+  },
+  {
+    filename: 'follow-up-records.docx',
+    type: 'docx', size_kb: 18,
+    metadata: {
+      author: 'jdoe',
+      lastModifiedBy: 'jdoe',
+      revision: 7,
+      totalEditTime: '1h 04m',
+      created: '2026-04-13T08:21:10Z',
+      modified: '2026-04-13T09:25:48Z',
+      application: 'Microsoft Office Word',
+      appVersion: '16.0000',
+      rsidRoot: '00ABC123',
+      rsids: ['00ABC123', '00DEF456'],
+      identifier: '8f1c4e3219b04a5a2c...',
+    },
+  },
+  {
+    filename: 'audit-output.pdf',
+    type: 'pdf', size_kb: 92,
+    metadata: {
+      author: 'jdoe',
+      creator: 'Microsoft Word for Microsoft 365',
+      producer: 'Microsoft: Print To PDF',
+      created: '2026-04-12T11:55:00Z',
+      modified: '2026-04-12T11:55:00Z',
+      // PDFs from MS Print-to-PDF carry the source app's name in
+      // /Creator — strong signal that this PDF was minted from
+      // a Word session by the same author.
+      identifier: 'urn:uuid:9c2e1b7a-...',
+    },
+  },
+  {
+    filename: 'minutes-2026-04-15.docx',
+    type: 'docx', size_kb: 11,
+    metadata: {
+      author: 'asmith',
+      lastModifiedBy: 'asmith',
+      revision: 3,
+      totalEditTime: '0h 22m',
+      created: '2026-04-15T13:02:44Z',
+      modified: '2026-04-15T13:24:18Z',
+      application: 'Microsoft Office Word',
+      appVersion: '16.0000',
+      // Different RSID root → different Word session → different
+      // editor regardless of stated author.
+      rsidRoot: '00XYZ987',
+      rsids: ['00XYZ987'],
+      identifier: '4a2e8d11c5b9f6e037...',
+    },
+  },
+  {
+    filename: 'vendor-proposal.pdf',
+    type: 'pdf', size_kb: 184,
+    metadata: {
+      author: 'external@acme.com',
+      creator: 'Pages 13.2',
+      producer: 'Mac OS X 14.4 Quartz PDFContext',
+      created: '2026-04-10T09:14:00Z',
+      modified: '2026-04-10T09:14:00Z',
+      // No RSIDs (PDF), no Office identifiers — but the Apple
+      // /Creator stack is unmistakably an external author.
+      identifier: 'urn:uuid:e7b82910-...',
+    },
+  },
+  {
+    filename: 'expenses.xlsx',
+    type: 'xlsx', size_kb: 31,
+    metadata: {
+      author: 'jdoe',
+      lastModifiedBy: 'finance-svc',
+      created: '2026-04-08T16:01:00Z',
+      modified: '2026-04-15T08:33:21Z',
+      application: 'Microsoft Excel',
+      appVersion: '16.0',
+      identifier: 'b1f3e009c47a2d5a1...',
+    },
+  },
+];
+
+// Find values of `key` shared by every file in the group. Returns
+// the shared value (string), or null if files disagree or the
+// field is absent.
+function sharedField(files, key) {
+  const values = new Set(
+    files.map(f => (f.metadata || {})[key]).filter(v => v != null && v !== '')
+  );
+  if (values.size !== 1) return null;
+  if (values.size === 1 && files.some(f => (f.metadata || {})[key] == null)) return null;
+  return [...values][0];
+}
+
+// Cluster files by primary author. Within each cluster, surface
+// the secondary signals (creator, application, lastModifiedBy,
+// producer, rsidRoot) that EVERY file in the cluster shares —
+// nulls when the field disagrees or is missing. Sorted largest
+// cluster first.
+function computeAuthorClusters(files) {
+  const byAuthor = new Map();
+  for (const f of files) {
+    const k = f.metadata.author || '(no author)';
+    if (!byAuthor.has(k)) byAuthor.set(k, []);
+    byAuthor.get(k).push(f);
+  }
+  return [...byAuthor.entries()].map(([author, group]) => ({
+    author,
+    files: group,
+    shared: {
+      application:    sharedField(group, 'application'),
+      creator:        sharedField(group, 'creator'),
+      producer:       sharedField(group, 'producer'),
+      lastModifiedBy: sharedField(group, 'lastModifiedBy'),
+      rsidRoot:       sharedField(group, 'rsidRoot'),
+    },
+  })).sort((a, b) => b.files.length - a.files.length || a.author.localeCompare(b.author));
+}
+
+function ForensicsSurface() {
+  const [selectedFilenames, setSelected] = React.useState(
+    () => new Set(FORENSICS_FIXTURE.map(f => f.filename))
+  );
+  const [activeFilename, setActiveFilename] = React.useState(FORENSICS_FIXTURE[0].filename);
+
+  const selectedFiles = FORENSICS_FIXTURE.filter(f => selectedFilenames.has(f.filename));
+  const clusters = React.useMemo(() => computeAuthorClusters(selectedFiles), [selectedFilenames]);
+  const active = FORENSICS_FIXTURE.find(f => f.filename === activeFilename);
+
+  const toggleSelected = (filename) => setSelected(prev => {
+    const next = new Set(prev);
+    if (next.has(filename)) next.delete(filename); else next.add(filename);
+    return next;
+  });
+
+  const fileIcon = (type) => ({
+    docx: '📝', pdf: '📄', xlsx: '📊', pptx: '📑', csv: '📋',
+  }[type] || '📁');
+
+  return (
+    <div style={{padding:'var(--gap)', display:'flex', flexDirection:'column', gap:'var(--gap)'}}>
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Authorship forensics
+            <span className="muted" style={{fontWeight:400, marginLeft:10, fontSize:11}}>
+              fixture · siphon-fs metadata extraction lands in a follow-up PR
+            </span>
+          </span>
+          <span className="k mono" style={{fontSize:11}}>
+            {selectedFiles.length} files · {clusters.length} {clusters.length === 1 ? 'cluster' : 'clusters'}
+          </span>
+        </div>
+        <div style={{padding:'12px 14px', fontSize:12, color:'var(--ink-soft)', lineHeight:1.6}}>
+          Compare metadata across the selected files. Authorship clusters
+          group by primary author; secondary signals (Office RSID root,
+          app/version, PDF Creator/Producer, last modifier) surface
+          when every file in the cluster carries the same value. Two
+          docs sharing an RSID root were edited by the same Word
+          session — strong same-author signal regardless of stated
+          authorship metadata.
+        </div>
+      </div>
+
+      <div style={{display:'grid', gridTemplateColumns:'minmax(320px, 0.9fr) 1.6fr', gap:'var(--gap)'}}>
+        {/* File set */}
+        <div className="box" style={{padding:0}}>
+          <div className="box-title">
+            <span className="t">File set</span>
+            <span className="k mono" style={{fontSize:10.5}}>
+              {selectedFiles.length} / {FORENSICS_FIXTURE.length}
+            </span>
+          </div>
+          <div>
+            {FORENSICS_FIXTURE.map(f => {
+              const isSel = selectedFilenames.has(f.filename);
+              const isActive = activeFilename === f.filename;
+              return (
+                <div key={f.filename}
+                     onClick={() => setActiveFilename(f.filename)}
+                     style={{
+                       display:'flex', alignItems:'center', gap:10,
+                       padding:'10px 14px',
+                       borderBottom:'1px solid var(--line-soft)',
+                       cursor:'pointer',
+                       background: isActive ? 'var(--bg-2)' : 'transparent',
+                       borderLeft: isActive ? '3px solid var(--accent)' : '3px solid transparent',
+                     }}>
+                  <input type="checkbox"
+                         checked={isSel}
+                         onClick={(e) => e.stopPropagation()}
+                         onChange={() => toggleSelected(f.filename)}
+                         title="include in the cluster computation" />
+                  <span style={{fontSize:16}}>{fileIcon(f.type)}</span>
+                  <div style={{flex:1, minWidth:0}}>
+                    <div className="mono" style={{
+                      fontSize:11.5, color:'var(--ink-bright)',
+                      overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap',
+                    }}>{f.filename}</div>
+                    <div className="muted mono" style={{fontSize:10.5}}>
+                      {f.type} · {f.size_kb} KB · author=
+                      <span style={{color:'var(--ink)'}}>{f.metadata.author || '—'}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Clusters + details */}
+        <div style={{display:'flex', flexDirection:'column', gap:'var(--gap)', minWidth:0}}>
+          <div className="box">
+            <div className="box-title">
+              <span className="t">Authorship clusters</span>
+              <span className="k mono" style={{fontSize:10.5}}>
+                grouped by primary author · sub-grouped by shared signals
+              </span>
+            </div>
+            {clusters.length === 0 && (
+              <div className="muted mono" style={{padding:'20px 14px', textAlign:'center', fontSize:12}}>
+                — no files selected —
+              </div>
+            )}
+            {clusters.map(c => (
+              <div key={c.author} style={{
+                padding:'12px 14px',
+                borderBottom:'1px solid var(--line-soft)',
+              }}>
+                <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:6}}>
+                  <span className="chip chip--ghost" style={{fontSize:9, fontWeight:700}}>
+                    AUTHOR
+                  </span>
+                  <span className="mono" style={{color:'var(--ink-bright)', fontSize:13}}>
+                    {c.author}
+                  </span>
+                  <span className="muted mono" style={{fontSize:10.5, marginLeft:'auto'}}>
+                    {c.files.length} {c.files.length === 1 ? 'file' : 'files'}
+                  </span>
+                </div>
+                <div style={{display:'flex', flexWrap:'wrap', gap:6, marginBottom:6}}>
+                  {c.files.map(f => (
+                    <span key={f.filename}
+                          className="chip"
+                          onClick={() => setActiveFilename(f.filename)}
+                          style={{
+                            fontSize:10.5, cursor:'pointer',
+                            border: activeFilename === f.filename
+                              ? '1px solid var(--accent)' : undefined,
+                            background: activeFilename === f.filename
+                              ? 'var(--accent-wash)' : undefined,
+                          }}>
+                      {fileIcon(f.type)} {f.filename}
+                    </span>
+                  ))}
+                </div>
+                {/* Shared signals — only render the ones that
+                    every file in the cluster agrees on. Nulls are
+                    suppressed; absence is itself a signal that
+                    the cluster is held together by the author
+                    string alone. */}
+                {(() => {
+                  const sig = c.shared;
+                  const rows = [
+                    ['rsid-root',     sig.rsidRoot,
+                     'Word session id — same root = same Word instance edited every file'],
+                    ['application',   sig.application,    'Office application + version'],
+                    ['creator',       sig.creator,        'PDF /Creator (source app)'],
+                    ['producer',      sig.producer,       'PDF /Producer (PDF library)'],
+                    ['last-modifier', sig.lastModifiedBy, 'OOXML cp:lastModifiedBy'],
+                  ].filter(r => r[1]);
+                  if (rows.length === 0) {
+                    return (
+                      <div className="muted mono" style={{fontSize:10.5}}>
+                        — no shared secondary signals; cluster held by author string alone —
+                      </div>
+                    );
+                  }
+                  return (
+                    <div style={{display:'grid', gridTemplateColumns:'auto 1fr', gap:'4px 12px', fontSize:11, fontFamily:"'JetBrains Mono', monospace"}}>
+                      {rows.map(([label, value, hint]) => (
+                        <React.Fragment key={label}>
+                          <span className="muted" title={hint}
+                                style={{fontSize:10, textTransform:'uppercase', letterSpacing:'0.08em'}}>
+                            {label}
+                          </span>
+                          <span style={{color:'var(--ink-bright)'}}>{value}</span>
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            ))}
+          </div>
+
+          {active && (
+            <div className="box">
+              <div className="box-title">
+                <span className="t">{fileIcon(active.type)} {active.filename}</span>
+                <span className="k mono" style={{fontSize:10.5}}>
+                  {active.type} · {active.size_kb} KB
+                </span>
+              </div>
+              <div style={{padding:'14px', display:'grid', gridTemplateColumns:'auto 1fr', gap:'4px 14px', fontSize:11.5, fontFamily:"'JetBrains Mono', monospace"}}>
+                {Object.entries(active.metadata).map(([k, v]) => (
+                  <React.Fragment key={k}>
+                    <span className="muted" style={{fontSize:10, textTransform:'uppercase', letterSpacing:'0.08em', whiteSpace:'nowrap'}}>
+                      {k}
+                    </span>
+                    <span style={{color:'var(--ink-bright)', overflow:'hidden', textOverflow:'ellipsis'}}>
+                      {Array.isArray(v) ? v.join(' · ') : String(v)}
+                    </span>
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const SURFACE_COMPONENTS = {
   dashboard:      () => <DashboardSurface />,
   findings:       () => <FindingsQueue />,
@@ -9626,6 +9986,7 @@ const SURFACE_COMPONENTS = {
   crypto:         () => <CryptoWorkbench />,
   extractor:      () => <Stub title="File Extractor"
                               description="Point-and-shoot at any file siphon-fs recognises (PDF, DOCX, XLSX, PPTX, ZIP/RAR/7z, Parquet, SQLite, EML, MSG, QR)." />,
+  forensics:      () => <ForensicsSurface />,
   timeline:       () => <Stub title="Timeline"
                               description="Reconstruct a finding sequence by timestamp + document span." />,
   pivots:         () => <Stub title="Pivots"
