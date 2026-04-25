@@ -3344,6 +3344,13 @@ function FindingsQueue() {
       return saved ? JSON.parse(saved) : { col: null, dir: 'desc' };
     } catch { return { col: null, dir: 'desc' }; }
   });
+  // Advanced-filter row visibility. Sticky so analysts who use
+  // user/filename/hash search regularly don't have to expand it
+  // every time. Defaults closed so first-run is uncluttered.
+  const [showAdvanced, setShowAdvanced] = React.useState(() => {
+    try { return localStorage.getItem('ir:queueShowAdv') === '1'; }
+    catch { return false; }
+  });
   const [expanded, setExpanded] = React.useState(null);
   const [dispo, setDispo] = React.useState(readDispo);
   const [notesDraft, setNotesDraft] = React.useState({});
@@ -3362,6 +3369,9 @@ function FindingsQueue() {
   React.useEffect(() => {
     try { localStorage.setItem('ir:queueSort', JSON.stringify(sortBy)); } catch {}
   }, [sortBy]);
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:queueShowAdv', showAdvanced ? '1' : '0'); } catch {}
+  }, [showAdvanced]);
   // Reset to page 0 whenever the visible row set could shift under
   // the analyst — filter, sort, pageSize, or fetch-limit changes.
   // Keeps "view page N" honest.
@@ -3392,6 +3402,14 @@ function FindingsQueue() {
 
   const filtered = React.useMemo(() => {
     const s = (filters.search || '').toLowerCase();
+    // Field-targeted search inputs from the advanced row. Each
+    // checks the relevant metadata key the upstream emitter
+    // populates (see crates/siphon-core/src/findings_ring.rs and
+    // the file extractor pipeline). Lowercased once up front so
+    // the per-row check is just a substring test.
+    const fUser     = (filters.user     || '').toLowerCase();
+    const fFile     = (filters.filename || '').toLowerCase();
+    const fHash     = (filters.hash     || '').toLowerCase();
     return all.filter(f => {
       if (filters.severity && filters.severity !== 'all' && f.severity !== filters.severity) return false;
       if (filters.category && filters.category !== 'all' && f.category !== filters.category) return false;
@@ -3399,6 +3417,28 @@ function FindingsQueue() {
       if (s && !(f.text || '').toLowerCase().includes(s)
           && !(f.category || '').toLowerCase().includes(s)
           && !(f.sub_category || '').toLowerCase().includes(s)) return false;
+      const md = f.metadata || {};
+      if (fUser) {
+        // user-ish identity fields: prefer .user, fall back to
+        // sender/recipient/owner/auth_user — the schema isn't
+        // strict and different emitters populate different keys.
+        const v = (md.user || md.sender || md.recipient || md.owner || md.auth_user || '').toLowerCase();
+        if (!v.includes(fUser)) return false;
+      }
+      if (fFile) {
+        // filename-ish: filename, source_path, original_filename,
+        // and source_ip when the finding came from a file scan
+        // (siphon-fs sets source_ip to the filename in that flow).
+        const v = (md.filename || md.source_path || md.original_filename || (f.source_ip || '')).toLowerCase();
+        if (!v.includes(fFile)) return false;
+      }
+      if (fHash) {
+        // content-hash-ish: content_hash, sha256, md5, hash. The
+        // ingest pipeline can stamp any of these depending on
+        // which extractor produced the finding.
+        const v = (md.content_hash || md.sha256 || md.md5 || md.hash || '').toLowerCase();
+        if (!v.includes(fHash)) return false;
+      }
       const d = dispo[f.id];
       if (filters.state === 'open' && d) return false;
       if (filters.state === 'hide-event' && d && d.kind === 'event') return false;
@@ -3594,11 +3634,61 @@ function FindingsQueue() {
             <option value={500}>500 per pod</option>
             <option value={1000}>1000 per pod</option>
           </select>
+          <button className="btn ghost" onClick={() => setShowAdvanced(v => !v)}
+                  title={showAdvanced ? 'hide advanced search inputs' : 'show advanced search inputs'}
+                  style={{fontSize:11}}>
+            advanced {showAdvanced ? '▴' : '▾'}
+          </button>
           <button className="btn ghost" onClick={() => setFilters({})}
                   title="clear all filters" style={{fontSize:11}}>
             clear
           </button>
         </div>
+
+        {/* advanced search row — collapsible. Field-targeted
+            inputs that filter on metadata keys: user identity,
+            filename / source path, and content hash. Each input
+            does a case-insensitive substring match across a small
+            set of related metadata keys (the schema isn't strict;
+            different emitters use different names). */}
+        {showAdvanced && (
+          <div style={{padding:'10px 14px', display:'flex', gap:8, flexWrap:'wrap', alignItems:'center', borderBottom:'1px solid var(--line-soft)'}}>
+            <span className="muted mono" style={{fontSize:10, marginRight:4}}>advanced:</span>
+            <input
+              value={filters.user || ''}
+              onChange={e => setFilters({...filters, user: e.target.value})}
+              placeholder="user · sender · recipient"
+              className="mono"
+              style={{
+                flex:'1 1 180px', fontSize:11,
+                padding:'6px 10px', background:'var(--bg-1)', color:'var(--ink)',
+                border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+              }}
+            />
+            <input
+              value={filters.filename || ''}
+              onChange={e => setFilters({...filters, filename: e.target.value})}
+              placeholder="filename · source path"
+              className="mono"
+              style={{
+                flex:'1 1 180px', fontSize:11,
+                padding:'6px 10px', background:'var(--bg-1)', color:'var(--ink)',
+                border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+              }}
+            />
+            <input
+              value={filters.hash || ''}
+              onChange={e => setFilters({...filters, hash: e.target.value})}
+              placeholder="content hash · sha256 · md5"
+              className="mono"
+              style={{
+                flex:'1 1 180px', fontSize:11,
+                padding:'6px 10px', background:'var(--bg-1)', color:'var(--ink)',
+                border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
+              }}
+            />
+          </div>
+        )}
 
         {/* pagination strip — sits between the filter row and the
             table header so page state is visible at all times. The
