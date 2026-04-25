@@ -59,7 +59,9 @@ spec:
         - port: {{ .Values.api.service.port }}
           protocol: TCP
   egress:
-    # k8s API server for k8s-roll discovery + rollouts.
+    # Port 443 → the in-cluster kubernetes.default.svc apiserver
+    # (the k8s-roll feature lists pods + patches Deployments via
+    # the apiserver). Port 53 → cluster DNS.
     - ports:
         - port: 443
           protocol: TCP
@@ -69,7 +71,7 @@ spec:
     {{- toYaml . | nindent 4 }}
     {{- end }}
 ---
-# --- siphon-fs: same shape as api
+# --- siphon-fs: ingress from nginx only; egress only DNS
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -90,9 +92,11 @@ spec:
         - port: {{ .Values.fs.service.port }}
           protocol: TCP
   egress:
+    # siphon-fs has no kube-apiserver client; only cluster DNS is
+    # needed in the default config. extraEgress (e.g. SIEM, S3,
+    # webhook destinations) lifts the policy when the operator
+    # plumbs a new outbound dependency.
     - ports:
-        - port: 443
-          protocol: TCP
         - port: 53
           protocol: UDP
     {{- with .Values.networkPolicy.extraEgress }}
