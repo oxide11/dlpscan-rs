@@ -5057,7 +5057,168 @@ function DocumentPreview({ finding, sameReq }) {
             keeps falling through to TextBody so this commit
             doesn't change what the user sees. */}
         {(() => {
+          // Single segment-renderer shared across every format
+          // chrome. Captures showHl / findText / findIdx via
+          // closure, so each `<pre>{segs.map(renderSeg)}</pre>`
+          // looks identical regardless of where it's invoked
+          // from. Image-OCR transcript, PDF page body, DOCX body,
+          // CSV cell — they all reach for the same renderer.
+          const renderSeg = (s, i) => {
+            if (s.kind === 'plain') return <span key={i}>{s.text}</span>;
+            if (!showHl && s.kind !== 'find') return <span key={i}>{s.text}</span>;
+            if (s.kind === 'match') {
+              return (
+                <mark key={i}
+                      title="regex match · detected by siphon-core"
+                      style={{
+                        background: REGEX_HL.bg,
+                        color: 'inherit',
+                        borderBottom: '2.5px solid ' + REGEX_HL.border,
+                        padding: '0 1px',
+                        borderRadius: 0,
+                      }}>{s.text}</mark>
+              );
+            }
+            if (s.kind === 'keyword') {
+              return (
+                <span key={i}
+                      title={`context keyword · "${s.keyword}"`}
+                      style={{
+                        background: KEYWORD_HL.bg,
+                        color: 'inherit',
+                        borderBottom: '2px dashed ' + KEYWORD_HL.border,
+                        padding: '0 1px',
+                      }}>{s.text}</span>
+              );
+            }
+            if (s.kind === 'find') {
+              return (
+                <mark key={i}
+                      data-find-idx={s.findIdx}
+                      title={`find · "${findText}"`}
+                      style={{
+                        background: FIND_HL.bg,
+                        color: '#000',
+                        border: '1px solid ' + FIND_HL.border,
+                        padding: '0 2px',
+                        borderRadius: 2,
+                        fontWeight: 600,
+                        outline: s.findIdx === findIdx ? '2px solid var(--ink-bright)' : 'none',
+                      }}>{s.text}</mark>
+              );
+            }
+            return <span key={i}>{s.text}</span>;
+          };
+
           switch (preview.format) {
+            case 'image': {
+              // Image preview chrome — viewport on top with a
+              // synthesised image area + overlay markers
+              // showing approximately where siphon-fs's OCR
+              // pass found the matched text. Below the image:
+              // the OCR transcript in a smaller pre, with the
+              // same highlights the text format uses so the
+              // analyst can copy/redact/find within the
+              // extracted text. The `image bytes unavailable in
+              // wireframe` band makes the synthesised nature
+              // visible — analysts know they're not seeing the
+              // real capture.
+              const matchSpans = segs.filter(s => s.kind === 'match');
+              return (
+                <div ref={preRef} style={{
+                  height, minHeight: 200, overflow:'auto',
+                  background:'var(--bg-1)',
+                  display:'flex', flexDirection:'column',
+                }}>
+                  {/* Image viewport — dark band, centred mock
+                      image, overlay markers anchored on a
+                      pseudo-grid so they don't all stack at
+                      the same coordinates. */}
+                  <div style={{
+                    background:'#0c0c0e', padding:'24px 16px',
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    flex:'0 0 auto',
+                  }}>
+                    <div style={{
+                      position:'relative',
+                      width:'min(360px, 90%)',
+                      aspectRatio:'4 / 3',
+                      background:'linear-gradient(135deg, #1c2228 0%, #2a323a 50%, #1c2228 100%)',
+                      border:'2px solid var(--line-strong)',
+                      borderRadius:6,
+                      boxShadow:'0 6px 20px rgba(0,0,0,0.5)',
+                      overflow:'hidden',
+                    }}>
+                      {/* Watermark — "image bytes unavailable" band */}
+                      <div style={{
+                        position:'absolute', inset:0,
+                        display:'flex', alignItems:'center', justifyContent:'center',
+                        fontFamily:"'JetBrains Mono', monospace",
+                        fontSize:11, color:'rgba(255,255,255,0.3)',
+                        textAlign:'center', padding:20,
+                        letterSpacing:'0.08em',
+                      }}>
+                        image bytes unavailable<br/>
+                        in wireframe ·<br/>
+                        OCR transcript below
+                      </div>
+                      {/* Highlight overlay markers — one per
+                          match, distributed across the image
+                          with deterministic-ish positioning
+                          based on the match index so the
+                          markers don't dance between renders. */}
+                      {matchSpans.slice(0, 6).map((s, i) => {
+                        const x = 12 + ((i * 31) % 70);
+                        const y = 18 + ((i * 23) % 60);
+                        return (
+                          <div key={i} style={{
+                            position:'absolute',
+                            left: `${x}%`, top: `${y}%`,
+                            transform:'translate(-50%, -50%)',
+                            padding:'2px 6px',
+                            background: REGEX_HL.bg,
+                            border:`1.5px solid ${REGEX_HL.border}`,
+                            borderRadius:2,
+                            fontFamily:"'JetBrains Mono', monospace",
+                            fontSize:10,
+                            color:'#000',
+                            maxWidth: 140,
+                            overflow:'hidden',
+                            textOverflow:'ellipsis',
+                            whiteSpace:'nowrap',
+                          }} title={s.text}>
+                            {s.text.length > 18 ? s.text.slice(0, 16) + '…' : s.text}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {/* OCR transcript label + body */}
+                  <div style={{
+                    padding:'8px 16px 0 16px',
+                    fontFamily:"'Space Grotesk', sans-serif", fontSize:10,
+                    color:'var(--ink-soft)',
+                    textTransform:'uppercase', letterSpacing:'0.12em',
+                    fontWeight:600,
+                    flex:'0 0 auto',
+                  }}>
+                    OCR transcript · siphon-fs
+                  </div>
+                  <pre style={{
+                    margin:0, padding:'8px 16px 16px 16px',
+                    fontFamily:"'JetBrains Mono', monospace",
+                    fontSize: fontSize - 1, lineHeight:1.6,
+                    color:'var(--ink)',
+                    whiteSpace: wrap ? 'pre-wrap' : 'pre',
+                    wordBreak: wrap ? 'break-word' : 'normal',
+                    flex:'1 1 auto', overflow:'auto',
+                    background:'transparent',
+                  }}>
+                    {segs.map(renderSeg)}
+                  </pre>
+                </div>
+              );
+            }
             default:
               return (
                 <pre ref={preRef}
@@ -5073,52 +5234,7 @@ function DocumentPreview({ finding, sameReq }) {
                        overflow:'auto',
                        background:'var(--bg-1)',
                      }}>
-                  {segs.map((s, i) => {
-                    if (s.kind === 'plain') return <span key={i}>{s.text}</span>;
-                    if (!showHl && s.kind !== 'find') return <span key={i}>{s.text}</span>;
-                    if (s.kind === 'match') {
-                      return (
-                        <mark key={i}
-                              title="regex match · detected by siphon-core"
-                              style={{
-                                background: REGEX_HL.bg,
-                                color: 'inherit',
-                                borderBottom: '2.5px solid ' + REGEX_HL.border,
-                                padding: '0 1px',
-                                borderRadius: 0,
-                              }}>{s.text}</mark>
-                      );
-                    }
-                    if (s.kind === 'keyword') {
-                      return (
-                        <span key={i}
-                              title={`context keyword · "${s.keyword}"`}
-                              style={{
-                                background: KEYWORD_HL.bg,
-                                color: 'inherit',
-                                borderBottom: '2px dashed ' + KEYWORD_HL.border,
-                                padding: '0 1px',
-                              }}>{s.text}</span>
-                      );
-                    }
-                    if (s.kind === 'find') {
-                      return (
-                        <mark key={i}
-                              data-find-idx={s.findIdx}
-                              title={`find · "${findText}"`}
-                              style={{
-                                background: FIND_HL.bg,
-                                color: '#000',
-                                border: '1px solid ' + FIND_HL.border,
-                                padding: '0 2px',
-                                borderRadius: 2,
-                                fontWeight: 600,
-                                outline: s.findIdx === findIdx ? '2px solid var(--ink-bright)' : 'none',
-                              }}>{s.text}</mark>
-                      );
-                    }
-                    return <span key={i}>{s.text}</span>;
-                  })}
+                  {segs.map(renderSeg)}
                 </pre>
               );
           }
