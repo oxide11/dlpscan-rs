@@ -44,17 +44,15 @@ spec:
               containerPort: 443
               protocol: TCP
             {{- end }}
-          env:
-            # The reverse-proxy image resolves upstream hostnames at
-            # startup via an env-var substitution step; plumb the
-            # chart-derived Service names in so the config doesn't
-            # need separate overrides.
-            - name: SIPHON_UPSTREAM_API
-              value: {{ default (include "siphon.componentName" (dict "root" . "component" "api")) .Values.nginx.upstreams.api }}
-            - name: SIPHON_UPSTREAM_FS
-              value: {{ default (include "siphon.componentName" (dict "root" . "component" "fs")) .Values.nginx.upstreams.fs }}
-            - name: SIPHON_UPSTREAM_AUTHELIA
-              value: {{ default (include "siphon.componentName" (dict "root" . "component" "authelia")) .Values.nginx.upstreams.authelia }}
+          # Upstream hostnames are hardcoded in nginx.conf — they
+          # match the Service names the chart's siphon.componentName
+          # helper emits (siphon-api, siphon-fs, siphon-authelia).
+          # If you ever templatize them via envsubst at container
+          # startup, plumb SIPHON_UPSTREAM_API / _FS / _AUTHELIA in
+          # here and consume them from a Dockerfile entrypoint
+          # script — without that script, env vars here are dead.
+          # nginx.upstreams.* values are reserved for that future
+          # work and not currently consumed.
           volumeMounts:
             - name: nginx-cache
               mountPath: /var/cache/nginx

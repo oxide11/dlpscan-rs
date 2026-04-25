@@ -128,7 +128,12 @@ services:
     image: siphon-api:latest
     profiles: [auth]
     environment:
-      - SIPHON_API_BIND=0.0.0.0:8080
+      # siphon-api reads SIPHON_BIND + SIPHON_PORT separately, never
+      # a combined SIPHON_API_BIND. Default bind is 127.0.0.1 which
+      # makes the container unreachable from nginx — force 0.0.0.0
+      # explicitly, matching the Helm chart.
+      - SIPHON_BIND=0.0.0.0
+      - SIPHON_PORT=8080
       # Remove SIPHON_API_KEY to run the service in dev mode without
       # a bearer-token check — Nginx + Authelia are the real front
       # door in this stack.

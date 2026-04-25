@@ -77,8 +77,8 @@ api:
   k8sRoll:
     enabled: true
     deployments:
-      - siphon-siphon-api
-      - siphon-siphon-fs
+      - siphon-api
+      - siphon-fs
 
 authelia:
   secretName: siphon-authelia
@@ -135,7 +135,7 @@ Before pointing real traffic at the release:
 - [ ] Set `global.linkerd.enabled=true` (or bring your own
       mesh) so pod-to-pod traffic is authenticated.
 - [ ] Verify `kubectl auth can-i patch deployments.apps -n siphon
-      --as=system:serviceaccount:siphon:siphon-siphon-api` returns
+      --as=system:serviceaccount:siphon:siphon-api` returns
       `yes` only for the Deployments you listed in
       `api.k8sRoll.deployments`.
 
