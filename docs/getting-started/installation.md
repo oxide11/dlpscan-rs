@@ -65,6 +65,6 @@ Supported formats: 59 file types
 
 ## System Requirements
 
-- Rust 1.75 or later (build only)
+- Rust 1.95 (build only — pinned via `rust-toolchain.toml`; CI mirrors)
 - Linux, macOS, or Windows
 - No runtime dependencies — single static binary
