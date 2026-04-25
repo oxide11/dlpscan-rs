@@ -461,6 +461,15 @@ async fn stop_process(State(state): State<AppState>, Json(req): Json<StopRequest
     } else {
         // SIGTERM first, then SIGKILL fallback after STOP_GRACE_SECS.
         #[cfg(unix)]
+        // SAFETY: libc::kill is FFI but its contract is well-defined —
+        // the only way it can misbehave is via an invalid pid, and pid
+        // here is the OS-assigned id of a `tokio::process::Child` we
+        // spawned ourselves and still hold a handle to. A nonexistent
+        // or already-reaped pid is a benign no-op (returns ESRCH); the
+        // return value is intentionally discarded because signal
+        // delivery is best-effort and we follow up with `child.kill()`
+        // (SIGKILL) below if the process doesn't exit within
+        // STOP_GRACE_SECS.
         unsafe {
             libc::kill(pid as i32, libc::SIGTERM);
         }
