@@ -25,6 +25,9 @@ spec:
       annotations:
         {{- include "siphon.podAnnotations" (dict "root" .) | nindent 8 }}
     spec:
+      # nginx is the reverse proxy — never talks to the k8s API.
+      # Default-SA token wouldn't be used; suppress the auto-mount.
+      automountServiceAccountToken: false
       {{- with include "siphon.imagePullSecrets" (dict "root" .) }}
       imagePullSecrets:
         {{- . | nindent 8 }}

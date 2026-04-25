@@ -366,6 +366,16 @@ podSecurityContext:
 containerSecurityContext:
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: true
+  # Defense-in-depth duplicates of the pod-level fields. Pod
+  # Security Admission's "restricted" baseline requires both
+  # runAsNonRoot and seccompProfile at container level too —
+  # admission rejects pods where the values appear only at pod
+  # level, even though k8s itself inherits them. Setting them
+  # again here makes the admission check pass without any
+  # operator-side override.
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
   capabilities:
     drop: [ALL]
 
