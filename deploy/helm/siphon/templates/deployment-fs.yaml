@@ -24,6 +24,10 @@ spec:
         {{- include "siphon.podAnnotations" (dict "root" .) | nindent 8 }}
     spec:
       terminationGracePeriodSeconds: 60  # large uploads may be in-flight
+      # siphon-fs doesn't talk to the k8s API; the default SA
+      # token would just be unused attack surface inside the
+      # container. Block the auto-mount.
+      automountServiceAccountToken: false
       {{- with include "siphon.imagePullSecrets" (dict "root" .) }}
       imagePullSecrets:
         {{- . | nindent 8 }}

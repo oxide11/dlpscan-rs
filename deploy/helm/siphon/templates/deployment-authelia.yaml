@@ -23,6 +23,9 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap-authelia.yaml") . | sha256sum }}
         {{- include "siphon.podAnnotations" (dict "root" .) | nindent 8 }}
     spec:
+      # Authelia is the auth front door — needs no in-cluster API
+      # access. Suppress the default-SA token auto-mount.
+      automountServiceAccountToken: false
       {{- with include "siphon.imagePullSecrets" (dict "root" .) }}
       imagePullSecrets:
         {{- . | nindent 8 }}
