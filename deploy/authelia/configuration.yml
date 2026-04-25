@@ -73,35 +73,54 @@ authentication_backend:
 # probes (ingress LB needs them unauthenticated). Everything else
 # goes through MFA.
 #
-# The three /api/v1/* rules below map to siphon-api routes: public
-# health, operator-grade scan/batch, and admin-grade key rotation.
-# Tighten the `subject:` rules once you've wired real groups into
-# the auth backend.
+# Rules below map to actual siphon-api routes (see
+# crates/siphon-api/src/main.rs `Router::new()`). Nginx strips the
+# `/api/` prefix when forwarding to siphon-api, so what the binary
+# sees as `/scan` shows up here as `/api/scan`. Tighten the
+# `subject:` matchers once you've wired real groups into the auth
+# backend; until then, anyone authenticated to a group named
+# `admins` / `operators` is treated as such.
 
 access_control:
   default_policy: deny
   rules:
+    # Authelia portal is its own host; auth flows happen here.
     - domain: "auth.siphon.local"
       policy: bypass
 
+    # Liveness + readiness probes — kubelet can't carry a session
+    # cookie. siphon-api also exempts these from its own
+    # auth_middleware so a 200 here actually reaches the handler.
     - domain: "siphon.local"
       resources:
-        - "^/health.*$"
-        - "^/metrics$"
+        - "^/api/(health|ready)$"
       policy: bypass
 
+    # Mutation paths that change scanner behavior or cluster state.
+    # All of these are POST/PATCH endpoints in siphon-api; gate on
+    # the admin group so a compromised operator credential can't
+    # roll deployments or rewrite overrides.
     - domain: "siphon.local"
       resources:
-        - "^/api/v1/admin/.*$"
+        - "^/api/v1/overrides/(apply|reload|revert|roll)$"
+        - "^/api/v1/k8s/deployments/.*/rollout$"
+        - "^/api/v1/pipeline/stages$"
       policy: two_factor
       subject: "group:admins"
 
+    # Data-scan endpoint. Operators (and admins) can submit text
+    # for inspection; this is the hot path for the scanner so it
+    # gets its own rule.
     - domain: "siphon.local"
       resources:
-        - "^/api/v1/(scan|batch|tokenize|detokenize|obfuscate).*$"
+        - "^/api/scan$"
       policy: two_factor
       subject: ["group:operators", "group:admins"]
 
+    # Everything else under /api/ is read-only metadata
+    # (/v1/findings, /v1/metrics, /v1/audit, /v1/k8s/pods, etc.).
+    # Require any authenticated user — the binary's RBAC layer
+    # handles fine-grained role checks downstream.
     - domain: "siphon.local"
       policy: two_factor
 

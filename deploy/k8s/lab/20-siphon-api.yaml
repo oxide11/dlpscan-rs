@@ -38,6 +38,14 @@ spec:
             - name: http
               containerPort: 8080
           env:
+            # siphon-api reads SIPHON_BIND + SIPHON_PORT separately;
+            # default bind is 127.0.0.1 which makes the pod
+            # unreachable from kubelet probes + the Service. Force
+            # 0.0.0.0 here, matching the Helm chart.
+            - name: SIPHON_BIND
+              value: "0.0.0.0"
+            - name: SIPHON_PORT
+              value: "8080"
             - name: SIPHON_CORS_ORIGINS
               value: "*"
             - name: SIPHON_OVERRIDES_PATH

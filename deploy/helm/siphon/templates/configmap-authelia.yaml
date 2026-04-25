@@ -84,13 +84,36 @@ data:
         - domain: "authelia-devbypass.invalid"
           policy: two_factor
       {{- else }}
+      # Production model — every /api/ request hits Authelia first
+      # via nginx's forward-auth sub-request. Paths use the
+      # `/api/...` prefix the browser sees; nginx strips that
+      # before forwarding to siphon-api. Routes below are authored
+      # against the real siphon-api router (see
+      # crates/siphon-api/src/main.rs).
       default_policy: two_factor
       rules:
+        # Probes — kubelet can't carry session cookies.
+        # siphon-api also exempts these in its own auth_middleware.
         - domain: "{{ $cookieDomain }}"
           resources:
-            - "^/health.*$"
-            - "^/metrics$"
+            - "^/api/(health|ready)$"
           policy: bypass
+        # Admin-grade mutations: override management, deployment
+        # rollouts, pipeline-stage edits. Add a `subject:` line
+        # here once a real auth backend with groups is wired up.
+        - domain: "{{ $cookieDomain }}"
+          resources:
+            - "^/api/v1/overrides/(apply|reload|revert|roll)$"
+            - "^/api/v1/k8s/deployments/.*/rollout$"
+            - "^/api/v1/pipeline/stages$"
+          policy: two_factor
+        # Operator-grade scan path.
+        - domain: "{{ $cookieDomain }}"
+          resources:
+            - "^/api/scan$"
+          policy: two_factor
+        # Everything else (read-only /api/v1/* metadata) falls
+        # through to default_policy: two_factor.
       {{- end }}
     session:
       name: authelia_session

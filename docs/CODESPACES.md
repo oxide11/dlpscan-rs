@@ -49,8 +49,8 @@ When the script exits you'll see something like:
 
 ```
 NAME                                READY   STATUS    RESTARTS
-siphon-siphon-api-7c5b...-abcde     1/1     Running   0
-siphon-siphon-fs-6f9a...-xyz12      1/1     Running   0
+siphon-api-7c5b...-abcde            1/1     Running   0
+siphon-fs-6f9a...-xyz12             1/1     Running   0
 siphon-nginx-7aaa...-qwert          1/1     Running   0
 siphon-authelia-8b9c...-mnbvc       1/1     Running   0
 
@@ -114,7 +114,7 @@ unavailable"):
 
 ```sh
 kubectl -n siphon auth can-i list pods \
-  --as=system:serviceaccount:siphon:siphon-siphon-api
+  --as=system:serviceaccount:siphon:siphon-api
 # → should print `yes`
 ```
 
