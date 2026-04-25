@@ -46,11 +46,11 @@ spec:
               containerPort: {{ .Values.api.service.port }}
               protocol: TCP
           env:
-            # siphon-api reads SIPHON_BIND (IP) and SIPHON_PORT
-            # separately, not a combined host:port. Defaults to
-            # 127.0.0.1 when SIPHON_BIND is unset — binding to
-            # loopback means the kubelet's readiness probe against
-            # the pod IP never succeeds and the pod crashloops.
+            # siphon-api reads SIPHON_BIND + SIPHON_PORT; default bind
+            # is 127.0.0.1 which makes the pod unreachable from
+            # kubelet probes + the Service. Force 0.0.0.0 here. The
+            # binary has no clap CLI so `args:` is ignored — this
+            # env pair is the only supported configuration path.
             - name: SIPHON_BIND
               value: "0.0.0.0"
             - name: SIPHON_PORT
