@@ -158,6 +158,29 @@ appear unless they're user-visible.
 4. Open PR; CI runs (see "CI expectations" below).
 5. After merge to `main`, push the per-crate tag(s) on the merge commit.
 
+### Tooling
+
+The lockstep + changelog work above has script support — both are wrappers
+around the rules this document spells out, so one bug in either tool can be
+checked against the rules above:
+
+- `scripts/bump-version.sh <target> <bump>` — touches every file the lockstep
+  table lists for the target crate, refuses non-forward bumps unless
+  `--force`, warns on `core` MAJOR cascades, refreshes `Cargo.lock`. Has
+  `--dry-run` and `--no-changelog` for staged edits.
+- `scripts/changelog.sh <target>` — generates the per-crate markdown bullets
+  by walking `git log <last-tag>..HEAD`, filtering to commits whose
+  Conventional-Commits scope matches the target. Filters out
+  `chore`/`docs`/`ci`/`test`/`refactor` by default; `--include-internal`
+  keeps them. `--write` replaces the bump-version-inserted TODO stub
+  in `CHANGELOG.md` with the generated bullets.
+- `scripts/check-semver.sh` — runs `cargo-semver-checks` against any
+  library crate (`siphon-core` and the root `siphon`) whose source has
+  staged changes. Wired in as a pre-commit hook by
+  `scripts/install-hooks.sh` (which `.devcontainer/setup.sh` runs on every
+  Codespace boot). Warns by default; set `CHECK_SEMVER_STRICT=1` to fail
+  the hook on detected breaks.
+
 ## Commits
 
 Use Conventional Commits with a scope:

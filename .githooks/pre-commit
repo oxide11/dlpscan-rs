@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Siphon pre-commit hook.
+#
+# Activated by ./scripts/install-hooks.sh (sets core.hooksPath to
+# .githooks). The default behaviour is warn-only — the hook
+# never blocks a commit unless an environment variable opts into
+# strict mode. The intent is that this catches problems early
+# without making `git commit` painful.
+
+set -Eeuo pipefail
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# cargo-semver-checks against any library crate whose source is
+# staged. Skipped silently if the tool isn't installed or no
+# library source is touched. See scripts/check-semver.sh for
+# strict-mode opt-in.
+if [[ -x "${REPO_ROOT}/scripts/check-semver.sh" ]]; then
+    "${REPO_ROOT}/scripts/check-semver.sh" || true
+fi
