@@ -5110,6 +5110,35 @@ function DocumentPreview({ finding, sameReq }) {
             return <span key={i}>{s.text}</span>;
           };
 
+          // Filename for the chrome's title bar — falls back to a
+          // synthesised name when metadata.filename is missing,
+          // matching the same pattern generatePreviewText's file
+          // branch already used.
+          const md = finding.metadata || {};
+          const docFilename = md.filename || md.original_filename
+                            || (finding.source_pod === 'siphon-fs' ? finding.source_ip : null)
+                            || `document-${(finding.request_id || 'x').slice(0, 6)}`;
+          // Common "paper" container used by the pdf / docx
+          // chromes. White sheet, faint drop shadow, generous
+          // padding; the serif body stack mirrors what most
+          // document readers default to. Returned as a JSX node
+          // factory rather than a component so it stays within
+          // the renderSeg closure scope.
+          const docPage = (children) => (
+            <div style={{
+              background:'#fff', color:'#1c1c1c',
+              boxShadow:'0 4px 24px rgba(0,0,0,0.4)',
+              padding:'48px 56px',
+              fontFamily:"'Georgia', 'Times New Roman', serif",
+              fontSize: fontSize + 1, lineHeight: 1.65,
+              minHeight: 540,
+              maxWidth: 720, margin:'0 auto',
+              borderRadius: 2,
+            }}>
+              {children}
+            </div>
+          );
+
           switch (preview.format) {
             case 'image': {
               // Image preview chrome — viewport on top with a
@@ -5219,6 +5248,98 @@ function DocumentPreview({ finding, sameReq }) {
                 </div>
               );
             }
+
+            case 'pdf': {
+              // PDF reader chrome — dark reader background with
+              // a centred white "page" floating above it. Top
+              // strip carries filename + page indicator so the
+              // analyst can tell at a glance which capture this
+              // is and that it's paginated (real pagination is
+              // out of scope; the wireframe synthesises one
+              // page). The body uses the serif font stack from
+              // docPage(), matching how a PDF reader renders
+              // typeset text.
+              return (
+                <div ref={preRef} style={{
+                  height, minHeight:200, overflow:'auto',
+                  background:'#3a3a3c',
+                  padding:'20px 0',
+                }}>
+                  <div style={{
+                    maxWidth:720, margin:'0 auto 12px auto',
+                    padding:'6px 14px',
+                    background:'#1c1c1e', color:'#cfd2d4',
+                    fontFamily:"'JetBrains Mono', monospace",
+                    fontSize:11,
+                    borderRadius:3,
+                    display:'flex', alignItems:'center', gap:12,
+                  }}>
+                    <span>📄 {docFilename}</span>
+                    <span style={{flex:1}} />
+                    <span style={{opacity:0.6}}>page 1 of 1</span>
+                  </div>
+                  {docPage(
+                    <pre style={{
+                      margin:0, fontFamily:'inherit',
+                      fontSize:'inherit', lineHeight:'inherit',
+                      whiteSpace: wrap ? 'pre-wrap' : 'pre',
+                      wordBreak: wrap ? 'break-word' : 'normal',
+                      color:'inherit',
+                    }}>
+                      {segs.map(renderSeg)}
+                    </pre>
+                  )}
+                </div>
+              );
+            }
+
+            case 'docx': {
+              // Word doc chrome — lighter reader background
+              // (Word's default page-canvas grey), filename in
+              // a thin ribbon at the top. Same paper container
+              // and serif body as PDF, but no page-of-page
+              // indicator since .docx files don't have a fixed
+              // page count until they're rendered. .rtf and
+              // .doc fall through to this case via
+              // detectDocFormat.
+              return (
+                <div ref={preRef} style={{
+                  height, minHeight:200, overflow:'auto',
+                  background:'#e7eaed',
+                  padding:'20px 0',
+                }}>
+                  <div style={{
+                    maxWidth:720, margin:'0 auto 16px auto',
+                    padding:'8px 16px',
+                    background:'#2b579a', color:'#fff',
+                    fontFamily:"'Segoe UI', 'Helvetica Neue', sans-serif",
+                    fontSize:12,
+                    borderRadius:3,
+                    display:'flex', alignItems:'center', gap:10,
+                  }}>
+                    <span style={{
+                      display:'inline-block', width:18, height:18,
+                      background:'#1a4480', borderRadius:2,
+                      textAlign:'center', lineHeight:'18px',
+                      fontSize:10, fontWeight:700,
+                    }}>W</span>
+                    <span>{docFilename}</span>
+                  </div>
+                  {docPage(
+                    <pre style={{
+                      margin:0, fontFamily:'inherit',
+                      fontSize:'inherit', lineHeight:'inherit',
+                      whiteSpace: wrap ? 'pre-wrap' : 'pre',
+                      wordBreak: wrap ? 'break-word' : 'normal',
+                      color:'inherit',
+                    }}>
+                      {segs.map(renderSeg)}
+                    </pre>
+                  )}
+                </div>
+              );
+            }
+
             default:
               return (
                 <pre ref={preRef}
