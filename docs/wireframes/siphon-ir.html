@@ -5045,67 +5045,84 @@ function DocumentPreview({ finding, sameReq }) {
           </ToolBtn>
         </div>
 
-        {/* PREVIEW BODY — fixed height driven by custom resize handle */}
-        <pre ref={preRef}
-             style={{
-               margin:0, padding:16,
-               fontFamily:"'JetBrains Mono', monospace",
-               fontSize: fontSize, lineHeight:1.6,
-               color:'var(--ink)',
-               whiteSpace: wrap ? 'pre-wrap' : 'pre',
-               wordBreak: wrap ? 'break-word' : 'normal',
-               height: height,
-               minHeight: 200,
-               overflow:'auto',
-               background:'var(--bg-1)',
-             }}>
-          {segs.map((s, i) => {
-            if (s.kind === 'plain') return <span key={i}>{s.text}</span>;
-            if (!showHl && s.kind !== 'find') return <span key={i}>{s.text}</span>;
-            if (s.kind === 'match') {
+        {/* PREVIEW BODY — format-aware switch.
+            preview.format ∈ { 'email', 'slack', 'print', 'api',
+                               'image', 'pdf', 'docx', 'xlsx',
+                               'csv', 'text' }.
+            The default branch is the historical text render —
+            an `<pre>` with the highlight segments rendered as
+            mark/span. Format-specific chromes (image / pdf /
+            docx / xlsx / csv) plug in as additional `case`s in
+            subsequent commits; anything without its own chrome
+            keeps falling through to TextBody so this commit
+            doesn't change what the user sees. */}
+        {(() => {
+          switch (preview.format) {
+            default:
               return (
-                <mark key={i}
-                      title="regex match · detected by siphon-core"
-                      style={{
-                        background: REGEX_HL.bg,
-                        color: 'inherit',
-                        borderBottom: '2.5px solid ' + REGEX_HL.border,
-                        padding: '0 1px',
-                        borderRadius: 0,
-                      }}>{s.text}</mark>
+                <pre ref={preRef}
+                     style={{
+                       margin:0, padding:16,
+                       fontFamily:"'JetBrains Mono', monospace",
+                       fontSize: fontSize, lineHeight:1.6,
+                       color:'var(--ink)',
+                       whiteSpace: wrap ? 'pre-wrap' : 'pre',
+                       wordBreak: wrap ? 'break-word' : 'normal',
+                       height: height,
+                       minHeight: 200,
+                       overflow:'auto',
+                       background:'var(--bg-1)',
+                     }}>
+                  {segs.map((s, i) => {
+                    if (s.kind === 'plain') return <span key={i}>{s.text}</span>;
+                    if (!showHl && s.kind !== 'find') return <span key={i}>{s.text}</span>;
+                    if (s.kind === 'match') {
+                      return (
+                        <mark key={i}
+                              title="regex match · detected by siphon-core"
+                              style={{
+                                background: REGEX_HL.bg,
+                                color: 'inherit',
+                                borderBottom: '2.5px solid ' + REGEX_HL.border,
+                                padding: '0 1px',
+                                borderRadius: 0,
+                              }}>{s.text}</mark>
+                      );
+                    }
+                    if (s.kind === 'keyword') {
+                      return (
+                        <span key={i}
+                              title={`context keyword · "${s.keyword}"`}
+                              style={{
+                                background: KEYWORD_HL.bg,
+                                color: 'inherit',
+                                borderBottom: '2px dashed ' + KEYWORD_HL.border,
+                                padding: '0 1px',
+                              }}>{s.text}</span>
+                      );
+                    }
+                    if (s.kind === 'find') {
+                      return (
+                        <mark key={i}
+                              data-find-idx={s.findIdx}
+                              title={`find · "${findText}"`}
+                              style={{
+                                background: FIND_HL.bg,
+                                color: '#000',
+                                border: '1px solid ' + FIND_HL.border,
+                                padding: '0 2px',
+                                borderRadius: 2,
+                                fontWeight: 600,
+                                outline: s.findIdx === findIdx ? '2px solid var(--ink-bright)' : 'none',
+                              }}>{s.text}</mark>
+                      );
+                    }
+                    return <span key={i}>{s.text}</span>;
+                  })}
+                </pre>
               );
-            }
-            if (s.kind === 'keyword') {
-              return (
-                <span key={i}
-                      title={`context keyword · "${s.keyword}"`}
-                      style={{
-                        background: KEYWORD_HL.bg,
-                        color: 'inherit',
-                        borderBottom: '2px dashed ' + KEYWORD_HL.border,
-                        padding: '0 1px',
-                      }}>{s.text}</span>
-              );
-            }
-            if (s.kind === 'find') {
-              return (
-                <mark key={i}
-                      data-find-idx={s.findIdx}
-                      title={`find · "${findText}"`}
-                      style={{
-                        background: FIND_HL.bg,
-                        color: '#000',
-                        border: '1px solid ' + FIND_HL.border,
-                        padding: '0 2px',
-                        borderRadius: 2,
-                        fontWeight: 600,
-                        outline: s.findIdx === findIdx ? '2px solid var(--ink-bright)' : 'none',
-                      }}>{s.text}</mark>
-              );
-            }
-            return <span key={i}>{s.text}</span>;
-          })}
-        </pre>
+          }
+        })()}
 
         {/* RIGHT RAIL — view controls */}
         <div style={{
