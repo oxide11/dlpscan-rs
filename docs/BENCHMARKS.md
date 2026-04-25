@@ -4,7 +4,7 @@ Comprehensive performance comparison between the Python and Rust implementations
 of siphon, including the impact of each optimization pass and the baseline-only
 scanning mode.
 
-**Environment:** Linux 6.18.5, Rust 1.75+ (release profile with LTO), Python 3.x  
+**Environment:** Linux 6.18.5, Rust 1.95 (release profile with LTO), Python 3.x  
 **Pattern count:** 560 total (108 always-run, 452 context-gated)  
 **Version:** 2.1.0  
 **Date:** April 2026
