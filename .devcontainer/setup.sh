@@ -60,6 +60,24 @@ fi
 echo "▶ Warming Cargo registry (cargo fetch)…"
 cargo fetch || echo "  (cargo unavailable in postCreate shell — skipping; deploys build inside Docker anyway)"
 
+# ---- cargo-semver-checks ---------------------------------------------------
+# Powers the pre-commit hook (.githooks/pre-commit → scripts/check-semver.sh).
+# Skipped silently if cargo isn't on PATH in this shell (the hook
+# itself also no-ops in that case, so a partial bootstrap is safe).
+# `--locked` keeps the install reproducible across re-bootstrap runs.
+if command -v cargo >/dev/null && ! command -v cargo-semver-checks >/dev/null; then
+    echo "▶ Installing cargo-semver-checks (one-time, ~1-2 min)…"
+    cargo install cargo-semver-checks --locked || \
+        echo "  (cargo-semver-checks install failed — pre-commit hook will no-op)"
+fi
+
+# ---- Git hooks ------------------------------------------------------------
+# Wire the repo's .githooks/ directory in as core.hooksPath so the
+# tracked hooks are active for every dev. Idempotent.
+if [[ -x scripts/install-hooks.sh ]]; then
+    ./scripts/install-hooks.sh
+fi
+
 # ---- Persist PATH in shell rc ---------------------------------------------
 # Interactive shells in the Codespace already source cargo via the
 # image's /etc/bash.bashrc, but `bash -c` / one-shot scripts don't.
