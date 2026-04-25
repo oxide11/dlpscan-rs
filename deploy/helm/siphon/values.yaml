@@ -173,7 +173,16 @@ fs:
   extraVolumeMounts: []
 
   podDisruptionBudget:
+    # siphon-fs ships with replicaCount 1 by default — a PDB only
+    # bites once you scale fs > 1 replica. Disabled here so the
+    # default install doesn't render an unsatisfiable PDB; flip
+    # this to `true` after bumping replicaCount.
     enabled: false
+    # Default value lives here so flipping `enabled: true` works
+    # without the operator also having to add minAvailable. PDB
+    # template only renders when enabled is true, so this is inert
+    # in the default config.
+    minAvailable: 1
 
 # ---------------------------------------------------------------------------
 # UI (Next.js SPA) — served from the nginx Deployment below
