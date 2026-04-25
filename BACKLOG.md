@@ -58,3 +58,39 @@ here. When an item lands, delete its bullet (its history is in `git log` and
   `page > firstPageOf(groupKey)`). Cosmetic; defer until an analyst notes
   the ambiguity.
   (Source: claude/ir-findings-grouping PR.)
+
+- **Real document parsing inside the Document Preview chromes.** The
+  image / PDF / Word / spreadsheet chromes all render synthesised content
+  today: the image chrome is a mock canvas with overlay markers, the PDF
+  and Word chromes wrap `<pre>{segs.map(renderSeg)}</pre>` in
+  paper-styled containers, the spreadsheet chrome builds rows from
+  `allFindings`. Each chrome is shaped so the synthesised body slots out
+  for a parsed body when siphon-fs eventually serves
+  `/v1/findings/{id}/payload`:
+    - **PDF**: `pdf.js` to render the actual page with text-layer
+      highlights anchored to siphon-fs's extracted-text offsets.
+    - **DOCX**: `mammoth.js` to convert .docx to HTML, then highlight
+      spans inside the rendered body.
+    - **XLSX / CSV**: `SheetJS (xlsx)` to parse the workbook; map each
+      finding's character span back to the (sheet, row, col) it came
+      from and highlight at cell granularity.
+  All three libraries are non-trivial in size; deferred until the backend
+  serves real bytes. (Source: claude/ir-document-preview PR.)
+
+- **Multi-page PDF rendering.** The PDF chrome currently shows a single
+  synthesised page with a `page 1 of 1` indicator. Once real PDFs flow
+  through the pipeline, paginate by parsed-text length (or by `pdf.js`'s
+  natural page boundaries) and wire prev/next page navigation to the
+  indicator. Schema doesn't change — `preview.body` becomes
+  `preview.pages: string[]` or similar.
+  (Source: claude/ir-document-preview PR.)
+
+- **Per-cell spreadsheet match anchoring.** Today the spreadsheet chrome
+  renders one row per finding (the primary plus every sameReq sibling)
+  and highlights the entire `Value` column. The Excel-feel is right but
+  the data shape is wrong — a real spreadsheet has rows of varying
+  schema, and a finding's match span maps to a specific `(sheet, row,
+  col)` in the source. Once siphon-fs extracts with row/col offsets,
+  swap the synthesised rows for parsed rows and highlight cells whose
+  offsets fall inside any finding span.
+  (Source: claude/ir-document-preview PR.)

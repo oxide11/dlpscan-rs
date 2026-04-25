@@ -4586,9 +4586,42 @@ const CONTEXT_KEYWORDS_MAP = {
 // Body contains every finding.text from `sameReq` embedded in a
 // realistic surrounding so the analyst can read the matched value
 // in context.
+// Decide which document format a finding represents. Drives the
+// preview chrome — a PDF finding gets the paginated reader, an
+// image finding gets the image viewer, etc. Today the format is
+// inferred from filename extension on file-channel findings;
+// channel-driven kinds (email/slack/print/api) take precedence
+// because they describe transport, not file format.
+//
+// Returns one of:
+//   'email' | 'slack' | 'print' | 'api'   (transport-driven)
+//   'image' | 'pdf' | 'docx' | 'xlsx' | 'csv' | 'text'  (file-driven)
+function detectDocFormat(finding) {
+  const md = finding.metadata || {};
+  const channel = (md.channel || '').toLowerCase();
+  if (channel.includes('email')) return 'email';
+  if (channel.includes('slack')) return 'slack';
+  if (channel.includes('print')) return 'print';
+  if (channel.includes('api'))   return 'api';
+
+  // File channel → look at the filename extension. The fallback
+  // is plain text; siphon-fs returns extracted text for
+  // unrecognised binary formats so 'text' is a sensible default.
+  const filename = (md.filename || md.original_filename || md.source_path
+                  || (finding.source_pod === 'siphon-fs' ? finding.source_ip : '') || '').toLowerCase();
+  const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.') + 1) : '';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'tiff', 'tif'].includes(ext)) return 'image';
+  if (ext === 'pdf')                                    return 'pdf';
+  if (['doc', 'docx', 'rtf'].includes(ext))             return 'docx';
+  if (['xls', 'xlsx', 'xlsm', 'ods'].includes(ext))     return 'xlsx';
+  if (ext === 'csv' || ext === 'tsv')                   return 'csv';
+  return 'text';
+}
+
 function generatePreviewText(finding, sameReq) {
   const md = finding.metadata || {};
   const channel = (md.channel || '').toLowerCase();
+  const format = detectDocFormat(finding);
   const all = [finding, ...(sameReq || [])];
   const matched = all.map(f => f.text).filter(Boolean);
   const ts = finding.ts || new Date().toISOString();
@@ -4621,6 +4654,7 @@ ${outbound ? 'Best regards,\n' + capName : 'Thanks,\n' + capName}
 `;
     return {
       kind: 'email',
+      format,
       direction: outbound ? 'outbound' : 'inbound',
       headers: {
         From: sender,
@@ -4648,6 +4682,7 @@ ${firstName}: would it be easier to share via the secure channel or should i pas
 `;
     return {
       kind: 'slack',
+      format,
       headers: {
         Channel: 'direct message',
         Participant: sender,
@@ -4679,6 +4714,7 @@ in error, please destroy and notify the compliance team.
 `;
     return {
       kind: 'print',
+      format,
       headers: {
         User: who,
         Printer: 'HQ-NE-18-COLOR',
@@ -4702,6 +4738,7 @@ in error, please destroy and notify the compliance team.
     }, null, 2);
     return {
       kind: 'api',
+      format,
       headers: {
         Endpoint: 'POST /v1/exports',
         'Content-Type': 'application/json',
@@ -4733,6 +4770,7 @@ End of extracted preview.
 `;
   return {
     kind: 'file',
+    format,
     headers: {
       Filename: filename,
       'Uploaded by': who,
@@ -5144,21 +5182,25 @@ function DocumentPreview({ finding, sameReq }) {
           </ToolBtn>
         </div>
 
-        {/* PREVIEW BODY — fixed height driven by custom resize handle */}
-        <pre ref={preRef}
-             style={{
-               margin:0, padding:16,
-               fontFamily:"'JetBrains Mono', monospace",
-               fontSize: fontSize, lineHeight:1.6,
-               color:'var(--ink)',
-               whiteSpace: wrap ? 'pre-wrap' : 'pre',
-               wordBreak: wrap ? 'break-word' : 'normal',
-               height: height,
-               minHeight: 200,
-               overflow:'auto',
-               background:'var(--bg-1)',
-             }}>
-          {segs.map((s, i) => {
+        {/* PREVIEW BODY — format-aware switch.
+            preview.format ∈ { 'email', 'slack', 'print', 'api',
+                               'image', 'pdf', 'docx', 'xlsx',
+                               'csv', 'text' }.
+            The default branch is the historical text render —
+            an `<pre>` with the highlight segments rendered as
+            mark/span. Format-specific chromes (image / pdf /
+            docx / xlsx / csv) plug in as additional `case`s in
+            subsequent commits; anything without its own chrome
+            keeps falling through to TextBody so this commit
+            doesn't change what the user sees. */}
+        {(() => {
+          // Single segment-renderer shared across every format
+          // chrome. Captures showHl / findText / findIdx via
+          // closure, so each `<pre>{segs.map(renderSeg)}</pre>`
+          // looks identical regardless of where it's invoked
+          // from. Image-OCR transcript, PDF page body, DOCX body,
+          // CSV cell — they all reach for the same renderer.
+          const renderSeg = (s, i) => {
             if (s.kind === 'plain') return <span key={i}>{s.text}</span>;
             if (!showHl && s.kind !== 'find') return <span key={i}>{s.text}</span>;
             if (s.kind === 'match') {
@@ -5203,8 +5245,432 @@ function DocumentPreview({ finding, sameReq }) {
               );
             }
             return <span key={i}>{s.text}</span>;
-          })}
-        </pre>
+          };
+
+          // Filename for the chrome's title bar — falls back to a
+          // synthesised name when metadata.filename is missing,
+          // matching the same pattern generatePreviewText's file
+          // branch already used.
+          const md = finding.metadata || {};
+          const docFilename = md.filename || md.original_filename
+                            || (finding.source_pod === 'siphon-fs' ? finding.source_ip : null)
+                            || `document-${(finding.request_id || 'x').slice(0, 6)}`;
+          // Common "paper" container used by the pdf / docx
+          // chromes. White sheet, faint drop shadow, generous
+          // padding; the serif body stack mirrors what most
+          // document readers default to. Returned as a JSX node
+          // factory rather than a component so it stays within
+          // the renderSeg closure scope.
+          const docPage = (children) => (
+            <div style={{
+              background:'#fff', color:'#1c1c1c',
+              boxShadow:'0 4px 24px rgba(0,0,0,0.4)',
+              padding:'48px 56px',
+              fontFamily:"'Georgia', 'Times New Roman', serif",
+              fontSize: fontSize + 1, lineHeight: 1.65,
+              minHeight: 540,
+              maxWidth: 720, margin:'0 auto',
+              borderRadius: 2,
+            }}>
+              {children}
+            </div>
+          );
+
+          switch (preview.format) {
+            case 'image': {
+              // Image preview chrome — viewport on top with a
+              // synthesised image area + overlay markers
+              // showing approximately where siphon-fs's OCR
+              // pass found the matched text. Below the image:
+              // the OCR transcript in a smaller pre, with the
+              // same highlights the text format uses so the
+              // analyst can copy/redact/find within the
+              // extracted text. The `image bytes unavailable in
+              // wireframe` band makes the synthesised nature
+              // visible — analysts know they're not seeing the
+              // real capture.
+              const matchSpans = segs.filter(s => s.kind === 'match');
+              return (
+                <div ref={preRef} style={{
+                  height, minHeight: 200, overflow:'auto',
+                  background:'var(--bg-1)',
+                  display:'flex', flexDirection:'column',
+                }}>
+                  {/* Image viewport — dark band, centred mock
+                      image, overlay markers anchored on a
+                      pseudo-grid so they don't all stack at
+                      the same coordinates. */}
+                  <div style={{
+                    background:'#0c0c0e', padding:'24px 16px',
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    flex:'0 0 auto',
+                  }}>
+                    <div style={{
+                      position:'relative',
+                      width:'min(360px, 90%)',
+                      aspectRatio:'4 / 3',
+                      background:'linear-gradient(135deg, #1c2228 0%, #2a323a 50%, #1c2228 100%)',
+                      border:'2px solid var(--line-strong)',
+                      borderRadius:6,
+                      boxShadow:'0 6px 20px rgba(0,0,0,0.5)',
+                      overflow:'hidden',
+                    }}>
+                      {/* Watermark — "image bytes unavailable" band */}
+                      <div style={{
+                        position:'absolute', inset:0,
+                        display:'flex', alignItems:'center', justifyContent:'center',
+                        fontFamily:"'JetBrains Mono', monospace",
+                        fontSize:11, color:'rgba(255,255,255,0.3)',
+                        textAlign:'center', padding:20,
+                        letterSpacing:'0.08em',
+                      }}>
+                        image bytes unavailable<br/>
+                        in wireframe ·<br/>
+                        OCR transcript below
+                      </div>
+                      {/* Highlight overlay markers — one per
+                          match, distributed across the image
+                          with deterministic-ish positioning
+                          based on the match index so the
+                          markers don't dance between renders. */}
+                      {matchSpans.slice(0, 6).map((s, i) => {
+                        const x = 12 + ((i * 31) % 70);
+                        const y = 18 + ((i * 23) % 60);
+                        return (
+                          <div key={i} style={{
+                            position:'absolute',
+                            left: `${x}%`, top: `${y}%`,
+                            transform:'translate(-50%, -50%)',
+                            padding:'2px 6px',
+                            background: REGEX_HL.bg,
+                            border:`1.5px solid ${REGEX_HL.border}`,
+                            borderRadius:2,
+                            fontFamily:"'JetBrains Mono', monospace",
+                            fontSize:10,
+                            color:'#000',
+                            maxWidth: 140,
+                            overflow:'hidden',
+                            textOverflow:'ellipsis',
+                            whiteSpace:'nowrap',
+                          }} title={s.text}>
+                            {s.text.length > 18 ? s.text.slice(0, 16) + '…' : s.text}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  {/* OCR transcript label + body */}
+                  <div style={{
+                    padding:'8px 16px 0 16px',
+                    fontFamily:"'Space Grotesk', sans-serif", fontSize:10,
+                    color:'var(--ink-soft)',
+                    textTransform:'uppercase', letterSpacing:'0.12em',
+                    fontWeight:600,
+                    flex:'0 0 auto',
+                  }}>
+                    OCR transcript · siphon-fs
+                  </div>
+                  <pre style={{
+                    margin:0, padding:'8px 16px 16px 16px',
+                    fontFamily:"'JetBrains Mono', monospace",
+                    fontSize: fontSize - 1, lineHeight:1.6,
+                    color:'var(--ink)',
+                    whiteSpace: wrap ? 'pre-wrap' : 'pre',
+                    wordBreak: wrap ? 'break-word' : 'normal',
+                    flex:'1 1 auto', overflow:'auto',
+                    background:'transparent',
+                  }}>
+                    {segs.map(renderSeg)}
+                  </pre>
+                </div>
+              );
+            }
+
+            case 'pdf': {
+              // PDF reader chrome — dark reader background with
+              // a centred white "page" floating above it. Top
+              // strip carries filename + page indicator so the
+              // analyst can tell at a glance which capture this
+              // is and that it's paginated (real pagination is
+              // out of scope; the wireframe synthesises one
+              // page). The body uses the serif font stack from
+              // docPage(), matching how a PDF reader renders
+              // typeset text.
+              return (
+                <div ref={preRef} style={{
+                  height, minHeight:200, overflow:'auto',
+                  background:'#3a3a3c',
+                  padding:'20px 0',
+                }}>
+                  <div style={{
+                    maxWidth:720, margin:'0 auto 12px auto',
+                    padding:'6px 14px',
+                    background:'#1c1c1e', color:'#cfd2d4',
+                    fontFamily:"'JetBrains Mono', monospace",
+                    fontSize:11,
+                    borderRadius:3,
+                    display:'flex', alignItems:'center', gap:12,
+                  }}>
+                    <span>📄 {docFilename}</span>
+                    <span style={{flex:1}} />
+                    <span style={{opacity:0.6}}>page 1 of 1</span>
+                  </div>
+                  {docPage(
+                    <pre style={{
+                      margin:0, fontFamily:'inherit',
+                      fontSize:'inherit', lineHeight:'inherit',
+                      whiteSpace: wrap ? 'pre-wrap' : 'pre',
+                      wordBreak: wrap ? 'break-word' : 'normal',
+                      color:'inherit',
+                    }}>
+                      {segs.map(renderSeg)}
+                    </pre>
+                  )}
+                </div>
+              );
+            }
+
+            case 'xlsx':
+            case 'csv': {
+              // Spreadsheet chrome — renders a real <table>
+              // with one row per finding (the primary +
+              // sameReq), so the analyst sees the data the
+              // way they'd see it in Excel / Numbers / a CSV
+              // viewer. Cells in the "Value" column are
+              // anchored to f.text and styled with the regex-
+              // highlight tokens, so the matches are visually
+              // identical to how they render in the text body.
+              const xlsx = preview.format === 'xlsx';
+              const headerCell = {
+                background:'#dfe3e6',
+                color:'#3b3b3b',
+                fontWeight:600,
+                padding:'4px 8px',
+                fontSize:11,
+                border:'1px solid #b0b8be',
+                fontFamily:"'Segoe UI', 'Helvetica Neue', sans-serif",
+              };
+              const cornerCell = {
+                ...headerCell,
+                background:'#cfd5d9',
+                width:34, textAlign:'center',
+              };
+              const rowNumCell = {
+                ...headerCell,
+                background:'#eef1f3',
+                textAlign:'center',
+                fontWeight:500,
+                color:'#5b6166',
+                width:34,
+              };
+              const dataCell = {
+                background:'#fff',
+                color:'#1c1c1c',
+                padding:'4px 8px',
+                fontSize:12,
+                border:'1px solid #d6dadd',
+                fontFamily:"'JetBrains Mono', monospace",
+                whiteSpace:'nowrap',
+                overflow:'hidden',
+                textOverflow:'ellipsis',
+                maxWidth:240,
+              };
+              return (
+                <div ref={preRef} style={{
+                  height, minHeight:200, overflow:'auto',
+                  background: xlsx ? '#f3f6f8' : 'var(--bg-1)',
+                  padding:'12px 0',
+                }}>
+                  {/* Top strip — Excel-green for xlsx, plain
+                      mono band for csv. Filename on the left,
+                      column count + row count on the right. */}
+                  <div style={{
+                    maxWidth:920, margin:'0 auto 10px auto',
+                    padding:'6px 14px',
+                    background: xlsx ? '#107c41' : '#1c1c1e',
+                    color:'#fff',
+                    fontFamily: xlsx
+                      ? "'Segoe UI', 'Helvetica Neue', sans-serif"
+                      : "'JetBrains Mono', monospace",
+                    fontSize:11,
+                    borderRadius:3,
+                    display:'flex', alignItems:'center', gap:10,
+                  }}>
+                    <span style={{
+                      display:'inline-block', width:18, height:18,
+                      background: xlsx ? '#0b6131' : '#444',
+                      borderRadius:2, textAlign:'center',
+                      lineHeight:'18px', fontSize:10, fontWeight:700,
+                    }}>{xlsx ? 'X' : ','}</span>
+                    <span>{docFilename}</span>
+                    <span style={{flex:1}} />
+                    <span style={{opacity:0.7}}>
+                      {allFindings.length} {allFindings.length === 1 ? 'row' : 'rows'} · 5 cols
+                    </span>
+                  </div>
+                  <div style={{
+                    maxWidth:920, margin:'0 auto',
+                    overflow:'auto',
+                    border:'1px solid #b0b8be',
+                    background:'#fff',
+                  }}>
+                    <table style={{
+                      borderCollapse:'collapse',
+                      width:'100%',
+                    }}>
+                      <thead>
+                        {/* Column letters (A, B, C, …) */}
+                        <tr>
+                          <th style={cornerCell}></th>
+                          {['A', 'B', 'C', 'D', 'E'].map(L => (
+                            <th key={L} style={headerCell}>{L}</th>
+                          ))}
+                        </tr>
+                        {/* User-facing column headers */}
+                        <tr>
+                          <th style={rowNumCell}>1</th>
+                          <th style={headerCell}>Date</th>
+                          <th style={headerCell}>Customer</th>
+                          <th style={headerCell}>Value</th>
+                          <th style={headerCell}>Category</th>
+                          <th style={headerCell}>Conf</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allFindings.map((rowF, i) => {
+                          const md2 = rowF.metadata || {};
+                          const customer = md2.user || md2.sender || md2.recipient
+                                        || `record-${i + 1}`;
+                          const date = (rowF.ts || '').slice(0, 10) || '—';
+                          return (
+                            <tr key={rowF.id || i}>
+                              <th style={rowNumCell}>{i + 2}</th>
+                              <td style={dataCell}>{date}</td>
+                              <td style={dataCell}>{customer}</td>
+                              {/* Value cell — the matched
+                                  string. Highlighted via the
+                                  same regex token the text body
+                                  uses, so the visual semantic
+                                  is identical. */}
+                              <td style={{
+                                ...dataCell,
+                                background: showHl ? REGEX_HL.bg : '#fff',
+                                borderBottom: showHl
+                                  ? `2.5px solid ${REGEX_HL.border}`
+                                  : dataCell.border,
+                                color:'#000', fontWeight:500,
+                              }} title={rowF.text}>{rowF.text || '—'}</td>
+                              <td style={{...dataCell, color:'#5b6166'}}>
+                                {rowF.category}
+                              </td>
+                              <td style={{...dataCell, textAlign:'right'}}>
+                                {rowF.confidence != null ? rowF.confidence.toFixed(2) : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {/* Sheet tabs — xlsx only. CSV files don't
+                      have sheets so we drop this strip for the
+                      .csv case. */}
+                  {xlsx && (
+                    <div style={{
+                      maxWidth:920, margin:'8px auto 0 auto',
+                      display:'flex', gap:0,
+                      fontFamily:"'Segoe UI', 'Helvetica Neue', sans-serif",
+                      fontSize:11,
+                    }}>
+                      <span style={{
+                        padding:'4px 14px',
+                        background:'#fff',
+                        border:'1px solid #b0b8be',
+                        borderBottom:'none',
+                        borderTopLeftRadius:3, borderTopRightRadius:3,
+                        color:'#107c41', fontWeight:600,
+                      }}>Sheet1</span>
+                      <span style={{
+                        padding:'4px 14px',
+                        background:'#e2e6e9',
+                        border:'1px solid #b0b8be',
+                        borderBottom:'none',
+                        borderTopLeftRadius:3, borderTopRightRadius:3,
+                        color:'#5b6166',
+                      }}>Sheet2</span>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            case 'docx': {
+              // Word doc chrome — lighter reader background
+              // (Word's default page-canvas grey), filename in
+              // a thin ribbon at the top. Same paper container
+              // and serif body as PDF, but no page-of-page
+              // indicator since .docx files don't have a fixed
+              // page count until they're rendered. .rtf and
+              // .doc fall through to this case via
+              // detectDocFormat.
+              return (
+                <div ref={preRef} style={{
+                  height, minHeight:200, overflow:'auto',
+                  background:'#e7eaed',
+                  padding:'20px 0',
+                }}>
+                  <div style={{
+                    maxWidth:720, margin:'0 auto 16px auto',
+                    padding:'8px 16px',
+                    background:'#2b579a', color:'#fff',
+                    fontFamily:"'Segoe UI', 'Helvetica Neue', sans-serif",
+                    fontSize:12,
+                    borderRadius:3,
+                    display:'flex', alignItems:'center', gap:10,
+                  }}>
+                    <span style={{
+                      display:'inline-block', width:18, height:18,
+                      background:'#1a4480', borderRadius:2,
+                      textAlign:'center', lineHeight:'18px',
+                      fontSize:10, fontWeight:700,
+                    }}>W</span>
+                    <span>{docFilename}</span>
+                  </div>
+                  {docPage(
+                    <pre style={{
+                      margin:0, fontFamily:'inherit',
+                      fontSize:'inherit', lineHeight:'inherit',
+                      whiteSpace: wrap ? 'pre-wrap' : 'pre',
+                      wordBreak: wrap ? 'break-word' : 'normal',
+                      color:'inherit',
+                    }}>
+                      {segs.map(renderSeg)}
+                    </pre>
+                  )}
+                </div>
+              );
+            }
+
+            default:
+              return (
+                <pre ref={preRef}
+                     style={{
+                       margin:0, padding:16,
+                       fontFamily:"'JetBrains Mono', monospace",
+                       fontSize: fontSize, lineHeight:1.6,
+                       color:'var(--ink)',
+                       whiteSpace: wrap ? 'pre-wrap' : 'pre',
+                       wordBreak: wrap ? 'break-word' : 'normal',
+                       height: height,
+                       minHeight: 200,
+                       overflow:'auto',
+                       background:'var(--bg-1)',
+                     }}>
+                  {segs.map(renderSeg)}
+                </pre>
+              );
+          }
+        })()}
 
         {/* RIGHT RAIL — view controls */}
         <div style={{
