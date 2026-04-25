@@ -55,9 +55,14 @@ spec:
         app.kubernetes.io/part-of: siphon
     spec:
       # Matches prod evadex.yaml — image ships uid 1000 via useradd.
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: evadex
           image: evadex:lab
@@ -66,6 +71,14 @@ spec:
           ports:
             - name: http
               containerPort: 8081
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: [ALL]
           env:
             # Optional — if the `evadex-secrets/bridge-key` Secret
             # exists, uvicorn enforces x-api-key on every request.
@@ -150,9 +163,14 @@ spec:
             app.kubernetes.io/part-of: siphon
         spec:
           restartPolicy: OnFailure
+          automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: evadex
               image: evadex:lab
@@ -161,6 +179,14 @@ spec:
                 - "profile"
                 - "run"
                 - "banking-daily"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                seccompProfile:
+                  type: RuntimeDefault
+                capabilities:
+                  drop: [ALL]
               env:
                 - name: EVADEX_BRIDGE_KEY
                   valueFrom:

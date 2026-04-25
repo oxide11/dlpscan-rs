@@ -26,6 +26,19 @@ spec:
         app.kubernetes.io/part-of: siphon
     spec:
       terminationGracePeriodSeconds: 60  # file uploads can be large
+      # siphon-fs has no in-cluster API client; suppress the default
+      # SA token mount to shrink attack surface. Mirrors the Helm
+      # chart's deployment-fs.yaml.
+      automountServiceAccountToken: false
+      # Pod-level security context, matching the Helm chart's
+      # podSecurityContext defaults.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: siphon-fs
           image: siphon-fs:lab
@@ -33,6 +46,16 @@ spec:
           ports:
             - name: http
               containerPort: 8081
+          # Container-level hardening, mirrored from the chart's
+          # containerSecurityContext.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: [ALL]
           env:
             - name: SIPHON_FS_BIND
               value: 0.0.0.0:8081

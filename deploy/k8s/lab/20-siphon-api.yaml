@@ -30,6 +30,16 @@ spec:
       # namespace + the two Deployments listed in 15-rbac-roller.yaml.
       serviceAccountName: siphon-api
       terminationGracePeriodSeconds: 45  # headroom for SIGTERM drain (Phase 5)
+      # Match the Helm chart's pod-level hardening so lab and prod
+      # deploys have the same baseline. The chart exposes these via
+      # `podSecurityContext` in values.yaml; raw manifests inline them.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: siphon-api
           image: siphon-api:lab
@@ -37,6 +47,19 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+          # Container-level hardening, mirrored from the Helm chart's
+          # `containerSecurityContext`. Pod Security Admission's
+          # "restricted" profile checks these at container level too,
+          # so duplicating from the pod-level fields is intentional
+          # rather than redundant.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: [ALL]
           env:
             # siphon-api reads SIPHON_BIND + SIPHON_PORT separately;
             # default bind is 127.0.0.1 which makes the pod
