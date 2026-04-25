@@ -3215,6 +3215,66 @@ window.useIrFindings = function (qs) {
 };
 
 const SEVERITY_RANK = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+
+// Comparator factory used by the queue's sort step. `sortBy.col`
+// is one of the column ids the analyst can click on; null means
+// the compound default (severity desc, ts desc as tiebreaker —
+// the same order the queue used before per-column sort landed).
+function makeFindingComparator(sortBy) {
+  if (!sortBy || sortBy.col == null) {
+    return (a, b) => {
+      const sa = SEVERITY_RANK[a.severity] || 0;
+      const sb = SEVERITY_RANK[b.severity] || 0;
+      if (sa !== sb) return sb - sa;
+      return (b.ts || '').localeCompare(a.ts || '');
+    };
+  }
+  const dir = sortBy.dir === 'asc' ? 1 : -1;
+  return (a, b) => {
+    let va, vb, numeric = false;
+    switch (sortBy.col) {
+      case 'ts':         va = a.ts || '';                  vb = b.ts || '';                  break;
+      case 'pod':        va = a.source_pod || '';          vb = b.source_pod || '';          break;
+      case 'category':   va = a.category || '';            vb = b.category || '';            break;
+      case 'confidence': va = a.confidence || 0;           vb = b.confidence || 0;           numeric = true; break;
+      case 'severity':   va = SEVERITY_RANK[a.severity]||0; vb = SEVERITY_RANK[b.severity]||0; numeric = true; break;
+      default:           return 0;
+    }
+    if (numeric) return (va - vb) * dir;
+    return String(va).localeCompare(String(vb)) * dir;
+  };
+}
+
+// Render a clickable header cell for the queue's table. Cycles
+// through three states on repeated clicks of the same column:
+//
+//   click 1 (column inactive) → { col: id, dir: 'desc' }
+//   click 2 (this column desc) → { col: id, dir: 'asc' }
+//   click 3 (this column asc)  → reset to compound default
+//
+// Three-click reset means we don't need a separate "reset sort"
+// button; users discover it through the natural toggle cycle.
+function sortableHeader(id, label, sortBy, setSortBy) {
+  const active = sortBy && sortBy.col === id;
+  const arrow = active ? (sortBy.dir === 'asc' ? ' ▲' : ' ▼') : '';
+  return (
+    <span
+      onClick={() => setSortBy(s => {
+        if (!s || s.col !== id)    return { col: id, dir: 'desc' };
+        if (s.dir === 'desc')      return { col: id, dir: 'asc' };
+        /* asc → reset */          return { col: null, dir: 'desc' };
+      })}
+      title={`sort by ${label} (click again to flip; third click resets)`}
+      style={{
+        cursor: 'pointer',
+        userSelect: 'none',
+        color: active ? 'var(--accent)' : undefined,
+      }}
+    >
+      {label}{arrow}
+    </span>
+  );
+}
 function severityChip(sev) {
   const cls = {
     critical: 'red', high: 'red', medium: 'amber',
@@ -3275,6 +3335,15 @@ function FindingsQueue() {
   // / pageSize edits all reset it back to 0 below so a narrow
   // filter doesn't strand the analyst on "page 7 of 3".
   const [page, setPage] = React.useState(0);
+  // sortBy: { col, dir }. col === null means the compound default
+  // (severity desc, ts desc as tiebreaker) — preserves prior
+  // behaviour when no column is explicitly clicked.
+  const [sortBy, setSortBy] = React.useState(() => {
+    try {
+      const saved = localStorage.getItem('ir:queueSort');
+      return saved ? JSON.parse(saved) : { col: null, dir: 'desc' };
+    } catch { return { col: null, dir: 'desc' }; }
+  });
   const [expanded, setExpanded] = React.useState(null);
   const [dispo, setDispo] = React.useState(readDispo);
   const [notesDraft, setNotesDraft] = React.useState({});
@@ -3290,10 +3359,13 @@ function FindingsQueue() {
   React.useEffect(() => {
     try { localStorage.setItem('ir:queuePageSize', String(pageSize)); } catch {}
   }, [pageSize]);
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:queueSort', JSON.stringify(sortBy)); } catch {}
+  }, [sortBy]);
   // Reset to page 0 whenever the visible row set could shift under
-  // the analyst — filter changes, fetch-limit bumps, page-size
-  // changes. Keeps "view page N" honest.
-  React.useEffect(() => { setPage(0); }, [filters, pageSize, limit]);
+  // the analyst — filter, sort, pageSize, or fetch-limit changes.
+  // Keeps "view page N" honest.
+  React.useEffect(() => { setPage(0); }, [filters, sortBy, pageSize, limit]);
   // Re-read dispositions when demo mode flips so the row chips flip
   // between the real and seeded stores without a reload.
   React.useEffect(() => {
@@ -3333,13 +3405,8 @@ function FindingsQueue() {
       if (filters.state === 'hide-fp' && d && d.kind === 'fp') return false;
       if (filters.state === 'only-escalated' && (!d || d.kind !== 'escalate')) return false;
       return true;
-    }).sort((a, b) => {
-      const sa = SEVERITY_RANK[a.severity] || 0;
-      const sb = SEVERITY_RANK[b.severity] || 0;
-      if (sa !== sb) return sb - sa;
-      return (b.ts || '').localeCompare(a.ts || '');
-    });
-  }, [all, filters, dispo]);
+    }).sort(makeFindingComparator(sortBy));
+  }, [all, filters, dispo, sortBy]);
 
   // Pagination derivations. totalPages floors at 1 so the
   // "page X of Y" pill stays sensible even when filtered is empty.
@@ -3597,7 +3664,13 @@ function FindingsQueue() {
           </div>
         )}
 
-        {/* header row */}
+        {/* header row — sortable columns are clickable; the
+            indicator (▲/▼) shows which column is active and the
+            current direction. The default sort (compound severity
+            + ts) shows no indicator on any column; clicking any
+            sortable header switches to that single-column sort
+            starting at desc, then toggles asc/desc on each
+            subsequent click. */}
         {filtered.length > 0 && (
           <div style={{
             display:'grid',
@@ -3606,12 +3679,12 @@ function FindingsQueue() {
             fontFamily:"'JetBrains Mono', monospace", fontSize:10,
             color:'var(--ink-soft)', textTransform:'uppercase', letterSpacing:'0.08em',
           }}>
-            <span>timestamp</span>
-            <span>pod</span>
-            <span>category / sub</span>
+            {sortableHeader('ts',         'timestamp',     sortBy, setSortBy)}
+            {sortableHeader('pod',        'pod',           sortBy, setSortBy)}
+            {sortableHeader('category',   'category / sub', sortBy, setSortBy)}
             <span>matched text</span>
-            <span>conf</span>
-            <span>severity</span>
+            {sortableHeader('confidence', 'conf',          sortBy, setSortBy)}
+            {sortableHeader('severity',   'severity',      sortBy, setSortBy)}
             <span>triage</span>
           </div>
         )}
