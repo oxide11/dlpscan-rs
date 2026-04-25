@@ -1,4 +1,17 @@
-# Siphon-API — sync HTTP scan service
+# Siphon-API — sync HTTP scan service.
+#
+# Two-pass build to maximise cargo's layer cache. The first
+# `cargo build` runs against stub source files, which forces the
+# full dep tree (kube, k8s-openapi, axum, the rxing/imageproc
+# image stack the `k8s-roll` feature pulls in) to compile and
+# cache once. The second `cargo build` runs against the real
+# source — only the workspace crates rebuild, deps stay cached.
+#
+# Effect on src-only edits: a normal `siphon-api` source change
+# rebuilds in seconds because the dep layer is reused. Without
+# this, every edit to crates/siphon-api/src/main.rs invalidated
+# the entire `RUN cargo build` layer and re-fetched the world.
+
 FROM rust:1.95-bookworm AS builder
 
 # Optional cargo parallelism cap. CI pipes CARGO_BUILD_JOBS=2 in
@@ -8,28 +21,72 @@ ARG CARGO_BUILD_JOBS
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 
 WORKDIR /app
-COPY Cargo.toml Cargo.lock* ./
-COPY crates/ crates/
-COPY src/ src/
-# Workspace root declares [[bench]] name = "scanning" — Cargo parses
-# the whole workspace even for `-p siphon-api`, so the bench source
-# file has to be present at image-build time even though it isn't
-# compiled in the release profile.
-COPY benches/ benches/
+
+# ── Stage 1a: dep-tree cache via stub workspace.
+#
+# Copy ONLY the manifests that drive cargo's resolver. Each
+# crate's src/ is replaced by a hand-written empty stub so cargo
+# has something to compile against without dragging in real source
+# code that would defeat the cache the next layer up. The benches/
+# entry from the workspace root is treated the same way — Cargo
+# parses the workspace before it knows we only want -p siphon-api,
+# so every member needs a parseable manifest + at least one source
+# file.
+COPY Cargo.toml Cargo.lock ./
+COPY crates/siphon-core/Cargo.toml     crates/siphon-core/Cargo.toml
+COPY crates/siphon-api/Cargo.toml      crates/siphon-api/Cargo.toml
+COPY crates/siphon-fs/Cargo.toml       crates/siphon-fs/Cargo.toml
+COPY crates/siphon-launcher/Cargo.toml crates/siphon-launcher/Cargo.toml
+
+RUN mkdir -p src \
+             crates/siphon-core/src \
+             crates/siphon-api/src \
+             crates/siphon-fs/src \
+             crates/siphon-launcher/src \
+             benches \
+ && echo 'fn main() {}'      > src/main.rs \
+ && echo 'pub fn _stub() {}' > src/lib.rs \
+ && echo 'pub fn _stub() {}' > crates/siphon-core/src/lib.rs \
+ && echo 'fn main() {}'      > crates/siphon-api/src/main.rs \
+ && echo 'fn main() {}'      > crates/siphon-fs/src/main.rs \
+ && echo 'fn main() {}'      > crates/siphon-launcher/src/main.rs \
+ && echo 'fn main() {}'      > benches/scanning.rs
+
+# Build the stub workspace with the EXACT same flags + features
+# the real build uses, so the cache hit on the second build is
+# total. --features k8s-roll pulls in kube + k8s-openapi here so
+# they're in the cache when the real source compile runs.
+RUN cargo build --release -p siphon-api --features k8s-roll --locked
+
+# ── Stage 1b: real source replaces stubs; rebuild only workspace.
+#
+# After this layer, cargo sees the real workspace src files but
+# the registry + target/release/deps tree is already populated
+# from the stub build above. cargo invalidates and recompiles
+# only the workspace crates, not the dep tree. `touch` the entry
+# files explicitly because COPY preserves source mtime, which can
+# pre-date the stub build and let cargo skip rebuilding them.
+COPY src/        src/
+COPY crates/     crates/
+COPY benches/    benches/
+
 # siphon-api's main.rs embeds README.md + the entire docs/ tree
 # via include_str!() for its /v1/docs endpoint (49 files). Cargo
 # resolves these at compile time relative to the source file, so
-# both paths must exist inside the builder image or compilation
-# dies with "couldn't read ../../../README.md".
+# both paths must exist inside the builder image at the *real*
+# compile step (the stub above doesn't reference them).
 COPY README.md ./
-COPY docs/ docs/
+COPY docs/      docs/
 
-# --features k8s-roll pulls in kube + k8s-openapi so /v1/overrides/roll
-# can patch Deployment annotations from inside the cluster. Omit the
-# flag for a non-k8s build — the endpoint responds 501 with a
-# kubectl-style fallback.
-RUN cargo build --release -p siphon-api --features k8s-roll --locked
+RUN touch crates/siphon-core/src/lib.rs \
+          crates/siphon-api/src/main.rs \
+          crates/siphon-fs/src/main.rs \
+          crates/siphon-launcher/src/main.rs \
+          src/main.rs \
+          src/lib.rs \
+ && cargo build --release -p siphon-api --features k8s-roll --locked
 
+# ── Stage 2: runtime image.
 FROM debian:bookworm-slim
 
 RUN apt-get update && \
