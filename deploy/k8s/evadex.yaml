@@ -25,15 +25,35 @@ spec:
       labels:
         app: evadex
     spec:
+      # evadex has no in-cluster API client; the bridge talks to
+      # siphon-api over HTTP, not the kube apiserver.
+      automountServiceAccountToken: false
+      # Pod-level hardening, matching the siphon Helm chart's
+      # podSecurityContext defaults.
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: evadex
           image: evadex:latest
           args: ["bridge", "--host", "0.0.0.0", "--port", "8081"]
           ports:
             - containerPort: 8081
+          # Container-level hardening. evadex writes generated
+          # corpora to /results (PVC-mounted), which is the only
+          # writable path; root FS stays read-only.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: [ALL]
           env:
             # Optional — if the `evadex-secrets/bridge-key` Secret
             # exists, uvicorn will require matching x-api-key on
@@ -136,9 +156,16 @@ spec:
       activeDeadlineSeconds: 2700
       template:
         spec:
+          # CronJob pod has no in-cluster API client either. Same
+          # hardening shape as the bridge Deployment above.
+          automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: evadex
               image: evadex:latest
@@ -146,6 +173,14 @@ spec:
                 - "profile"
                 - "run"
                 - "banking-daily"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                seccompProfile:
+                  type: RuntimeDefault
+                capabilities:
+                  drop: [ALL]
               env:
                 - name: EVADEX_BRIDGE_KEY
                   valueFrom:
