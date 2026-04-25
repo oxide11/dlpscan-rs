@@ -32,6 +32,33 @@ here. When an item lands, delete its bullet (its history is in `git log` and
   structural refactor PR; doesn't need to ride along with feature work.
   (Source: claude/ir-findings-queue PR.)
 
+- **Pin the Findings Detail facts box to a deterministic min-height.**
+  The detail-header refactor stopped the page header from jumping on
+  prev/next, but the new "finding facts" box still grows/shrinks vertically
+  as chip wrapping changes between findings, which can shove the document
+  preview a row or two up/down. Add a `min-height` based on the worst-case
+  chip set (or a CSS `aspect-ratio` lock). Defer until the analyst flags
+  the vertical jump as a real problem; the horizontal jump (which was the
+  reported bug) is fixed. (Source: claude/ir-detail-header-fix PR.)
+
+- **Custom queues for the Findings Queue.** The grouping registry
+  (`GROUP_BY_OPTIONS`) currently exposes four canned modes: user, document,
+  scan, hash. The roadmap also asks for "custom queues" — a saved
+  combination of (filter set + grouping + sort + visible columns) the
+  analyst can name and recall. Treat this as a new top-level concept on
+  the queue page (a "Saved queues" select alongside the existing controls)
+  with its own localStorage key like `ir:queueCustomQueues = [{name, snapshot}]`.
+  (Source: claude/ir-findings-grouping PR.)
+
+- **Continuation marker on group headers spanning page boundaries.** When
+  a group spans pages 3–6, page 4 currently shows the same header it
+  shows on page 3 with no signal that the group started earlier. Worth
+  adding a small "(continued)" annotation — knowable via `pageRows[0]`'s
+  group key matching some same-key row on a previous page (or just
+  `page > firstPageOf(groupKey)`). Cosmetic; defer until an analyst notes
+  the ambiguity.
+  (Source: claude/ir-findings-grouping PR.)
+
 - **Move Timeline from Analyze → Correlate.** Today the IR surface
   registry has Timeline under the Analyze workspace; conceptually it
   belongs with Correlate (it cross-references findings by ts + span,

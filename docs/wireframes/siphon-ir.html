@@ -3246,6 +3246,25 @@ function makeFindingComparator(sortBy) {
   };
 }
 
+// Wrap makeFindingComparator with a group-aware primary sort so
+// pagination doesn't slice a group across page boundaries
+// arbitrarily. When groupBy is null/'none' the wrapper is a
+// no-op pass-through. When it's a real grouping (user, document,
+// scan, hash), all rows in the same group come together —
+// adjacent in the sorted list — and within a group the analyst's
+// chosen sortBy still applies.
+function makeGroupedComparator(groupBy, sortBy) {
+  const baseCmp = makeFindingComparator(sortBy);
+  const groupKeyFn = (groupBy && GROUP_BY_OPTIONS[groupBy] && GROUP_BY_OPTIONS[groupBy].key) || null;
+  if (!groupKeyFn) return baseCmp;
+  return (a, b) => {
+    const ka = groupKeyFn(a) || '';
+    const kb = groupKeyFn(b) || '';
+    if (ka !== kb) return ka.localeCompare(kb);
+    return baseCmp(a, b);
+  };
+}
+
 // Column registry for the Findings Queue. The queue body renders
 // the visible subset (in the order they appear here) and the
 // "columns" popover picks visibility off the same list. Each
@@ -3376,6 +3395,45 @@ const FINDINGS_COLUMNS = [
     },
   },
 ];
+
+// Grouping registry for the Findings Queue. Each entry knows
+// how to extract a group-key string from a finding; the queue's
+// `groupBy` filter selects one of these and the row render
+// interleaves group-header rows above runs of same-key findings.
+//
+// Adding a new grouping = adding an entry below. The schema is
+// loose on purpose: many emitters populate one of several keys
+// for the same conceptual field (sender vs. recipient vs. owner
+// for "who"), so each `key` function falls through a small set
+// of metadata candidates before giving up.
+const GROUP_BY_OPTIONS = {
+  none:     { label: 'no grouping', key: null },
+  user:     {
+    label: 'user',
+    key: (f) => {
+      const md = f.metadata || {};
+      return md.user || md.sender || md.recipient || md.owner || md.auth_user || null;
+    },
+  },
+  document: {
+    label: 'document',
+    key: (f) => {
+      const md = f.metadata || {};
+      return md.filename || md.source_path || md.original_filename || null;
+    },
+  },
+  // A "scan" is one upstream request — a single /scan call or a
+  // single multipart upload that produced N findings. request_id
+  // is the cross-pod stamp on every finding from that request.
+  scan:     { label: 'scan',     key: (f) => f.request_id || null },
+  hash:     {
+    label: 'hash',
+    key: (f) => {
+      const md = f.metadata || {};
+      return md.content_hash || md.sha256 || md.md5 || md.hash || null;
+    },
+  },
+};
 
 // Render a clickable header cell for the queue's table. Cycles
 // through three states on repeated clicks of the same column:
@@ -3603,8 +3661,23 @@ function FindingsQueue() {
       if (filters.state === 'hide-fp' && d && d.kind === 'fp') return false;
       if (filters.state === 'only-escalated' && (!d || d.kind !== 'escalate')) return false;
       return true;
-    }).sort(makeFindingComparator(sortBy));
+    }).sort(makeGroupedComparator(filters.groupBy, sortBy));
   }, [all, filters, dispo, sortBy]);
+
+  // Pre-compute the count per group from the FULL filtered set (not
+  // just the current page) so each group header can show "N
+  // findings" — the analyst sees true totals even on page 4 of a
+  // group that spans pages 3–6.
+  const groupKeyFn = (filters.groupBy && GROUP_BY_OPTIONS[filters.groupBy] && GROUP_BY_OPTIONS[filters.groupBy].key) || null;
+  const groupCounts = React.useMemo(() => {
+    if (!groupKeyFn) return null;
+    const m = new Map();
+    for (const f of filtered) {
+      const k = groupKeyFn(f) || '(none)';
+      m.set(k, (m.get(k) || 0) + 1);
+    }
+    return m;
+  }, [filtered, filters.groupBy]);
 
   // Pagination derivations. totalPages floors at 1 so the
   // "page X of Y" pill stays sensible even when filtered is empty.
@@ -3782,6 +3855,16 @@ function FindingsQueue() {
             <option value="only-escalated">only escalated</option>
             <option value="hide-event">hide closed-events</option>
             <option value="hide-fp">hide fp-submitted</option>
+          </select>
+          <select value={filters.groupBy || 'none'}
+                  onChange={e => setFilters({...filters, groupBy: e.target.value})}
+                  style={{fontSize:11, padding:'6px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}
+                  title="cluster the queue by user, document, scan, or content hash">
+            <option value="none">no grouping</option>
+            <option value="user">group by user</option>
+            <option value="document">group by document</option>
+            <option value="scan">group by scan</option>
+            <option value="hash">group by hash</option>
           </select>
           <select value={limit}
                   onChange={e => setLimit(parseInt(e.target.value, 10))}
@@ -3998,13 +4081,66 @@ function FindingsQueue() {
           // defined outside the component). Built once per render
           // pass and shared across rows.
           const ctx = { dispo, clearDispo, flash, fmtTs };
-          return pageRows.map(f => {
+          // Track previous group key on this page so we render a
+          // group header above any row whose key differs from
+          // the previous-rendered row's. The very first row on
+          // any page always gets a header (when grouping is on)
+          // since we don't know what group preceded it from the
+          // prior page — analyst landing on page 4 shouldn't see
+          // a group's rows with no header above them. The full
+          // group's count comes from groupCounts, computed
+          // against `filtered` (not pageRows), so the chip shows
+          // true totals across page boundaries.
+          let prevGroupKey = null;
+          const groupLabel = filters.groupBy && GROUP_BY_OPTIONS[filters.groupBy]
+            ? GROUP_BY_OPTIONS[filters.groupBy].label
+            : null;
+          const elements = [];
+          pageRows.forEach((f, i) => {
+            if (groupKeyFn) {
+              const k = groupKeyFn(f) || '(none)';
+              if (k !== prevGroupKey) {
+                const total = (groupCounts && groupCounts.get(k)) || 0;
+                elements.push(
+                  <div key={`group-${k}-${i}`} style={{
+                    padding:'10px 14px',
+                    background:'var(--bg-3, var(--bg-1))',
+                    borderTop:'1px solid var(--line-strong)',
+                    borderBottom:'1px solid var(--line)',
+                    fontFamily:"'Space Grotesk', sans-serif",
+                    fontSize:10.5, letterSpacing:'0.1em',
+                    textTransform:'uppercase',
+                    color:'var(--ink-soft)', fontWeight:600,
+                    display:'flex', alignItems:'baseline', gap:10,
+                  }}>
+                    <span style={{color:'var(--ink-soft)'}}>{groupLabel}:</span>
+                    <span style={{
+                      color:'var(--ink-bright)',
+                      fontFamily:"'JetBrains Mono', monospace",
+                      textTransform:'none', letterSpacing:'normal',
+                      maxWidth: 480, overflow:'hidden',
+                      textOverflow:'ellipsis', whiteSpace:'nowrap',
+                    }} title={k}>
+                      {k}
+                    </span>
+                    <span className="muted" style={{
+                      fontSize:10, fontWeight:400,
+                      textTransform:'none', letterSpacing:'normal',
+                      marginLeft:'auto',
+                    }}>
+                      {total} {total === 1 ? 'finding' : 'findings'}
+                    </span>
+                  </div>
+                );
+                prevGroupKey = k;
+              }
+            }
             const d = dispo[f.id];
             const rowTint = d && d.kind === 'fp' ? 'var(--bg-1)'
                           : d && d.kind === 'escalate' ? 'var(--amber-wash, var(--bg-2))'
                           : 'transparent';
             const opacity = d && d.kind === 'fp' ? 0.5 : 1;
-            return (
+            elements.push(
               <div key={f.id} style={{borderBottom:'1px solid var(--line-soft)'}}>
                 <div onClick={() => window.__ir_goFinding && window.__ir_goFinding(f.id)}
                      style={{
@@ -4022,6 +4158,7 @@ function FindingsQueue() {
               </div>
             );
           });
+          return elements;
         })()}
 
         {/* bottom pagination strip — same controls as the top one
