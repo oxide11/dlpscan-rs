@@ -3245,6 +3245,137 @@ function makeFindingComparator(sortBy) {
   };
 }
 
+// Column registry for the Findings Queue. The queue body renders
+// the visible subset (in the order they appear here) and the
+// "columns" popover picks visibility off the same list. Each
+// entry knows its own width, default visibility, sortability, and
+// how to render itself for a given finding + per-render context
+// (the context carries closures the queue's render functions need
+// without making the registry itself component-aware).
+//
+// Adding a new column = adding an entry below + (optionally)
+// teaching makeFindingComparator how to sort it.
+const FINDINGS_COLUMNS = [
+  {
+    id: 'ts', label: 'timestamp', width: '140px',
+    defaultVisible: true, sortable: true,
+    render: (f, ctx) => (
+      <span style={{color:'var(--ink-soft)'}}>{ctx.fmtTs(f.ts)}</span>
+    ),
+  },
+  {
+    id: 'pod', label: 'pod', width: '90px',
+    defaultVisible: true, sortable: true,
+    render: (f) => (
+      <span className="chip chip--ghost" style={{fontSize:9, justifySelf:'start'}}>
+        {f.source_pod || '—'}
+      </span>
+    ),
+  },
+  {
+    id: 'category', label: 'category / sub', width: '180px',
+    defaultVisible: true, sortable: true,
+    render: (f) => (
+      <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+            title={`${f.category} / ${f.sub_category || ''}`}>
+        <span style={{color:'var(--ink-bright)'}}>{f.category}</span>
+        {f.sub_category && <span className="muted"> / {f.sub_category}</span>}
+      </span>
+    ),
+  },
+  {
+    id: 'text', label: 'matched text', width: 'minmax(180px, 1fr)',
+    defaultVisible: true, sortable: false,
+    render: (f) => (
+      <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:'var(--accent)'}}
+            title={f.text || ''}>
+        {f.text || '—'}
+      </span>
+    ),
+  },
+  {
+    id: 'confidence', label: 'conf', width: '60px',
+    defaultVisible: true, sortable: true,
+    render: (f) => (
+      <span style={{color: f.confidence >= 0.9 ? 'var(--safe)'
+                          : f.confidence >= 0.7 ? 'var(--amber)'
+                          : 'var(--ink-soft)'}}>
+        {f.confidence != null ? f.confidence.toFixed(2) : '—'}
+      </span>
+    ),
+  },
+  {
+    id: 'severity', label: 'severity', width: '90px',
+    defaultVisible: true, sortable: true,
+    render: (f) => severityChip(f.severity),
+  },
+  // Identity / file / hash columns mirror the advanced-search
+  // inputs that filter on these same fields. Default-hidden so
+  // the first-run table doesn't get crowded; analysts who scan
+  // with metadata routinely add them once and the choice sticks.
+  {
+    id: 'user', label: 'user', width: '140px',
+    defaultVisible: false, sortable: false,
+    render: (f) => {
+      const md = f.metadata || {};
+      const v = md.user || md.sender || md.recipient || md.owner || md.auth_user || '';
+      return (
+        <span className="muted" style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+              title={v}>{v || '—'}</span>
+      );
+    },
+  },
+  {
+    id: 'filename', label: 'filename', width: '180px',
+    defaultVisible: false, sortable: false,
+    render: (f) => {
+      const md = f.metadata || {};
+      const v = md.filename || md.source_path || md.original_filename || '';
+      return (
+        <span className="muted" style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+              title={v}>{v || '—'}</span>
+      );
+    },
+  },
+  {
+    id: 'hash', label: 'hash', width: '160px',
+    defaultVisible: false, sortable: false,
+    render: (f) => {
+      const md = f.metadata || {};
+      const v = md.content_hash || md.sha256 || md.md5 || md.hash || '';
+      return (
+        <span className="mono muted" style={{fontSize:10, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+              title={v}>{v ? v.slice(0, 12) + '…' : '—'}</span>
+      );
+    },
+  },
+  {
+    id: 'triage', label: 'triage', width: '160px',
+    defaultVisible: true, sortable: false,
+    render: (f, ctx) => {
+      const d = ctx.dispo[f.id];
+      return (
+        <span style={{display:'flex', gap:4, justifySelf:'end', alignItems:'center'}}>
+          {!d && <span className="muted mono" style={{fontSize:10}}>open →</span>}
+          {d && (
+            <>
+              <span className={`chip chip--${DISPO[d.kind].chip}`}
+                    title={`${DISPO[d.kind].label}${d.notes ? '\n\n' + d.notes : ''}`}
+                    style={{fontSize:9}}>{DISPO[d.kind].short}</span>
+              <button className="btn ghost" onClick={(e) => { e.stopPropagation(); ctx.clearDispo(f); }}
+                      title="undo disposition"
+                      style={{fontSize:10, padding:'3px 6px'}}>↶</button>
+            </>
+          )}
+          {ctx.flash && ctx.flash.id === f.id && (
+            <span className="mono" style={{fontSize:10, color:'var(--safe)'}}>✓</span>
+          )}
+        </span>
+      );
+    },
+  },
+];
+
 // Render a clickable header cell for the queue's table. Cycles
 // through three states on repeated clicks of the same column:
 //
@@ -3351,6 +3482,18 @@ function FindingsQueue() {
     try { return localStorage.getItem('ir:queueShowAdv') === '1'; }
     catch { return false; }
   });
+  // visibleCols: ordered list of FINDINGS_COLUMNS ids to render.
+  // Persisted so the analyst's column choice sticks across
+  // reloads and across consoles (open multiple tabs and they
+  // converge via the storage event listener below).
+  const [visibleCols, setVisibleCols] = React.useState(() => {
+    try {
+      const saved = localStorage.getItem('ir:queueColumns');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return FINDINGS_COLUMNS.filter(c => c.defaultVisible).map(c => c.id);
+  });
+  const [colsPanelOpen, setColsPanelOpen] = React.useState(false);
   const [expanded, setExpanded] = React.useState(null);
   const [dispo, setDispo] = React.useState(readDispo);
   const [notesDraft, setNotesDraft] = React.useState({});
@@ -3372,6 +3515,20 @@ function FindingsQueue() {
   React.useEffect(() => {
     try { localStorage.setItem('ir:queueShowAdv', showAdvanced ? '1' : '0'); } catch {}
   }, [showAdvanced]);
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:queueColumns', JSON.stringify(visibleCols)); } catch {}
+  }, [visibleCols]);
+
+  // Resolve visible column ids → registry entries, in display
+  // order. Filter out unknown ids so a stale localStorage doesn't
+  // crash the render after a column is removed from the registry.
+  const visibleColumnDefs = React.useMemo(
+    () => visibleCols
+      .map(id => FINDINGS_COLUMNS.find(c => c.id === id))
+      .filter(Boolean),
+    [visibleCols],
+  );
+  const gridTemplate = visibleColumnDefs.map(c => c.width).join(' ');
   // Reset to page 0 whenever the visible row set could shift under
   // the analyst — filter, sort, pageSize, or fetch-limit changes.
   // Keeps "view page N" honest.
@@ -3639,11 +3796,69 @@ function FindingsQueue() {
                   style={{fontSize:11}}>
             advanced {showAdvanced ? '▴' : '▾'}
           </button>
+          <button className="btn ghost" onClick={() => setColsPanelOpen(v => !v)}
+                  title="add or remove visible columns"
+                  style={{fontSize:11}}>
+            columns {colsPanelOpen ? '▴' : '▾'}
+          </button>
           <button className="btn ghost" onClick={() => setFilters({})}
                   title="clear all filters" style={{fontSize:11}}>
             clear
           </button>
         </div>
+
+        {/* columns panel — checkbox per registry entry. Toggling
+            on inserts the column at the position the registry has
+            it (so display order stays stable across toggles). The
+            list mirrors FINDINGS_COLUMNS, including default-hidden
+            user/filename/hash so analysts can opt in. Refusing to
+            uncheck the last visible column keeps the table from
+            collapsing to a row of empty grid cells. */}
+        {colsPanelOpen && (
+          <div style={{
+            padding:'10px 14px', display:'flex', gap:14, flexWrap:'wrap',
+            alignItems:'center', borderBottom:'1px solid var(--line-soft)',
+            background:'var(--bg-1)',
+            fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+          }}>
+            <span className="muted" style={{fontSize:10, marginRight:4}}>columns:</span>
+            {FINDINGS_COLUMNS.map(c => {
+              const checked = visibleCols.includes(c.id);
+              const disabled = checked && visibleCols.length === 1;
+              return (
+                <label key={c.id}
+                       title={disabled ? 'at least one column must stay visible' : ''}
+                       style={{
+                         display:'flex', alignItems:'center', gap:5,
+                         cursor: disabled ? 'not-allowed' : 'pointer',
+                         opacity: disabled ? 0.5 : 1,
+                       }}>
+                  <input type="checkbox"
+                         checked={checked}
+                         disabled={disabled}
+                         onChange={e => setVisibleCols(prev => {
+                           if (e.target.checked) {
+                             // Insert at the registry's natural
+                             // position so the order matches what
+                             // the user expects from the panel
+                             // top-to-bottom layout.
+                             const order = FINDINGS_COLUMNS.map(x => x.id);
+                             return order.filter(id => prev.includes(id) || id === c.id);
+                           }
+                           return prev.filter(id => id !== c.id);
+                         })} />
+                  {c.label}
+                </label>
+              );
+            })}
+            <button className="btn ghost"
+                    onClick={() => setVisibleCols(FINDINGS_COLUMNS.filter(c => c.defaultVisible).map(c => c.id))}
+                    title="restore the default column set"
+                    style={{fontSize:10, marginLeft:'auto'}}>
+              reset to default
+            </button>
+          </div>
+        )}
 
         {/* advanced search row — collapsible. Field-targeted
             inputs that filter on metadata keys: user identity,
@@ -3754,93 +3969,59 @@ function FindingsQueue() {
           </div>
         )}
 
-        {/* header row — sortable columns are clickable; the
-            indicator (▲/▼) shows which column is active and the
-            current direction. The default sort (compound severity
-            + ts) shows no indicator on any column; clicking any
-            sortable header switches to that single-column sort
-            starting at desc, then toggles asc/desc on each
-            subsequent click. */}
+        {/* header row — driven by the visible column registry.
+            Sortable columns get sortableHeader(); non-sortable
+            ones render as plain spans. The indicator (▲/▼) shows
+            which column is active and the current direction.
+            Compound default sort (severity + ts) shows no
+            indicator on any column. */}
         {filtered.length > 0 && (
           <div style={{
             display:'grid',
-            gridTemplateColumns:'140px 90px 180px 1fr 60px 90px 160px',
+            gridTemplateColumns: gridTemplate,
             gap:8, padding:'8px 14px', borderBottom:'1.5px solid var(--line)',
             fontFamily:"'JetBrains Mono', monospace", fontSize:10,
             color:'var(--ink-soft)', textTransform:'uppercase', letterSpacing:'0.08em',
           }}>
-            {sortableHeader('ts',         'timestamp',     sortBy, setSortBy)}
-            {sortableHeader('pod',        'pod',           sortBy, setSortBy)}
-            {sortableHeader('category',   'category / sub', sortBy, setSortBy)}
-            <span>matched text</span>
-            {sortableHeader('confidence', 'conf',          sortBy, setSortBy)}
-            {sortableHeader('severity',   'severity',      sortBy, setSortBy)}
-            <span>triage</span>
+            {visibleColumnDefs.map(c => (
+              c.sortable
+                ? <React.Fragment key={c.id}>{sortableHeader(c.id, c.label, sortBy, setSortBy)}</React.Fragment>
+                : <span key={c.id}>{c.label}</span>
+            ))}
           </div>
         )}
 
-        {pageRows.map(f => {
-          const d = dispo[f.id];
-          const rowTint = d && d.kind === 'fp' ? 'var(--bg-1)'
-                        : d && d.kind === 'escalate' ? 'var(--amber-wash, var(--bg-2))'
-                        : 'transparent';
-          const opacity = d && d.kind === 'fp' ? 0.5 : 1;
-          return (
-            <div key={f.id} style={{borderBottom:'1px solid var(--line-soft)'}}>
-              <div onClick={() => window.__ir_goFinding && window.__ir_goFinding(f.id)}
-                   style={{
-                     display:'grid',
-                     gridTemplateColumns:'140px 90px 180px 1fr 60px 90px 160px',
-                     gap:8, padding:'8px 14px', fontSize:11.5, alignItems:'center',
-                     cursor:'pointer', background: rowTint, opacity,
-                     fontFamily:"'JetBrains Mono', monospace",
-                   }}
-                   title="click to open the 5W+H review surface">
-                <span style={{color:'var(--ink-soft)'}}>{fmtTs(f.ts)}</span>
-                <span className="chip chip--ghost" style={{fontSize:9, justifySelf:'start'}}>
-                  {f.source_pod || '—'}
-                </span>
-                <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
-                      title={`${f.category} / ${f.sub_category}`}>
-                  <span style={{color:'var(--ink-bright)'}}>{f.category}</span>
-                  {f.sub_category && <span className="muted"> / {f.sub_category}</span>}
-                </span>
-                <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:'var(--accent)'}}
-                      title={f.text || ''}>
-                  {f.text || '—'}
-                </span>
-                <span style={{color: f.confidence >= 0.9 ? 'var(--safe)'
-                                    : f.confidence >= 0.7 ? 'var(--amber)'
-                                    : 'var(--ink-soft)'}}>
-                  {f.confidence != null ? f.confidence.toFixed(2) : '—'}
-                </span>
-                <span>{severityChip(f.severity)}</span>
-                <span style={{display:'flex', gap:4, justifySelf:'end', alignItems:'center'}}>
-                  {!d && (
-                    <span className="muted mono" style={{fontSize:10}}>
-                      open →
-                    </span>
-                  )}
-                  {d && (
-                    <>
-                      <span className={`chip chip--${DISPO[d.kind].chip}`}
-                            title={`${DISPO[d.kind].label}${d.notes ? '\n\n' + d.notes : ''}`}
-                            style={{fontSize:9}}>{DISPO[d.kind].short}</span>
-                      <button className="btn ghost" onClick={(e) => { e.stopPropagation(); clearDispo(f); }}
-                              title="undo disposition"
-                              style={{fontSize:10, padding:'3px 6px'}}>↶</button>
-                    </>
-                  )}
-                  {flash && flash.id === f.id && (
-                    <span className="mono" style={{fontSize:10, color:'var(--safe)'}}>
-                      ✓
-                    </span>
-                  )}
-                </span>
+        {(() => {
+          // ctx provides the closures + helpers the registry's
+          // render functions can't reach on their own (they're
+          // defined outside the component). Built once per render
+          // pass and shared across rows.
+          const ctx = { dispo, clearDispo, flash, fmtTs };
+          return pageRows.map(f => {
+            const d = dispo[f.id];
+            const rowTint = d && d.kind === 'fp' ? 'var(--bg-1)'
+                          : d && d.kind === 'escalate' ? 'var(--amber-wash, var(--bg-2))'
+                          : 'transparent';
+            const opacity = d && d.kind === 'fp' ? 0.5 : 1;
+            return (
+              <div key={f.id} style={{borderBottom:'1px solid var(--line-soft)'}}>
+                <div onClick={() => window.__ir_goFinding && window.__ir_goFinding(f.id)}
+                     style={{
+                       display:'grid',
+                       gridTemplateColumns: gridTemplate,
+                       gap:8, padding:'8px 14px', fontSize:11.5, alignItems:'center',
+                       cursor:'pointer', background: rowTint, opacity,
+                       fontFamily:"'JetBrains Mono', monospace",
+                     }}
+                     title="click to open the 5W+H review surface">
+                  {visibleColumnDefs.map(c => (
+                    <React.Fragment key={c.id}>{c.render(f, ctx)}</React.Fragment>
+                  ))}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          });
+        })()}
 
         {/* bottom pagination strip — same controls as the top one
             so the analyst doesn't scroll up to flip pages on long
