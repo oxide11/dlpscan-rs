@@ -1,6 +1,6 @@
 [package]
 name = "siphon-fs"
-version = "2.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "Polygon Siphon FS — file-scanner HTTP service (multipart in, findings out)"
 license = "MIT"

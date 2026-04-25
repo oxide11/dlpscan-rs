@@ -125,7 +125,9 @@ fs:
 
   image:
     repository: oxide11/siphon-fs
-    tag: ""
+    # Pinned per the per-crate SemVer rules in CLAUDE.md. Bump
+    # this in lockstep with crates/siphon-fs/Cargo.toml.
+    tag: "1.0.0"
     pullPolicy: ""
 
   service:
