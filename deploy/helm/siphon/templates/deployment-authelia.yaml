@@ -55,6 +55,11 @@ spec:
               mountPath: /config/configuration.yml
               subPath: configuration.yml
               readOnly: true
+            # users_database.yml is required by the file-backed
+            # authentication_backend (see configmap-authelia.yaml
+            # for the seeded default). Mounted via subPath so the
+            # ConfigMap file overlays the PVC directory without
+            # shadowing sibling state (SQLite DB, notifications).
             - name: config
               mountPath: /config/users_database.yml
               subPath: users_database.yml

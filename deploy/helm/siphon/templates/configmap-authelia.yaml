@@ -10,23 +10,6 @@ metadata:
   labels:
     {{- include "siphon.labels" (dict "root" . "component" "authelia") | nindent 4 }}
 data:
-  # Placeholder users database — file-backend Authelia reads this
-  # at login time. Ships a single admin user with a non-functional
-  # argon2id hash so the file is parseable but you can't actually
-  # log in with the default. For dev auth testing, replace the
-  # hash via:
-  #   authelia crypto hash generate argon2 --password '<pass>'
-  # and override `authelia.configYaml` or mount your own secret.
-  users_database.yml: |
-    users:
-      admin:
-        disabled: false
-        displayname: "Siphon Placeholder Admin"
-        password: "$argon2id$v=19$m=65536,t=3,p=4$c2FsdHNhbHRzYWx0cw$k9e3JxbgxS9HfG6a3w/rvl+J8DPlCg0KsWgl8qoE5Rc"
-        email: admin@siphon.local
-        groups:
-          - admins
-          - operators
   configuration.yml: |
     {{- if .Values.authelia.configYaml }}
     {{- .Values.authelia.configYaml | nindent 4 }}
@@ -36,14 +19,26 @@ data:
     # rotate every placeholder secret, and switch the storage / notifier
     # stanzas to Postgres + SMTP before pointing real users at it.
     #
-    # `$host` falls back to siphon.local when ingress.host is empty
-    # (e.g. Codespace / dev install). Authelia rejects an empty
-    # session.cookies[].domain, so we need a value even when the
-    # deployment isn't actually fronted by real DNS. OIDC flows
-    # still won't work from a non-matching origin (Codespaces
-    # forwarded URL doesn't match siphon.local), but the pod
-    # starts and non-auth-gated endpoints respond.
-    {{- $host := .Values.ingress.host | default "siphon.local" }}
+    # Public-origin resolution. Authelia's cookie Domain= attribute
+    # and its login-portal redirect URLs both have to match what the
+    # browser types in the URL bar — otherwise the portal sets a
+    # cookie the browser refuses to send back and the login loop
+    # never closes.
+    #   * cookieDomain is the hostname only (no port, no scheme). If
+    #     unset, falls back to ingress.host — fine for prod where
+    #     the ingress matches a real DNS name.
+    #   * externalUrl is the full origin (scheme + host + optional
+    #     port). If unset, we build it from scheme + ingress.host,
+    #     which matches the pre-Codespace layout.
+    # Codespace / k3d deploys drive both via codespace-deploy.sh so
+    # the Ingress can keep ingress.host empty (match any Host) while
+    # Authelia still reflects the browser-facing origin.
+    {{- $scheme := default "https" .Values.authelia.scheme }}
+    {{- $cookieDomain := default .Values.ingress.host .Values.authelia.cookieDomain }}
+    {{- $externalUrl := .Values.authelia.externalUrl }}
+    {{- if not $externalUrl }}
+    {{-   $externalUrl = printf "%s://%s" $scheme .Values.ingress.host }}
+    {{- end }}
     server:
       address: "tcp://0.0.0.0:{{ .Values.authelia.service.port }}"
     log:
@@ -72,22 +67,40 @@ data:
           key_length: 32
           salt_length: 16
     access_control:
+      {{- if .Values.authelia.devBypass }}
+      # devBypass=true — every request is waved through the
+      # forward-auth sub-request, regardless of host. Authelia
+      # 4.38 rejects `default_policy: bypass` with an empty rules
+      # list and its `domain:` matcher is exact-only (no universal
+      # wildcard), so the pattern is:
+      #   default_policy: bypass (reached for any host that doesn't
+      #                           match a rule — i.e. everything),
+      #   plus a single dummy rule pointing at a hostname that will
+      #   never resolve, solely to satisfy the validator.
+      # Intended for Codespace / k3d smoke-tests where there's no
+      # real user directory. NEVER ship this to production.
+      default_policy: bypass
+      rules:
+        - domain: "authelia-devbypass.invalid"
+          policy: two_factor
+      {{- else }}
       default_policy: two_factor
       rules:
-        - domain: {{ $host | quote }}
+        - domain: "{{ $cookieDomain }}"
           resources:
             - "^/health.*$"
             - "^/metrics$"
           policy: bypass
+      {{- end }}
     session:
       name: authelia_session
       same_site: lax
       expiration: 1h
       inactivity: 15m
       cookies:
-        - domain: {{ $host | quote }}
-          authelia_url: "https://{{ $host }}/auth/"
-          default_redirection_url: "https://{{ $host }}/"
+        - domain: {{ $cookieDomain | quote }}
+          authelia_url: "{{ $externalUrl }}/auth/"
+          default_redirection_url: "{{ $externalUrl }}/"
     regulation:
       max_retries: 3
       find_time: 2m
@@ -99,5 +112,28 @@ data:
       disable_startup_check: false
       filesystem:
         filename: /config/notification.txt
+    {{- end }}
+  # File-backed user database. Authelia's authentication_backend.file
+  # provider refuses to start if /config/users_database.yml is missing
+  # or empty, even when default_policy never consults it (e.g.
+  # devBypass). Seed a minimal-but-valid entry here; mounted into the
+  # pod via subPath alongside configuration.yml. The password hash
+  # below is the long-published Authelia demo hash for the password
+  # `authelia` — fine for smoke-tests, worthless in prod. Override
+  # `authelia.usersDatabase` in your values to plug real users in.
+  users_database.yml: |
+    {{- if .Values.authelia.usersDatabase }}
+    {{- .Values.authelia.usersDatabase | nindent 4 }}
+    {{- else }}
+    users:
+      admin:
+        disabled: false
+        displayname: "Siphon Admin"
+        # Demo hash for the password `authelia` — replace for prod.
+        password: "$argon2id$v=19$m=65536,t=3,p=4$BpLnfgDsc2WD8F2q$o/vzA4myCqZZ36bUGsDY//8mKUYNZZaR0t4MFFSs+iM"
+        email: admin@siphon.local
+        groups:
+          - admins
+          - operators
     {{- end }}
 {{- end }}

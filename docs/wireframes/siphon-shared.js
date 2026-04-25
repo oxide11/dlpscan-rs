@@ -264,4 +264,80 @@
       label,
     );
   };
+
+  // ─── FixtureBadge ────────────────────────────────────────────────
+  // Inline marker for surfaces (or sub-sections) that aren't wired
+  // to real data. Both consoles use it: the admin one to flag
+  // design-only surfaces, the responder one for fixture data
+  // sections. Default `small=false` renders a chip with an explicit
+  // FIXTURE label; `small` mode shrinks it for embedded use beside
+  // tile titles.
+  window.FixtureBadge = function FixtureBadge({ small, reason }) {
+    return React.createElement(
+      'span',
+      {
+        className: 'chip chip--warn',
+        title: reason || 'No backing data in siphon-api yet — this surface is a design fixture.',
+        style: {
+          fontSize: small ? 9 : 10,
+          letterSpacing: '0.14em',
+          fontWeight: 700,
+        },
+      },
+      'FIXTURE' + (reason ? ' · ' + reason : ''),
+    );
+  };
+
+  // ─── Shared poll tick ────────────────────────────────────────────
+  // The dashboards used to mount one setInterval per data hook —
+  // five separate timers on the C2 home alone, each kicking off its
+  // own pod fan-out. With a 5s cadence and ~4 pods that's 20 fetches
+  // staggered every 5s, with overlap any time the network breathed
+  // > 1s. useSharedPoll consolidates those into a single timer per
+  // (intervalMs) bucket. Every consumer gets the same tick value;
+  // hooks that depend on it via useEffect deps re-run together, in
+  // lockstep, on a single setInterval.
+  //
+  // Returns the current tick (monotonically increasing). Pass it
+  // into a `useEffect` deps array, or to refetch hooks that accept
+  // a deps argument:
+  //
+  //   const tick = window.useSharedPoll(5000);
+  //   const mx   = window.useSiphonApi('/v1/metrics', [tick]);
+  //   const fx   = window.useSiphonApi('/v1/findings?limit=5', [tick]);
+  //
+  // Both fetches re-run on the same edge — no setInterval drift,
+  // no fan-out duplication.
+  const __sharedPollBuckets = new Map(); // intervalMs -> { tick, listeners:Set, timer }
+  window.useSharedPoll = function (intervalMs) {
+    const ms = intervalMs | 0;
+    const [tick, setTick] = React.useState(0);
+    React.useEffect(() => {
+      let bucket = __sharedPollBuckets.get(ms);
+      if (!bucket) {
+        bucket = { tick: 0, listeners: new Set(), timer: null };
+        bucket.timer = setInterval(() => {
+          bucket.tick += 1;
+          // Snapshot to avoid mutation-during-iteration if a
+          // listener unsubscribes synchronously.
+          const fns = Array.from(bucket.listeners);
+          for (const fn of fns) { try { fn(bucket.tick); } catch {} }
+        }, ms);
+        __sharedPollBuckets.set(ms, bucket);
+      }
+      const fn = (t) => setTick(t);
+      bucket.listeners.add(fn);
+      // Sync the new subscriber to the current bucket tick so it
+      // doesn't sit at 0 until the next interval fires.
+      setTick(bucket.tick);
+      return () => {
+        bucket.listeners.delete(fn);
+        if (bucket.listeners.size === 0) {
+          clearInterval(bucket.timer);
+          __sharedPollBuckets.delete(ms);
+        }
+      };
+    }, [ms]);
+    return tick;
+  };
 })();
