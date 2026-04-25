@@ -4449,9 +4449,42 @@ const CONTEXT_KEYWORDS_MAP = {
 // Body contains every finding.text from `sameReq` embedded in a
 // realistic surrounding so the analyst can read the matched value
 // in context.
+// Decide which document format a finding represents. Drives the
+// preview chrome — a PDF finding gets the paginated reader, an
+// image finding gets the image viewer, etc. Today the format is
+// inferred from filename extension on file-channel findings;
+// channel-driven kinds (email/slack/print/api) take precedence
+// because they describe transport, not file format.
+//
+// Returns one of:
+//   'email' | 'slack' | 'print' | 'api'   (transport-driven)
+//   'image' | 'pdf' | 'docx' | 'xlsx' | 'csv' | 'text'  (file-driven)
+function detectDocFormat(finding) {
+  const md = finding.metadata || {};
+  const channel = (md.channel || '').toLowerCase();
+  if (channel.includes('email')) return 'email';
+  if (channel.includes('slack')) return 'slack';
+  if (channel.includes('print')) return 'print';
+  if (channel.includes('api'))   return 'api';
+
+  // File channel → look at the filename extension. The fallback
+  // is plain text; siphon-fs returns extracted text for
+  // unrecognised binary formats so 'text' is a sensible default.
+  const filename = (md.filename || md.original_filename || md.source_path
+                  || (finding.source_pod === 'siphon-fs' ? finding.source_ip : '') || '').toLowerCase();
+  const ext = filename.includes('.') ? filename.slice(filename.lastIndexOf('.') + 1) : '';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'tiff', 'tif'].includes(ext)) return 'image';
+  if (ext === 'pdf')                                    return 'pdf';
+  if (['doc', 'docx', 'rtf'].includes(ext))             return 'docx';
+  if (['xls', 'xlsx', 'xlsm', 'ods'].includes(ext))     return 'xlsx';
+  if (ext === 'csv' || ext === 'tsv')                   return 'csv';
+  return 'text';
+}
+
 function generatePreviewText(finding, sameReq) {
   const md = finding.metadata || {};
   const channel = (md.channel || '').toLowerCase();
+  const format = detectDocFormat(finding);
   const all = [finding, ...(sameReq || [])];
   const matched = all.map(f => f.text).filter(Boolean);
   const ts = finding.ts || new Date().toISOString();
@@ -4484,6 +4517,7 @@ ${outbound ? 'Best regards,\n' + capName : 'Thanks,\n' + capName}
 `;
     return {
       kind: 'email',
+      format,
       direction: outbound ? 'outbound' : 'inbound',
       headers: {
         From: sender,
@@ -4511,6 +4545,7 @@ ${firstName}: would it be easier to share via the secure channel or should i pas
 `;
     return {
       kind: 'slack',
+      format,
       headers: {
         Channel: 'direct message',
         Participant: sender,
@@ -4542,6 +4577,7 @@ in error, please destroy and notify the compliance team.
 `;
     return {
       kind: 'print',
+      format,
       headers: {
         User: who,
         Printer: 'HQ-NE-18-COLOR',
@@ -4565,6 +4601,7 @@ in error, please destroy and notify the compliance team.
     }, null, 2);
     return {
       kind: 'api',
+      format,
       headers: {
         Endpoint: 'POST /v1/exports',
         'Content-Type': 'application/json',
@@ -4596,6 +4633,7 @@ End of extracted preview.
 `;
   return {
     kind: 'file',
+    format,
     headers: {
       Filename: filename,
       'Uploaded by': who,
