@@ -143,3 +143,32 @@ here. When an item lands, delete its bullet (its history is in `git log` and
   swap the synthesised rows for parsed rows and highlight cells whose
   offsets fall inside any finding span.
   (Source: claude/ir-document-preview PR.)
+
+## deploy
+
+- **Digest-pin every Dockerfile base image.** Today the Rust builders
+  pin to `rust:1.95-bookworm`, the runtimes to `debian:bookworm-slim`,
+  the nginx runtime to `nginx:1.27-alpine`, and the Node ui-builder to
+  `node:22-alpine`. All but `debian:bookworm-slim` carry a major+minor
+  pin; none carry a digest. For supply-chain hardening, pin each FROM
+  by `image:tag@sha256:<digest>` so the build is reproducible against
+  exactly one upstream snapshot. Recipe per image:
+    1. `docker pull <image>:<tag>`
+    2. `docker inspect --format='{{index .RepoDigests 0}}' <image>:<tag>`
+    3. Append the resulting `@sha256:...` to the FROM line.
+  Renovate / dependabot can keep digest pins fresh once they're set
+  (the image-update flow opens PRs with the new digest). Today's
+  major+minor pins still resolve to a known build; this is a "harder
+  guarantee" upgrade rather than a fix.
+  (Source: claude/deploy-dockerfile-pinning PR.)
+
+- **Replicate the cargo dummy-build cache pattern to deploy/Dockerfile
+  + deploy/Dockerfile.fs.** The same two-pass cache layer that
+  Dockerfile.api now uses (stub workspace → real source) cuts CI build
+  time substantially on src-only edits. Dockerfile.api was the first
+  target because it pulls the heaviest dep graph (kube + k8s-openapi
+  + the `k8s-roll` image stack). Once the pattern's been validated in
+  CI, replicate verbatim into deploy/Dockerfile (root CLI image) and
+  deploy/Dockerfile.fs. The stub-builder block is the same shape; only
+  the `cargo build -p <name>` line differs per image.
+  (Source: claude/deploy-dockerfile-pinning PR.)
