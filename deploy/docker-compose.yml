@@ -151,7 +151,9 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.fs
-    image: siphon-fs:latest
+    # Pinned per the per-crate SemVer rules in CLAUDE.md. Bump
+    # in lockstep with crates/siphon-fs/Cargo.toml.
+    image: siphon-fs:1.0.0
     profiles: [auth]
     environment:
       - SIPHON_FS_BIND=0.0.0.0:8081
