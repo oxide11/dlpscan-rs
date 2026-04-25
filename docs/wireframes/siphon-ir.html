@@ -3263,6 +3263,18 @@ function FindingsQueue() {
     try { return parseInt(localStorage.getItem('ir:queueLimit') || '100', 10); }
     catch { return 100; }
   });
+  // pageSize: how many filtered rows to render at once. Distinct
+  // from `limit`, which is how many findings to FETCH per pod.
+  // pageSize is purely client-side window into the already-loaded
+  // ring and is what changes when the analyst flips through pages.
+  const [pageSize, setPageSize] = React.useState(() => {
+    try { return parseInt(localStorage.getItem('ir:queuePageSize') || '25', 10); }
+    catch { return 25; }
+  });
+  // page: zero-indexed; transient (not persisted). Filters / sort
+  // / pageSize edits all reset it back to 0 below so a narrow
+  // filter doesn't strand the analyst on "page 7 of 3".
+  const [page, setPage] = React.useState(0);
   const [expanded, setExpanded] = React.useState(null);
   const [dispo, setDispo] = React.useState(readDispo);
   const [notesDraft, setNotesDraft] = React.useState({});
@@ -3275,6 +3287,13 @@ function FindingsQueue() {
   React.useEffect(() => {
     try { localStorage.setItem('ir:queueLimit', String(limit)); } catch {}
   }, [limit]);
+  React.useEffect(() => {
+    try { localStorage.setItem('ir:queuePageSize', String(pageSize)); } catch {}
+  }, [pageSize]);
+  // Reset to page 0 whenever the visible row set could shift under
+  // the analyst — filter changes, fetch-limit bumps, page-size
+  // changes. Keeps "view page N" honest.
+  React.useEffect(() => { setPage(0); }, [filters, pageSize, limit]);
   // Re-read dispositions when demo mode flips so the row chips flip
   // between the real and seeded stores without a reload.
   React.useEffect(() => {
@@ -3321,6 +3340,23 @@ function FindingsQueue() {
       return (b.ts || '').localeCompare(a.ts || '');
     });
   }, [all, filters, dispo]);
+
+  // Pagination derivations. totalPages floors at 1 so the
+  // "page X of Y" pill stays sensible even when filtered is empty.
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  React.useEffect(() => {
+    // If a filter knocked the result set down enough that the
+    // current page index is now past the end, snap to the last
+    // page that does exist. Without this the analyst sees an
+    // empty table after narrowing the filter.
+    if (page >= totalPages) setPage(totalPages - 1);
+  }, [page, totalPages]);
+  const pageRows = React.useMemo(
+    () => filtered.slice(page * pageSize, (page + 1) * pageSize),
+    [filtered, page, pageSize],
+  );
+  const firstShown = filtered.length === 0 ? 0 : page * pageSize + 1;
+  const lastShown  = Math.min(filtered.length, (page + 1) * pageSize);
 
   // Record a disposition. Always stamps who/when + carries the
   // analyst's note (pulled from notesDraft[id]). FP dispositions also
@@ -3497,6 +3533,47 @@ function FindingsQueue() {
           </button>
         </div>
 
+        {/* pagination strip — sits between the filter row and the
+            table header so page state is visible at all times. The
+            same controls render again at the bottom of the table
+            below; both reach the same page setter. */}
+        {filtered.length > 0 && (
+          <div style={{
+            padding:'8px 14px', display:'flex', gap:10, alignItems:'center',
+            borderBottom:'1px solid var(--line-soft)',
+            fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+          }}>
+            <span style={{color:'var(--ink-bright)'}}>
+              {firstShown.toLocaleString()}–{lastShown.toLocaleString()}
+            </span>
+            <span className="muted">of {filtered.length.toLocaleString()}</span>
+            <span style={{flex:1}} />
+            <span className="muted">page {page + 1} / {totalPages}</span>
+            <button className="btn ghost" disabled={page === 0}
+                    onClick={() => setPage(0)}
+                    title="first page" style={{fontSize:11}}>‹‹</button>
+            <button className="btn ghost" disabled={page === 0}
+                    onClick={() => setPage(p => Math.max(0, p - 1))}
+                    title="previous page" style={{fontSize:11}}>‹ Prev</button>
+            <button className="btn ghost" disabled={page >= totalPages - 1}
+                    onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                    title="next page" style={{fontSize:11}}>Next ›</button>
+            <button className="btn ghost" disabled={page >= totalPages - 1}
+                    onClick={() => setPage(totalPages - 1)}
+                    title="last page" style={{fontSize:11}}>››</button>
+            <select value={pageSize}
+                    onChange={e => setPageSize(parseInt(e.target.value, 10))}
+                    style={{fontSize:11, padding:'4px 8px', background:'var(--bg-1)', color:'var(--ink)', border:'1px solid var(--line-strong)', borderRadius:'var(--radius)'}}
+                    title="rows per page">
+              <option value={10}>10 / page</option>
+              <option value={25}>25 / page</option>
+              <option value={50}>50 / page</option>
+              <option value={100}>100 / page</option>
+              <option value={200}>200 / page</option>
+            </select>
+          </div>
+        )}
+
         {/* table */}
         {findings.loading && (
           <div className="muted mono" style={{padding:20, textAlign:'center', fontSize:12}}>
@@ -3539,7 +3616,7 @@ function FindingsQueue() {
           </div>
         )}
 
-        {filtered.map(f => {
+        {pageRows.map(f => {
           const d = dispo[f.id];
           const rowTint = d && d.kind === 'fp' ? 'var(--bg-1)'
                         : d && d.kind === 'escalate' ? 'var(--amber-wash, var(--bg-2))'
@@ -3601,6 +3678,32 @@ function FindingsQueue() {
             </div>
           );
         })}
+
+        {/* bottom pagination strip — same controls as the top one
+            so the analyst doesn't scroll up to flip pages on long
+            lists. Suppressed when there's only one page. */}
+        {filtered.length > 0 && totalPages > 1 && (
+          <div style={{
+            padding:'8px 14px', display:'flex', gap:10, alignItems:'center',
+            borderTop:'1px solid var(--line-soft)',
+            fontFamily:"'JetBrains Mono', monospace", fontSize:11,
+          }}>
+            <span className="muted">page {page + 1} / {totalPages}</span>
+            <span style={{flex:1}} />
+            <button className="btn ghost" disabled={page === 0}
+                    onClick={() => setPage(0)}
+                    title="first page" style={{fontSize:11}}>‹‹</button>
+            <button className="btn ghost" disabled={page === 0}
+                    onClick={() => setPage(p => Math.max(0, p - 1))}
+                    title="previous page" style={{fontSize:11}}>‹ Prev</button>
+            <button className="btn ghost" disabled={page >= totalPages - 1}
+                    onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                    title="next page" style={{fontSize:11}}>Next ›</button>
+            <button className="btn ghost" disabled={page >= totalPages - 1}
+                    onClick={() => setPage(totalPages - 1)}
+                    title="last page" style={{fontSize:11}}>››</button>
+          </div>
+        )}
       </div>
     </div>
   );
