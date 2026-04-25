@@ -5926,109 +5926,41 @@ function FindingDetail({ id, back }) {
 
   return (
     <div>
+      {/* Header is now intentionally minimal: only the finding id
+          (fixed-width font) and the navigation/keyboard subtitle.
+          The variable-width content (category pill, classification
+          label, severity chip, sender/recipient/source/when/req)
+          used to live inside `title=` and `subtitle=` here, which
+          made the header reflow on every prev/next jump because
+          neighbouring findings have different category names,
+          classifications, and recipient strings. Moving them into
+          the dedicated FindingFacts box below keeps the page-bar
+          actions row (prev/next/back/dispose buttons) anchored in
+          place between findings. */}
       <IrPageBar
         crumbs={['Respond', 'Findings', f.id]}
-        title={<div style={{display:'flex', alignItems:'center', gap:14, flexWrap:'wrap'}}>
-          {/* Big bold finding id — the single label an analyst refers
-              to this case by throughout the review. */}
-          <span className="mono" style={{
-            fontSize: 28, lineHeight: 1,
-            color:'var(--ink-bright)', fontWeight: 700,
-            letterSpacing:'-0.02em',
-          }}>{f.id}</span>
-          {/* Data-type badge — category + sub_category rendered as a
-              single prominent pill so the type of data surfaces
-              before anything else. */}
-          <span style={{
-            fontSize: 12, padding:'5px 12px', lineHeight: 1.2,
-            fontFamily:"'Space Grotesk', sans-serif", fontWeight: 600,
-            letterSpacing:'0.02em',
-            background:'var(--amber-wash)',
-            border:'1.5px solid var(--amber)',
-            color:'var(--ink-bright)',
-            borderRadius:'var(--radius)',
+        title={<span className="mono" style={{
+          fontSize: 22, lineHeight: 1.1,
+          color:'var(--ink-bright)', fontWeight: 700,
+          letterSpacing:'-0.02em',
+        }}>{f.id}</span>}
+        subtitle={(
+          <div style={{
+            display:'flex', gap:16, flexWrap:'wrap', alignItems:'center',
+            marginTop:6, fontSize:12, fontFamily:"'JetBrains Mono', monospace",
+            color:'var(--ink-soft)',
           }}>
-            {f.category}
-            {f.sub_category && <><span style={{opacity:0.55, margin:'0 5px'}}>/</span>{f.sub_category}</>}
-          </span>
-          {/* Classification label — derived from category (PCI / PHI
-              / PII / CREDENTIAL etc.) so the regulatory lens is
-              visible at a glance. */}
-          {(() => {
-            const c = deriveClassification(f);
-            return (
-              <span style={{
-                fontSize: 10.5, padding:'5px 10px', lineHeight: 1.2,
-                fontFamily:"'Space Grotesk', sans-serif", fontWeight: 700,
-                letterSpacing:'0.12em', textTransform:'uppercase',
-                border: `1.5px solid ${c.color}`,
-                color: c.color,
-                background:'transparent',
-                borderRadius:'var(--radius)',
-              }} title="regulatory / classification label derived from the pattern category">
-                {c.label}
-              </span>
-            );
-          })()}
-          {severityChipLarge(f.severity)}
-        </div>}
-        subtitle={(() => {
-          const md = f.metadata || {};
-          const sender = md.sender || null;
-          const recipient = md.recipient || null;
-          // Amber-highlight external-domain recipients as a cheap
-          // exfil-shape signal.
-          const recipientExt = recipient && /(external|gmail|rival|personal|competitor)\.example/i.test(recipient);
-          const labelStyle = {fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:'var(--ink-soft)', fontWeight:600};
-          return (
-            <div style={{display:'flex', gap:16, flexWrap:'wrap', alignItems:'center', marginTop:6, fontSize:13, fontFamily:"'JetBrains Mono', monospace"}}>
-              {sender && (
-                <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
-                  <span style={labelStyle}>From</span>
-                  <span style={{color:'var(--ink-bright)', fontSize:13}}>{sender}</span>
-                </span>
-              )}
-              {recipient && (
-                <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
-                  <span style={labelStyle}>To</span>
-                  <span style={{
-                    color: recipientExt ? 'var(--amber)' : 'var(--ink-bright)',
-                    fontSize: 13, fontWeight: recipientExt ? 600 : 400,
-                  }} title={recipientExt ? 'external-domain recipient — possible exfil shape' : undefined}>
-                    {recipient}
-                    {recipientExt && <span style={{marginLeft:6, fontSize:9, padding:'1px 5px', background:'var(--amber-wash)', border:'1px solid var(--amber)', borderRadius:2}}>external</span>}
-                  </span>
-                </span>
-              )}
-              {!sender && !recipient && (
-                <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
-                  <span style={labelStyle}>Source</span>
-                  <span style={{color:'var(--ink-bright)', fontSize:13}}>{f.source_ip || '—'}</span>
-                </span>
-              )}
-              <span style={{color:'var(--ink-dim)'}}>·</span>
-              <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
-                <span style={labelStyle}>When</span>
-                <span style={{color:'var(--ink)', fontSize:12}}>{fmtTs(f.ts)}</span>
-              </span>
-              <span style={{color:'var(--ink-dim)'}}>·</span>
-              <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
-                <span style={labelStyle}>Req</span>
-                <span style={{color:'var(--ink-soft)', fontSize:12}}>{(f.request_id || '').split('-')[0] || '—'}</span>
-              </span>
-              {idx >= 0 && (<>
-                <span style={{color:'var(--ink-dim)'}}>·</span>
-                <span style={{color:'var(--ink-soft)', fontSize:12}}>{idx + 1} of {all.length}</span>
-              </>)}
-              <span style={{marginLeft:'auto', color:'var(--ink-dim)', fontSize:10.5}}>
-                <span className="mono" style={{color:'var(--ink-soft)'}}>j</span><span>/</span><span className="mono" style={{color:'var(--ink-soft)'}}>k</span>
-                <span> jump · </span>
-                <span className="mono" style={{color:'var(--ink-soft)'}}>esc</span>
-                <span> close</span>
-              </span>
-            </div>
-          );
-        })()}
+            {idx >= 0 && (
+              <span>{idx + 1} of {all.length}</span>
+            )}
+            <span style={{marginLeft:'auto'}}>
+              <span className="mono">j</span>/<span className="mono">k</span>
+              <span> jump · </span>
+              <span className="mono">esc</span>
+              <span> close</span>
+            </span>
+          </div>
+        )}
         actions={<>
           <window.LivePill source={findings.source} onClick={findings.refetch} />
           <div style={{display:'flex', gap:2, border:'1px solid var(--line-strong)', borderRadius:'var(--radius)', overflow:'hidden'}}>
@@ -6064,6 +5996,97 @@ function FindingDetail({ id, back }) {
           </button>
         </>}
       />
+
+      {/* Finding facts — the chip-row box that holds every
+          variable-width detection attribute (category pill,
+          classification, severity, sender/recipient/source,
+          when, request id). Pulled out of the page header so
+          neighbouring findings can have wildly different chip
+          shapes without shifting the prev/next buttons around.
+          The box itself reflows internally; the page header
+          stays a stable size between findings. */}
+      <div className="box" style={{margin:'var(--gap) var(--gap) 0 var(--gap)', padding:'12px 14px'}}>
+        <div style={{display:'flex', flexWrap:'wrap', alignItems:'center', gap:10, marginBottom:8}}>
+          {/* Category + sub_category pill — the data type. */}
+          <span style={{
+            fontSize: 12, padding:'5px 12px', lineHeight: 1.2,
+            fontFamily:"'Space Grotesk', sans-serif", fontWeight: 600,
+            letterSpacing:'0.02em',
+            background:'var(--amber-wash)',
+            border:'1.5px solid var(--amber)',
+            color:'var(--ink-bright)',
+            borderRadius:'var(--radius)',
+          }}>
+            {f.category}
+            {f.sub_category && <><span style={{opacity:0.55, margin:'0 5px'}}>/</span>{f.sub_category}</>}
+          </span>
+          {/* Classification (PCI / PHI / PII / CREDENTIAL etc.) */}
+          {(() => {
+            const c = deriveClassification(f);
+            return (
+              <span style={{
+                fontSize: 10.5, padding:'5px 10px', lineHeight: 1.2,
+                fontFamily:"'Space Grotesk', sans-serif", fontWeight: 700,
+                letterSpacing:'0.12em', textTransform:'uppercase',
+                border: `1.5px solid ${c.color}`,
+                color: c.color,
+                background:'transparent',
+                borderRadius:'var(--radius)',
+              }} title="regulatory / classification label derived from the pattern category">
+                {c.label}
+              </span>
+            );
+          })()}
+          {severityChipLarge(f.severity)}
+        </div>
+        {/* Sender / recipient / when / request id — the "where
+            and when did it happen" facts. Same layout as the
+            previous subtitle row but inside the chip-row box, so
+            its width changes don't bleed into the page header. */}
+        {(() => {
+          const md = f.metadata || {};
+          const sender = md.sender || null;
+          const recipient = md.recipient || null;
+          const recipientExt = recipient && /(external|gmail|rival|personal|competitor)\.example/i.test(recipient);
+          const labelStyle = {fontSize:10, textTransform:'uppercase', letterSpacing:'0.1em', color:'var(--ink-soft)', fontWeight:600};
+          return (
+            <div style={{display:'flex', gap:16, flexWrap:'wrap', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+              {sender && (
+                <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                  <span style={labelStyle}>From</span>
+                  <span style={{color:'var(--ink-bright)'}}>{sender}</span>
+                </span>
+              )}
+              {recipient && (
+                <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                  <span style={labelStyle}>To</span>
+                  <span style={{
+                    color: recipientExt ? 'var(--amber)' : 'var(--ink-bright)',
+                    fontWeight: recipientExt ? 600 : 400,
+                  }} title={recipientExt ? 'external-domain recipient — possible exfil shape' : undefined}>
+                    {recipient}
+                    {recipientExt && <span style={{marginLeft:6, fontSize:9, padding:'1px 5px', background:'var(--amber-wash)', border:'1px solid var(--amber)', borderRadius:2}}>external</span>}
+                  </span>
+                </span>
+              )}
+              {!sender && !recipient && (
+                <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                  <span style={labelStyle}>Source</span>
+                  <span style={{color:'var(--ink-bright)'}}>{f.source_ip || '—'}</span>
+                </span>
+              )}
+              <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                <span style={labelStyle}>When</span>
+                <span style={{color:'var(--ink)'}}>{fmtTs(f.ts)}</span>
+              </span>
+              <span style={{display:'inline-flex', alignItems:'center', gap:6}}>
+                <span style={labelStyle}>Req</span>
+                <span style={{color:'var(--ink-soft)'}}>{(f.request_id || '').split('-')[0] || '—'}</span>
+              </span>
+            </div>
+          );
+        })()}
+      </div>
 
       {/* Disposition banner — reflects whatever's already on this
           finding, including history across reloads. */}
