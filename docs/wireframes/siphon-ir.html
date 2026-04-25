@@ -5293,6 +5293,180 @@ function DocumentPreview({ finding, sameReq }) {
               );
             }
 
+            case 'xlsx':
+            case 'csv': {
+              // Spreadsheet chrome — renders a real <table>
+              // with one row per finding (the primary +
+              // sameReq), so the analyst sees the data the
+              // way they'd see it in Excel / Numbers / a CSV
+              // viewer. Cells in the "Value" column are
+              // anchored to f.text and styled with the regex-
+              // highlight tokens, so the matches are visually
+              // identical to how they render in the text body.
+              const xlsx = preview.format === 'xlsx';
+              const headerCell = {
+                background:'#dfe3e6',
+                color:'#3b3b3b',
+                fontWeight:600,
+                padding:'4px 8px',
+                fontSize:11,
+                border:'1px solid #b0b8be',
+                fontFamily:"'Segoe UI', 'Helvetica Neue', sans-serif",
+              };
+              const cornerCell = {
+                ...headerCell,
+                background:'#cfd5d9',
+                width:34, textAlign:'center',
+              };
+              const rowNumCell = {
+                ...headerCell,
+                background:'#eef1f3',
+                textAlign:'center',
+                fontWeight:500,
+                color:'#5b6166',
+                width:34,
+              };
+              const dataCell = {
+                background:'#fff',
+                color:'#1c1c1c',
+                padding:'4px 8px',
+                fontSize:12,
+                border:'1px solid #d6dadd',
+                fontFamily:"'JetBrains Mono', monospace",
+                whiteSpace:'nowrap',
+                overflow:'hidden',
+                textOverflow:'ellipsis',
+                maxWidth:240,
+              };
+              return (
+                <div ref={preRef} style={{
+                  height, minHeight:200, overflow:'auto',
+                  background: xlsx ? '#f3f6f8' : 'var(--bg-1)',
+                  padding:'12px 0',
+                }}>
+                  {/* Top strip — Excel-green for xlsx, plain
+                      mono band for csv. Filename on the left,
+                      column count + row count on the right. */}
+                  <div style={{
+                    maxWidth:920, margin:'0 auto 10px auto',
+                    padding:'6px 14px',
+                    background: xlsx ? '#107c41' : '#1c1c1e',
+                    color:'#fff',
+                    fontFamily: xlsx
+                      ? "'Segoe UI', 'Helvetica Neue', sans-serif"
+                      : "'JetBrains Mono', monospace",
+                    fontSize:11,
+                    borderRadius:3,
+                    display:'flex', alignItems:'center', gap:10,
+                  }}>
+                    <span style={{
+                      display:'inline-block', width:18, height:18,
+                      background: xlsx ? '#0b6131' : '#444',
+                      borderRadius:2, textAlign:'center',
+                      lineHeight:'18px', fontSize:10, fontWeight:700,
+                    }}>{xlsx ? 'X' : ','}</span>
+                    <span>{docFilename}</span>
+                    <span style={{flex:1}} />
+                    <span style={{opacity:0.7}}>
+                      {allFindings.length} {allFindings.length === 1 ? 'row' : 'rows'} · 5 cols
+                    </span>
+                  </div>
+                  <div style={{
+                    maxWidth:920, margin:'0 auto',
+                    overflow:'auto',
+                    border:'1px solid #b0b8be',
+                    background:'#fff',
+                  }}>
+                    <table style={{
+                      borderCollapse:'collapse',
+                      width:'100%',
+                    }}>
+                      <thead>
+                        {/* Column letters (A, B, C, …) */}
+                        <tr>
+                          <th style={cornerCell}></th>
+                          {['A', 'B', 'C', 'D', 'E'].map(L => (
+                            <th key={L} style={headerCell}>{L}</th>
+                          ))}
+                        </tr>
+                        {/* User-facing column headers */}
+                        <tr>
+                          <th style={rowNumCell}>1</th>
+                          <th style={headerCell}>Date</th>
+                          <th style={headerCell}>Customer</th>
+                          <th style={headerCell}>Value</th>
+                          <th style={headerCell}>Category</th>
+                          <th style={headerCell}>Conf</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {allFindings.map((rowF, i) => {
+                          const md2 = rowF.metadata || {};
+                          const customer = md2.user || md2.sender || md2.recipient
+                                        || `record-${i + 1}`;
+                          const date = (rowF.ts || '').slice(0, 10) || '—';
+                          return (
+                            <tr key={rowF.id || i}>
+                              <th style={rowNumCell}>{i + 2}</th>
+                              <td style={dataCell}>{date}</td>
+                              <td style={dataCell}>{customer}</td>
+                              {/* Value cell — the matched
+                                  string. Highlighted via the
+                                  same regex token the text body
+                                  uses, so the visual semantic
+                                  is identical. */}
+                              <td style={{
+                                ...dataCell,
+                                background: showHl ? REGEX_HL.bg : '#fff',
+                                borderBottom: showHl
+                                  ? `2.5px solid ${REGEX_HL.border}`
+                                  : dataCell.border,
+                                color:'#000', fontWeight:500,
+                              }} title={rowF.text}>{rowF.text || '—'}</td>
+                              <td style={{...dataCell, color:'#5b6166'}}>
+                                {rowF.category}
+                              </td>
+                              <td style={{...dataCell, textAlign:'right'}}>
+                                {rowF.confidence != null ? rowF.confidence.toFixed(2) : '—'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {/* Sheet tabs — xlsx only. CSV files don't
+                      have sheets so we drop this strip for the
+                      .csv case. */}
+                  {xlsx && (
+                    <div style={{
+                      maxWidth:920, margin:'8px auto 0 auto',
+                      display:'flex', gap:0,
+                      fontFamily:"'Segoe UI', 'Helvetica Neue', sans-serif",
+                      fontSize:11,
+                    }}>
+                      <span style={{
+                        padding:'4px 14px',
+                        background:'#fff',
+                        border:'1px solid #b0b8be',
+                        borderBottom:'none',
+                        borderTopLeftRadius:3, borderTopRightRadius:3,
+                        color:'#107c41', fontWeight:600,
+                      }}>Sheet1</span>
+                      <span style={{
+                        padding:'4px 14px',
+                        background:'#e2e6e9',
+                        border:'1px solid #b0b8be',
+                        borderBottom:'none',
+                        borderTopLeftRadius:3, borderTopRightRadius:3,
+                        color:'#5b6166',
+                      }}>Sheet2</span>
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
             case 'docx': {
               // Word doc chrome — lighter reader background
               // (Word's default page-canvas grey), filename in
