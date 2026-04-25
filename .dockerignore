@@ -1,0 +1,60 @@
+# Files NOT to send into the Docker build context. Without this,
+# every `docker build` ships the entire repo (including target/,
+# node_modules, .git, evadex_outputs, etc.) over to the daemon —
+# wasting bandwidth, time, and cache invalidation budget for no
+# build benefit.
+#
+# Keep this file the same across every Dockerfile in deploy/ —
+# they all use the repo root as build context. If a particular
+# Dockerfile genuinely needs one of these directories, list it
+# explicitly via `COPY` after a `!path` un-ignore (none today).
+
+# --- Rust build artifacts -------------------------------------------------
+# `target/` is the elephant. The local cargo cache rebuilds inside the
+# Docker image, so shipping host-side build artifacts is pure waste.
+target/
+**/target/
+
+# --- UI build artifacts ---------------------------------------------------
+# The Next.js SPA is rebuilt inside deploy/nginx/Dockerfile via pnpm.
+# Sending the host's node_modules + .next blows the build context up
+# by hundreds of megabytes for files the build will replace anyway.
+ui/node_modules/
+ui/.next/
+ui/out/
+ui/.turbo/
+
+# --- Version control ------------------------------------------------------
+.git/
+.gitignore
+.github/
+
+# --- IDE / editor / OS scratch -------------------------------------------
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Local environment / secrets -----------------------------------------
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# --- Tooling output / coverage / fixtures --------------------------------
+# evadex_outputs/ holds adversarial-test artifacts that aren't part of
+# any image build. coverage/ is local-only.
+evadex_outputs/
+coverage/
+*.profraw
+*.profdata
+
+# --- Documentation that doesn't ship in containers -----------------------
+# Dockerfile.api intentionally COPYs README.md + docs/ for siphon-api's
+# include_str! at compile time. Don't list those here.
+BENCHMARKS_RAW.md
+*.tmp

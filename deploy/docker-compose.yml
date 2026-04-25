@@ -24,8 +24,12 @@ version: '3.8'
 services:
   dlpscan:
     build:
-      context: .
-      dockerfile: Dockerfile
+      # Compose lives in deploy/, but the Dockerfile copies
+      # Cargo.toml + crates/ + src/ from the repo root, so the
+      # build context has to be the parent dir. Matches the same
+      # pattern siphon-api / siphon-fs / siphon-nginx use below.
+      context: ..
+      dockerfile: deploy/Dockerfile
     image: dlpscan:latest
     container_name: dlpscan
     volumes:
@@ -51,8 +55,8 @@ services:
   # Scan a single file
   dlpscan-file:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: deploy/Dockerfile
     image: dlpscan:latest
     profiles:
       - tools
@@ -63,8 +67,8 @@ services:
   # Run with InputGuard in redact mode
   dlpscan-guard:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: deploy/Dockerfile
     image: dlpscan:latest
     profiles:
       - tools
