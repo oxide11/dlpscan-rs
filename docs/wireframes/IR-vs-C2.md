@@ -75,7 +75,7 @@ system config that no longer lives there.
 
 | ID | Move | Status |
 |---|---|---|
-| M1 | `ir-users` → C2 (heavy code move) | Intent shipped (banners + disabled affordances). Code move queued for its own session. |
+| M1 | `ir-users` → C2 (heavy code move) | Intent shipped (banners + disabled affordances). Code move tracked in `BACKLOG.md` under siphon-ir. |
 | M2 | `ir-auth` → C2 | ✅ Shipped. C2's new `'auth'` surface is a stub today; full auth status board ports across in a follow-up. |
 | M3 | `ir-deployment` → C2 (Pods) | ✅ Shipped. IR redirects via `MovedToC2` helper. |
 | M4 | `ir-engineering` → C2 (Engineering) | ✅ Shipped. IR redirects via `MovedToC2` helper. |
@@ -88,20 +88,31 @@ system config that no longer lives there.
 |---|---|---|
 | Q1 | Investigations: canonical case-file UI in IR; C2 keeps a summary view that deep-links per-case to IR | ✅ C2's Investigations surface reframed as "operate lens" with deep-link banner, click-row → IR jump, and "+ New (in IR)" affordance |
 | Q2 | Integrations collapse to C2-only; IR uses Handoffs to surface XSOAR/Splunk | ✅ Shipped together with M3/M4 |
+| Q4 | "Flag as FP" action on IR findings posting to the C2 FP Queue store | ✅ Shipped. Turned out to be a key + shape mismatch, not a missing action — IR was writing to `c2:fpQueue` (camelCase) with a flat `{finding_id, …}` entry, C2 reads `c2:fp-queue` (kebab-case) with `{finding, flaggedAt, status, note}`. Renamed the IR-side key + shape; one-time migration in `readFpQueue` copies legacy entries to the new key. (Source: claude/q4-flag-as-fp PR.) |
 | Q5 | Alerts: rename IR's surface to `triggers` (escalation rules) | ✅ Shipped. C2 keeps operational `alerts`. |
 | Q6 | Docs in IR nav: popover-only is sufficient | ✅ Decision recorded — no code change. Adding a Docs entry to IR's nav would pull focus from the response workflow; the contextual `HelpIcon` popovers already reach the same content. |
 
 ## Still open
 
-| ID | Question | Status |
-|---|---|---|
-| Q3 | My Profile shared store across consoles | M5 stub ships first; the shared store requires hoisting per-user helpers to `siphon-shared.js`, which is M1 territory. Resolves once M1 lands. |
-| Q4 | "Flag as FP" action on IR findings posting to the C2 FP Queue store | Recommended **(a)**: add the action. Scope: ~150 LoC — IR finding-detail action + a shared `c2:fpqueue` localStorage write. Standalone PR; doesn't block anything else. |
+The remaining work has been moved to `BACKLOG.md` under `siphon-ir`
+so this doc can stop being a moving target. The two entries there
+carry the working-memory context the planning doc captured (function
+names to hoist, LoC estimates, localStorage migrations, event
+renames). Pull from BACKLOG when you have a session to spend on it.
+
+| ID | Tracked in `BACKLOG.md` as |
+|---|---|
+| M1 | "Heavy user-management code move" |
+| Q3 | "My Profile shared backing store" — resolves naturally as part of M1 |
 
 ## After this PR
 
-The remaining work is M1 (heavy user-management code move) plus
-the open questions above. M1 is the last big lift; once it lands,
-IR's Settings workspace shrinks to one entry (`My Profile`) and
-the per-user / per-role helpers live in `siphon-shared.js` where
+Everything in this doc has either shipped or been moved to
+`BACKLOG.md`. M1 is the last big lift; once it lands, IR's
+Settings workspace shrinks to one entry (`My Profile`) and the
+per-user / per-role helpers live in `siphon-shared.js` where
 both consoles inherit them.
+
+This file is now historical reference — it captures *why* the
+split was made and how each surface ended up where it is. The
+doing happens in BACKLOG.md.
