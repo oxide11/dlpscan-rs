@@ -340,4 +340,129 @@
     }, [ms]);
     return tick;
   };
+
+  // ─── RBAC + per-user settings · M1 commit A ─────────────────────
+  // Data constants both consoles need. Functions / hooks /
+  // components that use these still live in siphon-ir.html — they
+  // graduate up here in subsequent M1 commits. The names use a
+  // `SIPHON_` prefix; siphon-ir.html declares `IR_*` aliases that
+  // point at these globals so existing IR code keeps compiling
+  // until the whole graph has moved.
+  //
+  // localStorage keys keep the legacy `ir:` prefix for now (no
+  // migration this commit). The naming flip to `siphon:users` /
+  // `siphon:roles` ships with the helper-graph commit so the
+  // rename + the readers move together.
+
+  // localStorage slot for the user roster + the current-user
+  // pointer. Both keys stay local to this browser; server-backed
+  // RBAC is a later-phase task.
+  window.SIPHON_USERS_KEY        = 'ir:users';
+  window.SIPHON_CURRENT_USER_KEY = 'ir:currentUserId';
+  window.SIPHON_ROLES_KEY        = 'ir:roles';
+
+  // Role seed catalogue. system:true marks these as non-deletable —
+  // custom roles created through the role editor land alongside
+  // them in the live `ir:roles` store and carry system:false.
+  // Every runtime read goes through getRoles() so components pick
+  // up admin-authored changes immediately.
+  window.SIPHON_SYSTEM_ROLES = {
+    admin: {
+      label: 'Administrator',
+      glyph: '★',
+      color: 'var(--red)',
+      description: 'Full access · user management · integrations · everything responders and engineers see.',
+      system: true,
+      permissions: [
+        'users.view', 'users.create', 'users.invite', 'users.update',
+        'users.disable', 'users.delete',
+        'roles.manage',
+        'findings.view', 'findings.dispose', 'findings.escalate',
+        'playbooks.view', 'playbooks.edit',
+        'integrations.view', 'integrations.edit',
+        'engineering.view', 'crypto.use',
+        'dashboard.view',
+      ],
+    },
+    analyst: {
+      label: 'Incident Responder',
+      glyph: '◈',
+      color: 'var(--accent)',
+      description: 'Primary DLP triage role · review + dispose findings · escalate to XSOAR · use the crypto workbench.',
+      system: true,
+      permissions: [
+        'findings.view', 'findings.dispose', 'findings.escalate',
+        'playbooks.view',
+        'crypto.use',
+        'dashboard.view',
+      ],
+    },
+    viewer: {
+      label: 'Viewer',
+      glyph: '◯',
+      color: 'var(--ink-soft)',
+      description: 'Read-only access · stakeholder dashboards + audit reviews · cannot triage or escalate.',
+      system: true,
+      permissions: [
+        'findings.view',
+        'playbooks.view',
+        'dashboard.view',
+      ],
+    },
+    engineer: {
+      label: 'Detection Engineer',
+      glyph: '⌁',
+      color: 'var(--amber)',
+      description: 'Pattern authors · FP queue review · crosses into siphon-c2 for tuning.',
+      system: true,
+      permissions: [
+        'findings.view', 'findings.fp',
+        'playbooks.view', 'playbooks.edit',
+        'integrations.view',
+        'engineering.view', 'crypto.use',
+        'dashboard.view',
+      ],
+    },
+  };
+
+  // Timezone catalogue — short list covering the regions analysts
+  // commonly work from. Enough for the profile picker; users can
+  // pick their browser-detected default too.
+  window.SIPHON_TIMEZONES = [
+    { id: 'browser',           label: 'Browser default',     offset: null },
+    { id: 'UTC',               label: 'UTC',                 offset: 0 },
+    { id: 'America/New_York',  label: 'New York · EST/EDT',  offset: -5 },
+    { id: 'America/Chicago',   label: 'Chicago · CST/CDT',   offset: -6 },
+    { id: 'America/Denver',    label: 'Denver · MST/MDT',    offset: -7 },
+    { id: 'America/Los_Angeles', label: 'Los Angeles · PST/PDT', offset: -8 },
+    { id: 'America/Sao_Paulo', label: 'São Paulo · BRT',     offset: -3 },
+    { id: 'Europe/London',     label: 'London · GMT/BST',    offset: 0 },
+    { id: 'Europe/Berlin',     label: 'Berlin · CET/CEST',   offset: 1 },
+    { id: 'Europe/Paris',      label: 'Paris · CET/CEST',    offset: 1 },
+    { id: 'Asia/Dubai',        label: 'Dubai · GST',         offset: 4 },
+    { id: 'Asia/Kolkata',      label: 'Kolkata · IST',       offset: 5.5 },
+    { id: 'Asia/Singapore',    label: 'Singapore · SGT',     offset: 8 },
+    { id: 'Asia/Tokyo',        label: 'Tokyo · JST',         offset: 9 },
+    { id: 'Australia/Sydney',  label: 'Sydney · AEST/AEDT',  offset: 10 },
+  ];
+
+  // Password hashing parameters. PBKDF2 over WebCrypto runs
+  // entirely in the browser for the wireframe; production wires
+  // this through siphon-api's auth backend.
+  window.SIPHON_PBKDF2_ITERS = 100000;
+
+  // Default password seeded onto demo users at first boot. Forces
+  // a change on first sign-in so demo accounts don't leak.
+  window.SIPHON_SEED_DEFAULT_PASSWORD = 'ChangeMe!2026';
+
+  // Picker presets for the role editor: colour swatches + glyph
+  // candidates the UI exposes when an admin authors a custom role.
+  window.SIPHON_ROLE_COLOR_PRESETS = [
+    { id: 'accent', label: 'Accent (green)', value: 'var(--accent)' },
+    { id: 'red',    label: 'Red',            value: 'var(--red)' },
+    { id: 'amber',  label: 'Amber',          value: 'var(--amber)' },
+    { id: 'cyan',   label: 'Cyan',           value: 'var(--cyan)' },
+    { id: 'ink',    label: 'Ink',            value: 'var(--ink-soft)' },
+  ];
+  window.SIPHON_ROLE_GLYPH_PRESETS = ['◆', '◈', '◇', '◉', '◎', '◍', '▲', '△', '▼', '▽', '◖', '◗', '✦', '✧', '✪', '☰', '⚑', '⚐'];
 })();
