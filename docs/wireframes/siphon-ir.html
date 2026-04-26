@@ -2871,6 +2871,304 @@ if (_RO) {
     }, []);
     return window.siphonReadUsers();
   };
+  // ─── RBAC + per-user helpers · M1 commit B-2 ────────────────────
+  // Computed helpers (canDo, irRoleMeta, …), hooks (useRolesTick,
+  // useCan, useUserTzTick), the role + user mutators, the
+  // timezone formatter, and the password / invite-token utilities.
+  // siphon-ir.html keeps thin forwarding aliases so existing call
+  // sites compile unchanged.
+  //
+  // localStorage key strings (`ir:users`, `ir:roles`,
+  // `ir:currentUserId`) and custom event names (`ir:rolesChanged`,
+  // `ir:usersChanged`, `ir:currentUserChanged`) keep their `ir:`
+  // prefix in this commit. The rename to `siphon:*` ships with
+  // M1 commit B-3 so storage + readers + dispatchers + listeners
+  // all flip in lockstep.
+
+  // canDo(user | role, action) — single entry point surfaces use
+  // to gate UI. Future move to server-backed decisions only needs
+  // to swap this body. Accepts a user record (reads .role plus
+  // any per-user .extra_permissions), a role id string, or null.
+  // Permission strings are verb.resource ('findings.dispose',
+  // 'users.invite'). Unknown actions return false.
+  window.siphonCanDo = function siphonCanDo(userOrRole, action) {
+    if (!userOrRole || !action) return false;
+    let role;
+    let extras = [];
+    if (typeof userOrRole === 'string') {
+      role = userOrRole;
+    } else {
+      role = userOrRole.role;
+      if (Array.isArray(userOrRole.extra_permissions)) {
+        extras = userOrRole.extra_permissions;
+      }
+    }
+    const meta = window.siphonGetRoles()[role];
+    if (!meta) return false;
+    return meta.permissions.includes(action) || extras.includes(action);
+  };
+
+  // Role-meta lookup with a sane fallback so the UI never crashes
+  // on a deleted-but-still-referenced role id (the `?` glyph + the
+  // raw id make the orphan visible).
+  window.siphonRoleMeta = function siphonRoleMeta(id) {
+    const roles = window.siphonGetRoles();
+    return roles[id] || { label: id, glyph: '?', color: 'var(--ink-soft)', description: '', permissions: [] };
+  };
+
+  // Full enumeration across the live role store plus
+  // SIPHON_SYSTEM_ROLES so newly-added actions that the seed knows
+  // about still show up in the matrix even before they're attached
+  // to a role.
+  window.siphonAllPermissions = function siphonAllPermissions() {
+    const s = new Set();
+    Object.values(window.SIPHON_SYSTEM_ROLES).forEach(r => r.permissions.forEach(p => s.add(p)));
+    Object.values(window.siphonGetRoles()).forEach(r => r.permissions.forEach(p => s.add(p)));
+    return [...s].sort();
+  };
+
+  // Filter the user roster to those carrying a given role id.
+  // Tolerant of read failures so the role-CRUD layer never throws
+  // up to the caller.
+  window.siphonUsersInRole = function siphonUsersInRole(roleId) {
+    try { return window.siphonReadUsers().filter(u => u.role === roleId); }
+    catch { return []; }
+  };
+
+  // ─── Role CRUD ──────────────────────────────────────────────────
+  // Guards baked in so the editor surface doesn't have to repeat
+  // them: kebab-safe id, no id collisions, no deleting system
+  // roles, no deleting roles still assigned to users.
+
+  window.siphonCreateRole = function siphonCreateRole({ id, label, glyph, color, description, permissions }) {
+    const roles = window.siphonReadRoles();
+    const cleanId = (id || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 32);
+    if (!cleanId)        return { ok: false, reason: 'role id required' };
+    if (roles[cleanId])  return { ok: false, reason: 'a role with that id already exists' };
+    const rec = {
+      label: (label || cleanId).trim(),
+      glyph: (glyph || '◆').slice(0, 2),
+      color: color || 'var(--accent)',
+      description: (description || '').trim(),
+      system: false,
+      permissions: Array.isArray(permissions) ? permissions.slice() : [],
+    };
+    window.siphonWriteRoles({ ...roles, [cleanId]: rec });
+    return { ok: true, id: cleanId, role: rec };
+  };
+
+  window.siphonUpdateRole = function siphonUpdateRole(id, patch) {
+    const roles = window.siphonReadRoles();
+    const existing = roles[id];
+    if (!existing) return { ok: false, reason: 'no such role' };
+    // System roles can have their label / description / permissions
+    // / colour / glyph edited (so tenants can adjust the defaults
+    // for their environment), but their id + system flag are locked.
+    const { id: _ignoredId, system: _ignoredSystem, ...safe } = (patch || {});
+    const next = { ...existing, ...safe };
+    if (Array.isArray(next.permissions)) {
+      next.permissions = [...new Set(next.permissions)];
+    }
+    window.siphonWriteRoles({ ...roles, [id]: next });
+    return { ok: true, role: next };
+  };
+
+  window.siphonDeleteRole = function siphonDeleteRole(id) {
+    const roles = window.siphonReadRoles();
+    const existing = roles[id];
+    if (!existing)       return { ok: false, reason: 'no such role' };
+    if (existing.system) return { ok: false, reason: 'system roles are permanent' };
+    const inUse = window.siphonUsersInRole(id);
+    if (inUse.length)    return { ok: false, reason: 'role still assigned to ' + inUse.length + ' user(s)' };
+    const next = { ...roles };
+    delete next[id];
+    window.siphonWriteRoles(next);
+    return { ok: true };
+  };
+
+  // ─── User CRUD ──────────────────────────────────────────────────
+
+  window.siphonCreateUser = function siphonCreateUser({ name, email, role, timezone, default_password }) {
+    const users = window.siphonReadUsers();
+    const id = 'u-' + (email || name || Math.random().toString(36)).toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-').slice(0, 40) + '-' + Math.random().toString(36).slice(2, 6);
+    const u = {
+      id,
+      name: name || email || '(unnamed)',
+      email: email || '',
+      role: role || 'analyst',
+      status: 'invited',
+      invited_at: new Date().toISOString(),
+      joined_at: null,
+      last_active: null,
+      avatar: (name || email || '?').trim().slice(0, 2).toUpperCase(),
+      invite_token: 'tok_' + Math.random().toString(36).slice(2, 10),
+      settings: { ...window.siphonDefaultUserSettings(), timezone: timezone || 'browser' },
+    };
+    // Admin-set initial password (optional). When present, the
+    // new user logs in with it directly and is forced to change
+    // on first login. When absent, they must use the invite_token
+    // (magic link) to set their first password.
+    if (default_password) {
+      u.default_password = default_password;
+      u.must_change_password = true;
+    }
+    window.siphonWriteUsers([...users, u]);
+    return u;
+  };
+
+  window.siphonUpdateUser = function siphonUpdateUser(id, patch) {
+    const users = window.siphonReadUsers();
+    const next = users.map(u => u.id === id ? { ...u, ...patch } : u);
+    window.siphonWriteUsers(next);
+    return next.find(u => u.id === id) || null;
+  };
+
+  window.siphonDeleteUser = function siphonDeleteUser(id) {
+    const users = window.siphonReadUsers();
+    window.siphonWriteUsers(users.filter(u => u.id !== id));
+  };
+
+  window.siphonUpdateCurrentUserSettings = function siphonUpdateCurrentUserSettings(patch) {
+    const cur = window.siphonGetCurrentUser();
+    if (!cur) return null;
+    return window.siphonUpdateUser(cur.id, {
+      settings: { ...cur.settings, ...patch },
+    });
+  };
+
+  // ─── Hooks ──────────────────────────────────────────────────────
+
+  // Re-render trigger for components that display roles or
+  // permission chips. Bumps local state whenever the role store
+  // mutates in this tab OR another.
+  window.siphonUseRolesTick = function siphonUseRolesTick() {
+    const [, setTick] = React.useState(0);
+    React.useEffect(() => {
+      const refresh = () => setTick(t => t + 1);
+      const onStorage = (e) => { if (e.key === window.SIPHON_ROLES_KEY) refresh(); };
+      window.addEventListener('ir:rolesChanged', refresh);
+      window.addEventListener('storage', onStorage);
+      return () => {
+        window.removeEventListener('ir:rolesChanged', refresh);
+        window.removeEventListener('storage', onStorage);
+      };
+    }, []);
+  };
+
+  // Hook variant for components that gate on the CURRENT signed-in
+  // user. Re-renders on ir:currentUserChanged / ir:usersChanged
+  // (impersonation, role edit, etc.) so surfaces don't cache a
+  // stale role.
+  window.siphonUseCan = function siphonUseCan(action) {
+    const [, setTick] = React.useState(0);
+    React.useEffect(() => {
+      const refresh = () => setTick(t => t + 1);
+      window.addEventListener('ir:currentUserChanged', refresh);
+      window.addEventListener('ir:usersChanged',       refresh);
+      return () => {
+        window.removeEventListener('ir:currentUserChanged', refresh);
+        window.removeEventListener('ir:usersChanged',       refresh);
+      };
+    }, []);
+    return window.siphonCanDo(window.siphonGetCurrentUser(), action);
+  };
+
+  // Re-render trigger for surfaces that want their timestamps to
+  // follow the user's current TZ setting without a manual refresh.
+  // Components call this once (discard the return value); the tick
+  // bumps whenever ir:currentUserChanged / ir:usersChanged fires,
+  // forcing a re-render where siphonFormatTimestamp runs again.
+  window.siphonUseUserTzTick = function siphonUseUserTzTick() {
+    const [, setTick] = React.useState(0);
+    React.useEffect(() => {
+      const refresh = () => setTick(t => t + 1);
+      window.addEventListener('ir:currentUserChanged', refresh);
+      window.addEventListener('ir:usersChanged',       refresh);
+      return () => {
+        window.removeEventListener('ir:currentUserChanged', refresh);
+        window.removeEventListener('ir:usersChanged',       refresh);
+      };
+    }, []);
+  };
+
+  // ─── Timezone formatter ─────────────────────────────────────────
+  // Reads the current user's settings.timezone and formats any ISO
+  // timestamp accordingly. Uses Intl.DateTimeFormat so DST is
+  // handled correctly; falls back to browser default on 'browser'
+  // or on invalid IANA ids.
+
+  window.siphonGetCurrentUserTz = function siphonGetCurrentUserTz() {
+    try {
+      const u = window.siphonGetCurrentUser();
+      const tz = u && u.settings && u.settings.timezone;
+      return tz && tz !== 'browser' ? tz : null;
+    } catch { return null; }
+  };
+
+  window.siphonFormatTimestamp = function siphonFormatTimestamp(iso, opts) {
+    if (!iso) return '—';
+    const d = iso instanceof Date ? iso : new Date(iso);
+    if (Number.isNaN(d.getTime())) return '—';
+    const style = (opts && opts.style) || 'datetime';
+    const tz    = (opts && 'tz' in opts) ? opts.tz : window.siphonGetCurrentUserTz();
+    try {
+      const fmtOpts = style === 'date'
+        ? { year: 'numeric', month: '2-digit', day: '2-digit' }
+        : { year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+      if (tz) fmtOpts.timeZone = tz;
+      // en-CA gives YYYY-MM-DD and 24 h time — canonical and
+      // parse-able, which is what analysts want when comparing
+      // across pods.
+      return new Intl.DateTimeFormat('en-CA', fmtOpts).format(d).replace(', ', ' ');
+    } catch {
+      return (typeof iso === 'string' ? iso : d.toISOString())
+        .replace('T', ' ').replace('Z', '').slice(0, 19);
+    }
+  };
+
+  // ─── Password + invite-token utilities ──────────────────────────
+
+  // Password-policy check. Deliberately loose for a wireframe —
+  // the actual floor for a production deployment would be enforced
+  // by the server. Returns { ok: true } or { ok: false, reason }.
+  window.siphonValidatePassword = function siphonValidatePassword(pw, confirm) {
+    if (typeof pw !== 'string' || pw.length < 10) {
+      return { ok: false, reason: 'password must be at least 10 characters' };
+    }
+    if (!/[A-Za-z]/.test(pw) || !/[0-9]/.test(pw)) {
+      return { ok: false, reason: 'password must include at least one letter and one digit' };
+    }
+    if (pw === window.SIPHON_SEED_DEFAULT_PASSWORD) {
+      return { ok: false, reason: "can't reuse the seeded default password" };
+    }
+    if (confirm != null && pw !== confirm) {
+      return { ok: false, reason: "the two passwords don't match" };
+    }
+    return { ok: true };
+  };
+
+  // Invite token parsed from the URL's hash (#invite=TOKEN). Used
+  // to gate the InviteAcceptPage before the normal LoginPage gate.
+  // Reading from hash (not query string) keeps the token out of
+  // server-access logs if this ever ships behind a real web server.
+  window.siphonReadInviteTokenFromUrl = function siphonReadInviteTokenFromUrl() {
+    try {
+      const h = (typeof location !== 'undefined' && location.hash) || '';
+      const m = h.match(/(?:^|[#&])invite=([^&]+)/);
+      return m ? decodeURIComponent(m[1]) : null;
+    } catch { return null; }
+  };
+
+  window.siphonClearInviteTokenFromUrl = function siphonClearInviteTokenFromUrl() {
+    try {
+      const h = (typeof location !== 'undefined' && location.hash) || '';
+      const cleaned = h.replace(/(?:^#?|&)invite=[^&]+/, '');
+      const next = cleaned && cleaned !== '#' ? cleaned : '';
+      history.replaceState(null, '', location.pathname + location.search + next);
+    } catch {}
+  };
 })();
 </script>
 
@@ -12078,141 +12376,22 @@ const readRoles  = window.siphonReadRoles;
 const writeRoles = window.siphonWriteRoles;
 const getRoles   = window.siphonGetRoles;
 
-// Re-render trigger for components that display roles or
-// permission chips. Bumps local state whenever the role store
-// mutates in this tab OR another.
-function useRolesTick() {
-  const [, setTick] = React.useState(0);
-  React.useEffect(() => {
-    const refresh = () => setTick(t => t + 1);
-    const onStorage = (e) => { if (e.key === IR_ROLES_KEY) refresh(); };
-    window.addEventListener('ir:rolesChanged', refresh);
-    window.addEventListener('storage', onStorage);
-    return () => {
-      window.removeEventListener('ir:rolesChanged', refresh);
-      window.removeEventListener('storage', onStorage);
-    };
-  }, []);
-}
-
-// ─── Role CRUD · R2b1 ──────────────────────────────────────────
-// Guards baked in so the editor surface (R2b2-4) doesn't have to
-// repeat them: kebab-safe id, no id collisions, no deleting
-// system roles, no deleting roles still assigned to users.
-
-function irUsersInRole(roleId) {
-  try { return readUsers().filter(u => u.role === roleId); }
-  catch { return []; }
-}
-
-function irCreateRole({ id, label, glyph, color, description, permissions }) {
-  const roles = readRoles();
-  const cleanId = (id || '').trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 32);
-  if (!cleanId)        return { ok: false, reason: 'role id required' };
-  if (roles[cleanId])  return { ok: false, reason: 'a role with that id already exists' };
-  const rec = {
-    label: (label || cleanId).trim(),
-    glyph: (glyph || '◆').slice(0, 2),
-    color: color || 'var(--accent)',
-    description: (description || '').trim(),
-    system: false,
-    permissions: Array.isArray(permissions) ? permissions.slice() : [],
-  };
-  writeRoles({ ...roles, [cleanId]: rec });
-  return { ok: true, id: cleanId, role: rec };
-}
-
-function irUpdateRole(id, patch) {
-  const roles = readRoles();
-  const existing = roles[id];
-  if (!existing) return { ok: false, reason: 'no such role' };
-  // System roles can have their label / description / permissions
-  // / colour / glyph edited (so tenants can adjust the defaults
-  // for their environment), but their id + system flag are locked.
-  const { id: _ignoredId, system: _ignoredSystem, ...safe } = (patch || {});
-  const next = { ...existing, ...safe };
-  if (Array.isArray(next.permissions)) {
-    next.permissions = [...new Set(next.permissions)];
-  }
-  writeRoles({ ...roles, [id]: next });
-  return { ok: true, role: next };
-}
-
-function irDeleteRole(id) {
-  const roles = readRoles();
-  const existing = roles[id];
-  if (!existing)       return { ok: false, reason: 'no such role' };
-  if (existing.system) return { ok: false, reason: 'system roles are permanent' };
-  const inUse = irUsersInRole(id);
-  if (inUse.length)    return { ok: false, reason: 'role still assigned to ' + inUse.length + ' user(s)' };
-  const next = { ...roles };
-  delete next[id];
-  writeRoles(next);
-  return { ok: true };
-}
-function irRoleMeta(id) {
-  const roles = getRoles();
-  return roles[id] || { label: id, glyph: '?', color: 'var(--ink-soft)', description: '', permissions: [] };
-}
-
-// ─── Permission helpers · U2 ───────────────────────────────────
-// canDo(user | role, action) is the single entry point surfaces
-// use to gate UI. All checks route through it so a future move to
-// server-backed decisions only needs to replace this function.
-//
-// Accepts either:
-//   · a user record (reads .role + any per-user .extra_permissions)
-//   · a role id string ('admin' / 'analyst' / 'viewer' / 'engineer')
-//   · null (treated as no permissions)
-//
-// Permission strings are verb.resource, e.g. 'findings.dispose',
-// 'users.invite'. Unknown actions always return false — surfaces
-// should prefer tight action names over catch-all wildcards so
-// new permissions are explicitly added to each role.
-function canDo(userOrRole, action) {
-  if (!userOrRole || !action) return false;
-  let role;
-  let extras = [];
-  if (typeof userOrRole === 'string') {
-    role = userOrRole;
-  } else {
-    role = userOrRole.role;
-    if (Array.isArray(userOrRole.extra_permissions)) {
-      extras = userOrRole.extra_permissions;
-    }
-  }
-  const meta = getRoles()[role];
-  if (!meta) return false;
-  return meta.permissions.includes(action) || extras.includes(action);
-}
-
-// Full enumeration across the live role store plus IR_SYSTEM_ROLES
-// (so newly-added actions that the system seed knows about still
-// show up in the matrix even before they're attached to a role).
-function irAllPermissions() {
-  const s = new Set();
-  Object.values(IR_SYSTEM_ROLES).forEach(r => r.permissions.forEach(p => s.add(p)));
-  Object.values(getRoles()).forEach(r => r.permissions.forEach(p => s.add(p)));
-  return [...s].sort();
-}
-
-// Hook variant for components that gate on the CURRENT signed-in
-// user. Re-renders on ir:currentUserChanged / ir:usersChanged
-// (impersonation, role edit, etc.) so surfaces don't cache a
-// stale role.
-function useCan(action) {
-  const [tick, setTick] = React.useState(0);
-  React.useEffect(() => {
-    const refresh = () => setTick(t => t + 1);
-    window.addEventListener('ir:currentUserChanged', refresh);
-    window.addEventListener('ir:usersChanged',       refresh);
-    return () => {
-      window.removeEventListener('ir:currentUserChanged', refresh);
-      window.removeEventListener('ir:usersChanged',       refresh);
-    };
-  }, []);
-  return canDo(getCurrentUser(), action);
-}
+// Hoisted to siphon-shared.js (M1B-2). The helper graph (hooks,
+// computed lookups, role + user CRUD, timezone formatter,
+// password / invite-token utilities) now lives in shared.js;
+// these aliases keep existing IR call sites compiling. Storage
+// keys + custom event names still resolve to `ir:*`; the rename
+// to `siphon:*` ships with M1B-3.
+const useRolesTick      = window.siphonUseRolesTick;
+const useCan            = window.siphonUseCan;
+const useUserTzTick     = window.siphonUseUserTzTick;
+const canDo             = window.siphonCanDo;
+const irRoleMeta        = window.siphonRoleMeta;
+const irAllPermissions  = window.siphonAllPermissions;
+const irUsersInRole     = window.siphonUsersInRole;
+const irCreateRole      = window.siphonCreateRole;
+const irUpdateRole      = window.siphonUpdateRole;
+const irDeleteRole      = window.siphonDeleteRole;
 
 // Timezone catalogue — short list covering the regions analysts
 // commonly work from. Enough for the profile picker in U6; users
@@ -12231,108 +12410,14 @@ const writeUsers      = window.siphonWriteUsers;
 const getCurrentUser  = window.siphonGetCurrentUser;
 const setCurrentUser  = window.siphonSetCurrentUser;
 
-// CRUD helpers — surface code uses these so nobody reaches into
-// the raw array. createUser / updateUser / deleteUser /
-// updateCurrentUserSettings still live here; they graduate to
-// siphon-shared.js in M1 commit B-2 alongside the canDo / useCan
-// hook layer that depends on them.
-function createUser({ name, email, role, timezone, default_password }) {
-  const users = readUsers();
-  const id = 'u-' + (email || name || Math.random().toString(36)).toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-').slice(0, 40) + '-' + Math.random().toString(36).slice(2, 6);
-  const u = {
-    id,
-    name: name || email || '(unnamed)',
-    email: email || '',
-    role: role || 'analyst',
-    status: 'invited',
-    invited_at: new Date().toISOString(),
-    joined_at: null,
-    last_active: null,
-    avatar: (name || email || '?').trim().slice(0, 2).toUpperCase(),
-    invite_token: 'tok_' + Math.random().toString(36).slice(2, 10),
-    settings: { ...defaultUserSettings(), timezone: timezone || 'browser' },
-  };
-  // Admin-set initial password (optional). When present, the
-  // new user logs in with it directly and is forced to change
-  // on first login. When absent, they must use the invite_token
-  // (magic link) to set their first password.
-  if (default_password) {
-    u.default_password = default_password;
-    u.must_change_password = true;
-  }
-  writeUsers([...users, u]);
-  return u;
-}
-function updateUser(id, patch) {
-  const users = readUsers();
-  const next = users.map(u => u.id === id ? { ...u, ...patch } : u);
-  writeUsers(next);
-  return next.find(u => u.id === id) || null;
-}
-function deleteUser(id) {
-  const users = readUsers();
-  writeUsers(users.filter(u => u.id !== id));
-}
-function updateCurrentUserSettings(patch) {
-  const cur = getCurrentUser();
-  if (!cur) return null;
-  return updateUser(cur.id, {
-    settings: { ...cur.settings, ...patch },
-  });
-}
-
-// ─── Timezone formatter · U8 ───────────────────────────────────
-// Reads the current user's settings.timezone and formats any ISO
-// timestamp accordingly. Uses Intl.DateTimeFormat so DST is
-// handled correctly; falls back to browser default on 'browser'
-// or on invalid IANA ids.
-function irGetCurrentUserTz() {
-  try {
-    const u = getCurrentUser();
-    const tz = u && u.settings && u.settings.timezone;
-    return tz && tz !== 'browser' ? tz : null;
-  } catch { return null; }
-}
-function irFormatTimestamp(iso, opts) {
-  if (!iso) return '—';
-  const d = iso instanceof Date ? iso : new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const style = (opts && opts.style) || 'datetime';
-  const tz    = (opts && 'tz' in opts) ? opts.tz : irGetCurrentUserTz();
-  try {
-    const fmtOpts = style === 'date'
-      ? { year: 'numeric', month: '2-digit', day: '2-digit' }
-      : { year: 'numeric', month: '2-digit', day: '2-digit',
-          hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
-    if (tz) fmtOpts.timeZone = tz;
-    // en-CA gives YYYY-MM-DD and 24 h time — canonical and
-    // parse-able, which is what analysts want when comparing
-    // across pods.
-    return new Intl.DateTimeFormat('en-CA', fmtOpts).format(d).replace(', ', ' ');
-  } catch {
-    return (typeof iso === 'string' ? iso : d.toISOString())
-      .replace('T', ' ').replace('Z', '').slice(0, 19);
-  }
-}
-
-// Re-render trigger for surfaces that want their timestamps to
-// follow the user's current TZ setting without a manual refresh.
-// Components call this once (discard the return value); the tick
-// bumps whenever ir:currentUserChanged / ir:usersChanged fires,
-// forcing a re-render where irFormatTimestamp runs again.
-function useUserTzTick() {
-  const [, setTick] = React.useState(0);
-  React.useEffect(() => {
-    const refresh = () => setTick(t => t + 1);
-    window.addEventListener('ir:currentUserChanged', refresh);
-    window.addEventListener('ir:usersChanged',       refresh);
-    return () => {
-      window.removeEventListener('ir:currentUserChanged', refresh);
-      window.removeEventListener('ir:usersChanged',       refresh);
-    };
-  }, []);
-}
+// User CRUD + timezone formatter hoisted to siphon-shared.js
+// (M1B-2). Aliases below keep existing IR call sites compiling.
+const createUser                 = window.siphonCreateUser;
+const updateUser                 = window.siphonUpdateUser;
+const deleteUser                 = window.siphonDeleteUser;
+const updateCurrentUserSettings  = window.siphonUpdateCurrentUserSettings;
+const irGetCurrentUserTz         = window.siphonGetCurrentUserTz;
+const irFormatTimestamp          = window.siphonFormatTimestamp;
 
 // Small chip component surfaces can drop into their box-title
 // kicker. Tells the analyst which TZ the shown timestamps sit in
@@ -12444,41 +12529,10 @@ async function irAuthenticate(emailOrId, password) {
 // Password-policy check. Deliberately loose for a wireframe — the
 // actual floor for a production deployment would be enforced by
 // the server. Returns { ok: true } or { ok: false, reason }.
-function irValidatePassword(pw, confirm) {
-  if (typeof pw !== 'string' || pw.length < 10) {
-    return { ok: false, reason: 'password must be at least 10 characters' };
-  }
-  if (!/[A-Za-z]/.test(pw) || !/[0-9]/.test(pw)) {
-    return { ok: false, reason: 'password must include at least one letter and one digit' };
-  }
-  if (pw === IR_SEED_DEFAULT_PASSWORD) {
-    return { ok: false, reason: "can't reuse the seeded default password" };
-  }
-  if (confirm != null && pw !== confirm) {
-    return { ok: false, reason: "the two passwords don't match" };
-  }
-  return { ok: true };
-}
-
-// Invite token parsed from the URL's hash (#invite=TOKEN). Used
-// to gate the InviteAcceptPage before the normal LoginPage gate.
-// Reading from hash (not query string) keeps the token out of
-// server-access logs if this ever ships behind a real web server.
-function irReadInviteTokenFromUrl() {
-  try {
-    const h = (typeof location !== 'undefined' && location.hash) || '';
-    const m = h.match(/(?:^|[#&])invite=([^&]+)/);
-    return m ? decodeURIComponent(m[1]) : null;
-  } catch { return null; }
-}
-function irClearInviteTokenFromUrl() {
-  try {
-    const h = (typeof location !== 'undefined' && location.hash) || '';
-    const cleaned = h.replace(/(?:^#?|&)invite=[^&]+/, '');
-    const next = cleaned && cleaned !== '#' ? cleaned : '';
-    history.replaceState(null, '', location.pathname + location.search + next);
-  } catch {}
-}
+// Hoisted to siphon-shared.js (M1B-2).
+const irValidatePassword         = window.siphonValidatePassword;
+const irReadInviteTokenFromUrl   = window.siphonReadInviteTokenFromUrl;
+const irClearInviteTokenFromUrl  = window.siphonClearInviteTokenFromUrl;
 
 // Accept an invite by swapping the token for a real password.
 // Returns { ok: true, user } or { ok: false, reason }. Clears
