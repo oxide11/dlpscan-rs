@@ -38,7 +38,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5
 
       # cargo-deny resolves the workspace's full lockfile, so we
       # need cargo on PATH but no Rust source build. Toolchain
