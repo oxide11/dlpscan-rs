@@ -2913,11 +2913,16 @@ function Stub({ title, description }) {
 //
 // Dispositions live in localStorage[ir:dispositions] (persists across
 // reloads) and False-Positive submissions additionally write to the
-// shared localStorage[c2:fpQueue] bucket that the admin console's FP
-// Queue surface reads.
+// shared localStorage[c2:fp-queue] bucket that the admin console's FP
+// Queue surface reads. Same key + entry shape as C2's
+// `window.c2FpQueueAdd` writes (finding / flaggedAt / status / note),
+// so an entry pushed from IR shows up cleanly in C2 without a
+// translator. Old entries written to c2:fpQueue (camelCase, pre-Q4)
+// are migrated on first read of the new key.
 const IR_DISPO_KEY = 'ir:dispositions';
 const IR_DEMO_DISPO_KEY = 'ir:demoDispositions';
-const FP_QUEUE_KEY = 'c2:fpQueue';
+const FP_QUEUE_KEY = 'c2:fp-queue';
+const FP_QUEUE_LEGACY_KEY = 'c2:fpQueue';
 const XSOAR_CFG_KEY = 'ir:xsoar';
 const IR_DEMO_MODE_KEY = 'ir:demoMode';
 const IR_DEMO_SEED_KEY = 'ir:demoSeed';
@@ -2971,8 +2976,42 @@ function writeDispo(m) {
   try { localStorage.setItem(dispoKey(), JSON.stringify(m)); } catch {}
 }
 function readFpQueue() {
-  try { return JSON.parse(localStorage.getItem(FP_QUEUE_KEY) || '[]') || []; }
-  catch { return []; }
+  // One-time migration: pre-Q4 entries lived under the camelCase
+  // `c2:fpQueue` key with a legacy `{finding_id, category, …}`
+  // shape. C2's FpQueue reads {finding, flaggedAt, status, note},
+  // so the camelCase entries were never visible. Move what's
+  // there into the new key + new shape, then drop the old key.
+  try {
+    const legacyRaw = localStorage.getItem(FP_QUEUE_LEGACY_KEY);
+    if (legacyRaw) {
+      const legacy = JSON.parse(legacyRaw) || [];
+      const migrated = legacy.map(e => ({
+        // The legacy shape always carried the full `finding`
+        // alongside the flat fields; fall back to reconstructing
+        // from the flat fields if the full object was missing.
+        finding: e.finding || {
+          id:            e.finding_id,
+          category:      e.category,
+          sub_category:  e.sub_category,
+          text:          e.text,
+          confidence:    e.confidence,
+          severity:      e.severity,
+          source_pod:    e.source_pod,
+        },
+        flaggedAt: e.submitted_at || new Date().toISOString(),
+        status:    e.status || 'open',
+        note:      e.notes || '',
+      }));
+      const existing = JSON.parse(localStorage.getItem(FP_QUEUE_KEY) || '[]') || [];
+      // Dedup by finding id when merging — prefer the existing
+      // (post-migration) entry if a duplicate id is in both.
+      const existingIds = new Set(existing.map(e => e.finding && e.finding.id));
+      const merged = existing.concat(migrated.filter(e => !existingIds.has(e.finding && e.finding.id)));
+      localStorage.setItem(FP_QUEUE_KEY, JSON.stringify(merged));
+      localStorage.removeItem(FP_QUEUE_LEGACY_KEY);
+    }
+    return JSON.parse(localStorage.getItem(FP_QUEUE_KEY) || '[]') || [];
+  } catch { return []; }
 }
 function writeFpQueue(list) {
   try { localStorage.setItem(FP_QUEUE_KEY, JSON.stringify(list)); } catch {}
@@ -3730,24 +3769,18 @@ function FindingsQueue() {
       // admin-side queue.
       const queue = readFpQueue();
       // Dedup by finding id — re-submitting overwrites the note + ts
-      // rather than stacking duplicates.
-      const existing = queue.findIndex(x => x.finding_id === finding.id);
+      // rather than stacking duplicates. Entry shape matches C2's
+      // c2FpQueueAdd (finding / flaggedAt / status / note) so what
+      // IR pushes is what C2's FpQueue surface displays.
+      const existing = queue.findIndex(x => x.finding && x.finding.id === finding.id);
       const entry = {
-        finding_id: finding.id,
-        category: finding.category,
-        sub_category: finding.sub_category,
-        text: finding.text,
-        confidence: finding.confidence,
-        severity: finding.severity,
-        source_pod: finding.source_pod,
-        submitted_at: record.at,
-        submitted_by: record.by,
-        notes: note,
-        // Full finding for future rescanning / pattern-tuning context.
         finding,
+        flaggedAt: record.at,
+        status: 'open',
+        note,
       };
       if (existing >= 0) queue[existing] = entry;
-      else queue.push(entry);
+      else queue.unshift(entry);
       writeFpQueue(queue);
     }
 
@@ -3762,7 +3795,7 @@ function FindingsQueue() {
     setDispo(next);
     writeDispo(next);
     // If this was an FP, remove from the cross-console queue too.
-    const q = readFpQueue().filter(x => x.finding_id !== finding.id);
+    const q = readFpQueue().filter(x => !x.finding || x.finding.id !== finding.id);
     writeFpQueue(q);
   };
 
@@ -6509,22 +6542,18 @@ function FindingDetail({ id, back }) {
     writeDispo(nextMap);
     if (kind === 'fp' && !isDemoMode()) {
       const queue = readFpQueue();
-      const existing = queue.findIndex(x => x.finding_id === f.id);
+      // Same entry shape as the queue-page dispose path — matches
+      // C2's c2FpQueueAdd contract. See the FP_QUEUE_KEY comment
+      // at the top of the file.
+      const existing = queue.findIndex(x => x.finding && x.finding.id === f.id);
       const entry = {
-        finding_id: f.id,
-        category: f.category,
-        sub_category: f.sub_category,
-        text: f.text,
-        confidence: f.confidence,
-        severity: f.severity,
-        source_pod: f.source_pod,
-        submitted_at: record.at,
-        submitted_by: record.by,
-        notes: note,
         finding: f,
+        flaggedAt: record.at,
+        status: 'open',
+        note,
       };
       if (existing >= 0) queue[existing] = entry;
-      else queue.push(entry);
+      else queue.unshift(entry);
       writeFpQueue(queue);
     }
     setFlash(DISPO[kind].label);
@@ -6536,7 +6565,7 @@ function FindingDetail({ id, back }) {
     delete nextMap[f.id];
     setDispo(nextMap);
     writeDispo(nextMap);
-    writeFpQueue(readFpQueue().filter(x => x.finding_id !== f.id));
+    writeFpQueue(readFpQueue().filter(x => !x.finding || x.finding.id !== f.id));
   };
 
   return (
