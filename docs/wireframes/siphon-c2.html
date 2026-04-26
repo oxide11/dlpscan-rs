@@ -12550,18 +12550,19 @@ function Settings({ tweaks, setTweak }) {
   const { PageBar } = window;
 
   const tabs = [
-    ['Deployment',  'deployment'],
-    ['General',     'general'],
-    ['Changelog',   'changelog'],
-    ['Appearance',  'appearance'],
-    ['Features',    'features'],
-    ['Users',       'users'],
-    ['Roles',       'roles'],
-    ['API keys',    'keys'],
-    ['SSO · SAML',  'sso'],
-    ['Audit log',   'audit'],
-    ['Data retention','retention'],
-    ['Integrations','integrations'],
+    ['Deployment',     'deployment'],
+    ['Service Config', 'service-config'],
+    ['General',        'general'],
+    ['Changelog',      'changelog'],
+    ['Appearance',     'appearance'],
+    ['Features',       'features'],
+    ['Users',          'users'],
+    ['Roles',          'roles'],
+    ['API keys',       'keys'],
+    ['SSO · SAML',     'sso'],
+    ['Audit log',      'audit'],
+    ['Data retention', 'retention'],
+    ['Integrations',   'integrations'],
   ];
 
   return (
@@ -12582,7 +12583,7 @@ function Settings({ tweaks, setTweak }) {
       <div className="settings-wrap">
         <aside className="settings-tabs">
           <div className="section-l">Platform</div>
-          {tabs.filter(([, k]) => k === 'deployment' || k === 'features').map(([l,k]) => (
+          {tabs.filter(([, k]) => ['deployment', 'service-config', 'features'].includes(k)).map(([l,k]) => (
             <a key={k} className={tab===k?'active':''} onClick={() => setTab(k)}>{l}</a>
           ))}
           <div className="section-l">Account</div>
@@ -12601,6 +12602,7 @@ function Settings({ tweaks, setTweak }) {
 
         <div>
           {tab === 'deployment' && <DeploymentTab />}
+          {tab === 'service-config' && <ServiceConfigTab />}
           {tab === 'general' && <GeneralTab />}
           {tab === 'changelog' && <ChangelogTab />}
           {tab === 'appearance' && <AppearanceTab tweaks={tweaks} setTweak={setTweak} />}
@@ -13857,6 +13859,240 @@ window.setC2Flag = function(key, value) {
   flags[key] = value;
   try { localStorage.setItem('c2:flags', JSON.stringify(flags)); } catch {}
 };
+
+// ─── Settings → Service Config ──────────────────────────────────
+// Surfaces every env var / runtime knob siphon-api and siphon-fs
+// support, with live values pulled from /v1/capabilities. Today's
+// cut is read-only; the writable follow-up (3b) wires a
+// /v1/config endpoint on siphon-api so an admin can flip a knob
+// from the UI and trigger a roll without editing a values.yaml.
+//
+// SERVICE_CONFIG_KNOBS is the source of truth for "what does
+// Siphon know how to be configured with". Anything you add here
+// shows up in the UI; anything you remove disappears. Group order
+// is rendering order. The `live` field is the JSONPath into
+// /v1/capabilities (or `null` if the value isn't surfaced live —
+// most env vars are read at startup and never re-published, so
+// the UI shows the documented default and a "(startup)" note).
+const SERVICE_CONFIG_KNOBS = [
+  // ── siphon-api ─────────────────────────────────────────────
+  { service: 'siphon-api', group: 'HTTP', env: 'SIPHON_BIND',
+    label: 'Bind address',
+    desc: 'IP address the API listens on. Default 127.0.0.1 makes the pod loopback-only — set to 0.0.0.0 in any deployment that needs to be reachable from outside the pod.',
+    default: '127.0.0.1', live: null, restart: true },
+  { service: 'siphon-api', group: 'HTTP', env: 'SIPHON_PORT',
+    label: 'Listen port',
+    desc: 'TCP port the API listens on. Helm + Docker compose both pin 8080.',
+    default: '8080', live: null, restart: true },
+  { service: 'siphon-api', group: 'HTTP', env: 'SIPHON_CORS_ORIGINS',
+    label: 'CORS allowed origins',
+    desc: 'Comma-separated list of origins permitted by the Access-Control-Allow-Origin header. Empty disables CORS entirely. "*" works for dev only — production should list explicit hosts.',
+    default: '(empty)', live: null, restart: true },
+  { service: 'siphon-api', group: 'HTTP', env: 'SIPHON_RATE_LIMIT',
+    label: 'Rate limit (req/min/IP)',
+    desc: 'Per-IP request budget per minute, sliding window. Hitting the limit returns 429.',
+    default: '120', live: null, restart: true },
+  { service: 'siphon-api', group: 'HTTP', env: 'SIPHON_REQUEST_TIMEOUT_SECS',
+    label: 'Request timeout',
+    desc: 'Per-request upper bound. A scan that takes longer is dropped with 504. Bump for very large bodies; the hard cap keeps a wedged regex from holding a connection open forever.',
+    default: '30', live: null, restart: true },
+
+  { service: 'siphon-api', group: 'TLS', env: 'SIPHON_TLS_CERT',
+    label: 'TLS certificate',
+    desc: 'PEM-encoded server certificate path. Leave unset to serve plaintext (Nginx terminates TLS in front in the chart). Required when running siphon-api directly on a public IP.',
+    default: '(unset · plaintext)', live: null, restart: true },
+  { service: 'siphon-api', group: 'TLS', env: 'SIPHON_TLS_KEY',
+    label: 'TLS private key',
+    desc: 'PEM-encoded private key. Must be set together with SIPHON_TLS_CERT — neither set defaults to plaintext, both set enables HTTPS.',
+    default: '(unset)', live: null, restart: true },
+
+  { service: 'siphon-api', group: 'Auth', env: 'SIPHON_API_KEY',
+    label: 'Bearer token (hashed at rest)',
+    desc: 'Pre-shared key callers present as `Authorization: Bearer <key>`. Stored as SHA-256 in memory. Empty disables auth (open dev mode).',
+    default: '(unset · open mode)', live: null, restart: true,
+    sensitive: true },
+
+  { service: 'siphon-api', group: 'Auth', env: 'SIPHON_AUDIT_LOG_PATH',
+    label: 'Audit log path',
+    desc: 'JSONL file every audited action gets appended to. Empty disables audit-to-disk; in-memory ring buffer (see findings ring cap) is always available for /v1/audit.',
+    default: '(unset · in-memory only)', live: null, restart: true },
+  { service: 'siphon-api', group: 'Auth', env: 'SIPHON_AUDIT_SIGNING_KEY_HEX',
+    label: 'Audit HMAC key',
+    desc: 'Hex-encoded 32-byte key for signing audit entries (HMAC-SHA256 chain). Required for tamper-evident audit; without it the chain is unsigned.',
+    default: '(unset · unsigned)', live: null, restart: true,
+    sensitive: true },
+  { service: 'siphon-api', group: 'Auth', env: 'SIPHON_AUDIT_TAIL_PATH',
+    label: 'Audit tail file',
+    desc: 'Path to the file that always holds the latest audit signature (chain head). External monitoring can watch this for liveness without parsing the full log.',
+    default: '(unset)', live: null, restart: true },
+  { service: 'siphon-api', group: 'Auth', env: 'SIPHON_AUDIT_RING_CAP',
+    label: 'Audit ring capacity',
+    desc: 'Number of audit entries kept in memory for /v1/audit. Larger = more historical events at the cost of RAM.',
+    default: '5000', live: 'audit_ring_capacity', restart: true },
+
+  { service: 'siphon-api', group: 'Scan engine', env: 'SIPHON_FINDINGS_RING_CAP',
+    label: 'Findings ring capacity',
+    desc: 'Bounded ring of recent findings exposed at /v1/findings. Older findings drop off as new ones land.',
+    default: '1000', live: 'findings_ring_capacity', restart: true },
+  { service: 'siphon-api', group: 'Scan engine', env: 'SIPHON_OVERRIDES_PATH',
+    label: 'Pattern overrides file',
+    desc: 'JSON file with disabled_patterns / pattern_overrides / custom_categories / regex_overrides / list_bindings. Hot-reload via POST /v1/overrides/reload (no restart).',
+    default: '/etc/siphon/overrides.json', live: null, restart: false },
+  { service: 'siphon-api', group: 'Scan engine', env: 'SIPHON_OVERRIDES_KEEP',
+    label: 'Override-backup retention',
+    desc: 'Number of timestamped overrides backups to keep alongside the live file. Older backups get pruned on each /v1/overrides/apply.',
+    default: '10', live: null, restart: true },
+  { service: 'siphon-api', group: 'Scan engine', env: 'SIPHON_POLICIES_DIR',
+    label: 'Policies directory',
+    desc: 'Directory of TOML policy files loaded at startup. Each file binds patterns to actions (alert / block / mask).',
+    default: '(unset · no policies)', live: null, restart: true },
+  { service: 'siphon-api', group: 'Scan engine', env: 'SIPHON_ALLOWLIST_PATH',
+    label: 'Allowlist file',
+    desc: 'JSON file of values + regex skips. A finding whose value matches the allowlist is suppressed before it leaves the scanner.',
+    default: '(unset)', live: null, restart: true },
+
+  { service: 'siphon-api', group: 'Kubernetes', env: 'SIPHON_K8S_NAMESPACE',
+    label: 'k8s namespace',
+    desc: 'Namespace the in-cluster Kubernetes client targets for /v1/k8s/* endpoints. Empty falls back to the pod\'s own namespace via /var/run/secrets/kubernetes.io/serviceaccount/namespace.',
+    default: '(pod default)', live: null, restart: true },
+
+  { service: 'siphon-api', group: 'SIEM forwarder', env: 'DLPSCAN_SIEM_TYPE',
+    label: 'SIEM backend type',
+    desc: 'Which SIEM/observability backend findings stream to. Supported: splunk, elasticsearch, syslog, webhook, datadog. Empty disables SIEM forwarding.',
+    default: '(unset · disabled)', live: null, restart: true },
+  { service: 'siphon-api', group: 'SIEM forwarder', env: 'DLPSCAN_SIEM_URL',
+    label: 'SIEM endpoint URL',
+    desc: 'Used by splunk / elasticsearch / webhook backends. Path + scheme included.',
+    default: '(unset)', live: null, restart: true },
+  { service: 'siphon-api', group: 'SIEM forwarder', env: 'DLPSCAN_SIEM_HOST',
+    label: 'SIEM syslog host',
+    desc: 'Used by the syslog backend (host:port).',
+    default: '(unset)', live: null, restart: true },
+  { service: 'siphon-api', group: 'SIEM forwarder', env: 'DLPSCAN_SIEM_SITE',
+    label: 'Datadog site',
+    desc: 'Used by the datadog backend (e.g. datadoghq.com, datadoghq.eu).',
+    default: '(unset)', live: null, restart: true },
+
+  // ── siphon-fs ──────────────────────────────────────────────
+  { service: 'siphon-fs', group: 'HTTP', env: 'SIPHON_FS_BIND',
+    label: 'Bind address + port',
+    desc: 'Combined host:port the file-scan service listens on. Default exposes the pod cluster-wide on 8081.',
+    default: '0.0.0.0:8081', live: null, restart: true },
+  { service: 'siphon-fs', group: 'HTTP', env: 'SIPHON_FS_BODY_LIMIT_MB',
+    label: 'Multipart body limit',
+    desc: 'Maximum upload size in MB. Bumps memory + scratch-disk needs when raised. Hard limit before the request is rejected with 413.',
+    default: '100', live: null, restart: true },
+  { service: 'siphon-fs', group: 'Scan engine', env: 'SIPHON_OVERRIDES_PATH',
+    label: 'Pattern overrides file',
+    desc: 'Same overrides JSON the api reads — siphon-fs uses it to decide which patterns to apply post-extract. Hot-reload via POST /v1/overrides/reload (no restart).',
+    default: '/etc/siphon/overrides.json', live: null, restart: false },
+];
+
+// Render one knob row. Pulled out so the per-group section below
+// stays readable.
+function ServiceConfigRow({ knob, capabilities }) {
+  const liveValue = knob.live && capabilities && capabilities[knob.live];
+  return (
+    <div style={{
+      display:'grid',
+      gridTemplateColumns:'minmax(180px, 1fr) minmax(220px, 1.6fr) auto',
+      gap:14, padding:'12px 0',
+      borderBottom:'1px dashed var(--line-soft)',
+      alignItems:'flex-start',
+    }}>
+      <div>
+        <div style={{display:'flex', alignItems:'center', gap:8, flexWrap:'wrap'}}>
+          <span className="mono" style={{fontSize:11, color:'var(--ink)', fontWeight:600}}>{knob.env}</span>
+          {knob.sensitive && (
+            <span className="chip chip--warn" style={{fontSize:9}}>SENSITIVE</span>
+          )}
+          {knob.restart
+            ? <span className="chip chip--ghost" style={{fontSize:9}}>STARTUP</span>
+            : <span className="chip chip--safe" style={{fontSize:9}}>HOT-RELOAD</span>}
+        </div>
+        <div style={{color:'var(--ink-bright)', fontWeight:600, marginTop:3, fontSize:12.5}}>{knob.label}</div>
+      </div>
+      <div className="muted" style={{fontSize:11.5, lineHeight:1.6}}>{knob.desc}</div>
+      <div style={{minWidth:140, textAlign:'right'}}>
+        <div className="mono" style={{fontSize:10, color:'var(--ink-faint)'}}>default</div>
+        <div className="mono" style={{fontSize:11.5, color:'var(--ink)'}}>{knob.default}</div>
+        {liveValue !== undefined && liveValue !== null && (
+          <>
+            <div className="mono" style={{fontSize:10, color:'var(--ink-faint)', marginTop:6}}>live</div>
+            <div className="mono" style={{fontSize:11.5, color:'var(--accent)'}}>{String(liveValue)}</div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ServiceConfigTab() {
+  // Pull /v1/capabilities so the few knobs the running pod
+  // actually publishes (audit_ring_capacity, findings_ring_capacity)
+  // can show their live value next to the documented default.
+  const cap = window.useSiphonApi('/v1/capabilities');
+  const capabilities = cap.data || null;
+
+  // Group knobs by service then group so the layout is stable
+  // even if SERVICE_CONFIG_KNOBS reorders.
+  const byService = {};
+  SERVICE_CONFIG_KNOBS.forEach(k => {
+    byService[k.service] = byService[k.service] || {};
+    byService[k.service][k.group] = byService[k.service][k.group] || [];
+    byService[k.service][k.group].push(k);
+  });
+
+  return (
+    <>
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div style={{
+          padding:'12px 14px',
+          background:'var(--bg-2)',
+          border:'1px dashed var(--line-soft)',
+          borderRadius:'var(--radius)',
+          fontSize:12, color:'var(--ink)', lineHeight:1.6,
+        }}>
+          Read-only inventory of every environment variable and runtime
+          knob siphon-api and siphon-fs support. Tags:{' '}
+          <span className="chip chip--ghost" style={{fontSize:9}}>STARTUP</span>{' '}
+          read once at process start (a roll picks up changes);{' '}
+          <span className="chip chip--safe" style={{fontSize:9}}>HOT-RELOAD</span>{' '}
+          re-readable without restart;{' '}
+          <span className="chip chip--warn" style={{fontSize:9}}>SENSITIVE</span>{' '}
+          values that should never be checked into git or logged.
+          The writable variant (POST {'/v1/config'} from this surface) lands
+          in a follow-up PR.
+        </div>
+      </div>
+
+      {Object.entries(byService).map(([service, groups]) => (
+        <div key={service} className="box" style={{marginBottom:'var(--gap)'}}>
+          <div className="box-title">
+            <span className="t">{service}</span>
+            <span className="k mono" style={{fontSize:11}}>
+              {Object.values(groups).reduce((n, g) => n + g.length, 0)} knobs
+            </span>
+          </div>
+          <div style={{padding:'4px 14px'}}>
+            {Object.entries(groups).map(([group, knobs]) => (
+              <div key={group} style={{marginBottom:8}}>
+                <div className="section-l" style={{
+                  fontSize:10, color:'var(--ink-faint)',
+                  letterSpacing:'0.08em', textTransform:'uppercase',
+                  padding:'14px 0 4px', fontWeight:600,
+                }}>{group}</div>
+                {knobs.map(k => (
+                  <ServiceConfigRow key={k.env} knob={k} capabilities={capabilities} />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
 
 function FeaturesTab() {
   const [flags, setFlags] = React.useState(window.c2Flags());
