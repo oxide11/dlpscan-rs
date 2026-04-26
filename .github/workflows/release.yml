@@ -1,0 +1,96 @@
+name: release
+
+# Builds multi-arch container images for siphon-api + siphon-fs and
+# pushes them to GHCR.
+#
+#   · push to `main`            → :main  + :sha-<short>
+#   · tag v2.1.0                → :2.1.0 + :2.1 + :latest
+#   · manual run (any branch)   → :<branch> + :sha-<short>
+#
+# CI (ci.yml) covers test + compile on every push; this workflow
+# only runs when we actually want an image published, so ordinary
+# feature-branch pushes don't burn minutes on docker builds.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      push:
+        description: 'Push to GHCR (false = dry-run / build only)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write    # required to write to GHCR
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    name: build ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: siphon-api
+            dockerfile: deploy/Dockerfile.api
+          - service: siphon-fs
+            dockerfile: deploy/Dockerfile.fs
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Repo owner lowercased — GHCR is case-sensitive and some
+      # GitHub handles aren't all-lowercase, so repository names
+      # computed at runtime need normalising.
+      - id: repo
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ steps.repo.outputs.owner }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      # amd64-only for now. Cross-building arm64 under QEMU on
+      # amd64 runners was failing with exit 101 — QEMU ~2-3×s the
+      # memory footprint of rav1e / arrow codegen and rustc has
+      # known miscompiles under emulation. When prod needs arm64
+      # (Graviton, Ampere), we can split the matrix into
+      # ubuntu-latest + ubuntu-24.04-arm (free for public repos)
+      # and combine both per-arch images via a manifest job.
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cap cargo parallelism so rav1e / arrow / parquet
+          # codegen doesn't peak past the 16 GB runner (each
+          # codegen unit can hit ~1 GB; 4 cores × 4 units = OOM).
+          build-args: |
+            CARGO_BUILD_JOBS=2
+          # GitHub Actions cache shaves cold-start builds from
+          # ~5 min to ~1 min on re-runs. mode=max caches every
+          # layer including deps.
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to:   type=gha,scope=${{ matrix.service }},mode=max

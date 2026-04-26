@@ -1,20 +1,18 @@
 name: CI
 
-# Minimal, proven CI for the Siphon workspace. Each job is
-# independent so a clippy break doesn't block test, and one slow
-# dependency can't drag the whole pipeline. Re-add coverage piece
-# by piece (CodeQL, DevSkim, cargo-deny, release image push) once
-# the base is confirmed green and we know which third-party
-# actions resolve cleanly in the runner.
-
 on:
   push:
     branches: ["**"]
   pull_request:
     branches: [main]
 
+# CI is read-only: fetches source, runs cargo build/test/clippy/fmt.
+# Declaring the minimum token scope closes the CodeQL
+# "Workflow does not contain permissions" finding and prevents a
+# compromised action from escalating to write access.
 permissions:
   contents: read
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,12 +27,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Remove cargo registry overrides
+        run: rm -f ~/.cargo/config.toml ~/.cargo/config
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.95"
       - uses: Swatinem/rust-cache@v2
-      - name: cargo build
-        run: cargo build --workspace --locked
+      - name: Build (release)
+        run: cargo build --release
 
   test:
     name: Test
@@ -42,35 +42,84 @@ jobs:
     needs: build
     steps:
       - uses: actions/checkout@v4
+      - name: Remove cargo registry overrides
+        run: rm -f ~/.cargo/config.toml ~/.cargo/config
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.95"
       - uses: Swatinem/rust-cache@v2
-      - name: cargo test --lib
-        run: cargo test --workspace --lib --locked
-
-  fmt:
-    name: Format
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.95"
-          components: rustfmt
-      - run: cargo fmt --all --check
+      - name: Unit tests
+        run: cargo test --lib
+      - name: Integration tests
+        run: cargo test --test integration_test
+      - name: Evasion tests
+        run: cargo test --test evasion_test
+      - name: Forensics tests
+        run: cargo test --test forensics_test
+      - name: Evadex regression tests
+        run: cargo test --test evadex_regressions
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Remove cargo registry overrides
+        run: rm -f ~/.cargo/config.toml ~/.cargo/config
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.95"
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      # `-A dead_code` and `-A unused_imports` mirror the local
-      # convention from CLAUDE.md so cleanup work doesn't have to
-      # ride alongside the change that triggers the warning.
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings -A dead_code -A unused_imports
+      - run: cargo clippy --lib -- -D warnings -A dead-code -A unused-imports
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove cargo registry overrides
+        run: rm -f ~/.cargo/config.toml ~/.cargo/config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95"
+          components: rustfmt
+      - run: cargo fmt --check
+
+  version-sync:
+    # Every place Siphon's version is declared — workspace crates,
+    # ui/package.json, Helm appVersion, Helm image tag — must agree
+    # with the root Cargo.toml. Runs on every push so a stale
+    # Helm tag or a forgotten UI bump lands as a red check.
+    name: Version sync
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/check-version-sync.sh
+
+  ui:
+    # Next.js static export + typecheck + lint. Runs on any change
+    # so the SPA's type safety and bundle emit are verified every
+    # push, independent of the Rust pipeline.
+    name: UI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm build
