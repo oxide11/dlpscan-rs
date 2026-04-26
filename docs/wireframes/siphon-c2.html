@@ -2872,13 +2872,56 @@ function Investigations() {
       <div className="page-head">
         <div>
           <div className="crumbs">Operate · Investigations</div>
-          <h1>Investigations</h1>
+          <h1>Investigations <span style={{
+            fontSize:11, fontWeight:400, color:'var(--ink-soft)',
+            verticalAlign:'middle', marginLeft:8,
+            padding:'2px 8px', border:'1px solid var(--line-soft)',
+            borderRadius:'var(--radius)',
+          }}>operate view</span></h1>
         </div>
         <div className="actions">
           <window.FixtureBadge reason="no investigations backend" />
           <button className="btn ghost">Filter</button>
           <button className="btn">Saved queries</button>
-          <button className="btn primary">New investigation</button>
+          {/* "New investigation" disabled — case creation is an IR
+              workflow (Q1 from IR-vs-C2.md). Affordance left in
+              place so admins know where it lives. */}
+          <button className="btn"
+                  disabled
+                  title="Open a case in IR (Respond → Investigations)"
+                  style={{opacity:0.5, cursor:'not-allowed'}}>+ New (in IR)</button>
+        </div>
+      </div>
+
+      {/* Cross-console banner — Q1 from IR-vs-C2.md. C2's role is
+          to surface investigation *metrics* (open count, MTTA,
+          stale counts, cluster signals) the engineering / detection
+          side cares about; the case-file workflow itself (open,
+          assign, comment, close, exhibits) lives in IR. */}
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div style={{
+          padding:'12px 14px',
+          background:'var(--bg-2)',
+          border:'1px dashed var(--line-soft)',
+          borderRadius:'var(--radius)',
+          display:'flex', alignItems:'center', gap:12, flexWrap:'wrap',
+          fontSize:12, color:'var(--ink)',
+        }}>
+          <span className="chip chip--ghost" style={{fontSize:10, padding:'3px 10px'}}>
+            OPERATE LENS
+          </span>
+          <div style={{flex:1, lineHeight:1.5}}>
+            This is the operate view — open count, MTTA, cluster
+            signals, activity feed. The full case-file workflow
+            (assign, comment, exhibits, custody) lives in the IR
+            console. Click any case below to jump straight to its
+            thread in IR.
+          </div>
+          <a href="siphon-ir.html#surface=investigations"
+             className="btn primary"
+             style={{fontSize:11, textDecoration:'none', padding:'6px 12px'}}>
+            Open in IR →
+          </a>
         </div>
       </div>
 
@@ -2890,12 +2933,17 @@ function Investigations() {
       </div>
 
       <div className="box" style={{marginBottom:'var(--gap)'}}>
-        <div className="box-title"><span className="t">Open investigations</span><span className="k">click to open thread</span></div>
+        <div className="box-title"><span className="t">Open investigations</span><span className="k">click any row to open in IR</span></div>
         <div style={{display:'grid', gridTemplateColumns:'90px 110px 1fr 140px 70px 60px 50px', gap:10, alignItems:'center', padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
           <span className="label">ID</span><span className="label">Tenant</span><span className="label">Title</span><span className="label">Owner</span><span className="label">Sev</span><span className="label">Links</span><span className="label">Age</span>
         </div>
         {cases.map(([id,tn,title,own,sev,links,age],i)=>(
-          <div key={i} style={{display:'grid', gridTemplateColumns:'90px 110px 1fr 140px 70px 60px 50px', gap:10, alignItems:'center', padding:'7px 0', borderBottom:'1px solid var(--line-soft)', fontSize:12, fontFamily:"'JetBrains Mono', monospace", cursor:'pointer'}}>
+          // Row click jumps to the case in IR. Hash carries the
+          // case id so IR's Respond → Investigations can scroll to
+          // the right thread without an extra click.
+          <a key={i}
+             href={'siphon-ir.html#surface=investigations&case=' + encodeURIComponent(id)}
+             style={{display:'grid', gridTemplateColumns:'90px 110px 1fr 140px 70px 60px 50px', gap:10, alignItems:'center', padding:'7px 0', borderBottom:'1px solid var(--line-soft)', fontSize:12, fontFamily:"'JetBrains Mono', monospace", cursor:'pointer', textDecoration:'none', color:'inherit'}}>
             <span style={{color:'var(--accent)'}}>{id}</span>
             <span>{tn}</span>
             <span style={{color:'var(--ink-bright)'}}>{title}</span>
@@ -2903,7 +2951,7 @@ function Investigations() {
             <span><span className={`chip chip--${sev==='red'?'red':sev==='warn'?'warn':'safe'}`}>{sev.toUpperCase()}</span></span>
             <span className="muted">{links}</span>
             <span className="muted">{age}</span>
-          </div>
+          </a>
         ))}
       </div>
 

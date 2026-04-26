@@ -2531,10 +2531,14 @@ const IR_SURFACES = [
   { id: 'crypto',         workspace: 'analyze',   icon: '⎔',  title: 'Crypto Workbench', sub: 'zip · pdf · office · hash' },
   { id: 'extractor',      workspace: 'analyze',   icon: '⊞',  title: 'File Extractor',   sub: 'any siphon-fs format' },
   { id: 'forensics',      workspace: 'analyze',   icon: '⌘',  title: 'Forensics',        sub: 'authorship · file metadata' },
-  { id: 'timeline',       workspace: 'analyze',   icon: '⧗',  title: 'Timeline',         sub: 'reconstruct by ts + span' },
   // ── CORRELATE ────────────────────────────────────────────────
+  // Timeline moved here from Analyze (M6 from IR-vs-C2.md):
+  // chronological reconstruction is a cross-finding operation, same
+  // lens as Pivots / IOC Lookup. Surface id stays `'timeline'` so
+  // bookmarks and any in-flight links keep resolving.
   { id: 'pivots',         workspace: 'correlate', icon: '⇌',  title: 'Pivots',           sub: 'same-document · same-source' },
   { id: 'ioc',            workspace: 'correlate', icon: '◉',  title: 'IOC Lookup',       sub: 'cross-reference indicators' },
+  { id: 'timeline',       workspace: 'correlate', icon: '⧗',  title: 'Timeline',         sub: 'reconstruct by ts + span' },
   // ── EVIDENCE ─────────────────────────────────────────────────
   { id: 'custody',        workspace: 'evidence',  icon: '∎',  title: 'Chain of Custody', sub: 'per-finding history' },
   { id: 'exhibits',       workspace: 'evidence',  icon: '▣',  title: 'Exhibits',         sub: 'attached artifacts' },
