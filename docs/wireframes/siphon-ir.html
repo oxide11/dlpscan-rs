@@ -2524,7 +2524,7 @@ const IR_SURFACES = [
   // ── RESPOND ──────────────────────────────────────────────────
   { id: 'dashboard',      workspace: 'respond',   icon: '◈',  title: 'Overview',         sub: 'MTTR · totals · breakdowns · repeat occurrences' },
   { id: 'findings',       workspace: 'respond',   icon: '≋',  title: 'Findings Queue',   sub: 'live ring from all pods' },
-  { id: 'alerts',         workspace: 'respond',   icon: '!',  title: 'Alerts',           sub: 'threshold-breach signal' },
+  { id: 'triggers',       workspace: 'respond',   icon: '!',  title: 'Triggers',         sub: 'escalation rules · what fires when' },
   { id: 'investigations', workspace: 'respond',   icon: '⌖',  title: 'Investigations',   sub: 'case view · grouping' },
   { id: 'handoffs',       workspace: 'respond',   icon: '⇉',  title: 'Handoffs',         sub: 'tickets · escalations' },
   // ── ANALYZE ──────────────────────────────────────────────────
@@ -9969,8 +9969,17 @@ function MovedToC2({ title, c2Surface, why }) {
 const SURFACE_COMPONENTS = {
   dashboard:      () => <DashboardSurface />,
   findings:       () => <FindingsQueue />,
-  alerts:         () => <Stub title="Alerts"
-                              description="Threshold-breach signals routed from siphon-api's audit ring." />,
+  // Renamed from 'alerts' per IR-vs-C2.md → Q5: this surface owns
+  // *response triggers* (escalation rules that fire when a finding
+  // matches a pattern), distinct from C2's 'alerts' surface which
+  // shows operational alerts (Siphon health, throughput thresholds).
+  // Same visual still — full editor lands in a follow-up.
+  triggers:       () => <Stub title="Triggers"
+                              description="Escalation rules — what fires when a finding matches. Distinct from C2's operational alerts." />,
+  // Old route preserved as redirect to the new id so bookmarked
+  // hash URLs (and any in-flight links) still resolve.
+  alerts:         () => <Stub title="Renamed → Triggers"
+                              description="This surface was renamed from 'alerts' to 'triggers' to disambiguate against C2's operational alerts. Open Respond → Triggers in the sidenav." />,
   investigations: () => <Stub title="Investigations"
                               description="Case view — group findings, annotate, assign." />,
   handoffs:       () => <Stub title="Handoffs"
