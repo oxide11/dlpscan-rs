@@ -1,0 +1,69 @@
+name: CodeQL
+
+# GitHub's semantic analyzer. Rust is a "build-mode: manual"
+# language for CodeQL — it hooks into cargo and indexes what actually
+# compiles, so the workflow runs `cargo build --workspace` before
+# handing control back to the analyzer.
+#
+# Runs on every push to main, on all PRs to main, and weekly so a
+# dormant branch still gets re-scanned against current queries.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly — Monday 13:17 UTC. Offset off-the-hour to stay out of
+    # the cron stampede that hits most runners on :00 / :30.
+    - cron: "17 13 * * 1"
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze Rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["rust"]
+
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_NET_RETRY: 10
+      CARGO_HTTP_TIMEOUT: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Remove cargo registry overrides
+        run: rm -f ~/.cargo/config.toml ~/.cargo/config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended,security-and-quality
+
+      # CodeQL hooks into cargo; this build is what it indexes.
+      # Use --locked so the analysis runs against exactly what CI
+      # builds — no surprise registry fetches shifting results
+      # between runs.
+      - name: Build (for CodeQL indexing)
+        run: cargo build --workspace --locked
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
