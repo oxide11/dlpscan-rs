@@ -11151,6 +11151,39 @@ function UsersSurface() {
 
   return (
     <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
+      {/* Architectural-move banner — U10. C2 (siphon-c2.html) is
+          the canonical home for user management going forward.
+          The roster + role matrix + invite / role-change /
+          password-reset UI is being moved out of IR; this surface
+          will be removed once the move lands. IR keeps only the
+          per-user profile (My Profile under Settings). */}
+      <div className="box" style={{
+        background:'var(--bg-2)',
+        border:'1px dashed var(--accent)',
+      }}>
+        <div style={{
+          padding:'12px 14px',
+          display:'flex', alignItems:'center', gap:12, flexWrap:'wrap',
+          fontSize:12, color:'var(--ink)',
+        }}>
+          <span className="chip chip--accent" style={{fontSize:10, padding:'3px 10px'}}>
+            MOVING TO C2
+          </span>
+          <div style={{flex:1, lineHeight:1.5}}>
+            User management is moving to the C2 console. Going forward,
+            invites, role changes, password resets, and the permission
+            matrix live there. <strong>This page will be removed</strong>{' '}
+            once the move lands. Your own profile / preferences / change
+            password stay here under <span className="mono">Settings → My Profile</span>.
+          </div>
+          <a href="siphon-c2.html#surface=users"
+             className="btn primary"
+             style={{fontSize:11, textDecoration:'none', padding:'6px 12px'}}>
+            Open in C2 →
+          </a>
+        </div>
+      </div>
+
       <div className="box">
         <div className="box-title">
           <span className="t">Users & Roles</span>
@@ -11615,6 +11648,23 @@ function ProfileSurface() {
                         }}>
                     {role.glyph} {role.label}
                   </span>
+                  {/* Email + role aren't editable from the profile;
+                      they're admin-controlled. Surface the C2 deep
+                      link only when the signed-in user actually has
+                      `users.update` so non-admins don't see a button
+                      they can't use. */}
+                  {canDo(user, 'users.update') && (
+                    <div style={{marginTop:8, fontSize:11, lineHeight:1.4}}>
+                      <a href="siphon-c2.html#surface=users"
+                         style={{
+                           color:'var(--accent)', textDecoration:'none',
+                           borderBottom:'1px dashed var(--accent)',
+                         }}
+                         title="Open C2's Admin → Users surface">
+                        Manage other users in C2 →
+                      </a>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
