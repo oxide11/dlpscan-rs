@@ -52,6 +52,14 @@ spec:
               value: /secrets/session_secret
             - name: AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE
               value: /secrets/storage_encryption_key
+            {{- if .Values.authelia.notifier.smtp.enabled }}
+            # SMTP relay password — Authelia reads it from the file
+            # at the path below (same secret-mounting model as the
+            # other AUTHELIA_*_FILE entries). Add a `smtp_password`
+            # key to authelia.secretName when flipping smtp.enabled.
+            - name: AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE
+              value: /secrets/smtp_password
+            {{- end }}
             {{- end }}
           volumeMounts:
             - name: config

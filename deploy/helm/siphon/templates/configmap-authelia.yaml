@@ -132,9 +132,40 @@ data:
       local:
         path: /config/db.sqlite3
     notifier:
+      {{- if .Values.authelia.notifier.smtp.enabled }}
+      # SMTP notifier — password-reset and account-management
+      # links land in a real inbox. Password is sourced from the
+      # Authelia secret via AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE
+      # (see deployment-authelia.yaml); under the chart's
+      # convention the key on the Secret is `smtp_password`.
+      disable_startup_check: {{ if .Values.authelia.notifier.smtp.startupCheckAddress }}false{{ else }}true{{ end }}
+      smtp:
+        host: {{ required "authelia.notifier.smtp.host is required when smtp.enabled=true" .Values.authelia.notifier.smtp.host | quote }}
+        port: {{ .Values.authelia.notifier.smtp.port }}
+        username: {{ .Values.authelia.notifier.smtp.username | quote }}
+        sender: {{ required "authelia.notifier.smtp.sender is required when smtp.enabled=true" .Values.authelia.notifier.smtp.sender | quote }}
+        identifier: {{ .Values.authelia.notifier.smtp.identifier | quote }}
+        subject: {{ .Values.authelia.notifier.smtp.subject | quote }}
+        {{- if .Values.authelia.notifier.smtp.startupCheckAddress }}
+        startup_check_address: {{ .Values.authelia.notifier.smtp.startupCheckAddress | quote }}
+        {{- end }}
+        disable_html_emails: {{ .Values.authelia.notifier.smtp.disableHtmlEmails }}
+        tls:
+          skip_verify: {{ .Values.authelia.notifier.smtp.tls.skipVerify }}
+          {{- with .Values.authelia.notifier.smtp.tls.serverName }}
+          server_name: {{ . | quote }}
+          {{- end }}
+          minimum_version: {{ .Values.authelia.notifier.smtp.tls.minimumVersion | quote }}
+      {{- else }}
+      # Dev-default filesystem notifier — Authelia drops every
+      # "email" (password-reset links, identity-verification
+      # codes) into /config/notification.txt. Tail it during dev
+      # to grab the reset link without an SMTP relay. Flip
+      # authelia.notifier.smtp.enabled=true for prod.
       disable_startup_check: false
       filesystem:
         filename: /config/notification.txt
+      {{- end }}
     {{- end }}
   # File-backed user database. Authelia's authentication_backend.file
   # provider refuses to start if /config/users_database.yml is missing

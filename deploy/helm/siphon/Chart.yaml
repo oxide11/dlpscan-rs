@@ -13,7 +13,7 @@ type: application
 # Chart version — bump when templates change. Tracks independently
 # of the image (appVersion) it deploys; the version-sync CI check
 # only gates appVersion against the workspace Cargo.toml.
-version: 2.0.0
+version: 2.1.0
 # appVersion pinned to the Rust workspace version. Update via
 # scripts/bump-version.sh so every declaration stays in lockstep.
 appVersion: "2.1.0"

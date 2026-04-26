@@ -9,6 +9,24 @@ When a PR notes something as "out of scope this commit," that line belongs
 here. When an item lands, delete its bullet (its history is in `git log` and
 `CHANGELOG.md`).
 
+## siphon-api
+
+- **Multi-key role mapping.** RBAC enforcement landed in `siphon-api 2.2.0`
+  on a single-key model: a configured `SIPHON_API_KEY` resolves every
+  authenticated request to `Role::Admin`; the open-dev fallback (no key
+  configured) maps to `Role::Operator`. The schema for finer-grained
+  resolution is already in `siphon::rbac::resolve_role` — what's missing
+  is the wiring to feed it a `HashMap<key_hash, Role>` parsed from a
+  JSON file or a Kubernetes Secret. Shape: a new `SIPHON_API_KEYS_PATH`
+  env var pointing at a JSON document like
+  `[{"key_sha256": "<hex>", "role": "analyst", "label": "ops-team"}, …]`,
+  loaded at startup into a `HashMap<[u8; 32], Role>` on `AppState`. The
+  bearer-key compare in `auth_middleware` then becomes a constant-time
+  lookup that yields the matching `Role` (falling back to the existing
+  single-key Admin path when only `SIPHON_API_KEY` is set, for back-compat).
+  Adding new key types (e.g. mTLS client cert SHA → role) is a sibling
+  resolver under the same plumbing. (Source: claude/cross-cutting-rbac PR.)
+
 ## siphon-ir
 
 - **Drag-to-reorder columns in the Findings Queue.** The `visibleCols` array
