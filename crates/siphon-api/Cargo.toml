@@ -1,6 +1,6 @@
 [package]
 name = "siphon-api"
-version = "2.1.0"
+version = "2.2.0"
 edition = "2021"
 description = "Polygon Siphon API — sync HTTP scan service"
 license = "MIT"
