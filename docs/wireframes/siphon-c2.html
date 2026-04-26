@@ -3737,16 +3737,31 @@ function Users() {
           <h1>Users &amp; Roles <HelpIcon topic="rbac" title="RBAC" size={18} /></h1>
         </div>
         <div className="actions">
-          <button className="btn ghost">Invite</button>
-          <button className="btn">SAML / OIDC</button>
-          <button className="btn primary">New role</button>
+          {/* Buttons disabled — writes still happen in IR until the
+              full UI lands here (see banner). Disabled-with-title
+              keeps the affordance discoverable so admins know what's
+              coming. */}
+          <button className="btn ghost"
+                  disabled
+                  title="Invite UI moves to C2 in the next PR"
+                  style={{opacity:0.5, cursor:'not-allowed'}}>Invite</button>
+          <button className="btn"
+                  disabled
+                  title="SAML / OIDC config moves to C2 in the next PR"
+                  style={{opacity:0.5, cursor:'not-allowed'}}>SAML / OIDC</button>
+          <button className="btn primary"
+                  disabled
+                  title="Role editor moves to C2 in the next PR"
+                  style={{opacity:0.5, cursor:'not-allowed'}}>New role</button>
         </div>
       </div>
 
       {/* Cross-console banner — U9. The IR console (siphon-ir.html)
-          owns invite / create / role-change today; this surface
-          mirrors the roster but defers writes to the IR settings
-          page so admin + responder stay in sync. */}
+          owned the management UI today; this surface mirrored
+          its roster. The architectural call has been made to
+          move that UI here in the next PR — IR will keep only
+          per-user profile/preferences. The `ir:users` mirror
+          below stays in place until the move lands. */}
       <div className="box" style={{marginBottom:'var(--gap)'}}>
         <div style={{
           padding:'12px 14px',
@@ -3756,20 +3771,23 @@ function Users() {
           display:'flex', alignItems:'center', gap:12, flexWrap:'wrap',
           fontSize:12, color:'var(--ink)',
         }}>
-          <span className="chip chip--teal" style={{fontSize:10, padding:'3px 10px'}}>
-            IR-OWNED
+          <span className="chip chip--accent" style={{fontSize:10, padding:'3px 10px'}}>
+            C2-OWNED · MOVE IN PROGRESS
           </span>
           <div style={{flex:1}}>
-            User invites, role changes, password resets, and permission matrix live
-            in the responder console (siphon-ir.html → Settings → Users &amp; Roles).
-            Both consoles share the same{' '}
-            <span className="mono">ir:users</span> store, so changes made over there
-            reflect here on the next event or refresh.
+            User management lives in C2. The full UI (invite,
+            role change, password reset, permission matrix) is
+            being moved here from the IR console. For this PR
+            the surface still mirrors the shared{' '}
+            <span className="mono">ir:users</span> store and the
+            management controls remain in IR — once the move lands,
+            the localStorage key becomes <span className="mono">siphon:users</span>{' '}
+            and IR no longer renders the management UI.
           </div>
           <a href="siphon-ir.html#surface=ir-users"
-             className="btn primary"
+             className="btn"
              style={{fontSize:11, textDecoration:'none', padding:'6px 12px'}}>
-            Open in IR console →
+            Manage in IR (today) →
           </a>
         </div>
       </div>
