@@ -41,7 +41,7 @@ api:
 
   image:
     repository: oxide11/siphon-api
-    tag: ""  # defaults to Chart.appVersion
+    tag: "2.2.0"
     pullPolicy: ""  # inherits global.imagePullPolicy
 
   service:

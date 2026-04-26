@@ -323,8 +323,105 @@ fn emit_audit(event: AuditEvent) {
 }
 
 // ---------------------------------------------------------------------------
-// Auth middleware
+// Auth middleware + RBAC plumbing
 // ---------------------------------------------------------------------------
+//
+// The siphon RBAC primitives (Role + Permission + role_has_permission)
+// live in `siphon::rbac`. This file does the request-side wiring:
+//
+//   1. `auth_middleware` resolves the bearer key, derives the request's
+//      `Role`, and stashes an `AuthContext` in `Request::extensions`.
+//   2. Per-route extractors (`RequireAdminAction`, `RequireScan`, …)
+//      pull that `AuthContext` back out of the request parts and gate
+//      the handler on `role_has_permission(role, P)`. A 403 short-
+//      circuits the handler if the role doesn't carry the permission.
+//
+// The single-key path is back-compat: if `SIPHON_API_KEY` is set, any
+// caller presenting that key resolves to `Role::Admin`. Multi-key
+// role-mapping (a HashMap<key, Role> from a JSON file or k8s Secret)
+// is the next-step plumbing — schema's already in `rbac::resolve_role`.
+
+/// Per-request auth context inserted by `auth_middleware` once the
+/// bearer key has been validated. Pulled back out by RBAC extractors
+/// to gate handlers on a specific permission.
+#[derive(Clone, Copy, Debug)]
+struct AuthContext {
+    /// Role assigned to this request. Today every authenticated
+    /// request gets `Role::Admin` (single-key model); follow-up PRs
+    /// will plumb a key→role map for finer differentiation.
+    role: Role,
+}
+
+/// 403 helper used by every RBAC extractor. Stamps an audit row so a
+/// rejection appears in the audit log alongside successful actions.
+fn forbidden_response(role: Role, perm: Permission) -> (StatusCode, Json<ErrorResponse>) {
+    if let Ok(event) = AuditEvent::new("REJECT") {
+        emit_audit(
+            event
+                .with_action("rbac")
+                .with_outcome("forbidden")
+                .with_metadata("role", serde_json::json!(format!("{:?}", role)))
+                .with_metadata("permission", serde_json::json!(format!("{:?}", perm))),
+        );
+    }
+    (
+        StatusCode::FORBIDDEN,
+        Json(ErrorResponse {
+            error: format!("role '{:?}' does not have permission '{:?}'", role, perm),
+        }),
+    )
+}
+
+/// RBAC extractor — gates a handler on `Permission::AdminAction`. Use
+/// it in a handler signature like an axum extractor to short-circuit
+/// the request with 403 before any handler logic runs:
+///
+/// ```ignore
+/// async fn dangerous_handler(
+///     _: RequireAdminAction,
+///     State(state): State<Arc<AppState>>,
+///     Json(body): Json<...>,
+/// ) -> ... { ... }
+/// ```
+///
+/// One extractor per permission is the simplest expression of axum's
+/// type-driven gating model; add a sibling type when a new
+/// permission needs gating.
+///
+/// `Copy` so an already-extracted gate value can be forwarded into a
+/// nested in-process handler call (e.g. `k8s_rollout` delegating to
+/// `overrides_roll`) without needing a backdoor constructor that
+/// would bypass the extractor's check.
+#[derive(Clone, Copy)]
+struct RequireAdminAction;
+
+impl<S> axum::extract::FromRequestParts<S> for RequireAdminAction
+where
+    S: Send + Sync,
+{
+    type Rejection = (StatusCode, Json<ErrorResponse>);
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        // No AuthContext means the request is reaching this handler
+        // without going through auth_middleware — e.g. a misconfigured
+        // router that registered the handler before the auth layer.
+        // Treat as a server bug and reject with 401 (caller should
+        // never have gotten here).
+        let ctx = parts.extensions.get::<AuthContext>().copied().ok_or((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "no auth context (auth_middleware not applied to this route?)".into(),
+            }),
+        ))?;
+        if !role_has_permission(ctx.role, Permission::AdminAction) {
+            return Err(forbidden_response(ctx.role, Permission::AdminAction));
+        }
+        Ok(Self)
+    }
+}
 
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
@@ -340,10 +437,23 @@ async fn auth_middleware(
     // by design — Authelia sits in front").
     let path = request.uri().path();
     if path == "/health" || path == "/ready" {
+        // Probe paths bypass the AuthContext insertion intentionally —
+        // they have no RBAC gate, and skipping the insert means a
+        // misconfigured RBAC extractor on a probe route fails closed
+        // (UNAUTHORIZED) instead of silently inheriting the no-auth
+        // operator role.
         return next.run(request).await;
     }
 
     let Some(expected_hash) = &state.api_key_hash else {
+        // No API-key auth configured (open dev mode). Stamp an
+        // `Operator` role into the context so role-aware handlers
+        // still get a sensible default when bearer auth is off.
+        // Mirrors `siphon::rbac::resolve_role`'s no-auth branch.
+        let mut request = request;
+        request.extensions_mut().insert(AuthContext {
+            role: Role::Operator,
+        });
         return next.run(request).await;
     };
 
@@ -381,6 +491,14 @@ async fn auth_middleware(
                 )
                     .into_response();
             }
+            // Single-key model — any caller who presents the
+            // configured key gets full Admin authority. Multi-key
+            // role-mapping (HashMap<key, Role>) is the next-step
+            // plumbing; schema is already in rbac::resolve_role.
+            let mut request = request;
+            request
+                .extensions_mut()
+                .insert(AuthContext { role: Role::Admin });
             next.run(request).await
         }
         None => {
@@ -1740,6 +1858,11 @@ async fn overrides_roll(
 
 #[cfg(feature = "k8s-roll")]
 async fn overrides_roll(
+    // RBAC gate: this handler patches Deployment annotations
+    // cluster-side, which is the most impactful state mutation in
+    // the API surface. Require AdminAction; non-admin callers get
+    // 403 before we reach the kube client.
+    _: RequireAdminAction,
     State(_state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     maybe_req: Option<Json<RollRequest>>,
@@ -2075,6 +2198,10 @@ async fn k8s_rollout(
 
 #[cfg(feature = "k8s-roll")]
 async fn k8s_rollout(
+    // RBAC gate forwarded into `overrides_roll`. Extracting here
+    // (rather than relying on overrides_roll's own gate) keeps the
+    // 403 in front of the kube client init that overrides_roll does.
+    auth: RequireAdminAction,
     state: State<Arc<AppState>>,
     addr: ConnectInfo<SocketAddr>,
     axum::extract::Path(name): axum::extract::Path<String>,
@@ -2086,7 +2213,7 @@ async fn k8s_rollout(
         namespace: None,
         deployments: Some(vec![name]),
     });
-    overrides_roll(state, addr, Some(body)).await
+    overrides_roll(auth, state, addr, Some(body)).await
 }
 
 // ─── /v1/overrides/history + /revert (Phase 7) ─────────────────
@@ -3620,6 +3747,90 @@ mod tests {
         assert!(
             event.signature.is_none(),
             "invalid hex key should disable signing, not error out"
+        );
+    }
+
+    // ── RBAC extractor ────────────────────────────────────────────
+    //
+    // The auth_middleware is responsible for stamping an AuthContext
+    // into request extensions; the extractor reads it back. These
+    // tests exercise the extractor in isolation by constructing
+    // request Parts manually and asserting the three outcomes:
+    //
+    //   1. No AuthContext present  → 401 (server-wiring bug guard)
+    //   2. Role lacks AdminAction  → 403 (true RBAC reject)
+    //   3. Role has AdminAction    → Ok  (admin path)
+    //
+    // No AppState is needed because the extractor's `S` parameter
+    // is generic — `()` works fine for a unit test.
+
+    use axum::extract::FromRequestParts;
+    use axum::http::Request;
+
+    fn empty_parts() -> axum::http::request::Parts {
+        Request::builder().body(()).unwrap().into_parts().0
+    }
+
+    fn assert_status(
+        outcome: Result<RequireAdminAction, (StatusCode, Json<ErrorResponse>)>,
+        expected: StatusCode,
+        msg: &str,
+    ) {
+        match outcome {
+            Ok(_) => panic!("{msg}: expected reject with {expected:?}, got Ok"),
+            Err((status, _)) => assert_eq!(status, expected, "{msg}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn require_admin_action_rejects_when_no_auth_context() {
+        let mut parts = empty_parts();
+        let outcome = RequireAdminAction::from_request_parts(&mut parts, &()).await;
+        assert_status(
+            outcome,
+            StatusCode::UNAUTHORIZED,
+            "no auth context => 401 (caller never went through auth_middleware)",
+        );
+    }
+
+    #[tokio::test]
+    async fn require_admin_action_forbids_non_admin_role() {
+        // Viewer is the lowest role and explicitly does not carry
+        // AdminAction in the rbac matrix. Any role that lacks the
+        // permission would do; Viewer is the cleanest signal.
+        let mut parts = empty_parts();
+        parts.extensions.insert(AuthContext { role: Role::Viewer });
+        let outcome = RequireAdminAction::from_request_parts(&mut parts, &()).await;
+        assert_status(
+            outcome,
+            StatusCode::FORBIDDEN,
+            "viewer must not pass an AdminAction gate",
+        );
+    }
+
+    #[tokio::test]
+    async fn require_admin_action_admits_admin_role() {
+        let mut parts = empty_parts();
+        parts.extensions.insert(AuthContext { role: Role::Admin });
+        let outcome = RequireAdminAction::from_request_parts(&mut parts, &()).await;
+        assert!(outcome.is_ok(), "admin must pass the AdminAction gate");
+    }
+
+    #[tokio::test]
+    async fn require_admin_action_forbids_operator_role() {
+        // Operator can scan + view status, but k8s rollouts are
+        // explicitly an admin-only mutation in the rbac matrix.
+        // Pin the expectation in a test so a future matrix loosen
+        // doesn't silently widen the rollout endpoint.
+        let mut parts = empty_parts();
+        parts.extensions.insert(AuthContext {
+            role: Role::Operator,
+        });
+        let outcome = RequireAdminAction::from_request_parts(&mut parts, &()).await;
+        assert_status(
+            outcome,
+            StatusCode::FORBIDDEN,
+            "operator must not pass an AdminAction gate",
         );
     }
 }
