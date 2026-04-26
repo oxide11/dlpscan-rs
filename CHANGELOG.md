@@ -14,6 +14,25 @@ starting from this file.
 
 ---
 
+## 2026-04-26
+
+### siphon-api 2.2.0
+
+- feat(api): RBAC enforcement is now wired end-to-end — `auth_middleware`
+  resolves the bearer key into an `AuthContext { role }` stamped onto each
+  request; per-route extractors (today: `RequireAdminAction`) gate handlers
+  on `siphon::rbac::role_has_permission`, returning 403 with an audit-log
+  `REJECT` row before any handler logic runs. The `POST /v1/overrides/roll`
+  and `POST /v1/k8s/deployments/{name}/rollout` endpoints — which mutate
+  cluster state via `kube` — are gated on `Permission::AdminAction`. Open
+  dev mode (no `SIPHON_API_KEY` configured) maps to `Role::Operator`, so
+  AdminAction-gated routes refuse to fire without explicit auth even when
+  bearer auth is off. Multi-key role-mapping (a `HashMap<key, Role>`)
+  remains as follow-up plumbing — the schema's already in
+  `rbac::resolve_role`.
+
+---
+
 ## 2026-04-25
 
 ### siphon-fs 1.0.0
