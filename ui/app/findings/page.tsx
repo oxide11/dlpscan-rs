@@ -17,6 +17,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { formatTimestampUtc } from "@/lib/formatters";
 
 export const metadata = {
   title: "Findings",
@@ -65,7 +66,7 @@ export default function FindingsPage() {
       <SubHeader>
         <SubHeaderTitle
           title={SAMPLE.document}
-          description={`Scan ${SAMPLE.scanId} · ${formatWhen(
+          description={`Scan ${SAMPLE.scanId} · ${formatTimestampUtc(
             SAMPLE.scannedAt,
           )} · ${SAMPLE.durationMs} ms`}
         />
@@ -126,16 +127,3 @@ export default function FindingsPage() {
   );
 }
 
-// Render an ISO-8601 string as a locale-formatted short timestamp.
-// Kept inline because the whole app only has one call site today.
-function formatWhen(iso: string): string {
-  // Deterministic formatting — the static export builds once at
-  // CI time, so we can't rely on the browser's locale. Picking a
-  // fixed format ("YYYY-MM-DD HH:mm UTC") keeps the prerendered
-  // HTML stable and matches the JSON log timestamps.
-  const d = new Date(iso);
-  const pad = (n: number) => n.toString().padStart(2, "0");
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(
-    d.getUTCDate(),
-  )} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
-}
