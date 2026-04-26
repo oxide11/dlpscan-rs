@@ -16,6 +16,28 @@ starting from this file.
 
 ## 2026-04-26
 
+### chart 2.1.0
+
+- feat(chart): Authelia password-reset flow is now production-shaped. The
+  chart already had `password_reset.disable: false` set, but only rendered
+  the filesystem notifier — Authelia would write reset "emails" to
+  `/config/notification.txt` regardless of environment. New
+  `authelia.notifier.smtp.{enabled,host,port,username,sender,identifier,subject,startupCheckAddress,disableHtmlEmails,tls.{skipVerify,serverName,minimumVersion}}`
+  values keys flip the rendered notifier between filesystem (default,
+  for dev) and SMTP (for prod). When `smtp.enabled=true`, the
+  Authelia Deployment auto-mounts `AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE`
+  from the existing `authelia.secretName` Secret under the key
+  `smtp_password` — same model as the other AUTHELIA_*_FILE secrets.
+- chore(scripts): new `scripts/reset-authelia-password.sh` break-glass
+  helper. Re-hashes a user's password via the official Authelia
+  container (parameter-identical to a self-service reset hash) and
+  patches `users_database.yml` in place, with a timestamped backup
+  alongside. For when SMTP is broken and you can't wait.
+- docs(authentication): self-service and break-glass reset flows
+  documented in `docs/AUTHENTICATION.md`; production checklist now
+  references the new `authelia.notifier.smtp.*` keys instead of a
+  generic "switch notifier to SMTP" line item.
+
 ### siphon-api 2.2.0
 
 - feat(api): RBAC enforcement is now wired end-to-end — `auth_middleware`

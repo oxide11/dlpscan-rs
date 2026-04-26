@@ -272,6 +272,40 @@ authelia:
   # in production — it defeats every access-control rule.
   devBypass: false
 
+  # Authelia's password-reset flow needs a way to deliver the reset
+  # link. With `smtp.enabled: false` the chart falls back to the
+  # filesystem notifier — Authelia writes the "email" body to
+  # /config/notification.txt and the operator tails the file to grab
+  # the link. Fine for local dev / smoke tests; useless in prod.
+  #
+  # In prod, set `smtp.enabled: true` and fill in host / port /
+  # username / sender. The SMTP password is sourced from the same
+  # Secret as the other Authelia high-entropy values
+  # (authelia.secretName above) under the key `smtp_password` —
+  # add that key to the Secret in lockstep with flipping the toggle.
+  notifier:
+    smtp:
+      enabled: false
+      host: ""                # e.g. smtp.example.com
+      port: 587               # 587 = STARTTLS submission; 465 = implicit TLS
+      username: ""            # e.g. authelia@example.com
+      sender: ""              # "Siphon <noreply@example.com>"
+      identifier: "siphon"    # SMTP HELO/EHLO identifier
+      subject: "[Siphon] {title}"
+      # Authelia hits this address with a NOOP at startup to verify
+      # SMTP is reachable. Empty disables the check (the configmap
+      # template only emits `startup_check_address` when set).
+      startupCheckAddress: ""
+      disableHtmlEmails: false
+      tls:
+        # `true` accepts self-signed / private-CA SMTP relays.
+        # Leave false unless you know the relay's TLS chain isn't
+        # publicly trusted — accepting any cert lets a MITM see
+        # reset links.
+        skipVerify: false
+        serverName: ""        # SNI override; empty = derive from `host`
+        minimumVersion: "TLS1.2"
+
   resources:
     requests:
       cpu: 100m

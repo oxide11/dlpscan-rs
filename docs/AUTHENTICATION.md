@@ -88,6 +88,77 @@ The filesystem notifier writes "password reset" emails to
 flow without SMTP. Tail that file, grab the link, paste into the
 browser.
 
+### Password reset (self-service)
+
+Authelia ships a built-in self-service reset flow — the "Forgot
+password?" link on the login page. Behaviour depends on which
+notifier the chart is rendering:
+
+| Mode | Trigger | Where the reset link lands |
+|------|---------|----------------------------|
+| `authelia.notifier.smtp.enabled: false` (default) | "Forgot password?" → username | `/config/notification.txt` inside the Authelia pod (`kubectl exec` + `tail`) |
+| `authelia.notifier.smtp.enabled: true` | "Forgot password?" → username | the email address recorded for the user in `users_database.yml`, via the configured SMTP relay |
+
+To enable SMTP delivery (the production path), in your values
+override:
+
+```yaml
+authelia:
+  notifier:
+    smtp:
+      enabled: true
+      host: smtp.example.com
+      port: 587
+      username: authelia@example.com
+      sender: "Siphon <noreply@example.com>"
+      identifier: "siphon"
+      # tls.skipVerify defaults false. Only set true if your relay's
+      # TLS chain isn't publicly trusted; accepting any cert lets a
+      # MITM see reset links.
+      tls:
+        skipVerify: false
+```
+
+Then add an `smtp_password` key to the Authelia Secret named in
+`authelia.secretName`:
+
+```sh
+kubectl patch secret siphon-authelia \
+  --type merge \
+  -p "{\"stringData\":{\"smtp_password\":\"$(cat smtp.pw)\"}}"
+```
+
+The chart automatically wires `AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE`
+to `/secrets/smtp_password` when `smtp.enabled=true` so Authelia
+picks the secret up at startup.
+
+### Password reset (break-glass)
+
+When SMTP is broken (or you can't wait for it to come back),
+`scripts/reset-authelia-password.sh` rewrites the user's hash in
+`users_database.yml` directly. It's a thin wrapper around the
+official Authelia container's `crypto hash generate argon2`
+command, so the resulting hash is parameter-identical to one a
+self-service reset would produce.
+
+```sh
+# Prompts twice for the new password, backs the file up, patches
+# in place, prints the next-step kubectl rollout command.
+scripts/reset-authelia-password.sh --user admin
+
+# Mint the hash but don't touch the file — useful for piping into
+# a `kubectl edit secret` flow if your users_database lives in a
+# Secret rather than the chart's seeded ConfigMap.
+scripts/reset-authelia-password.sh --user admin --print
+```
+
+After patching, restart the Authelia Deployment so it re-reads
+the file:
+
+```sh
+kubectl -n siphon rollout restart deploy/<authelia-release-name>
+```
+
 ### Production checklist
 
 Before pointing production traffic at this stack:
@@ -96,8 +167,9 @@ Before pointing production traffic at this stack:
       `issuer_private_key`, `clients[*].secret`) with real
       cryptographic material.
 - [ ] Switch `storage` from SQLite to PostgreSQL.
-- [ ] Switch `notifier` from filesystem to SMTP (real mail
-      delivery).
+- [ ] Set `authelia.notifier.smtp.enabled: true` (with `host`,
+      `username`, `sender`, and the `smtp_password` key on the
+      Authelia Secret) so password-reset links reach a real inbox.
 - [ ] Swap `access_control` subject groups from the default
       placeholders to your real auth-backend groups.
 - [ ] Mount TLS certs at `/etc/nginx/certs/` and uncomment the TLS
