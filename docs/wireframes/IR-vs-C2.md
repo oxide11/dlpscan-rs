@@ -71,46 +71,37 @@ After M1–M5, IR's `Settings` workspace shrinks to `Integrations`
 Account" once `Integrations` resolves, since "settings" implies
 system config that no longer lives there.
 
-## Open questions
+## Status
 
-These are the calls that need a decision before M1–M5 ship. None
-of them block the planning doc itself; they block the code-move PR.
+| ID | Move | Status |
+|---|---|---|
+| M1 | `ir-users` → C2 (heavy code move) | Intent shipped (banners + disabled affordances). Code move queued for its own session. |
+| M2 | `ir-auth` → C2 | ✅ Shipped. C2's new `'auth'` surface is a stub today; full auth status board ports across in a follow-up. |
+| M3 | `ir-deployment` → C2 (Pods) | ✅ Shipped. IR redirects via `MovedToC2` helper. |
+| M4 | `ir-engineering` → C2 (Engineering) | ✅ Shipped. IR redirects via `MovedToC2` helper. |
+| M5 | Add `profile` to C2 | ✅ Shipped. Stub today; full impl arrives with the M1 code move (shared per-user store). |
+| M6 | Timeline Analyze → Correlate (IR) | ✅ Shipped. |
 
-1. **Investigations.** Today the surface exists in both. Proposal: canonical case-file UI lives in IR (where the work happens), C2 keeps a *summary* view (count of open cases, time-to-close trend, top assignees) that deep-links into IR for full case work. Yes/no?
+## Resolved questions
 
-2. **Integrations.** Today `'integrations'` exists in both consoles. Three plausible shapes:
-   - **a)** C2 owns *all* integrations (SIEM, SOAR, webhooks, JIRA, Splunk HEC, XSOAR). IR keeps no integrations surface; XSOAR/Splunk show up in IR's Handoffs surface as escalation targets only.
-   - **b)** C2 owns global integrations; IR has a stripped surface listing *only* the ones it can act on (XSOAR escalate, Splunk HEC search).
-   - **c)** Same surface, both consoles, identical UI (status quo).
-   Recommendation: **(a)** — collapse to C2-only and surface XSOAR/Splunk in IR's Handoffs. Yes/no?
+| ID | Decision | Implementation |
+|---|---|---|
+| Q1 | Investigations: canonical case-file UI in IR; C2 keeps a summary view that deep-links per-case to IR | ✅ C2's Investigations surface reframed as "operate lens" with deep-link banner, click-row → IR jump, and "+ New (in IR)" affordance |
+| Q2 | Integrations collapse to C2-only; IR uses Handoffs to surface XSOAR/Splunk | ✅ Shipped together with M3/M4 |
+| Q5 | Alerts: rename IR's surface to `triggers` (escalation rules) | ✅ Shipped. C2 keeps operational `alerts`. |
+| Q6 | Docs in IR nav: popover-only is sufficient | ✅ Decision recorded — no code change. Adding a Docs entry to IR's nav would pull focus from the response workflow; the contextual `HelpIcon` popovers already reach the same content. |
 
-3. **My Profile in C2.** Confirms M5: C2 needs a "My Profile" surface so engineers/analysts have a place to set their own theme/timezone/notifications. Yes/no — and does it share the same backing store as IR's profile (so a user's prefs follow them between consoles)?
+## Still open
 
-4. **FP Queue from IR.** Engineers tune patterns by working the FP queue in C2's Engineering workspace. Responders are the people most likely to *spot* a FP (they're in the findings all day). Today there's no path from a finding in IR to "flag as FP". Two shapes:
-   - **a)** Add a "Flag as false positive" action on each IR finding that posts to the same backing store the C2 FP Queue reads.
-   - **b)** Just deep-link "Discuss this with detection engineering →" out to C2's FP Queue.
-   Recommendation: **(a)** — closes the loop without requiring console-switching for the responder. Yes/no?
-
-5. **Alerts.** Both consoles have an `'alerts'` surface today. Different intent (C2 = ops; IR = response triggers) but same name. Three shapes:
-   - **a)** Rename one. C2 keeps `'alerts'` (operational), IR's becomes `'triggers'` or `'rules'` (escalation rules that fire when a finding matches).
-   - **b)** Keep both `'alerts'`, accept the name collision; users learn it from context.
-   - **c)** Collapse to one surface in C2 and surface fired-alert *records* in IR's Findings Queue as a filter.
-   Recommendation: **(a)**.
-
-6. **Docs.** Today docs are reachable via C2's `'docs'` surface and IR's `HelpIcon` popovers. Do we want a top-level Docs entry in IR's nav too, or is the popover sufficient? Recommendation: **popover sufficient** — adding a top-level Docs entry in IR pulls focus from the response workflow.
+| ID | Question | Status |
+|---|---|---|
+| Q3 | My Profile shared store across consoles | M5 stub ships first; the shared store requires hoisting per-user helpers to `siphon-shared.js`, which is M1 territory. Resolves once M1 lands. |
+| Q4 | "Flag as FP" action on IR findings posting to the C2 FP Queue store | Recommended **(a)**: add the action. Scope: ~150 LoC — IR finding-detail action + a shared `c2:fpqueue` localStorage write. Standalone PR; doesn't block anything else. |
 
 ## After this PR
 
-When the open questions resolve, the next PR (`claude/wireframes-ir-vs-c2-execute`)
-implements M2–M5 (M1 is already underway as its own multi-commit
-PR; M6 is on the backlog). Each move is small in isolation:
-
-- Add the C2 surface entry + a stub component
-- Remove the IR surface entry from `IR_SURFACES` + `SURFACE_COMPONENTS`
-- Delete the IR component definition
-- Add a one-time deep-link redirect on IR for users who land on the
-  old hash route (`siphon-ir.html#surface=ir-deployment` →
-  `siphon-c2.html#surface=pods`)
-
-Total expected diff for M2 + M3 + M4 + M5: ~600 LoC across the two
-HTML files, no shared code involved (each move is console-local).
+The remaining work is M1 (heavy user-management code move) plus
+the open questions above. M1 is the last big lift; once it lands,
+IR's Settings workspace shrinks to one entry (`My Profile`) and
+the per-user / per-role helpers live in `siphon-shared.js` where
+both consoles inherit them.
