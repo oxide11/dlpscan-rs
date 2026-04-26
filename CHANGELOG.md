@@ -16,6 +16,18 @@ starting from this file.
 
 ## 2026-04-26
 
+### ui (siphon-ui)
+
+- refactor(ui): extract two duplicated patterns into shared modules.
+  Three pages (`app/page.tsx`, `app/pods/page.tsx`,
+  `app/findings/page.tsx`) carried near-identical inline copies of
+  the destructive-tinted error card and the date / age formatters.
+  New `components/ui/error-alert.tsx` (with a `<ErrorAlert title
+  message hint? />` shape) and `lib/formatters.ts` (with
+  `formatTimestampUtc` + `formatRelativeAge`) replace those copies.
+  No version bump — `ui/package.json` follows the root Cargo.toml
+  per the version-sync gate.
+
 ### chart 2.1.0
 
 - feat(chart): Authelia password-reset flow is now production-shaped. The

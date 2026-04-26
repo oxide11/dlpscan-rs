@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertCircle,
   CheckCircle2,
   Loader2,
   RefreshCw,
@@ -26,7 +25,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { ErrorAlert } from "@/components/ui/error-alert";
 import { api, ApiError, type PodSummary } from "@/lib/api";
+import { formatRelativeAge } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 
 // Poll cadence for the pods list. Five seconds feels live without
@@ -156,29 +157,24 @@ export default function PodsPage() {
 
       <ShellContent>
         {error ? (
-          <Card className="mb-4 border-destructive/50 bg-destructive/5">
-            <CardContent className="flex items-start gap-3 py-4">
-              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
-              <div className="text-sm">
-                <div className="font-semibold text-destructive">
-                  Pod discovery unavailable
-                </div>
-                <div className="mt-0.5 text-muted-foreground">{error}</div>
-                <div className="mt-2 text-xs text-muted-foreground">
-                  The Ops view needs siphon-api built with{" "}
-                  <code className="rounded bg-muted px-1">
-                    --features k8s-roll
-                  </code>{" "}
-                  and the Role provisioned by the Helm chart
-                  (
-                  <code className="rounded bg-muted px-1">
-                    api.k8sRoll.enabled=true
-                  </code>
-                  ).
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <ErrorAlert
+            className="mb-4"
+            title="Pod discovery unavailable"
+            message={error}
+            hint={
+              <>
+                The Ops view needs siphon-api built with{" "}
+                <code className="rounded bg-muted px-1">
+                  --features k8s-roll
+                </code>{" "}
+                and the Role provisioned by the Helm chart (
+                <code className="rounded bg-muted px-1">
+                  api.k8sRoll.enabled=true
+                </code>
+                ).
+              </>
+            }
+          />
         ) : null}
 
         {loading && pods === null ? (
@@ -240,7 +236,7 @@ export default function PodsPage() {
                           </Badge>
                         ) : null}
                         <span className="ml-auto text-xs text-muted-foreground">
-                          {p.node ?? "—"} · {formatAge(p.created_at)}
+                          {p.node ?? "—"} · {formatRelativeAge(p.created_at)}
                         </span>
                         {p.image ? (
                           <span className="w-full truncate font-mono text-xs text-muted-foreground">
@@ -299,16 +295,3 @@ function PhaseIcon({ phase, ready }: { phase: string; ready: boolean }) {
   );
 }
 
-function formatAge(iso: string | null): string {
-  if (!iso) return "—";
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) return "—";
-  const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
-  if (secs < 60) return `${secs}s`;
-  const mins = Math.round(secs / 60);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.round(mins / 60);
-  if (hours < 48) return `${hours}h`;
-  const days = Math.round(hours / 24);
-  return `${days}d`;
-}

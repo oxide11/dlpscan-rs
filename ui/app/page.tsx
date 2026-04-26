@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
-  AlertCircle,
   ArrowRight,
   ScanLine,
   Server,
@@ -25,6 +24,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { ErrorAlert } from "@/components/ui/error-alert";
 import { api, ApiError, type PodSummary } from "@/lib/api";
 
 // Landing-page pod summary polls less aggressively than /pods
@@ -140,27 +140,22 @@ export default function DashboardPage() {
         </div>
 
         {error ? (
-          <Card className="mt-6 border-destructive/50 bg-destructive/5">
-            <CardContent className="flex items-start gap-3 py-4">
-              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
-              <div className="text-sm">
-                <div className="font-semibold text-destructive">
-                  Pod discovery unavailable
-                </div>
-                <div className="mt-0.5 text-muted-foreground">{error}</div>
-                <div className="mt-2 text-xs text-muted-foreground">
-                  The overview reads siphon-api&apos;s{" "}
-                  <code className="rounded bg-muted px-1">/v1/k8s/pods</code>,
-                  which requires the chart&apos;s{" "}
-                  <code className="rounded bg-muted px-1">
-                    api.k8sRoll.enabled=true
-                  </code>{" "}
-                  Role. Outside a cluster, the endpoint returns an
-                  init error.
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <ErrorAlert
+            className="mt-6"
+            title="Pod discovery unavailable"
+            message={error}
+            hint={
+              <>
+                The overview reads siphon-api&apos;s{" "}
+                <code className="rounded bg-muted px-1">/v1/k8s/pods</code>,
+                which requires the chart&apos;s{" "}
+                <code className="rounded bg-muted px-1">
+                  api.k8sRoll.enabled=true
+                </code>{" "}
+                Role. Outside a cluster, the endpoint returns an init error.
+              </>
+            }
+          />
         ) : null}
 
         <Card className="mt-6">
