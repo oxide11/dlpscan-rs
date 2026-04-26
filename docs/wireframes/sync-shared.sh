@@ -26,9 +26,16 @@ with open('siphon-shared.js')  as f: js  = f.read()
 # `<!-- @sync-surface: NAME -->`...`<!-- @end-sync-surface: NAME -->`
 # in the HTML, and the script block between them is regenerated
 # from the file content.
+#
+# The third entry in each tuple is an optional *shared* surface
+# root. Any .jsx under `shared/surfaces/` gets inlined into BOTH
+# consoles — same content, same marker name. Use this for surfaces
+# whose code should not diverge between C2 and IR (e.g., user
+# admin: a single roster + role matrix that both consoles operate
+# on).
 TARGETS = [
-    ('siphon-c2.html', 'c2/surfaces'),
-    ('siphon-ir.html', 'ir/surfaces'),
+    ('siphon-c2.html', 'c2/surfaces', 'shared/surfaces'),
+    ('siphon-ir.html', 'ir/surfaces', 'shared/surfaces'),
 ]
 
 def load_surfaces(root):
@@ -44,7 +51,7 @@ def load_surfaces(root):
             out[name] = f.read()
     return out
 
-for path, surface_dir in TARGETS:
+for path, surface_dir, shared_dir in TARGETS:
     with open(path) as f: html = f.read()
 
     # Replace the first <style>...</style> with fresh CSS. Lambda
@@ -74,7 +81,19 @@ for path, surface_dir in TARGETS:
     # whole stanza (open marker → script → close marker) and we
     # build the replacement from scratch — no regex backreferences,
     # since the lambda passed to re.sub returns its string verbatim.
-    for name, body in load_surfaces(surface_dir).items():
+    #
+    # Per-console surfaces resolve first; shared/ surfaces are
+    # appended after so a console can override a shared name with
+    # a console-specific variant by dropping the same .jsx into its
+    # own surface dir. Today nothing exercises that override —
+    # noting it for the next contributor.
+    surfaces = list(load_surfaces(surface_dir).items())
+    for shared_name, shared_body in load_surfaces(shared_dir).items():
+        if any(name == shared_name for name, _ in surfaces):
+            print(f'  note: shared/{shared_name} overridden by {surface_dir}/{shared_name}')
+            continue
+        surfaces.append((shared_name, shared_body))
+    for name, body in surfaces:
         open_tag  = f'<!-- @sync-surface: {name} -->'
         close_tag = f'<!-- @end-sync-surface: {name} -->'
         marker_re = re.compile(
@@ -83,10 +102,17 @@ for path, surface_dir in TARGETS:
             + re.escape(close_tag),
             re.DOTALL,
         )
+        # Track which dir the surface came from so the GENERATED
+        # banner points at the editable source, not the wrong root.
+        src_dir = (
+            surface_dir
+            if os.path.exists(os.path.join(surface_dir, name + '.jsx'))
+            else shared_dir
+        )
         replacement = (
             open_tag + '\n'
             + '<script type="text/babel" data-presets="react">\n'
-            + f'/* GENERATED — edit {surface_dir}/{name}.jsx and run sync-shared.sh */\n'
+            + f'/* GENERATED — edit {src_dir}/{name}.jsx and run sync-shared.sh */\n'
             + body.rstrip() + '\n'
             + '</script>\n'
             + close_tag
@@ -96,7 +122,7 @@ for path, surface_dir in TARGETS:
             print(f'  warn: no @sync-surface: {name} marker in {path} — skipping')
         else:
             html = new_html
-            print(f'  inlined {surface_dir}/{name}.jsx into {path}')
+            print(f'  inlined {src_dir}/{name}.jsx into {path}')
 
     with open(path, 'w') as f: f.write(html)
     print(f're-inlined siphon-shared.{{css,js}} + surfaces into {path}')
