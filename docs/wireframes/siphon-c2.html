@@ -2545,6 +2545,8 @@ const SURFACES = [
   // ── ADMIN ────────────────────────────────────────────────────
   { id: 'settings',       workspace: 'admin',   icon: '⚙',  title: 'Settings' },
   { id: 'users',          workspace: 'admin',   icon: '◍',  title: 'Users & Roles' },
+  { id: 'auth',           workspace: 'admin',   icon: '⛨',  title: 'Authentication', sub: 'password · SAML · passkeys' },
+  { id: 'profile',        workspace: 'admin',   icon: '◔',  title: 'My Profile',     sub: 'timezone · notifications · change password' },
   { id: 'integrations',   workspace: 'admin',   icon: '⇄',  title: 'Integrations' },
   { id: 'keys',           workspace: 'admin',   icon: '⚿',  title: 'API Keys',      cluster: true },
   { id: 'agents',         workspace: 'admin',   icon: '◆',  title: 'Agents',        cluster: true },
@@ -3960,6 +3962,68 @@ function Users() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Stub-with-blurb helper ─────────────────────────────────────
+// Lightweight fill-in for surfaces that own their own page-head
+// but want a centred "more on the way" panel underneath.
+// StubPage at the top of this file is heavier (it renders its own
+// crumbs + actions); use that when there's no surrounding head.
+function StubBlurb({ blurb }) {
+  return (
+    <div className="box" style={{marginTop:'var(--gap)'}}>
+      <div style={{
+        padding:'24px 22px',
+        fontSize:13, lineHeight:1.7,
+        color:'var(--ink-soft)',
+      }}>
+        {blurb}
+      </div>
+    </div>
+  );
+}
+
+// ─── Admin · Authentication (M2 from IR-vs-C2.md) ───────────────
+// Stub — moved here from siphon-ir.html#surface=ir-auth. The full
+// auth-method status board (live PBKDF2 password, backlog SAML +
+// passkeys) ports across in a follow-up commit; this entry locks
+// in the surface ID + sidenav slot so the move is reviewable in
+// chunks. See docs/wireframes/IR-vs-C2.md → M2.
+function Auth() {
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Admin · Authentication</div>
+          <h1>Authentication <HelpIcon topic="rbac" title="Authentication" size={18} /></h1>
+        </div>
+      </div>
+      <StubBlurb blurb="Auth method status board (password · SAML · passkeys). Moving here from IR per docs/wireframes/IR-vs-C2.md → M2. The full surface ports across in a follow-up commit." />
+    </div>
+  );
+}
+
+// ─── Admin · My Profile (M5 from IR-vs-C2.md) ───────────────────
+// Stub — every signed-in user should have a profile / preferences
+// page in C2 too (today only IR has one). The full ProfileSurface
+// implementation lives in siphon-ir.html and depends on the
+// per-user store + helpers (getCurrentUser, defaultUserSettings,
+// updateUser, etc.) that aren't yet hoisted to siphon-shared.js —
+// the heavy code move queued separately is what unlocks the real
+// component here. Until then the stub holds the slot so the
+// sidenav entry resolves.
+function Profile() {
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Admin · My Profile</div>
+          <h1>My Profile <HelpIcon topic="rbac" title="Profile" size={18} /></h1>
+        </div>
+      </div>
+      <StubBlurb blurb="Per-user preferences: timezone, theme, notifications, change-my-password. The functional UI in IR (Settings → My Profile) is the canonical reference and ports across once the user-management code move lands." />
     </div>
   );
 }
@@ -17533,6 +17597,8 @@ function App() {
       audit:          <Audit />,
       docs:           <DocsSurface />,
       users:          <Users />,
+      auth:           <Auth />,
+      profile:        <Profile />,
       integrations:   <Integrations />,
       keys:           <ApiKeys />,
       agents:         <Agents />,

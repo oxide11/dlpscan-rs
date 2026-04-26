@@ -2524,7 +2524,7 @@ const IR_SURFACES = [
   // ── RESPOND ──────────────────────────────────────────────────
   { id: 'dashboard',      workspace: 'respond',   icon: '◈',  title: 'Overview',         sub: 'MTTR · totals · breakdowns · repeat occurrences' },
   { id: 'findings',       workspace: 'respond',   icon: '≋',  title: 'Findings Queue',   sub: 'live ring from all pods' },
-  { id: 'alerts',         workspace: 'respond',   icon: '!',  title: 'Alerts',           sub: 'threshold-breach signal' },
+  { id: 'triggers',       workspace: 'respond',   icon: '!',  title: 'Triggers',         sub: 'escalation rules · what fires when' },
   { id: 'investigations', workspace: 'respond',   icon: '⌖',  title: 'Investigations',   sub: 'case view · grouping' },
   { id: 'handoffs',       workspace: 'respond',   icon: '⇉',  title: 'Handoffs',         sub: 'tickets · escalations' },
   // ── ANALYZE ──────────────────────────────────────────────────
@@ -2540,12 +2540,19 @@ const IR_SURFACES = [
   { id: 'exhibits',       workspace: 'evidence',  icon: '▣',  title: 'Exhibits',         sub: 'attached artifacts' },
   { id: 'export',         workspace: 'evidence',  icon: '↧',  title: 'Export Bundle',    sub: 'package case for handoff' },
   // ── SETTINGS ─────────────────────────────────────────────────
-  { id: 'integrations',   workspace: 'settings',  icon: '⇄',  title: 'Integrations',     sub: 'XSOAR · Splunk HEC' },
+  // Slimmed per docs/wireframes/IR-vs-C2.md — system-level admin
+  // (integrations, pod registry, dev toggles, auth backend) lives
+  // in C2 going forward. IR's Settings workspace keeps only the
+  // per-user / per-responder surfaces:
+  //   · Users & Roles → being moved to C2 (banner already shipped)
+  //   · My Profile    → personal prefs (stays here)
+  //
+  // Old IDs that landed here historically — `'integrations'`,
+  // `'ir-auth'`, `'ir-deployment'`, `'ir-engineering'` — are
+  // intentionally absent. SURFACE_COMPONENTS keeps redirects so a
+  // bookmarked hash route still goes somewhere useful.
   { id: 'ir-users',       workspace: 'settings',  icon: '◇',  title: 'Users & Roles',    sub: 'invite · disable · role matrix' },
-  { id: 'ir-auth',        workspace: 'settings',  icon: '⛨',  title: 'Authentication',   sub: 'password · SAML · passkeys' },
   { id: 'ir-settings',    workspace: 'settings',  icon: '⚙',  title: 'My Profile',       sub: 'timezone · notifications · change password' },
-  { id: 'ir-deployment',  workspace: 'settings',  icon: '⚿',  title: 'Pod Registry',     sub: 'shared with admin console' },
-  { id: 'ir-engineering', workspace: 'settings',  icon: '⌁',  title: 'Engineering',      sub: 'demo data · dev toggles' },
 ];
 
 function workspaceOf(surfaceId) {
@@ -6941,9 +6948,9 @@ function XsoarEscalateModal({ finding, note, onClose, onDone }) {
         <div style={{padding:14}}>
           {!cfg.webhook && (
             <div className="note" style={{borderColor:'var(--amber)', background:'var(--amber-wash)', color:'var(--ink)', marginBottom:12, fontSize:12}}>
-              <b>XSOAR webhook not configured.</b> Set the URL + credentials under{' '}
-              <a onClick={() => { onClose(); window.__ir_go && window.__ir_go('integrations'); }}
-                 style={{color:'var(--accent)', cursor:'pointer'}}>Settings → Integrations</a>.
+              <b>XSOAR webhook not configured.</b> Integrations are now configured in C2 —{' '}
+              <a href="siphon-c2.html#surface=integrations"
+                 style={{color:'var(--accent)', textDecoration:'underline'}}>open Admin → Integrations in C2</a>.
               In the meantime, copy the payload and submit via another channel.
             </div>
           )}
@@ -6987,204 +6994,12 @@ function XsoarEscalateModal({ finding, note, onClose, onDone }) {
   );
 }
 
-// ─── Settings → Integrations ────────────────────────────────────
-// Centralises the XSOAR + Splunk HEC configuration. Other IR
-// surfaces read these from localStorage (ir:xsoar, ir:splunk). The
-// 'Test' buttons validate the endpoint is reachable before a real
-// escalation tries.
-function IntegrationsSurface() {
-  const [xsoar, setXsoar] = React.useState(() => ({
-    webhook: '', apiKey: '', authHeader: 'bearer', ...readXsoarCfg(),
-  }));
-  const [splunk, setSplunk] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem('ir:splunk') || '{}') || { hec: '', token: '', index: 'dlp_ir' }; }
-    catch { return { hec: '', token: '', index: 'dlp_ir' }; }
-  });
-  const [xsoarSaved, setXsoarSaved] = React.useState(false);
-  const [splunkSaved, setSplunkSaved] = React.useState(false);
-  const [xsoarTest, setXsoarTest] = React.useState(null);
-  const [splunkTest, setSplunkTest] = React.useState(null);
-
-  const saveXsoar = () => {
-    writeXsoarCfg(xsoar);
-    setXsoarSaved(true);
-    setTimeout(() => setXsoarSaved(false), 1500);
-  };
-  const saveSplunk = () => {
-    try { localStorage.setItem('ir:splunk', JSON.stringify(splunk)); } catch {}
-    setSplunkSaved(true);
-    setTimeout(() => setSplunkSaved(false), 1500);
-  };
-
-  const testXsoar = async () => {
-    setXsoarTest({ state: 'running' });
-    try {
-      const headers = { 'Content-Type': 'application/json' };
-      if (xsoar.apiKey) headers['Authorization'] = xsoar.authHeader === 'api-key'
-        ? xsoar.apiKey
-        : 'Bearer ' + xsoar.apiKey;
-      const r = await fetch(xsoar.webhook, {
-        method: 'POST', headers,
-        body: JSON.stringify({ source: 'siphon-ir', kind: 'test', submitted_at: new Date().toISOString() }),
-      });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      setXsoarTest({ state: 'ok', status: r.status });
-    } catch (e) {
-      setXsoarTest({ state: 'fail', error: String(e.message || e) });
-    }
-  };
-  const testSplunk = async () => {
-    setSplunkTest({ state: 'running' });
-    try {
-      const r = await fetch(splunk.hec, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Splunk ' + (splunk.token || ''),
-        },
-        body: JSON.stringify({
-          event: { source: 'siphon-ir', kind: 'test', ts: new Date().toISOString() },
-          sourcetype: 'siphon:ir:test',
-          index: splunk.index || 'main',
-        }),
-      });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      setSplunkTest({ state: 'ok', status: r.status });
-    } catch (e) {
-      setSplunkTest({ state: 'fail', error: String(e.message || e) });
-    }
-  };
-
-  const fieldStyle = {
-    flex:1, minWidth:280, fontFamily:"'JetBrains Mono', monospace", fontSize:12,
-    padding:'6px 10px', background:'var(--bg-1)', color:'var(--ink)',
-    border:'1px solid var(--line-strong)', borderRadius:'var(--radius)',
-  };
-
-  return (
-    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
-      {/* ── XSOAR ───────────────────────────────────────────────── */}
-      <div className="box">
-        <div className="box-title">
-          <span className="t">XSOAR · SOAR / remediation pipeline</span>
-          <span className="k">
-            {xsoar.webhook ? <span className="chip chip--safe" style={{fontSize:9}}>configured</span>
-                           : <span className="chip chip--ghost" style={{fontSize:9}}>not configured</span>}
-          </span>
-        </div>
-        <div style={{padding:14, display:'grid', gap:10, fontSize:12}}>
-          <div className="muted" style={{fontSize:11.5, lineHeight:1.6}}>
-            Webhook endpoint XSOAR listens on (Cortex XSOAR playbook trigger, or a generic webhook
-            that feeds into your playbook engine). Escalate actions POST the finding + 5W context +
-            investigator notes as JSON.
-          </div>
-          <div>
-            <div className="label" style={{marginBottom:4}}>Webhook URL</div>
-            <input type="text" value={xsoar.webhook}
-                   onChange={e => setXsoar({ ...xsoar, webhook: e.target.value })}
-                   placeholder="https://xsoar.example.com/instance/execute/siphon_ir_webhook"
-                   style={fieldStyle} />
-          </div>
-          <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
-            <div style={{flex:2, minWidth:280}}>
-              <div className="label" style={{marginBottom:4}}>API key / token</div>
-              <input type="password" value={xsoar.apiKey}
-                     onChange={e => setXsoar({ ...xsoar, apiKey: e.target.value })}
-                     placeholder="bearer token or raw api-key"
-                     style={fieldStyle} autoComplete="off" />
-            </div>
-            <div style={{flex:1, minWidth:160}}>
-              <div className="label" style={{marginBottom:4}}>Auth header</div>
-              <select value={xsoar.authHeader}
-                      onChange={e => setXsoar({ ...xsoar, authHeader: e.target.value })}
-                      style={{...fieldStyle, width:'100%'}}>
-                <option value="bearer">Authorization: Bearer …</option>
-                <option value="api-key">Authorization: &lt;key&gt;</option>
-              </select>
-            </div>
-          </div>
-          <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
-            <button className="btn" onClick={saveXsoar}>{xsoarSaved ? 'Saved' : 'Save'}</button>
-            <button className="btn ghost" onClick={testXsoar}
-                    disabled={!xsoar.webhook || (xsoarTest && xsoarTest.state === 'running')}>
-              {xsoarTest && xsoarTest.state === 'running' ? 'Testing…' : 'Send test event'}
-            </button>
-            {xsoarTest && xsoarTest.state === 'ok' && (
-              <span className="chip chip--safe" style={{fontSize:10}}>test OK · {xsoarTest.status}</span>
-            )}
-            {xsoarTest && xsoarTest.state === 'fail' && (
-              <span className="chip chip--red" style={{fontSize:10}} title={xsoarTest.error}>
-                test failed: {xsoarTest.error.slice(0, 80)}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Splunk HEC ──────────────────────────────────────────── */}
-      <div className="box">
-        <div className="box-title">
-          <span className="t">Splunk HEC · event forwarder</span>
-          <span className="k">
-            {splunk.hec ? <span className="chip chip--safe" style={{fontSize:9}}>configured</span>
-                        : <span className="chip chip--ghost" style={{fontSize:9}}>not configured</span>}
-          </span>
-        </div>
-        <div style={{padding:14, display:'grid', gap:10, fontSize:12}}>
-          <div className="muted" style={{fontSize:11.5, lineHeight:1.6}}>
-            When configured, every analyst disposition (Close Event / Mark FP / Escalate) mirrors
-            into Splunk via HEC for reporting + long-term audit. Complements the admin console's
-            SIEM forwarders (which stream detections); this stream carries the triage outcomes.
-          </div>
-          <div>
-            <div className="label" style={{marginBottom:4}}>HEC URL</div>
-            <input type="text" value={splunk.hec}
-                   onChange={e => setSplunk({ ...splunk, hec: e.target.value })}
-                   placeholder="https://splunk.example.com:8088/services/collector"
-                   style={fieldStyle} />
-          </div>
-          <div style={{display:'flex', gap:10, flexWrap:'wrap'}}>
-            <div style={{flex:2, minWidth:280}}>
-              <div className="label" style={{marginBottom:4}}>HEC token</div>
-              <input type="password" value={splunk.token}
-                     onChange={e => setSplunk({ ...splunk, token: e.target.value })}
-                     placeholder="e.g. B5A79AAD-D822-46CC-80D1-…"
-                     style={fieldStyle} autoComplete="off" />
-            </div>
-            <div style={{flex:1, minWidth:140}}>
-              <div className="label" style={{marginBottom:4}}>Index</div>
-              <input type="text" value={splunk.index}
-                     onChange={e => setSplunk({ ...splunk, index: e.target.value })}
-                     placeholder="dlp_ir"
-                     style={fieldStyle} />
-            </div>
-          </div>
-          <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
-            <button className="btn" onClick={saveSplunk}>{splunkSaved ? 'Saved' : 'Save'}</button>
-            <button className="btn ghost" onClick={testSplunk}
-                    disabled={!splunk.hec || (splunkTest && splunkTest.state === 'running')}>
-              {splunkTest && splunkTest.state === 'running' ? 'Testing…' : 'Send test event'}
-            </button>
-            {splunkTest && splunkTest.state === 'ok' && (
-              <span className="chip chip--safe" style={{fontSize:10}}>test OK · {splunkTest.status}</span>
-            )}
-            {splunkTest && splunkTest.state === 'fail' && (
-              <span className="chip chip--red" style={{fontSize:10}} title={splunkTest.error}>
-                test failed: {splunkTest.error.slice(0, 80)}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="muted" style={{fontSize:11, lineHeight:1.7, padding:'0 2px'}}>
-        Both configurations live in this browser's localStorage only. Clear them with the browser's
-        site-data panel. For a shared multi-analyst setup, back these with a server-side secret store
-        and a /v1/integrations endpoint on siphon-api — Phase 7 of the IR roadmap.
-      </div>
-    </div>
-  );
-}
+// IntegrationsSurface removed — moved to C2 per
+// docs/wireframes/IR-vs-C2.md. The XSOAR + Splunk HEC config that
+// used to live here is now in C2's Admin → Integrations. The
+// `'integrations'` route in SURFACE_COMPONENTS still resolves
+// (renders MovedToC2 with a deep link) so old hash bookmarks
+// don't 404.
 
 // ─── Dashboard (Respond → Overview) ─────────────────────────────
 // Operational metrics: MTTR-respond / MTTR-remediate, totals by
@@ -10111,11 +9926,60 @@ function ForensicsSurface() {
   );
 }
 
+// Redirect helper for surfaces that have moved to C2 — renders a
+// short "moved" notice with a deep link instead of a dead route.
+// Prefer this over a stale Stub so users who bookmarked the old
+// hash get pointed somewhere actionable instead of a placeholder.
+function MovedToC2({ title, c2Surface, why }) {
+  return (
+    <div style={{padding:'var(--gap)'}}>
+      <div className="box" style={{
+        background:'var(--bg-2)',
+        border:'1px dashed var(--accent)',
+      }}>
+        <div style={{
+          padding:'18px 20px',
+          display:'flex', alignItems:'flex-start', gap:14, flexWrap:'wrap',
+          fontSize:13, color:'var(--ink)', lineHeight:1.6,
+        }}>
+          <span className="chip chip--accent" style={{fontSize:10, padding:'3px 10px', flexShrink:0}}>
+            MOVED TO C2
+          </span>
+          <div style={{flex:1, minWidth:240}}>
+            <div style={{
+              fontFamily:"'Space Grotesk', sans-serif",
+              fontSize:16, fontWeight:600, color:'var(--ink-bright)',
+              marginBottom:6,
+            }}>{title}</div>
+            <div style={{color:'var(--ink-soft)'}}>
+              {why}
+            </div>
+          </div>
+          <a href={'siphon-c2.html#surface=' + c2Surface}
+             className="btn primary"
+             style={{fontSize:12, textDecoration:'none', padding:'8px 14px', flexShrink:0}}>
+            Open in C2 →
+          </a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const SURFACE_COMPONENTS = {
   dashboard:      () => <DashboardSurface />,
   findings:       () => <FindingsQueue />,
-  alerts:         () => <Stub title="Alerts"
-                              description="Threshold-breach signals routed from siphon-api's audit ring." />,
+  // Renamed from 'alerts' per IR-vs-C2.md → Q5: this surface owns
+  // *response triggers* (escalation rules that fire when a finding
+  // matches a pattern), distinct from C2's 'alerts' surface which
+  // shows operational alerts (Siphon health, throughput thresholds).
+  // Same visual still — full editor lands in a follow-up.
+  triggers:       () => <Stub title="Triggers"
+                              description="Escalation rules — what fires when a finding matches. Distinct from C2's operational alerts." />,
+  // Old route preserved as redirect to the new id so bookmarked
+  // hash URLs (and any in-flight links) still resolve.
+  alerts:         () => <Stub title="Renamed → Triggers"
+                              description="This surface was renamed from 'alerts' to 'triggers' to disambiguate against C2's operational alerts. Open Respond → Triggers in the sidenav." />,
   investigations: () => <Stub title="Investigations"
                               description="Case view — group findings, annotate, assign." />,
   handoffs:       () => <Stub title="Handoffs"
@@ -10136,13 +10000,25 @@ const SURFACE_COMPONENTS = {
                               description="Attached artifacts: original file, extracted text, finding metadata, investigator notes." />,
   export:         () => <Stub title="Export Bundle"
                               description="Package a case into a zip for handoff (findings JSON, extracted text, exhibits, custody log, signed manifest)." />,
-  integrations:   () => <IntegrationsSurface />,
   'ir-users':     () => <UsersSurface />,
-  'ir-auth':      () => <AuthenticationSurface />,
   'ir-settings':  () => <ProfileSurface />,
-  'ir-deployment':() => <Stub title="Pod Registry"
-                              description="Shared with the admin console — registered pods appear in both. Edits under Settings → Deployment on siphon-c2.html." />,
-  'ir-engineering': () => <EngineeringSurface />,
+  // ── Moved-to-C2 redirects (per docs/wireframes/IR-vs-C2.md) ──
+  // Old route IDs kept as redirects so bookmarks still resolve.
+  // The corresponding entries are intentionally NOT in IR_SURFACES
+  // (above) — they don't appear in the sidenav, only as target
+  // hashes for deep links coming from elsewhere.
+  integrations:    () => <MovedToC2 title="Integrations"
+                                    c2Surface="integrations"
+                                    why="Integrations (XSOAR, Splunk HEC, SIEM/SOAR webhooks) are configured globally in C2 going forward. IR consumes them indirectly via the Handoffs surface." />,
+  'ir-auth':       () => <MovedToC2 title="Authentication"
+                                    c2Surface="auth"
+                                    why="Auth backend config (password policy, SAML, passkeys) is admin-level — it lives with system settings in C2." />,
+  'ir-deployment': () => <MovedToC2 title="Pod Registry"
+                                    c2Surface="pods"
+                                    why="The Pod Registry is the same set of pods C2's Operate workspace shows. C2's Pods surface is the canonical place to register, view, and manage them." />,
+  'ir-engineering':() => <MovedToC2 title="Engineering"
+                                    c2Surface="livescan"
+                                    why="Detection-engineering tooling (Live Scan, Corpus Runner, Scan Diff, API Explorer, FP Queue) is C2's Engineering workspace. The dev toggles that lived here move there too." />,
 };
 
 // ─── Settings → Users & Roles · U3 ─────────────────────────────
@@ -11437,128 +11313,11 @@ function UsersSurface() {
   );
 }
 
-// ─── Settings → Authentication · A5 ────────────────────────────
-// Status board for the console's authentication methods. Password
-// auth is wired (A1-A4) — SAML/Entra ID and Passkeys (WebAuthn)
-// are scoped as backlog items here so there's a named home for
-// them when they ship, and so current users can see at a glance
-// which paths are live.
-function AuthenticationSurface() {
-  const methods = [
-    {
-      id: 'password',
-      title: 'Password',
-      status: 'live',
-      summary: 'Email + password via PBKDF2-SHA256 (100k iters · salted per-user). WebCrypto-backed; runs entirely in the browser for the wireframe.',
-      details: [
-        ['Hash algo',     'PBKDF2-SHA256'],
-        ['Iterations',    String(IR_PBKDF2_ITERS)],
-        ['Policy floor',  '≥ 10 chars · letter + digit'],
-        ['Session TTL',   '12 h (rolling, not sliding)'],
-        ['Rotation',      'on-demand via Profile · enforced on seeded defaults'],
-      ],
-    },
-    {
-      id: 'saml-entra',
-      title: 'Entra ID · SAML 2.0',
-      status: 'backlog',
-      summary: 'SP-initiated SSO against Microsoft Entra ID (formerly Azure AD). Metadata exchange, certificate pinning, SCIM user provisioning.',
-      details: [
-        ['Flow',          'SP-initiated · AuthnRequest → IdP login → SAMLResponse'],
-        ['Metadata',      'published at /auth/saml/metadata (not wired)'],
-        ['Claim map',     'NameID→email · role from groups'],
-        ['Provisioning',  'SCIM 2.0 for just-in-time account create'],
-        ['Session bridge', 'exchange SAML assertion for ir:session cookie'],
-      ],
-    },
-    {
-      id: 'passkeys',
-      title: 'Passkeys · WebAuthn',
-      status: 'backlog',
-      summary: 'Platform + roaming authenticators via the WebAuthn API. Users register one or more passkeys against their account; login prompts the platform authenticator (Touch ID, Windows Hello, security key).',
-      details: [
-        ['Standard',       'WebAuthn L3 · FIDO2'],
-        ['Register',       'navigator.credentials.create({publicKey:…})'],
-        ['Login',          'navigator.credentials.get({publicKey:…})'],
-        ['Storage',        'per-user array of {credentialId, publicKey, counter}'],
-        ['Fallback',       'password still available if no passkeys registered'],
-      ],
-    },
-  ];
-
-  return (
-    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
-      <div className="box">
-        <div className="box-title">
-          <span className="t">Authentication methods</span>
-          <span className="k mono" style={{fontSize:11}}>local-only wireframe · server-backed deployment replaces this</span>
-        </div>
-        <div style={{padding:14, display:'grid', gap:14}}>
-          {methods.map(m => (
-            <div key={m.id}
-                 style={{
-                   padding:14,
-                   background:'var(--bg-1)',
-                   border:'1px solid var(--line-soft)',
-                   borderRadius:'var(--radius)',
-                 }}>
-              <div style={{display:'flex', alignItems:'center', gap:10, marginBottom:8, flexWrap:'wrap'}}>
-                <div style={{
-                  fontFamily:"'Space Grotesk', sans-serif", fontSize:15,
-                  fontWeight:700, color:'var(--ink-bright)',
-                }}>{m.title}</div>
-                <span className={'chip chip--' + (m.status === 'live' ? 'safe' : 'ghost')}
-                      style={{fontSize:10, padding:'3px 8px'}}>
-                  {m.status === 'live' ? '● LIVE' : '◯ BACKLOG'}
-                </span>
-              </div>
-              <div style={{fontSize:12, lineHeight:1.7, color:'var(--ink)', marginBottom:10}}>
-                {m.summary}
-              </div>
-              <div style={{
-                display:'grid',
-                gridTemplateColumns:'170px 1fr',
-                gap:'4px 14px',
-                fontSize:11.5,
-              }}>
-                {m.details.map(([k, v], i) => (
-                  <React.Fragment key={i}>
-                    <div className="label" style={{color:'var(--ink-soft)', padding:'2px 0'}}>{k}</div>
-                    <div className="mono" style={{color:'var(--ink)', padding:'2px 0'}}>{v}</div>
-                  </React.Fragment>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="box">
-        <div className="box-title">
-          <span className="t">Roadmap notes</span>
-          <span className="k mono" style={{fontSize:11}}>reserved slots</span>
-        </div>
-        <div style={{padding:14, fontSize:12, lineHeight:1.7, color:'var(--ink)'}}>
-          <ul style={{margin:0, paddingLeft:18}}>
-            <li>SAML wire target: <span className="mono">/auth/saml/initiate</span>,{' '}
-                <span className="mono">/auth/saml/acs</span>,{' '}
-                <span className="mono">/auth/saml/metadata</span> — parallel paths added
-                to siphon-api alongside the existing password handler.</li>
-            <li>Passkeys: per-user <span className="mono">credentials</span> array on the
-                User record; challenge/response ceremony stored server-side under a
-                short-lived key to prevent replay.</li>
-            <li>Downgrade policy: Passkey + SAML deploys will default to
-                <i> password disabled</i> for covered users — opt-in break-glass pw
-                only for administrators who specifically request it.</li>
-            <li>Audit: every auth event (login success/fail, pw change, passkey
-                register, SAML exchange) writes to <span className="mono">ir:auth-audit</span>{' '}
-                (future) so the Chain-of-Custody surface can cross-reference.</li>
-          </ul>
-        </div>
-      </div>
-    </div>
-  );
-}
+// AuthenticationSurface removed — moved to C2 per
+// docs/wireframes/IR-vs-C2.md. The auth-method status board (live
+// password + backlog SAML/passkeys) now lives in C2's Admin → Auth
+// surface. The `'ir-auth'` route in SURFACE_COMPONENTS still
+// resolves (renders MovedToC2) so old hash bookmarks don't 404.
 
 // ─── Settings → My Profile · U6 ────────────────────────────────
 // Self-service form for the currently signed-in user. Lets them
@@ -11898,113 +11657,17 @@ function ChangePasswordForm({ user, onDone, onCancel }) {
   );
 }
 
-// ─── Settings → Engineering ─────────────────────────────────────
-// Developer-facing toggles. Primary MVP tenant: the demo-data
-// switch, which backs every IR surface with seeded fixtures when
-// on. Live pod data resumes the moment the toggle flips off; the
-// two datasets never mix (separate disposition stores).
-function EngineeringSurface() {
-  const [mode, setMode] = React.useState(isDemoMode);
-  const [seed, setSeed] = React.useState(readDemoSeed);
-  const [demoDispoCount, setDemoDispoCount] = React.useState(() => Object.keys(JSON.parse(localStorage.getItem(IR_DEMO_DISPO_KEY) || '{}')).length);
-
-  // Seed demo dispositions the first time demo mode is turned on so
-  // the dashboard has MTTR data to chart. Re-seed happens only when
-  // the analyst explicitly clicks Regenerate.
-  React.useEffect(() => {
-    if (!mode) return;
-    const existing = localStorage.getItem(IR_DEMO_DISPO_KEY);
-    if (existing && existing !== '{}') return;
-    const findings = generateDemoFindings(seed);
-    const dispo = generateDemoDispositions(findings, seed);
-    localStorage.setItem(IR_DEMO_DISPO_KEY, JSON.stringify(dispo));
-    setDemoDispoCount(Object.keys(dispo).length);
-    window.dispatchEvent(new CustomEvent('ir:demoChanged', { detail: { reason: 'seeded' } }));
-  }, [mode, seed]);
-
-  const toggle = () => {
-    const next = !mode;
-    setMode(next);
-    setDemoMode(next);
-  };
-
-  const regenerate = () => {
-    if (!confirm('Regenerate demo data? Any triage actions you made in demo mode will be overwritten.')) return;
-    const newSeed = (Math.random() * 0xFFFFFFFF) >>> 0;
-    writeDemoSeed(newSeed);
-    setSeed(newSeed);
-    const findings = generateDemoFindings(newSeed);
-    const dispo = generateDemoDispositions(findings, newSeed);
-    localStorage.setItem(IR_DEMO_DISPO_KEY, JSON.stringify(dispo));
-    setDemoDispoCount(Object.keys(dispo).length);
-    window.dispatchEvent(new CustomEvent('ir:demoChanged', { detail: { reason: 'regenerate' } }));
-  };
-
-  const clearDemoOnly = () => {
-    if (!confirm('Clear demo dispositions? Your real (live-mode) triage state is NOT touched.')) return;
-    localStorage.removeItem(IR_DEMO_DISPO_KEY);
-    setDemoDispoCount(0);
-    window.dispatchEvent(new CustomEvent('ir:demoChanged', { detail: { reason: 'cleared' } }));
-  };
-
-  const findingsPreview = React.useMemo(() => generateDemoFindings(seed).length, [seed]);
-
-  return (
-    <div style={{padding:'var(--gap)', display:'grid', gap:'var(--gap)'}}>
-      <div className="box">
-        <div className="box-title">
-          <span className="t">Demo data</span>
-          <span className="k">
-            {mode ? <span className="chip chip--warn" style={{fontSize:9}}>DEMO MODE ACTIVE</span>
-                  : <span className="chip chip--safe" style={{fontSize:9}}>LIVE</span>}
-          </span>
-        </div>
-        <div style={{padding:14, display:'grid', gap:12, fontSize:12, lineHeight:1.7}}>
-          <div className="muted">
-            Swaps the Findings Queue + Dashboard data source from live pod unions to
-            a deterministic seeded set ({findingsPreview} findings across {DEMO_ANALYSTS.length} analysts
-            and {DEMO_USERS.length} end-users, with pre-triaged dispositions).
-            Useful for demos, screenshots, and dashboard tuning without
-            needing a real pod scanning real traffic.
-          </div>
-          <div className="muted" style={{fontSize:11.5, padding:'8px 10px', background:'var(--bg-1)', border:'1px dashed var(--line-soft)', borderRadius:'var(--radius)'}}>
-            <b>Isolation:</b> demo dispositions are stored under{' '}
-            <span className="mono">localStorage[ir:demoDispositions]</span>, separate from your
-            live triage state at <span className="mono">ir:dispositions</span>. They never mix.
-            The FP Queue handoff to the admin console also suppresses demo entries so you don't
-            pollute the real engineering queue.
-          </div>
-          <div style={{display:'flex', gap:10, alignItems:'center', flexWrap:'wrap'}}>
-            <label style={{display:'inline-flex', alignItems:'center', gap:8, cursor:'pointer'}}>
-              <input type="checkbox" checked={mode} onChange={toggle} />
-              <span style={{fontWeight:600}}>Use demo data</span>
-            </label>
-            <span className="muted mono" style={{fontSize:11}}>
-              seed <span className="mono" style={{color:'var(--ink)'}}>{(seed >>> 0).toString(16).padStart(8, '0')}</span>
-              {' · '}{demoDispoCount} demo dispositions
-            </span>
-          </div>
-          <div style={{display:'flex', gap:8, flexWrap:'wrap', paddingTop:4}}>
-            <button className="btn ghost" onClick={regenerate}
-                    title="reshuffle the seed and re-seed dispositions">
-              ↻ Regenerate seed
-            </button>
-            <button className="btn ghost" onClick={clearDemoOnly}
-                    title="wipe demo dispositions · live state not touched"
-                    style={{color:'var(--red)'}}>
-              ✕ Clear demo dispositions
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="muted" style={{fontSize:11, lineHeight:1.7, padding:'0 2px'}}>
-        More developer toggles will live here: mock XSOAR/Splunk responses, synthetic webhook
-        replay, fast-forward clock for MTTR testing.
-      </div>
-    </div>
-  );
-}
+// EngineeringSurface removed — moved to C2 per
+// docs/wireframes/IR-vs-C2.md. The demo-data toggle and dev-only
+// switches now live alongside C2's Engineering workspace (Live
+// Scan / Corpus Runner / Scan Diff / API Explorer / FP Queue).
+// The `'ir-engineering'` route in SURFACE_COMPONENTS still
+// resolves (renders MovedToC2) so old hash bookmarks don't 404.
+//
+// Demo-mode helpers (isDemoMode, setDemoMode, generateDemoFindings,
+// etc.) stay in IR for now — they're still consumed by IR's
+// dashboard + findings-queue surfaces. Once demo mode lands as a
+// real C2 surface, those helpers can move to siphon-shared.js.
 
 // ─── RBAC · users, roles, per-user settings ─────────────────────
 // U1 · data layer only. No UI change this commit — the Users &
