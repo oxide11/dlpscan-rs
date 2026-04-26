@@ -465,4 +465,250 @@
     { id: 'ink',    label: 'Ink',            value: 'var(--ink-soft)' },
   ];
   window.SIPHON_ROLE_GLYPH_PRESETS = ['◆', '◈', '◇', '◉', '◎', '◍', '▲', '△', '▼', '▽', '◖', '◗', '✦', '✧', '✪', '☰', '⚑', '⚐'];
+
+  // ─── RBAC + per-user storage layer · M1 commit B-1 ──────────────
+  // Foundation helpers — readers, writers, the seed roster, and a
+  // few utility formatters. Hooks (useRolesTick, useCan,
+  // useUsersList, useUserTzTick) and computed helpers (canDo,
+  // irRoleMeta, irAllPermissions, irUsersInRole) graduate up here
+  // in M1 commit B-2.
+  //
+  // siphon-ir.html keeps thin forwarding aliases under the
+  // existing IR-flavoured names (readRoles, getCurrentUser, etc.)
+  // so existing call sites compile unchanged.
+  //
+  // Custom event names stay on `ir:rolesChanged` /
+  // `ir:usersChanged` / `ir:currentUserChanged` for now — the
+  // rename to `siphon:*` ships with the JSX components so every
+  // listener moves in lockstep with the dispatchers.
+
+  // Default per-user settings the profile form edits and every
+  // surface respects (timezone applies to displayed timestamps).
+  window.siphonDefaultUserSettings = function siphonDefaultUserSettings() {
+    return {
+      timezone: 'browser',
+      theme: null,                // null = follow global c2:tweaks
+      density: null,
+      notifications: {
+        new_finding:       true,
+        my_assignment:     true,
+        fp_submission:     false,
+        escalation_done:   true,
+        playbook_update:   false,
+      },
+      default_filters: {},        // future use — saved queue filters
+    };
+  };
+
+  // Seed roster — mirrors the demo-data analyst names so the
+  // dashboard's by-analyst chart ties back to real User records,
+  // plus an admin + engineer + viewer + a pending-invite so every
+  // status has at least one member out of the box.
+  window.siphonSeedUsers = function siphonSeedUsers() {
+    const dus = window.siphonDefaultUserSettings;
+    return [
+      {
+        id: 'u-admin', name: 'R. Solanki', email: 'r.solanki@corp.example',
+        role: 'admin', status: 'active',
+        invited_at: null, joined_at: '2024-01-14T09:00:00Z',
+        last_active: new Date().toISOString(),
+        avatar: 'RS',
+        settings: { ...dus(), timezone: 'America/New_York' },
+      },
+      {
+        id: 'u-a.rao', name: 'A. Rao', email: 'a.rao@corp.example',
+        role: 'analyst', status: 'active',
+        invited_at: '2024-02-03T10:00:00Z', joined_at: '2024-02-04T08:12:00Z',
+        last_active: new Date(Date.now() - 3 * 3600e3).toISOString(),
+        avatar: 'AR',
+        settings: { ...dus(), timezone: 'Asia/Singapore' },
+      },
+      {
+        id: 'u-b.smith', name: 'B. Smith', email: 'b.smith@corp.example',
+        role: 'analyst', status: 'active',
+        invited_at: '2024-01-22T14:00:00Z', joined_at: '2024-01-23T11:04:00Z',
+        last_active: new Date(Date.now() - 40 * 60e3).toISOString(),
+        avatar: 'BS',
+        settings: { ...dus(), timezone: 'America/New_York' },
+      },
+      {
+        id: 'u-c.nguyen', name: 'C. Nguyen', email: 'c.nguyen@corp.example',
+        role: 'analyst', status: 'active',
+        invited_at: '2024-03-11T14:00:00Z', joined_at: '2024-03-12T09:22:00Z',
+        last_active: new Date(Date.now() - 9 * 3600e3).toISOString(),
+        avatar: 'CN',
+        settings: { ...dus(), timezone: 'Asia/Singapore' },
+      },
+      {
+        id: 'u-d.patel', name: 'D. Patel', email: 'd.patel@corp.example',
+        role: 'analyst', status: 'active',
+        invited_at: '2024-04-01T09:00:00Z', joined_at: '2024-04-02T08:45:00Z',
+        last_active: new Date(Date.now() - 26 * 3600e3).toISOString(),
+        avatar: 'DP',
+        settings: { ...dus(), timezone: 'Europe/London' },
+      },
+      {
+        id: 'u-e.moreno', name: 'E. Moreno', email: 'e.moreno@corp.example',
+        role: 'analyst', status: 'active',
+        invited_at: '2024-05-20T09:00:00Z', joined_at: '2024-05-21T12:00:00Z',
+        last_active: new Date(Date.now() - 6 * 3600e3).toISOString(),
+        avatar: 'EM',
+        settings: { ...dus(), timezone: 'America/Sao_Paulo' },
+      },
+      {
+        id: 'u-f.ito', name: 'F. Ito', email: 'f.ito@corp.example',
+        role: 'analyst', status: 'active',
+        invited_at: '2024-06-15T09:00:00Z', joined_at: '2024-06-16T08:30:00Z',
+        last_active: new Date(Date.now() - 55 * 60e3).toISOString(),
+        avatar: 'FI',
+        settings: { ...dus(), timezone: 'Asia/Tokyo' },
+      },
+      {
+        id: 'u-g.volkov', name: 'G. Volkov', email: 'g.volkov@corp.example',
+        role: 'analyst', status: 'active',
+        invited_at: '2024-07-08T09:00:00Z', joined_at: '2024-07-09T14:02:00Z',
+        last_active: new Date(Date.now() - 14 * 3600e3).toISOString(),
+        avatar: 'GV',
+        settings: { ...dus(), timezone: 'Europe/Berlin' },
+      },
+      {
+        id: 'u-h.mbeki', name: 'H. Mbeki', email: 'h.mbeki@corp.example',
+        role: 'analyst', status: 'active',
+        invited_at: '2024-08-19T09:00:00Z', joined_at: '2024-08-20T10:30:00Z',
+        last_active: new Date(Date.now() - 2 * 86400e3).toISOString(),
+        avatar: 'HM',
+        settings: { ...dus(), timezone: 'UTC' },
+      },
+      {
+        id: 'u-eng1', name: 'M. Chen', email: 'm.chen@corp.example',
+        role: 'engineer', status: 'active',
+        invited_at: '2023-11-04T10:00:00Z', joined_at: '2023-11-05T09:00:00Z',
+        last_active: new Date(Date.now() - 18 * 3600e3).toISOString(),
+        avatar: 'MC',
+        settings: { ...dus(), timezone: 'America/Los_Angeles' },
+      },
+      {
+        id: 'u-view1', name: 'J. Ward', email: 'j.ward@audit.example',
+        role: 'viewer', status: 'active',
+        invited_at: '2024-09-30T09:00:00Z', joined_at: '2024-10-02T14:15:00Z',
+        last_active: new Date(Date.now() - 5 * 86400e3).toISOString(),
+        avatar: 'JW',
+        settings: { ...dus(), timezone: 'Europe/London' },
+      },
+      {
+        id: 'u-pending', name: 'S. Lee', email: 's.lee@corp.example',
+        role: 'analyst', status: 'invited',
+        invited_at: new Date(Date.now() - 2 * 86400e3).toISOString(), joined_at: null,
+        last_active: null,
+        avatar: 'SL',
+        invite_token: 'tok_' + Math.random().toString(36).slice(2, 10),
+        settings: dus(),
+      },
+    ].map(u => u.status === 'invited'
+      ? u
+      : { ...u, default_password: window.SIPHON_SEED_DEFAULT_PASSWORD, must_change_password: true });
+  };
+
+  // Role storage. localStorage[ir:roles] is seeded from
+  // SIPHON_SYSTEM_ROLES on first read; writes fire 'ir:rolesChanged'
+  // so subscribed components re-render.
+  window.siphonReadRoles = function siphonReadRoles() {
+    try {
+      const raw = localStorage.getItem(window.SIPHON_ROLES_KEY);
+      if (!raw) {
+        const seeded = JSON.parse(JSON.stringify(window.SIPHON_SYSTEM_ROLES));
+        localStorage.setItem(window.SIPHON_ROLES_KEY, JSON.stringify(seeded));
+        return seeded;
+      }
+      const parsed = JSON.parse(raw);
+      return (parsed && typeof parsed === 'object') ? parsed : { ...window.SIPHON_SYSTEM_ROLES };
+    } catch {
+      return { ...window.SIPHON_SYSTEM_ROLES };
+    }
+  };
+  window.siphonWriteRoles = function siphonWriteRoles(dict) {
+    try { localStorage.setItem(window.SIPHON_ROLES_KEY, JSON.stringify(dict)); } catch {}
+    window.dispatchEvent(new CustomEvent('ir:rolesChanged'));
+  };
+  // Convenience: current snapshot of the role map. Callers that
+  // need to react to changes should pair with the upcoming
+  // siphonUseRolesTick() (commit B-2).
+  window.siphonGetRoles = function siphonGetRoles() {
+    return window.siphonReadRoles();
+  };
+
+  // User storage. localStorage[ir:users] is seeded with
+  // siphonSeedUsers() on first read; writes fire 'ir:usersChanged'.
+  window.siphonReadUsers = function siphonReadUsers() {
+    try {
+      const raw = localStorage.getItem(window.SIPHON_USERS_KEY);
+      if (!raw) {
+        const seeded = window.siphonSeedUsers();
+        localStorage.setItem(window.SIPHON_USERS_KEY, JSON.stringify(seeded));
+        return seeded;
+      }
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : window.siphonSeedUsers();
+    } catch {
+      return window.siphonSeedUsers();
+    }
+  };
+  window.siphonWriteUsers = function siphonWriteUsers(list) {
+    try { localStorage.setItem(window.SIPHON_USERS_KEY, JSON.stringify(list)); } catch {}
+    window.dispatchEvent(new CustomEvent('ir:usersChanged'));
+  };
+
+  // Current-user pointer. Defaults to the admin seed when nothing
+  // has been picked yet, matching what the topbar showed before
+  // RBAC landed.
+  window.siphonGetCurrentUser = function siphonGetCurrentUser() {
+    let users;
+    try { users = window.siphonReadUsers(); } catch { return null; }
+    let id;
+    try { id = localStorage.getItem(window.SIPHON_CURRENT_USER_KEY); } catch { id = null; }
+    if (!id) id = 'u-admin';
+    return users.find(u => u.id === id) || users[0] || null;
+  };
+  window.siphonSetCurrentUser = function siphonSetCurrentUser(id) {
+    try { localStorage.setItem(window.SIPHON_CURRENT_USER_KEY, id); } catch {}
+    window.dispatchEvent(new CustomEvent('ir:currentUserChanged'));
+  };
+
+  // Coarse "X minutes ago" / "X hours ago" formatter. Falls back
+  // to an ISO date for anything older than ~14 days. Returns "—"
+  // on empty / unparseable input so callers can drop it into a
+  // column without a `?? "—"` fallback at every site.
+  window.siphonFormatRelative = function siphonFormatRelative(iso) {
+    if (!iso) return '—';
+    const then = new Date(iso).getTime();
+    if (!then || Number.isNaN(then)) return '—';
+    const diff = Date.now() - then;
+    if (diff < 0) return 'just now';
+    const mins = Math.floor(diff / 60e3);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return hrs + 'h ago';
+    const days = Math.floor(hrs / 24);
+    if (days < 14) return days + 'd ago';
+    return new Date(iso).toISOString().slice(0, 10);
+  };
+
+  // Tiny hook over the users list so rows reflect CRUD from
+  // anywhere in the console (admin impersonation menu, invite
+  // accept, etc.).
+  window.siphonUseUsersList = function siphonUseUsersList() {
+    const [tick, setTick] = React.useState(0);
+    React.useEffect(() => {
+      const refresh = () => setTick(t => t + 1);
+      const onStorage = (e) => { if (e.key === window.SIPHON_USERS_KEY) refresh(); };
+      window.addEventListener('ir:usersChanged', refresh);
+      window.addEventListener('storage', onStorage);
+      return () => {
+        window.removeEventListener('ir:usersChanged', refresh);
+        window.removeEventListener('storage', onStorage);
+      };
+    }, []);
+    return window.siphonReadUsers();
+  };
 })();
