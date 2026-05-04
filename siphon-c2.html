@@ -11606,7 +11606,7 @@ function EvadexAdversarial() {
 
   // ── Run control state ──────────────────────────────────────
   // Row 1 — Scope
-  const [tier,           setTier]           = React.useState('core');
+  const [tier,           setTier]           = React.useState('northam');
   const [selectedCats,   setSelectedCats]   = React.useState(() => new Set());
   const [catsExpanded,   setCatsExpanded]   = React.useState(false);
   const [catsSearch,     setCatsSearch]     = React.useState('');
@@ -11629,6 +11629,9 @@ function EvadexAdversarial() {
   // Schedule is off by default — opt-in, so a nightly cron never
   // surprises anyone. Operator ticks it per-session when they want it.
   const [schedule, setSchedule] = React.useState(false);
+  // Advanced mode hidden by default. Simple mode shows two dropdowns
+  // (What to test / Depth) and a Run button. Advanced reveals all rows.
+  const [advancedMode, setAdvancedMode] = React.useState(false);
   const [runId,        setRunId]        = React.useState(null);
   const [runStatus,    setRunStatus]    = React.useState('idle'); // idle | queued | running | completed | failed | cancelled | cancelling
   const [runErr,       setRunErr]       = React.useState('');
@@ -11639,7 +11642,7 @@ function EvadexAdversarial() {
 
   // ── File generator state ───────────────────────────────────
   const [fmt,       setFmt]       = React.useState('xlsx');
-  const [genTier,   setGenTier]   = React.useState('banking');
+  const [genTier,   setGenTier]   = React.useState('northam');
   const [genCat,    setGenCat]    = React.useState('PCI');
   const [count,     setCount]     = React.useState(250);
   const [evRate,    setEvRate]    = React.useState(30);
@@ -12096,8 +12099,53 @@ function EvadexAdversarial() {
       <div className="box" style={{marginBottom:'var(--gap)'}}>
         <div className="box-title">
           <span className="t">Run controls</span>
-          <span className="k">scope · evasion · quality · output</span>
+          <span className="k">{advancedMode ? 'scope · evasion · quality · output' : 'simple mode'}</span>
+          <button className="btn ghost" style={{marginLeft:'auto', fontSize:11}}
+                  onClick={() => setAdvancedMode(v => !v)}>
+            {advancedMode ? '− Simple' : '+ Advanced'}
+          </button>
         </div>
+
+        {/* ── Simple mode: two dropdowns + Run ─────────────────── */}
+        {!advancedMode && (
+          <div className="row" style={{gap:12, alignItems:'flex-end', flexWrap:'wrap', paddingTop:4}}>
+            <div>
+              <div className="label" style={{marginBottom:4}}>What to test</div>
+              <select value={tier} onChange={e => { setTier(e.target.value); setSelectedCats(new Set()); }}
+                      style={{...evadexInputStyle, minWidth:280}}>
+                <option value="northam">northam · Canada + US + capital markets</option>
+                <option value="banking">banking · Canadian payment rails + IDs</option>
+                <option value="core">core · NA + major European + Australasia</option>
+                <option value="regional">regional · global IDs</option>
+                <option value="full">full · all patterns</option>
+              </select>
+            </div>
+            <div>
+              <div className="label" style={{marginBottom:4}}>Depth</div>
+              <select value={evasion} onChange={e => setEvasion(e.target.value)}
+                      style={{...evadexInputStyle, minWidth:220}}>
+                <option value="weighted">balanced · weighted (default)</option>
+                <option value="random">quick · random sampling</option>
+                <option value="adversarial">adversarial · history-filtered</option>
+                <option value="exhaustive">exhaustive · all variants</option>
+              </select>
+            </div>
+            <button className="btn primary" onClick={triggerRun} disabled={runDisabled}
+                    title={status !== 'live' ? 'bridge offline' : ''}>
+              {runBtnLabel}
+            </button>
+            {showCancel && (
+              <button className="btn" onClick={triggerCancel}
+                      disabled={runStatus === 'cancelling'}
+                      style={{borderColor:'var(--threat)', color:'var(--threat)'}}>
+                {runStatus === 'cancelling' ? '… cancelling' : '■ Cancel'}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ── Advanced: full row-by-row controls ───────────────── */}
+        {advancedMode && (<>
 
         {/* Row 1 — Scope */}
         <div className="label" style={{marginTop:4, marginBottom:6}}>Scope</div>
@@ -12106,6 +12154,7 @@ function EvadexAdversarial() {
             <div className="label" style={{marginBottom:4}}>Tier</div>
             <select value={tier} onChange={e => setTier(e.target.value)}
                     style={evadexInputStyle}>
+              <option value="northam">northam</option>
               <option value="banking">banking</option>
               <option value="core">core</option>
               <option value="regional">regional</option>
@@ -12247,7 +12296,9 @@ function EvadexAdversarial() {
 
         <hr className="sep" />
 
-        <div className="row" style={{gap:12, alignItems:'center', flexWrap:'wrap'}}>
+        </>)} {/* end advancedMode */}
+
+        {advancedMode && <div className="row" style={{gap:12, alignItems:'center', flexWrap:'wrap'}}>
           <button className="btn primary" onClick={triggerRun} disabled={runDisabled}
                   title={status !== 'live' ? 'bridge offline' : ''}>
             {runBtnLabel}
@@ -12276,7 +12327,7 @@ function EvadexAdversarial() {
               next · {schedule ? 'tonight 04:00' : 'off'}
             </span>
           </span>
-        </div>
+        </div>} {/* end advancedMode run row */}
         {showCancel && (() => {
           const pct = runProgress && typeof runProgress.progress === 'number'
             ? Math.max(0, Math.min(100, runProgress.progress)) : null;
@@ -12423,87 +12474,51 @@ function EvadexAdversarial() {
           <span className="k">produce realistic test artefacts · run them through Siphon · measure leak-through</span>
         </div>
 
-        <div className="grid" style={{gridTemplateColumns:'repeat(4, 1fr)', gap:'var(--gap)'}}>
-          <div>
+        {/* One-row generator — format · content · amount · language → button */}
+        <div className="row" style={{gap:10, alignItems:'flex-end', flexWrap:'wrap'}}>
+          <div style={{minWidth:90}}>
             <div className="label" style={{marginBottom:4}}>Format</div>
-            <select value={fmt} onChange={e => setFmt(e.target.value)}
-                    style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+            <select value={fmt} onChange={e => setFmt(e.target.value)} style={evadexInputStyle}>
               {['xlsx','docx','pdf','csv','json','eml','txt','html'].map(f => <option key={f} value={f}>{f}</option>)}
             </select>
           </div>
-          <div>
-            <div className="label" style={{marginBottom:4}}>Tier</div>
-            <select value={genTier} onChange={e => setGenTier(e.target.value)}
-                    style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
-              {['banking','core','regional','full'].map(t => <option key={t} value={t}>{t}</option>)}
+          <div style={{minWidth:170}}>
+            <div className="label" style={{marginBottom:4}}>Content</div>
+            <select value={genTier} onChange={e => setGenTier(e.target.value)} style={evadexInputStyle}>
+              <option value="northam">northam · CA + US + capital markets</option>
+              <option value="banking">banking · payment rails + IDs</option>
+              <option value="core">core · NA + EU + Australasia</option>
+              <option value="regional">regional · global</option>
+              <option value="full">full · all patterns</option>
             </select>
           </div>
-          <div>
-            <div className="label" style={{marginBottom:4}}>Category</div>
-            <select value={genCat} onChange={e => setGenCat(e.target.value)}
-                    style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
-              {['PCI','PII','PHI','CRED','SECRET','CRYPTO','MIXED'].map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-          <div>
-            <div className="label" style={{marginBottom:4}}>Count</div>
+          <div style={{minWidth:80}}>
+            <div className="label" style={{marginBottom:4}}>Amount</div>
             <input type="number" min="1" max="10000" value={count}
                    onChange={e => setCount(Number(e.target.value) || 0)}
-                   style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}} />
-          </div>
-        </div>
-
-        <hr className="sep" />
-
-        <div className="grid" style={{gridTemplateColumns:'2fr 1fr 1.5fr', gap:'var(--gap)', alignItems:'end'}}>
-          <div>
-            <div className="label" style={{marginBottom:4}}>
-              Evasion rate · <span className="mono" style={{color:'var(--accent)'}}>{evRate}%</span>
-            </div>
-            <input type="range" min="0" max="100" value={evRate}
-                   onChange={e => setEvRate(Number(e.target.value))}
-                   style={{width:'100%'}} />
-            <div className="muted" style={{fontSize:10, marginTop:2}}>0 = clean · 100 = every record mutated</div>
+                   style={{...evadexInputStyle, width:80}} />
           </div>
           <div>
             <div className="label" style={{marginBottom:4}}>Language</div>
-            <div className="row" style={{gap:0, border:'1px solid var(--line)', borderRadius:'var(--radius)', overflow:'hidden', width:'fit-content'}}>
+            <div className="row" style={{gap:0, border:'1px solid var(--line)', borderRadius:'var(--radius)', overflow:'hidden'}}>
               {['EN','FR-CA'].map(l => (
-                <button key={l} onClick={() => setLang(l)}
-                        className="btn ghost"
-                        style={{
-                          padding:'5px 12px', border:'none', borderRadius:0,
+                <button key={l} onClick={() => setLang(l)} className="btn ghost"
+                        style={{padding:'5px 10px', border:'none', borderRadius:0,
                           background: lang === l ? 'var(--accent)' : 'transparent',
-                          color:    lang === l ? '#e8efe6'       : 'var(--ink)',
-                          fontFamily:"'JetBrains Mono', monospace", fontSize:11,
-                        }}>{l}</button>
+                          color: lang === l ? '#e8efe6' : 'var(--ink)',
+                          fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>
+                  {l}
+                </button>
               ))}
             </div>
           </div>
-          <div>
-            <div className="label" style={{marginBottom:4}}>Template</div>
-            <select value={template} onChange={e => setTemplate(e.target.value)}
-                    style={{width:'100%', padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
-              <option value="statement">statement · monthly banking</option>
-              <option value="hr_record">hr_record · employee file</option>
-              <option value="invoice">invoice · accounts payable</option>
-              <option value="medical_record">medical_record · PHI</option>
-              <option value="secrets_file">secrets_file · credential sim</option>
-              <option value="generic">generic · mixed tokens</option>
-            </select>
-          </div>
-        </div>
-
-        <hr className="sep" />
-
-        <div className="row" style={{gap:10, alignItems:'center'}}>
           <button className="btn primary" onClick={triggerGenerate}
                   disabled={status !== 'live' || genBusy}
                   title={status !== 'live' ? 'bridge offline' : ''}>
-            {genBusy ? '… generating' : '⬇ Generate + Download'}
+            {genBusy ? '… generating' : '⬇ Generate'}
           </button>
-          <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
-            {count} × {fmt} · {genTier}/{genCat} · {evRate}% evasion · {lang} · {template}
+          <span className="mono muted" style={{fontSize:11}}>
+            {count} × {fmt} · {genTier} · {lang}
           </span>
           <span className="right">{
             status === 'live'
