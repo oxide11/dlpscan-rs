@@ -47,6 +47,82 @@ The install message (`NOTES.txt`) prints the next steps based on
 the enabled components and warns when required secrets are
 missing.
 
+## Local development (kind)
+
+Run the full stack on your laptop with no registry or ingress controller.
+Requires [kind](https://kind.sigs.k8s.io/) and Docker.
+
+```sh
+# 1. Create a cluster (once).
+kind create cluster --name siphon-lab
+
+# 2. Build the three images. Pass CARGO_BUILD_JOBS to cap parallelism
+#    if the build OOMs on a memory-constrained machine.
+docker build --build-arg CARGO_BUILD_JOBS=4 \
+  -f deploy/Dockerfile.api -t siphon-api:lab .
+docker build --build-arg CARGO_BUILD_JOBS=4 \
+  -f deploy/Dockerfile.fs -t siphon-fs:lab .
+docker build -f deploy/nginx/Dockerfile -t siphon-nginx:lab .
+
+# 3. Load the images into kind (no registry push needed).
+kind load docker-image siphon-api:lab   --name siphon-lab
+kind load docker-image siphon-fs:lab    --name siphon-lab
+kind load docker-image siphon-nginx:lab --name siphon-lab
+
+# 4. Create namespace + secrets.
+kubectl create namespace siphon
+kubectl -n siphon create secret generic siphon-api-auth \
+  --from-literal=api-key="$(openssl rand -hex 32)"
+kubectl -n siphon create secret generic siphon-authelia \
+  --from-literal=jwt_secret="$(openssl rand -hex 32)" \
+  --from-literal=session_secret="$(openssl rand -hex 32)" \
+  --from-literal=storage_encryption_key="$(openssl rand -hex 32)"
+
+# 5. Install.
+#    global.imageRegistry=""   -- images were loaded without a registry prefix
+#    authelia.externalUrl      -- must be https:// even for local; the redirect
+#                                 never fires with devBypass=true but Authelia
+#                                 4.38 rejects http:// at startup validation
+helm install siphon ./deploy/helm/siphon \
+  --namespace siphon \
+  --set global.imageRegistry="" \
+  --set api.image.repository=siphon-api \
+  --set api.image.tag=lab \
+  --set api.image.pullPolicy=Never \
+  --set fs.image.repository=siphon-fs \
+  --set fs.image.tag=lab \
+  --set fs.image.pullPolicy=Never \
+  --set nginx.image.repository=siphon-nginx \
+  --set nginx.image.tag=lab \
+  --set nginx.image.pullPolicy=Never \
+  --set authelia.devBypass=true \
+  --set authelia.secretName=siphon-authelia \
+  --set authelia.cookieDomain=127.0.0.1 \
+  --set authelia.externalUrl=https://127.0.0.1:8080 \
+  --set authelia.scheme=http \
+  --set api.auth.secretName=siphon-api-auth \
+  --set ingress.enabled=false \
+  --set api.replicaCount=1 \
+  --set nginx.replicaCount=1
+
+# 6. Wait for rollout.
+kubectl -n siphon rollout status deploy -l app.kubernetes.io/instance=siphon --timeout=300s
+
+# 7. Access the UI.
+kubectl -n siphon port-forward svc/siphon-nginx 8080:80
+# Open http://localhost:8080 in your browser.
+```
+
+To rebuild and redeploy after code changes:
+
+```sh
+# Rebuild only the image you changed, then reload + upgrade.
+docker build --build-arg CARGO_BUILD_JOBS=4 \
+  -f deploy/Dockerfile.api -t siphon-api:lab .
+kind load docker-image siphon-api:lab --name siphon-lab
+kubectl -n siphon rollout restart deploy/siphon-api
+```
+
 ## Values you usually tune
 
 ```yaml

@@ -17,7 +17,7 @@ FROM rust:1.95-bookworm AS builder
 # Optional cargo parallelism cap. CI pipes CARGO_BUILD_JOBS=2 in
 # to keep rav1e / arrow / parquet codegen under the runner's
 # memory ceiling; locally the default (all cores) is fine.
-ARG CARGO_BUILD_JOBS
+ARG CARGO_BUILD_JOBS=4
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 
 WORKDIR /app
