@@ -29,6 +29,48 @@ here. When an item lands, delete its bullet (its history is in `git log` and
 
 ## siphon-ir
 
+- **Heavy user-management code move (M1 from `docs/wireframes/IR-vs-C2.md`).**
+  C2 is the canonical owner of user management going forward — banners
+  + disabled affordances landed via the intent PR (`claude/c2-owns-users-intent`),
+  and C2 has stub `auth` + `profile` surfaces holding the slot. The
+  remaining work is the actual code move, scoped as three commits in one
+  PR. Approximate footprint: ~600 LoC of helpers (`useCan`,
+  `getCurrentUser`, `getRoles`, `useRolesTick`, `readRoles/writeRoles`,
+  `readUsers/writeUsers`, `updateUser`, `updateCurrentUserSettings`,
+  `defaultUserSettings`, `IR_TIMEZONES`, `IR_SYSTEM_ROLES`, `irRoleMeta`,
+  `irFormatRelative`, `irFormatTimestamp`, `useUserTzTick`,
+  `irValidatePassword`, `irReadInviteTokenFromUrl`,
+  `irClearInviteTokenFromUrl`, `IR_PBKDF2_ITERS` + PBKDF2 utilities)
+  hoisted to `siphon-shared.js` with `siphon*` names + back-compat
+  forwarding aliases in IR; ~1500 LoC of JSX components (`UsersSurface`,
+  `RolesSection`, `CreateUserForm`, `JustCreatedToast`, `UserRowActions`,
+  `useUsersList`) moved to `c2/surfaces/users-admin.jsx` via the
+  `shared/surfaces/` infrastructure already shipped; ~150 LoC of
+  cleanup deleting the duplicates from IR + dropping the `'ir-users'`
+  surface registration + the forwarding aliases. localStorage migration:
+  `ir:users` → `siphon:users`, `ir:roles` → `siphon:roles`, and three
+  custom event renames (`ir:rolesChanged` → `siphon:rolesChanged`,
+  `ir:usersChanged` → `siphon:usersChanged`, `ir:currentUserChanged` →
+  `siphon:currentUserChanged`). Babel-standalone only catches JSX errors
+  at runtime in the browser, so the move is best done in a dedicated
+  session with each commit verified by opening both HTML files locally
+  before pushing the next. (Source: docs/wireframes/IR-vs-C2.md → M1;
+  intent PR `claude/c2-owns-users-intent`.)
+
+- **My Profile shared backing store (Q3 from `docs/wireframes/IR-vs-C2.md`).**
+  C2 has a `profile` surface stub today (M5 shipped). The functional
+  impl lives in IR's `ProfileSurface` and depends on the per-user
+  store + helpers (`getCurrentUser`, `defaultUserSettings`, `updateUser`,
+  `updateCurrentUserSettings`, `IR_TIMEZONES`) that aren't yet hoisted to
+  `siphon-shared.js`. Resolves naturally as part of M1 above — once the
+  helper graph moves to shared, both consoles read/write the same
+  per-user store and a user's prefs follow them between consoles.
+  Standalone follow-up after M1: port the JSX of IR's ProfileSurface
+  to `shared/surfaces/profile.jsx` so both consoles render the same
+  page, then delete IR's inline copy. ~400 LoC port; pure mechanical
+  if M1 has already cleaned up the helper dependencies. (Source:
+  docs/wireframes/IR-vs-C2.md → Q3.)
+
 - **Drag-to-reorder columns in the Findings Queue.** The `visibleCols` array
   in localStorage `ir:queueColumns` is currently unordered with respect to
   the registry — toggling a column on inserts at its natural position in
