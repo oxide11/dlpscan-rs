@@ -33,7 +33,7 @@ spec:
         {{- . | nindent 8 }}
       {{- end }}
       securityContext:
-        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+        {{- toYaml (default .Values.podSecurityContext .Values.nginx.podSecurityContext) | nindent 8 }}
       containers:
         - name: nginx
           image: {{ include "siphon.image" (dict "root" . "image" .Values.nginx.image) }}
@@ -62,7 +62,7 @@ spec:
             - name: nginx-run
               mountPath: /var/run
           securityContext:
-            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+            {{- toYaml (default .Values.containerSecurityContext .Values.nginx.containerSecurityContext) | nindent 12 }}
           livenessProbe:
             httpGet:
               path: /nginx-health

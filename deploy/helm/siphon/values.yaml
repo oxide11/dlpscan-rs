@@ -16,6 +16,9 @@ global:
   # Common image registry + pull policy. Components can override
   # their own `image.registry` if you run a split registry (e.g.
   # Authelia from Docker Hub, Siphon from GHCR).
+  # For local kind builds where images are loaded directly via
+  # `kind load docker-image`, set this to "" so image names are
+  # used as-is (e.g. siphon-api:lab, not ghcr.io/siphon-api:lab).
   imageRegistry: ghcr.io
   imagePullPolicy: IfNotPresent
   imagePullSecrets: []
@@ -259,8 +262,12 @@ authelia:
   # URLs (`authelia_url`, `default_redirection_url`). Must match
   # what the user actually types in the URL bar or the login loop
   # never closes. Empty -> falls back to `{scheme}://{ingress.host}`.
+  # NOTE: Authelia 4.38 validates that `authelia_url` uses https://.
+  # For local kind/k3d deployments set authelia.scheme=http and
+  # supply an https:// URL here (the redirect never fires with
+  # devBypass=true, but the startup validator still rejects http://).
   # Examples:
-  #   http://localhost:8080
+  #   https://localhost:8080      (local kind with devBypass=true)
   #   https://<codespace>-8080.app.github.dev
   externalUrl: ""
 
@@ -363,6 +370,28 @@ nginx:
   podDisruptionBudget:
     enabled: true
     minAvailable: 1
+
+  # nginx's master process binds port 80 and chowns worker-process
+  # temp dirs to uid 101 (the nginx user). These per-component fields
+  # replace the chart-wide podSecurityContext / containerSecurityContext
+  # for the nginx pod only. Set both to {} to fall back to the globals.
+  podSecurityContext:
+    runAsNonRoot: false
+    runAsUser: 0
+    runAsGroup: 0
+    fsGroup: 0
+    seccompProfile:
+      type: RuntimeDefault
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: false
+    seccompProfile:
+      type: RuntimeDefault
+    capabilities:
+      drop: [ALL]
+      add: [NET_BIND_SERVICE, CHOWN, SETUID, SETGID]
 
 # ---------------------------------------------------------------------------
 # ingress — single ingress for the proxy
