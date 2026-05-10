@@ -127,7 +127,7 @@ export interface RollResponse {
 
 export const api = {
   scan: (text: string) =>
-    request<ScanResponse>("/v1/scan", {
+    request<ScanResponse>("/scan", {
       method: "POST",
       body: { text },
     }),
