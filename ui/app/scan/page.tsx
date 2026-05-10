@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/card";
 import { api, ApiError, type Finding } from "@/lib/api";
 
-// Smoke-test form that posts text to /api/v1/scan. Proves the
+// Smoke-test form that posts text to /api/scan. Proves the
 // Nginx → Authelia → siphon-api path end-to-end from the browser.
 
 export default function ScanPage() {
@@ -65,7 +65,7 @@ export default function ScanPage() {
             <CardDescription>
               Posts to{" "}
               <code className="rounded bg-muted px-1 py-0.5">
-                /api/v1/scan
+                /api/scan
               </code>{" "}
               via the Nginx forward-auth proxy.
             </CardDescription>
