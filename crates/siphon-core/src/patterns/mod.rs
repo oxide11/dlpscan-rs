@@ -253,10 +253,11 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[0-9BCDFGHJKLMNPQRSTVWXYZ]{6}\d\b",
         case_insensitive: false,
         specificity: 0.50,
-        // Context-gated (see models::is_context_required). 7-char
-        // alnum run is too loose to fire without a SEDOL-context
-        // keyword nearby.
-        context_required: true,
+        // No-vowel constraint in first 6 + check digit validator
+        // provide sufficient discrimination; context gating was
+        // suppressing detection in financial documents that lack the
+        // exact "sedol" or "stock exchange" keyword.
+        context_required: false,
     },
     PatternDef {
         category: "Securities Identifiers",
@@ -3429,10 +3430,13 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "Europe - Malta",
         sub_category: "Malta TIN",
-        regex: r"\b\d{3,9}[A-Z]?\b",
+        regex: r"\b\d{7}[A-Z]\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // Tightened to exact 7-digit+letter format (e.g. 1234567A).
+        // Requires context to guard against LEI suffix / MT103 field
+        // collisions that the original \d{3,9}[A-Z]? caused.
+        context_required: true,
     },
     PatternDef {
         category: "Europe - Cyprus",
@@ -4685,7 +4689,10 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{20}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        // context_required reduces FP collisions with financial
+        // reference numbers and MT103 composite fields that are
+        // also 20-digit sequences.
+        context_required: true,
     },
     PatternDef {
         category: "Africa - Tanzania",
