@@ -899,6 +899,25 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
             distance: 50,
         },
     ),
+    (
+        "Securities Identifiers",
+        "VALOR",
+        ContextEntry {
+            keywords: &[
+                "valor",
+                "valorennummer",
+                "valoren",
+                "six swiss exchange",
+                "swiss exchange",
+                "six group",
+                "ch-isin",
+                "swiss security",
+                "swiss securities",
+                "swissclear",
+            ],
+            distance: 50,
+        },
+    ),
     // Loan and Mortgage Data
     (
         "Loan and Mortgage Data",

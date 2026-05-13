@@ -285,6 +285,17 @@ pub static PATTERNS: &[PatternDef] = &[
         context_required: true,
     },
     PatternDef {
+        category: "Securities Identifiers",
+        sub_category: "VALOR",
+        regex: r"\b\d{1,9}\b",
+        case_insensitive: false,
+        specificity: 0.70,
+        // Swiss Valorennummer (SIX Swiss Exchange securities ID): 1-9 digits,
+        // no check digit. Regex is too broad alone — must be context-gated
+        // on VALOR-specific keywords to avoid false positives on any number.
+        context_required: true,
+    },
+    PatternDef {
         category: "Loan and Mortgage Data",
         sub_category: "Loan Number",
         regex: r"\b[A-Z0-9]{8,15}\b",
@@ -4780,10 +4791,10 @@ mod tests {
 
     #[test]
     fn test_pattern_count() {
-        // 567 = 560 base + Medical Record Number (HIPAA #8) + 6
+        // 568 = 560 base + Medical Record Number (HIPAA #8) + 6
         // Traffic Light Protocol patterns (TLP:RED, TLP:AMBER,
-        // TLP:AMBER+STRICT, TLP:GREEN, TLP:CLEAR, TLP:WHITE).
-        assert_eq!(PATTERNS.len(), 567);
+        // TLP:AMBER+STRICT, TLP:GREEN, TLP:CLEAR, TLP:WHITE) + VALOR.
+        assert_eq!(PATTERNS.len(), 568);
     }
 
     #[test]
