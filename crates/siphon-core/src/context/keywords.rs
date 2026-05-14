@@ -58,6 +58,8 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         ContextEntry {
             keywords: &[
                 "mastercard",
+                "master card",
+                "mc",
                 "credit card",
                 "card number",
                 "card no",
