@@ -12,7 +12,16 @@ path = "src/main.rs"
 
 [dependencies]
 siphon-core = { path = "../siphon-core" }
-siphon = { path = "../.." }
+# Drop the root crate's default features here — siphon-api doesn't
+# need any of the file-format extractors (PDF, Office, archives,
+# data-formats, forensics, barcode, bin-data) or the embedded msg
+# parser. They're owned by siphon-fs / siphon CLI. Pulling them in
+# brought rusqlite (via data-formats), which collides with sqlx's
+# libsqlite3-sys link at the cargo links-graph layer.
+#
+# `metrics` stays on because main.rs's ApiMetrics surface uses it.
+# Add back any other feature here if the binary refuses to compile.
+siphon = { path = "../..", default-features = false, features = ["metrics"] }
 
 # HTTP server
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "time"] }
@@ -39,6 +48,20 @@ hex = "0.4"
 
 # Misc
 uuid = { version = "1", features = ["v4"] }
+
+# Persistence — Postgres connection pool. Marked optional in the
+# code path (AppState carries Option<Pool> and every DB touch is
+# guarded) so siphon-api still serves /scan / /v1/* when
+# SIPHON_DATABASE_URL is unset or Postgres is unreachable.
+#
+# Why tokio-postgres + deadpool, not sqlx: sqlx's umbrella crate
+# unconditionally depends on sqlx-sqlite, which carries
+# `links = "sqlite3"` against libsqlite3-sys = "0.28" — collides
+# with rusqlite's libsqlite3-sys = "0.37" in the workspace dep
+# graph. tokio-postgres is pure-Rust, no libsqlite3-sys, no conflict.
+tokio-postgres = { version = "0.7", features = ["with-uuid-1", "with-chrono-0_4", "with-serde_json-1"] }
+deadpool-postgres = "0.14"
+chrono = { version = "0.4", features = ["serde"] }
 
 # Phase 6 — kube-rs for auto-roll. Feature-gated so non-k8s builds
 # stay lean. When the feature is off, /v1/overrides/roll responds
