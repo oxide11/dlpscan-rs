@@ -67,6 +67,18 @@ spec:
           protocol: TCP
         - port: 53
           protocol: UDP
+    {{- if .Values.postgres.enabled }}
+    # Port 5432 → in-chart Postgres for findings history + C2
+    # shared state. Scoped to the postgres component's pod selector
+    # so api can't talk to arbitrary databases in the namespace.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "siphon.selectorLabels" (dict "root" . "component" "postgres") | nindent 14 }}
+      ports:
+        - port: {{ .Values.postgres.service.port }}
+          protocol: TCP
+    {{- end }}
     {{- with .Values.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -132,4 +144,34 @@ spec:
           protocol: UDP
         - port: 587
           protocol: TCP
+{{- if .Values.postgres.enabled }}
+---
+# --- postgres: ingress from siphon-api only; no egress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "siphon.fullname" . }}-postgres
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "postgres") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "siphon.selectorLabels" (dict "root" . "component" "postgres") | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "siphon.selectorLabels" (dict "root" . "component" "api") | nindent 14 }}
+      ports:
+        - port: {{ .Values.postgres.service.port }}
+          protocol: TCP
+  # Postgres has no outbound calls in normal operation; only DNS
+  # is allowed in case the container's libpq does name lookups
+  # for SSL cert validation in future TLS configs.
+  egress:
+    - ports:
+        - port: 53
+          protocol: UDP
+{{- end }}
 {{- end }}

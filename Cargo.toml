@@ -1,5 +1,13 @@
 [workspace]
 members = [".", "crates/siphon-core", "crates/siphon-api", "crates/siphon-fs", "crates/siphon-launcher"]
+# Resolver v2 — per-member feature isolation. Without this, the
+# workspace would unify features across every member, which means
+# siphon's default `data-formats` (and therefore rusqlite) would
+# leak into siphon-api's build and collide with sqlx's libsqlite3-sys
+# link. v2 also matches what each member's `edition = "2021"`
+# already implies; we just have to spell it explicitly at the
+# workspace level.
+resolver = "2"
 
 [package]
 name = "siphon"

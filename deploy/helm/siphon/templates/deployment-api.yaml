@@ -71,6 +71,27 @@ spec:
                   name: {{ .Values.api.auth.secretName }}
                   key: {{ .Values.api.auth.secretKey | quote }}
             {{- end }}
+            {{- if .Values.postgres.enabled }}
+            # Database connection. Built from the in-cluster Postgres
+            # Service name + the random password generated out-of-
+            # band into postgres.secretName (codespace-deploy.sh
+            # creates this on first run). siphon-api falls back to a
+            # no-DB code path if SIPHON_DATABASE_URL is unset, so
+            # toggling postgres.enabled=false in values just turns
+            # off findings history and C2 shared state without
+            # breaking the API.
+            - name: SIPHON_DATABASE_URL
+              value: {{ printf "postgres://%s@%s:%v/%s"
+                .Values.postgres.username
+                (include "siphon.componentName" (dict "root" . "component" "postgres"))
+                .Values.postgres.service.port
+                .Values.postgres.database | quote }}
+            - name: SIPHON_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "postgres.secretName is required when postgres.enabled is true" .Values.postgres.secretName }}
+                  key: password
+            {{- end }}
             {{- with .Values.api.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

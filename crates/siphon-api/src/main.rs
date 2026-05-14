@@ -57,6 +57,8 @@ use std::time::{Duration, Instant};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
+mod db;
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -143,6 +145,11 @@ struct AppState {
     /// GET/PATCH /v1/pipeline/stages. Not persisted — restart clears.
     /// Diagnostic-only; production pods should leave this empty.
     disabled_stages: Arc<RwLock<HashSet<String>>>,
+    /// Optional Postgres pool. None when SIPHON_DATABASE_URL is
+    /// unset OR when the pool failed to connect at startup —
+    /// every consumer must handle the None case gracefully. See
+    /// `db::init_optional` for the failure-mode semantics.
+    db_pool: Option<deadpool_postgres::Pool>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -689,6 +696,59 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
 /// on future async warm-up work without breaking liveness semantics.
 async fn ready() -> StatusCode {
     StatusCode::OK
+}
+
+/// GET /v1/db/health — connection smoke-test. Round-trips a single
+/// SELECT through the pool so the C2 can confirm persistence is
+/// actually working end-to-end before users try to write findings.
+///
+/// Response shape:
+///   { "connected": true,  "latency_ms": 2 }        — pool live + query OK
+///   { "connected": false, "reason": "no pool" }    — SIPHON_DATABASE_URL unset
+///   { "connected": false, "reason": "<sqlx err>" } — pool exists, query failed
+#[derive(Serialize)]
+struct DbHealthResponse {
+    connected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    latency_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+async fn db_health(State(state): State<Arc<AppState>>) -> Json<DbHealthResponse> {
+    let Some(pool) = state.db_pool.as_ref() else {
+        return Json(DbHealthResponse {
+            connected: false,
+            latency_ms: None,
+            reason: Some("SIPHON_DATABASE_URL not configured".into()),
+        });
+    };
+    let started = Instant::now();
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            return Json(DbHealthResponse {
+                connected: false,
+                latency_ms: None,
+                reason: Some(format!("pool: {e}")),
+            });
+        }
+    };
+    match client
+        .query_one("SELECT id FROM db_health WHERE id = 1", &[])
+        .await
+    {
+        Ok(_) => Json(DbHealthResponse {
+            connected: true,
+            latency_ms: Some(started.elapsed().as_millis() as u64),
+            reason: None,
+        }),
+        Err(e) => Json(DbHealthResponse {
+            connected: false,
+            latency_ms: None,
+            reason: Some(e.to_string()),
+        }),
+    }
 }
 
 async fn scan(
@@ -3470,6 +3530,27 @@ async fn main() {
     let started_at_iso = siphon_core::audit::iso8601_now();
     let overrides_path_arc = Arc::new(std::path::PathBuf::from(&overrides_path));
 
+    // Database — optional. init_optional() returns None when
+    // SIPHON_DATABASE_URL is unset OR when Postgres is unreachable
+    // at startup. A live pool runs pending migrations before the
+    // API starts serving; a migration failure exits the process so
+    // the operator sees the crashloop instead of a half-applied
+    // schema. URL parse errors (bad operator config) also exit.
+    let db_pool = match db::init_optional().await {
+        Ok(pool) => pool,
+        Err(e) => {
+            tracing::error!(error = %e, "SIPHON_DATABASE_URL parse failed; refusing to start");
+            std::process::exit(1);
+        }
+    };
+    if let Some(pool) = &db_pool {
+        if let Err(e) = db::run_migrations(pool).await {
+            tracing::error!(error = %e, "database migration failed; refusing to start");
+            std::process::exit(1);
+        }
+        tracing::info!("database migrations applied");
+    }
+
     let state = Arc::new(AppState {
         api_key_hash,
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
@@ -3486,11 +3567,13 @@ async fn main() {
         started_at,
         overrides_path: overrides_path_arc,
         disabled_stages: Arc::new(RwLock::new(HashSet::new())),
+        db_pool,
     });
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
+        .route("/v1/db/health", get(db_health))
         .route("/scan", post(scan))
         .route("/v1/patterns", get(list_patterns))
         .route("/v1/categories", get(list_categories))

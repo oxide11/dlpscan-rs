@@ -188,6 +188,58 @@ fs:
     minAvailable: 1
 
 # ---------------------------------------------------------------------------
+# postgres — backing store for scan findings history + C2 shared state
+# ---------------------------------------------------------------------------
+# Single-replica vanilla Postgres (no built-in TDE; encryption at rest
+# comes from the underlying StorageClass — set storageClassName to a
+# StorageClass with `csi.storage.k8s.io/fstype: ext4` + a CSI driver
+# that supports per-volume encryption keys, or rely on the cloud
+# provider's at-rest default for AWS EBS / Azure Disk / GCE PD).
+#
+# siphon-api treats SIPHON_DATABASE_URL as optional. Setting
+# postgres.enabled=false here disables findings history and C2 shared
+# state but doesn't break the scan / tokenize / extract endpoints.
+postgres:
+  enabled: true
+
+  image:
+    repository: postgres
+    tag: "17-alpine"
+    pullPolicy: ""  # inherits global.imagePullPolicy
+
+  service:
+    port: 5432
+
+  persistence:
+    enabled: true
+    # Leave empty in dev (k3d local-path). In prod, point at an
+    # encrypted StorageClass to satisfy "encryption at rest"
+    # language in SOC 2 / HIPAA / PCI audits.
+    storageClassName: ""
+    size: 10Gi
+    accessModes: [ReadWriteOnce]
+
+  # Logical database name + role. siphon-api connects as this user
+  # over the in-cluster Service ClusterIP. The role's password is
+  # sourced from a Secret you create out of band — the chart does
+  # not generate one (avoids the helm-upgrade-rotates-everything
+  # footgun). See codespace-deploy.sh for the dev recipe:
+  #
+  #   kubectl create secret generic siphon-postgres \
+  #     --from-literal=password="$(openssl rand -hex 32)"
+  database: siphon
+  username: siphon
+  secretName: ""  # e.g. "siphon-postgres"
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# ---------------------------------------------------------------------------
 # UI (Next.js SPA) — served from the nginx Deployment below
 # ---------------------------------------------------------------------------
 # There is no standalone `ui` section. The reverse-proxy image

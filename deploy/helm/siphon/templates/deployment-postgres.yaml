@@ -1,0 +1,122 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "siphon.componentName" (dict "root" . "component" "postgres") }}
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "postgres") | nindent 4 }}
+spec:
+  # Single-replica + Recreate: Postgres is stateful against the
+  # PVC and only one pg_ctl can hold the on-disk lock. HA / streaming
+  # replication is out of scope for v1 — see deploy/k8s/postgres-ha.md
+  # (TODO) for the pgbackrest + Patroni story when we get there.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "siphon.selectorLabels" (dict "root" . "component" "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "siphon.labels" (dict "root" . "component" "postgres") | nindent 8 }}
+      annotations:
+        {{- include "siphon.podAnnotations" (dict "root" .) | nindent 8 }}
+    spec:
+      # No in-cluster API access needed; suppress the default SA mount.
+      automountServiceAccountToken: false
+      {{- with include "siphon.imagePullSecrets" (dict "root" .) }}
+      imagePullSecrets:
+        {{- . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: postgres
+          image: {{ printf "%s:%s" .Values.postgres.image.repository .Values.postgres.image.tag | quote }}
+          imagePullPolicy: {{ default .Values.global.imagePullPolicy .Values.postgres.image.pullPolicy }}
+          ports:
+            - name: postgres
+              containerPort: {{ .Values.postgres.service.port }}
+              protocol: TCP
+          env:
+            - name: POSTGRES_DB
+              value: {{ .Values.postgres.database | quote }}
+            - name: POSTGRES_USER
+              value: {{ .Values.postgres.username | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "postgres.secretName is required when postgres.enabled is true" .Values.postgres.secretName }}
+                  key: password
+            # PGDATA must live in a subpath of the PVC mount, not at
+            # the mount root, because PostgreSQL refuses to initdb
+            # into a directory containing a `lost+found` (which any
+            # default ext4 PVC includes). Standard workaround.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            {{- if .Values.postgres.persistence.enabled }}
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            {{- end }}
+            # Postgres needs to write to /var/run/postgresql for its
+            # control socket and to /tmp for ad-hoc work — give it
+            # an emptyDir for each so the rest of the container FS
+            # can stay read-only.
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            # Postgres needs a writable PGDATA; readOnlyRootFilesystem
+            # off. Stay non-root via the image's `postgres` user
+            # (UID 999 in the upstream image).
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: [ALL]
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.username | quote }}, "-d", {{ .Values.postgres.database | quote }}]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.username | quote }}, "-d", {{ .Values.postgres.database | quote }}]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
+      volumes:
+        {{- if .Values.postgres.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "siphon.componentName" (dict "root" . "component" "postgres") }}
+        {{- end }}
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      # Postgres needs the fsGroup to match the PVC's owning GID so
+      # the postgres user (UID 999) can write into PGDATA on first
+      # init. Force it here in case the chart-wide podSecurityContext
+      # has a different fsGroup.
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
