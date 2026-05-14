@@ -1,0 +1,12 @@
+# Build-script allowlist (pnpm 10.4+ honors this file instead of the
+# `pnpm.onlyBuiltDependencies` field in package.json — that location
+# was deprecated for trust reasons since package.json can be smuggled
+# in via a hoisted dep).
+#
+# pnpm 11 ignores builds by default and exits non-zero under
+# `--frozen-lockfile` when any build script is ignored without an
+# explicit approval here. Adding a package only enables its
+# install-time scripts; it grants no extra capabilities at runtime.
+onlyBuiltDependencies:
+  - sharp           # libvips native binary — Next.js image optimization
+  - unrs-resolver   # Rust-native module resolver used by eslint-config-next

@@ -26,8 +26,11 @@ RUN corepack enable pnpm
 WORKDIR /app
 
 # Cache dep install on the manifest alone — source edits won't bust
-# the layer that actually downloads node_modules.
-COPY ui/package.json ui/pnpm-lock.yaml ./
+# the layer that actually downloads node_modules. pnpm-workspace.yaml
+# carries the `onlyBuiltDependencies` allowlist that pnpm 10.4+
+# requires before it will run sharp / unrs-resolver postinstalls
+# under --frozen-lockfile.
+COPY ui/package.json ui/pnpm-lock.yaml ui/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY ui/ ./
