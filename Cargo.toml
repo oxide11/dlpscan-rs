@@ -91,7 +91,7 @@ rusqlite = { version = "0.32", optional = true, features = ["bundled"] }
 cfb = { version = "0.14", optional = true }
 
 # Barcode / QR code decoding
-rxing = { version = "0.6", optional = true }
+rxing = { version = "0.8", optional = true }
 image = { version = "0.25", optional = true }
 
 # Python bindings
