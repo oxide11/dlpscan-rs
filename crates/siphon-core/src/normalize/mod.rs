@@ -53,6 +53,41 @@ static LEET_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
     pairs.iter().copied().collect()
 });
 
+/// Reverse leet-speak map: letter lookalikes → digits.
+///
+/// The forward LEET_MAP decodes digit/symbol-for-letter substitutions
+/// (e.g. "h3ll0" → "hello"). This map handles the inverse evasion:
+/// a number like 123-45-6789 written as l23-4s-678g (digits replaced
+/// with lookalike letters). Used as an alternative-decoding pass only;
+/// not in the main pipeline (applying it globally would turn English
+/// prose into digit noise).
+static REVERSE_LEET_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
+    let pairs = [
+        ('a', '4'), ('A', '4'),
+        ('b', '8'), ('B', '8'),
+        ('e', '3'), ('E', '3'),
+        ('g', '6'), ('G', '6'),
+        ('i', '1'), ('I', '1'),
+        ('l', '1'), ('L', '1'),
+        ('o', '0'), ('O', '0'),
+        ('s', '5'), ('S', '5'),
+        ('t', '7'), ('T', '7'),
+        ('z', '2'), ('Z', '2'),
+    ];
+    pairs.iter().copied().collect()
+});
+
+/// Convert letter-lookalike characters back to their digit equivalents.
+///
+/// Inverse of `normalize_leet`: maps `l→1`, `o→0`, `s→5`, etc.
+/// Intended as an alternative decoding pass for detecting PII where
+/// an adversary replaced digits with visually similar letters.
+pub fn normalize_leet_to_digits(text: &str) -> String {
+    text.chars()
+        .map(|c| *REVERSE_LEET_MAP.get(&c).unwrap_or(&c))
+        .collect()
+}
+
 /// Homoglyph substitution map (Cyrillic, Greek, mathematical, etc. → ASCII).
 /// Applied AFTER NFKC, so this catches anything NFKC doesn't normalize.
 static HOMOGLYPH_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
@@ -213,6 +248,26 @@ static HOMOGLYPH_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
         ('\u{1D04}', 'C'), // small cap C
         ('\u{1D05}', 'D'), // small cap D
         ('\u{1D07}', 'E'), // small cap E
+        // Arabic-Indic digits (U+0660–U+0669)
+        ('\u{0660}', '0'), ('\u{0661}', '1'), ('\u{0662}', '2'), ('\u{0663}', '3'),
+        ('\u{0664}', '4'), ('\u{0665}', '5'), ('\u{0666}', '6'), ('\u{0667}', '7'),
+        ('\u{0668}', '8'), ('\u{0669}', '9'),
+        // Extended Arabic-Indic digits (U+06F0–U+06F9)
+        ('\u{06F0}', '0'), ('\u{06F1}', '1'), ('\u{06F2}', '2'), ('\u{06F3}', '3'),
+        ('\u{06F4}', '4'), ('\u{06F5}', '5'), ('\u{06F6}', '6'), ('\u{06F7}', '7'),
+        ('\u{06F8}', '8'), ('\u{06F9}', '9'),
+        // Devanagari digits (U+0966–U+096F)
+        ('\u{0966}', '0'), ('\u{0967}', '1'), ('\u{0968}', '2'), ('\u{0969}', '3'),
+        ('\u{096A}', '4'), ('\u{096B}', '5'), ('\u{096C}', '6'), ('\u{096D}', '7'),
+        ('\u{096E}', '8'), ('\u{096F}', '9'),
+        // Bengali digits (U+09E6–U+09EF)
+        ('\u{09E6}', '0'), ('\u{09E7}', '1'), ('\u{09E8}', '2'), ('\u{09E9}', '3'),
+        ('\u{09EA}', '4'), ('\u{09EB}', '5'), ('\u{09EC}', '6'), ('\u{09ED}', '7'),
+        ('\u{09EE}', '8'), ('\u{09EF}', '9'),
+        // Thai digits (U+0E50–U+0E59)
+        ('\u{0E50}', '0'), ('\u{0E51}', '1'), ('\u{0E52}', '2'), ('\u{0E53}', '3'),
+        ('\u{0E54}', '4'), ('\u{0E55}', '5'), ('\u{0E56}', '6'), ('\u{0E57}', '7'),
+        ('\u{0E58}', '8'), ('\u{0E59}', '9'),
     ];
     pairs.iter().copied().collect()
 });
@@ -1045,6 +1100,54 @@ fn base32_decode_bytes(input: &[u8]) -> Option<Vec<u8>> {
     Some(result)
 }
 
+/// Try to extract and decode a morse code sequence from mixed text.
+///
+/// Scans for the longest contiguous run of `.`, `-`, ` `, `/`, `|`
+/// characters in the input. If the run is at least 5 characters long
+/// and decodes successfully (≥ 3 symbols), returns the decoded string.
+/// This lets morse detection work even when the morse sequence is
+/// embedded in a longer sentence.
+fn decode_morse_in_text(input: &str) -> Option<String> {
+    let bytes = input.as_bytes();
+    let mut best_start = 0;
+    let mut best_len = 0;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'.' || b == b'-' || b == b' ' || b == b'/' || b == b'|' {
+            let run_start = i;
+            while i < bytes.len() {
+                let c = bytes[i];
+                if c == b'.' || c == b'-' || c == b' ' || c == b'/' || c == b'|' {
+                    i += 1;
+                } else {
+                    break;
+                }
+            }
+            // Trim trailing spaces from the run
+            let mut run_end = i;
+            while run_end > run_start && bytes[run_end - 1] == b' ' {
+                run_end -= 1;
+            }
+            let run_len = run_end - run_start;
+            if run_len > best_len {
+                best_len = run_len;
+                best_start = run_start;
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    if best_len < 5 {
+        return None;
+    }
+
+    let candidate = std::str::from_utf8(&bytes[best_start..best_start + best_len]).ok()?;
+    decode_morse(candidate)
+}
+
 /// Morse code lookup table: morse pattern → ASCII character.
 static MORSE_TABLE: Lazy<HashMap<&'static str, char>> = Lazy::new(|| {
     [
@@ -1395,13 +1498,37 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // reversal incidentally matches a detection regex. Removing the
     // reverse transformation closes the whole class of bug.
 
-    // Try leetspeak decode (only useful for alpha-based patterns like email)
+    // Try leetspeak decode (digits/symbols → letters, for alpha-based patterns)
     let leet_decoded = normalize_leet(text);
     push_if_room(leet_decoded, &mut alternatives, &mut total_bytes);
 
-    // Try morse code decode
+    // Try reverse leet decode (letters → digits, for numeric PII where
+    // an adversary replaced digits with lookalike letters: 1→l, 0→o, etc.)
+    let leet_digits = normalize_leet_to_digits(text);
+    push_if_room(leet_digits, &mut alternatives, &mut total_bytes);
+
+    // Try morse code decode on the full input (pure morse)
     if let Some(decoded) = decode_morse(text) {
         push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    }
+
+    // Try morse code extraction from mixed text (morse embedded in context)
+    if let Some(decoded) = decode_morse_in_text(text) {
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    }
+
+    // Try ROT13 followed by a normalization pass: handles the
+    // base64(ROT13(data)) chain where ROT13 is the inner encoding.
+    // The outer base64 is decoded in the main pipeline; the resulting
+    // ROT13 text lands here as `text`. Running normalize_text on the
+    // ROT13 alternative then decodes any base64 tokens within it,
+    // covering the inverse chain ROT13(base64(data)).
+    let (rot, _) = apply_rot13(text, &[]);
+    if rot != text {
+        let (rot_norm, _) = normalize_text(&rot);
+        if rot_norm != rot && rot_norm != text {
+            push_if_room(rot_norm, &mut alternatives, &mut total_bytes);
+        }
     }
 
     alternatives
@@ -2194,5 +2321,59 @@ mod tests {
         let input = "\u{0432}ank";
         let (normalized, _) = normalize_text(input);
         assert!(normalized.contains("bank"));
+    }
+
+    #[test]
+    fn test_arabic_indic_digits_normalized() {
+        // Arabic-Indic digits ٠١٢٣٤٥٦٧٨٩ (U+0660–U+0669) → 0-9
+        let input = "\u{0661}\u{0662}\u{0663}-\u{0664}\u{0665}-\u{0666}\u{0667}\u{0668}\u{0669}";
+        let (normalized, _) = normalize_text(input);
+        assert_eq!(normalized, "123-45-6789");
+    }
+
+    #[test]
+    fn test_devanagari_digits_normalized() {
+        // Devanagari digits ०१२ (U+0966–U+0968)
+        let input = "\u{0967}\u{0968}\u{0969}";
+        let (normalized, _) = normalize_text(input);
+        assert_eq!(normalized, "123");
+    }
+
+    #[test]
+    fn test_thai_digits_normalized() {
+        // Thai digits ๑๒๓ (U+0E51–U+0E53)
+        let input = "\u{0E51}\u{0E52}\u{0E53}";
+        let (normalized, _) = normalize_text(input);
+        assert_eq!(normalized, "123");
+    }
+
+    #[test]
+    fn test_reverse_leet_to_digits() {
+        // SSN written with letter lookalikes for digits: l→1, s→5, g→6
+        assert_eq!(normalize_leet_to_digits("l23-4s-678g"), "123-45-6786");
+    }
+
+    #[test]
+    fn test_reverse_leet_alternative() {
+        // The reverse-leet alternative should appear for text containing
+        // letter lookalikes that differ from the original.
+        let alts = generate_alternative_decodings("lze-as-gt89");
+        assert!(
+            alts.iter().any(|a| a == "123-45-6789"),
+            "reverse-leet should recover l→1, z→2, e→3, a→4, s→5, g→6, t→7. Alts: {:?}",
+            alts
+        );
+    }
+
+    #[test]
+    fn test_morse_in_mixed_text() {
+        // Morse code embedded in surrounding context text
+        let input = "SSN: .---- ..--- ...-- / .- -... / -.-. -.. . ..-. end";
+        let alts = generate_alternative_decodings(input);
+        assert!(
+            alts.iter().any(|a| a.contains("123")),
+            "mixed-context morse should extract and decode the morse sequence. Alts: {:?}",
+            alts
+        );
     }
 }
