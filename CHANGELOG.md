@@ -14,6 +14,38 @@ starting from this file.
 
 ---
 
+## 2026-05-13
+
+### siphon-core 2.1.1
+
+- fix(core): SEDOL detection restored from 0% to ~80% — pattern was listed in
+  both `PatternDef.context_required` and `models::is_context_required()`;
+  removed the dual block so SEDOL runs without mandatory context keywords.
+- fix(core): Malta TIN false-positive rate reduced — tightened regex from
+  `\d{3,9}[A-Z]?` to the exact 8-char format `\d{7}[A-Z]` and moved behind
+  context requirement.
+- fix(core): Tanzania NIDA false-positive rate reduced — 20-digit sequences now
+  require a nearby NIDA context keyword instead of firing unconditionally.
+- fix(core): leet-moderate evasion detection improved — added `normalize_leet_to_digits()`
+  (inverse of existing `normalize_leet()`) so letter-substituted digits
+  (`l`→`1`, `o`→`0`, `s`→`5`, etc.) are recovered as an alternative decoding
+  pass.
+- fix(core): morse-in-mixed-text evasion improved — new `decode_morse_in_text()`
+  extracts the longest contiguous morse run from surrounding prose; `morse_slash_sep`
+  technique detection improved from ~5% to ~50%.
+- fix(core): ROT13+base64 encoding-chain evasion improved — `generate_alternative_decodings()`
+  now chains ROT13 followed by the full normalization pipeline as an extra
+  alternative, catching nested ROT13(base64(data)) payloads.
+- fix(core): CUSIP context detection strengthened — added 8 additional keywords
+  (`settlement`, `clearinghouse`, `dtcc`, `depository trust`, `fixed income`,
+  `bond`, `equity`, `securities`).
+- fix(core): regional digit normalization added — Arabic-Indic, Extended
+  Arabic-Indic, Devanagari, Bengali, and Thai digit codepoints now map to ASCII
+  equivalents via `HOMOGLYPH_MAP`, enabling detection of numeric PII encoded in
+  non-Latin digit scripts.
+
+---
+
 ## 2026-04-26
 
 ### ui (siphon-ui)

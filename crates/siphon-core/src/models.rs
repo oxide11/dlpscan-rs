@@ -347,7 +347,6 @@ pub fn is_context_required(sub_category: &str) -> bool {
             | "Teller ID"
             | "Ticker Symbol"
             | "CUSIP"
-            | "SEDOL"
             | "VALOR"
             | "Australia TFN"
             // HIPAA #8 — MRN is a bare 6-10 digit regex that would
