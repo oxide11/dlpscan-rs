@@ -1,16 +1,33 @@
 # cargo-deny configuration
 # Run: cargo install cargo-deny && cargo deny check
 
+# cargo-deny 0.19+ removed `vulnerability` and `notice` (advisories are
+# treated as deny-by-default in schema v2; per-advisory carve-outs go
+# through `ignore` below). See EmbarkStudios/cargo-deny#611 for the
+# migration notes. `unmaintained` is still accepted and selects the
+# scope (workspace | transitive | all | none) — kept at workspace
+# because that's the surface we own and can act on.
 [advisories]
-vulnerability = "deny"
 unmaintained = "workspace"
 yanked = "deny"
-notice = "warn"
+# ignore = [
+#     { id = "RUSTSEC-0000-0000", reason = "..." },
+# ]
 
 [licenses]
 allow = [
     "MIT",
     "Apache-2.0",
+    # Apache-2.0 with the LLVM exception is its own SPDX expression
+    # (not just "Apache-2.0"). Pulled by target-lexicon via
+    # rav1e/system-deps in the rxing 0.8 image-decoder chain. Standard
+    # OSI-approved exception; used by every LLVM-origin Rust crate.
+    "Apache-2.0 WITH LLVM-exception",
+    # NCSA (University of Illinois / NCSA Open Source License) —
+    # permissive, OSI-approved, the license historically used by LLVM
+    # itself. Pulled in transitively by libfuzzer-sys via rav1e in the
+    # same image-decoder chain.
+    "NCSA",
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
