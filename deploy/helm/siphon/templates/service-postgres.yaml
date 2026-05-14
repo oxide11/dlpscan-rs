@@ -1,0 +1,19 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "siphon.componentName" (dict "root" . "component" "postgres") }}
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "postgres") | nindent 4 }}
+spec:
+  # ClusterIP — Postgres is consumed by siphon-api inside the
+  # release namespace only. Don't expose externally.
+  type: ClusterIP
+  ports:
+    - name: postgres
+      port: {{ .Values.postgres.service.port }}
+      targetPort: postgres
+      protocol: TCP
+  selector:
+    {{- include "siphon.selectorLabels" (dict "root" . "component" "postgres") | nindent 4 }}
+{{- end }}

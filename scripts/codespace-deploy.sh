@@ -111,6 +111,16 @@ if ! kubectl -n "${NAMESPACE}" get secret siphon-authelia >/dev/null 2>&1; then
         --from-literal=storage_encryption_key="$(openssl rand -hex 32)"
 fi
 
+# Postgres role password. The chart wires SIPHON_DATABASE_URL +
+# SIPHON_DATABASE_PASSWORD into siphon-api from this Secret. Out-of-
+# band creation is deliberate — we want helm-upgrades to leave the
+# password alone, not regenerate it each rollout.
+if ! kubectl -n "${NAMESPACE}" get secret siphon-postgres >/dev/null 2>&1; then
+    echo "▶ Generating dev siphon-postgres secret…"
+    kubectl -n "${NAMESPACE}" create secret generic siphon-postgres \
+        --from-literal=password="$(openssl rand -hex 32)"
+fi
+
 # --- 6. Helm install/upgrade ---------------------------------------------
 #
 # Browser-origin resolution. Authelia bakes the cookie Domain= and
@@ -157,6 +167,7 @@ helm upgrade --install siphon ./deploy/helm/siphon \
     --set nginx.image.tag=dev \
     --set api.auth.secretName=siphon-api-auth \
     --set authelia.secretName=siphon-authelia \
+    --set postgres.secretName=siphon-postgres \
     --set ingress.host= \
     --set "authelia.cookieDomain=${PUBLIC_HOST}" \
     --set "authelia.externalUrl=${PUBLIC_ORIGIN}" \
