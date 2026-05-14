@@ -95,7 +95,7 @@ rxing = { version = "0.8", optional = true }
 image = { version = "0.25", optional = true }
 
 # Python bindings
-pyo3 = { version = "0.24", features = ["extension-module"], optional = true }
+pyo3 = { version = "0.28", features = ["extension-module"], optional = true }
 
 # TUI (terminal UI)
 ratatui = { version = "0.30", optional = true }
