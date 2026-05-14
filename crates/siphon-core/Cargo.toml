@@ -29,12 +29,12 @@ rand = "0.8"
 # them in here just surfaces the typed APIs.
 zip = { version = "2", optional = true, default-features = false, features = ["deflate"] }
 quick-xml = { version = "0.39", optional = true }
-lopdf = { version = "0.38", optional = true, default-features = false }
+lopdf = { version = "0.40", optional = true, default-features = false }
 # OLE Compound File Binary Format — backs the legacy .doc/.xls/.ppt
 # metadata extractor (SummaryInformation / DocumentSummaryInformation
 # streams). Already in the dep graph via the root crate's `msg`
 # feature; optional here so non-forensics builds skip it.
-cfb = { version = "0.10", optional = true }
+cfb = { version = "0.14", optional = true }
 
 [features]
 bin-data = []
