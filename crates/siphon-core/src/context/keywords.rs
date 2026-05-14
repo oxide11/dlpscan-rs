@@ -59,7 +59,20 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
             keywords: &[
                 "mastercard",
                 "master card",
-                "mc",
+                // Short "mc" abbreviation. Context matching is
+                // substring-based (no word boundaries), so a bare
+                // "mc" would also fire inside surnames like
+                // McMahon / McCarthy and acronyms like PMC / DMC.
+                // Each variant below carries an explicit delimiter
+                // that those false positives don't have:
+                //   " mc "  — "the MC ending in 1234", tabular data
+                //   " mc:"  — "MC: 4929-..."  (form-style labels)
+                //   " mc-"  — "MC-4929-..."
+                //   "/mc"   — "visa/mc"
+                " mc ",
+                " mc:",
+                " mc-",
+                "/mc",
                 "credit card",
                 "card number",
                 "card no",
