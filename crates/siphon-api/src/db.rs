@@ -23,6 +23,21 @@ use tokio_postgres::NoTls;
 const MAX_POOL_SIZE: usize = 8;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Connection-state classification surfaced via /v1/db/health.
+/// Kept separate from the pool's `Option<Pool>` representation so
+/// the smoke endpoint can tell "URL absent" apart from "URL set but
+/// pool failed to come up at startup" — both are None at the
+/// AppState layer, which had me chasing a phantom config issue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoolState {
+    /// SIPHON_DATABASE_URL was not set in the environment.
+    Unconfigured,
+    /// URL was set and pool came up successfully.
+    Connected,
+    /// URL was set but the startup connection failed or timed out.
+    StartupFailed,
+}
+
 /// Migration files. Each entry is (sequence_id, name, sql_text).
 /// Add new files in chronological order; the runner applies them
 /// in this order and remembers which ones have run via the
@@ -37,18 +52,22 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
 
 /// Initialise an optional database pool from the environment.
 ///
-/// * `Ok(Some(pool))` — Postgres reachable, pool ready. Run
-///                     migrations next.
-/// * `Ok(None)`       — SIPHON_DATABASE_URL unset. Caller runs in
-///                     no-DB mode.
-/// * `Err(_)`         — URL malformed. main() exits.
-pub async fn init_optional() -> Result<Option<Pool>, Box<dyn std::error::Error + Send + Sync>> {
+/// Returns `(state, pool)`:
+///   * `(Unconfigured, None)` — SIPHON_DATABASE_URL not set.
+///   * `(Connected, Some)`    — URL set, pool ready, caller should
+///                              run migrations next.
+///   * `(StartupFailed, None)` — URL set but the startup connect
+///                              attempt failed or timed out. /v1/db/health
+///                              surfaces this distinct from Unconfigured.
+///   * Returns `Err(_)` only on malformed URL — main() exits.
+pub async fn init_optional(
+) -> Result<(PoolState, Option<Pool>), Box<dyn std::error::Error + Send + Sync>> {
     let Ok(url) = std::env::var("SIPHON_DATABASE_URL") else {
         tracing::info!(
             "SIPHON_DATABASE_URL not set — persistence disabled; findings \
              history and C2 shared state will return empty/in-memory"
         );
-        return Ok(None);
+        return Ok((PoolState::Unconfigured, None));
     };
 
     let mut cfg = Config::new();
@@ -82,7 +101,7 @@ pub async fn init_optional() -> Result<Option<Pool>, Box<dyn std::error::Error +
             // Trivial query to confirm the wire is live.
             let _ = client.simple_query("SELECT 1").await;
             tracing::info!(max_pool_size = MAX_POOL_SIZE, "connected to Postgres");
-            Ok(Some(pool))
+            Ok((PoolState::Connected, Some(pool)))
         }
         Ok(Err(e)) => {
             tracing::warn!(
@@ -90,7 +109,7 @@ pub async fn init_optional() -> Result<Option<Pool>, Box<dyn std::error::Error +
                 "Postgres connection failed at startup — running without \
                  persistence. Restart the pod once Postgres is reachable."
             );
-            Ok(None)
+            Ok((PoolState::StartupFailed, None))
         }
         Err(_) => {
             tracing::warn!(
@@ -98,7 +117,7 @@ pub async fn init_optional() -> Result<Option<Pool>, Box<dyn std::error::Error +
                 "Postgres connection timed out at startup — running \
                  without persistence."
             );
-            Ok(None)
+            Ok((PoolState::StartupFailed, None))
         }
     }
 }

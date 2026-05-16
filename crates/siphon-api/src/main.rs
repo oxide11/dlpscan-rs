@@ -150,6 +150,10 @@ struct AppState {
     /// every consumer must handle the None case gracefully. See
     /// `db::init_optional` for the failure-mode semantics.
     db_pool: Option<deadpool_postgres::Pool>,
+    /// Why `db_pool` is what it is — surfaced by /v1/db/health so
+    /// the operator can tell "URL not configured" apart from
+    /// "URL set but the pool failed to come up at startup".
+    db_state: db::PoolState,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -717,10 +721,24 @@ struct DbHealthResponse {
 
 async fn db_health(State(state): State<Arc<AppState>>) -> Json<DbHealthResponse> {
     let Some(pool) = state.db_pool.as_ref() else {
+        let reason = match state.db_state {
+            db::PoolState::Unconfigured => "SIPHON_DATABASE_URL not configured".to_string(),
+            db::PoolState::StartupFailed => {
+                "SIPHON_DATABASE_URL was set but the pool failed to connect at \
+                 startup (check siphon-api logs for the underlying error; \
+                 rollout restart siphon-api once Postgres is reachable)"
+                    .to_string()
+            }
+            // Connected with no pool would be a bug — surfaced
+            // explicitly rather than silently mapping to "not configured".
+            db::PoolState::Connected => "internal state mismatch: marked Connected but \
+                 pool is None — please report"
+                .to_string(),
+        };
         return Json(DbHealthResponse {
             connected: false,
             latency_ms: None,
-            reason: Some("SIPHON_DATABASE_URL not configured".into()),
+            reason: Some(reason),
         });
     };
     let started = Instant::now();
@@ -3536,8 +3554,8 @@ async fn main() {
     // API starts serving; a migration failure exits the process so
     // the operator sees the crashloop instead of a half-applied
     // schema. URL parse errors (bad operator config) also exit.
-    let db_pool = match db::init_optional().await {
-        Ok(pool) => pool,
+    let (db_state, db_pool) = match db::init_optional().await {
+        Ok(pair) => pair,
         Err(e) => {
             tracing::error!(error = %e, "SIPHON_DATABASE_URL parse failed; refusing to start");
             std::process::exit(1);
@@ -3568,6 +3586,7 @@ async fn main() {
         overrides_path: overrides_path_arc,
         disabled_stages: Arc::new(RwLock::new(HashSet::new())),
         db_pool,
+        db_state,
     });
 
     let app = Router::new()
