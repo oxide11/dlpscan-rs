@@ -37,6 +37,46 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.postgres.enabled }}
+      # Wait for Postgres to accept connections before siphon-api
+      # starts. Without this, k8s schedules both pods concurrently
+      # and the api can lose its one startup-connection attempt
+      # while postgres is still running initdb — siphon-api degrades
+      # to no-DB mode silently and the operator has to `rollout
+      # restart` to recover. The initContainer makes the api wait
+      # explicitly. ~3-15 s on a cold cluster; near-zero on a warm one.
+      initContainers:
+        - name: wait-for-postgres
+          image: {{ printf "%s:%s" .Values.postgres.image.repository .Values.postgres.image.tag | quote }}
+          # Hardened to match the rest of the chart's containerSecurityContext.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: [ALL]
+          command:
+            - sh
+            - -c
+            - |
+              for i in $(seq 1 60); do
+                if pg_isready -h {{ include "siphon.componentName" (dict "root" . "component" "postgres") }} -p {{ .Values.postgres.service.port }} -U {{ .Values.postgres.username }} -d {{ .Values.postgres.database }} -t 2 >/dev/null 2>&1; then
+                  echo "postgres ready after ${i}s"
+                  exit 0
+                fi
+                echo "waiting for postgres ($i/60)"
+                sleep 1
+              done
+              echo "postgres did not become ready within 60s" >&2
+              exit 1
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits:   { cpu: 100m, memory: 64Mi }
+      {{- end }}
       containers:
         - name: siphon-api
           image: {{ include "siphon.image" (dict "root" . "image" .Values.api.image) }}
