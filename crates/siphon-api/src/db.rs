@@ -42,13 +42,8 @@ pub enum PoolState {
 /// Add new files in chronological order; the runner applies them
 /// in this order and remembers which ones have run via the
 /// `_schema_migrations` bookkeeping table.
-const MIGRATIONS: &[(i64, &str, &str)] = &[
-    (
-        1,
-        "0001_init",
-        include_str!("../migrations/0001_init.sql"),
-    ),
-];
+const MIGRATIONS: &[(i64, &str, &str)] =
+    &[(1, "0001_init", include_str!("../migrations/0001_init.sql"))];
 
 /// Initialise an optional database pool from the environment.
 ///
@@ -125,9 +120,7 @@ pub async fn init_optional(
 /// Apply any pending migrations from the embedded MIGRATIONS list.
 /// Tracked in `_schema_migrations(version, name, applied_at)` so
 /// re-runs are idempotent.
-pub async fn run_migrations(
-    pool: &Pool,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn run_migrations(pool: &Pool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let client = pool.get().await?;
 
     // Bookkeeping table — created on first run; idempotent.
