@@ -27,7 +27,7 @@ rand = "0.8"
 # + XML) and PDF metadata dictionary access. All three are already
 # in the root crate's dep graph via the office/pdf features; pulling
 # them in here just surfaces the typed APIs.
-zip = { version = "7", optional = true, default-features = false, features = ["deflate"] }
+zip = { version = "8", optional = true, default-features = false, features = ["deflate"] }
 quick-xml = { version = "0.39", optional = true }
 lopdf = { version = "0.40", optional = true, default-features = false }
 # OLE Compound File Binary Format — backs the legacy .doc/.xls/.ppt
