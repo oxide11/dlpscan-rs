@@ -21,7 +21,7 @@ base64 = "0.22"
 tracing = "0.1"
 toml = "1.1"
 strsim = "0.11"
-rand = "0.8"
+rand = "0.10"
 
 # Forensics — Office container parsing (docx/xlsx/pptx treat as ZIP
 # + XML) and PDF metadata dictionary access. All three are already
