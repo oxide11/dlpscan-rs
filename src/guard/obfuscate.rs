@@ -3,11 +3,11 @@
 use crate::models::Match;
 use once_cell::sync::Lazy;
 use rand::rngs::StdRng;
-use rand::Rng;
+use rand::RngExt;
 use rand::SeedableRng;
 use std::sync::Mutex;
 
-static OBFUSCATION_RNG: Lazy<Mutex<StdRng>> = Lazy::new(|| Mutex::new(StdRng::from_entropy()));
+static OBFUSCATION_RNG: Lazy<Mutex<StdRng>> = Lazy::new(|| Mutex::new(rand::make_rng()));
 
 /// Set seed for deterministic obfuscation (for testing/auditing).
 pub fn set_obfuscation_seed(seed: u64) {
@@ -67,22 +67,27 @@ fn obfuscate_credit_card(m: &Match) -> String {
 
     let prefix = match m.sub_category.as_str() {
         "Visa" => "4".to_string(),
-        "MasterCard" => format!("5{}", rng.gen_range(1..=5)),
-        "Amex" => format!("3{}", if rng.gen_bool(0.5) { "4" } else { "7" }),
+        "MasterCard" => format!("5{}", rng.random_range(1..=5)),
+        "Amex" => format!("3{}", if rng.random_bool(0.5) { "4" } else { "7" }),
         "Discover" => "6011".to_string(),
         "JCB" => "35".to_string(),
         "Diners Club" => "36".to_string(),
         "UnionPay" => "62".to_string(),
-        _ => format!("{}", rng.gen_range(3..=6)),
+        _ => format!("{}", rng.random_range(3..=6)),
     };
 
     generate_luhn_number(&mut *rng, length, &prefix, &m.text)
 }
 
-fn generate_luhn_number(rng: &mut impl Rng, length: usize, prefix: &str, original: &str) -> String {
+fn generate_luhn_number(
+    rng: &mut impl RngExt,
+    length: usize,
+    prefix: &str,
+    original: &str,
+) -> String {
     let mut digits: Vec<u8> = prefix.bytes().map(|b| b - b'0').collect();
     while digits.len() < length - 1 {
-        digits.push(rng.gen_range(0..10));
+        digits.push(rng.random_range(0..10));
     }
     // Luhn check digit
     let mut total: u32 = 0;
@@ -122,10 +127,10 @@ fn generate_luhn_number(rng: &mut impl Rng, length: usize, prefix: &str, origina
 fn obfuscate_email() -> String {
     let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
     let user: String = (0..8)
-        .map(|_| (b'a' + rng.gen_range(0..26)) as char)
+        .map(|_| (b'a' + rng.random_range(0..26)) as char)
         .collect();
     let domains = ["example.net", "example.org", "test.invalid", "sample.test"];
-    let domain = domains[rng.gen_range(0..domains.len())];
+    let domain = domains[rng.random_range(0..domains.len())];
     format!("{user}@{domain}")
 }
 
@@ -135,7 +140,7 @@ fn obfuscate_phone(original: &str) -> String {
         .chars()
         .map(|c| {
             if c.is_ascii_digit() {
-                (b'0' + rng.gen_range(0..10)) as char
+                (b'0' + rng.random_range(0..10)) as char
             } else {
                 c
             }
@@ -160,9 +165,9 @@ fn obfuscate_iban(original: &str) -> String {
     }
     for c in chars {
         if c.is_ascii_digit() {
-            result.push((b'0' + rng.gen_range(0..10)) as char);
+            result.push((b'0' + rng.random_range(0..10)) as char);
         } else if c.is_ascii_alphabetic() {
-            result.push((b'A' + rng.gen_range(0..26)) as char);
+            result.push((b'A' + rng.random_range(0..26)) as char);
         } else {
             result.push(c);
         }
@@ -174,10 +179,10 @@ fn obfuscate_ipv4() -> String {
     let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
     format!(
         "{}.{}.{}.{}",
-        rng.gen_range(10..224),
-        rng.gen_range(0..256),
-        rng.gen_range(0..256),
-        rng.gen_range(1..255)
+        rng.random_range(10..224),
+        rng.random_range(0..256),
+        rng.random_range(0..256),
+        rng.random_range(1..255)
     )
 }
 
@@ -185,7 +190,7 @@ fn obfuscate_mac(original: &str) -> String {
     let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
     let delim = if original.contains(':') { ':' } else { '-' };
     let octets: Vec<String> = (0..6)
-        .map(|_| format!("{:02x}", rng.gen_range(0..256u16)))
+        .map(|_| format!("{:02x}", rng.random_range(0..256u16)))
         .collect();
     octets.join(&delim.to_string())
 }
@@ -199,7 +204,7 @@ fn obfuscate_secret(original: &str) -> String {
         .chars()
         .map(|c| {
             if c.is_alphanumeric() {
-                charset[rng.gen_range(0..charset.len())]
+                charset[rng.random_range(0..charset.len())]
             } else {
                 c
             }
@@ -213,11 +218,11 @@ fn obfuscate_generic(original: &str) -> String {
         .chars()
         .map(|c| {
             if c.is_ascii_digit() {
-                (b'0' + rng.gen_range(0..10)) as char
+                (b'0' + rng.random_range(0..10)) as char
             } else if c.is_ascii_uppercase() {
-                (b'A' + rng.gen_range(0..26)) as char
+                (b'A' + rng.random_range(0..26)) as char
             } else if c.is_ascii_lowercase() {
-                (b'a' + rng.gen_range(0..26)) as char
+                (b'a' + rng.random_range(0..26)) as char
             } else {
                 c
             }
@@ -278,8 +283,8 @@ mod tests {
         use rand::SeedableRng;
         let mut rng_a = StdRng::seed_from_u64(123);
         let mut rng_b = StdRng::seed_from_u64(123);
-        let a: u64 = rng_a.gen();
-        let b: u64 = rng_b.gen();
+        let a: u64 = rng_a.random();
+        let b: u64 = rng_b.random();
         assert_eq!(a, b);
     }
 }

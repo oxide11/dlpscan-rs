@@ -47,8 +47,8 @@ impl TokenVault {
     pub fn new(prefix: &str, secret: Option<&[u8]>) -> Self {
         let secret = secret.map(|s| s.to_vec()).unwrap_or_else(|| {
             let mut key = vec![0u8; 32];
-            use rand::RngCore;
-            rand::thread_rng().fill_bytes(&mut key);
+            use rand::Rng;
+            rand::rng().fill_bytes(&mut key);
             key
         });
 

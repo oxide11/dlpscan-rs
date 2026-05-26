@@ -148,8 +148,8 @@ impl ExactDataMatcher {
     pub fn new(salt: Option<&[u8]>, tokenizer_names: Option<Vec<&str>>) -> Self {
         let salt = salt.map(|s| s.to_vec()).unwrap_or_else(|| {
             let mut buf = vec![0u8; 32];
-            use rand::RngCore;
-            rand::thread_rng().fill_bytes(&mut buf);
+            use rand::Rng;
+            rand::rng().fill_bytes(&mut buf);
             buf
         });
 
