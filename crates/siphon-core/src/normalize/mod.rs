@@ -583,6 +583,65 @@ fn normalize_delimiters(input: &str, in_offsets: &[usize]) -> (String, Vec<usize
     (String::from_utf8_lossy(&out).into_owned(), offsets)
 }
 
+/// Strip delimiter characters between adjacent alphanumeric characters.
+///
+/// Removes `-`, `.`, `/`, `\`, and `_` when both immediate byte-neighbours are
+/// ASCII alphanumeric and at least one is a digit or uppercase letter. This
+/// defeats delimiter-injection evasion like `D123-4567` → `D1234567` and
+/// `BBG0-00BP-HV59` → `BBG000BPHV59` while preserving natural-language
+/// compound words like `test-case` whose neighbours are both lowercase.
+///
+/// Runs after `normalize_delimiters` so doubled-delimiter evasion (e.g.
+/// `123--456`) has already been collapsed to a single delimiter before this
+/// stage strips it entirely.
+fn strip_alnum_adjacent_delimiters(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    let bytes = input.as_bytes();
+    if !bytes
+        .iter()
+        .any(|&b| b == b'-' || b == b'.' || b == b'/' || b == b'\\' || b == b'_')
+    {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut offsets: Vec<usize> = Vec::with_capacity(bytes.len());
+    let mut changed = false;
+
+    for i in 0..bytes.len() {
+        let b = bytes[i];
+        if b == b'-' || b == b'.' || b == b'/' || b == b'\\' || b == b'_' {
+            let prev = out.last().copied();
+            let next = if i + 1 < bytes.len() {
+                Some(bytes[i + 1])
+            } else {
+                None
+            };
+            if let (Some(p), Some(n)) = (prev, next) {
+                if p.is_ascii_alphanumeric() && n.is_ascii_alphanumeric() {
+                    // Preserve lowercase–word boundaries (`test-case`);
+                    // strip identifier separators (`D123-4567`, `1.2.3`).
+                    if p.is_ascii_digit()
+                        || n.is_ascii_digit()
+                        || p.is_ascii_uppercase()
+                        || n.is_ascii_uppercase()
+                    {
+                        changed = true;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(b);
+        offsets.push(orig_offset(in_offsets, i));
+    }
+
+    if !changed {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    (String::from_utf8_lossy(&out).into_owned(), offsets)
+}
+
 /// Strip zero-width characters with offset composition.
 fn remap_strip_zero_width(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
     let has_zw = input.chars().any(|c| ZERO_WIDTH_CHARS.contains(&c));
@@ -1275,6 +1334,12 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     // Stage 6: Normalize excessive delimiters
     apply_stage!(normalize_delimiters, current, offsets);
 
+    // Stage 6b: Strip delimiter characters between alphanumeric neighbours.
+    // Resolves delimiter-injection evasion (e.g. `D123-4567` → `D1234567`,
+    // `BBG0-00BP-HV59` → `BBG000BPHV59`). Runs after stage 6 so any
+    // doubled-delimiter evasion has already been collapsed to a single char.
+    apply_stage!(strip_alnum_adjacent_delimiters, current, offsets);
+
     // Stages 7-10: Unicode normalization (only if non-ASCII remaining)
     if !is_ascii_only(&current) {
         // Stage 7: Strip zero-width characters
@@ -1471,6 +1536,22 @@ fn has_evasion_markers(text: &str) -> bool {
     if bytes.windows(2).any(|w| w[0] == b'\\' && w[1] == b'x') {
         return true;
     }
+    // Single delimiter between alphanumeric chars where at least one side is a
+    // digit or uppercase letter — identifier-delimiter evasion (e.g. `D123-4567`).
+    if bytes.len() >= 3 {
+        for w in bytes.windows(3) {
+            if (w[1] == b'-' || w[1] == b'.' || w[1] == b'/' || w[1] == b'\\' || w[1] == b'_')
+                && w[0].is_ascii_alphanumeric()
+                && w[2].is_ascii_alphanumeric()
+                && (w[0].is_ascii_digit()
+                    || w[2].is_ascii_digit()
+                    || w[0].is_ascii_uppercase()
+                    || w[2].is_ascii_uppercase())
+            {
+                return true;
+            }
+        }
+    }
     // Base64-encoded tokens: a run of ≥16 base64-alphabet characters
     // (optionally followed by `=` padding). This is a cheap linear
     // scan that gates the more expensive `decode_encoded_tokens` stage.
@@ -1595,11 +1676,12 @@ mod tests {
 
     #[test]
     fn test_base64_token_decode_ssn() {
-        // "123-45-6789" base64-encoded = "MTIzLTQ1LTY3ODk="
+        // "123-45-6789" base64-encoded = "MTIzLTQ1LTY3ODk=".
+        // Stage 4c decodes the token; stage 6b then strips digit-adjacent hyphens.
         let input = "config ssn = MTIzLTQ1LTY3ODk= end";
         let (result, _offsets) = normalize_text(input);
         assert!(
-            result.contains("123-45-6789"),
+            result.contains("123456789"),
             "base64-encoded SSN should be decoded inline. Got: {result:?}"
         );
     }
@@ -1617,11 +1699,12 @@ mod tests {
 
     #[test]
     fn test_base64_token_decode_unpadded() {
-        // "123-45-6789" without padding = "MTIzLTQ1LTY3ODk" (no trailing =)
+        // "123-45-6789" without padding = "MTIzLTQ1LTY3ODk" (no trailing =).
+        // Hyphens are stripped by stage 6b after decoding.
         let input = "data MTIzLTQ1LTY3ODk here";
         let (result, _) = normalize_text(input);
         assert!(
-            result.contains("123-45-6789"),
+            result.contains("123456789"),
             "unpadded base64 should also decode. Got: {result:?}"
         );
     }
@@ -1654,10 +1737,12 @@ mod tests {
 
     #[test]
     fn test_base64_token_decode_offset_map() {
+        // Stage 4c decodes base64; stage 6b strips digit-adjacent hyphens.
+        // The offset of the first decoded byte still points to the original token.
         let input = "prefix MTIzLTQ1LTY3ODk= suffix";
         let (result, offsets) = normalize_text(input);
-        assert!(result.contains("123-45-6789"));
-        let decoded_start = result.find("123-45-6789").unwrap();
+        assert!(result.contains("123456789"));
+        let decoded_start = result.find("123456789").unwrap();
         let original_token_start = input.find("MTIz").unwrap();
         if !offsets.is_empty() {
             assert_eq!(
@@ -1670,45 +1755,31 @@ mod tests {
     #[test]
     fn test_nested_base64_decode() {
         // "123-45-6789" → base64 → "MTIzLTQ1LTY3ODk=" → base64 →
-        // "TVRJekxUUTFMVFkzT0RrPQ=="
-        // The nested decode loop should unwrap both layers.
+        // "TVRJekxUUTFMVFkzT0RrPQ=="; nested decode loop unwraps both layers,
+        // then stage 6b strips digit-adjacent hyphens.
         let input = "nested TVRJekxUUTFMVFkzT0RrPQ== end";
         let (result, _) = normalize_text(input);
         assert!(
-            result.contains("123-45-6789"),
+            result.contains("123456789"),
             "double-base64 should unwrap to plaintext. Got: {result:?}"
         );
     }
 
     #[test]
     fn test_nested_decode_no_infinite_loop() {
-        // Verify the decode loop terminates cleanly when a token
-        // decodes to something that can't be further decoded (too
-        // short, not valid base64, etc.). No panic, no hang.
+        // Verify the decode loop terminates cleanly; stage 6b strips hyphens.
         let input = "safe MTIzLTQ1LTY3ODk= done";
         let (result, _) = normalize_text(input);
-        // Single-layer decode to "123-45-6789" — no further decoding
-        // possible since plaintext digits aren't valid encoded data.
-        assert!(result.contains("123-45-6789"));
+        assert!(result.contains("123456789"));
     }
 
     #[test]
     fn test_base64url_token_decode() {
-        // base64url uses _ and - instead of + and /. This is common
-        // in JWT payloads and URL parameters.
-        // "123-45-6789" in base64url = "MTIzLTQ1LTY3ODk" (same as
-        // standard for this particular input since it has no +/).
-        // Let's use a value that produces _ or - in base64url:
-        // "test?data=yes" → base64url "dGVzdD9kYXRhPXllcw" (no +/)
-        // Actually that won't have _ or -. Let me use a value that
-        // has non-printable bytes... hmm.
-        // The difference matters for values whose base64 form contains
-        // + or /. For now, verify that a pure-alphanumeric token that
-        // could be either still decodes as base64 standard first.
+        // Stage 4c decodes standard base64; stage 6b strips digit-adjacent hyphens.
         let input = "key = MTIzLTQ1LTY3ODk= done";
         let (result, _) = normalize_text(input);
         assert!(
-            result.contains("123-45-6789"),
+            result.contains("123456789"),
             "standard base64 should decode first. Got: {result:?}"
         );
     }
@@ -1737,22 +1808,23 @@ mod tests {
 
     #[test]
     fn test_hex_token_decode() {
-        // "123-45-6789" as hex = "3132332d34352d36373839"
-        // (each byte of the ASCII string → 2 hex digits)
+        // "123-45-6789" as hex = "3132332d34352d36373839".
+        // Stage 4c decodes the hex; stage 6b strips digit-adjacent hyphens.
         let input = "hex 3132332d34352d36373839 end";
         let (result, _) = normalize_text(input);
         assert!(
-            result.contains("123-45-6789"),
+            result.contains("123456789"),
             "hex-encoded SSN should be decoded. Got: {result:?}"
         );
     }
 
     #[test]
     fn test_hex_token_decode_with_0x_prefix() {
+        // Stage 4c decodes 0x-prefixed hex; stage 6b strips digit-adjacent hyphens.
         let input = "val 0x3132332d34352d36373839 done";
         let (result, _) = normalize_text(input);
         assert!(
-            result.contains("123-45-6789"),
+            result.contains("123456789"),
             "0x-prefixed hex should decode. Got: {result:?}"
         );
     }
@@ -1847,22 +1919,25 @@ mod tests {
 
     #[test]
     fn test_percent_decode_ssn() {
+        // Stage 1 decodes percent-encoding; stage 6b then strips the
+        // digit-adjacent hyphens, so the final result is all digits.
         let (result, _) = normalize_text("%31%32%33-%34%35-%36%37%38%39");
-        assert_eq!(result, "123-45-6789");
+        assert_eq!(result, "123456789");
     }
 
     #[test]
     fn test_percent_decode_digits_only() {
-        // url_percent_encoding_digits: only digits encoded
+        // url_percent_encoding_digits: only digits encoded; digit-adjacent
+        // hyphens stripped by stage 6b.
         let (result, _) = normalize_text("%34532-%30151-%31283");
-        assert_eq!(result, "4532-0151-1283");
+        assert_eq!(result, "453201511283");
     }
 
     #[test]
     fn test_percent_decode_full() {
-        // url_percent_encoding_full: everything encoded
+        // url_percent_encoding_full: everything encoded; hyphen stripped by stage 6b.
         let (result, _) = normalize_text("%34%35%33%32%2D%30%31%35%31");
-        assert_eq!(result, "4532-0151");
+        assert_eq!(result, "45320151");
     }
 
     #[test]
@@ -1874,15 +1949,16 @@ mod tests {
 
     #[test]
     fn test_html_entity_decode_ssn() {
+        // Stage 2 decodes entities; stage 6b strips digit-adjacent hyphens.
         let (result, _) = normalize_text("&#49;&#50;&#51;-&#52;&#53;-&#54;&#55;&#56;&#57;");
-        assert_eq!(result, "123-45-6789");
+        assert_eq!(result, "123456789");
     }
 
     #[test]
     fn test_html_entity_decode_mixed() {
-        // Some chars encoded, some plain
+        // Some chars encoded, some plain; hyphens stripped by stage 6b.
         let (result, _) = normalize_text("1&#50;3-&#52;5-6&#55;89");
-        assert_eq!(result, "123-45-6789");
+        assert_eq!(result, "123456789");
     }
 
     #[test]
@@ -1900,21 +1976,25 @@ mod tests {
 
     #[test]
     fn test_css_comment_strip() {
+        // Stage 3 strips CSS comments; stage 6b strips digit-adjacent hyphens.
         let (result, _) = normalize_text("1/**/2/**/3/**/-/**/4/**/5/**/-/**/6/**/7/**/8/**/9");
-        assert_eq!(result, "123-45-6789");
+        assert_eq!(result, "123456789");
     }
 
     #[test]
     fn test_html_comment_strip() {
+        // Stage 3 strips HTML comments; stage 6b strips digit-adjacent hyphens.
         let (result, _) =
             normalize_text("1<!---->2<!---->3<!---->-<!---->4<!---->5<!---->-<!---->6789");
-        assert_eq!(result, "123-45-6789");
+        assert_eq!(result, "123456789");
     }
 
     #[test]
     fn test_whitespace_padding_digits() {
+        // Stage 5 strips spaces between non-alpha chars; stage 6b strips
+        // the remaining digit-adjacent hyphens.
         let (result, _) = normalize_text("1 2 3 - 4 5 - 6 7 8 9");
-        assert_eq!(result, "123-45-6789");
+        assert_eq!(result, "123456789");
     }
 
     #[test]
@@ -1926,26 +2006,31 @@ mod tests {
 
     #[test]
     fn test_mid_line_break() {
+        // Stage 5 strips the newline between non-alpha chars; stage 6b
+        // strips digit-adjacent hyphens.
         let (result, _) = normalize_text("123-45-\n6789");
-        assert_eq!(result, "123-45-6789");
+        assert_eq!(result, "123456789");
     }
 
     #[test]
     fn test_mid_line_break_crlf() {
+        // Stage 5 strips CR+LF; stage 6b strips digit-adjacent hyphens.
         let (result, _) = normalize_text("123-45-\r\n6789");
-        assert_eq!(result, "123-45-6789");
+        assert_eq!(result, "123456789");
     }
 
     #[test]
     fn test_excessive_delimiter() {
+        // Stage 6 collapses `--` to `-`; stage 6b then strips digit-adjacent `-`.
         let (result, _) = normalize_text("123--45--6789");
-        assert_eq!(result, "123-45-6789");
+        assert_eq!(result, "123456789");
     }
 
     #[test]
     fn test_excessive_dots() {
+        // Stage 6 collapses `..` to `.`; stage 6b then strips digit-adjacent `.`.
         let (result, _) = normalize_text("192..168..1..1");
-        assert_eq!(result, "192.168.1.1");
+        assert_eq!(result, "19216811");
     }
 
     #[test]
@@ -1957,9 +2042,9 @@ mod tests {
 
     #[test]
     fn test_combined_evasion_percent_and_padding() {
-        // Percent-encoded digits with spaces
+        // Percent-encoded digits with spaces; stages 1, 5, and 6b all fire.
         let (result, _) = normalize_text("%31 %32 %33 - %34 %35 - %36 %37 %38 %39");
-        assert_eq!(result, "123-45-6789");
+        assert_eq!(result, "123456789");
     }
 
     #[test]
@@ -1985,9 +2070,10 @@ mod tests {
 
     #[test]
     fn test_hex_spaced_bytes_ssn() {
-        // "123-45-6789" encoded as hex-spaced bytes
+        // "123-45-6789" encoded as hex-spaced bytes.
+        // Stage 4 decodes the hex; stage 6b strips digit-adjacent hyphens.
         let (result, _) = normalize_text("31 32 33 2D 34 35 2D 36 37 38 39");
-        assert_eq!(result, "123-45-6789");
+        assert_eq!(result, "123456789");
     }
 
     #[test]
@@ -2027,9 +2113,10 @@ mod tests {
         let (result, _) = normalize_text("48 65 6c 6c 6f");
         assert_eq!(result, "Hello");
 
-        // And the existing SSN evasion regression should still fire.
+        // And the existing SSN evasion regression should still fire;
+        // stage 6b further strips the digit-adjacent hyphens.
         let (result, _) = normalize_text("31 32 33 2D 34 35 2D 36 37 38 39");
-        assert_eq!(result, "123-45-6789");
+        assert_eq!(result, "123456789");
     }
 
     #[test]
@@ -2148,6 +2235,65 @@ mod tests {
         assert!(decode_morse("hello world").is_none());
         assert!(decode_morse("123-45-6789").is_none());
         assert!(decode_morse("short").is_none());
+    }
+
+    // === stage 6b: strip_alnum_adjacent_delimiters tests ===
+
+    #[test]
+    fn test_strip_digit_adjacent_hyphen() {
+        // California DL evaded: D123-4567 → D1234567
+        let (result, _) = normalize_text("D123-4567");
+        assert_eq!(result, "D1234567");
+    }
+
+    #[test]
+    fn test_strip_digit_adjacent_dot() {
+        let (result, _) = normalize_text("D123.4567");
+        assert_eq!(result, "D1234567");
+    }
+
+    #[test]
+    fn test_strip_digit_adjacent_slash() {
+        let (result, _) = normalize_text("1234/5678/9012");
+        assert_eq!(result, "123456789012");
+    }
+
+    #[test]
+    fn test_strip_multiple_groups_fl_dl() {
+        // Florida DL: letter + 12 digits; evadex groups as D123-4567-8901-23
+        let (result, _) = normalize_text("D123-4567-8901-23");
+        assert_eq!(result, "D1234567890123");
+    }
+
+    #[test]
+    fn test_strip_uppercase_adjacent_figi() {
+        // FIGI: BBG000BPHV59 evaded as BBG0-00BP-HV59
+        let (result, _) = normalize_text("BBG0-00BP-HV59");
+        assert_eq!(result, "BBG000BPHV59");
+    }
+
+    #[test]
+    fn test_strip_preserves_lowercase_word_boundaries() {
+        // Lowercase-letter–only boundaries must NOT be stripped
+        let (result, _) = normalize_text("test-case");
+        assert_eq!(result, "test-case");
+
+        let (result, _) = normalize_text("pre-existing");
+        assert_eq!(result, "pre-existing");
+    }
+
+    #[test]
+    fn test_strip_idaho_dl() {
+        // Idaho DL: AB123456X; evadex groups as AB12-3456-X
+        let (result, _) = normalize_text("AB12-3456-X");
+        assert_eq!(result, "AB123456X");
+    }
+
+    #[test]
+    fn test_strip_nh_dl() {
+        // New Hampshire DL: 12ABC67890; evadex groups as 12AB-C678-90
+        let (result, _) = normalize_text("12AB-C678-90");
+        assert_eq!(result, "12ABC67890");
     }
 
     #[test]
