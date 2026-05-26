@@ -92,7 +92,7 @@ unrar = { version = "0.5", optional = true }
 
 # Data format extraction
 parquet = { version = "58", optional = true, default-features = false, features = ["arrow"] }
-arrow = { version = "54", optional = true, default-features = false, features = ["prettyprint"] }
+arrow = { version = "58", optional = true, default-features = false, features = ["prettyprint"] }
 rusqlite = { version = "0.39", optional = true, features = ["bundled"] }
 
 # OLE2 (MSG files)
