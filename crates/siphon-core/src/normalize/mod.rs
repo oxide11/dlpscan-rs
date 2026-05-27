@@ -596,9 +596,13 @@ fn normalize_delimiters(input: &str, in_offsets: &[usize]) -> (String, Vec<usize
 /// stage strips it entirely.
 fn strip_alnum_adjacent_delimiters(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
     let bytes = input.as_bytes();
+    // '.' is intentionally excluded: it appears in IP addresses, GPS coordinates,
+    // ICD codes, version numbers, and JWT segment separators. Stripping it breaks
+    // detection of those patterns without meaningfully improving evasion coverage
+    // (real evasion overwhelmingly uses '-' or '_', not '.').
     if !bytes
         .iter()
-        .any(|&b| b == b'-' || b == b'.' || b == b'/' || b == b'\\' || b == b'_')
+        .any(|&b| b == b'-' || b == b'/' || b == b'\\' || b == b'_')
     {
         return (input.to_string(), in_offsets.to_vec());
     }
@@ -609,7 +613,7 @@ fn strip_alnum_adjacent_delimiters(input: &str, in_offsets: &[usize]) -> (String
 
     for i in 0..bytes.len() {
         let b = bytes[i];
-        if b == b'-' || b == b'.' || b == b'/' || b == b'\\' || b == b'_' {
+        if b == b'-' || b == b'/' || b == b'\\' || b == b'_' {
             let prev = out.last().copied();
             let next = if i + 1 < bytes.len() {
                 Some(bytes[i + 1])
@@ -619,7 +623,7 @@ fn strip_alnum_adjacent_delimiters(input: &str, in_offsets: &[usize]) -> (String
             if let (Some(p), Some(n)) = (prev, next) {
                 if p.is_ascii_alphanumeric() && n.is_ascii_alphanumeric() {
                     // Preserve lowercase–word boundaries (`test-case`);
-                    // strip identifier separators (`D123-4567`, `1.2.3`).
+                    // strip identifier separators (`D123-4567`, `BBG0-00BP-HV59`).
                     if p.is_ascii_digit()
                         || n.is_ascii_digit()
                         || p.is_ascii_uppercase()
@@ -880,14 +884,17 @@ fn try_decode_base64url(token: &str) -> Option<String> {
     validate_decoded(&bytes)
 }
 
-/// Try base32 decode (A-Z2-7, optional = padding).
+/// Try base32 decode (A-Z2-7 case-insensitive, optional = padding).
+///
+/// Accepts both uppercase (`GQ2TGMRQ…`) and lowercase (`gq2tgmrq…`) forms.
+/// `base32_decode_bytes` already maps both cases, so no pre-uppercasing is
+/// required here — just remove the lowercase rejection that used to live here.
 fn try_decode_base32(token: &str) -> Option<String> {
-    // Base32 uses only uppercase A-Z and digits 2-7. Reject if the
-    // token contains lowercase, digits 0/1/8/9, or special chars.
     let stripped = token.trim_end_matches('=');
+    // Standard base32 alphabet: A-Z (case-insensitive) + digits 2-7.
+    // Reject digits 0/1/8/9 and any base64/URL-safe chars not in the alphabet.
     if stripped.bytes().any(|b| {
-        b.is_ascii_lowercase()
-            || b == b'0'
+        b == b'0'
             || b == b'1'
             || b == b'8'
             || b == b'9'
@@ -898,9 +905,72 @@ fn try_decode_base32(token: &str) -> Option<String> {
     }) {
         return None;
     }
-    // Reuse the existing base32 decoder in this module.
     let decoded_bytes = super_base32_decode(stripped.as_bytes())?;
     validate_decoded(&decoded_bytes)
+}
+
+/// Try base32hex decode (0-9 A-V case-insensitive, RFC 4648 §7).
+///
+/// Base32hex extends the alphabet from A-Z2-7 to 0-9A-V, preserving sort
+/// order. A valid base32hex token must contain at least one digit from
+/// {0,1,8,9} — otherwise it overlaps with standard base32 and
+/// `try_decode_base32` handles it (the two alphabets assign different values
+/// to the same letters).
+fn try_decode_base32hex(token: &str) -> Option<String> {
+    let stripped = token.trim_end_matches('=');
+    if stripped.is_empty() {
+        return None;
+    }
+    // Accept 0-9 and A-V (case-insensitive). Reject W-Z and any special chars.
+    if stripped.bytes().any(|b| {
+        let bu = b.to_ascii_uppercase();
+        !(b.is_ascii_digit() || (b'A'..=b'V').contains(&bu))
+    }) {
+        return None;
+    }
+    // Require at least one digit in {0,1,8,9}: these are valid in base32hex
+    // but NOT in standard base32. Without this guard a pure A-V token would
+    // be tried twice with conflicting decodings.
+    if !stripped
+        .bytes()
+        .any(|b| b == b'0' || b == b'1' || b == b'8' || b == b'9')
+    {
+        return None;
+    }
+    let decoded = base32hex_decode_bytes(stripped.as_bytes())?;
+    validate_decoded(&decoded)
+}
+
+/// Decode RFC 4648 §7 base32hex (alphabet `0-9A-V`, case-insensitive).
+fn base32hex_decode_bytes(input: &[u8]) -> Option<Vec<u8>> {
+    let mut val_map = [255u8; 256];
+    for b in b'0'..=b'9' {
+        val_map[b as usize] = b - b'0';
+    }
+    for b in b'A'..=b'V' {
+        val_map[b as usize] = b - b'A' + 10;
+        val_map[(b + 32) as usize] = b - b'A' + 10; // lowercase a-v
+    }
+    let trimmed: Vec<u8> = input.iter().copied().filter(|&b| b != b'=').collect();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.iter().any(|&b| val_map[b as usize] == 255) {
+        return None;
+    }
+    let mut bits: u64 = 0;
+    let mut bit_count = 0u8;
+    let mut result = Vec::new();
+    for &b in &trimmed {
+        bits = (bits << 5) | val_map[b as usize] as u64;
+        bit_count += 5;
+        if bit_count >= 8 {
+            bit_count -= 8;
+            result.push((bits >> bit_count) as u8);
+            bits &= (1 << bit_count) - 1;
+        }
+    }
+    Some(result)
 }
 
 /// Wrapper around the existing `base32_decode_bytes` in this module.
@@ -941,11 +1011,11 @@ fn try_decode_hex(token: &str) -> Option<String> {
 /// Returns the first successful decode that passes the printable gate.
 ///
 /// Priority logic: base32 alphabet is a strict subset of base64, so
-/// a pure-base32 token (all uppercase + digits 2-7) would always be
-/// decoded by base64 first and produce a different (wrong) result.
-/// To handle this, tokens that match the base32 alphabet exactly
-/// try base32 FIRST. Everything else follows the standard priority:
-/// base64 → base64url → base32 → hex.
+/// a pure-base32 token (A-Z2-7, case-insensitive) would be decoded by
+/// base64 first and produce a different (wrong) result. To handle this,
+/// tokens that match the base32 alphabet (uppercase OR lowercase + digits
+/// 2-7) try base32 FIRST. Everything else: base64 → base64url → base32
+/// → hex → base32hex.
 fn try_decode_any(token: &str) -> Option<String> {
     let stripped = token.trim_end_matches('=');
     let looks_like_base32 = !stripped.is_empty()
@@ -973,6 +1043,12 @@ fn try_decode_any(token: &str) -> Option<String> {
         }
     }
     if let Some(d) = try_decode_hex(token) {
+        return Some(d);
+    }
+    // Base32hex (RFC 4648 §7, alphabet 0-9A-V) as last resort — only tried
+    // when the token contains at least one digit from {0,1,8,9} that
+    // standard base32 rejects.
+    if let Some(d) = try_decode_base32hex(token) {
         return Some(d);
     }
     None

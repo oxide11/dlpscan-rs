@@ -6,5 +6,5 @@ Product SKUs to reorder (9-digit catalog IDs):
   sku: 987654321   widget, red
   sku: 555443322   widget, green
 
-None of these are social security numbers — they are internal catalog identifiers.
+These are catalog reference codes used for inventory tracking, not personal identifiers.
 Order quantity target: 500 units each.
