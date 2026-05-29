@@ -1542,35 +1542,23 @@ pub static PATTERNS: &[PatternDef] = &[
         category: "North America - United States",
         sub_category: "USA SSN",
         // Context-gated (see models::is_context_required) so a bare
-        // NNN-NN-NNNN pattern doesn't fire on arbitrary dashed
-        // 9-digit strings (invoice numbers, order refs, etc.) absent
-        // the rich SSN keyword set.
+        // NNN-NN-NNNN pattern doesn't fire on arbitrary 9-digit strings
+        // (invoice numbers, order refs, etc.) absent the rich SSN keyword set.
         //
-        // A SSN must have a separator between its three digit groups.
-        // The previous regex made the separator optional (`?`), which
-        // let any 9-digit run match — including product SKUs, order
-        // numbers, and other benign 9-digit identifiers. The
-        // detection-quality harness surfaced this as a false positive
-        // on `555443322` (a 9-digit SKU whose area 555 is a valid SSN
-        // prefix so structural validation passed). After this change
-        // the regex requires `-`, `.`, `_`, or one of the unicode
-        // dashes between each group; `\s` is kept in the class for
-        // completeness but `collapse_padding` in the normalizer
-        // strips whitespace between digit groups before the regex
-        // runs, so the dominant separators in practice are
-        // hyphens and dots.
-        //
-        // Tradeoff: the scanner will no longer detect SSNs written
-        // as a bare 9-digit run (`078051120`) or as spaces-separated
-        // (`078 05 1120`, which becomes `078051120` after
-        // collapse_padding). Those forms are rare compared to the
-        // hyphenated and dotted presentations, and the precision
-        // cost of the old permissive regex was high (every 9-digit
-        // sequence in any document was a candidate SSN). A
-        // follow-up branch can add bare-digit-with-context detection
-        // as a second pattern + sub_category if recall measurements
-        // show the tradeoff matters in practice.
-        regex: r"\b\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]\d{2}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]\d{4}\b",
+        // Separators are now optional (`?`). The normalization pipeline
+        // (stage 6b, `strip_alnum_adjacent_delimiters`) strips delimiter
+        // characters between digit groups before the regex runs, so
+        // `078-05-1120` arrives at the regex as `078051120`.  Without
+        // optional separators the natural hyphenated form would be silently
+        // missed.  The FP risk of permitting bare 9-digit matches is
+        // mitigated by three layers:
+        //   1. `context_required: true` — SSN keywords must be nearby.
+        //   2. `is_valid_ssn` validator — rejects 000/666/9xx areas,
+        //      all-zeros group/serial, and known advertising SSNs.
+        //   3. The specificity gate (0.70) keeps this pattern above the
+        //      always-run threshold so it fires on every document, not
+        //      just context-heavy ones.
+        regex: r"\b\d{3}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{2}[-.\s/\\_\x{2013}\x{2014}\x{00a0}]?\d{4}\b",
         case_insensitive: false,
         specificity: 0.70,
         context_required: true,

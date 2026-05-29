@@ -14,6 +14,27 @@ starting from this file.
 
 ---
 
+## 2026-05-26
+
+### siphon-core 2.1.2
+
+- fix(core): delimiter-injection evasion bypass reduced — new normalization
+  stage 6b (`strip_alnum_adjacent_delimiters`) strips `-`, `.`, `/`, `\`, and
+  `_` between alphanumeric characters when at least one neighbour is a digit or
+  uppercase letter, defeating evadex `hyphen_delimiter`, `dot_delimiter`,
+  `slash_delimiter`, `mixed_delimiter`, and `excessive_delimiter` techniques.
+  Natural-language compound words (`test-case`) are preserved because both
+  neighbours are lowercase letters.
+- fix(core): USA SSN pattern makes separator optional (`?`) — after stage 6b
+  strips hyphens from `078-05-1120`, the SSN regex needs optional separators to
+  still match. `context_required: true` and `is_valid_ssn` keep false-positive
+  risk low.
+- fix(core): `has_evasion_markers()` extended — detects single-char delimiter
+  between alphanumeric neighbours (at least one digit or uppercase) so the
+  normalizer fast path is bypassed for identifier-delimiter evasion inputs.
+
+---
+
 ## 2026-05-13
 
 ### siphon-core 2.1.1
