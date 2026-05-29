@@ -2534,7 +2534,7 @@ if (_RO) {
         'findings.view', 'findings.dispose', 'findings.escalate',
         'playbooks.view', 'playbooks.edit',
         'integrations.view', 'integrations.edit',
-        'engineering.view', 'crypto.use',
+        'engineering.view', 'engineering.adversarial', 'crypto.use',
         'dashboard.view',
       ],
     },
@@ -2573,7 +2573,7 @@ if (_RO) {
         'findings.view', 'findings.fp',
         'playbooks.view', 'playbooks.edit',
         'integrations.view',
-        'engineering.view', 'crypto.use',
+        'engineering.view', 'engineering.adversarial', 'crypto.use',
         'dashboard.view',
       ],
     },
@@ -12054,18 +12054,6 @@ function EvadexSpark({ data, height, color }) {
   );
 }
 
-// Relative-time formatter for the run-history column.
-function evadexRel(iso) {
-  if (!iso) return '—';
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return iso;
-  const s = Math.max(0, (Date.now() - t) / 1000);
-  if (s < 60)      return `${Math.round(s)}s ago`;
-  if (s < 3600)    return `${Math.round(s / 60)}m ago`;
-  if (s < 86400)   return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
-}
-
 // Color FN / FP cells by severity band.
 function evadexCountColor(n) {
   if (!n || n <= 0) return 'var(--ink-soft)';
@@ -12090,6 +12078,34 @@ function evadexTrendGlyph(trend) {
 
 function EvadexAdversarial() {
   const { PageBar } = window;
+
+  // ── Shared-helper plumbing ────────────────────────────────────
+  // RBAC: destructive actions (Run, Generate) require the
+  // engineering.adversarial permission. Admins and detection-
+  // engineers carry it by default; analysts and viewers can read
+  // metrics but not trigger runs. siphonGetCurrentUser() falls
+  // back to the seeded u-admin so the wireframe demo works
+  // without a logged-in user.
+  const canRun      = window.siphonUseCan('engineering.adversarial');
+  const currentUser = window.siphonGetCurrentUser();
+  // Re-render timestamps when the user toggles their TZ in
+  // My Profile so siphonFormatTimestamp() picks up the change.
+  window.siphonUseUserTzTick();
+
+  // Simple/Advanced mode: simple hides the file generator,
+  // exposing only the metrics + run controls. Opt-in advanced
+  // unlocks the synthetic file generator section. Persisted so
+  // the operator's choice survives a reload.
+  const LS_MODE = 'evadex.adversarial.mode';
+  const [advancedMode, setAdvancedMode] = React.useState(
+    () => {
+      try { return localStorage.getItem(LS_MODE) === 'advanced'; }
+      catch { return false; }
+    }
+  );
+  React.useEffect(() => {
+    try { localStorage.setItem(LS_MODE, advancedMode ? 'advanced' : 'simple'); } catch {}
+  }, [advancedMode]);
 
   // ── Bridge connection config (persisted in localStorage) ─────
   const LS_URL = 'evadex.bridge.url';
@@ -12160,12 +12176,19 @@ function EvadexAdversarial() {
     }
   }, [bridgeFetch]);
 
+  // Initial fetch on mount + on bridge config change; subsequent
+  // fetches piggyback on the shared 30 s tick so this surface
+  // doesn't run its own setInterval.
+  const tick30 = window.useSharedPoll(30000);
   React.useEffect(() => {
     setStatus('connecting');
     fetchMetrics();
-    const id = setInterval(fetchMetrics, 30000);
-    return () => clearInterval(id);
   }, [fetchMetrics]);
+  React.useEffect(() => {
+    // Tick 0 fires on mount and is already covered by the
+    // initial-fetch effect above; only act on subsequent ticks.
+    if (tick30 > 0) fetchMetrics();
+  }, [tick30, fetchMetrics]);
 
   // ── Run lifecycle ──────────────────────────────────────────
   const pollRun = React.useCallback(async (id) => {
@@ -12313,18 +12336,41 @@ function EvadexAdversarial() {
   const fpTrendDelta  = fpTrend  && fpTrend.length  >= 2
     ? (fpTrend[fpTrend.length - 1]  - fpTrend[fpTrend.length - 2])  : null;
 
-  const statusChip = status === 'live'
-    ? { cls: 'chip chip--safe', text: 'evadex · live' }
-    : status === 'offline'
-    ? { cls: 'chip chip--red',  text: 'evadex · offline' }
-    : { cls: 'chip chip--warn', text: 'evadex · connecting' };
+  // LivePill source mapping — keeps the chip styling identical
+  // to every other surface that polls a backend (C2 dashboard,
+  // Detect overview, etc.) instead of carrying its own variant.
+  const pillSource = status === 'live'    ? 'live'
+                   : status === 'offline' ? 'offline'
+                   : 'loading';
+  const pillTitle  = status === 'live'    ? `polls every 30 s · ${bridgeUrl}`
+                   : status === 'offline' ? (metricsErr || 'bridge unreachable')
+                   : 'connecting to bridge';
+
+  // Next scheduled run timestamp — computed only when the
+  // schedule toggle is on. The wireframe assumes the same
+  // nightly-04:00-UTC cadence that the evadex bridge ships
+  // with; future versions will fetch this from the bridge.
+  const nextRunIso = React.useMemo(() => {
+    if (!schedule) return null;
+    const now = new Date();
+    const next = new Date(Date.UTC(
+      now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 4, 0, 0
+    ));
+    if (next.getTime() <= now.getTime()) {
+      next.setUTCDate(next.getUTCDate() + 1);
+    }
+    return next.toISOString();
+  }, [schedule]);
 
   const runBtnLabel = runStatus === 'queued'    ? '… queued'
                     : runStatus === 'running'   ? '… running'
                     : runStatus === 'completed' ? '✓ completed · run again'
                     : runStatus === 'failed'    ? '⚠ failed · retry'
                     : '▶ Run now';
-  const runDisabled = status !== 'live' || runStatus === 'queued' || runStatus === 'running';
+  const runDisabled = !canRun || status !== 'live' || runStatus === 'queued' || runStatus === 'running';
+  const runTitle    = !canRun        ? 'requires engineering.adversarial permission'
+                    : status !== 'live' ? 'bridge offline'
+                    : '';
 
   const val = (x, suffix = '') => (x == null || Number.isNaN(x)) ? '—' : `${(+x).toFixed(1)}${suffix}`;
 
@@ -12335,7 +12381,19 @@ function EvadexAdversarial() {
         title="Adversarial Testing"
         subtitle="Evadex evasion harness · detection · false-positive · coverage against Siphon detectors"
         actions={<>
-          <span className={statusChip.cls}>{statusChip.text}</span>
+          <window.LivePill source={pillSource} onClick={fetchMetrics} title={pillTitle} />
+          <span className="chip chip--ghost"
+                title={m.last_run ? window.siphonFormatTimestamp(m.last_run) : 'No runs yet'}>
+            last · {window.siphonFormatRelative(m.last_run)}
+          </span>
+          <span className={`chip chip--${schedule ? 'teal' : 'ghost'}`}
+                title={nextRunIso ? `Next scheduled run · ${window.siphonFormatTimestamp(nextRunIso)} (nightly 04:00 UTC)` : 'Schedule disabled'}>
+            next · {schedule ? window.siphonFormatRelative(nextRunIso) : 'off'}
+          </span>
+          <button className="btn ghost" onClick={() => setAdvancedMode(v => !v)}
+                  title="Toggle the synthetic file generator section">
+            {advancedMode ? '− Simple' : '+ Advanced'}
+          </button>
           <button className="btn ghost" onClick={triggerExport} disabled={status !== 'live'}>Export report</button>
           <button className="btn primary" onClick={fetchMetrics}>↻ Refresh</button>
         </>}
@@ -12356,8 +12414,8 @@ function EvadexAdversarial() {
                  style={{flex:'1 1 220px', minWidth:180, padding:'6px 8px', background:'var(--bg-2)', color:'var(--ink)', border:'1px solid var(--line)', borderRadius:'var(--radius)', fontFamily:"'JetBrains Mono', monospace", fontSize:12}} />
           <button className="btn" onClick={fetchMetrics}>Connect</button>
           <span className="right row" style={{gap:10, alignItems:'center'}}>
-            <span className={statusChip.cls}>{statusChip.text}</span>
-            {lastFetched && <span className="mono muted" style={{fontSize:10}}>last · {evadexRel(lastFetched)}</span>}
+            <window.LivePill source={pillSource} onClick={fetchMetrics} title={pillTitle} />
+            {lastFetched && <span className="mono muted" style={{fontSize:10}}>last · {window.siphonFormatRelative(lastFetched)}</span>}
           </span>
         </div>
         {status === 'offline' && metricsErr && (
@@ -12473,7 +12531,7 @@ function EvadexAdversarial() {
 
         <div className="row" style={{gap:12, alignItems:'center', flexWrap:'wrap'}}>
           <button className="btn primary" onClick={triggerRun} disabled={runDisabled}
-                  title={status !== 'live' ? 'bridge offline' : ''}>
+                  title={runTitle}>
             {runBtnLabel}
           </button>
           {runId && (
@@ -12486,12 +12544,12 @@ function EvadexAdversarial() {
             <span className="label" style={{margin:0}}>schedule · nightly 04:00 UTC</span>
           </label>
           <span className="right row" style={{gap:14, alignItems:'center'}}>
-            <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
-              last run · <span className="muted">{m.last_run ? evadexRel(m.last_run) : '—'}</span>
-            </span>
-            <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
-              next · {schedule ? 'tonight 04:00' : 'off'}
-            </span>
+            {currentUser && (
+              <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
+                running as · <span className="muted">{currentUser.name || currentUser.id}</span>
+                {!canRun && <span className="chip chip--warn" style={{marginLeft:6, fontSize:9}}>read-only</span>}
+              </span>
+            )}
           </span>
         </div>
         {runErr && (
@@ -12565,7 +12623,16 @@ function EvadexAdversarial() {
         </div>
       </div>
 
-      {/* ══════════ SECTION 4 — File Generator ══════════ */}
+      {/* ══════════ SECTION 4 — File Generator (advanced) ══════════
+           Hidden in Simple mode — the operator opted in to the more
+           technical workflow via the "+ Advanced" toggle in the page
+           header. */}
+      {!advancedMode && (
+        <div className="note" style={{marginBottom:'var(--gap)', fontSize:11, opacity:0.75}}>
+          Synthetic file generator hidden in simple mode · use <b>+ Advanced</b> in the page header to expose it.
+        </div>
+      )}
+      {advancedMode && (
       <div className="box" style={{marginBottom:'var(--gap)'}}>
         <div className="box-title">
           <span className="t">Synthetic file generator</span>
@@ -12647,18 +12714,17 @@ function EvadexAdversarial() {
 
         <div className="row" style={{gap:10, alignItems:'center'}}>
           <button className="btn primary" onClick={triggerGenerate}
-                  disabled={status !== 'live' || genBusy}
-                  title={status !== 'live' ? 'bridge offline' : ''}>
+                  disabled={!canRun || status !== 'live' || genBusy}
+                  title={!canRun ? 'requires engineering.adversarial permission'
+                       : status !== 'live' ? 'bridge offline' : ''}>
             {genBusy ? '… generating' : '⬇ Generate + Download'}
           </button>
           <span className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>
             {count} × {fmt} · {genTier}/{genCat} · {evRate}% evasion · {lang} · {template}
           </span>
-          <span className="right">{
-            status === 'live'
-              ? <span className="chip chip--safe">evadex · live</span>
-              : <span className="chip chip--warn">evadex · {status}</span>
-          }</span>
+          <span className="right">
+            <window.LivePill source={pillSource} title={pillTitle} />
+          </span>
         </div>
         {genErr && (
           <div className="note" style={{marginTop:8, borderColor:'var(--threat)', color:'var(--threat)', fontSize:11}}>
@@ -12666,6 +12732,7 @@ function EvadexAdversarial() {
           </div>
         )}
       </div>
+      )} {/* end advancedMode — file generator */}
 
       {/* ══════════ SECTION 5 — History ══════════ */}
       <div className="box" style={{marginBottom:'var(--gap)'}}>
@@ -12692,7 +12759,7 @@ function EvadexAdversarial() {
           {(history.length ? history : Array.from({length: 3}, () => ({run_id:'—', when:null, profile:'—', detection_rate:null})))
             .flatMap((r, i) => [
               <span key={'a'+i} className="mono" style={{fontSize:11}}>{r.run_id || '—'}</span>,
-              <span key={'b'+i} className="muted" style={{fontSize:11}}>{r.when ? evadexRel(r.when) : '—'}</span>,
+              <span key={'b'+i} className="muted" style={{fontSize:11}}>{window.siphonFormatRelative(r.when)}</span>,
               <span key={'c'+i} className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{r.profile || '—'}</span>,
               <span key={'d'+i} className="mono" style={{fontSize:11, color: r.detection_rate == null ? 'var(--ink-dim)' : r.detection_rate >= 95 ? 'var(--safe)' : r.detection_rate >= 85 ? 'var(--amber)' : 'var(--threat)'}}>
                 {r.detection_rate == null ? '—' : `${(+r.detection_rate).toFixed(1)}%`}
