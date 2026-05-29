@@ -623,9 +623,9 @@ fn audit_user_field(api_key_header: Option<&str>) -> String {
 
 /// Generate a simple random ID (hex string).
 fn generate_id() -> String {
-    use rand::RngCore;
+    use rand::Rng;
     let mut bytes = [0u8; 16];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
