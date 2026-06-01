@@ -549,14 +549,14 @@ fn test_vault_ttl_expired_rejection() {
     use siphon::guard::TokenVault;
     use std::collections::HashMap;
     use std::sync::RwLock;
-    use std::time::Instant;
+    use std::time::SystemTime;
 
     let vaults: RwLock<HashMap<String, VaultEntry>> = RwLock::new(HashMap::new());
     vaults.write().unwrap().insert(
         "v1".to_string(),
         VaultEntry {
             vault: TokenVault::new("TOK", None),
-            created_at: Instant::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 100),
+            created_at: SystemTime::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 100),
         },
     );
 
