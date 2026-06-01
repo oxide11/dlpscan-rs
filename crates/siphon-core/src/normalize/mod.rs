@@ -585,11 +585,11 @@ fn normalize_delimiters(input: &str, in_offsets: &[usize]) -> (String, Vec<usize
 
 /// Returns `true` if the dot at `pos` in `bytes` should be stripped.
 ///
-/// Strips only when both neighbouring pure-digit runs are 2–4 characters long —
-/// the signature of credit-card / identifier delimiter-injection evasion
-/// (e.g. `4532.0151`, `D123.4567`, `123.45`).  A letter on either side means
-/// the dot is part of an email address, domain name, ICD-10 code, or similar
-/// pattern and must not be removed.
+/// Strips when both neighbouring pure-digit runs are 1–6 characters long —
+/// covers credit-card groupings (4-4), SSN groupings (3-2-4), ABA/SEPA wider
+/// splits (5-4, 3-6, etc.).  A letter on either side means the dot is part of
+/// an email address, domain name, ICD-10 code, or similar pattern and must not
+/// be removed.  IPv4 dots are protected upstream by `mark_ipv4_dot_positions`.
 fn should_strip_dot(bytes: &[u8], pos: usize) -> bool {
     if pos == 0 || pos + 1 >= bytes.len() {
         return false;
@@ -606,7 +606,7 @@ fn should_strip_dot(bytes: &[u8], pos: usize) -> bool {
         .iter()
         .take_while(|b| b.is_ascii_digit())
         .count();
-    (2..=4).contains(&before) && (2..=4).contains(&after)
+    (1..=6).contains(&before) && (1..=6).contains(&after)
 }
 
 /// Returns a bitmask of dot positions that belong to a valid IPv4 address.
@@ -2459,6 +2459,20 @@ mod tests {
         // (which needs 4 groups) and the dots are stripped.
         let (result, _) = normalize_text("021.000.021");
         assert_eq!(result, "021000021");
+    }
+
+    #[test]
+    fn test_dot_stripped_wider_5_4_grouping() {
+        // 5-4 grouping: wider than the old 2-4 cap; the 1-6 cap catches it.
+        let (result, _) = normalize_text("45320.1512");
+        assert_eq!(result, "453201512");
+    }
+
+    #[test]
+    fn test_dot_stripped_wider_3_6_grouping() {
+        // 3-6 grouping: after-run of 6 digits is within the 1-6 cap.
+        let (result, _) = normalize_text("453.201511");
+        assert_eq!(result, "453201511");
     }
 
     #[test]
