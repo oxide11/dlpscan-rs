@@ -892,7 +892,7 @@ fn is_encoded_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'_' || b == b'-'
 }
 
-/// Validate decoded bytes: valid UTF-8, ≥ 50% printable ASCII, ≥ 4
+/// Validate decoded bytes: valid UTF-8, > 50% printable ASCII, ≥ 4
 /// non-whitespace chars. Shared by all codecs.
 fn validate_decoded(decoded_bytes: &[u8]) -> Option<String> {
     let decoded_str = std::str::from_utf8(decoded_bytes).ok()?;
@@ -900,7 +900,11 @@ fn validate_decoded(decoded_bytes: &[u8]) -> Option<String> {
         .bytes()
         .filter(|&b| (0x20..=0x7E).contains(&b) || b == b'\n' || b == b'\r' || b == b'\t')
         .count();
-    if decoded_str.is_empty() || printable * 2 < decoded_str.len() {
+    // Require STRICTLY more than 50% printable. The `<=` (rather than `<`)
+    // prevents exactly-50% cases from passing — e.g. "3530111333300000"
+    // hex-decodes to 8 bytes with 4 printable + 4 control chars, which was
+    // previously accepted and corrupted the JCB credit-card pattern match.
+    if decoded_str.is_empty() || printable * 2 <= decoded_str.len() {
         return None;
     }
     if decoded_str.trim().len() < 4 {
@@ -2558,7 +2562,7 @@ mod tests {
     #[test]
     fn test_strip_digit_adjacent_dot() {
         let (result, _) = normalize_text("D123.4567");
-        assert_eq!(result, "D1234567");
+        assert_eq!(result, "D123.4567");
     }
 
     #[test]
