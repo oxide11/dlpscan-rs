@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::RwLock;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use crate::guard::{Action, InputGuard, Preset, ScanResult, TokenVault};
 
@@ -193,7 +193,7 @@ pub fn revoke_api_key_role(state: &AppState, key: &str) {
 
 pub struct VaultEntry {
     pub vault: TokenVault,
-    pub created_at: Instant,
+    pub created_at: SystemTime,
 }
 
 /// Per-client sliding-window rate limiter.
@@ -469,7 +469,7 @@ pub fn handle_tokenize(
             vault_id.clone(),
             VaultEntry {
                 vault,
-                created_at: Instant::now(),
+                created_at: SystemTime::now(),
             },
         );
     }
@@ -489,7 +489,13 @@ pub fn handle_detokenize(
     let vaults = vaults.read().map_err(|e| format!("{e}"))?;
     let entry = vaults.get(&req.vault_id).ok_or("Vault not found")?;
     // Enforce vault TTL
-    if entry.created_at.elapsed().as_secs() > VAULT_TTL_SECS {
+    if entry
+        .created_at
+        .elapsed()
+        .unwrap_or(std::time::Duration::ZERO)
+        .as_secs()
+        > VAULT_TTL_SECS
+    {
         return Err("Vault has expired".to_string());
     }
     let original = entry.vault.detokenize_text(&req.text);
@@ -501,7 +507,14 @@ pub fn handle_detokenize(
 /// Evict expired vaults. Call periodically or before vault operations.
 pub fn evict_expired_vaults(vaults: &RwLock<HashMap<String, VaultEntry>>) {
     if let Ok(mut vaults) = vaults.write() {
-        vaults.retain(|_, entry| entry.created_at.elapsed().as_secs() <= VAULT_TTL_SECS);
+        vaults.retain(|_, entry| {
+            entry
+                .created_at
+                .elapsed()
+                .unwrap_or(std::time::Duration::ZERO)
+                .as_secs()
+                <= VAULT_TTL_SECS
+        });
     }
 }
 
@@ -1895,7 +1908,7 @@ mod tests {
             "test-vault".to_string(),
             VaultEntry {
                 vault,
-                created_at: Instant::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 1),
+                created_at: SystemTime::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 1),
             },
         );
         // Detokenize should fail for expired vault
@@ -1916,7 +1929,7 @@ mod tests {
             "expired".to_string(),
             VaultEntry {
                 vault: crate::guard::TokenVault::new("TOK", None),
-                created_at: Instant::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 1),
+                created_at: SystemTime::now() - std::time::Duration::from_secs(VAULT_TTL_SECS + 1),
             },
         );
         // Insert active vault
@@ -1924,7 +1937,7 @@ mod tests {
             "active".to_string(),
             VaultEntry {
                 vault: crate::guard::TokenVault::new("TOK", None),
-                created_at: Instant::now(),
+                created_at: SystemTime::now(),
             },
         );
         evict_expired_vaults(&vaults);

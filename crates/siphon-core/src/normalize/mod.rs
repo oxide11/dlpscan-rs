@@ -583,29 +583,116 @@ fn normalize_delimiters(input: &str, in_offsets: &[usize]) -> (String, Vec<usize
     (String::from_utf8_lossy(&out).into_owned(), offsets)
 }
 
+/// Returns `true` if the dot at `pos` in `bytes` should be stripped.
+///
+/// Strips when both neighbouring pure-digit runs are 1–6 characters long —
+/// covers credit-card groupings (4-4), SSN groupings (3-2-4), ABA/SEPA wider
+/// splits (5-4, 3-6, etc.).  A letter on either side means the dot is part of
+/// an email address, domain name, ICD-10 code, or similar pattern and must not
+/// be removed.  IPv4 dots are protected upstream by `mark_ipv4_dot_positions`.
+fn should_strip_dot(bytes: &[u8], pos: usize) -> bool {
+    if pos == 0 || pos + 1 >= bytes.len() {
+        return false;
+    }
+    if !bytes[pos - 1].is_ascii_digit() || !bytes[pos + 1].is_ascii_digit() {
+        return false;
+    }
+    let before = bytes[..pos]
+        .iter()
+        .rev()
+        .take_while(|b| b.is_ascii_digit())
+        .count();
+    let after = bytes[pos + 1..]
+        .iter()
+        .take_while(|b| b.is_ascii_digit())
+        .count();
+    (1..=6).contains(&before) && (1..=6).contains(&after)
+}
+
+/// Returns a bitmask of dot positions that belong to a valid IPv4 address.
+///
+/// Dots inside `d{1,3}.d{1,3}.d{1,3}.d{1,3}` with each octet 0–255 are
+/// protected from stripping so that `192.168.1.1` is never collapsed to
+/// `192168.1.1`.
+fn mark_ipv4_dot_positions(bytes: &[u8]) -> Vec<bool> {
+    let mut protected = vec![false; bytes.len()];
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() && (i == 0 || !bytes[i - 1].is_ascii_digit()) {
+            if let Some(end) = try_match_ipv4(bytes, i) {
+                for j in i..end {
+                    if bytes[j] == b'.' {
+                        protected[j] = true;
+                    }
+                }
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    protected
+}
+
+/// Attempt to match a complete IPv4 address (`d{1,3}.d{1,3}.d{1,3}.d{1,3}`)
+/// starting at `start`.  Returns `Some(end)` (exclusive) on success.
+fn try_match_ipv4(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut pos = start;
+    for group in 0..4u8 {
+        let group_start = pos;
+        while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+            pos += 1;
+        }
+        let group_len = pos - group_start;
+        if group_len == 0 || group_len > 3 {
+            return None;
+        }
+        let val: u32 = bytes[group_start..pos]
+            .iter()
+            .fold(0u32, |acc, &b| acc * 10 + (b - b'0') as u32);
+        if val > 255 {
+            return None;
+        }
+        if group < 3 {
+            if pos >= bytes.len() || bytes[pos] != b'.' {
+                return None;
+            }
+            pos += 1;
+        }
+    }
+    if pos < bytes.len() && bytes[pos].is_ascii_digit() {
+        return None;
+    }
+    Some(pos)
+}
+
 /// Strip delimiter characters between adjacent alphanumeric characters.
 ///
-/// Removes `-`, `.`, `/`, `\`, and `_` when both immediate byte-neighbours are
-/// ASCII alphanumeric and at least one is a digit or uppercase letter. This
-/// defeats delimiter-injection evasion like `D123-4567` → `D1234567` and
-/// `BBG0-00BP-HV59` → `BBG000BPHV59` while preserving natural-language
-/// compound words like `test-case` whose neighbours are both lowercase.
+/// For `-`, `/`, `\`, `_`: removed when both immediate byte-neighbours are
+/// ASCII alphanumeric and at least one is a digit or uppercase letter, defeating
+/// delimiter-injection evasion like `D123-4567` → `D1234567` and
+/// `BBG0-00BP-HV59` → `BBG000BPHV59` while preserving compound words like
+/// `test-case` whose neighbours are both lowercase.
+///
+/// For `.`: stripped only when both neighbouring pure-digit runs are 2–4
+/// digits long (credit-card / identifier grouping such as `4532.0151.1283.0366`
+/// or `D123.4567`).  Dots that are part of a valid IPv4 address are never
+/// stripped.  Dots adjacent to letters (email addresses, domain names, ICD-10
+/// codes, JWT segments) are preserved because the digit guard fires first.
 ///
 /// Runs after `normalize_delimiters` so doubled-delimiter evasion (e.g.
 /// `123--456`) has already been collapsed to a single delimiter before this
 /// stage strips it entirely.
 fn strip_alnum_adjacent_delimiters(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
     let bytes = input.as_bytes();
-    // '.' is intentionally excluded: it appears in IP addresses, GPS coordinates,
-    // ICD codes, version numbers, and JWT segment separators. Stripping it breaks
-    // detection of those patterns without meaningfully improving evasion coverage
-    // (real evasion overwhelmingly uses '-' or '_', not '.').
     if !bytes
         .iter()
-        .any(|&b| b == b'-' || b == b'/' || b == b'\\' || b == b'_')
+        .any(|&b| b == b'-' || b == b'.' || b == b'/' || b == b'\\' || b == b'_')
     {
         return (input.to_string(), in_offsets.to_vec());
     }
+
+    let ip_dots = mark_ipv4_dot_positions(bytes);
 
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut offsets: Vec<usize> = Vec::with_capacity(bytes.len());
@@ -613,6 +700,10 @@ fn strip_alnum_adjacent_delimiters(input: &str, in_offsets: &[usize]) -> (String
 
     for i in 0..bytes.len() {
         let b = bytes[i];
+        if b == b'.' && !ip_dots[i] && should_strip_dot(bytes, i) {
+            changed = true;
+            continue;
+        }
         if b == b'-' || b == b'/' || b == b'\\' || b == b'_' {
             let prev = out.last().copied();
             let next = if i + 1 < bytes.len() {
@@ -2104,9 +2195,10 @@ mod tests {
 
     #[test]
     fn test_excessive_dots() {
-        // Stage 6 collapses `..` to `.`; stage 6b then strips digit-adjacent `.`.
+        // Stage 6 collapses `..` to `.`; stage 6b then recognises `192.168.1.1`
+        // as a valid IPv4 address and protects its dots from stripping.
         let (result, _) = normalize_text("192..168..1..1");
-        assert_eq!(result, "19216811");
+        assert_eq!(result, "192.168.1.1");
     }
 
     #[test]
@@ -2326,6 +2418,61 @@ mod tests {
     fn test_strip_digit_adjacent_dot() {
         let (result, _) = normalize_text("D123.4567");
         assert_eq!(result, "D1234567");
+    }
+
+    #[test]
+    fn test_dot_not_stripped_in_email() {
+        // Dots in email addresses must never be removed — letters on each side
+        // of the dot mean `should_strip_dot` returns false immediately.
+        let (result, _) = normalize_text("test.user@example.com");
+        assert_eq!(result, "test.user@example.com");
+    }
+
+    #[test]
+    fn test_dot_not_stripped_in_ip() {
+        // Dots inside a valid IPv4 address are marked by `mark_ipv4_dot_positions`
+        // and skipped by the strip loop even though the digit runs would otherwise
+        // satisfy the 2–4-digit threshold.
+        let (result, _) = normalize_text("192.168.1.1");
+        assert_eq!(result, "192.168.1.1");
+    }
+
+    #[test]
+    fn test_dot_stripped_in_digit_groups() {
+        // Credit-card dot-delimiter evasion: all three dots between 4-digit groups
+        // are stripped, yielding the canonical 16-digit PAN.
+        let (result, _) = normalize_text("4532.0151.1283.0366");
+        assert_eq!(result, "4532015112830366");
+    }
+
+    #[test]
+    fn test_dot_stripped_ssn_style() {
+        // SSN dot-delimiter evasion: 3-2-4 grouping.
+        let (result, _) = normalize_text("123.45.6789");
+        assert_eq!(result, "123456789");
+    }
+
+    #[test]
+    fn test_dot_stripped_aba_routing_style() {
+        // ABA routing-number dot-delimiter evasion: 3-3-3 grouping (9 digits).
+        // `021.000.021` has only 3 groups so it is NOT recognised as IPv4
+        // (which needs 4 groups) and the dots are stripped.
+        let (result, _) = normalize_text("021.000.021");
+        assert_eq!(result, "021000021");
+    }
+
+    #[test]
+    fn test_dot_stripped_wider_5_4_grouping() {
+        // 5-4 grouping: wider than the old 2-4 cap; the 1-6 cap catches it.
+        let (result, _) = normalize_text("45320.1512");
+        assert_eq!(result, "453201512");
+    }
+
+    #[test]
+    fn test_dot_stripped_wider_3_6_grouping() {
+        // 3-6 grouping: after-run of 6 digits is within the 1-6 cap.
+        let (result, _) = normalize_text("453.201511");
+        assert_eq!(result, "453201511");
     }
 
     #[test]
