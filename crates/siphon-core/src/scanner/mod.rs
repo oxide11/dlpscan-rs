@@ -2158,6 +2158,18 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_jcb_bare() {
+        // JCB number without context — was previously corrupted by the hex
+        // decoder treating the 16-digit string as hex bytes (fix: validate_decoded
+        // now requires strictly > 50% printable output to reject control-char results).
+        let result = scan_text("3530111333300000").unwrap();
+        assert!(
+            result.iter().any(|m| m.sub_category == "JCB"),
+            "Expected JCB detection"
+        );
+    }
+
+    #[test]
     fn test_scan_with_categories() {
         let config = ScanConfig {
             categories: Some(["Contact Information".to_string()].into_iter().collect()),

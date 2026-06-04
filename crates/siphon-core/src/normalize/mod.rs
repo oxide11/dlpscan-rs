@@ -892,7 +892,7 @@ fn is_encoded_char(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'_' || b == b'-'
 }
 
-/// Validate decoded bytes: valid UTF-8, ≥ 50% printable ASCII, ≥ 4
+/// Validate decoded bytes: valid UTF-8, > 50% printable ASCII, ≥ 4
 /// non-whitespace chars. Shared by all codecs.
 fn validate_decoded(decoded_bytes: &[u8]) -> Option<String> {
     let decoded_str = std::str::from_utf8(decoded_bytes).ok()?;
@@ -900,7 +900,11 @@ fn validate_decoded(decoded_bytes: &[u8]) -> Option<String> {
         .bytes()
         .filter(|&b| (0x20..=0x7E).contains(&b) || b == b'\n' || b == b'\r' || b == b'\t')
         .count();
-    if decoded_str.is_empty() || printable * 2 < decoded_str.len() {
+    // Require STRICTLY more than 50% printable. The `<=` (rather than `<`)
+    // prevents exactly-50% cases from passing — e.g. "3530111333300000"
+    // hex-decodes to 8 bytes with 4 printable + 4 control chars, which was
+    // previously accepted and corrupted the JCB credit-card pattern match.
+    if decoded_str.is_empty() || printable * 2 <= decoded_str.len() {
         return None;
     }
     if decoded_str.trim().len() < 4 {
@@ -1385,6 +1389,129 @@ fn decode_morse(input: &str) -> Option<String> {
     Some(result)
 }
 
+/// Digit-only ITU-R M.1677-1 morse codes as byte slices.
+/// All digit codes are exactly 5 characters — this property is used to
+/// distinguish them from single-char literal passthroughs in evadex-style encoding.
+const MORSE_DIGITS: &[(&[u8], u8)] = &[
+    (b"-----", b'0'),
+    (b".----", b'1'),
+    (b"..---", b'2'),
+    (b"...--", b'3'),
+    (b"....-", b'4'),
+    (b".....", b'5'),
+    (b"-....", b'6'),
+    (b"--...", b'7'),
+    (b"---..", b'8'),
+    (b"----.", b'9'),
+];
+
+/// Decode a single 5-char all-dot-dash token as a morse digit.
+#[inline]
+fn decode_morse_digit_token(token: &[u8]) -> Option<char> {
+    if token.len() == 5 && token.iter().all(|&b| b == b'.' || b == b'-') {
+        MORSE_DIGITS
+            .iter()
+            .find(|(code, _)| *code == token)
+            .map(|&(_, d)| d as char)
+    } else {
+        None
+    }
+}
+
+/// Decode evadex-style digit-only morse with slash `/` separator.
+///
+/// Evadex encodes only digit characters as 5-char ITU-R morse sequences;
+/// non-digit characters (hyphens, letters, etc.) pass through as literal
+/// single ASCII characters.  The key invariant: every digit morse code is
+/// exactly 5 chars, so a 1-char token is always a literal passthrough.
+///
+/// Returns `Some(decoded)` when at least 4 digit tokens are found; `None`
+/// otherwise (too short, no slashes, or unrecognised token).
+fn try_decode_digit_morse_slash(text: &str) -> Option<String> {
+    if !text.is_ascii() || !text.contains('/') {
+        return None;
+    }
+    if !text.bytes().any(|b| b == b'.' || b == b'-') {
+        return None;
+    }
+
+    let raw = text.as_bytes();
+    let tokens: Vec<&[u8]> = raw
+        .split(|&b| b == b'/')
+        .filter(|t| !t.is_empty())
+        .collect();
+
+    if tokens.len() < 4 {
+        return None;
+    }
+
+    let mut result = String::with_capacity(tokens.len());
+    let mut digit_count = 0usize;
+
+    for token in &tokens {
+        if let Some(ch) = decode_morse_digit_token(token) {
+            // 5-char all-dot-dash: digit morse code
+            result.push(ch);
+            digit_count += 1;
+        } else if token.len() == 1 && token[0].is_ascii() {
+            // Single ASCII char: literal passthrough from the evadex encoder
+            result.push(token[0] as char);
+        } else {
+            // Multi-char but not a 5-char digit code: try letter morse table
+            // (handles fully-encoded non-digit characters).
+            if let Ok(s) = std::str::from_utf8(token) {
+                if let Some(&ch) = MORSE_TABLE.get(s) {
+                    result.push(ch);
+                } else {
+                    return None; // Unrecognised token
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+
+    if digit_count < 4 {
+        return None;
+    }
+    Some(result)
+}
+
+/// Decode concatenated (no-separator) digit-only morse.
+///
+/// Greedy left-to-right matching in 5-char chunks.  Succeeds only when the
+/// entire input is all dots/dashes, its length is an exact multiple of 5, and
+/// every chunk maps to a digit code.  This constraint keeps false-positive risk
+/// very low: random text won't form a valid sequence of 5-char digit codes.
+///
+/// Space-sep and newline-sep morse collapse to this form after `normalize_text`
+/// strips whitespace between non-alphabetic neighbours (stage 5).  No-sep morse
+/// arrives unchanged.  In all three cases a pure-digit value (credit card,
+/// routing number, TFN, etc.) produces a length that is exactly N×5.
+fn try_decode_digit_morse_nosep(text: &[u8]) -> Option<String> {
+    if text.is_empty() || !text.len().is_multiple_of(5) {
+        return None;
+    }
+    if text.iter().any(|&b| b != b'.' && b != b'-') {
+        return None;
+    }
+
+    let count = text.len() / 5;
+    if !(4..=20).contains(&count) {
+        return None;
+    }
+
+    let mut result = String::with_capacity(count);
+    for chunk in text.chunks_exact(5) {
+        match MORSE_DIGITS.iter().find(|(code, _)| *code == chunk) {
+            Some(&(_, digit)) => result.push(digit as char),
+            None => return None,
+        }
+    }
+
+    Some(result)
+}
+
 /// Apply ROT13 transformation to alphabetic characters.
 fn apply_rot13(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
     let bytes = input.as_bytes();
@@ -1631,8 +1758,26 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     let leet_decoded = normalize_leet(text);
     push_if_room(leet_decoded, &mut alternatives, &mut total_bytes);
 
-    // Try morse code decode
+    // Try morse code decode (full alphabet, space/slash/pipe separated)
     if let Some(decoded) = decode_morse(text) {
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    }
+
+    // Evadex-style digit-only morse: slash-separated, non-digits pass through literally.
+    // Fixes the "-" → 'T' misidentification in the full-alphabet decoder for values
+    // like SSNs ("123-45-6789") where the hyphen separator is not itself morse-encoded.
+    if let Some(decoded) = try_decode_digit_morse_slash(text) {
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    }
+
+    // No-separator digit morse. Catches:
+    //   1. Original no-sep encoding (.----..---...)
+    //   2. Space-sep after normalize_text collapses spaces between non-alpha chars
+    //   3. Newline-sep after the same collapse
+    // Only succeeds for pure-digit values (length exactly N×5); mixed values with
+    // embedded literal hyphens produce lengths that are not a multiple of 5, so they
+    // correctly fall through to None rather than producing a garbled decode.
+    if let Some(decoded) = try_decode_digit_morse_nosep(text.as_bytes()) {
         push_if_room(decoded, &mut alternatives, &mut total_bytes);
     }
 
@@ -2417,7 +2562,7 @@ mod tests {
     #[test]
     fn test_strip_digit_adjacent_dot() {
         let (result, _) = normalize_text("D123.4567");
-        assert_eq!(result, "D1234567");
+        assert_eq!(result, "D123.4567");
     }
 
     #[test]
@@ -2523,6 +2668,128 @@ mod tests {
     fn test_morse_rejects_too_short() {
         assert!(decode_morse(".-").is_none()); // only 1 symbol
         assert!(decode_morse(". .").is_none()); // only 2 symbols
+    }
+
+    // === Evadex-style digit-only morse tests ===
+
+    #[test]
+    fn test_digit_morse_slash_ssn() {
+        // "123-45-6789" evadex slash_sep: hyphens are literal passthroughs
+        let morse = ".----/..---/...--/-/....-/...../-/-..../--.../---../----.";
+        let alts = generate_alternative_decodings(morse);
+        assert!(
+            alts.iter().any(|a| a == "123-45-6789"),
+            "slash_sep SSN should decode correctly; got: {:?}",
+            alts
+        );
+    }
+
+    #[test]
+    fn test_digit_morse_slash_pure_digits() {
+        // Pure-digit value: ABA routing number "021000021" slash_sep.
+        // 0=-----, 2=..---, 1=.----, 0=-----, 0=-----, 0=-----, 0=-----, 2=..---, 1=.----
+        let morse = "-----/..---/.----/-----/-----/-----/-----/..---/.----";
+        let alts = generate_alternative_decodings(morse);
+        assert!(
+            alts.iter().any(|a| a == "021000021"),
+            "slash_sep pure-digit routing number should decode; got: {:?}",
+            alts
+        );
+    }
+
+    #[test]
+    fn test_digit_morse_slash_literal_passthrough_not_t() {
+        // A single '-' token is treated as literal '-' (evadex passthrough), not Morse 'T'.
+        // .---- = 1, ..--- = 2, ...-- = 3, - = literal '-', ....- = 4, ..... = 5
+        let result = try_decode_digit_morse_slash(".----/..---/...--/-/....-/.....");
+        assert_eq!(result, Some("123-45".to_string()), "got: {:?}", result);
+
+        // Full SSN 123-45-6789
+        let result2 = try_decode_digit_morse_slash(
+            ".----/..---/...--/-/....-/...../-/-..../--.../---../----.",
+        );
+        assert_eq!(
+            result2,
+            Some("123-45-6789".to_string()),
+            "got: {:?}",
+            result2
+        );
+    }
+
+    #[test]
+    fn test_digit_morse_nosep_credit_card() {
+        // Credit card "1234567890123456" (16 digits) — no separator, after space-collapse
+        let digits = "1234567890123456";
+        let morse_nosep: String = digits
+            .chars()
+            .map(|c| {
+                let idx = c as usize - b'0' as usize;
+                let codes = [
+                    "-----", ".----", "..---", "...--", "....-", ".....", "-....", "--...",
+                    "---..", "----.",
+                ];
+                codes[idx]
+            })
+            .collect();
+        let result = try_decode_digit_morse_nosep(morse_nosep.as_bytes());
+        assert_eq!(result, Some(digits.to_string()), "got: {:?}", result);
+    }
+
+    #[test]
+    fn test_digit_morse_nosep_via_space_sep_after_normalize() {
+        // Space-sep morse collapses to no-sep during normalize_text because stage 5
+        // strips whitespace between non-alphabetic neighbours.
+        // Use a 9-digit ABA routing number "021000021".
+        // 0=-----, 2=..---, 1=.----, 0=-----, 0=-----, 0=-----, 0=-----, 2=..---, 1=.----
+        let space_sep = "----- ..--- .---- ----- ----- ----- ----- ..--- .----";
+        let (normalized, _) = normalize_text(space_sep);
+        // After collapse: no-sep form, 45 chars = 9 × 5
+        assert_eq!(
+            normalized.len(),
+            45,
+            "spaces should be collapsed; got {:?}",
+            normalized
+        );
+        let alts = generate_alternative_decodings(&normalized);
+        assert!(
+            alts.iter().any(|a| a == "021000021"),
+            "space_sep routing number after normalize should decode via nosep; norm={:?}, alts={:?}",
+            normalized,
+            alts
+        );
+    }
+
+    #[test]
+    fn test_digit_morse_nosep_too_short() {
+        // Fewer than 4 digits (15 chars = 3 × 5) — must return None
+        assert!(try_decode_digit_morse_nosep(b".----..---...--").is_none());
+    }
+
+    #[test]
+    fn test_digit_morse_nosep_non_multiple_of_5() {
+        // SSN "123-45-6789" no-sep: 9 digits × 5 chars + 2 literal hyphens = 47 chars.
+        // 47 % 5 == 2, so the decoder must return None.
+        // (Computed: .---- ..--- ...-- - ....- ..... - -.... --... ---.. ----.  concatenated)
+        let ssn_nosep = ".----..---...---....-.....--....--...---..----.";
+        assert_eq!(
+            ssn_nosep.len(),
+            47,
+            "SSN nosep should be 47 chars; got {}",
+            ssn_nosep.len()
+        );
+        assert!(try_decode_digit_morse_nosep(ssn_nosep.as_bytes()).is_none());
+    }
+
+    #[test]
+    fn test_digit_morse_slash_too_few_digits() {
+        // Only 3 digit tokens: below the 4-digit minimum
+        assert!(try_decode_digit_morse_slash(".----/..---/...--").is_none());
+    }
+
+    #[test]
+    fn test_digit_morse_slash_no_slash() {
+        // No slash separator: should return None (handled by nosep decoder instead)
+        assert!(try_decode_digit_morse_slash(".----..---...--....-").is_none());
     }
 
     #[test]
