@@ -54,6 +54,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "0003_file_scans",
         include_str!("../migrations/0003_file_scans.sql"),
     ),
+    (
+        4,
+        "0004_retention",
+        include_str!("../migrations/0004_retention.sql"),
+    ),
 ];
 
 /// Initialise an optional database pool from the environment.
@@ -174,6 +179,37 @@ pub async fn run_migrations(pool: &Pool) -> Result<(), Box<dyn std::error::Error
         client.simple_query("COMMIT").await?;
     }
     Ok(())
+}
+
+/// Delete findings and scans older than `retention_days`.
+///
+/// Calls the `prune_findings` PL/pgSQL function installed by migration
+/// 0004. Returns `(scans_deleted, findings_deleted)`. No-ops silently
+/// when the pool is `None` (Postgres unconfigured or unreachable at
+/// startup).
+pub async fn prune_old_findings(
+    pool: &Option<Pool>,
+    retention_days: u32,
+) -> Result<(i64, i64), Box<dyn std::error::Error + Send + Sync>> {
+    let pool = match pool {
+        Some(p) => p,
+        None => return Ok((0, 0)),
+    };
+
+    let client = pool.get().await?;
+    let rows = client
+        .query(
+            "SELECT * FROM prune_findings($1)",
+            &[&(retention_days as i32)],
+        )
+        .await?;
+
+    if rows.is_empty() {
+        return Ok((0, 0));
+    }
+    let scans_deleted: i64 = rows[0].get(0);
+    let findings_deleted: i64 = rows[0].get(1);
+    Ok((scans_deleted, findings_deleted))
 }
 
 /// Persist one completed scan to the `scans` + `findings` tables.

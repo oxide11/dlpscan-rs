@@ -24,6 +24,7 @@
 //!                                    exposed read-only via GET /v1/allowlist
 //!   SIPHON_AUDIT_RING_CAP            In-memory audit ring capacity (default: 500)
 //!   SIPHON_FINDINGS_RING_CAP         In-memory findings ring capacity (default: 1000)
+//!   SIPHON_FINDINGS_RETENTION_DAYS   Days to retain findings (0 or unset = keep forever)
 
 use axum::{
     body::Body,
@@ -3930,6 +3931,82 @@ async fn list_findings(
 }
 
 // ---------------------------------------------------------------------------
+// POST /v1/findings/prune — manual retention trigger (admin only)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct PruneQuery {
+    days: Option<u32>,
+}
+
+#[derive(Serialize)]
+struct PruneResponse {
+    scans_deleted: i64,
+    findings_deleted: i64,
+    retention_days: u32,
+}
+
+async fn findings_prune(
+    _: RequireAdminAction,
+    Query(q): Query<PruneQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<PruneResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let days = q
+        .days
+        .or_else(|| {
+            std::env::var("SIPHON_FINDINGS_RETENTION_DAYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|&d: &u32| d > 0)
+        })
+        .filter(|&d| d > 0)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "pass ?days=N or set SIPHON_FINDINGS_RETENTION_DAYS (must be > 0)"
+                        .into(),
+                }),
+            )
+        })?;
+
+    match db::prune_old_findings(&state.db_pool, days).await {
+        Ok((scans_deleted, findings_deleted)) => {
+            tracing::info!(
+                scans_deleted = scans_deleted,
+                findings_deleted = findings_deleted,
+                retention_days = days,
+                "manual_retention_prune_complete"
+            );
+            if let Ok(event) = AuditEvent::new("ADMIN") {
+                emit_audit(
+                    event
+                        .with_action("findings_prune")
+                        .with_outcome("success")
+                        .with_metadata("scans_deleted", serde_json::json!(scans_deleted))
+                        .with_metadata("findings_deleted", serde_json::json!(findings_deleted))
+                        .with_metadata("retention_days", serde_json::json!(days)),
+                );
+            }
+            Ok(Json(PruneResponse {
+                scans_deleted,
+                findings_deleted,
+                retention_days: days,
+            }))
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "manual_retention_prune_failed");
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("prune failed: {e}"),
+                }),
+            ))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -4188,6 +4265,34 @@ async fn main() {
         db_state,
     });
 
+    // Retention pruning background task — runs once per day when
+    // SIPHON_FINDINGS_RETENTION_DAYS is set to a value > 0.
+    if let Some(retention_days) = std::env::var("SIPHON_FINDINGS_RETENTION_DAYS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|&d| d > 0)
+    {
+        let pool_clone = state.db_pool.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(86400)).await;
+                match db::prune_old_findings(&pool_clone, retention_days).await {
+                    Ok((scans, findings)) => tracing::info!(
+                        scans_deleted = scans,
+                        findings_deleted = findings,
+                        retention_days = retention_days,
+                        "scheduled_retention_prune_complete"
+                    ),
+                    Err(e) => tracing::warn!(error = %e, "scheduled_retention_prune_failed"),
+                }
+            }
+        });
+        tracing::info!(
+            retention_days = retention_days,
+            "findings retention enabled"
+        );
+    }
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
@@ -4209,10 +4314,11 @@ async fn main() {
         .route("/v1/allowlist", get(list_allowlist))
         .route("/v1/edm", get(list_edm_vaults))
         .route("/v1/lsh", get(list_lsh_vaults))
-        // /v1/findings/stats MUST be registered before /v1/findings
-        // so the more-specific path is matched first.
+        // /v1/findings/* routes MUST be registered before /v1/findings
+        // so the more-specific paths are matched first.
         .route("/v1/findings/stats", get(findings_stats))
         .route("/v1/findings/pg", get(list_pg_findings))
+        .route("/v1/findings/prune", post(findings_prune))
         .route("/v1/findings", get(list_findings))
         .route("/v1/version", get(version))
         .route("/v1/capabilities", get(capabilities))
