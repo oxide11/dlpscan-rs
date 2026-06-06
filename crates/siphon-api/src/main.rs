@@ -95,7 +95,7 @@ impl LiveOverrides {
     /// Missing / unparseable → empty (additive-principle from the
     /// startup loader). Returns the summary for logging/tracing.
     fn from_path(path: &std::path::Path) -> Self {
-        let overrides = PatternOverrides::from_file_or_empty(&path.display().to_string());
+        let overrides = PatternOverrides::from_file_or_empty(path.display().to_string());
         Self::from_doc(overrides)
     }
 
@@ -902,6 +902,67 @@ async fn scan(
         .metrics
         .findings_total
         .fetch_add(count as u64, Ordering::Relaxed);
+
+    // Persist to Postgres in the background — never blocks the scan response.
+    // Raw input is never stored; SHA-256 hashes only.
+    {
+        let scan_id = uuid::Uuid::new_v4();
+
+        let api_key_hash_bytes: Vec<u8> = {
+            let mut h = Sha256::new();
+            // Hash the raw key value if one was configured; otherwise
+            // produce a zero-length hash sentinel to record "no auth".
+            if let Some(hash) = &state.api_key_hash {
+                h.update(hash.as_ref());
+            }
+            h.finalize().to_vec()
+        };
+
+        let input_hash_bytes: Vec<u8> = {
+            let mut h = Sha256::new();
+            h.update(req.text.as_bytes());
+            h.finalize().to_vec()
+        };
+
+        let input_len = req.text.len();
+        let dur_ms = duration_ms as u64;
+
+        // Serialize findings to JSON values for persist_scan.
+        let findings_json: Vec<serde_json::Value> = findings
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "category": f.category,
+                    "sub_category": f.sub_category,
+                    "confidence": f.confidence,
+                    "text": f.text,
+                    "has_context": f.has_context,
+                    "span": [f.span.0, f.span.1],
+                    "metadata": f.metadata,
+                })
+            })
+            .collect();
+
+        let pool_clone = state.db_pool.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db::persist_scan(
+                &pool_clone,
+                scan_id,
+                &api_key_hash_bytes,
+                &input_hash_bytes,
+                input_len,
+                &findings_json,
+                dur_ms,
+                "report",
+                Some("siphon-api"),
+                env!("CARGO_PKG_VERSION"),
+            )
+            .await
+            {
+                tracing::warn!("findings persist failed: {e}");
+            }
+        });
+    }
 
     // Push each finding into the in-memory ring so /v1/findings can surface
     // the live stream without touching disk. Reuse the audit module's
@@ -3202,6 +3263,7 @@ async fn list_integrations() -> Json<IntegrationsResponse> {
     let siem_type = std::env::var("DLPSCAN_SIEM_TYPE").ok();
     let url = std::env::var("DLPSCAN_SIEM_URL").ok();
     let host = std::env::var("DLPSCAN_SIEM_HOST").ok();
+    #[allow(clippy::type_complexity)]
     let all: Vec<(&str, fn() -> Option<String>)> = vec![
         ("splunk", || std::env::var("DLPSCAN_SIEM_URL").ok()),
         ("elasticsearch", || std::env::var("DLPSCAN_SIEM_URL").ok()),
@@ -3284,6 +3346,270 @@ async fn list_lsh_vaults() -> Json<VaultStubResponse> {
         vaults: vec![],
         note: "DocumentVault is per-ScanConfig; no global LSH registry in siphon-api yet.",
     })
+}
+
+// ---------------------------------------------------------------------------
+// GET /v1/findings/stats — category breakdown + daily scan counts from
+// Postgres. Returns empty stats when the pool is None (no DB configured).
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct CategoryCount {
+    category: String,
+    count: i64,
+}
+
+#[derive(Serialize)]
+struct DailyScanCount {
+    day: String,
+    count: i64,
+}
+
+#[derive(Serialize)]
+struct FindingsStatsResponse {
+    categories: Vec<CategoryCount>,
+    daily_scans: Vec<DailyScanCount>,
+    total_findings: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_scan_at: Option<String>,
+}
+
+async fn findings_stats(State(state): State<Arc<AppState>>) -> Json<FindingsStatsResponse> {
+    let Some(pool) = state.db_pool.as_ref() else {
+        return Json(FindingsStatsResponse {
+            categories: Vec::new(),
+            daily_scans: Vec::new(),
+            total_findings: 0,
+            last_scan_at: None,
+        });
+    };
+
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("findings_stats: pool get failed: {e}");
+            return Json(FindingsStatsResponse {
+                categories: Vec::new(),
+                daily_scans: Vec::new(),
+                total_findings: 0,
+                last_scan_at: None,
+            });
+        }
+    };
+
+    // Category breakdown.
+    let categories: Vec<CategoryCount> = match client
+        .query(
+            "SELECT category, COUNT(*) as cnt \
+             FROM findings \
+             GROUP BY category \
+             ORDER BY cnt DESC \
+             LIMIT 20",
+            &[],
+        )
+        .await
+    {
+        Ok(rows) => rows
+            .iter()
+            .map(|r| CategoryCount {
+                category: r.get::<_, String>("category"),
+                count: r.get::<_, i64>("cnt"),
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!("findings_stats: category query failed: {e}");
+            Vec::new()
+        }
+    };
+
+    // Daily scan counts (last 30 days).
+    let daily_scans: Vec<DailyScanCount> = match client
+        .query(
+            "SELECT DATE_TRUNC('day', created_at) as day, COUNT(*) as cnt \
+             FROM scans \
+             WHERE created_at >= NOW() - INTERVAL '30 days' \
+             GROUP BY day \
+             ORDER BY day DESC",
+            &[],
+        )
+        .await
+    {
+        Ok(rows) => rows
+            .iter()
+            .map(|r| {
+                let day: chrono::DateTime<chrono::Utc> =
+                    r.get::<_, chrono::DateTime<chrono::Utc>>("day");
+                DailyScanCount {
+                    day: day.to_rfc3339(),
+                    count: r.get::<_, i64>("cnt"),
+                }
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!("findings_stats: daily_scans query failed: {e}");
+            Vec::new()
+        }
+    };
+
+    // Total findings count.
+    let total_findings: i64 = match client.query_one("SELECT COUNT(*) FROM findings", &[]).await {
+        Ok(row) => row.get::<_, i64>(0),
+        Err(e) => {
+            tracing::warn!("findings_stats: total_findings query failed: {e}");
+            0
+        }
+    };
+
+    // Last scan timestamp.
+    let last_scan_at: Option<String> = match client
+        .query_one("SELECT MAX(created_at) FROM scans", &[])
+        .await
+    {
+        Ok(row) => {
+            let ts: Option<chrono::DateTime<chrono::Utc>> =
+                row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(0);
+            ts.map(|t| t.to_rfc3339())
+        }
+        Err(e) => {
+            tracing::warn!("findings_stats: last_scan_at query failed: {e}");
+            None
+        }
+    };
+
+    Json(FindingsStatsResponse {
+        categories,
+        daily_scans,
+        total_findings,
+        last_scan_at,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// GET /v1/findings/pg — Postgres-backed findings query.
+// Separate from /v1/findings (in-memory ring) so existing consumers
+// are not broken. Returns paginated findings from the DB when a pool
+// is available; empty list otherwise.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct PgFindingsQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    category: Option<String>,
+}
+
+#[derive(Serialize)]
+struct PgFinding {
+    id: String,
+    scan_id: String,
+    created_at: String,
+    category: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sub_category: Option<String>,
+    confidence: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    span_start: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    span_end: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    matched_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    has_context: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_required: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<serde_json::Value>,
+}
+
+#[derive(Serialize)]
+struct PgFindingsResponse {
+    findings: Vec<PgFinding>,
+    total: i64,
+}
+
+async fn list_pg_findings(
+    Query(q): Query<PgFindingsQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Json<PgFindingsResponse> {
+    let Some(pool) = state.db_pool.as_ref() else {
+        return Json(PgFindingsResponse {
+            findings: Vec::new(),
+            total: 0,
+        });
+    };
+
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("list_pg_findings: pool get failed: {e}");
+            return Json(PgFindingsResponse {
+                findings: Vec::new(),
+                total: 0,
+            });
+        }
+    };
+
+    let limit = q.limit.unwrap_or(50).min(1000);
+    let offset = q.offset.unwrap_or(0);
+    let category = q.category.as_deref();
+
+    let rows = match client
+        .query(
+            "SELECT id, scan_id, created_at, category, sub_category, confidence, \
+             span_start, span_end, matched_text, has_context, context_required, metadata \
+             FROM findings \
+             WHERE ($1::text IS NULL OR category = $1) \
+             ORDER BY created_at DESC \
+             LIMIT $2 OFFSET $3",
+            &[&category, &limit, &offset],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("list_pg_findings: query failed: {e}");
+            return Json(PgFindingsResponse {
+                findings: Vec::new(),
+                total: 0,
+            });
+        }
+    };
+
+    let findings: Vec<PgFinding> = rows
+        .iter()
+        .map(|r| {
+            let id: uuid::Uuid = r.get("id");
+            let scan_id: uuid::Uuid = r.get("scan_id");
+            let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+            PgFinding {
+                id: id.to_string(),
+                scan_id: scan_id.to_string(),
+                created_at: created_at.to_rfc3339(),
+                category: r.get("category"),
+                sub_category: r.get("sub_category"),
+                confidence: r.get("confidence"),
+                span_start: r.get("span_start"),
+                span_end: r.get("span_end"),
+                matched_text: r.get("matched_text"),
+                has_context: r.get("has_context"),
+                context_required: r.get("context_required"),
+                metadata: r.get("metadata"),
+            }
+        })
+        .collect();
+
+    let total: i64 = match client
+        .query_one(
+            "SELECT COUNT(*) FROM findings WHERE ($1::text IS NULL OR category = $1)",
+            &[&category],
+        )
+        .await
+    {
+        Ok(row) => row.get(0),
+        Err(_) => findings.len() as i64,
+    };
+
+    Json(PgFindingsResponse { findings, total })
 }
 
 #[derive(Deserialize)]
@@ -3609,6 +3935,10 @@ async fn main() {
         .route("/v1/allowlist", get(list_allowlist))
         .route("/v1/edm", get(list_edm_vaults))
         .route("/v1/lsh", get(list_lsh_vaults))
+        // /v1/findings/stats MUST be registered before /v1/findings
+        // so the more-specific path is matched first.
+        .route("/v1/findings/stats", get(findings_stats))
+        .route("/v1/findings/pg", get(list_pg_findings))
         .route("/v1/findings", get(list_findings))
         .route("/v1/version", get(version))
         .route("/v1/capabilities", get(capabilities))
