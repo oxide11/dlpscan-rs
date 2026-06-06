@@ -142,6 +142,7 @@ Key env vars for siphon-api:
 | `SIPHON_POLICIES_DIR` | — | directory of *.yaml rulesets |
 | `SIPHON_ALLOWLIST_PATH` | — | JSON allowlist |
 | `SIPHON_DATABASE_URL` | — | Postgres (optional) |
+| `SIPHON_FINDINGS_RETENTION_DAYS` | 90 | Days to retain findings (0 = keep forever) |
 | `SIPHON_OVERRIDES_PATH` | — | PatternOverrides YAML (hot-reloadable) |
 
 The `LiveOverrides` state is an `Arc<RwLock<…>>` snapshot cloned per request —
