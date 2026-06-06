@@ -6886,7 +6886,347 @@ const STREAM_TIMEFRAMES = [
   { id: 'all', label: 'All', ms: null },
 ];
 
+// ── FindingsHistory ──────────────────────────────────────────────────────────
+// History tab content — wired to /v1/findings/stats (60s poll) and
+// /v1/findings/pg (paginated postgres query). Shows aggregate stats,
+// category breakdown, daily sparkline, filter row, and a results table.
+// Gracefully degrades when postgres is not configured.
+// RBAC-gated on findings.view.
+function FindingsHistory() {
+  const canView = window.siphonUseCan('findings.view');
+
+  // 60s poll tick for stats
+  const statsTick = window.useSharedPoll(60000);
+  const statsUrl  = window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/findings/stats';
+
+  const [stats, setStats]       = React.useState(null);
+  const [statsErr, setStatsErr] = React.useState(null);
+  const [statsLoading, setStatsLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    setStatsLoading(true);
+    setStatsErr(null);
+    window.siphonFetch(statsUrl, { method: 'GET' })
+      .then(r => {
+        if (r.status === 404) return Promise.reject('404');
+        if (!r.ok) return Promise.reject('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(d => { if (!cancelled) { setStats(d); setStatsLoading(false); } })
+      .catch(e => { if (!cancelled) { setStatsErr(String(e)); setStatsLoading(false); } });
+    return () => { cancelled = true; };
+  }, [statsTick]);
+
+  // Filter state for the paginated results table
+  const [pgCat,     setPgCat]     = React.useState('');
+  const [pgLimit,   setPgLimit]   = React.useState(25);
+  const [pgOffset,  setPgOffset]  = React.useState(0);
+  const [pgRefKey,  setPgRefKey]  = React.useState(0);
+
+  // Re-fetch from page 0 whenever category or limit changes
+  React.useEffect(() => { setPgOffset(0); setPgRefKey(k => k + 1); }, [pgCat, pgLimit]);
+
+  const [pgData,    setPgData]    = React.useState(null);
+  const [pgErr,     setPgErr]     = React.useState(null);
+  const [pgLoading, setPgLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!canView) return;
+    let cancelled = false;
+    setPgLoading(true);
+    setPgErr(null);
+    const qs = '?category=' + encodeURIComponent(pgCat) + '&limit=' + pgLimit + '&offset=' + pgOffset;
+    const url = window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/findings/pg' + qs;
+    window.siphonFetch(url, { method: 'GET' })
+      .then(r => r.ok ? r.json() : Promise.reject('HTTP ' + r.status))
+      .then(d => { if (!cancelled) { setPgData(d); setPgLoading(false); } })
+      .catch(e => { if (!cancelled) { setPgErr(String(e)); setPgLoading(false); } });
+    return () => { cancelled = true; };
+  }, [pgCat, pgLimit, pgOffset, pgRefKey, canView]);
+
+  // ── Postgres-not-configured gate ────────────────────────────────
+  const notConfigured = statsErr === '404' ||
+    (!statsLoading && !statsErr && stats &&
+      stats.total_findings === 0 && !(stats.categories && stats.categories.length));
+
+  if (!canView) {
+    return (
+      <div className="note" style={{borderColor:'var(--amber)', color:'var(--amber)', background:'var(--amber-wash)', marginTop:16}}>
+        <b>Permission required:</b> your role does not have <span style={{fontFamily:"'JetBrains Mono', monospace"}}>findings.view</span>.
+      </div>
+    );
+  }
+
+  if (notConfigured) {
+    return (
+      <div className="note" style={{borderColor:'var(--amber)', color:'var(--amber)', background:'var(--amber-wash)', marginTop:16}}>
+        <b>Postgres not configured</b> — findings history unavailable.
+        Set <span style={{fontFamily:"'JetBrains Mono', monospace"}}>SIPHON_DATABASE_URL</span> to enable persistent findings storage.
+      </div>
+    );
+  }
+
+  // ── Derived stats ───────────────────────────────────────────────
+  const totalFindings  = (stats && stats.total_findings) || 0;
+  const categories     = (stats && stats.categories) || [];
+  const topCat         = categories.length > 0 ? categories[0] : null;
+  const lastScan       = stats && stats.last_scan_at;
+  const dailyCounts    = (stats && stats.daily_counts) || []; // [{date, count}]
+
+  // Build sparkline bars — proportional heights
+  const sparkMax = dailyCounts.reduce((m, d) => Math.max(m, d.count || 0), 1);
+
+  // Category options for filter dropdown
+  const catOptions = [['', 'all categories'], ...categories.map(c => [c.name || c, c.name || c])];
+
+  // Paginated results rows
+  const pgRows = (pgData && pgData.findings) || [];
+  const pgTotal = (pgData && pgData.total) || 0;
+  const totalPages = Math.max(1, Math.ceil(pgTotal / pgLimit));
+
+  const cellPad = '7px 10px';
+  const mono    = { fontFamily: "'JetBrains Mono', monospace" };
+
+  return (
+    <div style={{marginTop:16}}>
+      {statsErr && statsErr !== '404' && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', marginBottom:16}}>
+          <b>Stats error:</b> {statsErr}
+        </div>
+      )}
+
+      {/* ── Stats row ───────────────────────────────────────── */}
+      <div style={{display:'flex', gap:12, marginBottom:12, flexWrap:'wrap'}}>
+        <div className="box" style={{flex:1, minWidth:160}}>
+          <div className="stat">
+            <span className="s-label">Total findings</span>
+            <span className="s-val" style={mono}>{statsLoading ? '…' : totalFindings.toLocaleString()}</span>
+            <span className="s-delta">all time · postgres</span>
+          </div>
+        </div>
+        <div className="box" style={{flex:2, minWidth:220}}>
+          <div className="stat">
+            <span className="s-label">Top category</span>
+            <span className="s-val" style={{...mono, fontSize:18}}>
+              {statsLoading ? '…' : topCat ? (topCat.name || topCat) : '—'}
+            </span>
+            <span className="s-delta">
+              {topCat && topCat.count != null ? topCat.count.toLocaleString() + ' findings' : ''}
+            </span>
+          </div>
+        </div>
+        <div className="box" style={{flex:1, minWidth:160}}>
+          <div className="stat">
+            <span className="s-label">Last scan</span>
+            <span className="s-val" style={{...mono, fontSize:18}}>
+              {statsLoading ? '…' : lastScan ? window.siphonFormatRelative(lastScan) : '—'}
+            </span>
+            <span className="s-delta">
+              {lastScan ? window.siphonFormatTimestamp(lastScan) : ''}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Category breakdown ──────────────────────────────── */}
+      {categories.length > 0 && (
+        <div className="box" style={{marginBottom:12, padding:0, overflow:'hidden'}}>
+          <div className="box-title" style={{padding:'10px 14px', borderBottom:'1px solid var(--line)'}}>
+            <span className="t">Category breakdown</span>
+            <span className="k">by volume · all time</span>
+          </div>
+          <table style={{width:'100%', borderCollapse:'collapse', ...mono, fontSize:11.5}}>
+            <thead>
+              <tr style={{background:'var(--bg-2)', borderBottom:'1px solid var(--line-strong)'}}>
+                {['Category', 'Count', '% of total'].map((h, i) => (
+                  <th key={i} className="label" style={{
+                    textAlign: i === 0 ? 'left' : 'right',
+                    padding: cellPad, fontWeight:600,
+                    color:'var(--ink-faint)', whiteSpace:'nowrap',
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {categories.map((c, i) => {
+                const name  = c.name  || c;
+                const count = c.count != null ? c.count : 0;
+                const pct   = totalFindings > 0 ? ((count / totalFindings) * 100).toFixed(1) : '0.0';
+                return (
+                  <tr key={i} style={{
+                    borderBottom: i < categories.length - 1 ? '1px solid var(--line-soft)' : 'none',
+                    cursor: 'pointer',
+                    background: pgCat === name ? 'color-mix(in srgb, var(--accent) 8%, transparent)' : 'transparent',
+                  }} onClick={() => setPgCat(pgCat === name ? '' : name)}>
+                    <td style={{padding: cellPad, color:'var(--ink)'}}>{name}</td>
+                    <td style={{padding: cellPad, textAlign:'right', color:'var(--ink-bright)'}}>{count.toLocaleString()}</td>
+                    <td style={{padding: cellPad, textAlign:'right', color:'var(--ink-soft)'}}>{pct}%</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── Daily sparkline (CSS bars, last 30 days) ────────── */}
+      {dailyCounts.length > 0 && (
+        <div className="box" style={{marginBottom:12, padding:'12px 14px'}}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'baseline', marginBottom:8}}>
+            <span className="label" style={{fontSize:10}}>DAILY SCAN VOLUME · LAST 30 DAYS</span>
+            <span style={{...mono, fontSize:10, color:'var(--ink-faint)'}}>
+              peak {sparkMax.toLocaleString()}
+            </span>
+          </div>
+          <div style={{display:'flex', alignItems:'flex-end', gap:2, height:48}}>
+            {dailyCounts.map((d, i) => {
+              const h = Math.max(2, Math.round((d.count / sparkMax) * 48));
+              return (
+                <div key={i}
+                  title={(d.date || '') + ' · ' + (d.count || 0).toLocaleString() + ' findings'}
+                  style={{
+                    flex: 1,
+                    height: h + 'px',
+                    background: 'var(--accent)',
+                    opacity: 0.7,
+                    borderRadius: '2px 2px 0 0',
+                    cursor: 'default',
+                    transition: 'opacity 0.1s',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.opacity = '1'; }}
+                  onMouseLeave={e => { e.currentTarget.style.opacity = '0.7'; }}
+                />
+              );
+            })}
+          </div>
+          <div style={{display:'flex', justifyContent:'space-between', marginTop:4, ...mono, fontSize:9, color:'var(--ink-faint)'}}>
+            <span>{dailyCounts[0] && dailyCounts[0].date ? dailyCounts[0].date : ''}</span>
+            <span>{dailyCounts[dailyCounts.length - 1] && dailyCounts[dailyCounts.length - 1].date ? dailyCounts[dailyCounts.length - 1].date : ''}</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Filter row ──────────────────────────────────────── */}
+      <div className="box" style={{marginBottom:12, padding:'10px 14px'}}>
+        <div style={{display:'flex', gap:18, flexWrap:'wrap', alignItems:'center'}}>
+          <label style={{display:'flex', alignItems:'center', gap:6}}>
+            <span className="label" style={{whiteSpace:'nowrap'}}>CATEGORY</span>
+            <div style={{
+              display:'inline-flex', alignItems:'center', gap:4,
+              background:'var(--bg-1)', border:'1px solid var(--line-strong)',
+              borderRadius:'var(--radius)', padding:'3px 8px', ...mono, fontSize:11,
+            }}>
+              <select value={pgCat} onChange={e => { setPgCat(e.target.value); }}
+                style={{
+                  appearance:'none', background:'transparent', border:'none', outline:'none',
+                  color: pgCat === '' ? 'var(--ink-soft)' : 'var(--ink-bright)',
+                  ...mono, fontSize:11, paddingRight:4, cursor:'pointer',
+                }}>
+                {catOptions.map(([v, l]) => (
+                  <option key={v} value={v}>{l.length > 34 ? l.slice(0, 34) + '…' : l}</option>
+                ))}
+              </select>
+              <span style={{color:'var(--ink-faint)', fontSize:9}}>▾</span>
+            </div>
+          </label>
+          <label style={{display:'flex', alignItems:'center', gap:6}}>
+            <span className="label" style={{whiteSpace:'nowrap'}}>LIMIT</span>
+            <div style={{
+              display:'inline-flex', alignItems:'center', gap:4,
+              background:'var(--bg-1)', border:'1px solid var(--line-strong)',
+              borderRadius:'var(--radius)', padding:'3px 8px', ...mono, fontSize:11,
+            }}>
+              <select value={pgLimit} onChange={e => setPgLimit(parseInt(e.target.value, 10))}
+                style={{
+                  appearance:'none', background:'transparent', border:'none', outline:'none',
+                  color:'var(--ink-bright)', ...mono, fontSize:11, paddingRight:4, cursor:'pointer',
+                }}>
+                {[25, 50, 100, 500].map(n => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <span style={{color:'var(--ink-faint)', fontSize:9}}>▾</span>
+            </div>
+          </label>
+          <span style={{flex:1}} />
+          {pgOffset > 0 && (
+            <button className="btn ghost" onClick={() => setPgOffset(o => Math.max(0, o - pgLimit))}
+              style={{...mono, fontSize:11}}>← Prev</button>
+          )}
+          {pgOffset + pgLimit < pgTotal && (
+            <button className="btn ghost" onClick={() => setPgOffset(o => o + pgLimit)}
+              style={{...mono, fontSize:11}}>Next →</button>
+          )}
+          <button className="btn" onClick={() => { setPgOffset(0); setPgRefKey(k => k + 1); }}
+            title="refresh results from postgres" style={{...mono, fontSize:11}}>
+            ↻ Refresh
+          </button>
+        </div>
+        {pgTotal > 0 && (
+          <div style={{marginTop:8, ...mono, fontSize:10, color:'var(--ink-faint)'}}>
+            {(pgOffset + 1).toLocaleString()}–{Math.min(pgTotal, pgOffset + pgLimit).toLocaleString()}
+            {' of '}{pgTotal.toLocaleString()} rows
+            {pgCat ? ' · filtered to ' + pgCat : ''}
+          </div>
+        )}
+      </div>
+
+      {/* ── Results table ───────────────────────────────────── */}
+      {pgErr && (
+        <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', marginBottom:12}}>
+          <b>Query error:</b> {pgErr}
+        </div>
+      )}
+      <div className="box" style={{padding:0, overflow:'hidden'}}>
+        {pgLoading && (
+          <div className="muted" style={{padding:20, textAlign:'center', ...mono, fontSize:12}}>loading…</div>
+        )}
+        {!pgLoading && pgRows.length === 0 && !pgErr && (
+          <div className="muted" style={{padding:30, textAlign:'center', ...mono, fontSize:12}}>
+            — no findings in postgres{pgCat ? ' for category "' + pgCat + '"' : ''} —
+          </div>
+        )}
+        {!pgLoading && pgRows.length > 0 && (
+          <div style={{overflow:'auto'}}>
+            <table style={{width:'100%', borderCollapse:'collapse', ...mono, fontSize:11.5}}>
+              <thead>
+                <tr style={{borderBottom:'1px solid var(--line-strong)', background:'var(--bg-2)'}}>
+                  {['Time', 'Category', 'Sub-category', 'Confidence', 'Pod'].map((h, i) => (
+                    <th key={i} className="label" style={{
+                      textAlign:'left', padding: cellPad,
+                      fontWeight:600, color:'var(--ink-faint)', whiteSpace:'nowrap',
+                      position:'sticky', top:0, background:'var(--bg-2)',
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {pgRows.map((f, i) => (
+                  <tr key={f.id || i} style={{
+                    borderBottom: i < pgRows.length - 1 ? '1px solid var(--line-soft)' : 'none',
+                    background: i % 2 === 0 ? 'transparent' : 'color-mix(in srgb, var(--bg-2) 40%, transparent)',
+                  }}>
+                    <td style={{padding: cellPad, color:'var(--ink-soft)', whiteSpace:'nowrap'}}>
+                      {f.ts ? window.siphonFormatRelative(f.ts) : '—'}
+                    </td>
+                    <td style={{padding: cellPad, color:'var(--ink)'}}>{f.category || '—'}</td>
+                    <td style={{padding: cellPad, color:'var(--ink-soft)'}}>{f.sub_category || '—'}</td>
+                    <td style={{padding: cellPad, color: f.confidence >= 0.8 ? 'var(--green)' : f.confidence >= 0.5 ? 'var(--amber)' : 'var(--ink-soft)'}}>
+                      {f.confidence != null ? f.confidence.toFixed(2) : '—'}
+                    </td>
+                    <td style={{padding: cellPad, color:'var(--ink-faint)'}}>{f.pod || f.source_pod || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Stream({ go }) {
+  const [activeTab, setActiveTab] = React.useState('live');
   const [search, setSearch] = React.useState('');
   const [severity, setSeverity] = React.useState('any');
   const [category, setCategory] = React.useState('any');
@@ -6994,40 +7334,66 @@ function Stream({ go }) {
           <div className="crumbs">Operate · Findings</div>
           <h1 style={{display:'flex', alignItems:'center', gap:12, margin:'3px 0 0'}}>
             Findings stream
-            <window.LivePill source={paused ? 'loading' : fx.source} onClick={fx.refetch} title={fx.error || ''} />
+            {activeTab === 'live' && <window.LivePill source={paused ? 'loading' : fx.source} onClick={fx.refetch} title={fx.error || ''} />}
             <HelpIcon topic="findings" title="Findings pipeline" size={16} />
           </h1>
-          <div className="page-sub mono" style={{fontSize:12, color:'var(--ink-soft)', marginTop:6}}>
-            window <b style={{color:'var(--ink-bright)'}}>{tfMeta.label}</b>
-            {' · '}
-            <b style={{color:'var(--ink-bright)'}}>{filtered.length.toLocaleString()}</b>
-            {' of '}
-            <b style={{color:'var(--ink-bright)'}}>{inWindow.length.toLocaleString()}</b>
-            {' findings match'}
-            {fx.data && (
-              <>
-                {' · ring '}
-                <span style={{color:'var(--ink-faint)'}}>{fx.data.total}/{fx.data.capacity}</span>
-              </>
-            )}
-          </div>
+          {activeTab === 'live' && (
+            <div className="page-sub mono" style={{fontSize:12, color:'var(--ink-soft)', marginTop:6}}>
+              window <b style={{color:'var(--ink-bright)'}}>{tfMeta.label}</b>
+              {' · '}
+              <b style={{color:'var(--ink-bright)'}}>{filtered.length.toLocaleString()}</b>
+              {' of '}
+              <b style={{color:'var(--ink-bright)'}}>{inWindow.length.toLocaleString()}</b>
+              {' findings match'}
+              {fx.data && (
+                <>
+                  {' · ring '}
+                  <span style={{color:'var(--ink-faint)'}}>{fx.data.total}/{fx.data.capacity}</span>
+                </>
+              )}
+            </div>
+          )}
+          {activeTab === 'history' && (
+            <div className="page-sub mono" style={{fontSize:12, color:'var(--ink-soft)', marginTop:6}}>
+              postgres-backed · 60s poll · <span style={{color:'var(--ink-faint)'}}>GET /v1/findings/stats · GET /v1/findings/pg</span>
+            </div>
+          )}
         </div>
         <div className="actions" style={{alignItems:'center'}}>
-          <button
-            className={paused ? 'btn' : 'btn primary'}
-            onClick={() => setPaused(p => !p)}>
-            {paused ? '▶ Resume' : '❙❙ Pause'}
-          </button>
-          <button className="btn ghost" onClick={clearFilters} title="reset search + filters + timeframe">Clear</button>
-          <button className="btn" onClick={exportJson} title="download visible findings as JSON">Export</button>
+          {activeTab === 'live' && (
+            <>
+              <button
+                className={paused ? 'btn' : 'btn primary'}
+                onClick={() => setPaused(p => !p)}>
+                {paused ? '▶ Resume' : '❙❙ Pause'}
+              </button>
+              <button className="btn ghost" onClick={clearFilters} title="reset search + filters + timeframe">Clear</button>
+              <button className="btn" onClick={exportJson} title="download visible findings as JSON">Export</button>
+            </>
+          )}
         </div>
       </div>
 
-      {fx.error && (
+      {/* ── Tab bar ────────────────────────────────────────────── */}
+      <div className="variant-tabs" style={{marginTop:16}}>
+        {[['live', 'Live'], ['history', 'History']].map(([id, label]) => (
+          <button key={id} className={activeTab === id ? 'active' : ''}
+            onClick={() => setActiveTab(id)}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'history' && <FindingsHistory />}
+
+      {activeTab === 'live' && fx.error && (
         <div className="note" style={{borderColor:'var(--red)', color:'var(--red)', background:'var(--red-wash)', marginBottom:'var(--gap)'}}>
           <b>Error:</b> {fx.error}
         </div>
       )}
+
+      {activeTab === 'live' && (
+        <div>
 
       {/* ── Search row + timeframe tabs + header sparkline ───── */}
       <div className="box" style={{marginBottom:'var(--gap)', padding:'10px 14px'}}>
@@ -7130,6 +7496,8 @@ function Stream({ go }) {
       {groupBy !== 'none' && filtered.length > 0 && (
         <div className="muted mono" style={{textAlign:'center', padding:'8px 0', fontSize:11}}>
           pagination disabled while grouping · set GROUP BY to none to page through
+        </div>
+      )}
         </div>
       )}
     </div>
