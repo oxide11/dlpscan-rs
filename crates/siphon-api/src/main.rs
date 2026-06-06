@@ -956,6 +956,9 @@ async fn scan(
                 "report",
                 Some("siphon-api"),
                 env!("CARGO_PKG_VERSION"),
+                None,
+                None,
+                None,
             )
             .await
             {
@@ -1035,6 +1038,276 @@ async fn scan(
         finding_count: count,
         scan_duration_ms: duration_ms as u64,
         trace,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// POST /scan/batch — scan a list of texts in one request.
+//
+// Each item carries a caller-supplied `id` for correlation; the response
+// array is in the same order as the request array. One scan_id per item
+// is persisted in the background — the HTTP response is never delayed.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct BatchItem {
+    id: String,
+    text: String,
+    #[serde(default)]
+    options: ScanOptions,
+}
+
+#[derive(Serialize)]
+struct BatchItemResult {
+    id: String,
+    findings: Vec<Finding>,
+    finding_count: usize,
+    scan_duration_ms: u64,
+}
+
+#[derive(Serialize)]
+struct BatchScanResponse {
+    source_pod: &'static str,
+    batch_id: String,
+    items: Vec<BatchItemResult>,
+    total_findings: usize,
+    total_duration_ms: u64,
+}
+
+async fn scan_batch(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(items): Json<Vec<BatchItem>>,
+) -> Result<Json<BatchScanResponse>, (StatusCode, Json<ErrorResponse>)> {
+    const MAX_BATCH: usize = 500;
+    if items.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "batch must contain at least one item".into(),
+            }),
+        ));
+    }
+    if items.len() > MAX_BATCH {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("batch size {} exceeds limit {MAX_BATCH}", items.len()),
+            }),
+        ));
+    }
+
+    let source_ip = addr.ip().to_string();
+    let batch_id = uuid::Uuid::new_v4().to_string();
+    let batch_start = Instant::now();
+
+    // Snapshot overrides + stage toggles once for the whole batch.
+    let stage_disabled: HashSet<String> = state
+        .disabled_stages
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let ov = {
+        let g = state
+            .live_overrides
+            .read()
+            .expect("live_overrides lock poisoned");
+        g.clone()
+    };
+
+    let api_key_hash_bytes: Vec<u8> = {
+        let mut h = Sha256::new();
+        if let Some(hash) = &state.api_key_hash {
+            h.update(hash.as_ref());
+        }
+        h.finalize().to_vec()
+    };
+
+    let mut results: Vec<BatchItemResult> = Vec::with_capacity(items.len());
+    let mut total_findings: usize = 0;
+
+    for item in &items {
+        if item.text.is_empty() || item.text.len() > 10 * 1024 * 1024 {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("item {:?}: text must be non-empty and ≤ 10 MB", item.id),
+                }),
+            ));
+        }
+
+        let mut config = ScanConfig {
+            min_confidence: item.options.min_confidence.unwrap_or(0.0),
+            categories: item
+                .options
+                .categories
+                .clone()
+                .map(|c| c.into_iter().collect::<HashSet<_>>()),
+            require_context: item.options.require_context.unwrap_or(false),
+            baseline_only: item.options.baseline_only.unwrap_or(false),
+            deduplicate: item.options.deduplicate.unwrap_or(true),
+            disabled_patterns: Some(ov.disabled_patterns.clone()),
+            pattern_field_overrides: Some(ov.pattern_field_overrides.clone()),
+            runtime_patterns: Some(ov.runtime_patterns.clone()),
+            pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
+            list_bindings: Some(ov.list_bindings.clone()),
+            max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+            ..Default::default()
+        };
+        if stage_disabled.contains("min_confidence") {
+            config.min_confidence = 0.0;
+        }
+        if stage_disabled.contains("require_context") {
+            config.require_context = false;
+        }
+
+        let item_start = Instant::now();
+        let matches = scan_text_with_config(&item.text, &config).map_err(|e| {
+            state
+                .metrics
+                .scan_errors_total
+                .fetch_add(1, Ordering::Relaxed);
+            tracing::error!(batch_id = %batch_id, item_id = %item.id, error = %e, "batch_item_scan_failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "scan processing failed".into(),
+                }),
+            )
+        })?;
+        let item_duration_ms = item_start.elapsed().as_millis() as u64;
+
+        let findings: Vec<Finding> = matches
+            .iter()
+            .map(|m| Finding {
+                category: m.category.clone(),
+                sub_category: m.sub_category.clone(),
+                text: m.text.clone(),
+                confidence: m.confidence,
+                has_context: m.has_context,
+                span: m.span,
+                metadata: m.metadata.clone(),
+            })
+            .collect();
+
+        state.metrics.scans_total.fetch_add(1, Ordering::Relaxed);
+        state
+            .metrics
+            .findings_total
+            .fetch_add(findings.len() as u64, Ordering::Relaxed);
+
+        // Push each finding to the in-memory ring.
+        let ts_now = iso8601_now();
+        let short_batch = batch_id.split('-').next().unwrap_or(&batch_id);
+        for (idx, f) in findings.iter().enumerate() {
+            state.findings.push(FindingRecord {
+                id: format!("f-{short_batch}-{}-{idx:02x}", item.id),
+                ts: ts_now.clone(),
+                request_id: batch_id.clone(),
+                source_ip: source_ip.clone(),
+                source_pod: "siphon-api".to_string(),
+                category: f.category.clone(),
+                sub_category: f.sub_category.clone(),
+                text: f.text.clone(),
+                confidence: f.confidence,
+                has_context: f.has_context,
+                span: f.span,
+                metadata: f.metadata.clone(),
+                severity: severity_for(&f.category, f.confidence),
+            });
+        }
+
+        // Background persist — never blocks the response.
+        {
+            let scan_id = uuid::Uuid::new_v4();
+            let input_hash_bytes: Vec<u8> = {
+                let mut h = Sha256::new();
+                h.update(item.text.as_bytes());
+                h.finalize().to_vec()
+            };
+            let input_len = item.text.len();
+            let findings_json: Vec<serde_json::Value> = findings
+                .iter()
+                .map(|f| {
+                    serde_json::json!({
+                        "category": f.category,
+                        "sub_category": f.sub_category,
+                        "confidence": f.confidence,
+                        "text": f.text,
+                        "has_context": f.has_context,
+                        "span": [f.span.0, f.span.1],
+                        "metadata": f.metadata,
+                    })
+                })
+                .collect();
+            let pool_clone = state.db_pool.clone();
+            let api_key_hash_clone = api_key_hash_bytes.clone();
+            tokio::spawn(async move {
+                if let Err(e) = db::persist_scan(
+                    &pool_clone,
+                    scan_id,
+                    &api_key_hash_clone,
+                    &input_hash_bytes,
+                    input_len,
+                    &findings_json,
+                    item_duration_ms,
+                    "report",
+                    Some("siphon-api"),
+                    env!("CARGO_PKG_VERSION"),
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                {
+                    tracing::warn!("batch item persist failed: {e}");
+                }
+            });
+        }
+
+        total_findings += findings.len();
+        results.push(BatchItemResult {
+            id: item.id.clone(),
+            findings,
+            finding_count: matches.len(),
+            scan_duration_ms: item_duration_ms,
+        });
+    }
+
+    let total_duration_ms = batch_start.elapsed().as_millis() as u64;
+
+    tracing::info!(
+        batch_id = %batch_id,
+        items = items.len(),
+        total_findings = total_findings,
+        duration_ms = total_duration_ms,
+        "batch_scan_complete"
+    );
+
+    if let Ok(event) = AuditEvent::new("SCAN") {
+        emit_audit(
+            event
+                .with_action("batch_scan")
+                .with_outcome(if total_findings == 0 {
+                    "success"
+                } else {
+                    "findings_detected"
+                })
+                .with_is_clean(total_findings == 0)
+                .with_finding_count(total_findings)
+                .with_duration_ms(total_duration_ms as f64)
+                .with_request_id(&batch_id)
+                .with_source_ip(&source_ip)
+                .with_metadata("batch_size", serde_json::json!(items.len())),
+        );
+    }
+
+    Ok(Json(BatchScanResponse {
+        source_pod: "siphon-api",
+        batch_id,
+        items: results,
+        total_findings,
+        total_duration_ms,
     }))
 }
 
@@ -3920,6 +4193,7 @@ async fn main() {
         .route("/ready", get(ready))
         .route("/v1/db/health", get(db_health))
         .route("/scan", post(scan))
+        .route("/scan/batch", post(scan_batch))
         .route("/v1/patterns", get(list_patterns))
         .route("/v1/categories", get(list_categories))
         .route("/v1/policies", get(list_policies))
