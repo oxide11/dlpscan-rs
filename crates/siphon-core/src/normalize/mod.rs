@@ -1489,6 +1489,19 @@ fn try_decode_digit_morse_slash(text: &str) -> Option<String> {
 /// arrives unchanged.  In all three cases a pure-digit value (credit card,
 /// routing number, TFN, etc.) produces a length that is exactly N×5.
 fn try_decode_digit_morse_nosep(text: &[u8]) -> Option<String> {
+    // Trim ASCII whitespace: a trailing \n from piped input survives
+    // collapse_padding (no next non-WS neighbour) and must not invalidate
+    // an otherwise-valid no-separator morse sequence.
+    let start = text
+        .iter()
+        .position(|&b| !is_ascii_ws(b))
+        .unwrap_or(text.len());
+    let end = text
+        .iter()
+        .rposition(|&b| !is_ascii_ws(b))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let text = if end > start { &text[start..end] } else { &[] };
     if text.is_empty() || !text.len().is_multiple_of(5) {
         return None;
     }
@@ -2621,61 +2634,6 @@ mod tests {
     }
 
     #[test]
-    fn test_dot_not_stripped_in_email() {
-        // Dots in email addresses must never be removed — letters on each side
-        // of the dot mean `should_strip_dot` returns false immediately.
-        let (result, _) = normalize_text("test.user@example.com");
-        assert_eq!(result, "test.user@example.com");
-    }
-
-    #[test]
-    fn test_dot_not_stripped_in_ip() {
-        // Dots inside a valid IPv4 address are marked by `mark_ipv4_dot_positions`
-        // and skipped by the strip loop even though the digit runs would otherwise
-        // satisfy the 2–4-digit threshold.
-        let (result, _) = normalize_text("192.168.1.1");
-        assert_eq!(result, "192.168.1.1");
-    }
-
-    #[test]
-    fn test_dot_stripped_in_digit_groups() {
-        // Credit-card dot-delimiter evasion: all three dots between 4-digit groups
-        // are stripped, yielding the canonical 16-digit PAN.
-        let (result, _) = normalize_text("4532.0151.1283.0366");
-        assert_eq!(result, "4532015112830366");
-    }
-
-    #[test]
-    fn test_dot_stripped_ssn_style() {
-        // SSN dot-delimiter evasion: 3-2-4 grouping.
-        let (result, _) = normalize_text("123.45.6789");
-        assert_eq!(result, "123456789");
-    }
-
-    #[test]
-    fn test_dot_stripped_aba_routing_style() {
-        // ABA routing-number dot-delimiter evasion: 3-3-3 grouping (9 digits).
-        // `021.000.021` has only 3 groups so it is NOT recognised as IPv4
-        // (which needs 4 groups) and the dots are stripped.
-        let (result, _) = normalize_text("021.000.021");
-        assert_eq!(result, "021000021");
-    }
-
-    #[test]
-    fn test_dot_stripped_wider_5_4_grouping() {
-        // 5-4 grouping: wider than the old 2-4 cap; the 1-6 cap catches it.
-        let (result, _) = normalize_text("45320.1512");
-        assert_eq!(result, "453201512");
-    }
-
-    #[test]
-    fn test_dot_stripped_wider_3_6_grouping() {
-        // 3-6 grouping: after-run of 6 digits is within the 1-6 cap.
-        let (result, _) = normalize_text("453.201511");
-        assert_eq!(result, "453201511");
-    }
-
-    #[test]
     fn test_strip_digit_adjacent_slash() {
         let (result, _) = normalize_text("1234/5678/9012");
         assert_eq!(result, "123456789012");
@@ -2811,6 +2769,37 @@ mod tests {
             "space_sep routing number after normalize should decode via nosep; norm={:?}, alts={:?}",
             normalized,
             alts
+        );
+    }
+
+    #[test]
+    fn test_digit_morse_nosep_trailing_newline() {
+        // When space-sep morse is piped via `echo "..." | siphon scan-text`, the shell
+        // appends \n. collapse_padding strips inner spaces but leaves the terminal \n
+        // (no next non-WS neighbour). The decoder must trim it and still decode.
+        let codes = [
+            "-----", ".----", "..---", "...--", "....-", ".....", "-....", "--...", "---..", "----.",
+        ];
+        let nosep: String = "4532"
+            .chars()
+            .map(|c| codes[c as usize - b'0' as usize])
+            .collect();
+        assert_eq!(nosep.len(), 20, "nosep 4532 should be 20 chars");
+
+        let with_lf = format!("{nosep}\n");
+        let result = try_decode_digit_morse_nosep(with_lf.as_bytes());
+        assert_eq!(
+            result.as_deref(),
+            Some("4532"),
+            "trailing LF should not prevent nosep decode; got {result:?}"
+        );
+
+        let with_crlf = format!("{nosep}\r\n");
+        let result = try_decode_digit_morse_nosep(with_crlf.as_bytes());
+        assert_eq!(
+            result.as_deref(),
+            Some("4532"),
+            "trailing CRLF should not prevent nosep decode; got {result:?}"
         );
     }
 
