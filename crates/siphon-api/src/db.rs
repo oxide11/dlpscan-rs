@@ -60,6 +60,7 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         include_str!("../migrations/0004_retention.sql"),
     ),
     (5, "0005_edm", include_str!("../migrations/0005_edm.sql")),
+    (6, "0006_lsh", include_str!("../migrations/0006_lsh.sql")),
 ];
 
 /// Initialise an optional database pool from the environment.
@@ -390,6 +391,111 @@ pub async fn persist_edm_query(
                 &api_key_hash_bytes,
                 &source_pod,
                 &duration_ms_i32,
+            ],
+        )
+        .await?;
+
+    Ok(())
+}
+
+/// Persist one LSH (document similarity) query event to the `lsh_queries` table.
+///
+/// Called non-blockingly via `tokio::spawn` after each scan that ran an LSH
+/// lookup, regardless of whether it matched. Silently no-ops when the pool
+/// is None.
+pub async fn persist_lsh_query(
+    pool: &Option<Pool>,
+    query_hash: &[u8],
+    query_length: usize,
+    matched: bool,
+    matched_doc_id: Option<&str>,
+    similarity: Option<f32>,
+    api_key_hash: &[u8],
+    source_pod: Option<&str>,
+    duration_ms: u64,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let Some(pool) = pool else {
+        return Ok(());
+    };
+
+    let client = pool.get().await?;
+    let query_hash_bytes: Option<&[u8]> = if query_hash.is_empty() {
+        None
+    } else {
+        Some(query_hash)
+    };
+    let api_key_hash_bytes: Option<&[u8]> = if api_key_hash.is_empty() {
+        None
+    } else {
+        Some(api_key_hash)
+    };
+    let query_length_i32 = query_length as i32;
+    let duration_ms_i32 = duration_ms as i32;
+
+    client
+        .execute(
+            "INSERT INTO lsh_queries \
+             (query_hash, query_length, matched, matched_doc_id, similarity, \
+              api_key_hash, source_pod, duration_ms) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            &[
+                &query_hash_bytes,
+                &query_length_i32,
+                &matched,
+                &matched_doc_id,
+                &similarity,
+                &api_key_hash_bytes,
+                &source_pod,
+                &duration_ms_i32,
+            ],
+        )
+        .await?;
+
+    Ok(())
+}
+
+/// Persist one LSH vault document registration to the `lsh_registrations` table.
+///
+/// Called when a document is registered into a vault. Silently no-ops when
+/// the pool is None.
+pub async fn persist_lsh_registration(
+    pool: &Option<Pool>,
+    document_id: &str,
+    document_hash: &[u8],
+    document_length: usize,
+    api_key_hash: &[u8],
+    source_pod: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let Some(pool) = pool else {
+        return Ok(());
+    };
+
+    let client = pool.get().await?;
+    let document_hash_bytes: Option<&[u8]> = if document_hash.is_empty() {
+        None
+    } else {
+        Some(document_hash)
+    };
+    let api_key_hash_bytes: Option<&[u8]> = if api_key_hash.is_empty() {
+        None
+    } else {
+        Some(api_key_hash)
+    };
+    let document_length_i32 = document_length as i32;
+
+    client
+        .execute(
+            "INSERT INTO lsh_registrations \
+             (document_id, document_hash, document_length, api_key_hash, source_pod, \
+              scanner_version) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+            &[
+                &document_id,
+                &document_hash_bytes,
+                &document_length_i32,
+                &api_key_hash_bytes,
+                &source_pod,
+                &env!("CARGO_PKG_VERSION"),
             ],
         )
         .await?;

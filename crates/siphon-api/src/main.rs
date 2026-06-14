@@ -973,6 +973,8 @@ async fn scan(
 
         let pool_clone = state.db_pool.clone();
         let api_key_hash_bytes_for_edm = api_key_hash_bytes.clone();
+        let api_key_hash_bytes_for_lsh = api_key_hash_bytes.clone();
+        let input_hash_bytes_for_lsh = input_hash_bytes.clone();
         tokio::spawn(async move {
             if let Err(e) = db::persist_scan(
                 &pool_clone,
@@ -1022,6 +1024,51 @@ async fn scan(
                     {
                         tracing::warn!("edm_query persist failed: {e}");
                     }
+                }
+            });
+        }
+
+        // Persist LSH query events for any Document Similarity findings.
+        // LSH findings have category "Document Similarity"; the matched
+        // doc_id is encoded in the text field as "Similar to: {doc_id}".
+        {
+            let lsh_matches: Vec<(String, f32)> = findings
+                .iter()
+                .filter(|f| f.category == "Document Similarity")
+                .map(|f| {
+                    let doc_id = f
+                        .text
+                        .strip_prefix("Similar to: ")
+                        .unwrap_or(&f.text)
+                        .to_string();
+                    (doc_id, f.confidence as f32)
+                })
+                .collect();
+            let matched = !lsh_matches.is_empty();
+            let pool_lsh = state.db_pool.clone();
+            let api_key_hash_lsh = api_key_hash_bytes_for_lsh;
+            let query_hash_lsh = input_hash_bytes_for_lsh;
+            let query_len = input_len;
+            let dur_lsh = duration_ms as u64;
+            tokio::spawn(async move {
+                let (matched_doc_id, similarity) = lsh_matches
+                    .first()
+                    .map(|(id, sim)| (Some(id.as_str().to_string()), Some(*sim)))
+                    .unwrap_or((None, None));
+                if let Err(e) = db::persist_lsh_query(
+                    &pool_lsh,
+                    &query_hash_lsh,
+                    query_len,
+                    matched,
+                    matched_doc_id.as_deref(),
+                    similarity,
+                    &api_key_hash_lsh,
+                    Some("siphon-api"),
+                    dur_lsh,
+                )
+                .await
+                {
+                    tracing::warn!("lsh_query persist failed: {e}");
                 }
             });
         }
@@ -3682,6 +3729,121 @@ async fn list_lsh_vaults() -> Json<VaultStubResponse> {
 }
 
 // ---------------------------------------------------------------------------
+// GET /v1/lsh/history — recent LSH query events from Postgres.
+// Mirrors the EDM pattern: paginated, filterable by matched_only.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct LshHistoryQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    matched_only: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct LshQueryRecord {
+    id: String,
+    created_at: String,
+    matched: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    matched_doc_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    similarity: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    query_length: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_pod: Option<String>,
+}
+
+#[derive(Serialize)]
+struct LshHistoryResponse {
+    queries: Vec<LshQueryRecord>,
+    total: i64,
+}
+
+async fn lsh_history(
+    Query(q): Query<LshHistoryQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Json<LshHistoryResponse> {
+    let Some(pool) = state.db_pool.as_ref() else {
+        return Json(LshHistoryResponse {
+            queries: Vec::new(),
+            total: 0,
+        });
+    };
+
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("lsh_history: pool get failed: {e}");
+            return Json(LshHistoryResponse {
+                queries: Vec::new(),
+                total: 0,
+            });
+        }
+    };
+
+    let limit = q.limit.unwrap_or(50).min(1000);
+    let offset = q.offset.unwrap_or(0);
+    let matched_only = q.matched_only.unwrap_or(false);
+
+    let rows = match client
+        .query(
+            "SELECT id, created_at, matched, matched_doc_id, similarity, \
+             query_length, duration_ms, source_pod \
+             FROM lsh_queries \
+             WHERE (NOT $1 OR matched = true) \
+             ORDER BY created_at DESC \
+             LIMIT $2 OFFSET $3",
+            &[&matched_only, &limit, &offset],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("lsh_history: query failed: {e}");
+            return Json(LshHistoryResponse {
+                queries: Vec::new(),
+                total: 0,
+            });
+        }
+    };
+
+    let queries: Vec<LshQueryRecord> = rows
+        .iter()
+        .map(|r| {
+            let id: uuid::Uuid = r.get("id");
+            let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+            LshQueryRecord {
+                id: id.to_string(),
+                created_at: created_at.to_rfc3339(),
+                matched: r.get("matched"),
+                matched_doc_id: r.get("matched_doc_id"),
+                similarity: r.get("similarity"),
+                query_length: r.get("query_length"),
+                duration_ms: r.get("duration_ms"),
+                source_pod: r.get("source_pod"),
+            }
+        })
+        .collect();
+
+    let total: i64 = match client
+        .query_one(
+            "SELECT COUNT(*) FROM lsh_queries WHERE (NOT $1 OR matched = true)",
+            &[&matched_only],
+        )
+        .await
+    {
+        Ok(row) => row.get(0),
+        Err(_) => queries.len() as i64,
+    };
+
+    Json(LshHistoryResponse { queries, total })
+}
+
+// ---------------------------------------------------------------------------
 // GET /v1/findings/stats — category breakdown + daily scan counts from
 // Postgres. Returns empty stats when the pool is None (no DB configured).
 // Response is cached for STATS_CACHE_SECS seconds to avoid repeated
@@ -3703,12 +3865,23 @@ struct DailyScanCount {
 }
 
 #[derive(Serialize)]
+struct LshStats {
+    total_registrations: i64,
+    total_queries: i64,
+    match_rate: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_registration: Option<String>,
+}
+
+#[derive(Serialize)]
 struct FindingsStatsResponse {
     categories: Vec<CategoryCount>,
     daily_scans: Vec<DailyScanCount>,
     total_findings: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     last_scan_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lsh: Option<LshStats>,
 }
 
 async fn findings_stats(State(state): State<Arc<AppState>>) -> Response {
@@ -3736,6 +3909,7 @@ async fn findings_stats(State(state): State<Arc<AppState>>) -> Response {
             daily_scans: Vec::new(),
             total_findings: 0,
             last_scan_at: None,
+            lsh: None,
         })
         .into_response();
     };
@@ -3749,6 +3923,7 @@ async fn findings_stats(State(state): State<Arc<AppState>>) -> Response {
                 daily_scans: Vec::new(),
                 total_findings: 0,
                 last_scan_at: None,
+                lsh: None,
             })
             .into_response();
         }
@@ -3833,11 +4008,63 @@ async fn findings_stats(State(state): State<Arc<AppState>>) -> Response {
         }
     };
 
+    // LSH stats: total registrations, total queries, match rate, last registration.
+    let lsh_total_registrations: i64 = match client
+        .query_one("SELECT COUNT(*) FROM lsh_registrations", &[])
+        .await
+    {
+        Ok(row) => row.get(0),
+        Err(e) => {
+            tracing::warn!("findings_stats: lsh_registrations count failed: {e}");
+            0
+        }
+    };
+    let (lsh_total_queries, lsh_matched_queries): (i64, i64) = match client
+        .query_one(
+            "SELECT COUNT(*), COUNT(*) FILTER (WHERE matched = true) FROM lsh_queries",
+            &[],
+        )
+        .await
+    {
+        Ok(row) => (row.get(0), row.get(1)),
+        Err(e) => {
+            tracing::warn!("findings_stats: lsh_queries count failed: {e}");
+            (0, 0)
+        }
+    };
+    let lsh_match_rate = if lsh_total_queries > 0 {
+        lsh_matched_queries as f64 / lsh_total_queries as f64
+    } else {
+        0.0
+    };
+    let lsh_last_registration: Option<String> = match client
+        .query_one("SELECT MAX(created_at) FROM lsh_registrations", &[])
+        .await
+    {
+        Ok(row) => {
+            let ts: Option<chrono::DateTime<chrono::Utc>> =
+                row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(0);
+            ts.map(|t| t.to_rfc3339())
+        }
+        Err(e) => {
+            tracing::warn!("findings_stats: lsh_last_registration query failed: {e}");
+            None
+        }
+    };
+
+    let lsh_stats = LshStats {
+        total_registrations: lsh_total_registrations,
+        total_queries: lsh_total_queries,
+        match_rate: lsh_match_rate,
+        last_registration: lsh_last_registration,
+    };
+
     let response = FindingsStatsResponse {
         categories,
         daily_scans,
         total_findings,
         last_scan_at,
+        lsh: Some(lsh_stats),
     };
 
     // Populate cache.
@@ -4596,6 +4823,7 @@ async fn main() {
         .route("/v1/allowlist", get(list_allowlist))
         .route("/v1/edm", get(list_edm_vaults))
         .route("/v1/lsh", get(list_lsh_vaults))
+        .route("/v1/lsh/history", get(lsh_history))
         // /v1/findings/* routes MUST be registered before /v1/findings
         // so the more-specific paths are matched first.
         .route("/v1/findings/stats", get(findings_stats))
