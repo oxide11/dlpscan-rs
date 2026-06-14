@@ -149,6 +149,53 @@ The `LiveOverrides` state is an `Arc<RwLock<…>>` snapshot cloned per request �
 operators can call `POST /v1/overrides/apply` to swap overrides without restart.
 Findings rings are per-pod; each replica maintains its own ring.
 
+## Findings persistence layer (postgres)
+
+Migration files in `crates/siphon-api/src/migrations/`:
+- `0001_init.sql` — pgcrypto, pg_trgm, db_health table
+- `0002_findings.sql` — scans + findings tables, 6 indexes including GIN trigram
+- `0003_file_scans.sql` — adds file_name, file_hash, mime_type to scans
+- `0004_retention.sql` — prune_findings() PL/pgSQL function + retention index
+
+Key functions in `crates/siphon-api/src/db.rs`:
+- `init_optional()` → `(PoolState, Option<Pool>)` — three states: Unconfigured/Connected/StartupFailed
+- `persist_scan(pool, scan_id, api_key, input, response, duration_ms, action)` — called after every scan
+- `prune_old_findings(pool, retention_days)` — called by background task + `POST /v1/findings/prune`
+
+Scan endpoints with persistence:
+- `POST /scan` → `persist_scan()` via `tokio::spawn` (non-blocking)
+- `POST /scan/batch` → one `persist_scan()` per item via `tokio::spawn`
+- siphon-fs file scans → persist via `crates/siphon-fs/src/db.rs` (schema owned by siphon-api)
+
+Findings query endpoints:
+- `GET /v1/findings` — in-memory ring (existing, unchanged)
+- `GET /v1/findings/pg?category=&limit=&offset=` — postgres query
+- `GET /v1/findings/stats` — category breakdown + daily counts
+- `POST /v1/findings/prune` — manual retention trigger (admin only)
+
+Env vars for postgres:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `SIPHON_DATABASE_URL` | — | Postgres connection string (optional) |
+| `SIPHON_FINDINGS_RETENTION_DAYS` | 90 | Days to retain findings (0 = keep forever) |
+
+C2 wireframe:
+- `docs/wireframes/siphon-c2.html` — FindingsHistory component added
+- History tab polls `/v1/findings/stats` every 60s, `/v1/findings/pg` on filter change
+- Live tab unchanged — fans out to `/v1/findings` ring per pod
+
+## Open PRs
+
+| PR | Branch | Summary |
+|---|---|---|
+| #297 | dependabot/cargo/calamine-0.35.0 | deps: bump calamine 0.34→0.35 |
+| #311 | fix/morse-trim-trailing-whitespace | fix(core): trim trailing whitespace in morse no-sep decoder |
+| #312 | feat/findings-persistence | feat(api): findings persistence to postgres |
+| #313 | feat/findings-history-tab | feat(wireframes): Findings History tab — postgres-backed |
+| #314 | feat/batch-file-scan-persistence | feat(api,fs): findings persistence for batch and file scans |
+| #315 | feat/findings-retention | feat(api): findings retention policy |
+
 ### siphon-fs routes
 
 Same auth and health/ready as siphon-api. One additional endpoint:
