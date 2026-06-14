@@ -59,6 +59,7 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "0004_retention",
         include_str!("../migrations/0004_retention.sql"),
     ),
+    (5, "0005_edm", include_str!("../migrations/0005_edm.sql")),
 ];
 
 /// Initialise an optional database pool from the environment.
@@ -347,6 +348,85 @@ pub async fn persist_scan(
             )
             .await?;
     }
+
+    Ok(())
+}
+
+/// Persist one EDM (Exact Data Match) query event to the `edm_queries` table.
+///
+/// Called non-blockingly via `tokio::spawn` after each scan that ran an EDM
+/// lookup, regardless of whether it matched. Silently no-ops when the pool
+/// is None.
+pub async fn persist_edm_query(
+    pool: &Option<Pool>,
+    matched: bool,
+    category: Option<&str>,
+    confidence: Option<f32>,
+    api_key_hash: &[u8],
+    source_pod: Option<&str>,
+    duration_ms: u64,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let Some(pool) = pool else {
+        return Ok(());
+    };
+
+    let client = pool.get().await?;
+    let api_key_hash_bytes: Option<&[u8]> = if api_key_hash.is_empty() {
+        None
+    } else {
+        Some(api_key_hash)
+    };
+    let duration_ms_i32 = duration_ms as i32;
+
+    client
+        .execute(
+            "INSERT INTO edm_queries \
+             (matched, category, confidence, api_key_hash, source_pod, duration_ms) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+            &[
+                &matched,
+                &category,
+                &confidence,
+                &api_key_hash_bytes,
+                &source_pod,
+                &duration_ms_i32,
+            ],
+        )
+        .await?;
+
+    Ok(())
+}
+
+/// Persist one EDM vault registration to the `edm_registrations` table.
+///
+/// Called when an EDM vault is registered via the scan endpoint (as part of
+/// the ScanConfig). Silently no-ops when the pool is None.
+pub async fn persist_edm_registration(
+    pool: &Option<Pool>,
+    category: &str,
+    record_count: i32,
+    api_key_hash: &[u8],
+    source_pod: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let Some(pool) = pool else {
+        return Ok(());
+    };
+
+    let client = pool.get().await?;
+    let api_key_hash_bytes: Option<&[u8]> = if api_key_hash.is_empty() {
+        None
+    } else {
+        Some(api_key_hash)
+    };
+
+    client
+        .execute(
+            "INSERT INTO edm_registrations \
+             (category, record_count, api_key_hash, source_pod) \
+             VALUES ($1, $2, $3, $4)",
+            &[&category, &record_count, &api_key_hash_bytes, &source_pod],
+        )
+        .await?;
 
     Ok(())
 }

@@ -5,22 +5,16 @@ Last updated: 2026-06-13
 ## Ready to build
 
 ### High priority
-- [ ] Test postgres findings end to end in kind cluster — spin up postgres, verify persist_scan(), query endpoints, retention pruning
-- [ ] Findings export endpoint — GET /v1/findings/export returns CSV for compliance teams
-- [ ] Rate limiting on /v1/findings/pg — prevent expensive queries impacting scan performance
 - [ ] siphon-api serve subcommand — persistent HTTP API without k8s (needed for evadex bridge integration)
+- [ ] Findings deduplication — don't store duplicate findings for identical input
 
 ### Medium priority
-- [ ] EDM persistence — store exact match registration + query results in postgres
 - [ ] LSH persistence — store document similarity results in postgres
 - [ ] evadex results → postgres — store evadex scan results in findings table for C2 trending
-- [ ] Findings deduplication — don't store duplicate findings for identical input
 - [ ] POST /v1/findings/prune ?days=N — already done, document in API reference
 
 ### Detection improvements (from evadex data)
 - [ ] Morse code remaining bypass — currently ~50%, target <30%
-- [ ] Encoding chains — base64→ROT13 chains still high bypass
-- [ ] CUSIP context — only detected in settlement format
 - [ ] Regional digits — Thai, Extended Arabic-Indic still high bypass
 
 ### Infrastructure
@@ -30,10 +24,6 @@ Last updated: 2026-06-13
 
 ## In progress (open PRs)
 - [ ] #311 — fix(core): trim trailing whitespace in morse no-sep decoder
-- [ ] #312 — findings schema + persist_scan + query endpoints
-- [ ] #313 — C2 Findings History tab
-- [ ] #314 — batch + file scan persistence
-- [ ] #315 — retention policy
 - [ ] #297 — deps: bump calamine 0.34→0.35 (dependabot)
 
 ## Recently completed
@@ -48,3 +38,10 @@ Last updated: 2026-06-13
 - [x] Batch + file scan persistence — PR #314
 - [x] Retention policy — PR #315
 - [x] evadex v3.28.2 published to PyPI
+- [x] Findings export endpoint — GET /v1/findings/export (CSV + JSON, 100k row limit, date range filter)
+- [x] Rate limiting on findings query endpoints — /v1/findings/export 5/min, /v1/findings/pg 30/min, /v1/findings/stats 60/min per IP
+- [x] Stats caching — /v1/findings/stats response cached 60s to avoid repeated full-table COUNT scans
+- [x] EDM persistence — migration 0005_edm.sql + persist_edm_query/persist_edm_registration in db.rs + wired into scan handler
+- [x] CUSIP context keywords expanded — added instrument, ticker, position, identifier, portfolio, holding, asset, issuance, prospectus, indenture, maturity, coupon, face value, par value; distance 50→75
+- [x] Encoding chain alternatives — base64→ROT13, ROT13→base64, hex→base64 two-stage chains in generate_alternative_decodings
+- [x] Postgres end-to-end in kind cluster — siphon-lab cluster verified, postgres deployed, findings persistence tested

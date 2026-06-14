@@ -155,6 +155,11 @@ struct AppState {
     /// the operator can tell "URL not configured" apart from
     /// "URL set but the pool failed to come up at startup".
     db_state: db::PoolState,
+    /// Short-lived cache for GET /v1/findings/stats. Avoids repeated
+    /// full-table scans on every poll from the C2. Holds the last
+    /// serialized response body and the time it was computed; the
+    /// handler replaces it after STATS_CACHE_SECS seconds.
+    stats_cache: Arc<Mutex<Option<(Instant, serde_json::Value)>>>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -539,6 +544,18 @@ async fn auth_middleware(
 // Rate limit middleware
 // ---------------------------------------------------------------------------
 
+/// Per-endpoint rate limits (req/min per IP) that are tighter than the
+/// global SIPHON_RATE_LIMIT. Only the listed paths are checked; all other
+/// paths fall through to the global limit only.
+fn endpoint_rate_limit(path: &str) -> Option<u32> {
+    match path {
+        "/v1/findings/export" => Some(5), // expensive — file download
+        "/v1/findings/pg" => Some(30),    // DB query
+        "/v1/findings/stats" => Some(60), // cached, lighter
+        _ => None,
+    }
+}
+
 async fn rate_limit_middleware(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -546,20 +563,30 @@ async fn rate_limit_middleware(
     next: Next,
 ) -> Response {
     let ip = addr.ip().to_string();
+    let path = request.uri().path().to_string();
+
     let allowed = {
         let mut limiter = state.rate_limiter.lock().unwrap();
-        limiter.check(&ip, state.rate_limit)
+        // Global per-IP limit
+        let global_ok = limiter.check(&ip, state.rate_limit);
+        // Per-endpoint tighter limit (uses "ep:<path>:<ip>" as bucket key)
+        let endpoint_ok = match endpoint_rate_limit(&path) {
+            Some(ep_limit) => limiter.check(&format!("ep:{path}:{ip}"), ep_limit),
+            None => true,
+        };
+        global_ok && endpoint_ok
     };
 
     if !allowed {
-        tracing::warn!(ip = %ip, "rate_limited");
+        tracing::warn!(ip = %ip, path = %path, "rate_limited");
         if let Ok(event) = AuditEvent::new("REJECT") {
             emit_audit(
                 event
                     .with_action("rate_limit")
                     .with_outcome("rejected")
                     .with_source_ip(&ip)
-                    .with_metadata("reason", serde_json::json!("rate_limit_exceeded")),
+                    .with_metadata("reason", serde_json::json!("rate_limit_exceeded"))
+                    .with_metadata("path", serde_json::json!(path)),
             );
         }
         return (
@@ -945,6 +972,7 @@ async fn scan(
             .collect();
 
         let pool_clone = state.db_pool.clone();
+        let api_key_hash_bytes_for_edm = api_key_hash_bytes.clone();
         tokio::spawn(async move {
             if let Err(e) = db::persist_scan(
                 &pool_clone,
@@ -966,6 +994,37 @@ async fn scan(
                 tracing::warn!("findings persist failed: {e}");
             }
         });
+
+        // Persist EDM query events for any Exact Data Match findings.
+        // Each EDM finding is a confirmed known-value hit — record it
+        // separately so operators can track EDM match rates.
+        let edm_findings: Vec<(String, f64)> = findings
+            .iter()
+            .filter(|f| f.sub_category == "Exact Data Match")
+            .map(|f| (f.category.clone(), f.confidence))
+            .collect();
+        if !edm_findings.is_empty() {
+            let pool_edm = state.db_pool.clone();
+            let api_key_hash_edm = api_key_hash_bytes_for_edm;
+            let dur_edm = duration_ms as u64;
+            tokio::spawn(async move {
+                for (category, confidence) in &edm_findings {
+                    if let Err(e) = db::persist_edm_query(
+                        &pool_edm,
+                        true,
+                        Some(category.as_str()),
+                        Some(*confidence as f32),
+                        &api_key_hash_edm,
+                        Some("siphon-api"),
+                        dur_edm,
+                    )
+                    .await
+                    {
+                        tracing::warn!("edm_query persist failed: {e}");
+                    }
+                }
+            });
+        }
     }
 
     // Push each finding into the in-memory ring so /v1/findings can surface
@@ -3625,7 +3684,11 @@ async fn list_lsh_vaults() -> Json<VaultStubResponse> {
 // ---------------------------------------------------------------------------
 // GET /v1/findings/stats — category breakdown + daily scan counts from
 // Postgres. Returns empty stats when the pool is None (no DB configured).
+// Response is cached for STATS_CACHE_SECS seconds to avoid repeated
+// full-table COUNT scans on every C2 poll.
 // ---------------------------------------------------------------------------
+
+const STATS_CACHE_SECS: u64 = 60;
 
 #[derive(Serialize)]
 struct CategoryCount {
@@ -3648,14 +3711,33 @@ struct FindingsStatsResponse {
     last_scan_at: Option<String>,
 }
 
-async fn findings_stats(State(state): State<Arc<AppState>>) -> Json<FindingsStatsResponse> {
+async fn findings_stats(State(state): State<Arc<AppState>>) -> Response {
+    // Return cached response if fresh enough (avoids repeated DB COUNT scans).
+    {
+        let cache = state.stats_cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((cached_at, ref cached_body)) = *cache {
+            if cached_at.elapsed().as_secs() < STATS_CACHE_SECS {
+                let body = serde_json::to_vec(cached_body).unwrap_or_default();
+                return (
+                    [(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("application/json"),
+                    )],
+                    body,
+                )
+                    .into_response();
+            }
+        }
+    }
+
     let Some(pool) = state.db_pool.as_ref() else {
         return Json(FindingsStatsResponse {
             categories: Vec::new(),
             daily_scans: Vec::new(),
             total_findings: 0,
             last_scan_at: None,
-        });
+        })
+        .into_response();
     };
 
     let client = match pool.get().await {
@@ -3667,7 +3749,8 @@ async fn findings_stats(State(state): State<Arc<AppState>>) -> Json<FindingsStat
                 daily_scans: Vec::new(),
                 total_findings: 0,
                 last_scan_at: None,
-            });
+            })
+            .into_response();
         }
     };
 
@@ -3750,12 +3833,20 @@ async fn findings_stats(State(state): State<Arc<AppState>>) -> Json<FindingsStat
         }
     };
 
-    Json(FindingsStatsResponse {
+    let response = FindingsStatsResponse {
         categories,
         daily_scans,
         total_findings,
         last_scan_at,
-    })
+    };
+
+    // Populate cache.
+    if let Ok(json_val) = serde_json::to_value(&response) {
+        let mut cache = state.stats_cache.lock().unwrap_or_else(|e| e.into_inner());
+        *cache = Some((Instant::now(), json_val));
+    }
+
+    Json(response).into_response()
 }
 
 // ---------------------------------------------------------------------------
@@ -3884,6 +3975,196 @@ async fn list_pg_findings(
     };
 
     Json(PgFindingsResponse { findings, total })
+}
+
+// ---------------------------------------------------------------------------
+// GET /v1/findings/export — bulk export of findings as CSV or JSON.
+// Returns a file download suitable for compliance teams and long-term
+// archival. Max 100,000 rows per request.
+// ---------------------------------------------------------------------------
+
+const EXPORT_MAX_ROWS: i64 = 100_000;
+
+#[derive(Deserialize)]
+struct ExportQuery {
+    /// Output format: "csv" (default) or "json"
+    format: Option<String>,
+    /// Filter by category
+    category: Option<String>,
+    /// ISO8601 lower bound (inclusive), e.g. 2026-01-01T00:00:00Z
+    from: Option<String>,
+    /// ISO8601 upper bound (inclusive)
+    to: Option<String>,
+    /// Maximum rows to return (capped at 100,000)
+    limit: Option<i64>,
+}
+
+async fn findings_export(
+    Query(q): Query<ExportQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    let format = q.format.as_deref().unwrap_or("csv");
+    let limit = q.limit.unwrap_or(EXPORT_MAX_ROWS).min(EXPORT_MAX_ROWS);
+    let category = q.category.as_deref();
+    let from_ts: Option<chrono::DateTime<chrono::Utc>> =
+        q.from.as_deref().and_then(|s| s.parse().ok());
+    let to_ts: Option<chrono::DateTime<chrono::Utc>> = q.to.as_deref().and_then(|s| s.parse().ok());
+
+    let Some(pool) = state.db_pool.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                error: "database not configured".into(),
+            }),
+        )
+            .into_response();
+    };
+
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("findings_export: pool get failed: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "database unavailable".into(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    // JOIN findings → scans to get source_pod, scanner_version, file_name, duration_ms.
+    let rows = match client
+        .query(
+            "SELECT f.id, f.created_at, f.category, f.sub_category, f.confidence, \
+             f.matched_text, f.has_context, \
+             s.source_pod, s.scanner_version, s.file_name, s.duration_ms \
+             FROM findings f \
+             LEFT JOIN scans s ON s.id = f.scan_id \
+             WHERE ($1::text IS NULL OR f.category = $1) \
+             AND ($2::timestamptz IS NULL OR f.created_at >= $2) \
+             AND ($3::timestamptz IS NULL OR f.created_at <= $3) \
+             ORDER BY f.created_at DESC \
+             LIMIT $4",
+            &[&category, &from_ts, &to_ts, &limit],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("findings_export: query failed: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("query failed: {e}"),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let date_label = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+    if format == "json" {
+        let items: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|r| {
+                let id: uuid::Uuid = r.get("id");
+                let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+                serde_json::json!({
+                    "id": id.to_string(),
+                    "created_at": created_at.to_rfc3339(),
+                    "category": r.get::<_, String>("category"),
+                    "sub_category": r.get::<_, Option<String>>("sub_category"),
+                    "confidence": r.get::<_, f32>("confidence"),
+                    "matched_text": r.get::<_, Option<String>>("matched_text"),
+                    "has_context": r.get::<_, Option<bool>>("has_context"),
+                    "source_pod": r.get::<_, Option<String>>("source_pod"),
+                    "scanner_version": r.get::<_, Option<String>>("scanner_version"),
+                    "file_name": r.get::<_, Option<String>>("file_name"),
+                    "duration_ms": r.get::<_, Option<i32>>("duration_ms"),
+                })
+            })
+            .collect();
+
+        let body = serde_json::to_vec(&items).unwrap_or_default();
+        let filename = format!("siphon-findings-{date_label}.json");
+        return (
+            [
+                (
+                    header::CONTENT_DISPOSITION,
+                    HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+                        .unwrap_or(HeaderValue::from_static("attachment")),
+                ),
+                (
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/json"),
+                ),
+            ],
+            body,
+        )
+            .into_response();
+    }
+
+    // Default: CSV
+    let mut csv = String::with_capacity(rows.len() * 200);
+    csv.push_str("id,created_at,category,sub_category,confidence,matched_text,has_context,source_pod,scanner_version,file_name,duration_ms\n");
+    for r in &rows {
+        let id: uuid::Uuid = r.get("id");
+        let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+        let category: String = r.get("category");
+        let sub_category: Option<String> = r.get("sub_category");
+        let confidence: f32 = r.get("confidence");
+        let matched_text: Option<String> = r.get("matched_text");
+        let has_context: Option<bool> = r.get("has_context");
+        let source_pod: Option<String> = r.get("source_pod");
+        let scanner_version: Option<String> = r.get("scanner_version");
+        let file_name: Option<String> = r.get("file_name");
+        let duration_ms: Option<i32> = r.get("duration_ms");
+
+        fn csv_field(s: &str) -> String {
+            if s.contains(',') || s.contains('"') || s.contains('\n') {
+                format!("\"{}\"", s.replace('"', "\"\""))
+            } else {
+                s.to_string()
+            }
+        }
+
+        csv.push_str(&format!(
+            "{},{},{},{},{:.4},{},{},{},{},{},{}\n",
+            id,
+            created_at.to_rfc3339(),
+            csv_field(&category),
+            sub_category.as_deref().map(csv_field).unwrap_or_default(),
+            confidence,
+            matched_text.as_deref().map(csv_field).unwrap_or_default(),
+            has_context
+                .map(|b| if b { "true" } else { "false" })
+                .unwrap_or(""),
+            source_pod.as_deref().unwrap_or(""),
+            scanner_version.as_deref().unwrap_or(""),
+            file_name.as_deref().map(csv_field).unwrap_or_default(),
+            duration_ms.map(|n| n.to_string()).unwrap_or_default(),
+        ));
+    }
+
+    let filename = format!("siphon-findings-{date_label}.csv");
+    (
+        [
+            (
+                header::CONTENT_DISPOSITION,
+                HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+                    .unwrap_or(HeaderValue::from_static("attachment")),
+            ),
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/csv; charset=utf-8"),
+            ),
+        ],
+        csv,
+    )
+        .into_response()
 }
 
 #[derive(Deserialize)]
@@ -4263,6 +4544,7 @@ async fn main() {
         disabled_stages: Arc::new(RwLock::new(HashSet::new())),
         db_pool,
         db_state,
+        stats_cache: Arc::new(Mutex::new(None)),
     });
 
     // Retention pruning background task — runs once per day when
@@ -4318,6 +4600,7 @@ async fn main() {
         // so the more-specific paths are matched first.
         .route("/v1/findings/stats", get(findings_stats))
         .route("/v1/findings/pg", get(list_pg_findings))
+        .route("/v1/findings/export", get(findings_export))
         .route("/v1/findings/prune", post(findings_prune))
         .route("/v1/findings", get(list_findings))
         .route("/v1/version", get(version))
