@@ -43,3 +43,9 @@ spec:
               service:
                 name: siphon-fs
                 port: { number: 8081 }
+          - path: /evadex(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: evadex
+                port: { number: 8081 }

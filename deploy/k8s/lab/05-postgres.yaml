@@ -1,0 +1,134 @@
+# Postgres — findings persistence for the lab. Lab-only: emptyDir
+# data volume (no PVC) so the cluster is fully ephemeral. Mirrors the
+# Helm chart's deployment-postgres.yaml security posture.
+#
+# UID 999 = the `postgres` user baked into the upstream image.
+# readOnlyRootFilesystem: false — postgres must write to PGDATA.
+# PGDATA subpath avoids the lost+found initdb rejection on ext4 PVCs.
+# /var/run/postgresql and /tmp are each an emptyDir so the init
+# socket and temp files have a writable home.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: siphon-lab
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: siphon
+data:
+  init.sql: |
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: siphon-lab
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: siphon
+spec:
+  replicas: 1
+  # Recreate: a single postgres process must hold the on-disk lock.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: postgres
+        app.kubernetes.io/part-of: siphon
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: POSTGRES_DB
+              value: siphon
+            - name: POSTGRES_USER
+              value: siphon
+            - name: POSTGRES_PASSWORD
+              value: siphon-lab
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+          readinessProbe:
+            exec:
+              command: [pg_isready, -U, siphon, -d, siphon]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command: [pg_isready, -U, siphon, -d, siphon]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: init
+          configMap:
+            name: postgres-init
+        - name: run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: siphon-lab
+  labels:
+    app.kubernetes.io/name: postgres
+    app.kubernetes.io/part-of: siphon
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432

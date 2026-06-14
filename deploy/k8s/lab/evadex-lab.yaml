@@ -89,6 +89,18 @@ spec:
                   name: evadex-secrets
                   key: bridge-key
                   optional: true
+            # HTTP transport — bridge forwards scan requests to
+            # siphon-api:8080 rather than shelling out to the CLI.
+            - name: EVADEX_DEFAULT_SIPHON_URL
+              value: http://siphon-api:8080
+            # siphon-api in the lab has no API-key gate by default;
+            # the secret is optional so the pod starts without it.
+            - name: EVADEX_DEFAULT_SIPHON_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: siphon-api-auth
+                  key: api-key
+                  optional: true
             - name: SIPHON_EXE
               value: /usr/local/bin/siphon
             - name: EVADEX_BRIDGE_ROOT
@@ -193,6 +205,14 @@ spec:
                     secretKeyRef:
                       name: evadex-secrets
                       key: bridge-key
+                      optional: true
+                - name: EVADEX_DEFAULT_SIPHON_URL
+                  value: http://siphon-api:8080
+                - name: EVADEX_DEFAULT_SIPHON_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: siphon-api-auth
+                      key: api-key
                       optional: true
                 - name: SIPHON_EXE
                   value: /usr/local/bin/siphon

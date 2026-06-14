@@ -20,7 +20,7 @@ Last updated: 2026-06-14
 ### Infrastructure
 - [ ] Helm chart: postgres subchart or external postgres configuration
 - [ ] siphon-fs postgres pool — already wired, needs end-to-end test
-- [ ] lab-up.sh — add postgres to local kind setup
+- [x] lab-up.sh — add postgres to local kind setup
 
 ## In progress (open PRs)
 - [ ] #311 — fix(core): trim trailing whitespace in morse no-sep decoder
