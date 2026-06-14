@@ -42,18 +42,35 @@ pub enum PoolState {
 /// Add new files in chronological order; the runner applies them
 /// in this order and remembers which ones have run via the
 /// `_schema_migrations` bookkeeping table.
-const MIGRATIONS: &[(i64, &str, &str)] =
-    &[(1, "0001_init", include_str!("../migrations/0001_init.sql"))];
+const MIGRATIONS: &[(i64, &str, &str)] = &[
+    (1, "0001_init", include_str!("../migrations/0001_init.sql")),
+    (
+        2,
+        "0002_findings",
+        include_str!("../migrations/0002_findings.sql"),
+    ),
+    (
+        3,
+        "0003_file_scans",
+        include_str!("../migrations/0003_file_scans.sql"),
+    ),
+    (
+        4,
+        "0004_retention",
+        include_str!("../migrations/0004_retention.sql"),
+    ),
+    (5, "0005_edm", include_str!("../migrations/0005_edm.sql")),
+];
 
 /// Initialise an optional database pool from the environment.
 ///
 /// Returns `(state, pool)`:
 ///   * `(Unconfigured, None)` — SIPHON_DATABASE_URL not set.
-///   * `(Connected, Some)`    — URL set, pool ready, caller should
-///                              run migrations next.
+///   * `(Connected, Some)` — URL set, pool ready, caller should
+///     run migrations next.
 ///   * `(StartupFailed, None)` — URL set but the startup connect
-///                              attempt failed or timed out. /v1/db/health
-///                              surfaces this distinct from Unconfigured.
+///     attempt failed or timed out. /v1/db/health surfaces this
+///     distinct from Unconfigured.
 ///   * Returns `Err(_)` only on malformed URL — main() exits.
 pub async fn init_optional(
 ) -> Result<(PoolState, Option<Pool>), Box<dyn std::error::Error + Send + Sync>> {
@@ -162,5 +179,254 @@ pub async fn run_migrations(pool: &Pool) -> Result<(), Box<dyn std::error::Error
             .await?;
         client.simple_query("COMMIT").await?;
     }
+    Ok(())
+}
+
+/// Delete findings and scans older than `retention_days`.
+///
+/// Calls the `prune_findings` PL/pgSQL function installed by migration
+/// 0004. Returns `(scans_deleted, findings_deleted)`. No-ops silently
+/// when the pool is `None` (Postgres unconfigured or unreachable at
+/// startup).
+pub async fn prune_old_findings(
+    pool: &Option<Pool>,
+    retention_days: u32,
+) -> Result<(i64, i64), Box<dyn std::error::Error + Send + Sync>> {
+    let pool = match pool {
+        Some(p) => p,
+        None => return Ok((0, 0)),
+    };
+
+    let client = pool.get().await?;
+    let rows = client
+        .query(
+            "SELECT * FROM prune_findings($1)",
+            &[&(retention_days as i32)],
+        )
+        .await?;
+
+    if rows.is_empty() {
+        return Ok((0, 0));
+    }
+    let scans_deleted: i64 = rows[0].get(0);
+    let findings_deleted: i64 = rows[0].get(1);
+    Ok((scans_deleted, findings_deleted))
+}
+
+/// Persist one completed scan to the `scans` + `findings` tables.
+///
+/// Called in a background `tokio::spawn` after every POST /scan so
+/// DB latency never slows the scan response. If the pool is None
+/// (Postgres unconfigured or unreachable at startup) the call is a
+/// silent no-op. Individual DB errors are returned to the caller,
+/// which logs a warning and discards them — a failed write must
+/// never affect the scan response.
+///
+/// Raw input text is never stored. The caller pre-hashes both the
+/// api_key and the input with SHA-256 so db.rs stays self-contained
+/// (no crypto dep here).
+///
+/// `findings` is a slice of `serde_json::Value` objects with the
+/// following shape (produced by the scan handler from `Finding`
+/// structs):
+/// ```json
+/// {
+///   "category":         "Credit Card Numbers",
+///   "sub_category":     "Visa",
+///   "confidence":       0.95,
+///   "text":             "4111...",
+///   "has_context":      true,
+///   "span":             [0, 16],
+///   "metadata":         {}
+/// }
+/// ```
+#[allow(clippy::too_many_arguments)]
+pub async fn persist_scan(
+    pool: &Option<Pool>,
+    scan_id: uuid::Uuid,
+    api_key_hash: &[u8],
+    input_hash: &[u8],
+    input_length: usize,
+    findings: &[serde_json::Value],
+    duration_ms: u64,
+    action: &str,
+    source_pod: Option<&str>,
+    scanner_version: &str,
+    file_name: Option<&str>,
+    file_hash: Option<&[u8]>,
+    mime_type: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let Some(pool) = pool else {
+        return Ok(());
+    };
+
+    let client = pool.get().await?;
+
+    let api_key_hash_bytes: Option<&[u8]> = if api_key_hash.is_empty() {
+        None
+    } else {
+        Some(api_key_hash)
+    };
+    let input_hash_bytes: Option<&[u8]> = if input_hash.is_empty() {
+        None
+    } else {
+        Some(input_hash)
+    };
+    let input_len_i32 = input_length as i32;
+    let finding_count_i32 = findings.len() as i32;
+    let duration_ms_i32 = duration_ms as i32;
+
+    client
+        .execute(
+            "INSERT INTO scans \
+             (id, source_pod, scanner_version, api_key_hash, input_hash, \
+              input_length, finding_count, duration_ms, action, \
+              file_name, file_hash, mime_type) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+            &[
+                &scan_id,
+                &source_pod,
+                &scanner_version,
+                &api_key_hash_bytes,
+                &input_hash_bytes,
+                &input_len_i32,
+                &finding_count_i32,
+                &duration_ms_i32,
+                &action,
+                &file_name,
+                &file_hash,
+                &mime_type,
+            ],
+        )
+        .await?;
+
+    for f in findings {
+        let category = f.get("category").and_then(|v| v.as_str()).unwrap_or("");
+        let sub_category = f.get("sub_category").and_then(|v| v.as_str());
+        let confidence = f.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+        let span_start: Option<i32> = f
+            .get("span")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .and_then(|v| v.as_i64())
+            .map(|n| n as i32);
+        let span_end: Option<i32> = f
+            .get("span")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.get(1))
+            .and_then(|v| v.as_i64())
+            .map(|n| n as i32);
+        let matched_text = f.get("text").and_then(|v| v.as_str());
+        let has_context = f.get("has_context").and_then(|v| v.as_bool());
+        let context_required: Option<bool> = None;
+        let metadata: Option<serde_json::Value> = f.get("metadata").cloned();
+
+        client
+            .execute(
+                "INSERT INTO findings \
+                 (scan_id, source_pod, scanner_version, api_key_hash, input_hash, \
+                  input_length, category, sub_category, confidence, \
+                  span_start, span_end, matched_text, has_context, context_required, metadata) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+                &[
+                    &scan_id,
+                    &source_pod,
+                    &scanner_version,
+                    &api_key_hash_bytes,
+                    &input_hash_bytes,
+                    &input_len_i32,
+                    &category,
+                    &sub_category,
+                    &confidence,
+                    &span_start,
+                    &span_end,
+                    &matched_text,
+                    &has_context,
+                    &context_required,
+                    &metadata,
+                ],
+            )
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Persist one EDM (Exact Data Match) query event to the `edm_queries` table.
+///
+/// Called non-blockingly via `tokio::spawn` after each scan that ran an EDM
+/// lookup, regardless of whether it matched. Silently no-ops when the pool
+/// is None.
+pub async fn persist_edm_query(
+    pool: &Option<Pool>,
+    matched: bool,
+    category: Option<&str>,
+    confidence: Option<f32>,
+    api_key_hash: &[u8],
+    source_pod: Option<&str>,
+    duration_ms: u64,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let Some(pool) = pool else {
+        return Ok(());
+    };
+
+    let client = pool.get().await?;
+    let api_key_hash_bytes: Option<&[u8]> = if api_key_hash.is_empty() {
+        None
+    } else {
+        Some(api_key_hash)
+    };
+    let duration_ms_i32 = duration_ms as i32;
+
+    client
+        .execute(
+            "INSERT INTO edm_queries \
+             (matched, category, confidence, api_key_hash, source_pod, duration_ms) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+            &[
+                &matched,
+                &category,
+                &confidence,
+                &api_key_hash_bytes,
+                &source_pod,
+                &duration_ms_i32,
+            ],
+        )
+        .await?;
+
+    Ok(())
+}
+
+/// Persist one EDM vault registration to the `edm_registrations` table.
+///
+/// Called when an EDM vault is registered via the scan endpoint (as part of
+/// the ScanConfig). Silently no-ops when the pool is None.
+pub async fn persist_edm_registration(
+    pool: &Option<Pool>,
+    category: &str,
+    record_count: i32,
+    api_key_hash: &[u8],
+    source_pod: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let Some(pool) = pool else {
+        return Ok(());
+    };
+
+    let client = pool.get().await?;
+    let api_key_hash_bytes: Option<&[u8]> = if api_key_hash.is_empty() {
+        None
+    } else {
+        Some(api_key_hash)
+    };
+
+    client
+        .execute(
+            "INSERT INTO edm_registrations \
+             (category, record_count, api_key_hash, source_pod) \
+             VALUES ($1, $2, $3, $4)",
+            &[&category, &record_count, &api_key_hash_bytes, &source_pod],
+        )
+        .await?;
+
     Ok(())
 }

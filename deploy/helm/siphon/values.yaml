@@ -111,7 +111,9 @@ api:
     secretName: ""     # e.g. "siphon-api-auth"
     secretKey: "api-key"
 
-  extraEnv: []
+  extraEnv:
+    - name: SIPHON_FINDINGS_RETENTION_DAYS
+      value: "90"
   extraVolumes: []
   extraVolumeMounts: []
 

@@ -125,6 +125,32 @@ enum Commands {
         #[command(subcommand)]
         action: LshAction,
     },
+    /// Start the HTTP API server
+    Serve {
+        /// Host to bind to
+        #[arg(long, default_value = "0.0.0.0")]
+        host: String,
+
+        /// Port to listen on
+        #[arg(long, env = "SIPHON_API_PORT", default_value = "8080")]
+        port: u16,
+
+        /// API key for authentication (env: SIPHON_API_KEY)
+        #[arg(long, env = "SIPHON_API_KEY")]
+        api_key: Option<String>,
+
+        /// Database URL for findings persistence (env: SIPHON_DATABASE_URL)
+        #[arg(long, env = "SIPHON_DATABASE_URL")]
+        database_url: Option<String>,
+
+        /// Findings retention days — 0 keeps forever (env: SIPHON_FINDINGS_RETENTION_DAYS)
+        #[arg(long, env = "SIPHON_FINDINGS_RETENTION_DAYS", default_value = "90")]
+        retention_days: u32,
+
+        /// Tokio worker threads
+        #[arg(long, default_value = "4")]
+        workers: usize,
+    },
     /// Interactive TUI menu (requires tui feature)
     #[cfg(feature = "tui")]
     Tui,
@@ -929,6 +955,86 @@ fn main() {
                 );
             }
         },
+
+        // ---------------------------------------------------------------
+        // siphon serve — Start the HTTP API server (delegates to siphon-api)
+        // ---------------------------------------------------------------
+        Commands::Serve {
+            host,
+            port,
+            api_key,
+            database_url,
+            retention_days,
+            workers,
+        } => {
+            // Translate CLI args into the env vars siphon-api reads.
+            // CLI args win over any pre-existing env var so operators can
+            // override per invocation without unsetting variables globally.
+            std::env::set_var("SIPHON_BIND", &host);
+            std::env::set_var("SIPHON_PORT", port.to_string());
+            if let Some(key) = api_key {
+                std::env::set_var("SIPHON_API_KEY", key);
+            }
+            if let Some(db) = database_url {
+                std::env::set_var("SIPHON_DATABASE_URL", db);
+            }
+            if retention_days > 0 {
+                std::env::set_var("SIPHON_FINDINGS_RETENTION_DAYS", retention_days.to_string());
+            }
+            // tokio reads TOKIO_WORKER_THREADS to cap the default pool.
+            std::env::set_var("TOKIO_WORKER_THREADS", workers.to_string());
+
+            // Locate the siphon-api binary next to the running siphon
+            // executable. Both land in the same target/<profile>/ dir after
+            // a workspace build (cargo build --release / cargo build -p siphon-api).
+            let exe = std::env::current_exe().unwrap_or_else(|e| {
+                eprintln!("siphon serve: cannot determine executable path: {e}");
+                process::exit(1);
+            });
+            let api_bin = exe
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .join(if cfg!(windows) {
+                    "siphon-api.exe"
+                } else {
+                    "siphon-api"
+                });
+
+            if !api_bin.exists() {
+                eprintln!(
+                    "siphon serve: siphon-api not found at {}",
+                    api_bin.display()
+                );
+                eprintln!("  Build it with: cargo build --release -p siphon-api");
+                process::exit(1);
+            }
+
+            eprintln!(
+                "Siphon API server starting on {}:{} (workers: {})",
+                host, port, workers
+            );
+
+            // On Unix exec() replaces the current process so signals are
+            // forwarded naturally (no double-SIGTERM problem). On Windows
+            // we spawn a child and wait — Windows has no exec() equivalent.
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                let err = std::process::Command::new(&api_bin).exec();
+                eprintln!("siphon serve: exec failed: {err}");
+                process::exit(1);
+            }
+            #[cfg(not(unix))]
+            {
+                let status = std::process::Command::new(&api_bin)
+                    .status()
+                    .unwrap_or_else(|e| {
+                        eprintln!("siphon serve: failed to launch siphon-api: {e}");
+                        process::exit(1);
+                    });
+                process::exit(status.code().unwrap_or(1));
+            }
+        }
 
         // ---------------------------------------------------------------
         // siphon tui — Interactive TUI menu
