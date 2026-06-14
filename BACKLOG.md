@@ -9,8 +9,8 @@ Last updated: 2026-06-14
 - [ ] Findings deduplication — don't store duplicate findings for identical input
 
 ### Medium priority
-- [ ] LSH persistence — store document similarity results in postgres
-- [ ] evadex results → postgres — store evadex scan results in findings table for C2 trending
+- [x] LSH persistence — store document similarity results in postgres (PR #320)
+- [x] evadex results → postgres — store evadex scan results in findings table for C2 trending (PR #321)
 - [ ] POST /v1/findings/prune ?days=N — already done, document in API reference
 
 ### Detection improvements (from evadex data)
@@ -42,6 +42,8 @@ Last updated: 2026-06-14
 - [x] Rate limiting on findings query endpoints — /v1/findings/export 5/min, /v1/findings/pg 30/min, /v1/findings/stats 60/min per IP
 - [x] Stats caching — /v1/findings/stats response cached 60s to avoid repeated full-table COUNT scans
 - [x] EDM persistence — migration 0005_edm.sql + persist_edm_query/persist_edm_registration in db.rs + wired into scan handler
+- [x] LSH persistence — migration 0006_lsh.sql + persist_lsh_query/persist_lsh_registration in db.rs + wired into scan handler; GET /v1/lsh/history; GET /v1/findings/stats extended with lsh section
+- [x] evadex → postgres — migration 0007_evadex.sql; POST/GET /v1/evadex/runs + GET /v1/evadex/runs/stats in siphon-api; bridge push-to-siphon via SIPHON_API_URL; C2 Stored Runs panel
 - [x] CUSIP context keywords expanded — added instrument, ticker, position, identifier, portfolio, holding, asset, issuance, prospectus, indenture, maturity, coupon, face value, par value; distance 50→75
 - [x] Encoding chain alternatives — base64→ROT13, ROT13→base64, hex→base64 two-stage chains in generate_alternative_decodings
 - [x] Postgres end-to-end in kind cluster — siphon-lab cluster verified, postgres deployed, findings persistence tested

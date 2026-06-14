@@ -3729,6 +3729,321 @@ async fn list_lsh_vaults() -> Json<VaultStubResponse> {
 }
 
 // ---------------------------------------------------------------------------
+// POST /v1/evadex/runs — ingest a completed evadex scan from the bridge.
+// GET  /v1/evadex/runs — paginated run history.
+// GET  /v1/evadex/runs/stats — detection rate summary + top bypassed techniques.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct EvadexIngestRequest {
+    run_id: Option<String>,
+    scanner_label: Option<String>,
+    tier: Option<String>,
+    evasion_mode: Option<String>,
+    strategy: Option<String>,
+    meta: Option<serde_json::Value>,
+    results: Option<Vec<serde_json::Value>>,
+}
+
+async fn ingest_evadex_run(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<EvadexIngestRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if state.db_pool.is_none() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "database not configured"})),
+        );
+    }
+
+    let meta = body.meta.as_ref();
+    let run_id = body
+        .run_id
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let scanner_label = body
+        .scanner_label
+        .as_deref()
+        .or_else(|| meta.and_then(|m| m.get("scanner").and_then(|v| v.as_str())));
+    let total_variants =
+        meta.and_then(|m| m.get("total").and_then(|v| v.as_i64()).map(|n| n as i32));
+    let detected = meta.and_then(|m| m.get("pass").and_then(|v| v.as_i64()).map(|n| n as i32));
+    let bypassed = meta.and_then(|m| m.get("fail").and_then(|v| v.as_i64()).map(|n| n as i32));
+    let detection_rate = meta
+        .and_then(|m| m.get("pass_rate").and_then(|v| v.as_f64()))
+        .map(|n| n as f32);
+    let duration_s = meta
+        .and_then(|m| m.get("duration_s").and_then(|v| v.as_f64()))
+        .map(|n| n as f32);
+    let evadex_version = meta.and_then(|m| m.get("evadex_version").and_then(|v| v.as_str()));
+    let findings = body.results.unwrap_or_default();
+    let capped = findings.len().min(2000);
+
+    if let Err(e) = db::persist_evadex_run(
+        &state.db_pool,
+        &run_id,
+        scanner_label,
+        body.tier.as_deref(),
+        body.evasion_mode.as_deref(),
+        body.strategy.as_deref(),
+        total_variants,
+        detected,
+        bypassed,
+        detection_rate,
+        duration_s,
+        evadex_version,
+        None,
+        &findings[..capped],
+    )
+    .await
+    {
+        tracing::warn!("ingest_evadex_run: persist failed: {e}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "persist failed"})),
+        );
+    }
+
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "run_id": run_id,
+            "findings_stored": capped,
+        })),
+    )
+}
+
+#[derive(Deserialize)]
+struct EvadexRunsQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct EvadexRunSummary {
+    run_id: String,
+    created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scanner_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evasion_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_variants: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detected: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bypassed: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detection_rate: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_s: Option<f32>,
+}
+
+#[derive(Serialize)]
+struct EvadexRunsResponse {
+    runs: Vec<EvadexRunSummary>,
+    total: i64,
+}
+
+async fn list_evadex_runs(
+    Query(q): Query<EvadexRunsQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Json<EvadexRunsResponse> {
+    let Some(pool) = state.db_pool.as_ref() else {
+        return Json(EvadexRunsResponse {
+            runs: Vec::new(),
+            total: 0,
+        });
+    };
+
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("list_evadex_runs: pool get failed: {e}");
+            return Json(EvadexRunsResponse {
+                runs: Vec::new(),
+                total: 0,
+            });
+        }
+    };
+
+    let limit = q.limit.unwrap_or(50).min(500);
+    let offset = q.offset.unwrap_or(0);
+
+    let rows = match client
+        .query(
+            "SELECT run_id, created_at, scanner_label, tier, evasion_mode, \
+             total_variants, detected, bypassed, detection_rate, duration_s \
+             FROM evadex_runs \
+             ORDER BY created_at DESC \
+             LIMIT $1 OFFSET $2",
+            &[&limit, &offset],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("list_evadex_runs: query failed: {e}");
+            return Json(EvadexRunsResponse {
+                runs: Vec::new(),
+                total: 0,
+            });
+        }
+    };
+
+    let runs: Vec<EvadexRunSummary> = rows
+        .iter()
+        .map(|r| {
+            let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+            EvadexRunSummary {
+                run_id: r.get("run_id"),
+                created_at: created_at.to_rfc3339(),
+                scanner_label: r.get("scanner_label"),
+                tier: r.get("tier"),
+                evasion_mode: r.get("evasion_mode"),
+                total_variants: r.get("total_variants"),
+                detected: r.get("detected"),
+                bypassed: r.get("bypassed"),
+                detection_rate: r.get("detection_rate"),
+                duration_s: r.get("duration_s"),
+            }
+        })
+        .collect();
+
+    let total: i64 = match client
+        .query_one("SELECT COUNT(*) FROM evadex_runs", &[])
+        .await
+    {
+        Ok(row) => row.get(0),
+        Err(_) => runs.len() as i64,
+    };
+
+    Json(EvadexRunsResponse { runs, total })
+}
+
+#[derive(Serialize)]
+struct EvadexTechniqueBypass {
+    technique: String,
+    bypass_count: i64,
+    total_count: i64,
+    bypass_rate: f64,
+}
+
+#[derive(Serialize)]
+struct EvadexRunsStats {
+    total_runs: i64,
+    total_variants: i64,
+    total_detected: i64,
+    total_bypassed: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    avg_detection_rate: Option<f64>,
+    top_bypassed_techniques: Vec<EvadexTechniqueBypass>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_run_at: Option<String>,
+}
+
+async fn evadex_runs_stats(State(state): State<Arc<AppState>>) -> Json<EvadexRunsStats> {
+    let empty = || {
+        Json(EvadexRunsStats {
+            total_runs: 0,
+            total_variants: 0,
+            total_detected: 0,
+            total_bypassed: 0,
+            avg_detection_rate: None,
+            top_bypassed_techniques: Vec::new(),
+            last_run_at: None,
+        })
+    };
+
+    let Some(pool) = state.db_pool.as_ref() else {
+        return empty();
+    };
+
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("evadex_runs_stats: pool get failed: {e}");
+            return empty();
+        }
+    };
+
+    let summary_row = match client
+        .query_one(
+            "SELECT \
+               COUNT(*)                                  AS total_runs, \
+               COALESCE(SUM(total_variants),0)           AS total_variants, \
+               COALESCE(SUM(detected),0)                 AS total_detected, \
+               COALESCE(SUM(bypassed),0)                 AS total_bypassed, \
+               AVG(detection_rate)                       AS avg_detection_rate, \
+               MAX(created_at)                           AS last_run_at \
+             FROM evadex_runs",
+            &[],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("evadex_runs_stats: aggregate query failed: {e}");
+            return empty();
+        }
+    };
+
+    let last_run_at: Option<chrono::DateTime<chrono::Utc>> = summary_row.get("last_run_at");
+    let avg_dr: Option<f64> = summary_row.get("avg_detection_rate");
+
+    let technique_rows = match client
+        .query(
+            "SELECT \
+               technique, \
+               COUNT(*) FILTER (WHERE NOT detected) AS bypass_count, \
+               COUNT(*)                             AS total_count \
+             FROM evadex_findings \
+             GROUP BY technique \
+             ORDER BY bypass_count DESC \
+             LIMIT 10",
+            &[],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("evadex_runs_stats: technique query failed: {e}");
+            Vec::new()
+        }
+    };
+
+    let top_bypassed_techniques: Vec<EvadexTechniqueBypass> = technique_rows
+        .iter()
+        .map(|r| {
+            let bypass_count: i64 = r.get("bypass_count");
+            let total_count: i64 = r.get("total_count");
+            let bypass_rate = if total_count > 0 {
+                (bypass_count as f64 / total_count as f64) * 100.0
+            } else {
+                0.0
+            };
+            EvadexTechniqueBypass {
+                technique: r.get("technique"),
+                bypass_count,
+                total_count,
+                bypass_rate,
+            }
+        })
+        .collect();
+
+    Json(EvadexRunsStats {
+        total_runs: summary_row.get("total_runs"),
+        total_variants: summary_row.get("total_variants"),
+        total_detected: summary_row.get("total_detected"),
+        total_bypassed: summary_row.get("total_bypassed"),
+        avg_detection_rate: avg_dr,
+        top_bypassed_techniques,
+        last_run_at: last_run_at.map(|dt| dt.to_rfc3339()),
+    })
+}
+
+// ---------------------------------------------------------------------------
 // GET /v1/lsh/history — recent LSH query events from Postgres.
 // Mirrors the EDM pattern: paginated, filterable by matched_only.
 // ---------------------------------------------------------------------------
@@ -4824,6 +5139,12 @@ async fn main() {
         .route("/v1/edm", get(list_edm_vaults))
         .route("/v1/lsh", get(list_lsh_vaults))
         .route("/v1/lsh/history", get(lsh_history))
+        // /v1/evadex/runs/stats MUST be before /v1/evadex/runs (more specific first).
+        .route("/v1/evadex/runs/stats", get(evadex_runs_stats))
+        .route(
+            "/v1/evadex/runs",
+            get(list_evadex_runs).post(ingest_evadex_run),
+        )
         // /v1/findings/* routes MUST be registered before /v1/findings
         // so the more-specific paths are matched first.
         .route("/v1/findings/stats", get(findings_stats))

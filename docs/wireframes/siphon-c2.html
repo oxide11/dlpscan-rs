@@ -12336,6 +12336,15 @@ function EvadexAdversarial() {
   const fpTrendDelta  = fpTrend  && fpTrend.length  >= 2
     ? (fpTrend[fpTrend.length - 1]  - fpTrend[fpTrend.length - 2])  : null;
 
+  // ── Stored runs (siphon-api postgres) ─────────────────────
+  // Polls the siphon-api /v1/evadex/* endpoints for runs
+  // persisted by the bridge push-to-siphon feature.
+  const storedRunsData  = window.useSiphonApi('/v1/evadex/runs?limit=10');
+  const storedStatsData = window.useSiphonApi('/v1/evadex/runs/stats');
+  const storedRuns  = (storedRunsData  && storedRunsData.runs)  || [];
+  const storedStats = storedStatsData  || {};
+  const topBypassed = Array.isArray(storedStats.top_bypassed_techniques) ? storedStats.top_bypassed_techniques : [];
+
   // LivePill source mapping — keeps the chip styling identical
   // to every other surface that polls a backend (C2 dashboard,
   // Detect overview, etc.) instead of carrying its own variant.
@@ -12770,6 +12779,107 @@ function EvadexAdversarial() {
         <hr className="sep" />
         <div className="note" style={{maxWidth: 760, fontSize:11}}>
           Wired to <span className="mono">{bridgeUrl}</span> · polling <span className="mono">GET /v1/evadex/metrics</span> every 30 s · <span className="mono">POST /v1/evadex/run</span> + <span className="mono">POST /v1/evadex/generate</span> drive from the UI. Start the bridge locally with <span className="mono">python -m evadex bridge</span>.
+        </div>
+      </div>
+
+      {/* ══════════ SECTION 6 — Stored Runs (siphon-api postgres) ══════════ */}
+      <div className="box" style={{marginBottom:'var(--gap)'}}>
+        <div className="box-title">
+          <span className="t">Stored runs · postgres</span>
+          <span className="k">
+            persisted by bridge push-to-siphon ·{' '}
+            <span className="mono">GET /v1/evadex/runs</span>
+          </span>
+        </div>
+
+        {/* Aggregate stats row */}
+        <div className="grid grid-3" style={{marginBottom:'var(--gap)'}}>
+          <div>
+            <div className="label">Total runs</div>
+            <div className="mono" style={{fontSize:20, fontWeight:600}}>
+              {storedStats.total_runs != null ? storedStats.total_runs : '—'}
+            </div>
+            <div className="muted" style={{fontSize:11}}>
+              last · {window.siphonFormatRelative(storedStats.last_run_at)}
+            </div>
+          </div>
+          <div>
+            <div className="label">Avg detection rate</div>
+            <div className="mono" style={{fontSize:20, fontWeight:600,
+              color: storedStats.avg_detection_rate == null ? 'var(--ink-dim)'
+                   : storedStats.avg_detection_rate >= 95 ? 'var(--safe)'
+                   : storedStats.avg_detection_rate >= 85 ? 'var(--amber)'
+                   : 'var(--threat)'}}>
+              {storedStats.avg_detection_rate != null ? `${(+storedStats.avg_detection_rate).toFixed(1)}%` : '—'}
+            </div>
+            <div className="muted" style={{fontSize:11}}>
+              across {storedStats.total_runs || 0} stored run{storedStats.total_runs === 1 ? '' : 's'}
+            </div>
+          </div>
+          <div>
+            <div className="label">Total variants</div>
+            <div className="mono" style={{fontSize:20, fontWeight:600}}>
+              {storedStats.total_variants != null ? storedStats.total_variants.toLocaleString() : '—'}
+            </div>
+            <div className="muted" style={{fontSize:11}}>
+              {storedStats.total_bypassed != null ? storedStats.total_bypassed.toLocaleString() : '—'} bypassed
+            </div>
+          </div>
+        </div>
+
+        {/* Top bypassed techniques */}
+        {topBypassed.length > 0 && (
+          <div style={{marginBottom:'var(--gap)'}}>
+            <div className="label" style={{marginBottom:6}}>Top bypassed techniques</div>
+            <div style={{display:'grid', gridTemplateColumns:'1.5fr 80px 80px 100px', gap:'4px 12px', fontSize:12, alignItems:'center'}}>
+              <span className="label" style={{fontSize:10}}>Technique</span>
+              <span className="label" style={{fontSize:10}}>Bypass</span>
+              <span className="label" style={{fontSize:10}}>Total</span>
+              <span className="label" style={{fontSize:10}}>Bypass rate</span>
+              {topBypassed.slice(0, 6).flatMap((t, i) => [
+                <span key={'tn'+i} className="mono" style={{fontSize:11}}>{t.technique}</span>,
+                <span key={'bc'+i} className="mono" style={{fontSize:11, color:'var(--threat)'}}>{t.bypass_count}</span>,
+                <span key={'tc'+i} className="mono" style={{fontSize:11, color:'var(--ink-soft)'}}>{t.total_count}</span>,
+                <span key={'br'+i} className="mono" style={{fontSize:11,
+                  color: t.bypass_rate >= 80 ? 'var(--threat)' : t.bypass_rate >= 50 ? 'var(--amber)' : 'var(--safe)'}}>
+                  {(+t.bypass_rate).toFixed(1)}%
+                </span>,
+              ])}
+            </div>
+          </div>
+        )}
+
+        {/* Recent stored runs table */}
+        <div style={{display:'grid', gridTemplateColumns:'1.4fr 110px 90px 70px 70px 90px', gap:'4px 12px', fontSize:12, alignItems:'center'}}>
+          <span className="label" style={{fontSize:10}}>Run ID</span>
+          <span className="label" style={{fontSize:10}}>When</span>
+          <span className="label" style={{fontSize:10}}>Tier</span>
+          <span className="label" style={{fontSize:10}}>Total</span>
+          <span className="label" style={{fontSize:10}}>Bypassed</span>
+          <span className="label" style={{fontSize:10}}>Detection</span>
+          {(storedRuns.length ? storedRuns : [{run_id:'—', created_at:null, tier:null, total_variants:null, bypassed:null, detection_rate:null}])
+            .flatMap((r, i) => [
+              <span key={'id'+i} className="mono" style={{fontSize:10, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}
+                    title={r.run_id}>{r.run_id}</span>,
+              <span key={'w'+i} className="muted" style={{fontSize:10}}>{window.siphonFormatRelative(r.created_at)}</span>,
+              <span key={'t'+i} className="mono" style={{fontSize:10, color:'var(--ink-soft)'}}>{r.tier || '—'}</span>,
+              <span key={'n'+i} className="mono" style={{fontSize:10}}>{r.total_variants ?? '—'}</span>,
+              <span key={'b'+i} className="mono" style={{fontSize:10, color: r.bypassed > 0 ? 'var(--amber)' : 'var(--ink-soft)'}}>{r.bypassed ?? '—'}</span>,
+              <span key={'d'+i} className="mono" style={{fontSize:10,
+                color: r.detection_rate == null ? 'var(--ink-dim)'
+                     : r.detection_rate >= 95 ? 'var(--safe)'
+                     : r.detection_rate >= 85 ? 'var(--amber)'
+                     : 'var(--threat)'}}>
+                {r.detection_rate != null ? `${(+r.detection_rate).toFixed(1)}%` : '—'}
+              </span>,
+          ])}
+        </div>
+
+        <hr className="sep" />
+        <div className="note" style={{fontSize:11}}>
+          Persisted by <span className="mono">evadex bridge → POST /v1/evadex/runs</span> on scan completion.
+          Requires <span className="mono">SIPHON_API_URL</span> set in the bridge environment.
+          Queried from <span className="mono">GET /v1/evadex/runs</span> + <span className="mono">/v1/evadex/runs/stats</span>.
         </div>
       </div>
     </div>

@@ -61,6 +61,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
     ),
     (5, "0005_edm", include_str!("../migrations/0005_edm.sql")),
     (6, "0006_lsh", include_str!("../migrations/0006_lsh.sql")),
+    (
+        7,
+        "0007_evadex",
+        include_str!("../migrations/0007_evadex.sql"),
+    ),
 ];
 
 /// Initialise an optional database pool from the environment.
@@ -499,6 +504,119 @@ pub async fn persist_lsh_registration(
             ],
         )
         .await?;
+
+    Ok(())
+}
+
+/// Persist a completed evadex adversarial run and up to 2 000 individual test
+/// findings to the `evadex_runs` + `evadex_findings` tables.
+///
+/// The run row is inserted with ON CONFLICT DO NOTHING so re-pushing the same
+/// run_id is idempotent (the bridge may retry on transient failures). Findings
+/// are only inserted for new runs — they are silently skipped when the run_id
+/// already exists. Silently no-ops when the pool is None.
+///
+/// `findings` is a slice of raw evadex result items:
+/// ```json
+/// {
+///   "payload":  { "category": "credit_card", "value": "...", "label": "..." },
+///   "variant":  { "technique": "morse_code", "value": "...", ... },
+///   "detected": true,
+///   "confidence": 0.95
+/// }
+/// ```
+#[allow(clippy::too_many_arguments)]
+pub async fn persist_evadex_run(
+    pool: &Option<Pool>,
+    run_id: &str,
+    scanner_label: Option<&str>,
+    tier: Option<&str>,
+    evasion_mode: Option<&str>,
+    strategy: Option<&str>,
+    total_variants: Option<i32>,
+    detected: Option<i32>,
+    bypassed: Option<i32>,
+    detection_rate: Option<f32>,
+    duration_s: Option<f32>,
+    evadex_version: Option<&str>,
+    siphon_version: Option<&str>,
+    findings: &[serde_json::Value],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let Some(pool) = pool else {
+        return Ok(());
+    };
+
+    let client = pool.get().await?;
+
+    // Insert the run summary. ON CONFLICT makes the push idempotent.
+    let inserted = client
+        .execute(
+            "INSERT INTO evadex_runs \
+             (run_id, scanner_label, tier, evasion_mode, strategy, \
+              total_variants, detected, bypassed, detection_rate, \
+              duration_s, evadex_version, siphon_version) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) \
+             ON CONFLICT (run_id) DO NOTHING",
+            &[
+                &run_id,
+                &scanner_label,
+                &tier,
+                &evasion_mode,
+                &strategy,
+                &total_variants,
+                &detected,
+                &bypassed,
+                &detection_rate,
+                &duration_s,
+                &evadex_version,
+                &siphon_version,
+            ],
+        )
+        .await?;
+
+    // Skip findings if the run already existed (inserted == 0).
+    if inserted == 0 {
+        return Ok(());
+    }
+
+    // Insert up to 2 000 individual test findings.
+    for f in findings.iter().take(2000) {
+        let category = f
+            .get("payload")
+            .and_then(|p| p.get("category"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let technique = f
+            .get("variant")
+            .and_then(|v| v.get("technique"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let variant_value: Option<&str> = f
+            .get("variant")
+            .and_then(|v| v.get("value"))
+            .and_then(|v| v.as_str());
+        let det: bool = f.get("detected").and_then(|v| v.as_bool()).unwrap_or(false);
+        let confidence: Option<f32> = f
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .map(|n| n as f32);
+
+        client
+            .execute(
+                "INSERT INTO evadex_findings \
+                 (run_id, category, technique, variant_value, detected, confidence) \
+                 VALUES ($1,$2,$3,$4,$5,$6)",
+                &[
+                    &run_id,
+                    &category,
+                    &technique,
+                    &variant_value,
+                    &det,
+                    &confidence,
+                ],
+            )
+            .await?;
+    }
 
     Ok(())
 }
