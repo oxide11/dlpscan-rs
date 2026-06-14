@@ -1,11 +1,11 @@
 # Siphon Backlog
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 ## Ready to build
 
 ### High priority
-- [ ] siphon-api serve subcommand — persistent HTTP API without k8s (needed for evadex bridge integration)
+- [x] siphon-api serve subcommand — persistent HTTP API without k8s (PR #318; siphon serve delegates to siphon-api binary)
 - [ ] Findings deduplication — don't store duplicate findings for identical input
 
 ### Medium priority
