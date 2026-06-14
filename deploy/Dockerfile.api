@@ -107,4 +107,4 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=3s --retries=3 \
 
 LABEL org.opencontainers.image.title="siphon-api" \
       org.opencontainers.image.description="Polygon Siphon sync HTTP scan service" \
-      org.opencontainers.image.version="2.2.0"
+      org.opencontainers.image.version="2.3.0"

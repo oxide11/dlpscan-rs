@@ -129,7 +129,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
-    image: siphon-api:2.2.0
+    image: siphon-api:2.3.0
     profiles: [auth]
     environment:
       # siphon-api reads SIPHON_BIND + SIPHON_PORT separately, never

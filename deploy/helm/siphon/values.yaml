@@ -44,7 +44,7 @@ api:
 
   image:
     repository: oxide11/siphon-api
-    tag: "2.2.0"
+    tag: "2.3.0"
     pullPolicy: ""  # inherits global.imagePullPolicy
 
   service:
