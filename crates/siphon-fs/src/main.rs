@@ -26,6 +26,7 @@ use axum::{
     Router,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use siphon_core::audit::iso8601_now;
 use siphon_core::findings_ring::{filter_findings, severity_for, FindingRecord, FindingsRing};
 use siphon_core::overrides::{
@@ -38,6 +39,8 @@ use std::sync::Arc;
 use std::time::Instant;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{info, warn};
+
+mod db;
 
 const POD_NAME: &str = "siphon-fs";
 const FINDINGS_RING_CAP: usize = 500;
@@ -108,6 +111,10 @@ struct AppState {
     started_at_iso: String,
     /// Monotonic startup mark for uptime calculation.
     started_at: Instant,
+    /// Optional Postgres pool. None when SIPHON_DATABASE_URL is unset
+    /// or Postgres was unreachable at startup. Every consumer must
+    /// handle the None case gracefully — persistence is always optional.
+    db_pool: Option<deadpool_postgres::Pool>,
 }
 
 // ─── health + readiness ──────────────────────────────────────────
@@ -496,6 +503,55 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
 
     let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
 
+    // Persist findings to Postgres in the background — never blocks the response.
+    // SHA-256 of the raw file bytes is stored as input_hash; raw bytes are not.
+    {
+        let scan_id = uuid::Uuid::new_v4();
+        let file_hash: Vec<u8> = {
+            let mut h = Sha256::new();
+            h.update(&bytes);
+            h.finalize().to_vec()
+        };
+        let input_len = bytes.len();
+        let dur_ms = duration_ms as u64;
+        let file_name_clone = filename.clone();
+        let mime_type_clone = content_type.clone();
+        let findings_json: Vec<serde_json::Value> = findings
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "category": f.category,
+                    "sub_category": f.sub_category,
+                    "confidence": f.confidence,
+                    "text": f.text,
+                    "has_context": f.has_context,
+                    "span": [f.span.0, f.span.1],
+                    "metadata": f.metadata,
+                })
+            })
+            .collect();
+        let pool_clone = state.db_pool.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db::persist_scan(
+                &pool_clone,
+                scan_id,
+                &file_hash,
+                input_len,
+                &findings_json,
+                dur_ms,
+                POD_NAME,
+                env!("CARGO_PKG_VERSION"),
+                file_name_clone.as_deref(),
+                Some(&file_hash),
+                mime_type_clone.as_deref(),
+            )
+            .await
+            {
+                tracing::warn!("file scan persist failed: {e}");
+            }
+        });
+    }
+
     info!(
         request_id = %request_id,
         filename = %filename.clone().unwrap_or_else(|| "<none>".into()),
@@ -663,6 +719,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let started_at = Instant::now();
     let started_at_iso = siphon_core::audit::iso8601_now();
 
+    // Optional Postgres pool — siphon-fs connects to the same DB as
+    // siphon-api but does NOT run migrations (siphon-api owns the schema).
+    let (_db_state, db_pool) = match db::init_optional().await {
+        Ok(pair) => pair,
+        Err(e) => {
+            tracing::error!(error = %e, "SIPHON_DATABASE_URL parse failed; refusing to start");
+            std::process::exit(1);
+        }
+    };
+
     let state = AppState {
         findings: Arc::new(FindingsRing::new(FINDINGS_RING_CAP)),
         live_overrides: Arc::new(std::sync::RwLock::new(live_overrides)),
@@ -670,6 +736,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pod_id: pod_id.clone(),
         started_at_iso,
         started_at,
+        db_pool,
     };
     let app = build_router(state);
 
