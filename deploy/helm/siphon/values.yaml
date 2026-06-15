@@ -44,7 +44,7 @@ api:
 
   image:
     repository: oxide11/siphon-api
-    tag: "2.2.0"
+    tag: "2.3.0"
     pullPolicy: ""  # inherits global.imagePullPolicy
 
   service:
@@ -111,7 +111,9 @@ api:
     secretName: ""     # e.g. "siphon-api-auth"
     secretKey: "api-key"
 
-  extraEnv: []
+  extraEnv:
+    - name: SIPHON_FINDINGS_RETENTION_DAYS
+      value: "90"
   extraVolumes: []
   extraVolumeMounts: []
 
@@ -171,7 +173,16 @@ fs:
       storageClassName: ""
       accessModes: [ReadWriteOnce]
 
-  extraEnv: []
+  extraEnv:
+    # Raise the HTTP body cap + per-file streaming cap to 500 MB so
+    # large files (Parquet dumps, ZIP archives, Office files) can be
+    # scanned without hitting the default 100 MB body limit. Keep
+    # the two values in sync: BODY_LIMIT is axum's raw body gate,
+    # MAX_FILE_SIZE is the per-file streaming check in the handler.
+    - name: SIPHON_FS_BODY_LIMIT_MB
+      value: "500"
+    - name: SIPHON_FS_MAX_FILE_SIZE_MB
+      value: "500"
   extraVolumes: []
   extraVolumeMounts: []
 
