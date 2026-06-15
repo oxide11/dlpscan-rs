@@ -16,6 +16,39 @@ monolithic Pod.
 | — shared — | ConfigMap + Ingress + 4× NetworkPolicy | Overrides, single DNS entry, default-deny network |
 | — siphon-api RBAC — | ServiceAccount + Role + RoleBinding | Pod list/watch + Deployment patch for the Ops UI's live pod view |
 
+## Postgres (findings persistence)
+
+The chart bundles an optional single-replica Postgres that backs
+findings history and C2 shared state. It is **enabled by default**
+(`postgres.enabled: true`). To bring up the full stack with findings
+persistence:
+
+```sh
+# Create the postgres secret before installing (or upgrading).
+kubectl -n siphon create secret generic siphon-postgres \
+  --from-literal=password="$(openssl rand -hex 32)"
+
+helm install siphon ./deploy/helm/siphon \
+  --namespace siphon \
+  --set postgres.secretName=siphon-postgres \
+  --set api.auth.secretName=siphon-api-auth \
+  --set authelia.secretName=siphon-authelia \
+  --set ingress.host=siphon.example.com
+```
+
+`siphon-api` picks up `SIPHON_DATABASE_URL` automatically when
+`postgres.enabled=true`; findings history endpoints and C2 shared state
+activate without further configuration.
+
+To use an **external Postgres** instead:
+
+```sh
+helm install siphon ./deploy/helm/siphon \
+  --set postgres.enabled=false \
+  --set "api.extraEnv[0].name=SIPHON_DATABASE_URL" \
+  --set "api.extraEnv[0].value=postgres://user:pass@host:5432/siphon"
+```
+
 ## Quickstart
 
 ```sh
@@ -220,9 +253,6 @@ Before pointing real traffic at the release:
 - **Prometheus Operator CRDs.** Metrics scrape uses pod annotations
   today; add a ServiceMonitor subchart when the cluster runs the
   Operator.
-- **External findings database (Postgres / Neo4j / ClickHouse).**
-  Phase 3 of the roadmap lands the database; this chart assumes
-  in-memory findings rings until then.
 - **Pod log streaming.** The k8s-roll RBAC grants `pods/log`
   read so a follow-up endpoint can stream logs, but the endpoint
   itself isn't wired yet.
