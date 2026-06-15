@@ -16,7 +16,7 @@ type: application
 version: 2.1.0
 # appVersion pinned to the Rust workspace version. Update via
 # scripts/bump-version.sh so every declaration stays in lockstep.
-appVersion: "2.1.0"
+appVersion: "2.2.0"
 
 home: https://github.com/oxide11/dlpscan-rs
 sources:
