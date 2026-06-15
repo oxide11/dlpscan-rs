@@ -91,7 +91,7 @@ sevenz-rust = { version = "0.6", optional = true }
 unrar = { version = "0.5", optional = true }
 
 # Data format extraction
-parquet = { version = "58", optional = true, default-features = false, features = ["arrow"] }
+parquet = { version = "59", optional = true, default-features = false, features = ["arrow"] }
 arrow = { version = "58", optional = true, default-features = false, features = ["prettyprint"] }
 rusqlite = { version = "0.40", optional = true, features = ["bundled"] }
 
