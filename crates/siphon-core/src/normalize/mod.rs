@@ -2825,7 +2825,8 @@ mod tests {
         // appends \n. collapse_padding strips inner spaces but leaves the terminal \n
         // (no next non-WS neighbour). The decoder must trim it and still decode.
         let codes = [
-            "-----", ".----", "..---", "...--", "....-", ".....", "-....", "--...", "---..", "----.",
+            "-----", ".----", "..---", "...--", "....-", ".....", "-....", "--...", "---..",
+            "----.",
         ];
         let nosep: String = "4532"
             .chars()

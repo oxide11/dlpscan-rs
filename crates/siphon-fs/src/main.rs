@@ -56,6 +56,27 @@ fn body_limit_bytes() -> usize {
         .unwrap_or(100 * 1024 * 1024)
 }
 
+/// Per-file streaming size cap. Checked chunk-by-chunk during multipart
+/// intake; returns 413 before the full body is buffered. Separate from
+/// the axum body limit (SIPHON_FS_BODY_LIMIT_MB) which gates the raw
+/// HTTP body. Default 500 MB.
+fn max_file_size_bytes() -> usize {
+    std::env::var("SIPHON_FS_MAX_FILE_SIZE_MB")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map(|mb| mb * 1024 * 1024)
+        .unwrap_or(500 * 1024 * 1024)
+}
+
+/// Optional override for the temp directory used when streaming uploads
+/// to disk. Defaults to the OS temp dir. Set SIPHON_FS_TEMP_DIR to a
+/// path on a larger volume when the default is too small.
+fn temp_dir_path() -> Option<std::path::PathBuf> {
+    std::env::var("SIPHON_FS_TEMP_DIR")
+        .ok()
+        .map(std::path::PathBuf::from)
+}
+
 // ─── shared app state ────────────────────────────────────────────
 // FindingsRing is owned by this pod — each siphon-fs replica keeps
 // its own local ring. Multi-replica convergence (e.g. gossiping
@@ -115,6 +136,12 @@ struct AppState {
     /// or Postgres was unreachable at startup. Every consumer must
     /// handle the None case gracefully — persistence is always optional.
     db_pool: Option<deadpool_postgres::Pool>,
+    /// Per-file size cap enforced during streaming multipart intake.
+    /// Read once at startup from SIPHON_FS_MAX_FILE_SIZE_MB.
+    max_file_bytes: usize,
+    /// Optional temp directory for streamed uploads. None → OS default.
+    /// Read once at startup from SIPHON_FS_TEMP_DIR.
+    temp_dir: Option<std::path::PathBuf>,
 }
 
 // ─── health + readiness ──────────────────────────────────────────
@@ -261,6 +288,15 @@ struct ScanResponse {
     /// view renders both pods identically.
     #[serde(skip_serializing_if = "Option::is_none")]
     trace: Option<Vec<siphon_core::scanner::StageEvent>>,
+    /// Set when extraction or scanning fails but the request was otherwise
+    /// valid. Callers should check this field; an absent `error` means
+    /// the scan completed normally.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    /// Machine-readable error class. Currently emitted values:
+    ///   PASSWORD_REQUIRED — archive or document is password-protected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error_code: Option<String>,
 }
 
 /// Scan options accepted as a JSON-encoded `options` multipart field.
@@ -291,27 +327,73 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
     let request_id = uuid::Uuid::new_v4().to_string();
     let start = Instant::now();
 
-    let mut file_bytes: Option<Vec<u8>> = None;
+    // (tmp_file, byte_count, sha256_hash) — populated by streaming the
+    // multipart "file" field chunk-by-chunk directly into a temp file.
+    let mut file_info: Option<(tempfile::NamedTempFile, usize, Vec<u8>)> = None;
     let mut filename: Option<String> = None;
     let mut content_type: Option<String> = None;
     let mut options: ScanOptions = ScanOptions::default();
 
     loop {
         match multipart.next_field().await {
-            Ok(Some(field)) => {
+            Ok(Some(mut field)) => {
                 let name = field.name().unwrap_or("").to_string();
                 if name == "file" {
                     filename = field.file_name().map(|s| s.to_string());
                     content_type = field.content_type().map(|s| s.to_string());
-                    match field.bytes().await {
-                        Ok(b) => file_bytes = Some(b.to_vec()),
+                    let suffix = filename
+                        .as_deref()
+                        .and_then(|f| std::path::Path::new(f).extension())
+                        .and_then(|s| s.to_str())
+                        .map(|s| format!(".{s}"))
+                        .unwrap_or_else(|| ".bin".to_string());
+                    let mut builder = tempfile::Builder::new();
+                    builder.prefix("siphon-fs-").suffix(&suffix);
+                    let mut tmp = match match state.temp_dir.as_deref() {
+                        Some(dir) => builder.tempfile_in(dir),
+                        None => builder.tempfile(),
+                    } {
+                        Ok(t) => t,
                         Err(e) => {
                             return err(
-                                StatusCode::BAD_REQUEST,
-                                format!("failed to read file field: {e}"),
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                format!("tempfile create failed: {e}"),
                             );
                         }
+                    };
+                    let mut hasher = Sha256::new();
+                    let mut total_bytes = 0usize;
+                    loop {
+                        match field.chunk().await {
+                            Ok(Some(chunk)) => {
+                                total_bytes += chunk.len();
+                                if total_bytes > state.max_file_bytes {
+                                    return err(
+                                        StatusCode::PAYLOAD_TOO_LARGE,
+                                        format!(
+                                            "file exceeds limit of {} MB",
+                                            state.max_file_bytes / (1024 * 1024)
+                                        ),
+                                    );
+                                }
+                                hasher.update(chunk.as_ref());
+                                if let Err(e) = std::io::Write::write_all(&mut tmp, &chunk) {
+                                    return err(
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        format!("tempfile write failed: {e}"),
+                                    );
+                                }
+                            }
+                            Ok(None) => break,
+                            Err(e) => {
+                                return err(
+                                    StatusCode::BAD_REQUEST,
+                                    format!("failed to read file field: {e}"),
+                                );
+                            }
+                        }
                     }
+                    file_info = Some((tmp, total_bytes, hasher.finalize().to_vec()));
                 } else if name == "options" {
                     // JSON-encoded ScanOptions (mirrors siphon-api's
                     // /scan body shape). Malformed → 400; missing is
@@ -350,43 +432,13 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
         }
     }
 
-    let Some(bytes) = file_bytes else {
+    let Some((tmp, file_len, file_hash)) = file_info else {
         return err(
             StatusCode::BAD_REQUEST,
             "missing 'file' multipart field".to_string(),
         );
     };
-    let file_len = bytes.len();
 
-    // Write the multipart bytes to a temp file so siphon's extractor
-    // registry can dispatch on extension. Unknown extensions fall
-    // through to plain-text extraction.
-    let suffix = filename
-        .as_deref()
-        .and_then(|f| std::path::Path::new(f).extension())
-        .and_then(|s| s.to_str())
-        .map(|s| format!(".{s}"))
-        .unwrap_or_else(|| ".bin".to_string());
-
-    let mut tmp = match tempfile::Builder::new()
-        .prefix("siphon-fs-")
-        .suffix(&suffix)
-        .tempfile()
-    {
-        Ok(t) => t,
-        Err(e) => {
-            return err(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("tempfile create failed: {e}"),
-            );
-        }
-    };
-    if let Err(e) = std::io::Write::write_all(&mut tmp, &bytes) {
-        return err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("tempfile write failed: {e}"),
-        );
-    }
     let tmp_path = tmp.path().to_string_lossy().into_owned();
 
     // siphon's extractor registry covers text, RTF, EML, PDF, Office
@@ -396,10 +448,32 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
     let extract = match siphon::extractors::extract_text(&tmp_path) {
         Ok(r) => r,
         Err(e) => {
-            return err(
-                StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                format!("extraction failed: {e}"),
+            let lower = e.to_lowercase();
+            let is_password = lower.contains("password") || lower.contains("encrypt");
+            warn!(
+                request_id = %request_id,
+                filename = %filename.clone().unwrap_or_else(|| "<none>".into()),
+                error = %e,
+                "extraction failed"
             );
+            return JsonResponse(ScanResponse {
+                request_id,
+                filename,
+                content_type,
+                bytes: file_len,
+                duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+                parsed_as: "unknown".to_string(),
+                warnings: vec![],
+                findings: vec![],
+                trace: None,
+                error: Some(format!("extraction failed: {e}")),
+                error_code: if is_password {
+                    Some("PASSWORD_REQUIRED".to_string())
+                } else {
+                    None
+                },
+            })
+            .into_response();
         }
     };
 
@@ -504,15 +578,10 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
     let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
 
     // Persist findings to Postgres in the background — never blocks the response.
-    // SHA-256 of the raw file bytes is stored as input_hash; raw bytes are not.
+    // SHA-256 was computed incrementally during streaming; raw bytes are not stored.
     {
         let scan_id = uuid::Uuid::new_v4();
-        let file_hash: Vec<u8> = {
-            let mut h = Sha256::new();
-            h.update(&bytes);
-            h.finalize().to_vec()
-        };
-        let input_len = bytes.len();
+        let input_len = file_len;
         let dur_ms = duration_ms as u64;
         let file_name_clone = filename.clone();
         let mime_type_clone = content_type.clone();
@@ -576,6 +645,8 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
         warnings: extract.warnings,
         findings,
         trace,
+        error: None,
+        error_code: None,
     })
     .into_response()
 }
@@ -729,6 +800,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    let max_file_bytes = max_file_size_bytes();
+    let temp_dir = temp_dir_path();
+
     let state = AppState {
         findings: Arc::new(FindingsRing::new(FINDINGS_RING_CAP)),
         live_overrides: Arc::new(std::sync::RwLock::new(live_overrides)),
@@ -737,6 +811,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         started_at_iso,
         started_at,
         db_pool,
+        max_file_bytes,
+        temp_dir: temp_dir.clone(),
     };
     let app = build_router(state);
 
@@ -753,6 +829,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         overrides_regex_swaps_compiled = regex_override_count,
         overrides_list_bindings_active = list_binding_count,
         overrides_unique_thresholds = unique_threshold_count,
+        max_file_mb = max_file_bytes / (1024 * 1024),
+        temp_dir = ?temp_dir,
         bind = %addr,
         "siphon-fs starting"
     );
