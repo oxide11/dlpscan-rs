@@ -24,6 +24,7 @@
 //!                                    exposed read-only via GET /v1/allowlist
 //!   SIPHON_AUDIT_RING_CAP            In-memory audit ring capacity (default: 500)
 //!   SIPHON_FINDINGS_RING_CAP         In-memory findings ring capacity (default: 1000)
+//!   SIPHON_FINDINGS_RETENTION_DAYS   Days to retain findings (0 or unset = keep forever)
 
 use axum::{
     body::Body,
@@ -95,7 +96,7 @@ impl LiveOverrides {
     /// Missing / unparseable → empty (additive-principle from the
     /// startup loader). Returns the summary for logging/tracing.
     fn from_path(path: &std::path::Path) -> Self {
-        let overrides = PatternOverrides::from_file_or_empty(&path.display().to_string());
+        let overrides = PatternOverrides::from_file_or_empty(path.display().to_string());
         Self::from_doc(overrides)
     }
 
@@ -154,6 +155,11 @@ struct AppState {
     /// the operator can tell "URL not configured" apart from
     /// "URL set but the pool failed to come up at startup".
     db_state: db::PoolState,
+    /// Short-lived cache for GET /v1/findings/stats. Avoids repeated
+    /// full-table scans on every poll from the C2. Holds the last
+    /// serialized response body and the time it was computed; the
+    /// handler replaces it after STATS_CACHE_SECS seconds.
+    stats_cache: Arc<Mutex<Option<(Instant, serde_json::Value)>>>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -538,6 +544,18 @@ async fn auth_middleware(
 // Rate limit middleware
 // ---------------------------------------------------------------------------
 
+/// Per-endpoint rate limits (req/min per IP) that are tighter than the
+/// global SIPHON_RATE_LIMIT. Only the listed paths are checked; all other
+/// paths fall through to the global limit only.
+fn endpoint_rate_limit(path: &str) -> Option<u32> {
+    match path {
+        "/v1/findings/export" => Some(5), // expensive — file download
+        "/v1/findings/pg" => Some(30),    // DB query
+        "/v1/findings/stats" => Some(60), // cached, lighter
+        _ => None,
+    }
+}
+
 async fn rate_limit_middleware(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -545,20 +563,30 @@ async fn rate_limit_middleware(
     next: Next,
 ) -> Response {
     let ip = addr.ip().to_string();
+    let path = request.uri().path().to_string();
+
     let allowed = {
         let mut limiter = state.rate_limiter.lock().unwrap();
-        limiter.check(&ip, state.rate_limit)
+        // Global per-IP limit
+        let global_ok = limiter.check(&ip, state.rate_limit);
+        // Per-endpoint tighter limit (uses "ep:<path>:<ip>" as bucket key)
+        let endpoint_ok = match endpoint_rate_limit(&path) {
+            Some(ep_limit) => limiter.check(&format!("ep:{path}:{ip}"), ep_limit),
+            None => true,
+        };
+        global_ok && endpoint_ok
     };
 
     if !allowed {
-        tracing::warn!(ip = %ip, "rate_limited");
+        tracing::warn!(ip = %ip, path = %path, "rate_limited");
         if let Ok(event) = AuditEvent::new("REJECT") {
             emit_audit(
                 event
                     .with_action("rate_limit")
                     .with_outcome("rejected")
                     .with_source_ip(&ip)
-                    .with_metadata("reason", serde_json::json!("rate_limit_exceeded")),
+                    .with_metadata("reason", serde_json::json!("rate_limit_exceeded"))
+                    .with_metadata("path", serde_json::json!(path)),
             );
         }
         return (
@@ -903,6 +931,149 @@ async fn scan(
         .findings_total
         .fetch_add(count as u64, Ordering::Relaxed);
 
+    // Persist to Postgres in the background — never blocks the scan response.
+    // Raw input is never stored; SHA-256 hashes only.
+    {
+        let scan_id = uuid::Uuid::new_v4();
+
+        let api_key_hash_bytes: Vec<u8> = {
+            let mut h = Sha256::new();
+            // Hash the raw key value if one was configured; otherwise
+            // produce a zero-length hash sentinel to record "no auth".
+            if let Some(hash) = &state.api_key_hash {
+                h.update(hash.as_ref());
+            }
+            h.finalize().to_vec()
+        };
+
+        let input_hash_bytes: Vec<u8> = {
+            let mut h = Sha256::new();
+            h.update(req.text.as_bytes());
+            h.finalize().to_vec()
+        };
+
+        let input_len = req.text.len();
+        let dur_ms = duration_ms as u64;
+
+        // Serialize findings to JSON values for persist_scan.
+        let findings_json: Vec<serde_json::Value> = findings
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "category": f.category,
+                    "sub_category": f.sub_category,
+                    "confidence": f.confidence,
+                    "text": f.text,
+                    "has_context": f.has_context,
+                    "span": [f.span.0, f.span.1],
+                    "metadata": f.metadata,
+                })
+            })
+            .collect();
+
+        let pool_clone = state.db_pool.clone();
+        let api_key_hash_bytes_for_edm = api_key_hash_bytes.clone();
+        let api_key_hash_bytes_for_lsh = api_key_hash_bytes.clone();
+        let input_hash_bytes_for_lsh = input_hash_bytes.clone();
+        tokio::spawn(async move {
+            if let Err(e) = db::persist_scan(
+                &pool_clone,
+                scan_id,
+                &api_key_hash_bytes,
+                &input_hash_bytes,
+                input_len,
+                &findings_json,
+                dur_ms,
+                "report",
+                Some("siphon-api"),
+                env!("CARGO_PKG_VERSION"),
+                None,
+                None,
+                None,
+            )
+            .await
+            {
+                tracing::warn!("findings persist failed: {e}");
+            }
+        });
+
+        // Persist EDM query events for any Exact Data Match findings.
+        // Each EDM finding is a confirmed known-value hit — record it
+        // separately so operators can track EDM match rates.
+        let edm_findings: Vec<(String, f64)> = findings
+            .iter()
+            .filter(|f| f.sub_category == "Exact Data Match")
+            .map(|f| (f.category.clone(), f.confidence))
+            .collect();
+        if !edm_findings.is_empty() {
+            let pool_edm = state.db_pool.clone();
+            let api_key_hash_edm = api_key_hash_bytes_for_edm;
+            let dur_edm = duration_ms as u64;
+            tokio::spawn(async move {
+                for (category, confidence) in &edm_findings {
+                    if let Err(e) = db::persist_edm_query(
+                        &pool_edm,
+                        true,
+                        Some(category.as_str()),
+                        Some(*confidence as f32),
+                        &api_key_hash_edm,
+                        Some("siphon-api"),
+                        dur_edm,
+                    )
+                    .await
+                    {
+                        tracing::warn!("edm_query persist failed: {e}");
+                    }
+                }
+            });
+        }
+
+        // Persist LSH query events for any Document Similarity findings.
+        // LSH findings have category "Document Similarity"; the matched
+        // doc_id is encoded in the text field as "Similar to: {doc_id}".
+        {
+            let lsh_matches: Vec<(String, f32)> = findings
+                .iter()
+                .filter(|f| f.category == "Document Similarity")
+                .map(|f| {
+                    let doc_id = f
+                        .text
+                        .strip_prefix("Similar to: ")
+                        .unwrap_or(&f.text)
+                        .to_string();
+                    (doc_id, f.confidence as f32)
+                })
+                .collect();
+            let matched = !lsh_matches.is_empty();
+            let pool_lsh = state.db_pool.clone();
+            let api_key_hash_lsh = api_key_hash_bytes_for_lsh;
+            let query_hash_lsh = input_hash_bytes_for_lsh;
+            let query_len = input_len;
+            let dur_lsh = duration_ms as u64;
+            tokio::spawn(async move {
+                let (matched_doc_id, similarity) = lsh_matches
+                    .first()
+                    .map(|(id, sim)| (Some(id.as_str().to_string()), Some(*sim)))
+                    .unwrap_or((None, None));
+                if let Err(e) = db::persist_lsh_query(
+                    &pool_lsh,
+                    &query_hash_lsh,
+                    query_len,
+                    matched,
+                    matched_doc_id.as_deref(),
+                    similarity,
+                    &api_key_hash_lsh,
+                    Some("siphon-api"),
+                    dur_lsh,
+                )
+                .await
+                {
+                    tracing::warn!("lsh_query persist failed: {e}");
+                }
+            });
+        }
+    }
+
     // Push each finding into the in-memory ring so /v1/findings can surface
     // the live stream without touching disk. Reuse the audit module's
     // iso8601 timestamp so the frontend renders a single consistent format.
@@ -974,6 +1145,276 @@ async fn scan(
         finding_count: count,
         scan_duration_ms: duration_ms as u64,
         trace,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// POST /scan/batch — scan a list of texts in one request.
+//
+// Each item carries a caller-supplied `id` for correlation; the response
+// array is in the same order as the request array. One scan_id per item
+// is persisted in the background — the HTTP response is never delayed.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct BatchItem {
+    id: String,
+    text: String,
+    #[serde(default)]
+    options: ScanOptions,
+}
+
+#[derive(Serialize)]
+struct BatchItemResult {
+    id: String,
+    findings: Vec<Finding>,
+    finding_count: usize,
+    scan_duration_ms: u64,
+}
+
+#[derive(Serialize)]
+struct BatchScanResponse {
+    source_pod: &'static str,
+    batch_id: String,
+    items: Vec<BatchItemResult>,
+    total_findings: usize,
+    total_duration_ms: u64,
+}
+
+async fn scan_batch(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(items): Json<Vec<BatchItem>>,
+) -> Result<Json<BatchScanResponse>, (StatusCode, Json<ErrorResponse>)> {
+    const MAX_BATCH: usize = 500;
+    if items.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "batch must contain at least one item".into(),
+            }),
+        ));
+    }
+    if items.len() > MAX_BATCH {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("batch size {} exceeds limit {MAX_BATCH}", items.len()),
+            }),
+        ));
+    }
+
+    let source_ip = addr.ip().to_string();
+    let batch_id = uuid::Uuid::new_v4().to_string();
+    let batch_start = Instant::now();
+
+    // Snapshot overrides + stage toggles once for the whole batch.
+    let stage_disabled: HashSet<String> = state
+        .disabled_stages
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let ov = {
+        let g = state
+            .live_overrides
+            .read()
+            .expect("live_overrides lock poisoned");
+        g.clone()
+    };
+
+    let api_key_hash_bytes: Vec<u8> = {
+        let mut h = Sha256::new();
+        if let Some(hash) = &state.api_key_hash {
+            h.update(hash.as_ref());
+        }
+        h.finalize().to_vec()
+    };
+
+    let mut results: Vec<BatchItemResult> = Vec::with_capacity(items.len());
+    let mut total_findings: usize = 0;
+
+    for item in &items {
+        if item.text.is_empty() || item.text.len() > 10 * 1024 * 1024 {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("item {:?}: text must be non-empty and ≤ 10 MB", item.id),
+                }),
+            ));
+        }
+
+        let mut config = ScanConfig {
+            min_confidence: item.options.min_confidence.unwrap_or(0.0),
+            categories: item
+                .options
+                .categories
+                .clone()
+                .map(|c| c.into_iter().collect::<HashSet<_>>()),
+            require_context: item.options.require_context.unwrap_or(false),
+            baseline_only: item.options.baseline_only.unwrap_or(false),
+            deduplicate: item.options.deduplicate.unwrap_or(true),
+            disabled_patterns: Some(ov.disabled_patterns.clone()),
+            pattern_field_overrides: Some(ov.pattern_field_overrides.clone()),
+            runtime_patterns: Some(ov.runtime_patterns.clone()),
+            pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
+            list_bindings: Some(ov.list_bindings.clone()),
+            max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+            ..Default::default()
+        };
+        if stage_disabled.contains("min_confidence") {
+            config.min_confidence = 0.0;
+        }
+        if stage_disabled.contains("require_context") {
+            config.require_context = false;
+        }
+
+        let item_start = Instant::now();
+        let matches = scan_text_with_config(&item.text, &config).map_err(|e| {
+            state
+                .metrics
+                .scan_errors_total
+                .fetch_add(1, Ordering::Relaxed);
+            tracing::error!(batch_id = %batch_id, item_id = %item.id, error = %e, "batch_item_scan_failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "scan processing failed".into(),
+                }),
+            )
+        })?;
+        let item_duration_ms = item_start.elapsed().as_millis() as u64;
+
+        let findings: Vec<Finding> = matches
+            .iter()
+            .map(|m| Finding {
+                category: m.category.clone(),
+                sub_category: m.sub_category.clone(),
+                text: m.text.clone(),
+                confidence: m.confidence,
+                has_context: m.has_context,
+                span: m.span,
+                metadata: m.metadata.clone(),
+            })
+            .collect();
+
+        state.metrics.scans_total.fetch_add(1, Ordering::Relaxed);
+        state
+            .metrics
+            .findings_total
+            .fetch_add(findings.len() as u64, Ordering::Relaxed);
+
+        // Push each finding to the in-memory ring.
+        let ts_now = iso8601_now();
+        let short_batch = batch_id.split('-').next().unwrap_or(&batch_id);
+        for (idx, f) in findings.iter().enumerate() {
+            state.findings.push(FindingRecord {
+                id: format!("f-{short_batch}-{}-{idx:02x}", item.id),
+                ts: ts_now.clone(),
+                request_id: batch_id.clone(),
+                source_ip: source_ip.clone(),
+                source_pod: "siphon-api".to_string(),
+                category: f.category.clone(),
+                sub_category: f.sub_category.clone(),
+                text: f.text.clone(),
+                confidence: f.confidence,
+                has_context: f.has_context,
+                span: f.span,
+                metadata: f.metadata.clone(),
+                severity: severity_for(&f.category, f.confidence),
+            });
+        }
+
+        // Background persist — never blocks the response.
+        {
+            let scan_id = uuid::Uuid::new_v4();
+            let input_hash_bytes: Vec<u8> = {
+                let mut h = Sha256::new();
+                h.update(item.text.as_bytes());
+                h.finalize().to_vec()
+            };
+            let input_len = item.text.len();
+            let findings_json: Vec<serde_json::Value> = findings
+                .iter()
+                .map(|f| {
+                    serde_json::json!({
+                        "category": f.category,
+                        "sub_category": f.sub_category,
+                        "confidence": f.confidence,
+                        "text": f.text,
+                        "has_context": f.has_context,
+                        "span": [f.span.0, f.span.1],
+                        "metadata": f.metadata,
+                    })
+                })
+                .collect();
+            let pool_clone = state.db_pool.clone();
+            let api_key_hash_clone = api_key_hash_bytes.clone();
+            tokio::spawn(async move {
+                if let Err(e) = db::persist_scan(
+                    &pool_clone,
+                    scan_id,
+                    &api_key_hash_clone,
+                    &input_hash_bytes,
+                    input_len,
+                    &findings_json,
+                    item_duration_ms,
+                    "report",
+                    Some("siphon-api"),
+                    env!("CARGO_PKG_VERSION"),
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                {
+                    tracing::warn!("batch item persist failed: {e}");
+                }
+            });
+        }
+
+        total_findings += findings.len();
+        results.push(BatchItemResult {
+            id: item.id.clone(),
+            findings,
+            finding_count: matches.len(),
+            scan_duration_ms: item_duration_ms,
+        });
+    }
+
+    let total_duration_ms = batch_start.elapsed().as_millis() as u64;
+
+    tracing::info!(
+        batch_id = %batch_id,
+        items = items.len(),
+        total_findings = total_findings,
+        duration_ms = total_duration_ms,
+        "batch_scan_complete"
+    );
+
+    if let Ok(event) = AuditEvent::new("SCAN") {
+        emit_audit(
+            event
+                .with_action("batch_scan")
+                .with_outcome(if total_findings == 0 {
+                    "success"
+                } else {
+                    "findings_detected"
+                })
+                .with_is_clean(total_findings == 0)
+                .with_finding_count(total_findings)
+                .with_duration_ms(total_duration_ms as f64)
+                .with_request_id(&batch_id)
+                .with_source_ip(&source_ip)
+                .with_metadata("batch_size", serde_json::json!(items.len())),
+        );
+    }
+
+    Ok(Json(BatchScanResponse {
+        source_pod: "siphon-api",
+        batch_id,
+        items: results,
+        total_findings,
+        total_duration_ms,
     }))
 }
 
@@ -3202,6 +3643,7 @@ async fn list_integrations() -> Json<IntegrationsResponse> {
     let siem_type = std::env::var("DLPSCAN_SIEM_TYPE").ok();
     let url = std::env::var("DLPSCAN_SIEM_URL").ok();
     let host = std::env::var("DLPSCAN_SIEM_HOST").ok();
+    #[allow(clippy::type_complexity)]
     let all: Vec<(&str, fn() -> Option<String>)> = vec![
         ("splunk", || std::env::var("DLPSCAN_SIEM_URL").ok()),
         ("elasticsearch", || std::env::var("DLPSCAN_SIEM_URL").ok()),
@@ -3286,6 +3728,987 @@ async fn list_lsh_vaults() -> Json<VaultStubResponse> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// POST /v1/evadex/runs — ingest a completed evadex scan from the bridge.
+// GET  /v1/evadex/runs — paginated run history.
+// GET  /v1/evadex/runs/stats — detection rate summary + top bypassed techniques.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct EvadexIngestRequest {
+    run_id: Option<String>,
+    scanner_label: Option<String>,
+    tier: Option<String>,
+    evasion_mode: Option<String>,
+    strategy: Option<String>,
+    meta: Option<serde_json::Value>,
+    results: Option<Vec<serde_json::Value>>,
+}
+
+async fn ingest_evadex_run(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<EvadexIngestRequest>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    if state.db_pool.is_none() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "database not configured"})),
+        );
+    }
+
+    let meta = body.meta.as_ref();
+    let run_id = body
+        .run_id
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let scanner_label = body
+        .scanner_label
+        .as_deref()
+        .or_else(|| meta.and_then(|m| m.get("scanner").and_then(|v| v.as_str())));
+    let total_variants =
+        meta.and_then(|m| m.get("total").and_then(|v| v.as_i64()).map(|n| n as i32));
+    let detected = meta.and_then(|m| m.get("pass").and_then(|v| v.as_i64()).map(|n| n as i32));
+    let bypassed = meta.and_then(|m| m.get("fail").and_then(|v| v.as_i64()).map(|n| n as i32));
+    let detection_rate = meta
+        .and_then(|m| m.get("pass_rate").and_then(|v| v.as_f64()))
+        .map(|n| n as f32);
+    let duration_s = meta
+        .and_then(|m| m.get("duration_s").and_then(|v| v.as_f64()))
+        .map(|n| n as f32);
+    let evadex_version = meta.and_then(|m| m.get("evadex_version").and_then(|v| v.as_str()));
+    let findings = body.results.unwrap_or_default();
+    let capped = findings.len().min(2000);
+
+    if let Err(e) = db::persist_evadex_run(
+        &state.db_pool,
+        &run_id,
+        scanner_label,
+        body.tier.as_deref(),
+        body.evasion_mode.as_deref(),
+        body.strategy.as_deref(),
+        total_variants,
+        detected,
+        bypassed,
+        detection_rate,
+        duration_s,
+        evadex_version,
+        None,
+        &findings[..capped],
+    )
+    .await
+    {
+        tracing::warn!("ingest_evadex_run: persist failed: {e}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": "persist failed"})),
+        );
+    }
+
+    (
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "run_id": run_id,
+            "findings_stored": capped,
+        })),
+    )
+}
+
+#[derive(Deserialize)]
+struct EvadexRunsQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct EvadexRunSummary {
+    run_id: String,
+    created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scanner_label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tier: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evasion_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_variants: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detected: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    bypassed: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detection_rate: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_s: Option<f32>,
+}
+
+#[derive(Serialize)]
+struct EvadexRunsResponse {
+    runs: Vec<EvadexRunSummary>,
+    total: i64,
+}
+
+async fn list_evadex_runs(
+    Query(q): Query<EvadexRunsQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Json<EvadexRunsResponse> {
+    let Some(pool) = state.db_pool.as_ref() else {
+        return Json(EvadexRunsResponse {
+            runs: Vec::new(),
+            total: 0,
+        });
+    };
+
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("list_evadex_runs: pool get failed: {e}");
+            return Json(EvadexRunsResponse {
+                runs: Vec::new(),
+                total: 0,
+            });
+        }
+    };
+
+    let limit = q.limit.unwrap_or(50).min(500);
+    let offset = q.offset.unwrap_or(0);
+
+    let rows = match client
+        .query(
+            "SELECT run_id, created_at, scanner_label, tier, evasion_mode, \
+             total_variants, detected, bypassed, detection_rate, duration_s \
+             FROM evadex_runs \
+             ORDER BY created_at DESC \
+             LIMIT $1 OFFSET $2",
+            &[&limit, &offset],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("list_evadex_runs: query failed: {e}");
+            return Json(EvadexRunsResponse {
+                runs: Vec::new(),
+                total: 0,
+            });
+        }
+    };
+
+    let runs: Vec<EvadexRunSummary> = rows
+        .iter()
+        .map(|r| {
+            let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+            EvadexRunSummary {
+                run_id: r.get("run_id"),
+                created_at: created_at.to_rfc3339(),
+                scanner_label: r.get("scanner_label"),
+                tier: r.get("tier"),
+                evasion_mode: r.get("evasion_mode"),
+                total_variants: r.get("total_variants"),
+                detected: r.get("detected"),
+                bypassed: r.get("bypassed"),
+                detection_rate: r.get("detection_rate"),
+                duration_s: r.get("duration_s"),
+            }
+        })
+        .collect();
+
+    let total: i64 = match client
+        .query_one("SELECT COUNT(*) FROM evadex_runs", &[])
+        .await
+    {
+        Ok(row) => row.get(0),
+        Err(_) => runs.len() as i64,
+    };
+
+    Json(EvadexRunsResponse { runs, total })
+}
+
+#[derive(Serialize)]
+struct EvadexTechniqueBypass {
+    technique: String,
+    bypass_count: i64,
+    total_count: i64,
+    bypass_rate: f64,
+}
+
+#[derive(Serialize)]
+struct EvadexRunsStats {
+    total_runs: i64,
+    total_variants: i64,
+    total_detected: i64,
+    total_bypassed: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    avg_detection_rate: Option<f64>,
+    top_bypassed_techniques: Vec<EvadexTechniqueBypass>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_run_at: Option<String>,
+}
+
+async fn evadex_runs_stats(State(state): State<Arc<AppState>>) -> Json<EvadexRunsStats> {
+    let empty = || {
+        Json(EvadexRunsStats {
+            total_runs: 0,
+            total_variants: 0,
+            total_detected: 0,
+            total_bypassed: 0,
+            avg_detection_rate: None,
+            top_bypassed_techniques: Vec::new(),
+            last_run_at: None,
+        })
+    };
+
+    let Some(pool) = state.db_pool.as_ref() else {
+        return empty();
+    };
+
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("evadex_runs_stats: pool get failed: {e}");
+            return empty();
+        }
+    };
+
+    let summary_row = match client
+        .query_one(
+            "SELECT \
+               COUNT(*)                                  AS total_runs, \
+               COALESCE(SUM(total_variants),0)           AS total_variants, \
+               COALESCE(SUM(detected),0)                 AS total_detected, \
+               COALESCE(SUM(bypassed),0)                 AS total_bypassed, \
+               AVG(detection_rate)                       AS avg_detection_rate, \
+               MAX(created_at)                           AS last_run_at \
+             FROM evadex_runs",
+            &[],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("evadex_runs_stats: aggregate query failed: {e}");
+            return empty();
+        }
+    };
+
+    let last_run_at: Option<chrono::DateTime<chrono::Utc>> = summary_row.get("last_run_at");
+    let avg_dr: Option<f64> = summary_row.get("avg_detection_rate");
+
+    let technique_rows = match client
+        .query(
+            "SELECT \
+               technique, \
+               COUNT(*) FILTER (WHERE NOT detected) AS bypass_count, \
+               COUNT(*)                             AS total_count \
+             FROM evadex_findings \
+             GROUP BY technique \
+             ORDER BY bypass_count DESC \
+             LIMIT 10",
+            &[],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("evadex_runs_stats: technique query failed: {e}");
+            Vec::new()
+        }
+    };
+
+    let top_bypassed_techniques: Vec<EvadexTechniqueBypass> = technique_rows
+        .iter()
+        .map(|r| {
+            let bypass_count: i64 = r.get("bypass_count");
+            let total_count: i64 = r.get("total_count");
+            let bypass_rate = if total_count > 0 {
+                (bypass_count as f64 / total_count as f64) * 100.0
+            } else {
+                0.0
+            };
+            EvadexTechniqueBypass {
+                technique: r.get("technique"),
+                bypass_count,
+                total_count,
+                bypass_rate,
+            }
+        })
+        .collect();
+
+    Json(EvadexRunsStats {
+        total_runs: summary_row.get("total_runs"),
+        total_variants: summary_row.get("total_variants"),
+        total_detected: summary_row.get("total_detected"),
+        total_bypassed: summary_row.get("total_bypassed"),
+        avg_detection_rate: avg_dr,
+        top_bypassed_techniques,
+        last_run_at: last_run_at.map(|dt| dt.to_rfc3339()),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// GET /v1/lsh/history — recent LSH query events from Postgres.
+// Mirrors the EDM pattern: paginated, filterable by matched_only.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct LshHistoryQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    matched_only: Option<bool>,
+}
+
+#[derive(Serialize)]
+struct LshQueryRecord {
+    id: String,
+    created_at: String,
+    matched: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    matched_doc_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    similarity: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    query_length: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_ms: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_pod: Option<String>,
+}
+
+#[derive(Serialize)]
+struct LshHistoryResponse {
+    queries: Vec<LshQueryRecord>,
+    total: i64,
+}
+
+async fn lsh_history(
+    Query(q): Query<LshHistoryQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Json<LshHistoryResponse> {
+    let Some(pool) = state.db_pool.as_ref() else {
+        return Json(LshHistoryResponse {
+            queries: Vec::new(),
+            total: 0,
+        });
+    };
+
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("lsh_history: pool get failed: {e}");
+            return Json(LshHistoryResponse {
+                queries: Vec::new(),
+                total: 0,
+            });
+        }
+    };
+
+    let limit = q.limit.unwrap_or(50).min(1000);
+    let offset = q.offset.unwrap_or(0);
+    let matched_only = q.matched_only.unwrap_or(false);
+
+    let rows = match client
+        .query(
+            "SELECT id, created_at, matched, matched_doc_id, similarity, \
+             query_length, duration_ms, source_pod \
+             FROM lsh_queries \
+             WHERE (NOT $1 OR matched = true) \
+             ORDER BY created_at DESC \
+             LIMIT $2 OFFSET $3",
+            &[&matched_only, &limit, &offset],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("lsh_history: query failed: {e}");
+            return Json(LshHistoryResponse {
+                queries: Vec::new(),
+                total: 0,
+            });
+        }
+    };
+
+    let queries: Vec<LshQueryRecord> = rows
+        .iter()
+        .map(|r| {
+            let id: uuid::Uuid = r.get("id");
+            let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+            LshQueryRecord {
+                id: id.to_string(),
+                created_at: created_at.to_rfc3339(),
+                matched: r.get("matched"),
+                matched_doc_id: r.get("matched_doc_id"),
+                similarity: r.get("similarity"),
+                query_length: r.get("query_length"),
+                duration_ms: r.get("duration_ms"),
+                source_pod: r.get("source_pod"),
+            }
+        })
+        .collect();
+
+    let total: i64 = match client
+        .query_one(
+            "SELECT COUNT(*) FROM lsh_queries WHERE (NOT $1 OR matched = true)",
+            &[&matched_only],
+        )
+        .await
+    {
+        Ok(row) => row.get(0),
+        Err(_) => queries.len() as i64,
+    };
+
+    Json(LshHistoryResponse { queries, total })
+}
+
+// ---------------------------------------------------------------------------
+// GET /v1/findings/stats — category breakdown + daily scan counts from
+// Postgres. Returns empty stats when the pool is None (no DB configured).
+// Response is cached for STATS_CACHE_SECS seconds to avoid repeated
+// full-table COUNT scans on every C2 poll.
+// ---------------------------------------------------------------------------
+
+const STATS_CACHE_SECS: u64 = 60;
+
+#[derive(Serialize)]
+struct CategoryCount {
+    category: String,
+    count: i64,
+}
+
+#[derive(Serialize)]
+struct DailyScanCount {
+    day: String,
+    count: i64,
+}
+
+#[derive(Serialize)]
+struct LshStats {
+    total_registrations: i64,
+    total_queries: i64,
+    match_rate: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_registration: Option<String>,
+}
+
+#[derive(Serialize)]
+struct FindingsStatsResponse {
+    categories: Vec<CategoryCount>,
+    daily_scans: Vec<DailyScanCount>,
+    total_findings: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_scan_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lsh: Option<LshStats>,
+}
+
+async fn findings_stats(State(state): State<Arc<AppState>>) -> Response {
+    // Return cached response if fresh enough (avoids repeated DB COUNT scans).
+    {
+        let cache = state.stats_cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((cached_at, ref cached_body)) = *cache {
+            if cached_at.elapsed().as_secs() < STATS_CACHE_SECS {
+                let body = serde_json::to_vec(cached_body).unwrap_or_default();
+                return (
+                    [(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("application/json"),
+                    )],
+                    body,
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    let Some(pool) = state.db_pool.as_ref() else {
+        return Json(FindingsStatsResponse {
+            categories: Vec::new(),
+            daily_scans: Vec::new(),
+            total_findings: 0,
+            last_scan_at: None,
+            lsh: None,
+        })
+        .into_response();
+    };
+
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("findings_stats: pool get failed: {e}");
+            return Json(FindingsStatsResponse {
+                categories: Vec::new(),
+                daily_scans: Vec::new(),
+                total_findings: 0,
+                last_scan_at: None,
+                lsh: None,
+            })
+            .into_response();
+        }
+    };
+
+    // Category breakdown.
+    let categories: Vec<CategoryCount> = match client
+        .query(
+            "SELECT category, COUNT(*) as cnt \
+             FROM findings \
+             GROUP BY category \
+             ORDER BY cnt DESC \
+             LIMIT 20",
+            &[],
+        )
+        .await
+    {
+        Ok(rows) => rows
+            .iter()
+            .map(|r| CategoryCount {
+                category: r.get::<_, String>("category"),
+                count: r.get::<_, i64>("cnt"),
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!("findings_stats: category query failed: {e}");
+            Vec::new()
+        }
+    };
+
+    // Daily scan counts (last 30 days).
+    let daily_scans: Vec<DailyScanCount> = match client
+        .query(
+            "SELECT DATE_TRUNC('day', created_at) as day, COUNT(*) as cnt \
+             FROM scans \
+             WHERE created_at >= NOW() - INTERVAL '30 days' \
+             GROUP BY day \
+             ORDER BY day DESC",
+            &[],
+        )
+        .await
+    {
+        Ok(rows) => rows
+            .iter()
+            .map(|r| {
+                let day: chrono::DateTime<chrono::Utc> =
+                    r.get::<_, chrono::DateTime<chrono::Utc>>("day");
+                DailyScanCount {
+                    day: day.to_rfc3339(),
+                    count: r.get::<_, i64>("cnt"),
+                }
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!("findings_stats: daily_scans query failed: {e}");
+            Vec::new()
+        }
+    };
+
+    // Total findings count.
+    let total_findings: i64 = match client.query_one("SELECT COUNT(*) FROM findings", &[]).await {
+        Ok(row) => row.get::<_, i64>(0),
+        Err(e) => {
+            tracing::warn!("findings_stats: total_findings query failed: {e}");
+            0
+        }
+    };
+
+    // Last scan timestamp.
+    let last_scan_at: Option<String> = match client
+        .query_one("SELECT MAX(created_at) FROM scans", &[])
+        .await
+    {
+        Ok(row) => {
+            let ts: Option<chrono::DateTime<chrono::Utc>> =
+                row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(0);
+            ts.map(|t| t.to_rfc3339())
+        }
+        Err(e) => {
+            tracing::warn!("findings_stats: last_scan_at query failed: {e}");
+            None
+        }
+    };
+
+    // LSH stats: total registrations, total queries, match rate, last registration.
+    let lsh_total_registrations: i64 = match client
+        .query_one("SELECT COUNT(*) FROM lsh_registrations", &[])
+        .await
+    {
+        Ok(row) => row.get(0),
+        Err(e) => {
+            tracing::warn!("findings_stats: lsh_registrations count failed: {e}");
+            0
+        }
+    };
+    let (lsh_total_queries, lsh_matched_queries): (i64, i64) = match client
+        .query_one(
+            "SELECT COUNT(*), COUNT(*) FILTER (WHERE matched = true) FROM lsh_queries",
+            &[],
+        )
+        .await
+    {
+        Ok(row) => (row.get(0), row.get(1)),
+        Err(e) => {
+            tracing::warn!("findings_stats: lsh_queries count failed: {e}");
+            (0, 0)
+        }
+    };
+    let lsh_match_rate = if lsh_total_queries > 0 {
+        lsh_matched_queries as f64 / lsh_total_queries as f64
+    } else {
+        0.0
+    };
+    let lsh_last_registration: Option<String> = match client
+        .query_one("SELECT MAX(created_at) FROM lsh_registrations", &[])
+        .await
+    {
+        Ok(row) => {
+            let ts: Option<chrono::DateTime<chrono::Utc>> =
+                row.get::<_, Option<chrono::DateTime<chrono::Utc>>>(0);
+            ts.map(|t| t.to_rfc3339())
+        }
+        Err(e) => {
+            tracing::warn!("findings_stats: lsh_last_registration query failed: {e}");
+            None
+        }
+    };
+
+    let lsh_stats = LshStats {
+        total_registrations: lsh_total_registrations,
+        total_queries: lsh_total_queries,
+        match_rate: lsh_match_rate,
+        last_registration: lsh_last_registration,
+    };
+
+    let response = FindingsStatsResponse {
+        categories,
+        daily_scans,
+        total_findings,
+        last_scan_at,
+        lsh: Some(lsh_stats),
+    };
+
+    // Populate cache.
+    if let Ok(json_val) = serde_json::to_value(&response) {
+        let mut cache = state.stats_cache.lock().unwrap_or_else(|e| e.into_inner());
+        *cache = Some((Instant::now(), json_val));
+    }
+
+    Json(response).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// GET /v1/findings/pg — Postgres-backed findings query.
+// Separate from /v1/findings (in-memory ring) so existing consumers
+// are not broken. Returns paginated findings from the DB when a pool
+// is available; empty list otherwise.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct PgFindingsQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    category: Option<String>,
+}
+
+#[derive(Serialize)]
+struct PgFinding {
+    id: String,
+    scan_id: String,
+    created_at: String,
+    category: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sub_category: Option<String>,
+    confidence: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    span_start: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    span_end: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    matched_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    has_context: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_required: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<serde_json::Value>,
+}
+
+#[derive(Serialize)]
+struct PgFindingsResponse {
+    findings: Vec<PgFinding>,
+    total: i64,
+}
+
+async fn list_pg_findings(
+    Query(q): Query<PgFindingsQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Json<PgFindingsResponse> {
+    let Some(pool) = state.db_pool.as_ref() else {
+        return Json(PgFindingsResponse {
+            findings: Vec::new(),
+            total: 0,
+        });
+    };
+
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("list_pg_findings: pool get failed: {e}");
+            return Json(PgFindingsResponse {
+                findings: Vec::new(),
+                total: 0,
+            });
+        }
+    };
+
+    let limit = q.limit.unwrap_or(50).min(1000);
+    let offset = q.offset.unwrap_or(0);
+    let category = q.category.as_deref();
+
+    let rows = match client
+        .query(
+            "SELECT id, scan_id, created_at, category, sub_category, confidence, \
+             span_start, span_end, matched_text, has_context, context_required, metadata \
+             FROM findings \
+             WHERE ($1::text IS NULL OR category = $1) \
+             ORDER BY created_at DESC \
+             LIMIT $2 OFFSET $3",
+            &[&category, &limit, &offset],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("list_pg_findings: query failed: {e}");
+            return Json(PgFindingsResponse {
+                findings: Vec::new(),
+                total: 0,
+            });
+        }
+    };
+
+    let findings: Vec<PgFinding> = rows
+        .iter()
+        .map(|r| {
+            let id: uuid::Uuid = r.get("id");
+            let scan_id: uuid::Uuid = r.get("scan_id");
+            let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+            PgFinding {
+                id: id.to_string(),
+                scan_id: scan_id.to_string(),
+                created_at: created_at.to_rfc3339(),
+                category: r.get("category"),
+                sub_category: r.get("sub_category"),
+                confidence: r.get("confidence"),
+                span_start: r.get("span_start"),
+                span_end: r.get("span_end"),
+                matched_text: r.get("matched_text"),
+                has_context: r.get("has_context"),
+                context_required: r.get("context_required"),
+                metadata: r.get("metadata"),
+            }
+        })
+        .collect();
+
+    let total: i64 = match client
+        .query_one(
+            "SELECT COUNT(*) FROM findings WHERE ($1::text IS NULL OR category = $1)",
+            &[&category],
+        )
+        .await
+    {
+        Ok(row) => row.get(0),
+        Err(_) => findings.len() as i64,
+    };
+
+    Json(PgFindingsResponse { findings, total })
+}
+
+// ---------------------------------------------------------------------------
+// GET /v1/findings/export — bulk export of findings as CSV or JSON.
+// Returns a file download suitable for compliance teams and long-term
+// archival. Max 100,000 rows per request.
+// ---------------------------------------------------------------------------
+
+const EXPORT_MAX_ROWS: i64 = 100_000;
+
+#[derive(Deserialize)]
+struct ExportQuery {
+    /// Output format: "csv" (default) or "json"
+    format: Option<String>,
+    /// Filter by category
+    category: Option<String>,
+    /// ISO8601 lower bound (inclusive), e.g. 2026-01-01T00:00:00Z
+    from: Option<String>,
+    /// ISO8601 upper bound (inclusive)
+    to: Option<String>,
+    /// Maximum rows to return (capped at 100,000)
+    limit: Option<i64>,
+}
+
+async fn findings_export(
+    Query(q): Query<ExportQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    let format = q.format.as_deref().unwrap_or("csv");
+    let limit = q.limit.unwrap_or(EXPORT_MAX_ROWS).min(EXPORT_MAX_ROWS);
+    let category = q.category.as_deref();
+    let from_ts: Option<chrono::DateTime<chrono::Utc>> =
+        q.from.as_deref().and_then(|s| s.parse().ok());
+    let to_ts: Option<chrono::DateTime<chrono::Utc>> = q.to.as_deref().and_then(|s| s.parse().ok());
+
+    let Some(pool) = state.db_pool.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                error: "database not configured".into(),
+            }),
+        )
+            .into_response();
+    };
+
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("findings_export: pool get failed: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "database unavailable".into(),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    // JOIN findings → scans to get source_pod, scanner_version, file_name, duration_ms.
+    let rows = match client
+        .query(
+            "SELECT f.id, f.created_at, f.category, f.sub_category, f.confidence, \
+             f.matched_text, f.has_context, \
+             s.source_pod, s.scanner_version, s.file_name, s.duration_ms \
+             FROM findings f \
+             LEFT JOIN scans s ON s.id = f.scan_id \
+             WHERE ($1::text IS NULL OR f.category = $1) \
+             AND ($2::timestamptz IS NULL OR f.created_at >= $2) \
+             AND ($3::timestamptz IS NULL OR f.created_at <= $3) \
+             ORDER BY f.created_at DESC \
+             LIMIT $4",
+            &[&category, &from_ts, &to_ts, &limit],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("findings_export: query failed: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("query failed: {e}"),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let date_label = chrono::Utc::now().format("%Y-%m-%d").to_string();
+
+    if format == "json" {
+        let items: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|r| {
+                let id: uuid::Uuid = r.get("id");
+                let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+                serde_json::json!({
+                    "id": id.to_string(),
+                    "created_at": created_at.to_rfc3339(),
+                    "category": r.get::<_, String>("category"),
+                    "sub_category": r.get::<_, Option<String>>("sub_category"),
+                    "confidence": r.get::<_, f32>("confidence"),
+                    "matched_text": r.get::<_, Option<String>>("matched_text"),
+                    "has_context": r.get::<_, Option<bool>>("has_context"),
+                    "source_pod": r.get::<_, Option<String>>("source_pod"),
+                    "scanner_version": r.get::<_, Option<String>>("scanner_version"),
+                    "file_name": r.get::<_, Option<String>>("file_name"),
+                    "duration_ms": r.get::<_, Option<i32>>("duration_ms"),
+                })
+            })
+            .collect();
+
+        let body = serde_json::to_vec(&items).unwrap_or_default();
+        let filename = format!("siphon-findings-{date_label}.json");
+        return (
+            [
+                (
+                    header::CONTENT_DISPOSITION,
+                    HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+                        .unwrap_or(HeaderValue::from_static("attachment")),
+                ),
+                (
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/json"),
+                ),
+            ],
+            body,
+        )
+            .into_response();
+    }
+
+    // Default: CSV
+    let mut csv = String::with_capacity(rows.len() * 200);
+    csv.push_str("id,created_at,category,sub_category,confidence,matched_text,has_context,source_pod,scanner_version,file_name,duration_ms\n");
+    for r in &rows {
+        let id: uuid::Uuid = r.get("id");
+        let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+        let category: String = r.get("category");
+        let sub_category: Option<String> = r.get("sub_category");
+        let confidence: f32 = r.get("confidence");
+        let matched_text: Option<String> = r.get("matched_text");
+        let has_context: Option<bool> = r.get("has_context");
+        let source_pod: Option<String> = r.get("source_pod");
+        let scanner_version: Option<String> = r.get("scanner_version");
+        let file_name: Option<String> = r.get("file_name");
+        let duration_ms: Option<i32> = r.get("duration_ms");
+
+        fn csv_field(s: &str) -> String {
+            if s.contains(',') || s.contains('"') || s.contains('\n') {
+                format!("\"{}\"", s.replace('"', "\"\""))
+            } else {
+                s.to_string()
+            }
+        }
+
+        csv.push_str(&format!(
+            "{},{},{},{},{:.4},{},{},{},{},{},{}\n",
+            id,
+            created_at.to_rfc3339(),
+            csv_field(&category),
+            sub_category.as_deref().map(csv_field).unwrap_or_default(),
+            confidence,
+            matched_text.as_deref().map(csv_field).unwrap_or_default(),
+            has_context
+                .map(|b| if b { "true" } else { "false" })
+                .unwrap_or(""),
+            source_pod.as_deref().unwrap_or(""),
+            scanner_version.as_deref().unwrap_or(""),
+            file_name.as_deref().map(csv_field).unwrap_or_default(),
+            duration_ms.map(|n| n.to_string()).unwrap_or_default(),
+        ));
+    }
+
+    let filename = format!("siphon-findings-{date_label}.csv");
+    (
+        [
+            (
+                header::CONTENT_DISPOSITION,
+                HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+                    .unwrap_or(HeaderValue::from_static("attachment")),
+            ),
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/csv; charset=utf-8"),
+            ),
+        ],
+        csv,
+    )
+        .into_response()
+}
+
 #[derive(Deserialize)]
 struct FindingsQuery {
     limit: Option<usize>,
@@ -3328,6 +4751,220 @@ async fn list_findings(
         capacity,
         findings,
     })
+}
+
+// ---------------------------------------------------------------------------
+// POST /v1/findings/prune — manual retention trigger (admin only)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct PruneQuery {
+    days: Option<u32>,
+}
+
+#[derive(Serialize)]
+struct PruneResponse {
+    scans_deleted: i64,
+    findings_deleted: i64,
+    retention_days: u32,
+}
+
+async fn findings_prune(
+    _: RequireAdminAction,
+    Query(q): Query<PruneQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<PruneResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let days = q
+        .days
+        .or_else(|| {
+            std::env::var("SIPHON_FINDINGS_RETENTION_DAYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|&d: &u32| d > 0)
+        })
+        .filter(|&d| d > 0)
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "pass ?days=N or set SIPHON_FINDINGS_RETENTION_DAYS (must be > 0)"
+                        .into(),
+                }),
+            )
+        })?;
+
+    match db::prune_old_findings(&state.db_pool, days).await {
+        Ok((scans_deleted, findings_deleted)) => {
+            tracing::info!(
+                scans_deleted = scans_deleted,
+                findings_deleted = findings_deleted,
+                retention_days = days,
+                "manual_retention_prune_complete"
+            );
+            if let Ok(event) = AuditEvent::new("ADMIN") {
+                emit_audit(
+                    event
+                        .with_action("findings_prune")
+                        .with_outcome("success")
+                        .with_metadata("scans_deleted", serde_json::json!(scans_deleted))
+                        .with_metadata("findings_deleted", serde_json::json!(findings_deleted))
+                        .with_metadata("retention_days", serde_json::json!(days)),
+                );
+            }
+            Ok(Json(PruneResponse {
+                scans_deleted,
+                findings_deleted,
+                retention_days: days,
+            }))
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "manual_retention_prune_failed");
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: format!("prune failed: {e}"),
+                }),
+            ))
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Streaming scan — POST /scan/stream
+// ---------------------------------------------------------------------------
+
+/// POST /scan/stream — identical request body to POST /scan; findings are
+/// emitted as Server-Sent Events as they are discovered.  Each finding is
+/// a `data: <json>\n\n` frame; the final frame carries
+/// `{"done":true,"total":<n>,"duration_ms":<n>}`.
+///
+/// The endpoint accepts a POST body even though `EventSource` in browsers
+/// only supports GET.  Use `fetch()` + `ReadableStream` on the client side
+/// (or curl with `--no-buffer`).
+async fn scan_stream(State(state): State<Arc<AppState>>, Json(req): Json<ScanRequest>) -> Response {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use tokio_stream::wrappers::ReceiverStream;
+
+    if req.text.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "text field is required and cannot be empty".into(),
+            }),
+        )
+            .into_response();
+    }
+    if req.text.len() > 10 * 1024 * 1024 {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ErrorResponse {
+                error: "payload exceeds size limit".into(),
+            }),
+        )
+            .into_response();
+    }
+
+    let stage_disabled: HashSet<String> = state
+        .disabled_stages
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let ov = {
+        let g = state
+            .live_overrides
+            .read()
+            .expect("live_overrides lock poisoned");
+        g.clone()
+    };
+
+    let mut config = ScanConfig {
+        min_confidence: req.options.min_confidence.unwrap_or(0.0),
+        categories: req
+            .options
+            .categories
+            .map(|c| c.into_iter().collect::<HashSet<_>>()),
+        require_context: req.options.require_context.unwrap_or(false),
+        baseline_only: req.options.baseline_only.unwrap_or(false),
+        deduplicate: req.options.deduplicate.unwrap_or(true),
+        disabled_patterns: Some(ov.disabled_patterns.clone()),
+        pattern_field_overrides: Some(ov.pattern_field_overrides.clone()),
+        runtime_patterns: Some(ov.runtime_patterns.clone()),
+        pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
+        list_bindings: Some(ov.list_bindings.clone()),
+        max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+        ..Default::default()
+    };
+    if stage_disabled.contains("min_confidence") {
+        config.min_confidence = 0.0;
+    }
+    if stage_disabled.contains("require_context") {
+        config.require_context = false;
+    }
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, std::convert::Infallible>>(128);
+    let text = req.text;
+    let metrics = state.metrics.clone();
+
+    tokio::spawn(async move {
+        let start = Instant::now();
+        match scan_text_with_config(&text, &config) {
+            Ok(matches) => {
+                let count = matches.len();
+                for m in matches {
+                    let finding = Finding {
+                        category: m.category,
+                        sub_category: m.sub_category,
+                        text: m.text,
+                        confidence: m.confidence,
+                        has_context: m.has_context,
+                        span: m.span,
+                        metadata: m.metadata,
+                    };
+                    let json_str = serde_json::to_string(&finding).unwrap_or_default();
+                    if tx.send(Ok(Event::default().data(json_str))).await.is_err() {
+                        return;
+                    }
+                }
+                metrics.scans_total.fetch_add(1, Ordering::Relaxed);
+                metrics
+                    .findings_total
+                    .fetch_add(count as u64, Ordering::Relaxed);
+                let duration_ms = start.elapsed().as_millis() as u64;
+                let done = serde_json::json!({
+                    "done": true,
+                    "total": count,
+                    "duration_ms": duration_ms,
+                })
+                .to_string();
+                let _ = tx.send(Ok(Event::default().data(done))).await;
+            }
+            Err(e) => {
+                metrics.scan_errors_total.fetch_add(1, Ordering::Relaxed);
+                let err = serde_json::json!({ "error": e.to_string() }).to_string();
+                let _ = tx.send(Ok(Event::default().data(err))).await;
+            }
+        }
+    });
+
+    Sse::new(ReceiverStream::new(rx))
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Admin reload — POST /v1/admin/reload  (RequireAdminAction)
+// ---------------------------------------------------------------------------
+
+/// POST /v1/admin/reload — force an immediate reload of the overrides file
+/// from disk.  Requires the `AdminAction` permission (same as the overrides
+/// management endpoints).  Returns the same `ReloadResponse` shape as
+/// POST /v1/overrides/reload so C2 tooling can use either endpoint.
+async fn admin_reload(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Result<Json<ReloadResponse>, (StatusCode, Json<ErrorResponse>)> {
+    overrides_reload(State(state), ConnectInfo(addr)).await
 }
 
 // ---------------------------------------------------------------------------
@@ -3587,13 +5224,102 @@ async fn main() {
         disabled_stages: Arc::new(RwLock::new(HashSet::new())),
         db_pool,
         db_state,
+        stats_cache: Arc::new(Mutex::new(None)),
     });
+
+    // Retention pruning background task — runs once per day when
+    // SIPHON_FINDINGS_RETENTION_DAYS is set to a value > 0.
+    if let Some(retention_days) = std::env::var("SIPHON_FINDINGS_RETENTION_DAYS")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .filter(|&d| d > 0)
+    {
+        let pool_clone = state.db_pool.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(86400)).await;
+                match db::prune_old_findings(&pool_clone, retention_days).await {
+                    Ok((scans, findings)) => tracing::info!(
+                        scans_deleted = scans,
+                        findings_deleted = findings,
+                        retention_days = retention_days,
+                        "scheduled_retention_prune_complete"
+                    ),
+                    Err(e) => tracing::warn!(error = %e, "scheduled_retention_prune_failed"),
+                }
+            }
+        });
+        tracing::info!(
+            retention_days = retention_days,
+            "findings retention enabled"
+        );
+    }
+
+    // Hot-reload file watcher — watches SIPHON_OVERRIDES_PATH for changes
+    // and swaps LiveOverrides without a restart. Watcher runs on its own
+    // OS thread (notify callbacks are not async-safe); a tokio task drains
+    // the channel and performs the reload with a 200ms debounce.
+    if let Some(overrides_watch_path) = std::env::var("SIPHON_OVERRIDES_PATH")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.exists())
+    {
+        let (watch_tx, mut watch_rx) = tokio::sync::mpsc::channel::<()>(4);
+        let watch_path_thread = overrides_watch_path.clone();
+        std::thread::spawn(move || {
+            use notify::{RecursiveMode, Watcher};
+            let tx_inner = watch_tx.clone();
+            let result = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                if res.is_ok() {
+                    let _ = tx_inner.blocking_send(());
+                }
+            });
+            let mut watcher = match result {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::warn!(error = %e, "overrides_watcher_init_failed");
+                    return;
+                }
+            };
+            if let Err(e) = watcher.watch(&watch_path_thread, RecursiveMode::NonRecursive) {
+                tracing::warn!(error = %e, path = %watch_path_thread.display(), "overrides_watcher_watch_failed");
+                return;
+            }
+            tracing::info!(path = %watch_path_thread.display(), "overrides_file_watcher_active");
+            // Keep the watcher alive — dropping it stops watching.
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(3600));
+            }
+        });
+
+        let state_for_watcher = state.clone();
+        tokio::spawn(async move {
+            while watch_rx.recv().await.is_some() {
+                // Debounce: drain rapid-fire events before reloading.
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                while watch_rx.try_recv().is_ok() {}
+                let path = state_for_watcher.overrides_path.as_path();
+                let fresh = LiveOverrides::from_path(path);
+                match state_for_watcher.live_overrides.write() {
+                    Ok(mut guard) => {
+                        *guard = fresh;
+                        tracing::info!(path = %path.display(), "overrides_auto_reloaded");
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "overrides_watcher_lock_poisoned");
+                    }
+                }
+            }
+        });
+    }
 
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/v1/db/health", get(db_health))
         .route("/scan", post(scan))
+        .route("/scan/stream", post(scan_stream))
+        .route("/scan/batch", post(scan_batch))
         .route("/v1/patterns", get(list_patterns))
         .route("/v1/categories", get(list_categories))
         .route("/v1/policies", get(list_policies))
@@ -3609,6 +5335,19 @@ async fn main() {
         .route("/v1/allowlist", get(list_allowlist))
         .route("/v1/edm", get(list_edm_vaults))
         .route("/v1/lsh", get(list_lsh_vaults))
+        .route("/v1/lsh/history", get(lsh_history))
+        // /v1/evadex/runs/stats MUST be before /v1/evadex/runs (more specific first).
+        .route("/v1/evadex/runs/stats", get(evadex_runs_stats))
+        .route(
+            "/v1/evadex/runs",
+            get(list_evadex_runs).post(ingest_evadex_run),
+        )
+        // /v1/findings/* routes MUST be registered before /v1/findings
+        // so the more-specific paths are matched first.
+        .route("/v1/findings/stats", get(findings_stats))
+        .route("/v1/findings/pg", get(list_pg_findings))
+        .route("/v1/findings/export", get(findings_export))
+        .route("/v1/findings/prune", post(findings_prune))
         .route("/v1/findings", get(list_findings))
         .route("/v1/version", get(version))
         .route("/v1/capabilities", get(capabilities))
@@ -3616,6 +5355,7 @@ async fn main() {
         .route("/v1/overrides/disk", get(overrides_disk))
         .route("/v1/overrides/apply", post(overrides_apply))
         .route("/v1/overrides/reload", post(overrides_reload))
+        .route("/v1/admin/reload", post(admin_reload))
         .route("/v1/overrides/history", get(overrides_history))
         .route("/v1/overrides/content", get(overrides_content))
         .route(

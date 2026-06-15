@@ -1,6 +1,6 @@
 [package]
 name = "siphon-api"
-version = "2.2.0"
+version = "2.3.0"
 edition = "2021"
 description = "Polygon Siphon API — sync HTTP scan service"
 license = "MIT"
@@ -48,6 +48,10 @@ hex = "0.4"
 
 # Misc
 uuid = { version = "1", features = ["v4"] }
+tokio-stream = "0.1"
+
+# File watcher for SIPHON_OVERRIDES_PATH hot-reload
+notify = "6"
 
 # Persistence — Postgres connection pool. Marked optional in the
 # code path (AppState carries Option<Pool> and every DB touch is

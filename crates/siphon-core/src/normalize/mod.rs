@@ -1794,6 +1794,53 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
         push_if_room(decoded, &mut alternatives, &mut total_bytes);
     }
 
+    // Two-stage encoding chain: base64 → ROT13.
+    // Covers the evasion pattern base64(rot13(secret)) where the primary
+    // normalization pipeline decodes the base64 wrapper and the alt pass
+    // then needs to strip the inner ROT13.  The existing ROT13 alt above
+    // handles rot13(data) that survived to the normalized text; this
+    // explicitly generates rot13(b64decode(text)) for the case where the
+    // *normalised* text is still base64-encoded (e.g. the token-splitter
+    // didn't fire because it was embedded mid-sentence with no whitespace).
+    if let Some(b64_decoded) = try_decode_base64(text) {
+        let (rot_of_b64, _) = apply_rot13(&b64_decoded, &[]);
+        push_if_room(rot_of_b64, &mut alternatives, &mut total_bytes);
+        // Also push the raw b64 decoded form in case the caller's
+        // normalize_text didn't reach it (avoids the chain requiring the
+        // ROT13 outer to be double-ROT13'd back).
+        push_if_room(b64_decoded, &mut alternatives, &mut total_bytes);
+    }
+
+    // Two-stage encoding chain: ROT13 → base64.
+    // Covers rot13(base64(secret)): ROT13 the outer shell to recover
+    // base64, then the scanner's per-alt normalize_text call decodes
+    // the base64.  The first-pass ROT13 alt already produces rot13(text)
+    // and the alt-norm step runs normalize_text on it, but that only
+    // works when the full text is a clean base64 blob.  This explicit
+    // step handles the mixed-content case where rot13(base64(token)) is
+    // embedded among other text and the token-splitter can isolate it.
+    {
+        let (rot_text, _) = apply_rot13(text, &[]);
+        if let Some(b64_decoded) = try_decode_base64(&rot_text) {
+            push_if_room(b64_decoded, &mut alternatives, &mut total_bytes);
+        }
+        // Also push rot_text itself if not already added (ROT13 alt above
+        // already did this, push_if_room de-dups via != text check).
+        push_if_room(rot_text, &mut alternatives, &mut total_bytes);
+    }
+
+    // Two-stage encoding chain: hex → base64.
+    // Covers hex(base64(secret)) where the outer hex is already stripped
+    // by stage 4c but the intermediate base64 layer may not have been
+    // reached in a single normalize pass when the hex content is short
+    // enough to be treated as a literal token.
+    if let Some(hex_decoded) = try_decode_hex(text) {
+        if let Some(b64_decoded) = try_decode_base64(&hex_decoded) {
+            push_if_room(b64_decoded, &mut alternatives, &mut total_bytes);
+        }
+        push_if_room(hex_decoded, &mut alternatives, &mut total_bytes);
+    }
+
     alternatives
 }
 

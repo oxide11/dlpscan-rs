@@ -14,6 +14,69 @@ starting from this file.
 
 ---
 
+## 2026-06-14
+
+### siphon-core 2.1.3
+
+- feat(core): CUSIP context keywords expanded — 14 additional keywords added
+  (`instrument`, `ticker`, `position`, `identifier`, `portfolio`, `holding`,
+  `asset`, `issuance`, `prospectus`, `indenture`, `maturity`, `coupon`,
+  `face value`, `par value`); context distance widened from 50 to 75 chars,
+  improving detection of CUSIP numbers in financial documents where the
+  instrument label appears further from the identifier than the previous window
+  allowed.
+- feat(core): encoding chain alternatives added — `generate_alternative_decodings()`
+  now produces `base64→ROT13`, `ROT13→base64`, and `hex→base64` two-stage
+  chains alongside the existing single-pass decoders, catching doubly-encoded
+  values that evadex encodes across two distinct transforms.
+
+### siphon-api 2.3.0
+
+- feat(api): findings persistence to Postgres — scans + findings tables via
+  migrations `0001_init.sql`–`0004_retention.sql`; `persist_scan()` called
+  after every text scan in a background `tokio::spawn` (never blocks the HTTP
+  response). New query endpoints: `GET /v1/findings/pg` (paginated DB query,
+  filterable by category), `GET /v1/findings/stats` (category breakdown + daily
+  counts, cached 60 s), `POST /v1/findings/prune` (manual retention trigger,
+  admin-only).
+- feat(api): batch and file scan persistence — `POST /scan/batch` and
+  `siphon-fs POST /scan` now persist via the same `persist_scan()` path; one
+  row per item for batch, one row per file for file scans.
+- feat(api): findings retention policy — `SIPHON_FINDINGS_RETENTION_DAYS` env
+  var (default 90, 0 = keep forever); `prune_old_findings()` runs at startup
+  and in a nightly background task.
+- feat(api): findings export — `GET /v1/findings/export` returns CSV or JSON,
+  up to 100 k rows, filterable by category and ISO8601 date range; rate-limited
+  at 5 req/min per IP (prevents accidental full-table dumps from C2 polling).
+- feat(api): per-endpoint rate limits — `/v1/findings/export` 5/min,
+  `/v1/findings/pg` 30/min, `/v1/findings/stats` 60/min per IP, tighter than
+  the global `SIPHON_RATE_LIMIT`.
+- feat(api): EDM persistence — migration `0005_edm.sql`; every Exact Data Match
+  finding triggers a `persist_edm_query()` call; EDM registration events
+  persisted on vault write.
+- feat(api): LSH document similarity persistence — migration `0006_lsh.sql`;
+  `persist_lsh_query()` called after every scan that runs an LSH check; new
+  `GET /v1/lsh/history` endpoint (paginated, filterable by `matched_only`);
+  `GET /v1/findings/stats` extended with an `lsh` section (total
+  registrations, total queries, match rate, last registration timestamp).
+- feat(api): evadex adversarial-run ingest — migration `0007_evadex.sql`;
+  `POST /v1/evadex/runs` accepts completed evadex scan payloads from the
+  bridge, storing per-run stats and up to 2 000 individual findings; idempotent
+  on `run_id` (`ON CONFLICT DO NOTHING`). `GET /v1/evadex/runs` returns
+  paginated run history (limit ≤ 500). `GET /v1/evadex/runs/stats` returns
+  aggregated detection-rate summary and top-10 bypassed techniques from
+  `evadex_findings`.
+
+### siphon-cli 2.2.0
+
+- feat(cli): `siphon serve` subcommand — delegates to the `siphon-api` binary
+  found on `PATH` (or via `--exe`), enabling a persistent HTTP API without
+  needing the full k8s stack. Exits 1 with a clear error when `siphon-api` is
+  not installed. Forwards all remaining flags (`--port`, `--bind`, env-var
+  pass-through) to the child process.
+
+---
+
 ## 2026-05-26
 
 ### siphon-core 2.1.2

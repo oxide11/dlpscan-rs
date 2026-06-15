@@ -75,6 +75,13 @@ spec:
               value: /etc/siphon/overrides.json
             - name: RUST_LOG
               value: info
+            - name: SIPHON_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: siphon-postgres
+                  key: database-url
+            - name: SIPHON_FINDINGS_RETENTION_DAYS
+              value: "7"
           volumeMounts:
             - name: overrides
               mountPath: /etc/siphon

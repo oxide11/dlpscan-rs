@@ -44,7 +44,7 @@ api:
 
   image:
     repository: oxide11/siphon-api
-    tag: "2.2.0"
+    tag: "2.3.0"
     pullPolicy: ""  # inherits global.imagePullPolicy
 
   service:
@@ -111,7 +111,9 @@ api:
     secretName: ""     # e.g. "siphon-api-auth"
     secretKey: "api-key"
 
-  extraEnv: []
+  extraEnv:
+    - name: SIPHON_FINDINGS_RETENTION_DAYS
+      value: "90"
   extraVolumes: []
   extraVolumeMounts: []
 
