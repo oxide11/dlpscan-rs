@@ -4830,6 +4830,144 @@ async fn findings_prune(
 }
 
 // ---------------------------------------------------------------------------
+// Streaming scan — POST /scan/stream
+// ---------------------------------------------------------------------------
+
+/// POST /scan/stream — identical request body to POST /scan; findings are
+/// emitted as Server-Sent Events as they are discovered.  Each finding is
+/// a `data: <json>\n\n` frame; the final frame carries
+/// `{"done":true,"total":<n>,"duration_ms":<n>}`.
+///
+/// The endpoint accepts a POST body even though `EventSource` in browsers
+/// only supports GET.  Use `fetch()` + `ReadableStream` on the client side
+/// (or curl with `--no-buffer`).
+async fn scan_stream(State(state): State<Arc<AppState>>, Json(req): Json<ScanRequest>) -> Response {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use tokio_stream::wrappers::ReceiverStream;
+
+    if req.text.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "text field is required and cannot be empty".into(),
+            }),
+        )
+            .into_response();
+    }
+    if req.text.len() > 10 * 1024 * 1024 {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ErrorResponse {
+                error: "payload exceeds size limit".into(),
+            }),
+        )
+            .into_response();
+    }
+
+    let stage_disabled: HashSet<String> = state
+        .disabled_stages
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let ov = {
+        let g = state
+            .live_overrides
+            .read()
+            .expect("live_overrides lock poisoned");
+        g.clone()
+    };
+
+    let mut config = ScanConfig {
+        min_confidence: req.options.min_confidence.unwrap_or(0.0),
+        categories: req
+            .options
+            .categories
+            .map(|c| c.into_iter().collect::<HashSet<_>>()),
+        require_context: req.options.require_context.unwrap_or(false),
+        baseline_only: req.options.baseline_only.unwrap_or(false),
+        deduplicate: req.options.deduplicate.unwrap_or(true),
+        disabled_patterns: Some(ov.disabled_patterns.clone()),
+        pattern_field_overrides: Some(ov.pattern_field_overrides.clone()),
+        runtime_patterns: Some(ov.runtime_patterns.clone()),
+        pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
+        list_bindings: Some(ov.list_bindings.clone()),
+        max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+        ..Default::default()
+    };
+    if stage_disabled.contains("min_confidence") {
+        config.min_confidence = 0.0;
+    }
+    if stage_disabled.contains("require_context") {
+        config.require_context = false;
+    }
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, std::convert::Infallible>>(128);
+    let text = req.text;
+    let metrics = state.metrics.clone();
+
+    tokio::spawn(async move {
+        let start = Instant::now();
+        match scan_text_with_config(&text, &config) {
+            Ok(matches) => {
+                let count = matches.len();
+                for m in matches {
+                    let finding = Finding {
+                        category: m.category,
+                        sub_category: m.sub_category,
+                        text: m.text,
+                        confidence: m.confidence,
+                        has_context: m.has_context,
+                        span: m.span,
+                        metadata: m.metadata,
+                    };
+                    let json_str = serde_json::to_string(&finding).unwrap_or_default();
+                    if tx.send(Ok(Event::default().data(json_str))).await.is_err() {
+                        return;
+                    }
+                }
+                metrics.scans_total.fetch_add(1, Ordering::Relaxed);
+                metrics
+                    .findings_total
+                    .fetch_add(count as u64, Ordering::Relaxed);
+                let duration_ms = start.elapsed().as_millis() as u64;
+                let done = serde_json::json!({
+                    "done": true,
+                    "total": count,
+                    "duration_ms": duration_ms,
+                })
+                .to_string();
+                let _ = tx.send(Ok(Event::default().data(done))).await;
+            }
+            Err(e) => {
+                metrics.scan_errors_total.fetch_add(1, Ordering::Relaxed);
+                let err = serde_json::json!({ "error": e.to_string() }).to_string();
+                let _ = tx.send(Ok(Event::default().data(err))).await;
+            }
+        }
+    });
+
+    Sse::new(ReceiverStream::new(rx))
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Admin reload — POST /v1/admin/reload  (RequireAdminAction)
+// ---------------------------------------------------------------------------
+
+/// POST /v1/admin/reload — force an immediate reload of the overrides file
+/// from disk.  Requires the `AdminAction` permission (same as the overrides
+/// management endpoints).  Returns the same `ReloadResponse` shape as
+/// POST /v1/overrides/reload so C2 tooling can use either endpoint.
+async fn admin_reload(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Result<Json<ReloadResponse>, (StatusCode, Json<ErrorResponse>)> {
+    overrides_reload(State(state), ConnectInfo(addr)).await
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -5117,11 +5255,70 @@ async fn main() {
         );
     }
 
+    // Hot-reload file watcher — watches SIPHON_OVERRIDES_PATH for changes
+    // and swaps LiveOverrides without a restart. Watcher runs on its own
+    // OS thread (notify callbacks are not async-safe); a tokio task drains
+    // the channel and performs the reload with a 200ms debounce.
+    if let Some(overrides_watch_path) = std::env::var("SIPHON_OVERRIDES_PATH")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.exists())
+    {
+        let (watch_tx, mut watch_rx) = tokio::sync::mpsc::channel::<()>(4);
+        let watch_path_thread = overrides_watch_path.clone();
+        std::thread::spawn(move || {
+            use notify::{RecursiveMode, Watcher};
+            let tx_inner = watch_tx.clone();
+            let result = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                if res.is_ok() {
+                    let _ = tx_inner.blocking_send(());
+                }
+            });
+            let mut watcher = match result {
+                Ok(w) => w,
+                Err(e) => {
+                    tracing::warn!(error = %e, "overrides_watcher_init_failed");
+                    return;
+                }
+            };
+            if let Err(e) = watcher.watch(&watch_path_thread, RecursiveMode::NonRecursive) {
+                tracing::warn!(error = %e, path = %watch_path_thread.display(), "overrides_watcher_watch_failed");
+                return;
+            }
+            tracing::info!(path = %watch_path_thread.display(), "overrides_file_watcher_active");
+            // Keep the watcher alive — dropping it stops watching.
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(3600));
+            }
+        });
+
+        let state_for_watcher = state.clone();
+        tokio::spawn(async move {
+            while watch_rx.recv().await.is_some() {
+                // Debounce: drain rapid-fire events before reloading.
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                while watch_rx.try_recv().is_ok() {}
+                let path = state_for_watcher.overrides_path.as_path();
+                let fresh = LiveOverrides::from_path(path);
+                match state_for_watcher.live_overrides.write() {
+                    Ok(mut guard) => {
+                        *guard = fresh;
+                        tracing::info!(path = %path.display(), "overrides_auto_reloaded");
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "overrides_watcher_lock_poisoned");
+                    }
+                }
+            }
+        });
+    }
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/v1/db/health", get(db_health))
         .route("/scan", post(scan))
+        .route("/scan/stream", post(scan_stream))
         .route("/scan/batch", post(scan_batch))
         .route("/v1/patterns", get(list_patterns))
         .route("/v1/categories", get(list_categories))
@@ -5158,6 +5355,7 @@ async fn main() {
         .route("/v1/overrides/disk", get(overrides_disk))
         .route("/v1/overrides/apply", post(overrides_apply))
         .route("/v1/overrides/reload", post(overrides_reload))
+        .route("/v1/admin/reload", post(admin_reload))
         .route("/v1/overrides/history", get(overrides_history))
         .route("/v1/overrides/content", get(overrides_content))
         .route(

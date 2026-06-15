@@ -6,6 +6,8 @@ Last updated: 2026-06-14
 
 ### High priority
 - [x] siphon-api serve subcommand — persistent HTTP API without k8s (PR #318; siphon serve delegates to siphon-api binary)
+- [x] Streaming scan SSE — POST /scan/stream returns findings as Server-Sent Events as discovered; done+duration final frame
+- [x] Pattern hot-reload — notify v6 file watcher on SIPHON_OVERRIDES_PATH; debounced auto-reload + POST /v1/admin/reload (RequireAdminAction)
 - [ ] Findings deduplication — don't store duplicate findings for identical input
 
 ### Medium priority
@@ -47,3 +49,4 @@ Last updated: 2026-06-14
 - [x] CUSIP context keywords expanded — added instrument, ticker, position, identifier, portfolio, holding, asset, issuance, prospectus, indenture, maturity, coupon, face value, par value; distance 50→75
 - [x] Encoding chain alternatives — base64→ROT13, ROT13→base64, hex→base64 two-stage chains in generate_alternative_decodings
 - [x] Postgres end-to-end in kind cluster — siphon-lab cluster verified, postgres deployed, findings persistence tested
+- [x] Streaming scan SSE + pattern hot-reload — feat/streaming-hotreload branch; see PR for full details
