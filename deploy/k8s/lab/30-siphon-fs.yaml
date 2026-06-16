@@ -67,6 +67,8 @@ spec:
             - name: overrides
               mountPath: /etc/siphon
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
           livenessProbe:
             httpGet: { path: /health, port: http }
             initialDelaySeconds: 2
@@ -87,6 +89,8 @@ spec:
         - name: overrides
           configMap:
             name: siphon-overrides
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

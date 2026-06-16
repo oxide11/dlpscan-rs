@@ -69,8 +69,6 @@ spec:
               value: "0.0.0.0"
             - name: SIPHON_PORT
               value: "8080"
-            - name: SIPHON_CORS_ORIGINS
-              value: "*"
             - name: SIPHON_OVERRIDES_PATH
               value: /etc/siphon/overrides.json
             - name: RUST_LOG

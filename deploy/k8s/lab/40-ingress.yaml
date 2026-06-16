@@ -31,6 +31,12 @@ spec:
   rules:
     - http:
         paths:
+          - path: /ui(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: siphon-ui
+                port: { number: 80 }
           - path: /api(/|$)(.*)
             pathType: ImplementationSpecific
             backend:

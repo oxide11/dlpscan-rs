@@ -20,6 +20,7 @@ CLUSTER_SPEC="${REPO_ROOT}/deploy/k8s/lab/kind-cluster.yaml"
 MANIFESTS="${REPO_ROOT}/deploy/k8s/lab"
 API_IMAGE="siphon-api:lab"
 FS_IMAGE="siphon-fs:lab"
+UI_IMAGE="siphon-ui:lab"
 EVADEX_IMAGE="evadex:lab"
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
@@ -57,9 +58,10 @@ done
 kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=180s
 
 # ── 3 · build siphon images ──────────────────────────────────────
-bold "[3/8] building ${API_IMAGE} + ${FS_IMAGE}"
+bold "[3/8] building ${API_IMAGE} + ${FS_IMAGE} + ${UI_IMAGE}"
 docker build -t "$API_IMAGE" -f "${REPO_ROOT}/deploy/Dockerfile.api" "$REPO_ROOT"
 docker build -t "$FS_IMAGE"  -f "${REPO_ROOT}/deploy/Dockerfile.fs"  "$REPO_ROOT"
+docker build -t "$UI_IMAGE"  -f "${REPO_ROOT}/deploy/Dockerfile.ui"  "$REPO_ROOT"
 
 # ── 4 · build evadex image ───────────────────────────────────────
 bold "[4/8] building ${EVADEX_IMAGE}"
@@ -74,16 +76,18 @@ docker build -t "$EVADEX_IMAGE" \
 bold "[5/8] loading images into kind cluster"
 kind load docker-image "$API_IMAGE"    --name "$CLUSTER_NAME"
 kind load docker-image "$FS_IMAGE"     --name "$CLUSTER_NAME"
+kind load docker-image "$UI_IMAGE"     --name "$CLUSTER_NAME"
 kind load docker-image "$EVADEX_IMAGE" --name "$CLUSTER_NAME"
 
 # ── 6 · apply manifests ──────────────────────────────────────────
 bold "[6/8] applying lab manifests"
-kubectl apply -f "$MANIFESTS"
+find "$MANIFESTS" -maxdepth 1 -name "*.yaml" ! -name "kind-cluster.yaml" | sort | xargs -I{} kubectl apply -f {}
 # Bounce siphon-api and siphon-fs so they pick up any freshly-loaded
 # image even when the tag didn't change (imagePullPolicy: IfNotPresent
 # won't re-pull; an annotation flip triggers a roll).
 kubectl -n siphon-lab rollout restart deployment/siphon-api
 kubectl -n siphon-lab rollout restart deployment/siphon-fs
+kubectl -n siphon-lab rollout restart deployment/siphon-ui
 kubectl -n siphon-lab rollout restart deployment/evadex
 
 # ── 7 · wait for postgres ────────────────────────────────────────
@@ -94,6 +98,7 @@ kubectl -n siphon-lab rollout status deployment/postgres --timeout=120s
 bold "[8/8] waiting for rollouts"
 kubectl -n siphon-lab rollout status deployment/siphon-api --timeout=120s
 kubectl -n siphon-lab rollout status deployment/siphon-fs  --timeout=120s
+kubectl -n siphon-lab rollout status deployment/siphon-ui  --timeout=120s
 kubectl -n siphon-lab rollout status deployment/evadex     --timeout=120s
 
 # ── health summary ───────────────────────────────────────────────
@@ -106,6 +111,7 @@ kubectl get pods -n siphon-lab
 
 printf '\n'
 printf 'Endpoints:\n'
+printf '  C2 UI       → http://localhost/ui/\n'
 printf '  siphon-api  → http://localhost/api/health\n'
 printf '  siphon-fs   → http://localhost/fs/health\n'
 printf '  evadex      → http://localhost/evadex/healthz\n'
@@ -117,7 +123,8 @@ PG_STATUS="$(kubectl exec -n siphon-lab deploy/postgres -- \
 printf 'Postgres:     %s\n' "$PG_STATUS"
 
 printf '\n'
-printf 'Admin console (siphon-c2.html) — set localStorage key:\n'
+printf 'Admin console served at http://localhost/ui/ (or open docs/wireframes/siphon-c2.html locally)\n'
+printf 'If using the file:// version, set localStorage key:\n'
 printf "  c2:apiUrl = 'http://localhost/api'\n"
 printf '\n'
 printf 'Tear down with: scripts/lab-down.sh\n'

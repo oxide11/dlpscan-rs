@@ -5110,7 +5110,10 @@ async fn main() {
                 .allow_methods([axum::http::Method::POST, axum::http::Method::GET])
                 .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
             if trimmed == "*" {
-                base.allow_origin(AllowOrigin::any())
+                // AllowOrigin::any() sends `*` which browsers reject for
+                // file:// (Origin: null) pages. permissive() mirrors the
+                // request Origin instead, matching null and everything else.
+                CorsLayer::permissive()
             } else {
                 let allowed: Vec<HeaderValue> = trimmed
                     .split(',')
