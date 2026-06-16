@@ -2176,8 +2176,8 @@ if (_RO) {
   // zero migration work.
 
   window.SIPHON_API_URL = function () {
-    try { return localStorage.getItem('c2:apiUrl') || 'http://127.0.0.1:8080'; }
-    catch { return 'http://127.0.0.1:8080'; }
+    try { return localStorage.getItem('c2:apiUrl') || 'http://127.0.0.1:8080/api'; }
+    catch { return 'http://127.0.0.1:8080/api'; }
   };
 
   window.SIPHON_FS_URL = function () {
@@ -8165,7 +8165,7 @@ function DetectionPipeline({ finding }) {
     }
     let cancelled = false;
     setState(s => ({ ...s, loading: true, error: null }));
-    const url = (window.SIPHON_API_URL ? window.SIPHON_API_URL() : 'http://127.0.0.1:8080').replace(/\/$/, '') + '/scan';
+    const url = (window.SIPHON_API_URL ? window.SIPHON_API_URL() : 'http://127.0.0.1:8080/api').replace(/\/$/, '') + '/scan';
     window.siphonFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -11019,7 +11019,7 @@ function PatternSimulator({ pattern, findings }) {
   const runScan = async () => {
     if (!text.trim()) return;
     setState({ loading: true, trace: null, error: null, scannedLen: text.length });
-    const url = (window.SIPHON_API_URL ? window.SIPHON_API_URL() : 'http://127.0.0.1:8080')
+    const url = (window.SIPHON_API_URL ? window.SIPHON_API_URL() : 'http://127.0.0.1:8080/api')
       .replace(/\/$/, '') + '/scan';
     try {
       const r = await window.siphonFetch(url, {
@@ -14676,7 +14676,7 @@ function ApiUrlControl() {
         }}
       />
       <button className="btn" onClick={save}>{saved ? 'Saved' : 'Save'}</button>
-      <button className="btn ghost" onClick={() => { setUrl('http://127.0.0.1:8080'); }}>Reset</button>
+      <button className="btn ghost" onClick={() => { setUrl('http://127.0.0.1:8080/api'); }}>Reset</button>
     </div>
   );
 }
@@ -16602,8 +16602,8 @@ AWS key for the old integration: AKIAIOSFODNN7EXAMPLE (should be rotated).`;
 
 function LiveScan() {
   const defaultUrl = (() => {
-    try { return localStorage.getItem('c2:apiUrl') || 'http://127.0.0.1:8080'; }
-    catch { return 'http://127.0.0.1:8080'; }
+    try { return localStorage.getItem('c2:apiUrl') || 'http://127.0.0.1:8080/api'; }
+    catch { return 'http://127.0.0.1:8080/api'; }
   })();
   const [apiUrl, setApiUrl] = React.useState(defaultUrl);
   // Phase 4.5d: per-session FS URL so file-mode can target a specific
@@ -17316,8 +17316,8 @@ function parseCorpus(raw) {
 
 function CorpusRunner() {
   const apiUrl = (() => {
-    try { return localStorage.getItem('c2:apiUrl') || 'http://127.0.0.1:8080'; }
-    catch { return 'http://127.0.0.1:8080'; }
+    try { return localStorage.getItem('c2:apiUrl') || 'http://127.0.0.1:8080/api'; }
+    catch { return 'http://127.0.0.1:8080/api'; }
   })();
   const [source, setSource] = React.useState(CR_SAMPLE);
   const [results, setResults] = React.useState([]);   // [{doc, res, err, ms}]
