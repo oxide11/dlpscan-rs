@@ -1,0 +1,79 @@
+# siphon-nginx — lab reverse proxy Deployment.
+#
+# Config comes from the siphon-nginx-config ConfigMap (created by
+# lab-up.sh with the API key substituted) rather than being baked
+# into the image, so the config survives pod restarts.
+#
+# Routes all traffic from the nginx-ingress-controller to the
+# appropriate backend service using stable k8s FQDN DNS names.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: siphon-nginx
+  namespace: siphon-lab
+  labels:
+    app.kubernetes.io/name: siphon-nginx
+    app.kubernetes.io/component: nginx
+    app.kubernetes.io/part-of: siphon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: siphon-nginx
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: siphon-nginx
+        app.kubernetes.io/component: nginx
+        app.kubernetes.io/part-of: siphon
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+          livenessProbe:
+            httpGet: { path: /nginx-health, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /nginx-health, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: siphon-nginx-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: siphon-nginx
+  namespace: siphon-lab
+  labels:
+    app.kubernetes.io/name: siphon-nginx
+    app.kubernetes.io/part-of: siphon
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: siphon-nginx
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

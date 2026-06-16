@@ -17061,7 +17061,7 @@ function LiveScan() {
           </div>
         ) : (
           <>
-            <div style={{display:'grid', gridTemplateColumns:'1.4fr 1.4fr 2fr 90px 80px 90px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
+            <div style={{display:'grid', gridTemplateColumns:'1.4fr 1.2fr 2fr 100px 72px 80px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
               <span className="label">Category</span>
               <span className="label">Sub-category</span>
               <span className="label">Match</span>
@@ -17069,16 +17069,58 @@ function LiveScan() {
               <span className="label">Ctx</span>
               <span className="label">Span</span>
             </div>
-            {findings.map((f,i) => (
-              <div key={i} style={{display:'grid', gridTemplateColumns:'1.4fr 1.4fr 2fr 90px 80px 90px', gap:10, padding:'7px 0', borderBottom:'1px solid var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
-                <span style={{color:'var(--ink-bright)'}}>{f.category}</span>
-                <span className="muted">{f.sub_category || '—'}</span>
-                <span style={{color:'var(--accent)'}}>{f.text}</span>
-                <span style={{color: confColor(f.confidence)}}>{(f.confidence != null ? f.confidence.toFixed(2) : '—')}</span>
-                <span>{f.has_context ? <span className="chip chip--safe" style={{fontSize:9}}>yes</span> : <span className="chip chip--ghost" style={{fontSize:9}}>no</span>}</span>
-                <span className="muted">{f.span ? f.span.join('..') : '—'}</span>
-              </div>
-            ))}
+            {findings.map((f,i) => {
+              const hasBin = f.metadata && f.category === 'Credit Card Numbers' &&
+                (f.metadata.bin_brand || f.metadata.bin_card_type || f.metadata.bin_country);
+              const confClr = f.confidence >= 0.9 ? 'var(--safe)' : f.confidence >= 0.7 ? 'var(--amber)' : 'var(--red)';
+              return (
+                <React.Fragment key={i}>
+                  <div style={{display:'grid', gridTemplateColumns:'1.4fr 1.2fr 2fr 100px 72px 80px', gap:10, padding:'7px 0', borderBottom: hasBin ? 'none' : '1px solid var(--line-soft)', alignItems:'center', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+                    <span style={{color:'var(--ink-bright)'}}>{f.category}</span>
+                    <span>
+                      {f.sub_category
+                        ? <span className="chip chip--ghost" style={{fontSize:9, padding:'2px 6px'}}>{f.sub_category}</span>
+                        : <span className="muted">—</span>}
+                    </span>
+                    <span style={{display:'flex', alignItems:'center', gap:5, minWidth:0}}>
+                      <span style={{color:'var(--accent)', flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{f.text}</span>
+                      <button
+                        title="Copy"
+                        onClick={() => { try { navigator.clipboard.writeText(f.text); } catch {} }}
+                        style={{
+                          padding:'1px 5px', fontSize:10,
+                          fontFamily:"'JetBrains Mono', monospace",
+                          background:'transparent',
+                          border:'1px solid var(--line-soft)',
+                          color:'var(--ink-soft)',
+                          borderRadius:'var(--radius)',
+                          cursor:'pointer', flexShrink:0,
+                        }}>⎘</button>
+                    </span>
+                    <span style={{display:'flex', alignItems:'center', gap:4}}>
+                      <span style={{width:7, height:7, borderRadius:'50%', background:confClr, display:'inline-block', flexShrink:0}} />
+                      <span style={{color:confClr}}>{f.confidence != null ? f.confidence.toFixed(2) : '—'}</span>
+                    </span>
+                    <span>{f.has_context ? <span className="chip chip--safe" style={{fontSize:9}}>yes</span> : <span className="chip chip--ghost" style={{fontSize:9}}>no</span>}</span>
+                    <span className="muted">{f.span ? f.span.join('..') : '—'}</span>
+                  </div>
+                  {hasBin && (
+                    <div style={{
+                      padding:'3px 0 8px 2px',
+                      borderBottom:'1px solid var(--line-soft)',
+                      fontFamily:"'JetBrains Mono', monospace",
+                      fontSize:10.5,
+                      display:'flex', gap:14, flexWrap:'wrap',
+                    }}>
+                      {f.metadata.bin_brand     && <span><span style={{color:'var(--ink-faint)'}}>brand </span><span style={{color:'var(--cyan)'}}>{f.metadata.bin_brand}</span></span>}
+                      {f.metadata.bin_card_type && <span><span style={{color:'var(--ink-faint)'}}>type </span><span style={{color:'var(--ink)'}}>{f.metadata.bin_card_type}</span></span>}
+                      {f.metadata.bin_country   && <span><span style={{color:'var(--ink-faint)'}}>country </span><span style={{color:'var(--ink)'}}>{f.metadata.bin_country}</span></span>}
+                      {f.metadata.bin_issuer    && <span><span style={{color:'var(--ink-faint)'}}>issuer </span><span style={{color:'var(--ink-soft)'}}>{f.metadata.bin_issuer}</span></span>}
+                    </div>
+                  )}
+                </React.Fragment>
+              );
+            })}
           </>
         )}
       </div>

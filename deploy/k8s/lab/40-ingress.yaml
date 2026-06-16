@@ -1,14 +1,11 @@
-# Ingress — fronts both services on a single host so the admin
-# console (siphon-c2.html) can talk to them with one base URL. Path
-# shape:
-#   /api/v1/*  → siphon-api (for the admin console's existing
-#                 window.SIPHON_API_URL() wiring)
-#   /api/scan  → siphon-api POST /scan for text
-#   /api/*     → siphon-api fallback
-#   /fs/scan   → siphon-fs POST /scan for file uploads
-#   /fs/*      → siphon-fs (health, ready)
+# Ingress — thin pass-through to siphon-nginx.
 #
-# Requires nginx-ingress-controller in the cluster. The lab-up script
+# siphon-nginx handles all routing internally using stable FQDN DNS
+# names, injects the API key for /api/ and /fs/ paths, and proxies
+# to siphon-ui, evadex, etc. The ingress just provides the external
+# entry point (kind port-forward on host:80).
+#
+# Requires nginx-ingress-controller in the cluster. lab-up.sh
 # installs it via the standard kind manifest.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -16,42 +13,20 @@ metadata:
   name: siphon-lab
   namespace: siphon-lab
   annotations:
-    nginx.ingress.kubernetes.io/use-regex: "true"
-    # Headroom for the extractor — must be >= DefaultBodyLimit in
-    # siphon-fs (64MB) or uploads get rejected at the ingress.
-    nginx.ingress.kubernetes.io/proxy-body-size: "64m"
+    # Headroom for large file uploads (siphon-fs default 64MB).
+    nginx.ingress.kubernetes.io/proxy-body-size: "500m"
     # File parsers (PDF, archives) can be slow — give the proxy
     # enough time before it declares a 504.
     nginx.ingress.kubernetes.io/proxy-read-timeout: "120"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "120"
-    # Strip /api or /fs prefix before proxying.
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
 spec:
   ingressClassName: nginx
   rules:
     - http:
         paths:
-          - path: /ui(/|$)(.*)
-            pathType: ImplementationSpecific
+          - path: /
+            pathType: Prefix
             backend:
               service:
-                name: siphon-ui
+                name: siphon-nginx
                 port: { number: 80 }
-          - path: /api(/|$)(.*)
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: siphon-api
-                port: { number: 8080 }
-          - path: /fs(/|$)(.*)
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: siphon-fs
-                port: { number: 8081 }
-          - path: /evadex(/|$)(.*)
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: evadex
-                port: { number: 8081 }

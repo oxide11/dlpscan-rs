@@ -4,6 +4,28 @@ Last updated: 2026-06-14
 
 ## Ready to build
 
+### UI/UX improvements
+- [ ] Scan results — show confidence scores, span highlighting, BIN enrichment for credit cards
+- [ ] Findings history table — sortable and filterable in UI
+- [ ] Loading states — smoother transitions, skeleton screens
+- [ ] File upload scan — drag and drop interface in Scan tab
+- [ ] Scan results — highlight matched text in original input
+
+### Stability
+- [ ] nginx configmap baked into image — currently wiped on pod restart
+- [ ] SIPHON_API_KEY set in lab — currently no auth in dev mode
+- [ ] lab-up.sh idempotent — re-running should work cleanly without errors
+
+### Adversarial Testing tab
+- [ ] evadex bridge metrics fully wired — show real detection rate, FP rate, coverage
+- [ ] File generator working end to end — generate and download test files from UI
+- [ ] Run Now fully working — trigger scan from C2 and see results
+
+### Findings tab
+- [ ] Postgres history showing correctly — verify /v1/findings/pg populates table
+- [ ] Export button — download findings as CSV from UI
+- [ ] Date range filter working
+
 ### High priority
 - [x] siphon-api serve subcommand — persistent HTTP API without k8s (PR #318; siphon serve delegates to siphon-api binary)
 - [x] Streaming scan SSE — POST /scan/stream returns findings as Server-Sent Events as discovered; done+duration final frame

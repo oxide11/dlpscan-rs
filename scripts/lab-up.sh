@@ -34,19 +34,19 @@ docker info >/dev/null 2>&1 || die "docker daemon not reachable"
 
 # ── 1 · cluster ──────────────────────────────────────────────────
 if kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME"; then
-  bold "[1/8] kind cluster '${CLUSTER_NAME}' already exists — reusing"
+  bold "[1/9] kind cluster '${CLUSTER_NAME}' already exists — reusing"
 else
-  bold "[1/8] creating kind cluster '${CLUSTER_NAME}'"
+  bold "[1/9] creating kind cluster '${CLUSTER_NAME}'"
   kind create cluster --name "$CLUSTER_NAME" --config "$CLUSTER_SPEC"
 fi
 kubectl cluster-info --context "kind-${CLUSTER_NAME}" >/dev/null
 
 # ── 2 · nginx ingress controller ─────────────────────────────────
 if ! kubectl get ns ingress-nginx >/dev/null 2>&1; then
-  bold "[2/8] installing nginx-ingress-controller"
+  bold "[2/9] installing nginx-ingress-controller"
   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
 else
-  bold "[2/8] nginx-ingress-controller already installed"
+  bold "[2/9] nginx-ingress-controller already installed"
 fi
 # `kubectl apply` returns before the controller pod is actually
 # scheduled, so wait for the Deployment object to appear first, then
@@ -58,13 +58,13 @@ done
 kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=180s
 
 # ── 3 · build siphon images ──────────────────────────────────────
-bold "[3/8] building ${API_IMAGE} + ${FS_IMAGE} + ${UI_IMAGE}"
+bold "[3/9] building ${API_IMAGE} + ${FS_IMAGE} + ${UI_IMAGE}"
 docker build -t "$API_IMAGE" -f "${REPO_ROOT}/deploy/Dockerfile.api" "$REPO_ROOT"
 docker build -t "$FS_IMAGE"  -f "${REPO_ROOT}/deploy/Dockerfile.fs"  "$REPO_ROOT"
 docker build -t "$UI_IMAGE"  -f "${REPO_ROOT}/deploy/Dockerfile.ui"  "$REPO_ROOT"
 
 # ── 4 · build evadex image ───────────────────────────────────────
-bold "[4/8] building ${EVADEX_IMAGE}"
+bold "[4/9] building ${EVADEX_IMAGE}"
 if [[ -z "$EVADEX_ROOT" || ! -d "$EVADEX_ROOT" ]]; then
   die "evadex repo not found at ../evadex — clone it alongside dlpscan-rs"
 fi
@@ -73,33 +73,62 @@ docker build -t "$EVADEX_IMAGE" \
   "$EVADEX_ROOT"
 
 # ── 5 · load images into kind ────────────────────────────────────
-bold "[5/8] loading images into kind cluster"
+bold "[5/9] loading images into kind cluster"
 kind load docker-image "$API_IMAGE"    --name "$CLUSTER_NAME"
 kind load docker-image "$FS_IMAGE"     --name "$CLUSTER_NAME"
 kind load docker-image "$UI_IMAGE"     --name "$CLUSTER_NAME"
 kind load docker-image "$EVADEX_IMAGE" --name "$CLUSTER_NAME"
 
-# ── 6 · apply manifests ──────────────────────────────────────────
-bold "[6/8] applying lab manifests"
+# ── 6 · API key + nginx configmap ────────────────────────────────
+bold "[6/9] setting up API key + nginx configmap"
+kubectl -n siphon-lab apply -f "${MANIFESTS}/00-namespace.yaml" >/dev/null 2>&1 || true
+
+# Generate a stable lab API key on first run; read it on re-runs.
+if ! kubectl get secret siphon-api-auth -n siphon-lab >/dev/null 2>&1; then
+  API_KEY="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48)"
+  kubectl create secret generic siphon-api-auth \
+    --from-literal=api-key="${API_KEY}" \
+    -n siphon-lab
+  printf 'API key generated and stored in secret siphon-api-auth\n'
+else
+  API_KEY="$(kubectl get secret siphon-api-auth -n siphon-lab \
+    -o jsonpath='{.data.api-key}' | base64 -d)"
+  printf 'API key read from existing secret siphon-api-auth\n'
+fi
+
+# Build ConfigMap with the real API key substituted in.
+TMP_NGINX="$(mktemp)"
+sed "s|__SIPHON_API_KEY__|${API_KEY}|g" \
+  "${REPO_ROOT}/deploy/k8s/lab/nginx-config/nginx.conf" > "$TMP_NGINX"
+kubectl create configmap siphon-nginx-config \
+  --from-file=nginx.conf="${TMP_NGINX}" \
+  -n siphon-lab \
+  --dry-run=client -o yaml | kubectl apply -f -
+rm -f "$TMP_NGINX"
+
+# ── 7 · apply manifests ──────────────────────────────────────────
+bold "[7/9] applying lab manifests"
 find "$MANIFESTS" -maxdepth 1 -name "*.yaml" ! -name "kind-cluster.yaml" | sort | xargs -I{} kubectl apply -f {}
-# Bounce siphon-api and siphon-fs so they pick up any freshly-loaded
-# image even when the tag didn't change (imagePullPolicy: IfNotPresent
+# Bounce all deployments so they pick up any freshly-loaded image
+# even when the tag didn't change (imagePullPolicy: IfNotPresent
 # won't re-pull; an annotation flip triggers a roll).
 kubectl -n siphon-lab rollout restart deployment/siphon-api
 kubectl -n siphon-lab rollout restart deployment/siphon-fs
 kubectl -n siphon-lab rollout restart deployment/siphon-ui
+kubectl -n siphon-lab rollout restart deployment/siphon-nginx
 kubectl -n siphon-lab rollout restart deployment/evadex
 
-# ── 7 · wait for postgres ────────────────────────────────────────
-bold "[7/8] waiting for postgres"
+# ── 8 · wait for postgres ────────────────────────────────────────
+bold "[8/9] waiting for postgres"
 kubectl -n siphon-lab rollout status deployment/postgres --timeout=120s
 
-# ── 8 · wait for all rollouts ────────────────────────────────────
-bold "[8/8] waiting for rollouts"
-kubectl -n siphon-lab rollout status deployment/siphon-api --timeout=120s
-kubectl -n siphon-lab rollout status deployment/siphon-fs  --timeout=120s
-kubectl -n siphon-lab rollout status deployment/siphon-ui  --timeout=120s
-kubectl -n siphon-lab rollout status deployment/evadex     --timeout=120s
+# ── 9 · wait for all rollouts ────────────────────────────────────
+bold "[9/9] waiting for rollouts"
+kubectl -n siphon-lab rollout status deployment/siphon-api   --timeout=120s
+kubectl -n siphon-lab rollout status deployment/siphon-fs    --timeout=120s
+kubectl -n siphon-lab rollout status deployment/siphon-ui    --timeout=120s
+kubectl -n siphon-lab rollout status deployment/siphon-nginx --timeout=60s
+kubectl -n siphon-lab rollout status deployment/evadex       --timeout=120s
 
 # ── health summary ───────────────────────────────────────────────
 printf '\n'
@@ -115,6 +144,11 @@ printf '  C2 UI       → http://localhost/ui/\n'
 printf '  siphon-api  → http://localhost/api/health\n'
 printf '  siphon-fs   → http://localhost/fs/health\n'
 printf '  evadex      → http://localhost/evadex/healthz\n'
+printf '  nginx proxy → http://localhost/ (siphon-nginx, API key injected)\n'
+printf '\n'
+printf 'API key: %s\n' "${API_KEY}"
+printf '  (stored in secret siphon-api-auth in namespace siphon-lab)\n'
+printf '  nginx injects it automatically — no localStorage setup needed\n'
 printf '\n'
 
 # Postgres ready check (runs inside the postgres pod)
