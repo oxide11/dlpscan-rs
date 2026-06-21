@@ -73,6 +73,11 @@ spec:
               value: /etc/siphon/overrides.json
             - name: RUST_LOG
               value: info
+            - name: SIPHON_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: siphon-api-auth
+                  key: api-key
             - name: SIPHON_DATABASE_URL
               valueFrom:
                 secretKeyRef:

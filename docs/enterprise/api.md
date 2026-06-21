@@ -265,6 +265,47 @@ Query for similar documents. Requires **Scan** permission.
 
 List registered document count. Requires **ViewStatus**.
 
+### `POST /v1/findings/prune`
+
+Manually trigger the findings retention policy. Deletes scans and findings
+older than the configured retention period from the Postgres persistence layer.
+
+**Auth**: Required — **Admin** role only.
+
+**Query parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | integer (optional) | Override the retention period for this call only. If omitted, uses the value of `SIPHON_FINDINGS_RETENTION_DAYS` (default: 90). |
+
+```bash
+# Use the configured retention period (SIPHON_FINDINGS_RETENTION_DAYS)
+curl -X POST http://localhost:8080/v1/findings/prune \
+  -H "Authorization: Bearer <admin-key>"
+
+# Override retention period to 30 days for this call
+curl -X POST "http://localhost:8080/v1/findings/prune?days=30" \
+  -H "Authorization: Bearer <admin-key>"
+```
+
+**Response:**
+```json
+{"scans_deleted": 142, "findings_deleted": 3891}
+```
+
+**Notes:**
+
+- This is a heavy database operation (full-table DELETE with index scan). Call
+  it sparingly — the background retention task runs automatically on a schedule
+  and covers the normal case.
+- Setting `SIPHON_FINDINGS_RETENTION_DAYS=0` disables automatic pruning
+  entirely; manual calls to this endpoint with an explicit `?days=` value still
+  work when retention is disabled globally.
+- The operation is logged to the audit trail with the effective retention period
+  and deleted counts.
+- No specific rate limit applies beyond the global `SIPHON_RATE_LIMIT`, but
+  concurrent prune calls are serialized server-side to avoid conflicting DELETEs.
+
 ## BIN Enrichment
 
 When dlpscan is compiled with the `bin-data` feature, credit card findings

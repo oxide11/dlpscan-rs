@@ -1,0 +1,52 @@
+# docker-compose.dev.yml — simple local dev without kind/k8s
+# Usage: docker-compose -f deploy/docker-compose.dev.yml up
+# Browse to http://localhost:3000/ui/
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: siphon
+      POSTGRES_USER: siphon
+      POSTGRES_PASSWORD: siphon-dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U siphon -d siphon"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  siphon-api:
+    image: siphon-api:lab
+    environment:
+      SIPHON_API_KEY: dev-key-change-me
+      SIPHON_DATABASE_URL: postgres://siphon:siphon-dev@postgres:5432/siphon
+      SIPHON_FINDINGS_RETENTION_DAYS: 7
+      SIPHON_BIND: 0.0.0.0
+      SIPHON_PORT: 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  siphon-fs:
+    image: siphon-fs:lab
+    environment:
+      SIPHON_API_KEY: dev-key-change-me
+      SIPHON_BIND: 0.0.0.0
+      SIPHON_PORT: 8081
+    ports:
+      - "8081:8081"
+
+  siphon-ui:
+    image: siphon-ui:lab
+    ports:
+      - "3000:80"
+
+volumes:
+  postgres_data:

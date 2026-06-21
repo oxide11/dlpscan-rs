@@ -282,6 +282,24 @@ pub async fn persist_scan(
     let finding_count_i32 = findings.len() as i32;
     let duration_ms_i32 = duration_ms as i32;
 
+    // Deduplication: skip if we already stored a scan with the same input_hash
+    // within the last 60 seconds (prevents double-writes from client retries).
+    if !input_hash.is_empty() {
+        let existing = client
+            .query_opt(
+                "SELECT id FROM scans \
+                 WHERE input_hash = $1 \
+                 AND created_at > NOW() - INTERVAL '60 seconds' \
+                 LIMIT 1",
+                &[&input_hash],
+            )
+            .await?;
+        if existing.is_some() {
+            tracing::debug!("skipping duplicate scan (same input_hash within 60s)");
+            return Ok(());
+        }
+    }
+
     client
         .execute(
             "INSERT INTO scans \

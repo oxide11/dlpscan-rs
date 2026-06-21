@@ -1,8 +1,30 @@
 # Siphon Backlog
 
-Last updated: 2026-06-14
+Last updated: 2026-06-21
 
 ## Ready to build
+
+### UI/UX improvements
+- [ ] Scan results — show confidence scores, span highlighting, BIN enrichment for credit cards
+- [x] Findings history table — sortable (click headers) and CSV export button (feat/backlog-sprint-2)
+- [ ] Loading states — smoother transitions, skeleton screens
+- [ ] File upload scan — drag and drop interface in Scan tab
+- [ ] Scan results — highlight matched text in original input
+
+### Stability
+- [ ] nginx configmap baked into image — currently wiped on pod restart
+- [ ] SIPHON_API_KEY set in lab — currently no auth in dev mode
+- [ ] lab-up.sh idempotent — re-running should work cleanly without errors
+
+### Adversarial Testing tab
+- [ ] evadex bridge metrics fully wired — show real detection rate, FP rate, coverage
+- [ ] File generator working end to end — generate and download test files from UI
+- [ ] Run Now fully working — trigger scan from C2 and see results
+
+### Findings tab
+- [ ] Postgres history showing correctly — verify /v1/findings/pg populates table
+- [x] Export button — CSV export via /v1/findings/export (feat/backlog-sprint-2)
+- [ ] Date range filter working
 
 ### High priority
 - [x] siphon-api serve subcommand — persistent HTTP API without k8s (PR #318; siphon serve delegates to siphon-api binary)
@@ -29,6 +51,15 @@ Last updated: 2026-06-14
 - [ ] #297 — deps: bump calamine 0.34→0.35 (dependabot)
 
 ## Recently completed
+- [x] C2 command palette (Ctrl+K) — full surface search + quick actions, keyboard-navigable (feat/backlog-sprint-2)
+- [x] LiveScan Ctrl+Enter shortcut — trigger scan from textarea keyboard shortcut (feat/backlog-sprint-2)
+- [x] LiveScan session history — last 5 scans with snippet / finding count / duration (feat/backlog-sprint-2)
+- [x] LiveScan green no-findings banner — distinct ✓ banner when scan returns 0 findings (feat/backlog-sprint-2)
+- [x] FindingsHistory sortable columns — click column header to sort ascending/descending (feat/backlog-sprint-2)
+- [x] FindingsHistory CSV export — ↓ CSV button calls /v1/findings/export (feat/backlog-sprint-2)
+- [x] Makefile — build/test/lint/scan/fmt/pr-check targets (feat/backlog-sprint-2)
+- [x] docker-compose.dev.yml — local dev without kind, postgres healthcheck wired (feat/backlog-sprint-2)
+- [x] lab-up.sh service health checks — check_service() waits for HTTP 200 on each svc (feat/backlog-sprint-2)
 - [x] Delimiter normalization (stage 6b) — PR #300
 - [x] Encoding decode passes — PR #301/#302
 - [x] Dot-stripping regression fix — PR #303

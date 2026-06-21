@@ -24,24 +24,38 @@ reloads them into the cluster, and rolls the Deployments.
 
 ## Hit it
 
-Once `lab-up.sh` reports ready:
+Once `lab-up.sh` reports ready, the API key is printed and stored in
+the `siphon-api-auth` secret. siphon-nginx injects it automatically,
+so `/api/*` and `/fs/*` routes work without a manual Authorization header.
 
 ```bash
-curl http://localhost/api/health   # siphon-api
-curl http://localhost/fs/health    # siphon-fs
+# Health endpoints (unauthenticated)
+curl http://localhost/api/health
+curl http://localhost/fs/health
 
-# text scan (via siphon-api)
+# Scan via siphon-nginx (API key injected by nginx — no header needed)
 curl -s -X POST http://localhost/api/scan \
   -H 'content-type: application/json' \
   -d '{"text":"Email: alice@example.com · card 4242 4242 4242 4242"}'
 
-# file scan (via siphon-fs)
+# File scan via siphon-fs (nginx injects auth)
 curl -s -X POST http://localhost/fs/scan -F "file=@/path/to/file.pdf"
+
+# Read the API key if you need it for direct access
+API_KEY=$(kubectl get secret siphon-api-auth -n siphon-lab \
+  -o jsonpath='{.data.api-key}' | base64 -d)
+curl -s http://localhost/api/scan \
+  -H "Authorization: Bearer ${API_KEY}" \
+  -H 'content-type: application/json' \
+  -d '{"text":"test"}'
 ```
 
 ## Point the admin console at it
 
-In the browser console on `docs/wireframes/siphon-c2.html`:
+Open http://localhost/ui/ in a browser — siphon-nginx routes to siphon-ui
+and injects the API key automatically. No localStorage setup needed.
+
+If opening `docs/wireframes/siphon-c2.html` as a local file instead:
 
 ```js
 localStorage.setItem('c2:apiUrl', 'http://localhost/api');
@@ -53,13 +67,33 @@ location.reload();
 ```
 deploy/k8s/lab/
 ├── 00-namespace.yaml            siphon-lab
+├── 05-postgres.yaml             Postgres Deployment + Service
+├── 06-postgres-secret.yaml      Postgres connection string Secret
 ├── 10-configmap-overrides.yaml  shared pattern-overrides ConfigMap
 ├── 15-rbac-roller.yaml          SA + Role + RoleBinding for auto-roll
-├── 20-siphon-api.yaml           Deployment (2) + Service
-├── 30-siphon-fs.yaml            Deployment (1) + Service
-├── 40-ingress.yaml              nginx-ingress: /api/*, /fs/*
+├── 20-siphon-api.yaml           Deployment (2) + Service (reads SIPHON_API_KEY)
+├── 25-siphon-ui.yaml            Deployment (1) + Service (nginx static files)
+├── 30-siphon-fs.yaml            Deployment (1) + Service (reads SIPHON_API_KEY)
+├── 35-siphon-nginx.yaml         Deployment (1) + Service (reverse proxy, ConfigMap-mounted config)
+├── 40-ingress.yaml              nginx-ingress: all traffic → siphon-nginx
+├── evadex-lab.yaml              evadex bridge Deployment + Service
+├── nginx-config/nginx.conf      source template for siphon-nginx ConfigMap
+│                                (API key placeholder __SIPHON_API_KEY__ substituted by lab-up.sh)
 └── kind-cluster.yaml            kind single-node spec w/ port 80 forward
 ```
+
+### API key and nginx ConfigMap
+
+`lab-up.sh` generates a stable lab API key on first run and stores it in
+a k8s Secret (`siphon-api-auth`). On re-runs the key is read from the
+existing secret so the same key is used across restarts. The key is then
+substituted into `nginx-config/nginx.conf` and applied as the
+`siphon-nginx-config` ConfigMap.
+
+`siphon-api` and `siphon-fs` read `SIPHON_API_KEY` from the same secret,
+so bearer auth is enforced. `siphon-nginx` injects the `Authorization`
+header for `/api/*` and `/fs/*` requests, so the C2 console works without
+any localStorage setup.
 
 Both Deployments mount the same `siphon-overrides` ConfigMap at
 `/etc/siphon/overrides.json`. Phase 3 teaches the scanner to layer
