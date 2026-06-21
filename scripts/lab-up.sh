@@ -22,6 +22,7 @@ API_IMAGE="siphon-api:lab"
 FS_IMAGE="siphon-fs:lab"
 UI_IMAGE="siphon-ui:lab"
 EVADEX_IMAGE="evadex:lab"
+BUILD=true; [[ "${1:-}" == "--no-build" ]] && BUILD=false
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -58,12 +59,15 @@ done
 kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=180s
 
 # ── 3 · build siphon images ──────────────────────────────────────
+if $BUILD; then
 bold "[3/9] building ${API_IMAGE} + ${FS_IMAGE} + ${UI_IMAGE}"
 docker build -t "$API_IMAGE" -f "${REPO_ROOT}/deploy/Dockerfile.api" "$REPO_ROOT"
 docker build -t "$FS_IMAGE"  -f "${REPO_ROOT}/deploy/Dockerfile.fs"  "$REPO_ROOT"
 docker build -t "$UI_IMAGE"  -f "${REPO_ROOT}/deploy/Dockerfile.ui"  "$REPO_ROOT"
+fi
 
 # ── 4 · build evadex image ───────────────────────────────────────
+if $BUILD; then
 bold "[4/9] building ${EVADEX_IMAGE}"
 if [[ -z "$EVADEX_ROOT" || ! -d "$EVADEX_ROOT" ]]; then
   die "evadex repo not found at ../evadex — clone it alongside dlpscan-rs"
@@ -71,13 +75,16 @@ fi
 docker build -t "$EVADEX_IMAGE" \
   -f "${EVADEX_ROOT}/deploy/Dockerfile.bridge" \
   "$EVADEX_ROOT"
+fi
 
 # ── 5 · load images into kind ────────────────────────────────────
+if $BUILD; then
 bold "[5/9] loading images into kind cluster"
 kind load docker-image "$API_IMAGE"    --name "$CLUSTER_NAME"
 kind load docker-image "$FS_IMAGE"     --name "$CLUSTER_NAME"
 kind load docker-image "$UI_IMAGE"     --name "$CLUSTER_NAME"
 kind load docker-image "$EVADEX_IMAGE" --name "$CLUSTER_NAME"
+fi
 
 # ── 6 · API key + nginx configmap ────────────────────────────────
 bold "[6/9] setting up API key + nginx configmap"

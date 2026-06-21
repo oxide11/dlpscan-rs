@@ -205,6 +205,39 @@ static HOMOGLYPH_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
         ('\u{2087}', '7'),
         ('\u{2088}', '8'),
         ('\u{2089}', '9'),
+        // Arabic-Indic digits: ٠١٢٣٤٥٦٧٨٩ (U+0660–U+0669)
+        ('\u{0660}', '0'),
+        ('\u{0661}', '1'),
+        ('\u{0662}', '2'),
+        ('\u{0663}', '3'),
+        ('\u{0664}', '4'),
+        ('\u{0665}', '5'),
+        ('\u{0666}', '6'),
+        ('\u{0667}', '7'),
+        ('\u{0668}', '8'),
+        ('\u{0669}', '9'),
+        // Extended Arabic-Indic digits: ۰۱۲۳۴۵۶۷۸۹ (U+06F0–U+06F9)
+        ('\u{06F0}', '0'),
+        ('\u{06F1}', '1'),
+        ('\u{06F2}', '2'),
+        ('\u{06F3}', '3'),
+        ('\u{06F4}', '4'),
+        ('\u{06F5}', '5'),
+        ('\u{06F6}', '6'),
+        ('\u{06F7}', '7'),
+        ('\u{06F8}', '8'),
+        ('\u{06F9}', '9'),
+        // Thai digits: ๐๑๒๓๔๕๖๗๘๙ (U+0E50–U+0E59)
+        ('\u{0E50}', '0'),
+        ('\u{0E51}', '1'),
+        ('\u{0E52}', '2'),
+        ('\u{0E53}', '3'),
+        ('\u{0E54}', '4'),
+        ('\u{0E55}', '5'),
+        ('\u{0E56}', '6'),
+        ('\u{0E57}', '7'),
+        ('\u{0E58}', '8'),
+        ('\u{0E59}', '9'),
         // Other common lookalikes
         ('\u{0131}', 'i'), // dotless i
         ('\u{0237}', 'j'), // dotless j
@@ -1338,11 +1371,10 @@ fn decode_morse(input: &str) -> Option<String> {
         return None;
     }
 
-    // Quick check: morse code only contains '.', '-', ' ', '/', '|'
-    if !trimmed
-        .bytes()
-        .all(|b| b == b'.' || b == b'-' || b == b' ' || b == b'/' || b == b'|')
-    {
+    // Quick check: morse code only contains '.', '-', ' ', '/', '|', ',', ':'
+    if !trimmed.bytes().all(|b| {
+        b == b'.' || b == b'-' || b == b' ' || b == b'/' || b == b'|' || b == b',' || b == b':'
+    }) {
         return None;
     }
 
@@ -1357,6 +1389,32 @@ fn decode_morse(input: &str) -> Option<String> {
         trimmed.split('/').collect()
     } else if trimmed.contains('|') {
         trimmed.split('|').collect()
+    } else if trimmed.contains(':') {
+        trimmed.split(':').collect()
+    } else if trimmed.contains(',') {
+        // Comma-separated: chars within each word split by comma
+        // (evadex comma_sep variant)
+        let parts: Vec<&str> = trimmed.split(',').collect();
+        // If comma-separated, we treat each token as a char (no nested word separator)
+        // Single-pass: just split on commas and treat each as a char code
+        return {
+            let mut r = String::new();
+            let mut decoded = 0usize;
+            for symbol in parts.iter().filter(|s| !s.trim().is_empty()) {
+                let sym = symbol.trim();
+                if let Some(&ch) = MORSE_TABLE.get(sym) {
+                    r.push(ch);
+                    decoded += 1;
+                } else {
+                    return None;
+                }
+            }
+            if decoded < 3 {
+                None
+            } else {
+                Some(r)
+            }
+        };
     } else {
         // Try splitting on 3+ spaces for word boundaries
         trimmed.split("   ").collect()
@@ -1464,6 +1522,56 @@ fn try_decode_digit_morse_slash(text: &str) -> Option<String> {
                     result.push(ch);
                 } else {
                     return None; // Unrecognised token
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+
+    if digit_count < 4 {
+        return None;
+    }
+    Some(result)
+}
+
+/// Decode evadex-style digit-only morse with comma `','` separator.
+///
+/// Same semantics as `try_decode_digit_morse_slash` but uses comma as
+/// the field separator.  The comma is the evadex `comma_sep` encoding.
+fn try_decode_digit_morse_comma(text: &str) -> Option<String> {
+    if !text.is_ascii() || !text.contains(',') {
+        return None;
+    }
+    if !text.bytes().any(|b| b == b'.' || b == b'-') {
+        return None;
+    }
+
+    let raw = text.as_bytes();
+    let tokens: Vec<&[u8]> = raw
+        .split(|&b| b == b',')
+        .filter(|t| !t.is_empty())
+        .collect();
+
+    if tokens.len() < 4 {
+        return None;
+    }
+
+    let mut result = String::with_capacity(tokens.len());
+    let mut digit_count = 0usize;
+
+    for token in &tokens {
+        if let Some(ch) = decode_morse_digit_token(token) {
+            result.push(ch);
+            digit_count += 1;
+        } else if token.len() == 1 && token[0].is_ascii() {
+            result.push(token[0] as char);
+        } else {
+            if let Ok(s) = std::str::from_utf8(token) {
+                if let Some(&ch) = MORSE_TABLE.get(s) {
+                    result.push(ch);
+                } else {
+                    return None;
                 }
             } else {
                 return None;
@@ -1780,6 +1888,11 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // Fixes the "-" → 'T' misidentification in the full-alphabet decoder for values
     // like SSNs ("123-45-6789") where the hyphen separator is not itself morse-encoded.
     if let Some(decoded) = try_decode_digit_morse_slash(text) {
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    }
+
+    // Evadex-style digit-only morse: comma-separated (evadex comma_sep variant).
+    if let Some(decoded) = try_decode_digit_morse_comma(text) {
         push_if_room(decoded, &mut alternatives, &mut total_bytes);
     }
 
@@ -2922,5 +3035,29 @@ mod tests {
         let input = "\u{0432}ank";
         let (normalized, _) = normalize_text(input);
         assert!(normalized.contains("bank"));
+    }
+
+    #[test]
+    fn test_arabic_indic_digits_normalized() {
+        // Arabic-Indic ٠١٢٣ should normalize to 0123
+        let input = "\u{0660}\u{0661}\u{0662}\u{0663}";
+        let (result, _) = normalize_text(input);
+        assert_eq!(result, "0123");
+    }
+
+    #[test]
+    fn test_extended_arabic_indic_digits_normalized() {
+        // Extended Arabic-Indic ۰۱۲۳ should normalize to 0123
+        let input = "\u{06F0}\u{06F1}\u{06F2}\u{06F3}";
+        let (result, _) = normalize_text(input);
+        assert_eq!(result, "0123");
+    }
+
+    #[test]
+    fn test_thai_digits_normalized() {
+        // Thai ๐๑๒๓ should normalize to 0123
+        let input = "\u{0E50}\u{0E51}\u{0E52}\u{0E53}";
+        let (result, _) = normalize_text(input);
+        assert_eq!(result, "0123");
     }
 }
