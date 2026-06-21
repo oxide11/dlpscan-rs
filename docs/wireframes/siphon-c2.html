@@ -3277,6 +3277,11 @@ function Topbar({ tweaks, setTweak }) {
       </button>
       <button
         className="tb-theme"
+        onClick={() => window.__c2_openPalette && window.__c2_openPalette()}
+        title="Command palette (Ctrl+K)"
+        style={{fontSize:11, letterSpacing:'0.1em', padding:'3px 8px', fontFamily:"'JetBrains Mono', monospace"}}>⌘K</button>
+      <button
+        className="tb-theme"
         onClick={() => window.__c2_go && window.__c2_go('settings')}
         title="Settings"
         style={{fontSize:14, lineHeight:1, padding:'3px 8px'}}>⚙</button>
@@ -6945,6 +6950,18 @@ function FindingsHistory() {
   const [pgLimit,   setPgLimit]   = React.useState(25);
   const [pgOffset,  setPgOffset]  = React.useState(0);
   const [pgRefKey,  setPgRefKey]  = React.useState(0);
+  // Sort state for the results table (client-side on the current page).
+  const [sortCol,   setSortCol]   = React.useState('ts');
+  const [sortDir,   setSortDir]   = React.useState('desc');
+
+  const toggleSort = (col) => {
+    if (sortCol === col) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortCol(col);
+      setSortDir('desc');
+    }
+  };
 
   // Re-fetch from page 0 whenever category or limit changes
   React.useEffect(() => { setPgOffset(0); setPgRefKey(k => k + 1); }, [pgCat, pgLimit]);
@@ -7002,8 +7019,17 @@ function FindingsHistory() {
   // Category options for filter dropdown
   const catOptions = [['', 'all categories'], ...categories.map(c => [c.name || c, c.name || c])];
 
-  // Paginated results rows
-  const pgRows = (pgData && pgData.findings) || [];
+  // Paginated results rows (sorted client-side on current page)
+  const pgRows = React.useMemo(() => {
+    const rows = (pgData && pgData.findings) || [];
+    return [...rows].sort((a, b) => {
+      let av = a[sortCol], bv = b[sortCol];
+      if (av == null) av = '';
+      if (bv == null) bv = '';
+      const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv));
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [pgData, sortCol, sortDir]);
   const pgTotal = (pgData && pgData.total) || 0;
   const totalPages = Math.max(1, Math.ceil(pgTotal / pgLimit));
 
@@ -7182,6 +7208,17 @@ function FindingsHistory() {
             title="refresh results from postgres" style={{...mono, fontSize:11}}>
             ↻ Refresh
           </button>
+          <button
+            className="btn ghost"
+            title="Download findings as CSV (calls /v1/findings/export)"
+            style={{...mono, fontSize:11}}
+            onClick={() => {
+              const base = window.SIPHON_API_URL().replace(/\/$/, '');
+              const qs = pgCat ? '&category=' + encodeURIComponent(pgCat) : '';
+              window.open(base + '/v1/findings/export?format=csv' + qs, '_blank');
+            }}>
+            ↓ CSV
+          </button>
         </div>
         {pgTotal > 0 && (
           <div style={{marginTop:8, ...mono, fontSize:10, color:'var(--ink-faint)'}}>
@@ -7212,27 +7249,39 @@ function FindingsHistory() {
             <table style={{width:'100%', borderCollapse:'collapse', ...mono, fontSize:11.5}}>
               <thead>
                 <tr style={{borderBottom:'1px solid var(--line-strong)', background:'var(--bg-2)'}}>
-                  {['Time', 'Category', 'Sub-category', 'Confidence', 'Pod'].map((h, i) => (
-                    <th key={i} className="label" style={{
-                      textAlign:'left', padding: cellPad,
-                      fontWeight:600, color:'var(--ink-faint)', whiteSpace:'nowrap',
-                      position:'sticky', top:0, background:'var(--bg-2)',
-                    }}>{h}</th>
+                  {[['ts','Time'], ['category','Category'], ['sub_category','Sub-category'], ['confidence','Confidence'], ['pod','Pod']].map(([col, h]) => (
+                    <th key={col} className="label"
+                      onClick={() => toggleSort(col)}
+                      style={{
+                        textAlign:'left', padding: cellPad,
+                        fontWeight:600, color: sortCol === col ? 'var(--accent)' : 'var(--ink-faint)',
+                        whiteSpace:'nowrap', position:'sticky', top:0, background:'var(--bg-2)',
+                        cursor:'pointer', userSelect:'none',
+                      }}>
+                      {h}
+                      {sortCol === col && <span style={{marginLeft:4, fontSize:10}}>{sortDir === 'asc' ? '↑' : '↓'}</span>}
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {pgRows.map((f, i) => (
-                  <tr key={f.id || i} style={{
-                    borderBottom: i < pgRows.length - 1 ? '1px solid var(--line-soft)' : 'none',
-                    background: i % 2 === 0 ? 'transparent' : 'color-mix(in srgb, var(--bg-2) 40%, transparent)',
-                  }}>
+                  <tr key={f.id || i}
+                    onClick={() => f.id && window.__c2_go && window.__c2_go('stream', 'finding:' + f.id)}
+                    style={{
+                      borderBottom: i < pgRows.length - 1 ? '1px solid var(--line-soft)' : 'none',
+                      background: i % 2 === 0 ? 'transparent' : 'color-mix(in srgb, var(--bg-2) 40%, transparent)',
+                      cursor: f.id ? 'pointer' : 'default',
+                    }}
+                    onMouseEnter={e => { if (f.id) e.currentTarget.style.background = 'color-mix(in srgb, var(--accent) 6%, transparent)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = i % 2 === 0 ? 'transparent' : 'color-mix(in srgb, var(--bg-2) 40%, transparent)'; }}
+                  >
                     <td style={{padding: cellPad, color:'var(--ink-soft)', whiteSpace:'nowrap'}}>
                       {f.ts ? window.siphonFormatRelative(f.ts) : '—'}
                     </td>
                     <td style={{padding: cellPad, color:'var(--ink)'}}>{f.category || '—'}</td>
                     <td style={{padding: cellPad, color:'var(--ink-soft)'}}>{f.sub_category || '—'}</td>
-                    <td style={{padding: cellPad, color: f.confidence >= 0.8 ? 'var(--green)' : f.confidence >= 0.5 ? 'var(--amber)' : 'var(--ink-soft)'}}>
+                    <td style={{padding: cellPad, color: f.confidence >= 0.8 ? 'var(--safe)' : f.confidence >= 0.5 ? 'var(--amber)' : 'var(--ink-soft)'}}>
                       {f.confidence != null ? f.confidence.toFixed(2) : '—'}
                     </td>
                     <td style={{padding: cellPad, color:'var(--ink-faint)'}}>{f.pod || f.source_pod || '—'}</td>
@@ -16659,6 +16708,8 @@ function LiveScan() {
   const [health, setHealth] = React.useState('unknown');
   const [result, setResult] = React.useState(null);
   const [error, setError] = React.useState(null);
+  // Session scan history — last 5 scans; not persisted to localStorage.
+  const [scanHistory, setScanHistory] = React.useState([]);
 
   React.useEffect(() => {
     try { localStorage.setItem('c2:apiUrl', apiUrl); } catch {}
@@ -16698,6 +16749,13 @@ function LiveScan() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
       setResult(j);
+      // Append to session scan history (last 5 scans, newest first).
+      setScanHistory(h => [{
+        ts: new Date().toISOString(),
+        snippet: text.length > 60 ? text.slice(0, 60) + '…' : text,
+        count: (j.findings || []).length,
+        ms: j.scan_duration_ms != null ? Math.round(j.scan_duration_ms) : null,
+      }, ...h].slice(0, 5));
     } catch (e) {
       setError(String(e.message || e));
     } finally {
@@ -16938,6 +16996,12 @@ function LiveScan() {
             <textarea
               value={text}
               onChange={e => setText(e.target.value)}
+              onKeyDown={e => {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                  e.preventDefault();
+                  if (!loading && text.trim()) runScan();
+                }
+              }}
               rows={14}
               style={{
                 width:'100%', resize:'vertical',
@@ -17016,6 +17080,9 @@ function LiveScan() {
             ) : (
               <button className="btn ghost" onClick={() => { setFile(null); setResult(null); setError(null); }}>Clear</button>
             )}
+            {mode === 'text' && !loading && (
+              <span className="muted" style={{fontSize:10, fontFamily:"'JetBrains Mono', monospace"}}>Ctrl+Enter to scan</span>
+            )}
             {result && <span className="muted" style={{marginLeft:'auto', fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>
               {result.finding_count} findings · {Math.round(result.scan_duration_ms)}ms · {result.source_pod}
             </span>}
@@ -17078,9 +17145,22 @@ function LiveScan() {
       <div className="box">
         <div className="box-title"><span className="t">Findings</span><span className="k">{findings.length} rows</span></div>
         {findings.length === 0 ? (
-          <div className="muted" style={{padding:14, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
-            {result ? '— nothing detected —' : '— run a scan to see findings —'}
-          </div>
+          result ? (
+            <div style={{
+              padding:'14px 18px', borderRadius:'var(--radius)',
+              background:'rgba(57,255,20,0.07)',
+              border:'1px solid rgba(57,255,20,0.3)',
+              color:'var(--safe)', fontFamily:"'JetBrains Mono', monospace",
+              fontSize:12, display:'flex', alignItems:'center', gap:10,
+            }}>
+              <span style={{fontSize:16}}>✓</span>
+              <span><b>No findings</b> — scanner detected nothing in this input</span>
+            </div>
+          ) : (
+            <div className="muted" style={{padding:14, textAlign:'center', fontFamily:"'JetBrains Mono', monospace", fontSize:12}}>
+              — run a scan to see findings —
+            </div>
+          )
         ) : (
           <>
             <div style={{display:'grid', gridTemplateColumns:'1.4fr 1.2fr 2fr 100px 72px 80px', gap:10, padding:'6px 0', borderBottom:'1.5px solid var(--line)'}}>
@@ -17156,6 +17236,35 @@ function LiveScan() {
           {mode === 'file'
             ? <>likely a stale siphon-fs binary. Rebuild with <span className="mono">cargo build -p siphon-fs</span>, then STOP + START siphon-fs in the Local Launcher panel.</>
             : <>likely a stale siphon-api binary. Rebuild with <span className="mono">cargo build -p siphon-api</span>, then restart the pod.</>}
+        </div>
+      )}
+
+      {scanHistory.length > 0 && (
+        <div className="box" style={{marginTop:12}}>
+          <div className="box-title">
+            <span className="t">Session history</span>
+            <span className="k">{scanHistory.length} scan{scanHistory.length > 1 ? 's' : ''}</span>
+            <button className="btn ghost" style={{marginLeft:'auto', fontSize:10}} onClick={() => setScanHistory([])}>Clear</button>
+          </div>
+          <table style={{width:'100%', borderCollapse:'collapse', fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>
+            <thead>
+              <tr style={{borderBottom:'1px solid var(--line-strong)'}}>
+                {['Time', 'Input preview', 'Findings', 'Duration'].map((h, i) => (
+                  <th key={i} style={{textAlign:'left', padding:'5px 10px', color:'var(--ink-faint)', fontWeight:600}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {scanHistory.map((s, i) => (
+                <tr key={i} style={{borderBottom: i < scanHistory.length - 1 ? '1px solid var(--line-soft)' : 'none'}}>
+                  <td style={{padding:'5px 10px', color:'var(--ink-faint)', whiteSpace:'nowrap'}}>{new Date(s.ts).toLocaleTimeString()}</td>
+                  <td style={{padding:'5px 10px', color:'var(--ink-soft)', overflow:'hidden', textOverflow:'ellipsis', maxWidth:260, whiteSpace:'nowrap'}}>{s.snippet}</td>
+                  <td style={{padding:'5px 10px', color: s.count > 0 ? 'var(--red)' : 'var(--safe)'}}>{s.count}</td>
+                  <td style={{padding:'5px 10px', color:'var(--ink-faint)'}}>{s.ms != null ? s.ms + 'ms' : '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
@@ -19027,6 +19136,128 @@ const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
   "theme": "light"
 }/*EDITMODE-END*/;
 
+// ── CommandPalette ─────────────────────────────────────────────────────────
+// Ctrl+K / Cmd+K global command palette. Fuzzy-searches surfaces and quick
+// actions; keyboard-navigable with arrow keys, Enter to select, Esc to close.
+function CommandPalette({ onClose, go }) {
+  const [query, setQuery] = React.useState('');
+  const [sel, setSel] = React.useState(0);
+  const inputRef = React.useRef(null);
+
+  React.useEffect(() => { if (inputRef.current) inputRef.current.focus(); }, []);
+
+  const ACTIONS = [
+    { label: 'Export findings CSV', sub: 'GET /v1/findings/export', icon: '↓', group: 'actions',
+      action: () => { const b = window.SIPHON_API_URL().replace(/\/$/, ''); window.open(b + '/v1/findings/export?format=csv', '_blank'); } },
+    { label: 'Run evadex adversarial test', sub: 'adversarial testing', icon: '⚔', group: 'actions',
+      action: () => go && go('adversarial') },
+    { label: 'Check API health', sub: 'GET /health', icon: '◉', group: 'actions',
+      action: () => { const b = window.SIPHON_API_URL().replace(/\/$/, ''); window.open(b + '/health', '_blank'); } },
+    { label: 'Reload overrides', sub: 'POST /v1/overrides/apply (no-op body)', icon: '⟳', group: 'actions',
+      action: () => {
+        window.siphonFetch && window.siphonFetch(window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/overrides/apply', { method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}' })
+          .then(() => {}).catch(() => {});
+      }},
+  ];
+
+  const SURFACE_CMDS = SURFACES.map(s => ({
+    label: s.title, sub: s.sub || s.workspace, icon: s.icon || '○', group: s.workspace,
+    action: () => go && go(s.id),
+  }));
+
+  const ALL = [...ACTIONS, ...SURFACE_CMDS];
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? ALL.filter(c => c.label.toLowerCase().includes(q) || (c.sub && c.sub.toLowerCase().includes(q)) || c.group.includes(q))
+    : ALL;
+
+  const pick = (cmd) => { if (cmd) { cmd.action(); onClose(); } };
+
+  React.useEffect(() => {
+    const handler = (e) => {
+      if (e.key === 'ArrowDown') { setSel(s => Math.min(s + 1, filtered.length - 1)); e.preventDefault(); }
+      else if (e.key === 'ArrowUp') { setSel(s => Math.max(s - 1, 0)); e.preventDefault(); }
+      else if (e.key === 'Enter') { pick(filtered[sel]); }
+      else if (e.key === 'Escape') { onClose(); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [filtered, sel, onClose]);
+
+  React.useEffect(() => { setSel(0); }, [query]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position:'fixed', inset:0, zIndex:9999,
+        background:'rgba(0,0,0,0.72)',
+        display:'flex', alignItems:'flex-start', justifyContent:'center',
+        paddingTop:'14vh',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          width:'min(580px, 92vw)',
+          background:'var(--bg-1)',
+          border:'1px solid var(--line-strong)',
+          borderRadius:8,
+          boxShadow:'0 24px 64px rgba(0,0,0,0.6)',
+          overflow:'hidden',
+        }}
+      >
+        <div style={{display:'flex', alignItems:'center', gap:8, padding:'10px 14px', borderBottom:'1px solid var(--line)', background:'var(--bg-2)'}}>
+          <span style={{color:'var(--accent)', fontSize:14, flexShrink:0}}>⌘</span>
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search surfaces, actions…"
+            style={{flex:1, background:'transparent', border:'none', outline:'none', color:'var(--ink)', fontSize:14, fontFamily:"'JetBrains Mono', monospace"}}
+          />
+          <kbd style={{fontSize:10, color:'var(--ink-faint)', fontFamily:"'JetBrains Mono', monospace", border:'1px solid var(--line-soft)', borderRadius:4, padding:'2px 6px'}}>ESC</kbd>
+        </div>
+        <div style={{maxHeight:'min(420px, 62vh)', overflow:'auto'}}>
+          {filtered.length === 0 && (
+            <div style={{padding:'24px 16px', textAlign:'center', color:'var(--ink-faint)', fontSize:12, fontFamily:"'JetBrains Mono', monospace"}}>
+              No results for "{query}"
+            </div>
+          )}
+          {filtered.map((cmd, i) => (
+            <div
+              key={i}
+              onClick={() => pick(cmd)}
+              onMouseEnter={() => setSel(i)}
+              style={{
+                display:'flex', alignItems:'center', gap:12,
+                padding:'9px 14px',
+                cursor:'pointer',
+                background: i === sel ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'transparent',
+                borderBottom:'1px solid var(--line-soft)',
+                borderLeft: i === sel ? '2px solid var(--accent)' : '2px solid transparent',
+                transition:'background 60ms',
+              }}
+            >
+              <span style={{fontSize:13, width:18, textAlign:'center', color:'var(--accent)', flexShrink:0}}>{cmd.icon}</span>
+              <div style={{flex:1, minWidth:0}}>
+                <div style={{fontSize:13, color:'var(--ink)', fontFamily:"'Space Grotesk', sans-serif"}}>{cmd.label}</div>
+                {cmd.sub && <div style={{fontSize:10.5, color:'var(--ink-faint)', fontFamily:"'JetBrains Mono', monospace", marginTop:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{cmd.sub}</div>}
+              </div>
+              <span style={{fontSize:9.5, color:'var(--ink-faint)', fontFamily:"'JetBrains Mono', monospace", textTransform:'uppercase', letterSpacing:'0.08em', flexShrink:0}}>{cmd.group}</span>
+            </div>
+          ))}
+        </div>
+        <div style={{padding:'6px 14px', borderTop:'1px solid var(--line)', background:'var(--bg-2)', display:'flex', gap:16, fontSize:10, color:'var(--ink-faint)', fontFamily:"'JetBrains Mono', monospace"}}>
+          <span>↑↓ navigate</span><span>↵ open</span><span>esc close</span>
+          <span style={{marginLeft:'auto'}}>Ctrl+K</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [surface, setSurface] = React.useState(() => {
     try { return localStorage.getItem('c2:surface') || 'dashboard'; } catch { return 'dashboard'; }
@@ -19046,6 +19277,22 @@ function App() {
     return { ...TWEAK_DEFAULTS, ...stored };
   });
   const [tweakOpen, setTweakOpen] = React.useState(false);
+  const [cmdOpen, setCmdOpen] = React.useState(false);
+
+  // Expose globally so Topbar can open the palette without prop-drilling.
+  React.useEffect(() => { window.__c2_openPalette = () => setCmdOpen(true); }, []);
+
+  // Global Ctrl+K / Cmd+K shortcut to open command palette.
+  React.useEffect(() => {
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setCmdOpen(v => !v);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
 
   React.useEffect(() => { try { localStorage.setItem('c2:surface', surface); } catch {} }, [surface]);
   React.useEffect(() => { try { localStorage.setItem('c2:sub', sub); } catch {} }, [sub]);
@@ -19175,6 +19422,7 @@ function App() {
       <main className="page">{Surface}</main>
       <TweaksPanel on={tweakOpen} state={tweaks} set={setTweak} />
       {HelpModal && <HelpModal />}
+      {cmdOpen && <CommandPalette onClose={() => setCmdOpen(false)} go={go} />}
     </div>
   );
 }
