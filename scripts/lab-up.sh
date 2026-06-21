@@ -163,6 +163,33 @@ PG_STATUS="$(kubectl exec -n siphon-lab deploy/postgres -- \
   pg_isready -U siphon -d siphon 2>/dev/null && echo ready || echo NOT READY)"
 printf 'Postgres:     %s\n' "$PG_STATUS"
 
+# ── Service health verification ──────────────────────────────────
+check_service() {
+  local name="$1"
+  local url="$2"
+  if curl -sf --max-time 5 "$url" > /dev/null 2>&1; then
+    printf '  \033[32m✓\033[0m %-15s %s\n' "$name" "$url"
+    return 0
+  else
+    printf '  \033[33m✗\033[0m %-15s %s — not responding\n' "$name" "$url"
+    return 1
+  fi
+}
+
+printf 'Service health:\n'
+_all_healthy=true
+check_service "siphon-api"  "http://localhost/api/health"    || _all_healthy=false
+check_service "siphon-fs"   "http://localhost/fs/health"     || _all_healthy=false
+check_service "evadex"      "http://localhost/evadex/healthz" || _all_healthy=false
+check_service "siphon-ui"   "http://localhost/ui/"           || _all_healthy=false
+printf '\n'
+if $_all_healthy; then
+  printf '\033[32m✓ All services healthy\033[0m\n'
+else
+  printf '\033[33m⚠ Some services not yet healthy — they may still be starting.\033[0m\n'
+  printf '  Wait a moment and recheck: curl http://localhost/api/health\n'
+fi
+
 printf '\n'
 printf 'Admin console served at http://localhost/ui/ (or open docs/wireframes/siphon-c2.html locally)\n'
 printf 'If using the file:// version, set localStorage key:\n'
