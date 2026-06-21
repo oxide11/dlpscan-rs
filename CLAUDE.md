@@ -190,21 +190,29 @@ Env vars for postgres:
 | `SIPHON_FINDINGS_RETENTION_DAYS` | 90 | Days to retain findings (0 = keep forever) |
 
 C2 wireframe:
-- `docs/wireframes/siphon-c2.html` — FindingsHistory component added
+- `docs/wireframes/siphon-c2.html` — current full-stack C2 dashboard
+- Command palette `Ctrl+K` — full surface search + quick actions, keyboard-navigable
+- LiveScan — `Ctrl+Enter` shortcut, last-5-scan session history, green no-findings banner
+- FindingsHistory tab — sortable columns, CSV export button (`↓ CSV` → `/v1/findings/export`), postgres-backed pagination
 - History tab polls `/v1/findings/stats` every 60s, `/v1/findings/pg` on filter change
-- Live tab unchanged — fans out to `/v1/findings` ring per pod
+- Live tab fans out to `/v1/findings` ring per pod; Adversarial Testing tab shows evadex bridge metrics
 
 ## Open PRs
 
 | PR | Branch | Summary |
 |---|---|---|
 | #297 | dependabot/cargo/calamine-0.35.0 | deps: bump calamine 0.34→0.35 |
-| #311 | fix/morse-trim-trailing-whitespace | fix(core): trim trailing whitespace in morse no-sep decoder |
+| #311 | fix/morse-trim-trailing-whitespace | fix(core): trim trailing whitespace in morse no-sep decoder (in progress) |
+
+### Recently merged (2026-06-21)
+
+| PR | Branch | Summary |
+|---|---|---|
 | #312 | feat/findings-persistence | feat(api): findings persistence to postgres |
 | #313 | feat/findings-history-tab | feat(wireframes): Findings History tab — postgres-backed |
 | #314 | feat/batch-file-scan-persistence | feat(api,fs): findings persistence for batch and file scans |
 | #315 | feat/findings-retention | feat(api): findings retention policy |
-| #318 | feat/siphon-serve | feat(cli): siphon serve subcommand (merged) |
+| #318 | feat/siphon-serve | feat(cli): siphon serve subcommand |
 | #320 | feat/lsh-persistence | feat(api): LSH document similarity persistence to postgres |
 | #321 | feat/evadex-persistence | feat(api): evadex adversarial-run persistence to postgres |
 

@@ -14,6 +14,32 @@ starting from this file.
 
 ---
 
+## 2026-06-21
+
+### siphon-core 2.2.0
+
+- feat(core): regional digit homoglyph coverage extended — Arabic-Indic
+  (U+0660–U+0669), Extended Arabic-Indic (U+06F0–U+06F9), and Thai
+  (U+0E50–U+0E59) digit sets added to the HOMOGLYPH_MAP. Evasion variants
+  that substitute these regional digits for ASCII equivalents are now
+  normalised in stage 2 before pattern matching, closing bypass paths
+  previously exposed by evadex's regional_digits technique family.
+- feat(core): Morse decoder accepts comma `','` and colon `':'` as
+  additional word-boundary separators (in addition to `/` and `|`). Handles
+  the evadex `comma_sep` and `colon_sep` Morse variants. A dedicated
+  `try_decode_digit_morse_comma` fast-path mirrors the existing slash/pipe
+  paths to avoid regex overhead for digit-only payloads.
+
+### siphon-api 2.4.0
+
+- feat(api): `persist_scan()` deduplication — duplicate writes within a 60 s
+  window are suppressed when `input_hash` matches an existing scan row
+  (`WHERE input_hash = $1 AND created_at > NOW() - INTERVAL '60 seconds'`).
+  Prevents double-counted findings from client-level retries hitting the same
+  endpoint in quick succession.
+
+---
+
 ## 2026-06-14
 
 ### siphon-core 2.1.3

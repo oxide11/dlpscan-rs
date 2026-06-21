@@ -1,6 +1,6 @@
 # Siphon Backlog
 
-Last updated: 2026-06-21
+Last updated: 2026-06-21 (refinement pass)
 
 ## Ready to build
 
@@ -30,7 +30,7 @@ Last updated: 2026-06-21
 - [x] siphon-api serve subcommand — persistent HTTP API without k8s (PR #318; siphon serve delegates to siphon-api binary)
 - [x] Streaming scan SSE — POST /scan/stream returns findings as Server-Sent Events as discovered; done+duration final frame
 - [x] Pattern hot-reload — notify v6 file watcher on SIPHON_OVERRIDES_PATH; debounced auto-reload + POST /v1/admin/reload (RequireAdminAction)
-- [ ] Findings deduplication — don't store duplicate findings for identical input
+- [x] Findings deduplication — skip duplicate persist_scan() for same input_hash within 60s (siphon-api 2.4.0)
 
 ### Medium priority
 - [x] LSH persistence — store document similarity results in postgres (PR #320)
@@ -39,7 +39,7 @@ Last updated: 2026-06-21
 
 ### Detection improvements (from evadex data)
 - [ ] Morse code remaining bypass — currently ~50%, target <30%
-- [ ] Regional digits — Thai, Extended Arabic-Indic still high bypass
+- [x] Regional digits — Thai, Extended Arabic-Indic homoglyphs added to normalizer (siphon-core 2.2.0)
 
 ### Infrastructure
 - [ ] Helm chart: postgres subchart or external postgres configuration
