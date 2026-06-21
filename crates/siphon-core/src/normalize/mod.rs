@@ -929,6 +929,17 @@ fn is_encoded_char(b: u8) -> bool {
 /// non-whitespace chars. Shared by all codecs.
 fn validate_decoded(decoded_bytes: &[u8]) -> Option<String> {
     let decoded_str = std::str::from_utf8(decoded_bytes).ok()?;
+    // Reject immediately if decoded bytes contain any C0 control character
+    // other than tab (0x09), line-feed (0x0A), or carriage-return (0x0D).
+    // These (especially NUL/0x00 and ENQ/0x05) are never present in
+    // meaningful encoded text, but DO appear when a digit-only string (like
+    // a credit-card number) is incorrectly decoded as hex bytes.
+    if decoded_bytes
+        .iter()
+        .any(|&b| b < 0x09 || (b > 0x0D && b < 0x20) || b == 0x7F)
+    {
+        return None;
+    }
     let printable = decoded_str
         .bytes()
         .filter(|&b| (0x20..=0x7E).contains(&b) || b == b'\n' || b == b'\r' || b == b'\t')
@@ -1633,6 +1644,52 @@ fn try_decode_digit_morse_nosep(text: &[u8]) -> Option<String> {
     Some(result)
 }
 
+/// Scan text for an embedded no-separator digit-only morse segment.
+///
+/// Unlike `try_decode_digit_morse_nosep` which requires the ENTIRE input to be
+/// morse, this function finds maximal runs of '.' and '-' embedded within a
+/// larger text (e.g., text with a prepended filename context line) and tries to
+/// decode each candidate segment.  Used in the alt-decodings pass so that
+/// file-scan paths that prepend filename preamble don't break morse detection.
+///
+/// Decoding constraints are identical to `try_decode_digit_morse_nosep`:
+/// length must be an exact multiple of 5, every 5-char chunk must be a valid
+/// digit morse code, and the digit count must be in 4..=20.
+fn find_embedded_digit_morse_nosep(text: &[u8]) -> Option<String> {
+    let mut i = 0;
+    while i < text.len() {
+        if text[i] == b'.' || text[i] == b'-' {
+            let seg_start = i;
+            while i < text.len() && (text[i] == b'.' || text[i] == b'-') {
+                i += 1;
+            }
+            let segment = &text[seg_start..i];
+            if segment.len().is_multiple_of(5) {
+                let count = segment.len() / 5;
+                if (4..=20).contains(&count) {
+                    let mut result = String::with_capacity(count);
+                    let mut valid = true;
+                    for chunk in segment.chunks_exact(5) {
+                        match MORSE_DIGITS.iter().find(|(code, _)| *code == chunk) {
+                            Some(&(_, digit)) => result.push(digit as char),
+                            None => {
+                                valid = false;
+                                break;
+                            }
+                        }
+                    }
+                    if valid {
+                        return Some(result);
+                    }
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
 /// Apply ROT13 transformation to alphabetic characters.
 fn apply_rot13(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
     let bytes = input.as_bytes();
@@ -1905,6 +1962,14 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // correctly fall through to None rather than producing a garbled decode.
     if let Some(decoded) = try_decode_digit_morse_nosep(text.as_bytes()) {
         push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    } else {
+        // Fallback: scan for embedded morse segments within a larger text.
+        // Handles the file-scan path where a filename preamble is prepended to
+        // the text before scanning (pipeline.process_file prepends filename
+        // context words followed by \n, which breaks the pure-bytes check above).
+        if let Some(decoded) = find_embedded_digit_morse_nosep(text.as_bytes()) {
+            push_if_room(decoded, &mut alternatives, &mut total_bytes);
+        }
     }
 
     // Two-stage encoding chain: base64 → ROT13.
