@@ -797,6 +797,124 @@ async fn db_health(State(state): State<Arc<AppState>>) -> Json<DbHealthResponse>
     }
 }
 
+// ---------------------------------------------------------------------------
+// GET /v1/health/detailed — comprehensive health check
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct DetailedDbHealth {
+    connected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    latency_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+    /// Total findings rows in Postgres. None when DB is unavailable or the
+    /// query fails (e.g. migrations not yet applied).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    findings_count: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct DetailedScanStats {
+    scans_total: u64,
+    findings_total: u64,
+    scan_errors_total: u64,
+    /// Computed as scans_total / (uptime_secs / 60). Clamped at scans_total
+    /// when uptime is under one minute (avoids inflated rates on fresh pods).
+    scans_per_minute: f64,
+}
+
+#[derive(Serialize)]
+struct DetailedHealthResponse {
+    status: &'static str,
+    pod_type: &'static str,
+    pod_id: String,
+    version: &'static str,
+    core_version: &'static str,
+    started_at: String,
+    uptime_secs: u64,
+    patterns_loaded: usize,
+    categories_loaded: usize,
+    db: DetailedDbHealth,
+    scans: DetailedScanStats,
+}
+
+async fn health_detailed(State(state): State<Arc<AppState>>) -> Json<DetailedHealthResponse> {
+    let uptime_secs = state.started_at.elapsed().as_secs();
+
+    let db = match state.db_pool.as_ref() {
+        None => {
+            let reason = match state.db_state {
+                db::PoolState::Unconfigured => "SIPHON_DATABASE_URL not configured".to_string(),
+                db::PoolState::StartupFailed => {
+                    "SIPHON_DATABASE_URL was set but the pool failed to connect at startup"
+                        .to_string()
+                }
+                db::PoolState::Connected => {
+                    "internal state mismatch: marked Connected but pool is None".to_string()
+                }
+            };
+            DetailedDbHealth {
+                connected: false,
+                latency_ms: None,
+                reason: Some(reason),
+                findings_count: None,
+            }
+        }
+        Some(pool) => {
+            let t0 = Instant::now();
+            match pool.get().await {
+                Err(e) => DetailedDbHealth {
+                    connected: false,
+                    latency_ms: None,
+                    reason: Some(format!("pool: {e}")),
+                    findings_count: None,
+                },
+                Ok(client) => {
+                    let latency_ms = t0.elapsed().as_millis() as u64;
+                    let findings_count = client
+                        .query_one("SELECT COUNT(*) FROM findings", &[])
+                        .await
+                        .ok()
+                        .map(|row| row.get::<_, i64>(0));
+                    DetailedDbHealth {
+                        connected: true,
+                        latency_ms: Some(latency_ms),
+                        reason: None,
+                        findings_count,
+                    }
+                }
+            }
+        }
+    };
+
+    let scans_total = state.metrics.scans_total.load(Ordering::Relaxed);
+    let scans_per_minute = if uptime_secs >= 60 {
+        scans_total as f64 / (uptime_secs as f64 / 60.0)
+    } else {
+        scans_total as f64
+    };
+
+    Json(DetailedHealthResponse {
+        status: "ok",
+        pod_type: "siphon-api",
+        pod_id: state.pod_id.to_string(),
+        version: env!("CARGO_PKG_VERSION"),
+        core_version: siphon_core::VERSION,
+        started_at: state.started_at_iso.clone(),
+        uptime_secs,
+        patterns_loaded: siphon_core::patterns::PATTERNS.len(),
+        categories_loaded: siphon_core::patterns::categories().len(),
+        db,
+        scans: DetailedScanStats {
+            scans_total,
+            findings_total: state.metrics.findings_total.load(Ordering::Relaxed),
+            scan_errors_total: state.metrics.scan_errors_total.load(Ordering::Relaxed),
+            scans_per_minute,
+        },
+    })
+}
+
 async fn scan(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -1415,6 +1533,196 @@ async fn scan_batch(
         items: results,
         total_findings,
         total_duration_ms,
+    }))
+}
+
+// ---------------------------------------------------------------------------
+// POST /v1/scan/explain — scan with pipeline explanation per finding
+// ---------------------------------------------------------------------------
+
+/// Normalization stages the scanner always applies, in pipeline order.
+/// These run unconditionally on every input before regex matching.
+const NORMALIZATION_STAGES: &[&str] = &[
+    "zero_width_strip",
+    "html_entity_decode",
+    "percent_decode",
+    "homoglyph_substitution",
+    "leet_speak",
+    "nfkc",
+    "base64_decode",
+    "whitespace_normalize",
+];
+
+#[derive(Serialize)]
+struct FindingExplanation {
+    /// Normalization stages applied to every input before regex matching.
+    normalization_stages: Vec<&'static str>,
+    /// Whether the checksum / format validator accepted this candidate.
+    /// `None` when no validator runs for this pattern.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    validation_passed: Option<bool>,
+    /// Whether a context keyword was found near the match span.
+    context_present: bool,
+    /// Confidence value at the emit stage.
+    final_confidence: f64,
+    /// Raw pipeline trace events for this (category, sub_category, span).
+    pipeline_events: Vec<siphon_core::scanner::StageEvent>,
+}
+
+#[derive(Serialize)]
+struct ExplainFinding {
+    category: String,
+    sub_category: String,
+    text: String,
+    confidence: f64,
+    has_context: bool,
+    span: (usize, usize),
+    #[serde(skip_serializing_if = "std::collections::HashMap::is_empty")]
+    metadata: std::collections::HashMap<String, String>,
+    explanation: FindingExplanation,
+}
+
+#[derive(Serialize)]
+struct ExplainResponse {
+    source_pod: &'static str,
+    request_id: String,
+    scan_duration_ms: u64,
+    finding_count: usize,
+    findings: Vec<ExplainFinding>,
+}
+
+async fn scan_explain(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ScanRequest>,
+) -> Result<Json<ExplainResponse>, (StatusCode, Json<ErrorResponse>)> {
+    if req.text.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "text field is required and cannot be empty".into(),
+            }),
+        ));
+    }
+    if req.text.len() > 10 * 1024 * 1024 {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ErrorResponse {
+                error: "payload exceeds size limit".into(),
+            }),
+        ));
+    }
+
+    let trace_sink: Option<Arc<Mutex<Vec<siphon_core::scanner::StageEvent>>>> =
+        Some(Arc::new(Mutex::new(Vec::new())));
+
+    let stage_disabled: HashSet<String> = state
+        .disabled_stages
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let ov = {
+        let g = state
+            .live_overrides
+            .read()
+            .expect("live_overrides lock poisoned");
+        g.clone()
+    };
+
+    let mut config = ScanConfig {
+        min_confidence: req.options.min_confidence.unwrap_or(0.0),
+        categories: req
+            .options
+            .categories
+            .map(|c| c.into_iter().collect::<HashSet<_>>()),
+        require_context: req.options.require_context.unwrap_or(false),
+        baseline_only: req.options.baseline_only.unwrap_or(false),
+        deduplicate: req.options.deduplicate.unwrap_or(true),
+        trace: trace_sink.clone(),
+        disabled_patterns: Some(ov.disabled_patterns.clone()),
+        pattern_field_overrides: Some(ov.pattern_field_overrides.clone()),
+        runtime_patterns: Some(ov.runtime_patterns.clone()),
+        pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
+        list_bindings: Some(ov.list_bindings.clone()),
+        max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+        ..Default::default()
+    };
+    if stage_disabled.contains("min_confidence") {
+        config.min_confidence = 0.0;
+    }
+    if stage_disabled.contains("require_context") {
+        config.require_context = false;
+    }
+
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let start = Instant::now();
+
+    let matches = scan_text_with_config(&req.text, &config).map_err(|e| {
+        state
+            .metrics
+            .scan_errors_total
+            .fetch_add(1, Ordering::Relaxed);
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: format!("scan processing failed: {e}"),
+            }),
+        )
+    })?;
+    let duration_ms = start.elapsed().as_millis() as u64;
+
+    state.metrics.scans_total.fetch_add(1, Ordering::Relaxed);
+    state
+        .metrics
+        .findings_total
+        .fetch_add(matches.len() as u64, Ordering::Relaxed);
+
+    let all_events: Vec<siphon_core::scanner::StageEvent> = trace_sink
+        .as_ref()
+        .and_then(|s| s.lock().ok().map(|g| g.clone()))
+        .unwrap_or_default();
+
+    let findings: Vec<ExplainFinding> = matches
+        .into_iter()
+        .map(|m| {
+            let events: Vec<siphon_core::scanner::StageEvent> = all_events
+                .iter()
+                .filter(|e| {
+                    e.category == m.category && e.sub_category == m.sub_category && e.span == m.span
+                })
+                .cloned()
+                .collect();
+
+            let validation_passed = events
+                .iter()
+                .find(|e| e.stage == "validation")
+                .map(|e| e.outcome == "pass");
+
+            ExplainFinding {
+                category: m.category,
+                sub_category: m.sub_category,
+                text: m.text,
+                confidence: m.confidence,
+                has_context: m.has_context,
+                span: m.span,
+                metadata: m.metadata,
+                explanation: FindingExplanation {
+                    normalization_stages: NORMALIZATION_STAGES.to_vec(),
+                    validation_passed,
+                    context_present: m.has_context,
+                    final_confidence: m.confidence,
+                    pipeline_events: events,
+                },
+            }
+        })
+        .collect();
+
+    let count = findings.len();
+    Ok(Json(ExplainResponse {
+        source_pod: "siphon-api",
+        request_id,
+        scan_duration_ms: duration_ms,
+        finding_count: count,
+        findings,
     }))
 }
 
@@ -5320,9 +5628,11 @@ async fn main() {
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/v1/db/health", get(db_health))
+        .route("/v1/health/detailed", get(health_detailed))
         .route("/scan", post(scan))
         .route("/scan/stream", post(scan_stream))
         .route("/scan/batch", post(scan_batch))
+        .route("/v1/scan/explain", post(scan_explain))
         .route("/v1/patterns", get(list_patterns))
         .route("/v1/categories", get(list_categories))
         .route("/v1/policies", get(list_policies))
