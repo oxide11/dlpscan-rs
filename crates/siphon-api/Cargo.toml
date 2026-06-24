@@ -51,7 +51,7 @@ uuid = { version = "1", features = ["v4"] }
 tokio-stream = "0.1"
 
 # File watcher for SIPHON_OVERRIDES_PATH hot-reload
-notify = "6"
+notify = "8"
 
 # Persistence — Postgres connection pool. Marked optional in the
 # code path (AppState carries Option<Pool> and every DB touch is
