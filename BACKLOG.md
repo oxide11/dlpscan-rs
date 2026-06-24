@@ -1,6 +1,6 @@
 # Siphon Backlog
 
-Last updated: 2026-06-21
+Last updated: 2026-06-23
 
 ## Ready to build
 
@@ -40,8 +40,10 @@ Last updated: 2026-06-21
 ### Detection improvements (from evadex data)
 - [x] Morse code file-scan bypass — fixed: embedded morse segments now found in filename-prefixed text (PR #336)
 - [x] JCB detection — fixed: hex-decoder no longer corrupts all-digit JCB numbers (PR #336)
-- [ ] Morse code remaining bypass — ~40% remaining; target <30%
-- [ ] Regional digits — Thai, Extended Arabic-Indic still high bypass
+- [x] Morse code em-dash/en-dash variants — fixed: U+2013/2014/2212/2015 mapped to '-' in HOMOGLYPH_MAP (fix/morse-regional-context)
+- [x] Morse code IBAN bypass — fixed: all 4 evadex variants (space/nosep/newline/slash sep) now detected; slash decoder extended to accept multi-char alpha tokens merged by stage 6b (fix/morse-regional-context)
+- [ ] Morse code remaining bypass — SSN/SIN/AU_TFN still bypass (context-required patterns skipped in alt path by design; FP prevention)
+- [x] Regional digits — Thai (U+0E50), Extended Arabic-Indic (U+06F0), Arabic-Indic (U+0660) all pass; BACKLOG was outdated
 
 ### Infrastructure
 - [ ] Helm chart: postgres subchart or external postgres configuration
@@ -81,5 +83,6 @@ Last updated: 2026-06-21
 - [x] evadex → postgres — migration 0007_evadex.sql; POST/GET /v1/evadex/runs + GET /v1/evadex/runs/stats in siphon-api; bridge push-to-siphon via SIPHON_API_URL; C2 Stored Runs panel
 - [x] CUSIP context keywords expanded — added instrument, ticker, position, identifier, portfolio, holding, asset, issuance, prospectus, indenture, maturity, coupon, face value, par value; distance 50→75
 - [x] Encoding chain alternatives — base64→ROT13, ROT13→base64, hex→base64 two-stage chains in generate_alternative_decodings
+- [x] Morse em-dash/en-dash + IBAN mixed-nosep decoder — siphon-core 2.1.4; see fix/morse-regional-context PR
 - [x] Postgres end-to-end in kind cluster — siphon-lab cluster verified, postgres deployed, findings persistence tested
 - [x] Streaming scan SSE + pattern hot-reload — feat/streaming-hotreload branch; see PR for full details
