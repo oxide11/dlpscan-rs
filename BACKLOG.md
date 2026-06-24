@@ -41,7 +41,7 @@ Last updated: 2026-07-04
 - [x] Morse code file-scan bypass — fixed: embedded morse segments now found in filename-prefixed text (PR #336)
 - [x] JCB detection — fixed: hex-decoder no longer corrupts all-digit JCB numbers (PR #336)
 - [x] Morse code em-dash/en-dash variants — fixed: U+2013/2014/2212/2015 mapped to '-' in HOMOGLYPH_MAP (PR #349)
-- [x] Morse code IBAN bypass — fixed: new mixed-alpha-nosep decoder handles IBAN space/nosep/newline-sep variants (PR #349)
+- [x] Morse code IBAN bypass — fixed: all 4 evadex variants (space/nosep/newline/slash sep) now detected; slash decoder extended to accept multi-char alpha tokens merged by stage 6b (PR #349)
 - [ ] Morse code remaining bypass — ~40% remaining (evadex measures ~29%); target <30%. Remaining failures are context-required IDs (SSN/SIN/AU_TFN/DE_TAX_ID/FR_INSEE) skipped by the morse alt-decode path by design. PR #349 chips at this.
 - [x] Regional digits — Thai (U+0E50), Extended Arabic-Indic (U+06F0), Arabic-Indic (U+0660) now detected via HOMOGLYPH_MAP; Thai-digit card regression locked in (PR #359); verified PASS in the evadex suite
 
