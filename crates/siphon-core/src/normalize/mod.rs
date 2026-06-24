@@ -1531,6 +1531,15 @@ fn try_decode_digit_morse_slash(text: &str) -> Option<String> {
         } else if token.len() == 1 && token[0].is_ascii() {
             // Single ASCII char: literal passthrough from the evadex encoder
             result.push(token[0] as char);
+        } else if token.iter().all(|&b| b.is_ascii_alphabetic()) {
+            // All-alpha token: literal passthrough.  Stage 6b
+            // (strip_alnum_adjacent_delimiters) merges adjacent alpha chars
+            // separated by slashes (e.g. G/B → GB, W/E/S/T → WEST) before
+            // alt-decodings run, so a multi-char all-alpha token is a valid
+            // pass-through in IBAN country-code / bank-code position.
+            for &b in *token {
+                result.push(b as char);
+            }
         } else {
             // Multi-char but not a 5-char digit code: try letter morse table
             // (handles fully-encoded non-digit characters).
@@ -1583,6 +1592,10 @@ fn try_decode_digit_morse_comma(text: &str) -> Option<String> {
             digit_count += 1;
         } else if token.len() == 1 && token[0].is_ascii() {
             result.push(token[0] as char);
+        } else if token.iter().all(|&b| b.is_ascii_alphabetic()) {
+            for &b in *token {
+                result.push(b as char);
+            }
         } else {
             if let Ok(s) = std::str::from_utf8(token) {
                 if let Some(&ch) = MORSE_TABLE.get(s) {
@@ -3303,6 +3316,21 @@ mod tests {
         assert!(
             try_decode_mixed_alpha_nosep(input).is_none(),
             "3 decoded digits should reject (< 4 minimum)"
+        );
+    }
+
+    #[test]
+    fn test_slash_decoder_multi_char_alpha_token() {
+        // After stage 6b (strip_alnum_adjacent_delimiters), G/B becomes GB and
+        // W/E/S/T becomes WEST in the slash-sep IBAN form.  The slash decoder
+        // must accept all-alpha multi-char tokens as literal passthrough.
+        // digits "82" encoded as "---..'' / "..---"; 4 more digits to meet minimum
+        let input = "GB/---../..---/WEST/.----/..---/...--/....-/...../-..../----./---../--.../-..../...../....-/...--/..---";
+        let decoded = try_decode_digit_morse_slash(input);
+        assert_eq!(
+            decoded.as_deref(),
+            Some("GB82WEST12345698765432"),
+            "multi-char alpha tokens should pass through literally"
         );
     }
 }

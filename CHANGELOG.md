@@ -29,6 +29,13 @@ starting from this file.
   space-sep and newline-sep evadex variants collapse to this mixed form; the new
   decoder reconstructs the original value and allows IBAN Generic (specificity
   0.90, always-run) to fire in the alt-decoding path.
+- fix(core): `try_decode_digit_morse_slash` and `try_decode_digit_morse_comma`
+  now accept all-alpha multi-char tokens as literal passthrough. Stage 6b
+  (`strip_alnum_adjacent_delimiters`) merges adjacent alpha chars separated
+  by slashes before the alt-decodings pass runs (e.g. `G/B` → `GB`,
+  `W/E/S/T` → `WEST`), breaking IBAN slash-sep detection. The new branch
+  recognises these merged alpha runs and passes them through verbatim,
+  covering the evadex `slash_sep` morse variant for IBAN numbers.
 
 ---
 
