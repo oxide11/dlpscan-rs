@@ -189,6 +189,12 @@ static HOMOGLYPH_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
         ('\u{FF20}', '@'),
         ('\u{FF3F}', '_'),
         ('\u{FF0A}', '*'),
+        // Unicode dashes that substitute for ASCII hyphen/minus in morse evasion
+        // (em-dash, en-dash, and minus sign used as the '-' symbol in morse code)
+        ('\u{2013}', '-'), // en-dash (–)
+        ('\u{2014}', '-'), // em-dash (—)
+        ('\u{2212}', '-'), // minus sign (−)
+        ('\u{2015}', '-'), // horizontal bar (―)
         // Mathematical/script homoglyphs (commonly used for evasion)
         ('\u{2070}', '0'),
         ('\u{00B9}', '1'),
@@ -1875,6 +1881,78 @@ pub const MAX_ALTERNATIVE_DECODING_TOTAL: usize = 64 * 1024;
 /// to cover the short-document case the second pass is designed for
 /// (a few KB) while refusing to multiply an attacker-controlled blob
 /// into N full copies in memory.
+/// Decode evadex-style morse where digit chars are nosep-encoded and non-digit
+/// ASCII chars (letters, hyphens, etc.) pass through literally, with both
+/// types directly adjacent or separated by spaces.
+///
+/// Handles IBAN-style values (e.g. "GB82WEST12345698765432") after evadex
+/// space-sep or no-sep encoding and normalize_text's collapse_padding:
+///   "G B---....---W E S T.----..---...--..."  → "GB82WEST12345698765432"
+///
+/// Constraints:
+/// - Input must contain at least one morse symbol (`.` or `-`) AND one alpha letter.
+/// - Contiguous runs of `.`/`-` must have length divisible by 5; each 5-char
+///   chunk must be a valid ITU-R digit code.
+/// - At least 4 digits must be decoded to avoid false positives on short noise.
+/// - Any character that is not a space, ASCII alpha, or `.`/`-` causes failure.
+fn try_decode_mixed_alpha_nosep(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+
+    // Require at least one morse symbol AND at least one alpha letter.
+    // Without alpha: use try_decode_digit_morse_nosep instead.
+    // Without morse: this isn't morse at all.
+    if !bytes.iter().any(|&b| b == b'.' || b == b'-') {
+        return None;
+    }
+    if !bytes.iter().any(|b| b.is_ascii_alphabetic()) {
+        return None;
+    }
+
+    let mut result = String::with_capacity(text.len());
+    let mut digit_count = 0usize;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b' ' || b == b'\t' {
+            i += 1;
+            continue;
+        }
+        if b.is_ascii_alphabetic() {
+            result.push(b as char);
+            i += 1;
+            continue;
+        }
+        if b == b'.' || b == b'-' {
+            let seg_start = i;
+            while i < bytes.len() && (bytes[i] == b'.' || bytes[i] == b'-') {
+                i += 1;
+            }
+            let segment = &bytes[seg_start..i];
+            if segment.is_empty() || !segment.len().is_multiple_of(5) {
+                return None;
+            }
+            for chunk in segment.chunks_exact(5) {
+                match MORSE_DIGITS.iter().find(|(code, _)| *code == chunk) {
+                    Some(&(_, digit)) => {
+                        result.push(digit as char);
+                        digit_count += 1;
+                    }
+                    None => return None,
+                }
+            }
+            continue;
+        }
+        // Unknown character — not a valid mixed-alpha-nosep morse input
+        return None;
+    }
+
+    if digit_count < 4 {
+        return None;
+    }
+    Some(result)
+}
+
 pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     if text.len() > MAX_ALTERNATIVE_DECODING_INPUT {
         return Vec::new();
@@ -1970,6 +2048,15 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
         if let Some(decoded) = find_embedded_digit_morse_nosep(text.as_bytes()) {
             push_if_room(decoded, &mut alternatives, &mut total_bytes);
         }
+    }
+
+    // Mixed alpha + nosep digit-morse decoder. Handles IBAN-style values where
+    // non-digit characters (country code letters, bank code) pass through
+    // literally and digit characters are nosep-encoded. After collapse_padding
+    // the space-sep and newline-sep variants collapse to this mixed form:
+    //   "G B---....---W E S T.----..---..." → "GB82WEST12345698765432"
+    if let Some(decoded) = try_decode_mixed_alpha_nosep(text) {
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
     }
 
     // Two-stage encoding chain: base64 → ROT13.
@@ -3124,5 +3211,98 @@ mod tests {
         let input = "\u{0E50}\u{0E51}\u{0E52}\u{0E53}";
         let (result, _) = normalize_text(input);
         assert_eq!(result, "0123");
+    }
+
+    #[test]
+    fn test_em_dash_normalized_to_hyphen() {
+        // Em-dash (U+2014) and en-dash (U+2013) should map to ASCII hyphen
+        let em = "\u{2014}";
+        let (result, _) = normalize_text(em);
+        assert_eq!(result, "-", "em-dash should normalize to '-'");
+
+        let en = "\u{2013}";
+        let (result, _) = normalize_text(en);
+        assert_eq!(result, "-", "en-dash should normalize to '-'");
+
+        let minus = "\u{2212}";
+        let (result, _) = normalize_text(minus);
+        assert_eq!(result, "-", "minus sign should normalize to '-'");
+    }
+
+    #[test]
+    fn test_em_dash_morse_via_homoglyph() {
+        // Morse where ASCII '-' is replaced with em-dash: after homoglyph normalization
+        // the em-dashes become '-' and the nosep decoder can decode the result.
+        // "4532" standard nosep: "....-" + "....." + "...--" + "..---"
+        let standard = concat!("....-", ".....", "...--", "..---");
+        let em = '\u{2014}';
+        let nosep_4532_em: String = standard
+            .chars()
+            .map(|c| if c == '-' { em } else { c })
+            .collect();
+        let (normalized, _) = normalize_text(&nosep_4532_em);
+        let alts = generate_alternative_decodings(&normalized);
+        assert!(
+            alts.iter().any(|a| a == "4532"),
+            "em-dash morse should decode to digits after normalization; norm={:?} alts={:?}",
+            normalized,
+            alts
+        );
+    }
+
+    #[test]
+    fn test_mixed_alpha_nosep_basic() {
+        // "AB1234" with digits nosep-encoded and alpha passing through:
+        // A, B pass through; 1=.---- 2=..--- 3=...-- 4=....-
+        let input = concat!("AB", ".----", "..---", "...--", "....-");
+        let decoded = try_decode_mixed_alpha_nosep(input);
+        assert_eq!(
+            decoded.as_deref(),
+            Some("AB1234"),
+            "mixed nosep should decode alpha+digits; got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn test_mixed_alpha_nosep_with_spaces() {
+        // Space-separated letters (post-collapse form): "A B.----..---...--....-"
+        let input = "A B.----..---...--....-";
+        let decoded = try_decode_mixed_alpha_nosep(input);
+        assert_eq!(
+            decoded.as_deref(),
+            Some("AB1234"),
+            "mixed nosep should skip spaces between letters; got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn test_mixed_alpha_nosep_rejects_pure_nosep() {
+        // Pure nosep (no alpha) must return None — use existing nosep decoder instead
+        let pure = ".----..---...--....-";
+        assert!(
+            try_decode_mixed_alpha_nosep(pure).is_none(),
+            "pure nosep should not match mixed decoder"
+        );
+    }
+
+    #[test]
+    fn test_mixed_alpha_nosep_rejects_bad_segment_length() {
+        // A morse segment whose length is not a multiple of 5 → None
+        // "A---" has "---" (3 chars), not a multiple of 5
+        assert!(
+            try_decode_mixed_alpha_nosep("A---BCDE").is_none(),
+            "segment of length 3 should reject"
+        );
+    }
+
+    #[test]
+    fn test_mixed_alpha_nosep_rejects_too_few_digits() {
+        // Only 3 digits decoded (< 4 minimum) → None
+        // 3 digit nosep = ".----..---...--" (15 chars)
+        let input = "A.----..---...--";
+        assert!(
+            try_decode_mixed_alpha_nosep(input).is_none(),
+            "3 decoded digits should reject (< 4 minimum)"
+        );
     }
 }

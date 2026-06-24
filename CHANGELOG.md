@@ -14,6 +14,24 @@ starting from this file.
 
 ---
 
+## 2026-06-23
+
+### siphon-core 2.1.4
+
+- fix(core): em-dash (U+2014), en-dash (U+2013), Unicode minus sign (U+2212),
+  and horizontal bar (U+2015) added to `HOMOGLYPH_MAP`, normalising them to
+  ASCII hyphen before pattern matching. Morse-code evasion variants that replace
+  the standard `-` symbol with typographic dashes are now detected.
+- fix(core): new `try_decode_mixed_alpha_nosep` decoder added to
+  `generate_alternative_decodings()`. Handles IBAN-style values where non-digit
+  characters (country code letters, bank/branch codes) pass through literally
+  while digit characters are no-sep morse-encoded. After `collapse_padding` the
+  space-sep and newline-sep evadex variants collapse to this mixed form; the new
+  decoder reconstructs the original value and allows IBAN Generic (specificity
+  0.90, always-run) to fire in the alt-decoding path.
+
+---
+
 ## 2026-06-14
 
 ### siphon-core 2.1.3
