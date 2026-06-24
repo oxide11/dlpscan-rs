@@ -38,7 +38,9 @@ Last updated: 2026-06-21
 - [ ] POST /v1/findings/prune ?days=N — already done, document in API reference
 
 ### Detection improvements (from evadex data)
-- [ ] Morse code remaining bypass — currently ~50%, target <30%
+- [x] Morse code file-scan bypass — fixed: embedded morse segments now found in filename-prefixed text (PR #336)
+- [x] JCB detection — fixed: hex-decoder no longer corrupts all-digit JCB numbers (PR #336)
+- [ ] Morse code remaining bypass — ~40% remaining; target <30%
 - [ ] Regional digits — Thai, Extended Arabic-Indic still high bypass
 
 ### Infrastructure

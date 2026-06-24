@@ -1,4 +1,4 @@
-.PHONY: up up-fresh down build test lint scan fmt pr-check
+.PHONY: up up-fresh down build test lint scan fmt pr-check evadex-scan evadex-status evadex-watch
 
 up:
 	./scripts/lab-up.sh --no-build
@@ -33,3 +33,19 @@ fmt:
 
 pr-check: lint test
 	@echo "✓ Ready for PR"
+
+evadex-scan:
+	cd ../evadex && python -m evadex scan \
+		--transport http \
+		--url http://localhost:8080/api \
+		--tier northam --fast \
+		--scanner-label siphon-dev
+
+evadex-status:
+	cd ../evadex && python -m evadex status
+
+evadex-watch:
+	cd ../evadex && python -m evadex watch \
+		--transport http \
+		--url http://localhost:8080/api \
+		--tier northam
