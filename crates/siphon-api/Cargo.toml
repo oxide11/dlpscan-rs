@@ -27,7 +27,7 @@ siphon = { path = "../..", default-features = false, features = ["metrics"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "time"] }
 axum = "0.8"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace", "set-header", "limit"] }
+tower-http = { version = "0.7", features = ["cors", "trace", "set-header", "limit"] }
 
 # TLS
 axum-server = { version = "0.8", features = ["tls-rustls"] }
