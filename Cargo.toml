@@ -81,7 +81,7 @@ toml = "1.1"
 tempfile = "3"
 
 # File extraction
-pdf-extract = { version = "0.10", optional = true }
+pdf-extract = { version = "0.12", optional = true }
 calamine = { version = "0.35", optional = true }
 zip = { version = "8", default-features = false, features = ["deflate"] }
 quick-xml = { version = "0.40", optional = true }
