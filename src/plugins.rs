@@ -134,6 +134,13 @@ pub fn clear_all() {
 mod tests {
     use super::*;
 
+    /// The validator/post-processor registries are process-global, so tests
+    /// that register or clear them must not run in parallel — otherwise one
+    /// test's `clear_all()` wipes another's just-registered validator
+    /// mid-assert. Serialize them on a shared lock (recovering from poison so
+    /// a panic in one test doesn't cascade into the rest).
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+
     fn make_match(sub_cat: &str) -> Match {
         Match {
             text: "test".to_string(),
@@ -149,6 +156,7 @@ mod tests {
 
     #[test]
     fn test_no_validators_passes() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_all();
         let m = make_match("unknown_sub");
         assert!(run_validators(&m));
@@ -156,6 +164,7 @@ mod tests {
 
     #[test]
     fn test_register_and_run_validator() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_all();
         register_validator("ssn", Box::new(|m: &Match| m.confidence > 0.5));
         let m = make_match("ssn");
@@ -169,6 +178,7 @@ mod tests {
 
     #[test]
     fn test_unregister_validators() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_all();
         register_validator("cc", Box::new(|_| false));
         unregister_validators("cc");
@@ -179,6 +189,7 @@ mod tests {
 
     #[test]
     fn test_post_processor() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_all();
         register_post_processor(Box::new(|matches: Vec<Match>| {
             matches.into_iter().filter(|m| m.confidence > 0.5).collect()
