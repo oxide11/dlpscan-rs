@@ -1852,6 +1852,74 @@ fn find_embedded_digit_morse_nosep(text: &[u8]) -> Option<String> {
     None
 }
 
+/// Scan `text` for an embedded run of digit-only morse tokens joined by a single
+/// consistent delimiter `delim` (one of `/`, `,`, `|`) and decode it.
+///
+/// This is the delimited analogue of [`find_embedded_digit_morse_nosep`]. The
+/// whole-input decoders [`try_decode_digit_morse_slash`] /
+/// [`try_decode_digit_morse_comma`] bail as soon as any non-morse text pollutes
+/// a token, so a filename preamble or surrounding prose (e.g. the file-scan path
+/// that prepends `invoice.txt\n` before the payload, or a `card ` prefix)
+/// defeats them — even though the nosep path already tolerates exactly that.
+/// This closes that asymmetry for the delimited variants.
+///
+/// A candidate run is a maximal sequence `TOKEN (DELIM TOKEN)*` where every
+/// `TOKEN` is a run of `.`/`-` and `DELIM` is `delim` throughout. The run is
+/// accepted only when it holds 4..=20 tokens and **every** token is a valid
+/// 5-char digit morse code — the same low-false-positive constraints as the
+/// nosep embedded scan (Luhn/checksum still gates the decoded digits downstream).
+fn find_embedded_digit_morse_delimited(text: &str, delim: u8) -> Option<String> {
+    if !text.is_ascii() {
+        return None;
+    }
+    let raw = text.as_bytes();
+    let is_morse = |b: u8| b == b'.' || b == b'-';
+    let mut i = 0;
+    while i < raw.len() {
+        if !is_morse(raw[i]) {
+            i += 1;
+            continue;
+        }
+        // Walk a maximal `TOKEN (DELIM TOKEN)*` run starting at `i`.
+        let run_start = i;
+        let mut tokens: Vec<&[u8]> = Vec::new();
+        let mut j = i;
+        loop {
+            let tok_start = j;
+            while j < raw.len() && is_morse(raw[j]) {
+                j += 1;
+            }
+            tokens.push(&raw[tok_start..j]);
+            // Continue only across a single `delim` that is followed by another
+            // morse token; anything else terminates the run.
+            if j + 1 < raw.len() && raw[j] == delim && is_morse(raw[j + 1]) {
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        if (4..=20).contains(&tokens.len()) {
+            let mut result = String::with_capacity(tokens.len());
+            let mut ok = true;
+            for token in &tokens {
+                match decode_morse_digit_token(token) {
+                    Some(ch) => result.push(ch),
+                    None => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok {
+                return Some(result);
+            }
+        }
+        // Advance past this run (guaranteed progress: j > run_start).
+        i = j.max(run_start + 1);
+    }
+    None
+}
+
 /// Apply ROT13 transformation to alphabetic characters.
 fn apply_rot13(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
     let bytes = input.as_bytes();
@@ -2328,10 +2396,26 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // like SSNs ("123-45-6789") where the hyphen separator is not itself morse-encoded.
     if let Some(decoded) = try_decode_digit_morse_slash(text) {
         push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    } else if let Some(decoded) = find_embedded_digit_morse_delimited(text, b'/') {
+        // Fallback: slash-morse embedded in surrounding text (filename preamble,
+        // prose prefix) — the whole-input decoder above bails on the first
+        // polluted token, mirroring the nosep embedded fallback below.
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
     }
 
     // Evadex-style digit-only morse: comma-separated (evadex comma_sep variant).
     if let Some(decoded) = try_decode_digit_morse_comma(text) {
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    } else if let Some(decoded) = find_embedded_digit_morse_delimited(text, b',') {
+        // Fallback: comma-morse embedded in surrounding text.
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    }
+
+    // Pipe-separated digit morse embedded in surrounding text. The full-alphabet
+    // decode_morse() handles bare pipe-morse, but bails on any non-morse prefix;
+    // no whole-input digit decoder covers pipe, so this is the only digit path
+    // that tolerates a preamble for the pipe variant.
+    if let Some(decoded) = find_embedded_digit_morse_delimited(text, b'|') {
         push_if_room(decoded, &mut alternatives, &mut total_bytes);
     }
 
@@ -3737,6 +3821,83 @@ mod tests {
     fn test_digit_morse_slash_no_slash() {
         // No slash separator: should return None (handled by nosep decoder instead)
         assert!(try_decode_digit_morse_slash(".----..---...--....-").is_none());
+    }
+
+    // === Embedded delimited digit-morse (preamble-tolerant) tests ===
+
+    // Helper: encode a digit string as delimited morse.
+    fn enc_delim_morse(digits: &str, delim: char) -> String {
+        let codes: Vec<String> = digits
+            .chars()
+            .map(|d| {
+                let (code, _) = MORSE_DIGITS
+                    .iter()
+                    .find(|(_, dd)| *dd == d as u8)
+                    .expect("digit");
+                String::from_utf8(code.to_vec()).unwrap()
+            })
+            .collect();
+        codes.join(&delim.to_string())
+    }
+
+    #[test]
+    fn test_embedded_comma_morse_with_preamble() {
+        // A filename preamble (as prepended on the file-scan path) must not defeat
+        // comma-separated digit morse the way the whole-input decoder does.
+        let cc = enc_delim_morse("4532015112830366", ',');
+        let payload = format!("invoice.txt\n{cc}");
+        // Whole-input decoder bails on the polluted first token…
+        assert!(try_decode_digit_morse_comma(&payload).is_none());
+        // …but the embedded scan recovers the run.
+        assert_eq!(
+            find_embedded_digit_morse_delimited(&payload, b','),
+            Some("4532015112830366".to_string())
+        );
+    }
+
+    #[test]
+    fn test_embedded_slash_morse_with_word_prefix() {
+        let cc = enc_delim_morse("4532015112830366", '/');
+        let payload = format!("card {cc}");
+        assert_eq!(
+            find_embedded_digit_morse_delimited(&payload, b'/'),
+            Some("4532015112830366".to_string())
+        );
+    }
+
+    #[test]
+    fn test_embedded_pipe_morse_with_preamble() {
+        let cc = enc_delim_morse("4532015112830366", '|');
+        let payload = format!("leak.log\n{cc}");
+        assert_eq!(
+            find_embedded_digit_morse_delimited(&payload, b'|'),
+            Some("4532015112830366".to_string())
+        );
+    }
+
+    #[test]
+    fn test_embedded_delimited_morse_via_generate_alternatives() {
+        // End-to-end through the alt-decoding entry point for all three delimiters.
+        for delim in [',', '/', '|'] {
+            let cc = enc_delim_morse("4532015112830366", delim);
+            let payload = format!("invoice.txt\n{cc}");
+            let alts = generate_alternative_decodings(&payload);
+            assert!(
+                alts.iter().any(|a| a.contains("4532015112830366")),
+                "delim {delim:?}: expected recovered CC in alternatives, got {alts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_embedded_delimited_morse_rejects_prose() {
+        // The lone '.' in "invoice.txt" (and any other short/invalid run) must not
+        // be mistaken for a digit-morse run.
+        assert!(find_embedded_digit_morse_delimited("invoice.txt is here", b',').is_none());
+        assert!(find_embedded_digit_morse_delimited("a.b/c.d/e.f", b'/').is_none());
+        // Fewer than 4 tokens → rejected.
+        let short = enc_delim_morse("453", ',');
+        assert!(find_embedded_digit_morse_delimited(&format!("x {short}"), b',').is_none());
     }
 
     #[test]

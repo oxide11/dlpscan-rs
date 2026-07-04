@@ -42,7 +42,9 @@ Last updated: 2026-07-04
 - [x] JCB detection — fixed: hex-decoder no longer corrupts all-digit JCB numbers (PR #336)
 - [x] Morse code em-dash/en-dash variants — fixed: U+2013/2014/2212/2015 mapped to '-' in HOMOGLYPH_MAP (PR #349)
 - [x] Morse code IBAN bypass — fixed: all 4 evadex variants (space/nosep/newline/slash sep) now detected; slash decoder extended to accept multi-char alpha tokens merged by stage 6b (PR #349)
-- [ ] Morse code remaining bypass — ~40% remaining (evadex measures ~29%); target <30%. Remaining failures are context-required IDs (SSN/SIN/AU_TFN/DE_TAX_ID/FR_INSEE) skipped by the morse alt-decode path by design. PR #349 chips at this.
+- [x] Morse delimited-preamble bypass — fixed: comma/slash/pipe digit-morse embedded in surrounding text (filename preamble on the file-scan path, or a prose prefix like `card `) now decoded via `find_embedded_digit_morse_delimited`, the delimited analogue of the nosep embedded scan (PR #336). Preamble/prefix spot checks 0/6 → 6/6; bare-separator variants stay 5/5 (PR #367; siphon-core 2.1.7)
+- [ ] Morse code remaining bypass — remaining failures are context-required IDs (SSN/SIN/AU_TFN/DE_TAX_ID/FR_INSEE) skipped by the morse alt-decode path *by design*: the alt-decoding emits bare digits without the surrounding context keyword, so context-gated patterns don't fire. Luhn/checksum-gated values (cards, IBAN, routing) are now covered across all separators incl. embedded-in-text. Closing the context-required class needs the alt-decoder to carry surrounding context — a larger change weighed against FP risk. Target <30%; re-baseline with evadex before deciding.
+- [x] Unicode digit-script + confusable-digit folding — fixed: Stage 10 gained a Unicode `Nd` fallback (`fold_unicode_digit`) folding all decimal-digit scripts (Devanagari/Bengali/Gujarati/Tamil/math-bold/… ~60 scripts) to ASCII; new Stage 11 (`fold_confusable_digit_runs`) folds letter-shaped digit confusables (O→0, l/I→1, Greek/Cyrillic O→0) inside long digit-dense runs. Closes leet_aggressive / greek_omicron / Devanagari-digit gaps; run-gated + Luhn-gated so prose is untouched (PR #366; siphon-core 2.1.6)
 - [x] Regional digits — Thai (U+0E50), Extended Arabic-Indic (U+06F0), Arabic-Indic (U+0660) now detected via HOMOGLYPH_MAP; Thai-digit card regression locked in (PR #359); verified PASS in the evadex suite
 
 ### Infrastructure
@@ -51,6 +53,9 @@ Last updated: 2026-07-04
 - [x] lab-up.sh — add postgres to local kind setup
 
 ## In progress (open PRs)
+- [ ] #365 — fix(core): evadex-mutate gaps — base64 mixed-case + delimiter/noise uniformity; siphon-core 2.1.5
+- [ ] #366 — fix(core): unicode digit-script folding + confusable-digit normalization; siphon-core 2.1.6 — **stacked on #365**
+- [ ] #367 — fix(core): preamble-tolerant delimited digit-morse decoding; siphon-core 2.1.7 — **stacked on #366**. Merge order: #365 → #366 → #367 (GitHub auto-retargets each to main as its base merges).
 - [x] #349 — fix(core): em-dash/en-dash homoglyphs + IBAN mixed-nosep morse decoder — merged; siphon-core 2.1.4
 - [ ] #350 — deps: bump kube 3.1→4.0 and k8s-openapi 0.27→0.28
 

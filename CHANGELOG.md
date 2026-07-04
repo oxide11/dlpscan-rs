@@ -16,6 +16,23 @@ starting from this file.
 
 ## 2026-07-04
 
+### siphon-core 2.1.7
+
+Extends the morse alt-decode path to tolerate surrounding text for the
+delimited digit-morse variants. Stacks on 2.1.6.
+
+- fix(core): new `find_embedded_digit_morse_delimited()` recovers a run of
+  digit-only morse tokens joined by a consistent `/`, `,`, or `|` delimiter when
+  it is embedded in larger text (a filename preamble on the file-scan path, or a
+  prose prefix such as `card `). The whole-input decoders
+  `try_decode_digit_morse_slash` / `_comma` bail as soon as a non-morse token
+  pollutes the input, and no whole-input digit decoder covered pipe at all — so
+  `invoice.txt\n<comma-morse-card>` previously bypassed even though the *nosep*
+  path already tolerated a preamble (PR #336). Wired as a fallback after each
+  whole-input decoder in `generate_alternative_decodings`. Accepts only runs of
+  4..=20 valid 5-char digit codes; Luhn/checksum still gates the result, so
+  false-positive risk stays negligible. 5 new regression tests.
+
 ### siphon-core 2.1.6
 
 Closes open-ended Unicode-digit and letter-confusable evasion classes surfaced
