@@ -35,13 +35,13 @@ Last updated: 2026-07-04
 ### Medium priority
 - [x] LSH persistence — store document similarity results in postgres (PR #320)
 - [x] evadex results → postgres — store evadex scan results in findings table for C2 trending (PR #321)
-- [ ] POST /v1/findings/prune ?days=N — already done, document in API reference
+- [x] POST /v1/findings/prune ?days=N — done; documented in docs/enterprise/api.md
 
 ### Detection improvements (from evadex data)
 - [x] Morse code file-scan bypass — fixed: embedded morse segments now found in filename-prefixed text (PR #336)
 - [x] JCB detection — fixed: hex-decoder no longer corrupts all-digit JCB numbers (PR #336)
-- [ ] Morse code remaining bypass — ~40% remaining; target <30%
-- [ ] Regional digits — Thai, Extended Arabic-Indic still high bypass
+- [ ] Morse code remaining bypass — ~40% remaining (evadex measures ~29%); target <30%. Remaining failures are context-required IDs (SSN/SIN/AU_TFN/DE_TAX_ID/FR_INSEE) skipped by the morse alt-decode path by design. PR #349 chips at this.
+- [x] Regional digits — Thai (U+0E50), Extended Arabic-Indic (U+06F0), Arabic-Indic (U+0660) now detected via HOMOGLYPH_MAP; Thai-digit card regression locked in (PR #359); verified PASS in the evadex suite
 
 ### Infrastructure
 - [ ] Helm chart: postgres subchart or external postgres configuration
@@ -49,8 +49,22 @@ Last updated: 2026-07-04
 - [x] lab-up.sh — add postgres to local kind setup
 
 ## In progress (open PRs)
-- [ ] #311 — fix(core): trim trailing whitespace in morse no-sep decoder
-- [ ] #297 — deps: bump calamine 0.34→0.35 (dependabot)
+- [ ] #349 — fix(core): em-dash/en-dash homoglyphs + IBAN mixed-nosep morse decoder
+- [ ] #350 — deps: bump kube 3.1→4.0 and k8s-openapi 0.27→0.28
+
+## Resumption notes (for when you come back)
+
+Start here:
+1. Check open PRs — several may be ready to merge (#360 final-sprint docs;
+   #350 kube 4.0 bump; #349 morse/regional homoglyph fix).
+2. Run evadex against the latest Siphon for a fresh detection baseline
+   (`cd ../evadex && python -m evadex scan --transport http --url http://localhost:8080/api --tier northam --fast`).
+3. Tackle the morse bypass — biggest remaining detection gap (~40% internal /
+   ~29% evadex). See PR #349 and the morse alt-decode path.
+4. Wire real auth (`SIPHON_API_KEY`) + TLS before any non-lab deployment; run a
+   load test to establish a throughput/latency baseline.
+
+See `HANDOFF.md` for full state, versions, and commands.
 
 ## Recently completed
 - [x] C2 command palette (Ctrl+K) — full surface search + quick actions, keyboard-navigable (feat/backlog-sprint-2)
@@ -83,3 +97,5 @@ Last updated: 2026-07-04
 - [x] Encoding chain alternatives — base64→ROT13, ROT13→base64, hex→base64 two-stage chains in generate_alternative_decodings
 - [x] Postgres end-to-end in kind cluster — siphon-lab cluster verified, postgres deployed, findings persistence tested
 - [x] Streaming scan SSE + pattern hot-reload — feat/streaming-hotreload branch; see PR for full details
+- [x] Admin-console read-only endpoints — GET /v1/categories, POST /v1/scan/explain, GET /v1/health/detailed (PR #345); recorded in CHANGELOG siphon-api 2.4.0
+- [x] Pipe-morse + Thai-digit card detection regression tests — tests/integration_test.rs (PR #359)
