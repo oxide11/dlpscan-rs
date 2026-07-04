@@ -794,6 +794,131 @@ fn strip_alnum_adjacent_delimiters(input: &str, in_offsets: &[usize]) -> (String
     (String::from_utf8_lossy(&out).into_owned(), offsets)
 }
 
+/// Returns `true` if `c` is a candidate "injected separator" character for
+/// [`strip_consistent_digit_separators`]: any non-alphanumeric, non-whitespace
+/// character that is NOT already handled by the dedicated delimiter stages
+/// (`.`, `-`, `/`, `_`, `\`). Includes ASCII punctuation (`|`, `,`, `:`, `;`,
+/// `~`, `+`, `=`, `*`, `#`, `@`, `$`, …) and non-ASCII symbols (e.g. U+00B7
+/// MIDDLE DOT).
+#[inline]
+fn is_consistent_sep(c: char) -> bool {
+    !c.is_ascii_alphanumeric() && !c.is_whitespace() && !matches!(c, '.' | '-' | '/' | '_' | '\\')
+}
+
+/// Strip a single, *consistent* separator character injected between pure-digit
+/// groups — the delimiter-injection and consistent-noise evasion families that
+/// the dedicated delimiter stages don't cover.
+///
+/// Defeats (each with an identical separator repeated ≥ 3×):
+///   * `4532|0151|1283|0366`  (pipe / `,` / `:` / `;` / `~` / `+` / `=` …)
+///   * `4532*0151*1283*0366`  (asterisk / `#` / `@` / `$` consistent noise)
+///   * `4532·0151·1283·0366`  (U+00B7 middle-dot, non-ASCII)
+///
+/// Deliberately conservative to protect legitimate text:
+///   * the separator must be *identical* at every position — mixed noise like
+///     `4532#0151@1283$0366` is left intact because inconsistency is not a
+///     reliable evasion signal and stripping it would be guesswork;
+///   * the separator may not be a digit, ASCII letter, or whitespace, and the
+///     `.`/`-`/`/`/`_`/`\` characters are excluded (handled by
+///     [`strip_alnum_adjacent_delimiters`], which carefully protects emails,
+///     IPs, and ICD-10 codes);
+///   * each digit group must be 1–6 digits, the separator must repeat ≥ 3
+///     times, the concatenated run must be 12–40 digits, and the whole span
+///     must be flanked by non-alphanumeric characters (never strip *inside* an
+///     identifier);
+///   * downstream checksum/Luhn validation still gates every resulting match.
+fn strip_consistent_digit_separators(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    let cs: Vec<char> = input.chars().collect();
+    let starts: Vec<usize> = input.char_indices().map(|(b, _)| b).collect();
+    let n = cs.len();
+    if n < 15 {
+        // Shortest strippable span is 12 digits + 3 separators.
+        return (input.to_string(), in_offsets.to_vec());
+    }
+    let mut remove = vec![false; n];
+    let mut any = false;
+
+    let mut i = 0;
+    while i < n {
+        if !cs[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        // Left boundary: never start mid-identifier (alphanumeric to the left).
+        if i > 0 && cs[i - 1].is_ascii_alphanumeric() {
+            while i < n && cs[i].is_ascii_digit() {
+                i += 1;
+            }
+            continue;
+        }
+        // First digit group.
+        let mut j = i;
+        while j < n && cs[j].is_ascii_digit() {
+            j += 1;
+        }
+        let first_len = j - i;
+        if !((1..=6).contains(&first_len) && j < n && is_consistent_sep(cs[j])) {
+            i = j.max(i + 1);
+            continue;
+        }
+        let sep = cs[j];
+        let mut sep_positions: Vec<usize> = Vec::new();
+        let mut total_digits = first_len;
+        let mut groups_ok = true;
+        let mut k = j;
+        loop {
+            if k < n && cs[k] == sep {
+                let g = k + 1;
+                let mut m = g;
+                while m < n && cs[m].is_ascii_digit() {
+                    m += 1;
+                }
+                let glen = m - g;
+                if glen == 0 {
+                    break; // trailing separator with no following digit group
+                }
+                if !(1..=6).contains(&glen) {
+                    groups_ok = false;
+                    break;
+                }
+                sep_positions.push(k);
+                total_digits += glen;
+                k = m;
+            } else {
+                break;
+            }
+        }
+        // Right boundary must not continue into an identifier.
+        let right_ok = k >= n || !cs[k].is_ascii_alphanumeric();
+        if groups_ok && right_ok && sep_positions.len() >= 3 && (12..=40).contains(&total_digits) {
+            for &p in &sep_positions {
+                remove[p] = true;
+            }
+            any = true;
+        }
+        i = k.max(i + 1);
+    }
+
+    if !any {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    let mut out = String::with_capacity(input.len());
+    let mut offsets: Vec<usize> = Vec::with_capacity(input.len());
+    for idx in 0..n {
+        if remove[idx] {
+            continue;
+        }
+        let ch = cs[idx];
+        let byte_idx = starts[idx];
+        out.push(ch);
+        for b in 0..ch.len_utf8() {
+            offsets.push(orig_offset(in_offsets, byte_idx + b));
+        }
+    }
+    (out, offsets)
+}
+
 /// Strip zero-width characters with offset composition.
 fn remap_strip_zero_width(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
     let has_zw = input.chars().any(|c| ZERO_WIDTH_CHARS.contains(&c));
@@ -1849,6 +1974,13 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     // doubled-delimiter evasion has already been collapsed to a single char.
     apply_stage!(strip_alnum_adjacent_delimiters, current, offsets);
 
+    // Stage 6c: Strip a consistent separator injected between digit groups.
+    // Covers the delimiter families the previous stages don't (`|`, `,`, `:`,
+    // `;`, `~`, `+`, `=`) and consistent-noise evasion (`4532*0151*1283*0366`,
+    // including non-ASCII separators like U+00B7). Conservative: identical
+    // separator repeated ≥3× between 12–40 digits only.
+    apply_stage!(strip_consistent_digit_separators, current, offsets);
+
     // Stages 7-10: Unicode normalization (only if non-ASCII remaining)
     if !is_ascii_only(&current) {
         // Stage 7: Strip zero-width characters
@@ -1982,6 +2114,128 @@ fn try_decode_mixed_alpha_nosep(text: &str) -> Option<String> {
         return None;
     }
     Some(result)
+}
+
+/// Recover a case-folded base64 token that encodes a purely numeric secret
+/// (credit-card / SSN / bank-account numbers).
+///
+/// Base64 is case-sensitive, so upper-, lower-, or mixed-casing an encoded blob
+/// corrupts a standard decode — this is the `base64_mixed_case` (and
+/// `base64_uppercase` / `base64_lowercase`) evasion family. But base64 decodes
+/// in independent 4-symbol → 3-byte blocks, and when the *plaintext* is all
+/// ASCII digits there is (almost always) exactly one assignment of upper/lower
+/// case to each letter in a block that yields three digit bytes. We enumerate
+/// the ≤2⁴ case combinations per block, keep those whose bytes are all digits,
+/// and return the cartesian product as candidate digit strings for the caller
+/// to re-scan (Luhn / checksum validation still gates every match).
+///
+/// Returns an empty vec unless the token could plausibly be a case-folded
+/// numeric payload. Bounded: token ≤ 64 chars, ≤ `MAX_CANDIDATES` results.
+fn recover_case_folded_base64_digits(token: &str) -> Vec<String> {
+    const MAX_LEN: usize = 64;
+    const MAX_CANDIDATES: usize = 16;
+
+    if token.len() > MAX_LEN {
+        return Vec::new();
+    }
+    let stripped = token.trim_end_matches('=');
+    // Need at least 16 base64 symbols (≈12 decoded digits) to be worth it, and
+    // a valid base64 body length is never ≡1 (mod 4).
+    if stripped.len() < 16 || stripped.len() % 4 == 1 {
+        return Vec::new();
+    }
+    let sym = stripped.as_bytes();
+    if sym
+        .iter()
+        .any(|&b| !(b.is_ascii_alphanumeric() || b == b'+' || b == b'/'))
+    {
+        return Vec::new();
+    }
+
+    // Candidate 6-bit value(s) per symbol. Letters carry two candidates (their
+    // upper-case value 0–25 and lower-case value 26–51); everything else one.
+    let opts: Vec<[Option<u8>; 2]> = sym
+        .iter()
+        .map(|&b| {
+            if b.is_ascii_alphabetic() {
+                let up = b.to_ascii_uppercase() - b'A';
+                let lo = (b.to_ascii_lowercase() - b'a') + 26;
+                [Some(up), Some(lo)]
+            } else if b.is_ascii_digit() {
+                [Some(52 + (b - b'0')), None]
+            } else if b == b'+' {
+                [Some(62), None]
+            } else {
+                [Some(63), None] // '/'
+            }
+        })
+        .collect();
+
+    // Solve block-by-block (base64 blocks are independent).
+    let mut per_block: Vec<Vec<String>> = Vec::new();
+    let mut idx = 0;
+    while idx < opts.len() {
+        let end = (idx + 4).min(opts.len());
+        let block = &opts[idx..end];
+        let bn = block.len();
+        let choice_positions: Vec<usize> = (0..bn).filter(|&p| block[p][1].is_some()).collect();
+        let combos = 1usize << choice_positions.len();
+        let mut block_strs: Vec<String> = Vec::new();
+        for mask in 0..combos {
+            let mut vals = [0u8; 4];
+            for (p, slot) in vals.iter_mut().enumerate().take(bn) {
+                let sel = choice_positions
+                    .iter()
+                    .position(|&c| c == p)
+                    .map(|bit| (mask >> bit) & 1)
+                    .unwrap_or(0);
+                *slot = block[p][sel].unwrap();
+            }
+            let out_bytes: Vec<u8> = match bn {
+                4 => vec![
+                    (vals[0] << 2) | (vals[1] >> 4),
+                    ((vals[1] & 0x0f) << 4) | (vals[2] >> 2),
+                    ((vals[2] & 0x03) << 6) | vals[3],
+                ],
+                3 => vec![
+                    (vals[0] << 2) | (vals[1] >> 4),
+                    ((vals[1] & 0x0f) << 4) | (vals[2] >> 2),
+                ],
+                2 => vec![(vals[0] << 2) | (vals[1] >> 4)],
+                _ => Vec::new(),
+            };
+            if !out_bytes.is_empty() && out_bytes.iter().all(|b| b.is_ascii_digit()) {
+                let s: String = out_bytes.iter().map(|&b| b as char).collect();
+                if !block_strs.contains(&s) {
+                    block_strs.push(s);
+                }
+            }
+        }
+        if block_strs.is_empty() {
+            return Vec::new(); // this block can't be all-digits → token isn't numeric
+        }
+        per_block.push(block_strs);
+        idx = end;
+    }
+
+    // Bounded cartesian product of the per-block digit strings.
+    let mut results: Vec<String> = vec![String::new()];
+    for block_strs in &per_block {
+        let mut next: Vec<String> = Vec::new();
+        'outer: for prefix in &results {
+            for bs in block_strs {
+                next.push(format!("{prefix}{bs}"));
+                if next.len() >= MAX_CANDIDATES {
+                    break 'outer;
+                }
+            }
+        }
+        results = next;
+    }
+    results.retain(|s| s.len() >= 12);
+    results.sort();
+    results.dedup();
+    results
 }
 
 pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
@@ -2141,6 +2395,18 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
         push_if_room(hex_decoded, &mut alternatives, &mut total_bytes);
     }
 
+    // Case-folded base64 of a numeric secret (`base64_mixed_case` /
+    // `_uppercase` / `_lowercase`). Recover the original digits per 4-symbol
+    // block. Also try the ROT13 shell so `base64_then_rot13` mixed-case is
+    // covered: rot13(rot13(base64)) restores the base64 letters (with folded
+    // case) which then recovers the same way.
+    let rot_text = apply_rot13(text, &[]).0;
+    for src in [text.trim(), rot_text.trim()] {
+        for recovered in recover_case_folded_base64_digits(src) {
+            push_if_room(recovered, &mut alternatives, &mut total_bytes);
+        }
+    }
+
     alternatives
 }
 
@@ -2207,6 +2473,34 @@ fn has_evasion_markers(text: &str) -> bool {
     // \xHH hex-escape sequences
     if bytes.windows(2).any(|w| w[0] == b'\\' && w[1] == b'x') {
         return true;
+    }
+    // Consistent separator injected between digit groups (e.g.
+    // `4532|0151|1283|0366`, `4532*0151*1283*0366`). Cheap ASCII byte scan:
+    // the same non-alphanumeric, non-whitespace separator flanked by ASCII
+    // digits appearing ≥3× enters the pipeline for
+    // `strip_consistent_digit_separators`. Non-ASCII separators (U+00B7 …)
+    // fail `is_ascii_only` and enter the pipeline anyway. `.`/`-`/`/`/`_`/`\`
+    // are excluded here (handled by the dedicated delimiter stages/markers).
+    if bytes.len() >= 15 {
+        let mut counts = [0u8; 128];
+        for w in bytes.windows(3) {
+            let s = w[1];
+            if w[0].is_ascii_digit()
+                && w[2].is_ascii_digit()
+                && s < 128
+                && !s.is_ascii_alphanumeric()
+                && s != b' '
+                && s != b'\t'
+                && s != b'\n'
+                && s != b'\r'
+                && !matches!(s, b'.' | b'-' | b'/' | b'_' | b'\\')
+            {
+                counts[s as usize] = counts[s as usize].saturating_add(1);
+                if counts[s as usize] >= 3 {
+                    return true;
+                }
+            }
+        }
     }
     // Single delimiter between alphanumeric chars where at least one side is a
     // digit or uppercase letter — identifier-delimiter evasion (e.g. `D123-4567`).
@@ -2320,6 +2614,134 @@ fn remap_nfkc(input: &str, input_offsets: &[usize]) -> (String, Vec<usize>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- Consistent digit-separator stripping (stage 6c) ----
+
+    fn norm(s: &str) -> String {
+        normalize_text(s).0
+    }
+
+    #[test]
+    fn test_consistent_sep_pipe() {
+        assert_eq!(norm("4532|0151|1283|0366"), "4532015112830366");
+    }
+
+    #[test]
+    fn test_consistent_sep_variants() {
+        for sep in [',', ':', ';', '~', '+', '=', '*', '#', '@', '$'] {
+            let input = format!("4532{sep}0151{sep}1283{sep}0366");
+            assert_eq!(
+                norm(&input),
+                "4532015112830366",
+                "separator {sep:?} not stripped"
+            );
+        }
+    }
+
+    #[test]
+    fn test_consistent_sep_unicode_middot() {
+        assert_eq!(
+            norm("4532\u{00B7}0151\u{00B7}1283\u{00B7}0366"),
+            "4532015112830366"
+        );
+    }
+
+    #[test]
+    fn test_inconsistent_noise_left_intact() {
+        // Mixed separators are NOT a reliable evasion signal — leave them.
+        let input = "4532#0151@1283$0366";
+        assert_eq!(norm(input), input);
+    }
+
+    #[test]
+    fn test_letter_noise_left_intact() {
+        // Letters are never treated as separators (would corrupt identifiers).
+        let input = "4532x0151y1283z0366";
+        assert_eq!(norm(input), input);
+    }
+
+    #[test]
+    fn test_consistent_sep_too_few_seps() {
+        // Only two separators — below the ≥3 threshold, left intact.
+        let input = "45320151:1283:0366";
+        assert_eq!(norm(input), input);
+    }
+
+    #[test]
+    fn test_consistent_sep_preserves_ipv4() {
+        // Dots are excluded, and even so IPv4 must survive untouched.
+        let input = "10.0.0.1 and 192.168.1.1";
+        assert_eq!(norm(input), input);
+    }
+
+    #[test]
+    fn test_consistent_sep_not_inside_identifier() {
+        // Alphanumeric boundary on the left → don't strip (part number, etc.).
+        let input = "AB4532:0151:1283:0366";
+        assert_eq!(norm(input), input);
+    }
+
+    #[test]
+    fn test_strip_consistent_offsets_are_valid() {
+        let input = "4532*0151*1283*0366";
+        let (out, offsets) = strip_consistent_digit_separators(input, &[]);
+        assert_eq!(out, "4532015112830366");
+        assert_eq!(offsets.len(), out.len());
+        // Every offset must point back inside the original string.
+        assert!(offsets.iter().all(|&o| o < input.len()));
+    }
+
+    // ---- Case-folded base64 numeric recovery ----
+
+    #[test]
+    fn test_recover_case_folded_base64_uppercased() {
+        use base64::{engine::general_purpose, Engine};
+        let b64 = general_purpose::STANDARD.encode("4532015112830366");
+        let got = recover_case_folded_base64_digits(&b64.to_uppercase());
+        assert!(
+            got.contains(&"4532015112830366".to_string()),
+            "recovered = {got:?}"
+        );
+    }
+
+    #[test]
+    fn test_recover_case_folded_base64_lowercased() {
+        use base64::{engine::general_purpose, Engine};
+        let b64 = general_purpose::STANDARD.encode("4532015112830366");
+        let got = recover_case_folded_base64_digits(&b64.to_lowercase());
+        assert!(got.contains(&"4532015112830366".to_string()));
+    }
+
+    #[test]
+    fn test_recover_case_folded_base64_rejects_non_numeric() {
+        // A base64 blob whose plaintext has letters must not "recover" digits.
+        use base64::{engine::general_purpose, Engine};
+        let b64 = general_purpose::STANDARD.encode("hello world secret");
+        assert!(recover_case_folded_base64_digits(&b64.to_uppercase()).is_empty());
+    }
+
+    #[test]
+    fn test_recover_case_folded_base64_alt_decoding() {
+        use base64::{engine::general_purpose, Engine};
+        let b64 = general_purpose::STANDARD.encode("4532015112830366");
+        // Mixed-case the encoded blob deterministically.
+        let mixed: String = b64
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                if i % 2 == 0 {
+                    c.to_ascii_uppercase()
+                } else {
+                    c.to_ascii_lowercase()
+                }
+            })
+            .collect();
+        let alts = generate_alternative_decodings(&mixed);
+        assert!(
+            alts.iter().any(|a| a.contains("4532015112830366")),
+            "alts = {alts:?}"
+        );
+    }
 
     #[test]
     fn test_strip_zero_width_no_change() {

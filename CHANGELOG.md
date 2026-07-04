@@ -16,6 +16,38 @@ starting from this file.
 
 ## 2026-07-04
 
+### siphon-core 2.1.5
+
+Closes gaps surfaced by running `evadex mutate` against bypassing credit-card
+variants. Overall mutate bypass rate dropped from 84.4% to 79.7% on the
+`bench_http_northam` survivor population; all canonical single-technique
+variants in the spot-check corpus (15/15) now detect.
+
+- fix(core): new normalization stage `strip_consistent_digit_separators`
+  (pipeline stage 6c) strips a single *consistent* separator injected between
+  pure-digit groups. Defeats the delimiter families the existing delimiter
+  stages don't cover (`|`, `,`, `:`, `;`, `~`, `+`, `=`) and consistent-noise
+  evasion (`4532*0151*1283*0366`, including non-ASCII separators such as U+00B7
+  MIDDLE DOT). Conservative by construction: the separator must be identical and
+  repeat ≥3 times between 12–40 digits, each group 1–6 digits, flanked by
+  non-alphanumeric characters; `.`/`-`/`/`/`_`/`\` are left to the dedicated
+  delimiter stages (which protect emails, IPs, and ICD-10 codes). Mixed-noise
+  (`4532#0151@1283$0366`) and letter-noise are deliberately left intact — an
+  inconsistent separator is not a reliable evasion signal. A matching cheap
+  marker was added to `has_evasion_markers` so pure-ASCII payloads still enter
+  the pipeline.
+- fix(core): new `recover_case_folded_base64_digits` recovers case-folded
+  base64 of a numeric secret (the `base64_mixed_case` / `_uppercase` /
+  `_lowercase` families). Base64 is case-sensitive, but when the plaintext is
+  all ASCII digits the original casing can be recovered per independent
+  4-symbol block by enumerating the ≤2⁴ upper/lower combinations that decode to
+  digit bytes. Wired into `generate_alternative_decodings()` and also run on the
+  ROT13 shell so `base64` → `rot13` mixed-case is covered. Bounded (token ≤64
+  chars, ≤16 candidates); checksum/Luhn validation still gates every match.
+- note(core): the existing zero-width stripping set already covered all evadex
+  zero-width variants (U+200B/C/D, U+2060, U+FEFF, U+00AD, U+180E, U+034F) — no
+  change needed.
+
 ### siphon-core 2.1.4
 
 - fix(core): em-dash (U+2014), en-dash (U+2013), Unicode minus sign (U+2212),
