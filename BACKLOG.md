@@ -44,6 +44,7 @@ Last updated: 2026-07-04
 - [x] Morse code IBAN bypass — fixed: all 4 evadex variants (space/nosep/newline/slash sep) now detected; slash decoder extended to accept multi-char alpha tokens merged by stage 6b (PR #349)
 - [x] Morse delimited-preamble bypass — fixed: comma/slash/pipe digit-morse embedded in surrounding text (filename preamble on the file-scan path, or a prose prefix like `card `) now decoded via `find_embedded_digit_morse_delimited`, the delimited analogue of the nosep embedded scan (PR #336). Preamble/prefix spot checks 0/6 → 6/6; bare-separator variants stay 5/5 (PR #367; siphon-core 2.1.7)
 - [ ] Morse code remaining bypass — remaining failures are context-required IDs (SSN/SIN/AU_TFN/DE_TAX_ID/FR_INSEE) skipped by the morse alt-decode path *by design*: the alt-decoding emits bare digits without the surrounding context keyword, so context-gated patterns don't fire. Luhn/checksum-gated values (cards, IBAN, routing) are now covered across all separators incl. embedded-in-text. Closing the context-required class needs the alt-decoder to carry surrounding context — a larger change weighed against FP risk. Target <30%; re-baseline with evadex before deciding.
+- [ ] Remaining credit_card gaps (evadex replay 2026-07-04, post #365-#367; 63/100 previously-bypassing variants now detected) — still bypassing: zero-padding (`right_pad_zeros`/`left_pad_zeros`, ~10), nested/partial base64 chains (`base64_partial`/`base64_no_padding`/`base64_double`/`url_of_base64`/`hex_of_base64`, ~11), `noise_embedded` (4), residual `homoglyph_substitution` (4), `barcode_split` (2), and a couple of `morse_slash_sep`/`morse_no_sep` stragglers. Zero-padding and deep-nested base64 are the highest-value next targets.
 - [x] Unicode digit-script + confusable-digit folding — fixed: Stage 10 gained a Unicode `Nd` fallback (`fold_unicode_digit`) folding all decimal-digit scripts (Devanagari/Bengali/Gujarati/Tamil/math-bold/… ~60 scripts) to ASCII; new Stage 11 (`fold_confusable_digit_runs`) folds letter-shaped digit confusables (O→0, l/I→1, Greek/Cyrillic O→0) inside long digit-dense runs. Closes leet_aggressive / greek_omicron / Devanagari-digit gaps; run-gated + Luhn-gated so prose is untouched (PR #366; siphon-core 2.1.6)
 - [x] Regional digits — Thai (U+0E50), Extended Arabic-Indic (U+06F0), Arabic-Indic (U+0660) now detected via HOMOGLYPH_MAP; Thai-digit card regression locked in (PR #359); verified PASS in the evadex suite
 
@@ -53,9 +54,9 @@ Last updated: 2026-07-04
 - [x] lab-up.sh — add postgres to local kind setup
 
 ## In progress (open PRs)
-- [ ] #365 — fix(core): evadex-mutate gaps — base64 mixed-case + delimiter/noise uniformity; siphon-core 2.1.5
-- [ ] #366 — fix(core): unicode digit-script folding + confusable-digit normalization; siphon-core 2.1.6 — **stacked on #365**
-- [ ] #367 — fix(core): preamble-tolerant delimited digit-morse decoding; siphon-core 2.1.7 — **stacked on #366**. Merge order: #365 → #366 → #367 (GitHub auto-retargets each to main as its base merges).
+- [x] #365 — fix(core): evadex-mutate gaps — base64 mixed-case + delimiter/noise uniformity; siphon-core 2.1.5 — **merged to main** (squash 0778cd4, 2026-07-04)
+- [x] #366 — fix(core): unicode digit-script folding + confusable-digit normalization; siphon-core 2.1.6 — **merged to main** (squash 362f792, 2026-07-04)
+- [x] #367 — fix(core): preamble-tolerant delimited digit-morse decoding; siphon-core 2.1.7 — **merged to main** (squash a8ff937, 2026-07-04). Stack merged in order #365 → #366 → #367; each child was rebased onto main after its parent squash-merged (squash collapses history, so a non-force merge-commit resolved the conflict).
 - [x] #349 — fix(core): em-dash/en-dash homoglyphs + IBAN mixed-nosep morse decoder — merged; siphon-core 2.1.4
 - [ ] #350 — deps: bump kube 3.1→4.0 and k8s-openapi 0.27→0.28
 
@@ -74,6 +75,7 @@ Start here:
 See `HANDOFF.md` for full state, versions, and commands.
 
 ## Recently completed
+- [x] Merged PR stack #365 → #366 → #367 to main (siphon-core 2.1.5 → 2.1.6 → 2.1.7, 2026-07-04). Clean main verified: 394 siphon-core lib tests + 154 root lib + 69 integration + 12 evasion all pass; `cargo deny` clean; release binary builds. Spot check 27/29 (the 2 "fails" are malformed test vectors that don't fold to a Luhn-valid PAN — correctly-built Greek/Cyrillic-O payloads *are* detected, confirming Stage 11 confusable folding). evadex mutate credit_card bypass 84.4% → **74.2%** (159 bred, seed 42, same breeding scan); evadex replay `--failed-only` credit_card: **63/100** previously-bypassing variants now detected (regional-digit + morse-separator + nested-base64 techniques flipped to detected).
 - [x] Stage-6b dot-stripping + base64 alt-decode test failures — `should_strip_dot` now leaves letter-bounded dots intact (`D123.4567` stays an identifier) while still stripping pure numeric groupings; base64→ROT13 alt-decode chain only emits when ROT13 actually transforms the bytes, so pure-digit payloads no longer re-introduce plain base64 output stage 4c already covers (main 0cb99c9)
 - [x] #349 — em-dash/en-dash homoglyphs + IBAN mixed-nosep/slash morse decoder — merged; siphon-core 2.1.4 (all 4 evadex IBAN morse variants now detected)
 - [x] C2 command palette (Ctrl+K) — full surface search + quick actions, keyboard-navigable (feat/backlog-sprint-2)
