@@ -24,10 +24,10 @@ jobs:
 
     steps:
       - name: Checkout dlpscan-rs
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Checkout evadex
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: tbustenk/evadex
           path: evadex
