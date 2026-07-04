@@ -2004,11 +2004,30 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
         current = r.0;
         offsets = r.1;
 
-        // Stage 10: Homoglyph map
-        let r = remap_char_transform(&current, &offsets, |c| *HOMOGLYPH_MAP.get(&c).unwrap_or(&c));
+        // Stage 10: Homoglyph map, with a Unicode decimal-digit (Nd) fallback
+        // so *every* digit script folds to ASCII (Devanagari, Bengali, Tamil,
+        // …), not just the handful hard-coded in HOMOGLYPH_MAP.
+        let r = remap_char_transform(&current, &offsets, |c| {
+            if let Some(&mapped) = HOMOGLYPH_MAP.get(&c) {
+                mapped
+            } else if let Some(d) = fold_unicode_digit(c) {
+                d
+            } else {
+                c
+            }
+        });
         current = r.0;
         offsets = r.1;
     }
+
+    // Stage 11: Fold digit-confusable letters (Latin/Greek/Cyrillic O→0, l→1,
+    // …) that sit inside a long, digit-dense run — homoglyph/leet substitution
+    // inside a candidate card/account number (e.g. `4532O151l283O366`). This
+    // runs OUTSIDE the `!is_ascii_only` block above because the substituted
+    // letters are themselves ASCII, so Stage 10 would never see them.
+    let r = fold_confusable_digit_runs(&current, &offsets);
+    current = r.0;
+    offsets = r.1;
 
     // If nothing changed, return empty offsets (identity)
     if current == text {
@@ -2579,6 +2598,120 @@ fn remap_char_transform(
         }
     }
 
+    (output, output_offsets)
+}
+
+/// Fold any Unicode decimal digit (general category Nd) to its ASCII
+/// equivalent. Rather than hand-maintaining a 10-entry table per script (the
+/// old approach in `HOMOGLYPH_MAP`, which covered only Arabic/Thai and let
+/// Devanagari, Bengali, Tamil, … through), this walks the fixed set of Nd
+/// block starts — the "zero" code point of each contiguous 0–9 run — so a new
+/// digit script never needs a code change. `char::to_digit` is not usable
+/// here: it only understands ASCII digits and a–z.
+fn fold_unicode_digit(c: char) -> Option<char> {
+    // ASCII digits are already canonical; skip the scan.
+    if c.is_ascii() {
+        return None;
+    }
+    // Start code point ("digit zero") of every Unicode Nd block, ascending.
+    const ZERO_BASES: &[u32] = &[
+        0x0660, 0x06F0, 0x07C0, 0x0966, 0x09E6, 0x0A66, 0x0AE6, 0x0B66, 0x0BE6, 0x0C66, 0x0CE6,
+        0x0D66, 0x0DE6, 0x0E50, 0x0ED0, 0x0F20, 0x1040, 0x1090, 0x17E0, 0x1810, 0x1946, 0x19D0,
+        0x1A80, 0x1A90, 0x1B50, 0x1BB0, 0x1C40, 0x1C50, 0xA620, 0xA8D0, 0xA900, 0xA9D0, 0xA9F0,
+        0xAA50, 0xABF0, 0xFF10, // Supplementary planes
+        0x1_04A0, 0x1_0D30, 0x1_1066, 0x1_10F0, 0x1_1136, 0x1_11D0, 0x1_12F0, 0x1_1450, 0x1_14D0,
+        0x1_1650, 0x1_16C0, 0x1_1730, 0x1_18E0, 0x1_1950, 0x1_1C50, 0x1_1D50, 0x1_1DA0, 0x1_1F50,
+        0x1_6A60, 0x1_6AC0, 0x1_6B50, 0x1_D7CE, 0x1_D7D8, 0x1_D7E2, 0x1_D7EC, 0x1_D7F6, 0x1_E140,
+        0x1_E2F0, 0x1_E4F0, 0x1_E950, 0x1_FBF0,
+    ];
+    let cp = c as u32;
+    for &base in ZERO_BASES {
+        if base > cp {
+            break; // list is sorted ascending; no later block can match
+        }
+        if cp <= base + 9 {
+            return Some((b'0' + (cp - base) as u8) as char);
+        }
+    }
+    None
+}
+
+/// Letters/symbols that visually stand in for a digit. These fold to a digit
+/// ONLY inside a long, digit-dense run (see `fold_confusable_digit_runs`) —
+/// folding every 'O' → '0' unconditionally would wreck ordinary prose, so the
+/// caller gates on run length and digit density.
+#[inline]
+fn confusable_to_digit(c: char) -> Option<char> {
+    match c {
+        // zero look-alikes: Latin O/o, Greek omicron Ο/ο, Cyrillic O/о
+        'O' | 'o' | '\u{039F}' | '\u{03BF}' | '\u{041E}' | '\u{043E}' => Some('0'),
+        // one look-alikes: Latin l/I/i, bar, Greek Iota Ι, Cyrillic Byelo-Ukr І
+        'l' | 'I' | 'i' | '|' | '\u{0399}' | '\u{0406}' => Some('1'),
+        _ => None,
+    }
+}
+
+#[inline]
+fn is_digit_run_member(c: char) -> bool {
+    c.is_ascii_digit() || confusable_to_digit(c).is_some()
+}
+
+/// Fold digit-confusable letters to ASCII digits, but only inside a maximal
+/// run of ≥12 chars that is ≥60% real ASCII digits (and has ≥8 of them). This
+/// defeats homoglyph/leet substitution inside a candidate card/account number
+/// (e.g. `4532O151l283O366` → `4532015112830366`) while leaving ordinary text
+/// untouched. Each char maps to exactly one char, so byte offsets are
+/// preserved the same way `remap_char_transform` does it.
+fn fold_confusable_digit_runs(input: &str, input_offsets: &[usize]) -> (String, Vec<usize>) {
+    let chars: Vec<(usize, char)> = input.char_indices().collect();
+    let n = chars.len();
+    let mut fold = vec![false; n];
+    let mut any = false;
+    let mut i = 0;
+    while i < n {
+        if !is_digit_run_member(chars[i].1) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut ascii_digits = 0usize;
+        while i < n && is_digit_run_member(chars[i].1) {
+            if chars[i].1.is_ascii_digit() {
+                ascii_digits += 1;
+            }
+            i += 1;
+        }
+        let len = i - start;
+        // len ≥ 12, ≥ 8 real digits, > 60% real digits, and at least one
+        // confusable to actually fold (else the run is already plain digits).
+        if len > ascii_digits && len >= 12 && ascii_digits >= 8 && ascii_digits * 10 > len * 6 {
+            for slot in fold.iter_mut().take(i).skip(start) {
+                *slot = true;
+            }
+            any = true;
+        }
+    }
+    if !any {
+        return (input.to_string(), input_offsets.to_vec());
+    }
+    let mut output = String::with_capacity(input.len());
+    let mut output_offsets = Vec::with_capacity(input.len());
+    for (idx, &(byte_idx, ch)) in chars.iter().enumerate() {
+        let replacement = if fold[idx] {
+            confusable_to_digit(ch).unwrap_or(ch)
+        } else {
+            ch
+        };
+        output.push(replacement);
+        let orig_start = if byte_idx < input_offsets.len() {
+            input_offsets[byte_idx]
+        } else {
+            byte_idx
+        };
+        for _ in 0..replacement.len_utf8() {
+            output_offsets.push(orig_start);
+        }
+    }
     (output, output_offsets)
 }
 
@@ -3668,6 +3801,65 @@ mod tests {
         let input = "\u{0E50}\u{0E51}\u{0E52}\u{0E53}";
         let (result, _) = normalize_text(input);
         assert_eq!(result, "0123");
+    }
+
+    #[test]
+    fn test_devanagari_and_bengali_digits_normalized() {
+        // Devanagari १२३ and Bengali ৪৫৬ fold via the Unicode Nd fallback,
+        // not a hand-maintained per-script table.
+        let (deva, _) = normalize_text("\u{0967}\u{0968}\u{0969}");
+        assert_eq!(deva, "123");
+        let (beng, _) = normalize_text("\u{09EA}\u{09EB}\u{09EC}");
+        assert_eq!(beng, "456");
+    }
+
+    #[test]
+    fn test_fold_unicode_digit_covers_supplementary_scripts() {
+        // Mathematical bold digits (U+1D7CE..) and fullwidth digits fold too.
+        assert_eq!(fold_unicode_digit('\u{1D7CE}'), Some('0'));
+        assert_eq!(fold_unicode_digit('\u{1D7D7}'), Some('9'));
+        assert_eq!(fold_unicode_digit('\u{FF15}'), Some('5'));
+        // Non-digits and ASCII return None.
+        assert_eq!(fold_unicode_digit('A'), None);
+        assert_eq!(fold_unicode_digit('5'), None);
+        assert_eq!(fold_unicode_digit('\u{0966}'), Some('0')); // Devanagari zero
+    }
+
+    #[test]
+    fn test_confusable_digits_fold_in_dense_run() {
+        // Latin O→0 and l→1 inside a 16-char, digit-dense run (leet evasion).
+        let (result, _) = normalize_text("4532O151l283O366");
+        assert_eq!(result, "4532015112830366");
+    }
+
+    #[test]
+    fn test_confusable_greek_and_cyrillic_o_fold_in_run() {
+        // Greek omicron (U+039F) and Cyrillic O (U+041E) standing in for '0'
+        // inside a digit run both fold to ASCII '0'.
+        let (greek, _) = normalize_text("4532\u{039F}15112830366");
+        assert_eq!(greek, "4532015112830366");
+        let (cyr, _) = normalize_text("4532\u{041E}15112830366");
+        assert_eq!(cyr, "4532015112830366");
+    }
+
+    #[test]
+    fn test_confusable_fold_does_not_touch_prose() {
+        // Ordinary words with O/o/l/I must NOT be rewritten — the run gate
+        // (≥12 chars, ≥8 real digits, >60% digits) protects normal text.
+        let (r1, _) = normalize_text("Hello world, I lost my wallet OoOo");
+        assert_eq!(r1, "Hello world, I lost my wallet OoOo");
+        // Short number-ish token below the 12-char threshold is untouched.
+        let (r2, _) = normalize_text("Order IOl only 12345");
+        assert_eq!(r2, "Order IOl only 12345");
+    }
+
+    #[test]
+    fn test_confusable_fold_requires_digit_density() {
+        // A long run that is mostly letters (≤60% digits) is left alone even
+        // if it exceeds the length threshold.
+        let sparse = "OIlOIlOIl123456"; // 15 chars, only 6 real digits
+        let (result, _) = normalize_text(sparse);
+        assert_eq!(result, sparse);
     }
 
     #[test]
