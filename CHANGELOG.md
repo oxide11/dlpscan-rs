@@ -16,6 +16,25 @@ starting from this file.
 
 ## 2026-07-04
 
+### siphon-api 2.4.0
+
+- feat(api): read-only admin-console endpoints (PR #345) — three endpoints
+  shipped in the codebase without a version bump or changelog entry; this
+  release records them:
+  - `GET /v1/categories` — enumerates every detection category with its
+    `pattern_count` and the list of `sub_categories`, plus a `total` count.
+    Backs the category picker in the C2 console.
+  - `POST /v1/scan/explain` — scans a `{text, options?}` body like `POST /scan`
+    but returns a per-finding pipeline trace instead of bare findings: for each
+    match it reports `validation_passed`, `context_present`, `final_confidence`,
+    and the raw `pipeline_events` stage log. Enables operators to see *why* a
+    value was (or was not) flagged. Same 10 MB payload cap as `/scan`.
+  - `GET /v1/health/detailed` — extended health beyond `/health`: pod identity,
+    `version`/`core_version`, uptime, `patterns_loaded`/`categories_loaded`, a
+    `db` block (connected, latency_ms, findings_count — degrades gracefully when
+    Postgres is unconfigured or unreachable), and a `scans` block
+    (scans_total, findings_total, scan_errors_total, scans_per_minute).
+
 ### siphon-api 2.3.1
 
 - fix(api): recover from a poisoned rate-limiter mutex instead of panicking.

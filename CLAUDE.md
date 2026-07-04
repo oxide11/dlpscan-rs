@@ -111,10 +111,11 @@ and `/ready` are unauthenticated (kubelet probes).
 ```
 GET  /health                    pod identity + liveness
 GET  /ready                     readiness probe
-GET  /v1/health/detailed        comprehensive health: uptime, pattern/category counts, DB pool, scan stats
+GET  /v1/health/detailed        extended health: versions, uptime, patterns/categories loaded, DB block (connected/latency/findings_count), scan stats
 POST /scan                      text → findings (JSON body: {text, options?})
 POST /scan/batch                [{text, id}] → [{id, findings}]
-POST /v1/scan/explain           scan + per-finding pipeline explanation (normalization, validation, context)
+POST /v1/scan/explain           scan + per-finding pipeline trace (validation/context/confidence + stage events — "why did this match?")
+GET  /v1/categories             detection categories with pattern_count + sub_categories
 GET  /v1/policies               loaded *.yaml rulesets (read-only)
 GET  /v1/allowlist              current allowlist
 GET  /v1/audit                  recent events from audit ring buffer
@@ -200,10 +201,12 @@ C2 wireframe:
 
 | PR | Branch | Summary |
 |---|---|---|
-| #361 | fix/stability | fix(lab): stability improvements |
-| #360 | refine/final-sprint | chore(api): record admin-console endpoints as siphon-api 2.4.0 |
-| #350 | claude/branch-merge-review-goyt39 | deps: bump kube 3.1→4.0 and k8s-openapi 0.27→0.28 |
-| #349 | fix/morse-regional-context | fix(core): em-dash/en-dash homoglyphs and IBAN mixed-nosep morse decoder |
+| #349 | fix/morse-regional-context | fix(core): em-dash/en-dash homoglyphs + IBAN mixed-nosep morse decoder |
+
+The findings-persistence wave (#312–#321), the retention/export/EDM/LSH/evadex
+work, the admin-console endpoints (#345: categories/explain/detailed-health),
+the kube 4.0 bump (#330), and the 2.3.1 hardening + 2.4.0 record (#362/#360)
+have all merged to `main` — see CHANGELOG `siphon-api 2.3.0`–`2.4.0`.
 
 ### siphon-fs routes
 

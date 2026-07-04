@@ -35,7 +35,7 @@ Last updated: 2026-07-04
 ### Medium priority
 - [x] LSH persistence — store document similarity results in postgres (PR #320)
 - [x] evadex results → postgres — store evadex scan results in findings table for C2 trending (PR #321)
-- [ ] POST /v1/findings/prune ?days=N — already done, document in API reference
+- [x] POST /v1/findings/prune ?days=N — done; documented in docs/enterprise/api.md
 
 ### Detection improvements (from evadex data)
 - [x] Morse code file-scan bypass — fixed: embedded morse segments now found in filename-prefixed text (PR #336)
@@ -49,8 +49,8 @@ Last updated: 2026-07-04
 - [x] lab-up.sh — add postgres to local kind setup
 
 ## In progress (open PRs)
-- [ ] #311 — fix(core): trim trailing whitespace in morse no-sep decoder
-- [ ] #297 — deps: bump calamine 0.34→0.35 (dependabot)
+- [ ] #349 — fix(core): em-dash/en-dash homoglyphs + IBAN mixed-nosep morse decoder
+- [ ] #350 — deps: bump kube 3.1→4.0 and k8s-openapi 0.27→0.28
 
 ## Recently completed
 - [x] C2 command palette (Ctrl+K) — full surface search + quick actions, keyboard-navigable (feat/backlog-sprint-2)
@@ -83,3 +83,5 @@ Last updated: 2026-07-04
 - [x] Encoding chain alternatives — base64→ROT13, ROT13→base64, hex→base64 two-stage chains in generate_alternative_decodings
 - [x] Postgres end-to-end in kind cluster — siphon-lab cluster verified, postgres deployed, findings persistence tested
 - [x] Streaming scan SSE + pattern hot-reload — feat/streaming-hotreload branch; see PR for full details
+- [x] Admin-console read-only endpoints — GET /v1/categories, POST /v1/scan/explain, GET /v1/health/detailed (PR #345); recorded in CHANGELOG siphon-api 2.4.0
+- [x] Pipe-morse + Thai-digit card detection regression tests — tests/integration_test.rs (PR #359)
