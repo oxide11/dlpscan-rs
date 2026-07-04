@@ -179,6 +179,31 @@ fn test_evasion_fullwidth_digits() {
     );
 }
 
+#[test]
+fn test_evasion_pipe_separated_morse_card() {
+    // Each morse symbol of the Visa number 4532015112830366 separated by `|`.
+    // decode_morse treats `|` as a separator, so the pipeline reconstructs the
+    // digits before the credit-card regex runs.
+    let morse = "....-|.....|...--|..---|-----|.----|.....|.----|.----|..---|---..|...--|-----|...--|-....|-....";
+    let matches = scan_text(morse).unwrap();
+    assert!(
+        matches.iter().any(|m| m.category.contains("Credit Card")),
+        "Should detect pipe-separated morse credit card"
+    );
+}
+
+#[test]
+fn test_evasion_thai_digit_card() {
+    // Visa number 4532015112830366 written with Thai digits (U+0E50–U+0E59).
+    // Homoglyph normalization maps the Thai digit range back to ASCII digits.
+    let thai = "\u{0E54}\u{0E55}\u{0E53}\u{0E52}\u{0E50}\u{0E51}\u{0E55}\u{0E51}\u{0E51}\u{0E52}\u{0E58}\u{0E53}\u{0E50}\u{0E53}\u{0E56}\u{0E56}";
+    let matches = scan_text(thai).unwrap();
+    assert!(
+        matches.iter().any(|m| m.category.contains("Credit Card")),
+        "Should detect Thai-digit credit card"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Guard integration tests
 // ---------------------------------------------------------------------------
