@@ -566,7 +566,10 @@ async fn rate_limit_middleware(
     let path = request.uri().path().to_string();
 
     let allowed = {
-        let mut limiter = state.rate_limiter.lock().unwrap();
+        // Recover from a poisoned lock rather than panicking: a single panic
+        // while the guard is held would otherwise turn every subsequent request
+        // into a panic (self-inflicted DoS). Mirrors `rate_limit_status`.
+        let mut limiter = state.rate_limiter.lock().unwrap_or_else(|e| e.into_inner());
         // Global per-IP limit
         let global_ok = limiter.check(&ip, state.rate_limit);
         // Per-endpoint tighter limit (uses "ep:<path>:<ip>" as bucket key)
@@ -4177,7 +4180,7 @@ async fn list_evadex_runs(
     };
 
     let limit = q.limit.unwrap_or(50).min(500);
-    let offset = q.offset.unwrap_or(0);
+    let offset = q.offset.unwrap_or(0).max(0);
 
     let rows = match client
         .query(
@@ -4409,7 +4412,7 @@ async fn lsh_history(
     };
 
     let limit = q.limit.unwrap_or(50).min(1000);
-    let offset = q.offset.unwrap_or(0);
+    let offset = q.offset.unwrap_or(0).max(0);
     let matched_only = q.matched_only.unwrap_or(false);
 
     let rows = match client
@@ -4765,7 +4768,7 @@ async fn list_pg_findings(
     };
 
     let limit = q.limit.unwrap_or(50).min(1000);
-    let offset = q.offset.unwrap_or(0);
+    let offset = q.offset.unwrap_or(0).max(0);
     let category = q.category.as_deref();
 
     let rows = match client

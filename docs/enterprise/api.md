@@ -76,6 +76,34 @@ Readiness probe (for Kubernetes).
 
 Prometheus text format metrics. See [Observability](observability.md).
 
+### `GET /v1/health/detailed`
+
+Comprehensive health check (authenticated). Reports pod identity, uptime,
+loaded pattern/category counts, Postgres pool state (with connection latency
+and total findings row count when reachable), and lifetime scan counters. Use
+this for dashboards and deep readiness checks; the plain `GET /health` remains
+the lightweight kubelet probe.
+
+```json
+{
+  "status": "ok",
+  "pod_type": "siphon-api",
+  "pod_id": "siphon-api-7d9f8c",
+  "version": "2.3.1",
+  "core_version": "2.1.3",
+  "started_at": "2026-07-04T12:00:00Z",
+  "uptime_secs": 3600,
+  "patterns_loaded": 560,
+  "categories_loaded": 48,
+  "db": {"connected": true, "latency_ms": 3, "findings_count": 128442},
+  "scans": {"scans_total": 9120, "findings_total": 3310, "scan_errors_total": 2, "scans_per_minute": 152.0}
+}
+```
+
+When Postgres is unconfigured or unreachable, `db.connected` is `false` and a
+`db.reason` string explains why (e.g. `SIPHON_DATABASE_URL not configured`);
+`latency_ms` and `findings_count` are omitted.
+
 ### `POST /v1/scan`
 
 Scan text for sensitive data.
@@ -121,6 +149,42 @@ Scan text for sensitive data.
 Findings for Credit Card Numbers include enriched BIN metadata when the
 `bin-data` feature is compiled in. See [BIN Enrichment](#bin-enrichment)
 below for details.
+
+### `POST /v1/scan/explain`
+
+Scan text and return a per-finding explanation of *why* it fired. Accepts the
+same request body as `POST /v1/scan`. Each finding is annotated with the
+normalization stages applied, whether its checksum/format validator passed,
+whether a context keyword was present, the final confidence, and the raw
+pipeline trace events for its span. Useful for debugging false positives and
+tuning overrides.
+
+**Response (`ExplainResponse`):**
+```json
+{
+  "source_pod": "siphon-api",
+  "request_id": "req-4f2a…",
+  "scan_duration_ms": 4,
+  "finding_count": 1,
+  "findings": [
+    {
+      "category": "Credit Card Numbers",
+      "sub_category": "Visa",
+      "text": "411**********111",
+      "confidence": 0.95,
+      "has_context": true,
+      "span": [11, 30],
+      "explanation": {
+        "normalization_stages": ["zero_width_strip", "html_entity_decode", "percent_decode", "homoglyph_substitution", "leet_speak", "nfkc", "base64_decode", "whitespace_normalize"],
+        "validation_passed": true,
+        "context_present": true,
+        "final_confidence": 0.95,
+        "pipeline_events": []
+      }
+    }
+  ]
+}
+```
 
 ### `POST /v1/batch/scan`
 
@@ -264,6 +328,39 @@ Query for similar documents. Requires **Scan** permission.
 ### `GET /v1/lsh/documents`
 
 List registered document count. Requires **ViewStatus**.
+
+### `GET /v1/lsh/history`
+
+Paginated history of LSH similarity queries from the Postgres persistence
+layer. Mirrors the EDM history endpoint. Returns an empty list when Postgres
+is not configured.
+
+**Query parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `limit` | integer (optional) | Page size. Default 50, clamped to 1000. |
+| `offset` | integer (optional) | Row offset. Default 0, clamped to ≥ 0. |
+| `matched_only` | boolean (optional) | When `true`, return only queries that matched a registered document. Default `false`. |
+
+**Response (`LshHistoryResponse`):**
+```json
+{
+  "queries": [
+    {
+      "id": "q-8c1e…",
+      "created_at": "2026-07-04T12:00:00Z",
+      "matched": true,
+      "matched_doc_id": "earnings-q4",
+      "similarity": 0.92,
+      "query_length": 4096,
+      "duration_ms": 3,
+      "source_pod": "siphon-api-7d9f8c"
+    }
+  ],
+  "total": 1
+}
+```
 
 ### `POST /v1/findings/prune`
 
