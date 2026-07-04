@@ -10,9 +10,20 @@
 [advisories]
 unmaintained = "workspace"
 yanked = "deny"
-# ignore = [
-#     { id = "RUSTSEC-0000-0000", reason = "..." },
-# ]
+ignore = [
+    # RUSTSEC-2026-0194 (O(N^2) duplicate-attribute check) and
+    # RUSTSEC-2026-0195 (unbounded namespace-declaration allocation in
+    # NsReader) are both quick-xml < 0.41 DoS advisories, both fixed in
+    # 0.41.0. Our DIRECT dep is bumped to 0.41 (see Cargo.toml and
+    # crates/siphon-core/Cargo.toml), which covers the office/forensics XML
+    # parsing that touches untrusted uploads. The only remaining affected
+    # instance for both is quick-xml 0.39.x pulled transitively by calamine
+    # 0.35 (latest release, 2026-05-10) — no calamine version yet ships
+    # against quick-xml 0.41, so neither can be resolved by an upgrade.
+    # Scoped ignores until calamine bumps its quick-xml dependency.
+    { id = "RUSTSEC-2026-0194", reason = "transitive via calamine 0.35 (latest); no fixed calamine release yet. Direct dep already on 0.41." },
+    { id = "RUSTSEC-2026-0195", reason = "transitive via calamine 0.35 (latest); no fixed calamine release yet. Direct dep already on 0.41." },
+]
 
 [licenses]
 allow = [
