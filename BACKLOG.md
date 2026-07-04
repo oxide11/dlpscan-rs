@@ -1,6 +1,6 @@
 # Siphon Backlog
 
-Last updated: 2026-06-21
+Last updated: 2026-07-04
 
 ## Ready to build
 
@@ -12,9 +12,9 @@ Last updated: 2026-06-21
 - [ ] Scan results — highlight matched text in original input
 
 ### Stability
-- [ ] nginx configmap baked into image — currently wiped on pod restart
-- [ ] SIPHON_API_KEY set in lab — currently no auth in dev mode
-- [ ] lab-up.sh idempotent — re-running should work cleanly without errors
+- [x] nginx configmap persists across pod restarts — mounted from siphon-nginx-config ConfigMap (Authorization + API key survive restart), verified (fix/stability)
+- [x] SIPHON_API_KEY set in lab — injected from siphon-api-auth secret into siphon-api + siphon-fs; verified live (fix/stability)
+- [x] lab-up.sh idempotent — declarative apply for namespace/secret/configmap + SIGPIPE fix in key generation; runs cleanly twice with a stable API key (fix/stability)
 
 ### Adversarial Testing tab
 - [ ] evadex bridge metrics fully wired — show real detection rate, FP rate, coverage
@@ -22,7 +22,7 @@ Last updated: 2026-06-21
 - [ ] Run Now fully working — trigger scan from C2 and see results
 
 ### Findings tab
-- [ ] Postgres history showing correctly — verify /v1/findings/pg populates table
+- [x] Postgres history showing correctly — /v1/findings/pg populates from siphon-fs file scans; verified end-to-end (fix/stability)
 - [x] Export button — CSV export via /v1/findings/export (feat/backlog-sprint-2)
 - [ ] Date range filter working
 
@@ -45,7 +45,7 @@ Last updated: 2026-06-21
 
 ### Infrastructure
 - [ ] Helm chart: postgres subchart or external postgres configuration
-- [ ] siphon-fs postgres pool — already wired, needs end-to-end test
+- [x] siphon-fs postgres pool — fixed missing SIPHON_DATABASE_URL in 30-siphon-fs.yaml; file-scan findings now reach postgres; verified end-to-end (fix/stability)
 - [x] lab-up.sh — add postgres to local kind setup
 
 ## In progress (open PRs)
