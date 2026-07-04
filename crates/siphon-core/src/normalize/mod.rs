@@ -639,7 +639,25 @@ fn should_strip_dot(bytes: &[u8], pos: usize) -> bool {
         .iter()
         .take_while(|b| b.is_ascii_digit())
         .count();
-    (1..=6).contains(&before) && (1..=6).contains(&after)
+    if !((1..=6).contains(&before) && (1..=6).contains(&after)) {
+        return false;
+    }
+    // An ASCII letter bounding either digit run means the dot belongs to an
+    // alphanumeric identifier (e.g. `D123.4567`, a driver-licence / part
+    // number where the dot is structural), not a purely numeric group
+    // separator like `4532.0151` — leave those dots intact. Hyphens in the
+    // same identifiers are still stripped by the delimiter branch; only the
+    // dot rule is this conservative because dots also delimit emails, hosts,
+    // and version/ICD-10 codes.
+    let before_run_start = pos - before;
+    if before_run_start > 0 && bytes[before_run_start - 1].is_ascii_alphabetic() {
+        return false;
+    }
+    let after_run_end = pos + 1 + after;
+    if after_run_end < bytes.len() && bytes[after_run_end].is_ascii_alphabetic() {
+        return false;
+    }
+    true
 }
 
 /// Returns a bitmask of dot positions that belong to a valid IPv4 address.
@@ -1982,11 +2000,15 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // didn't fire because it was embedded mid-sentence with no whitespace).
     if let Some(b64_decoded) = try_decode_base64(text) {
         let (rot_of_b64, _) = apply_rot13(&b64_decoded, &[]);
-        push_if_room(rot_of_b64, &mut alternatives, &mut total_bytes);
-        // Also push the raw b64 decoded form in case the caller's
-        // normalize_text didn't reach it (avoids the chain requiring the
-        // ROT13 outer to be double-ROT13'd back).
-        push_if_room(b64_decoded, &mut alternatives, &mut total_bytes);
+        // Only emit the chain result when ROT13 actually transformed the
+        // decoded bytes. If the payload has no letters (e.g. a pure-digit
+        // SSN/PAN), ROT13 is a no-op and `rot_of_b64` collapses to a plain
+        // single-layer base64 decode — which belongs to the normalization
+        // pipeline (stage 4c), not the alt-decodings pass. Emitting it here
+        // would re-introduce raw base64 output that stage 4c already covers.
+        if rot_of_b64 != b64_decoded {
+            push_if_room(rot_of_b64, &mut alternatives, &mut total_bytes);
+        }
     }
 
     // Two-stage encoding chain: ROT13 → base64.
