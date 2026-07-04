@@ -68,6 +68,15 @@ spec:
                 secretKeyRef:
                   name: siphon-api-auth
                   key: api-key
+            # File-scan findings persist to the same Postgres as
+            # siphon-api (schema owned by siphon-api). Without this the
+            # siphon-fs db layer stays in the Unconfigured no-op state
+            # and /scan findings never reach the findings table.
+            - name: SIPHON_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: siphon-postgres
+                  key: database-url
           volumeMounts:
             - name: overrides
               mountPath: /etc/siphon

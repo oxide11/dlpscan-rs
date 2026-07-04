@@ -88,20 +88,32 @@ fi
 
 # ── 6 · API key + nginx configmap ────────────────────────────────
 bold "[6/9] setting up API key + nginx configmap"
-kubectl -n siphon-lab apply -f "${MANIFESTS}/00-namespace.yaml" >/dev/null 2>&1 || true
+# Namespace is cluster-scoped — apply it declaratively (idempotent).
+# No `-n` flag (ignored for a Namespace object) and no error-swallow,
+# so a genuine failure here still aborts the run.
+kubectl apply -f "${MANIFESTS}/00-namespace.yaml"
 
-# Generate a stable lab API key on first run; read it on re-runs.
-if ! kubectl get secret siphon-api-auth -n siphon-lab >/dev/null 2>&1; then
-  API_KEY="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48)"
-  kubectl create secret generic siphon-api-auth \
-    --from-literal=api-key="${API_KEY}" \
-    -n siphon-lab
-  printf 'API key generated and stored in secret siphon-api-auth\n'
-else
+# Generate a stable lab API key on first run; reuse it on re-runs.
+# The key is computed first (generated when the secret is absent,
+# read back otherwise) and then applied declaratively via
+# `--dry-run=client | apply`, so re-runs converge without a "secret
+# already exists" error while keeping the key stable across runs.
+if kubectl get secret siphon-api-auth -n siphon-lab >/dev/null 2>&1; then
   API_KEY="$(kubectl get secret siphon-api-auth -n siphon-lab \
     -o jsonpath='{.data.api-key}' | base64 -d)"
   printf 'API key read from existing secret siphon-api-auth\n'
+else
+  # `head -c 48` closes the pipe once it has 48 bytes, so `tr` dies
+  # with SIGPIPE (exit 141). Under `set -o pipefail` that status would
+  # propagate and `set -e` would abort the run, so swallow it with
+  # `|| true` — head has already captured the 48 chars it needs.
+  API_KEY="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48 || true)"
+  printf 'API key generated for secret siphon-api-auth\n'
 fi
+kubectl create secret generic siphon-api-auth \
+  --from-literal=api-key="${API_KEY}" \
+  -n siphon-lab \
+  --dry-run=client -o yaml | kubectl apply -f -
 
 # Build ConfigMap with the real API key substituted in.
 TMP_NGINX="$(mktemp)"
