@@ -69,18 +69,25 @@ jobs:
         env:
           SIPHON_BIN: ${{ github.workspace }}/target/release/siphon
         run: |
+          # `evadex ci` selects the scanner from an evadex.yaml (tool + exe)
+          # and forwards --config to the underlying `evadex scan`; thresholds
+          # are on a 0-100 scale (--min-detection / --max-fp).
+          cat > evadex.gate.yaml <<YAML
+          tool: siphon-cli
+          exe: ${SIPHON_BIN}
+          YAML
           python -m evadex ci \
-            --tool siphon-cli \
-            --siphon-bin "$SIPHON_BIN" \
+            --config evadex.gate.yaml \
             --tier northam \
-            --min-detection-rate 0.70 \
-            --max-fp-rate 0.05 \
-            --output evadex-gate-report.json
+            --min-detection 70 \
+            --max-fp 5 \
+            | tee evadex-gate-report.txt
 
       - name: Upload quality gate report
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: evadex-quality-gate-report
-          path: evadex/evadex-gate-report.json
+          path: evadex/evadex-gate-report.txt
+          if-no-files-found: ignore
           retention-days: 30
