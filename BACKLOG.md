@@ -51,7 +51,7 @@ Last updated: 2026-07-04
 - [x] lab-up.sh — add postgres to local kind setup
 
 ## In progress (open PRs)
-- [ ] #349 — fix(core): em-dash/en-dash homoglyphs + IBAN mixed-nosep morse decoder
+- [x] #349 — fix(core): em-dash/en-dash homoglyphs + IBAN mixed-nosep morse decoder — merged; siphon-core 2.1.4
 - [ ] #350 — deps: bump kube 3.1→4.0 and k8s-openapi 0.27→0.28
 
 ## Resumption notes (for when you come back)
@@ -69,6 +69,8 @@ Start here:
 See `HANDOFF.md` for full state, versions, and commands.
 
 ## Recently completed
+- [x] Stage-6b dot-stripping + base64 alt-decode test failures — `should_strip_dot` now leaves letter-bounded dots intact (`D123.4567` stays an identifier) while still stripping pure numeric groupings; base64→ROT13 alt-decode chain only emits when ROT13 actually transforms the bytes, so pure-digit payloads no longer re-introduce plain base64 output stage 4c already covers (main 0cb99c9)
+- [x] #349 — em-dash/en-dash homoglyphs + IBAN mixed-nosep/slash morse decoder — merged; siphon-core 2.1.4 (all 4 evadex IBAN morse variants now detected)
 - [x] C2 command palette (Ctrl+K) — full surface search + quick actions, keyboard-navigable (feat/backlog-sprint-2)
 - [x] LiveScan Ctrl+Enter shortcut — trigger scan from textarea keyboard shortcut (feat/backlog-sprint-2)
 - [x] LiveScan session history — last 5 scans with snippet / finding count / duration (feat/backlog-sprint-2)
