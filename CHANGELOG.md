@@ -14,6 +14,24 @@ starting from this file.
 
 ---
 
+## 2026-07-04
+
+### siphon-api 2.3.1
+
+- fix(api): recover from a poisoned rate-limiter mutex instead of panicking.
+  `rate_limit_middleware` held the lock with `.lock().unwrap()`; if any request
+  panicked while the guard was held, the poisoned lock turned every subsequent
+  request into a panic — a self-inflicted denial of service. It now recovers
+  the guard with `unwrap_or_else(|e| e.into_inner())`, matching the existing
+  pattern already used by `GET /v1/ratelimit`.
+- fix(api): clamp pagination `offset` to a non-negative value on
+  `GET /v1/findings/pg` and `GET /v1/lsh/history`. A negative `offset` query
+  parameter previously reached Postgres verbatim and produced a 500; it is now
+  floored at 0 so bad input returns the first page instead of an error.
+- docs(api): document the previously undocumented `GET /v1/health/detailed`,
+  `POST /v1/scan/explain`, and `GET /v1/lsh/history` endpoints in
+  `docs/enterprise/api.md`.
+
 ## 2026-06-14
 
 ### siphon-core 2.1.3

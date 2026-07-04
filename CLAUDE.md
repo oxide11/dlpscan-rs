@@ -111,8 +111,10 @@ and `/ready` are unauthenticated (kubelet probes).
 ```
 GET  /health                    pod identity + liveness
 GET  /ready                     readiness probe
+GET  /v1/health/detailed        comprehensive health: uptime, pattern/category counts, DB pool, scan stats
 POST /scan                      text → findings (JSON body: {text, options?})
 POST /scan/batch                [{text, id}] → [{id, findings}]
+POST /v1/scan/explain           scan + per-finding pipeline explanation (normalization, validation, context)
 GET  /v1/policies               loaded *.yaml rulesets (read-only)
 GET  /v1/allowlist              current allowlist
 GET  /v1/audit                  recent events from audit ring buffer
@@ -198,15 +200,10 @@ C2 wireframe:
 
 | PR | Branch | Summary |
 |---|---|---|
-| #297 | dependabot/cargo/calamine-0.35.0 | deps: bump calamine 0.34→0.35 |
-| #311 | fix/morse-trim-trailing-whitespace | fix(core): trim trailing whitespace in morse no-sep decoder |
-| #312 | feat/findings-persistence | feat(api): findings persistence to postgres |
-| #313 | feat/findings-history-tab | feat(wireframes): Findings History tab — postgres-backed |
-| #314 | feat/batch-file-scan-persistence | feat(api,fs): findings persistence for batch and file scans |
-| #315 | feat/findings-retention | feat(api): findings retention policy |
-| #318 | feat/siphon-serve | feat(cli): siphon serve subcommand (merged) |
-| #320 | feat/lsh-persistence | feat(api): LSH document similarity persistence to postgres |
-| #321 | feat/evadex-persistence | feat(api): evadex adversarial-run persistence to postgres |
+| #361 | fix/stability | fix(lab): stability improvements |
+| #360 | refine/final-sprint | chore(api): record admin-console endpoints as siphon-api 2.4.0 |
+| #350 | claude/branch-merge-review-goyt39 | deps: bump kube 3.1→4.0 and k8s-openapi 0.27→0.28 |
+| #349 | fix/morse-regional-context | fix(core): em-dash/en-dash homoglyphs and IBAN mixed-nosep morse decoder |
 
 ### siphon-fs routes
 
