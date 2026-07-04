@@ -16,6 +16,26 @@ starting from this file.
 
 ## 2026-07-04
 
+### siphon-core 2.1.6
+
+Closes open-ended Unicode-digit and letter-confusable evasion classes surfaced
+by evadex. Stacks on 2.1.5.
+
+- fix(core): Stage 10 gains a Unicode decimal-digit (Nd) fallback,
+  `fold_unicode_digit()`, so every Unicode `Nd` script folds to ASCII —
+  Devanagari, Bengali, Gujarati, Tamil, mathematical bold/monospace digits, and
+  fullwidth — not just the four scripts (Arabic-Indic, Extended Arabic-Indic,
+  Thai, fullwidth) the hand-maintained homoglyph table previously covered. Runs
+  only when the homoglyph map has no explicit entry, so existing mappings are
+  unchanged.
+- fix(core): new Stage 11, `fold_confusable_digit_runs`, folds letter-shaped
+  digit substitutions (`O`/`o`→0, `l`/`I`→1, Greek `Ο`/`ο`→0, Cyrillic `О`/`о`→0)
+  to ASCII digits — but **only inside a long, digit-dense run** so prose is never
+  touched. A run must be ≥12 chars, hold ≥8 real ASCII digits, and be >60%
+  digits before any confusable letter in it is folded; Luhn/checksum still
+  gates the result. Closes the `leet_aggressive`, `greek_omicron`, and
+  Devanagari-digit detection gaps. 6 new regression tests.
+
 ### siphon-core 2.1.5
 
 Closes gaps surfaced by running `evadex mutate` against bypassing credit-card
