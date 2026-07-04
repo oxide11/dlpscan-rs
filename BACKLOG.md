@@ -40,6 +40,8 @@ Last updated: 2026-07-04
 ### Detection improvements (from evadex data)
 - [x] Morse code file-scan bypass — fixed: embedded morse segments now found in filename-prefixed text (PR #336)
 - [x] JCB detection — fixed: hex-decoder no longer corrupts all-digit JCB numbers (PR #336)
+- [x] Morse code em-dash/en-dash variants — fixed: U+2013/2014/2212/2015 mapped to '-' in HOMOGLYPH_MAP (PR #349)
+- [x] Morse code IBAN bypass — fixed: all 4 evadex variants (space/nosep/newline/slash sep) now detected; slash decoder extended to accept multi-char alpha tokens merged by stage 6b (PR #349)
 - [ ] Morse code remaining bypass — ~40% remaining (evadex measures ~29%); target <30%. Remaining failures are context-required IDs (SSN/SIN/AU_TFN/DE_TAX_ID/FR_INSEE) skipped by the morse alt-decode path by design. PR #349 chips at this.
 - [x] Regional digits — Thai (U+0E50), Extended Arabic-Indic (U+06F0), Arabic-Indic (U+0660) now detected via HOMOGLYPH_MAP; Thai-digit card regression locked in (PR #359); verified PASS in the evadex suite
 
@@ -95,6 +97,7 @@ See `HANDOFF.md` for full state, versions, and commands.
 - [x] evadex → postgres — migration 0007_evadex.sql; POST/GET /v1/evadex/runs + GET /v1/evadex/runs/stats in siphon-api; bridge push-to-siphon via SIPHON_API_URL; C2 Stored Runs panel
 - [x] CUSIP context keywords expanded — added instrument, ticker, position, identifier, portfolio, holding, asset, issuance, prospectus, indenture, maturity, coupon, face value, par value; distance 50→75
 - [x] Encoding chain alternatives — base64→ROT13, ROT13→base64, hex→base64 two-stage chains in generate_alternative_decodings
+- [x] Morse em-dash/en-dash + IBAN mixed-nosep decoder — siphon-core 2.1.4; see fix/morse-regional-context PR
 - [x] Postgres end-to-end in kind cluster — siphon-lab cluster verified, postgres deployed, findings persistence tested
 - [x] Streaming scan SSE + pattern hot-reload — feat/streaming-hotreload branch; see PR for full details
 - [x] Admin-console read-only endpoints — GET /v1/categories, POST /v1/scan/explain, GET /v1/health/detailed (PR #345); recorded in CHANGELOG siphon-api 2.4.0
