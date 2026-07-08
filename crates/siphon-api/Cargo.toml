@@ -27,7 +27,7 @@ siphon = { path = "../..", default-features = false, features = ["metrics"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "time"] }
 axum = "0.8"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace", "set-header", "limit"] }
+tower-http = { version = "0.7", features = ["cors", "trace", "set-header", "limit"] }
 
 # TLS
 axum-server = { version = "0.8", features = ["tls-rustls"] }
@@ -51,7 +51,7 @@ uuid = { version = "1", features = ["v4"] }
 tokio-stream = "0.1"
 
 # File watcher for SIPHON_OVERRIDES_PATH hot-reload
-notify = "6"
+notify = "8"
 
 # Persistence — Postgres connection pool. Marked optional in the
 # code path (AppState carries Option<Pool> and every DB touch is
@@ -71,8 +71,8 @@ chrono = { version = "0.4", features = ["serde"] }
 # stay lean. When the feature is off, /v1/overrides/roll responds
 # with 501 and a helpful note pointing at the feature + manual
 # `kubectl rollout restart` fallback.
-kube = { version = "3.1", optional = true, default-features = false, features = ["client", "rustls-tls"] }
-k8s-openapi = { version = "0.27", optional = true, features = ["v1_32"] }
+kube = { version = "4.0", optional = true, default-features = false, features = ["client", "rustls-tls"] }
+k8s-openapi = { version = "0.28", optional = true, features = ["v1_32"] }
 
 [features]
 default = []

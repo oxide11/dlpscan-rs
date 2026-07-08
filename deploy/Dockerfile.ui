@@ -1,4 +1,4 @@
-FROM nginx:1.27-alpine
+FROM nginx:1.31-alpine
 COPY docs/wireframes/siphon-c2.html /usr/share/nginx/html/index.html
 COPY docs/wireframes/siphon-shared.css /usr/share/nginx/html/siphon-shared.css
 COPY docs/wireframes/siphon-shared.js /usr/share/nginx/html/siphon-shared.js

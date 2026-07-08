@@ -3195,6 +3195,7 @@ const SURFACES = [
   { id: 'pods',           workspace: 'operate', icon: '▦',  title: 'Pods',          cluster: true },
   { id: 'logs',           workspace: 'operate', icon: '>_', title: 'Pod Logs',      cluster: true },
   { id: 'alerts',         workspace: 'operate', icon: '!',  title: 'Alerts',        cluster: true },
+  { id: 'analytics',     workspace: 'operate', icon: '◎',  title: 'Analytics',     sub: 'trends · volume · coverage' },
   // ── DETECT ───────────────────────────────────────────────────
   { id: 'detect',         workspace: 'detect',  icon: '◈',  title: 'Overview',      sub: 'patterns · models · fingerprints' },
   { id: 'policy',         workspace: 'detect',  icon: '⤷',  title: 'Policies' },
@@ -5613,6 +5614,10 @@ function DashV1_Ops_Local() {
   const mx = window.useSiphonApi('/v1/metrics',         [refreshKey]);
   const fx = window.useFindingsUnion('?limit=500',       [refreshKey]);
   const ix = window.useSiphonApi('/v1/integrations',     [refreshKey]);
+  const sx  = window.useSiphonApi('/v1/findings/stats',      [refreshKey]);
+  const ex  = window.useSiphonApi('/v1/evadex/runs?limit=1', [refreshKey]);
+  const dbx = window.useSiphonApi('/v1/db/health',           [refreshKey]);
+  const pgx = window.useSiphonApi('/v1/findings/pg?limit=5', [refreshKey]);
 
   const m = mx.data || {};
   const findings = (fx.data && fx.data.findings) || [];
@@ -5644,8 +5649,26 @@ function DashV1_Ops_Local() {
   // currently keep in this component.
   const scansPerSec = m.uptime_secs ? (m.scans_total || 0) / m.uptime_secs : 0;
 
-  const overall = [mx.source, fx.source, ix.source].includes('offline') ? 'offline'
-    : [mx.source, fx.source, ix.source].every(s => s === 'live') ? 'live' : 'loading';
+  const overall = [mx.source, fx.source, ix.source, sx.source].includes('offline') ? 'offline'
+    : [mx.source, fx.source, ix.source, sx.source].every(s => s === 'live') ? 'live' : 'loading';
+
+  // ── Today stats from daily_counts ──────────────────────────
+  const dailyCounts = (sx.data && sx.data.daily_counts) || [];
+  const todayDate = new Date().toISOString().slice(0, 10);
+  const todayEntry = dailyCounts.find(d => d.date === todayDate);
+  const findingsToday = todayEntry ? todayEntry.count : 0;
+  const scansToday = sx.data ? (sx.data.scans_today != null ? sx.data.scans_today : '—') : '—';
+  const detectionRate = sx.data && sx.data.detection_rate != null ? sx.data.detection_rate : null;
+
+  // ── Evadex last run ──────────────────────────────────────────
+  const evadexRuns = (ex.data && ex.data.runs) || [];
+  const lastEvadexRun = evadexRuns[0] || null;
+
+  // ── DB health ────────────────────────────────────────────────
+  const dbHealth = dbx.data || {};
+
+  // ── Recent findings from Postgres ──────────────────────────
+  const recentPgFindings = (pgx.data && pgx.data.findings) || [];
 
   // ── Inputs: aggregate findings by source_ip to figure out who's
   // actually calling this siphon-api right now. Top 5.
@@ -5666,6 +5689,75 @@ function DashV1_Ops_Local() {
 
       {/* ── SLO band (Availability · Coverage · Efficacy) ────── */}
       <SloBand metrics={m} findings={findings} source={overall} />
+
+      {/* ── 0b · Today stats strip ───────────────────────────── */}
+      <div className="grid grid-4" style={{marginBottom:'var(--gap)'}}>
+        <div className="box box--tight" style={{display:'flex', flexDirection:'column', gap:4}}>
+          <span className="label" style={{margin:0}}>Scans · today</span>
+          <span style={{fontSize:26, fontFamily:"'Space Grotesk', sans-serif", fontWeight:700, color:'var(--ink-bright)', lineHeight:1.1}}>
+            {scansToday !== '—' ? Number(scansToday).toLocaleString() : '—'}
+          </span>
+          <span className="muted mono" style={{fontSize:10}}>since 00:00 UTC</span>
+        </div>
+        <div className="box box--tight" style={{display:'flex', flexDirection:'column', gap:4}}>
+          <span className="label" style={{margin:0}}>Findings · today</span>
+          <span style={{fontSize:26, fontFamily:"'Space Grotesk', sans-serif", fontWeight:700, color:'var(--accent)', lineHeight:1.1}}>
+            {findingsToday.toLocaleString()}
+          </span>
+          <span className="muted mono" style={{fontSize:10}}>from daily_counts</span>
+        </div>
+        <div className="box box--tight" style={{display:'flex', flexDirection:'column', gap:4}}>
+          <span className="label" style={{margin:0}}>Detection rate</span>
+          <span style={{fontSize:26, fontFamily:"'Space Grotesk', sans-serif", fontWeight:700, lineHeight:1.1,
+                        color: detectionRate == null ? 'var(--ink-dim)' : detectionRate >= 95 ? 'var(--safe)' : detectionRate >= 85 ? 'var(--amber)' : 'var(--threat)'}}>
+            {detectionRate != null ? detectionRate.toFixed(1) + '%' : '—'}
+          </span>
+          <span className="muted mono" style={{fontSize:10}}>last evadex run</span>
+        </div>
+        <div className="box box--tight" style={{display:'flex', flexDirection:'column', gap:4}}>
+          <span className="label" style={{margin:0}}>DB health</span>
+          <span style={{fontSize:26, fontFamily:"'Space Grotesk', sans-serif", fontWeight:700, lineHeight:1.1,
+                        color: dbHealth.status === 'healthy' ? 'var(--safe)' : dbHealth.status === 'unconfigured' ? 'var(--ink-dim)' : 'var(--threat)'}}>
+            {dbHealth.status || '—'}
+          </span>
+          <span className="muted mono" style={{fontSize:10}}>
+            {dbHealth.latency_ms != null ? `${dbHealth.latency_ms}ms latency` : 'GET /v1/db/health'}
+          </span>
+        </div>
+      </div>
+
+      {/* ── 0c · Evadex last run widget ──────────────────────── */}
+      {lastEvadexRun && (
+        <div className="box box--tight" style={{marginBottom:'var(--gap)', display:'flex', gap:16, alignItems:'center', flexWrap:'wrap'}}>
+          <span className="label" style={{margin:0}}>Evadex · last run</span>
+          <span className="chip chip--ghost">{lastEvadexRun.run_id || '—'}</span>
+          <span className="chip" style={{borderColor:'var(--ink-dim)', color:'var(--ink-soft)'}}>
+            {lastEvadexRun.tier || 'unknown tier'}
+          </span>
+          <span className={`chip chip--${lastEvadexRun.detection_rate == null ? 'ghost' : lastEvadexRun.detection_rate >= 95 ? 'safe' : lastEvadexRun.detection_rate >= 85 ? 'warn' : 'red'}`}>
+            {lastEvadexRun.detection_rate != null ? (+(lastEvadexRun.detection_rate)).toFixed(1) + '% detected' : 'no rate'}
+          </span>
+          <span className="mono muted" style={{fontSize:10}}>
+            {lastEvadexRun.total_variants != null ? `${lastEvadexRun.total_variants} variants` : ''}{lastEvadexRun.bypassed != null ? ` · ${lastEvadexRun.bypassed} bypassed` : ''}
+          </span>
+          <span className="mono muted" style={{fontSize:10, marginLeft:'auto'}}>
+            {lastEvadexRun.created_at ? window.siphonFormatRelative(lastEvadexRun.created_at) : ''}
+          </span>
+          <button className="btn ghost" style={{fontSize:10, padding:'2px 8px'}}
+                  onClick={() => window.__c2_go && window.__c2_go('adversarial')}>
+            → View full report
+          </button>
+        </div>
+      )}
+      {!lastEvadexRun && (
+        <div className="box box--tight box--dashed" style={{marginBottom:'var(--gap)', display:'flex', gap:10, alignItems:'center'}}>
+          <span className="label" style={{margin:0, color:'var(--ink-dim)'}}>Evadex · no runs persisted</span>
+          <button className="btn ghost" style={{fontSize:10, padding:'2px 8px', marginLeft:'auto'}}
+                  onClick={() => window.__c2_go && window.__c2_go('adversarial')}>
+            → Run adversarial test
+          </button>
+        </div>
+      )}
 
       {/* ── 1 · KPI strip ─────────────────────────────────────── */}
       <div className="grid grid-4" style={{marginBottom: 'var(--gap)'}}>
@@ -5718,6 +5810,54 @@ function DashV1_Ops_Local() {
 
       {/* ── 3 · Detection histogram (by category, live) ──────── */}
       <DetectionHistogram findings={findings} />
+
+      {/* ── 4 · Recent findings feed ─────────────────────────── */}
+      <div className="box" style={{marginTop:'var(--gap)'}}>
+        <div className="box-title">
+          <span className="t">Recent Findings</span>
+          <span className="k">last 5 · postgres · /v1/findings/pg</span>
+        </div>
+        {recentPgFindings.length === 0 ? (
+          <div className="muted mono" style={{fontSize:11, padding:'8px 0'}}>
+            {pgx.source === 'loading' ? 'loading…' : pgx.source === 'offline' ? 'postgres not configured or offline' : 'no findings yet'}
+          </div>
+        ) : (
+          <table style={{width:'100%', borderCollapse:'collapse', fontSize:11, fontFamily:"'JetBrains Mono', monospace"}}>
+            <thead>
+              <tr style={{borderBottom:'1px solid var(--line)'}}>
+                {['Time','Category','Sub-category','Confidence','Text'].map(h => (
+                  <th key={h} style={{textAlign:'left', padding:'3px 6px', color:'var(--ink-faint)', fontWeight:600, letterSpacing:'0.08em', textTransform:'uppercase', fontSize:9.5}}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {recentPgFindings.map((f, i) => (
+                <tr key={f.id || i} style={{borderBottom:'1px solid var(--line-soft)'}}>
+                  <td style={{padding:'4px 6px', color:'var(--ink-soft)', whiteSpace:'nowrap'}}>
+                    {f.created_at ? window.siphonFormatRelative(f.created_at) : '—'}
+                  </td>
+                  <td style={{padding:'4px 6px', color:'var(--ink)'}}>{f.category || '—'}</td>
+                  <td style={{padding:'4px 6px', color:'var(--ink-soft)'}}>{f.sub_category || '—'}</td>
+                  <td style={{padding:'4px 6px'}}>
+                    <span style={{color: f.confidence >= 0.85 ? 'var(--safe)' : f.confidence >= 0.6 ? 'var(--amber)' : 'var(--threat)'}}>
+                      {f.confidence != null ? (f.confidence * 100).toFixed(0) + '%' : '—'}
+                    </span>
+                  </td>
+                  <td style={{padding:'4px 6px', color:'var(--ink-soft)', maxWidth:240, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                    {f.redacted_text || f.text || '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <div style={{marginTop:8, textAlign:'right'}}>
+          <button className="btn ghost" style={{fontSize:10, padding:'2px 8px'}}
+                  onClick={() => window.__c2_go && window.__c2_go('stream')}>
+            View all findings →
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -19128,6 +19268,401 @@ Object.assign(window, { ApiExplorer, ScanDiff, ProcessState, FPTool, FpQueue, Do
 </script>
 
 <script type="text/babel" data-presets="react">
+/* ===== analytics.jsx ===== */
+// Analytics surface — scan volume · detection rate trend · top categories · response time
+// Pure CSS/SVG charts, no external chart libraries.
+
+// ── Reusable SVG bar chart ──────────────────────────────────────────────────
+function SvgBarChart({ data, width, height, color }) {
+  width = width || 600; height = height || 120; color = color || 'var(--accent)';
+  if (!data || data.length === 0) {
+    return <div style={{height, display:'flex', alignItems:'center', justifyContent:'center', color:'var(--ink-faint)', fontSize:11, fontFamily:"'JetBrains Mono', monospace"}}>no data</div>;
+  }
+  const max = Math.max.apply(null, data.map(function(d) { return d.value || 0; }).concat([1]));
+  const barW = Math.max(2, Math.floor((width - data.length) / data.length));
+  const gap = 1;
+  const totalW = (barW + gap) * data.length;
+  const padB = 22;
+  return (
+    <svg viewBox={'0 0 ' + totalW + ' ' + height} style={{width:'100%', height:height, display:'block', overflow:'visible'}} preserveAspectRatio="none">
+      {data.map(function(d, i) {
+        const barH = Math.max(1, Math.round(((d.value || 0) / max) * (height - padB)));
+        const x = i * (barW + gap);
+        const y = height - padB - barH;
+        const showLabel = i === data.length - 1 || i % Math.max(1, Math.floor(data.length / 6)) === 0;
+        return (
+          <g key={i}>
+            <rect x={x} y={y} width={barW} height={barH} fill={color} opacity={0.8} rx={1} />
+            {showLabel ? (
+              <text x={x + barW / 2} y={height - 4} textAnchor="middle" fontSize="7" fill="var(--ink-faint)" fontFamily="JetBrains Mono, monospace">
+                {d.label || ''}
+              </text>
+            ) : null}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// ── Reusable SVG line chart ─────────────────────────────────────────────────
+function SvgLineChart({ data, width, height, color, yMin, yMax }) {
+  width = width || 600; height = height || 100; color = color || 'var(--cyan)';
+  if (!data || data.length < 2) {
+    return <div style={{height:height, display:'flex', alignItems:'center', justifyContent:'center', color:'var(--ink-faint)', fontSize:11, fontFamily:"'JetBrains Mono', monospace"}}>no data</div>;
+  }
+  const vals = data.map(function(d) { return d.value; });
+  const lo = yMin != null ? yMin : Math.min.apply(null, vals);
+  const hi = yMax != null ? yMax : Math.max.apply(null, vals.concat([lo + 0.01]));
+  const padL = 4; const padR = 4; const padT = 8; const padB = 20;
+  const W = width - padL - padR;
+  const H = height - padT - padB;
+  const toX = function(i) { return padL + (i / (data.length - 1)) * W; };
+  const toY = function(v) { return padT + H - ((v - lo) / (hi - lo)) * H; };
+  const pts = data.map(function(d, i) { return toX(i).toFixed(1) + ',' + toY(d.value).toFixed(1); }).join(' ');
+  const fillPts = toX(0).toFixed(1) + ',' + (padT + H).toFixed(1) + ' ' + pts + ' ' + toX(data.length - 1).toFixed(1) + ',' + (padT + H).toFixed(1);
+  return (
+    <svg viewBox={'0 0 ' + width + ' ' + height} style={{width:'100%', height:height, display:'block'}} preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="lgfill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.25" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      <polygon points={fillPts} fill="url(#lgfill)" />
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" />
+      {data.map(function(d, i) {
+        const showLabel = i === 0 || i === data.length - 1 || i % Math.max(1, Math.floor(data.length / 6)) === 0;
+        return showLabel ? (
+          <text key={i} x={toX(i)} y={height - 4} textAnchor="middle" fontSize="7" fill="var(--ink-faint)" fontFamily="JetBrains Mono, monospace">
+            {d.label || ''}
+          </text>
+        ) : null;
+      })}
+      <circle cx={toX(data.length - 1)} cy={toY(data[data.length - 1].value)} r="2.5" fill={color} />
+    </svg>
+  );
+}
+
+// ── Reusable horizontal bar chart ──────────────────────────────────────────
+function SvgHBarChart({ data, color }) {
+  color = color || 'var(--accent)';
+  if (!data || data.length === 0) {
+    return <div style={{padding:'8px 0', color:'var(--ink-faint)', fontSize:11, fontFamily:"'JetBrains Mono', monospace"}}>no data</div>;
+  }
+  const max = Math.max.apply(null, data.map(function(d) { return d.value || 0; }).concat([1]));
+  const labelW = 160;
+  const numW = 60;
+  return (
+    <div style={{fontFamily:"'JetBrains Mono', monospace", fontSize:11}}>
+      {data.map(function(d, i) {
+        const pct = ((d.value || 0) / max) * 100;
+        const opacity = Math.max(0.3, 1 - i * 0.07);
+        return (
+          <div key={i} style={{display:'flex', alignItems:'center', gap:8, marginBottom:4}}>
+            <div style={{width:labelW, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', color:'var(--ink-soft)', fontSize:10.5}} title={d.name}>{d.name}</div>
+            <div style={{flex:1, background:'var(--bg-3)', borderRadius:1, overflow:'hidden', height:12}}>
+              <div style={{width:pct + '%', height:'100%', background:color, borderRadius:1, opacity:opacity, transition:'width 0.3s'}} />
+            </div>
+            <div style={{width:numW, textAlign:'right', color:'var(--ink-soft)', fontSize:10.5}}>{(d.value || 0).toLocaleString()}</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Analytics surface ───────────────────────────────────────────────────────
+function Analytics({ go }) {
+  const statsTick = window.useSharedPoll(60000);
+  const sx = window.useSiphonApi('/v1/findings/stats',       [statsTick]);
+  const ex = window.useSiphonApi('/v1/evadex/runs?limit=30', [statsTick]);
+  const mx = window.useSiphonApi('/v1/metrics',              [statsTick]);
+
+  const stats       = sx.data || {};
+  const dailyCounts = (stats.daily_counts || []).slice(-30);
+  const categories  = (stats.categories  || []).slice(0, 10);
+  const evadexRuns  = (ex.data && ex.data.runs) || [];
+  const m           = mx.data || {};
+
+  const volData = dailyCounts.map(function(d) {
+    return { label: (d.date || '').slice(5), value: d.count || 0 };
+  });
+
+  const rateData = evadexRuns.slice().reverse().map(function(r) {
+    return { label: (r.created_at || '').slice(5, 10), value: r.detection_rate != null ? +(r.detection_rate) : null };
+  }).filter(function(d) { return d.value != null; });
+
+  const catData = categories.map(function(c) {
+    return { name: c.name || String(c), value: c.count || 0 };
+  });
+
+  const rtRows = [
+    { name: 'p50', value: m.scan_duration_p50_ms },
+    { name: 'p95', value: m.scan_duration_p95_ms },
+    { name: 'p99', value: m.scan_duration_p99_ms },
+  ].filter(function(r) { return r.value != null; });
+  const hasRtData = rtRows.length > 0;
+  const rtMax = hasRtData ? Math.max.apply(null, rtRows.map(function(r) { return r.value; })) : 1;
+
+  const source = [sx.source, ex.source, mx.source].includes('offline') ? 'offline'
+               : [sx.source, ex.source, mx.source].every(function(s) { return s === 'live'; }) ? 'live'
+               : 'loading';
+
+  const refetch = function() { sx.refetch(); ex.refetch(); mx.refetch(); };
+
+  return (
+    <div>
+      <div className="page-head">
+        <div>
+          <div className="crumbs">Operate · Analytics</div>
+          <h1>Analytics</h1>
+          <p className="page-sub" style={{marginTop:4}}>Scan volume · detection rate · category breakdown · response time</p>
+        </div>
+        <div className="actions">
+          <window.LivePill source={source} onClick={refetch} title="polls every 60s" />
+          <button className="btn ghost" onClick={refetch}>↻ Refresh</button>
+          <button className="btn ghost" onClick={function() { go && go('stream'); }}>Open Findings Console</button>
+        </div>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:'1fr 1fr', gap:'var(--gap)', marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Scan Volume · 30 days</span>
+            <span className="k">GET /v1/findings/stats · daily_counts</span>
+          </div>
+          {sx.source === 'loading' ? (
+            <div className="muted mono" style={{fontSize:11, padding:'12px 0'}}>loading…</div>
+          ) : volData.length === 0 ? (
+            <div className="note" style={{fontSize:11}}>No daily count data — ensure Postgres is configured and <span style={{fontFamily:"'JetBrains Mono', monospace"}}>SIPHON_DATABASE_URL</span> is set.</div>
+          ) : (
+            <div>
+              <SvgBarChart data={volData} height={120} color="var(--accent)" />
+              <div style={{display:'flex', gap:16, marginTop:8, fontSize:10.5, fontFamily:"'JetBrains Mono', monospace", color:'var(--ink-soft)'}}>
+                <span>total: <b style={{color:'var(--ink)'}}>{dailyCounts.reduce(function(a, d) { return a + (d.count || 0); }, 0).toLocaleString()}</b></span>
+                <span>avg/day: <b style={{color:'var(--ink)'}}>{dailyCounts.length ? Math.round(dailyCounts.reduce(function(a, d) { return a + (d.count || 0); }, 0) / dailyCounts.length).toLocaleString() : '—'}</b></span>
+                <span>peak: <b style={{color:'var(--accent)'}}>{Math.max.apply(null, dailyCounts.map(function(d) { return d.count || 0; }).concat([0])).toLocaleString()}</b></span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Detection Rate · evadex runs</span>
+            <span className="k">GET /v1/evadex/runs · last 30</span>
+          </div>
+          {ex.source === 'loading' ? (
+            <div className="muted mono" style={{fontSize:11, padding:'12px 0'}}>loading…</div>
+          ) : rateData.length < 2 ? (
+            <div className="note" style={{fontSize:11}}>
+              {rateData.length === 0
+                ? 'No evadex runs persisted — run an adversarial test to populate.'
+                : 'Need ≥ 2 runs for a trend line.'}
+            </div>
+          ) : (
+            <div>
+              <SvgLineChart data={rateData} height={120} color="var(--cyan)" yMin={0} yMax={100} />
+              <div style={{display:'flex', gap:16, marginTop:8, fontSize:10.5, fontFamily:"'JetBrains Mono', monospace", color:'var(--ink-soft)'}}>
+                <span>latest: <b style={{color: rateData[rateData.length-1].value >= 95 ? 'var(--safe)' : rateData[rateData.length-1].value >= 85 ? 'var(--amber)' : 'var(--threat)'}}>
+                  {rateData[rateData.length-1].value.toFixed(1)}%
+                </b></span>
+                <span>avg: <b style={{color:'var(--ink)'}}>{(rateData.reduce(function(a, d) { return a + d.value; }, 0) / rateData.length).toFixed(1)}%</b></span>
+                <span>runs: <b style={{color:'var(--ink)'}}>{rateData.length}</b></span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="grid" style={{gridTemplateColumns:'1fr 1fr', gap:'var(--gap)', marginBottom:'var(--gap)'}}>
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Top Categories · all-time</span>
+            <span className="k">GET /v1/findings/stats · categories</span>
+          </div>
+          {sx.source === 'loading' ? (
+            <div className="muted mono" style={{fontSize:11, padding:'12px 0'}}>loading…</div>
+          ) : catData.length === 0 ? (
+            <div className="note" style={{fontSize:11}}>No category data available.</div>
+          ) : (
+            <div>
+              <SvgHBarChart data={catData} color="var(--accent)" />
+              <div style={{marginTop:8, fontSize:10.5, fontFamily:"'JetBrains Mono', monospace", color:'var(--ink-faint)'}}>
+                showing top {catData.length} categories · {(stats.total_findings || 0).toLocaleString()} total findings
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="box">
+          <div className="box-title">
+            <span className="t">Scanner Response Time</span>
+            <span className="k">GET /v1/metrics · percentiles</span>
+          </div>
+          {mx.source === 'loading' ? (
+            <div className="muted mono" style={{fontSize:11, padding:'12px 0'}}>loading…</div>
+          ) : !hasRtData ? (
+            <div className="note" style={{fontSize:11}}>
+              Response time percentiles not available — requires Prometheus metrics integration.
+              <br /><br />
+              <span style={{color:'var(--ink-soft)'}}>Scans total: <b style={{color:'var(--ink)'}}>{(m.scans_total || 0).toLocaleString()}</b> · errors: <b style={{color:'var(--ink)'}}>{(m.scan_errors_total || 0).toLocaleString()}</b></span>
+            </div>
+          ) : (
+            <div>
+              <div style={{display:'flex', flexDirection:'column', gap:12, padding:'8px 0'}}>
+                {rtRows.map(function(r) {
+                  const barColor = r.name === 'p99' ? 'var(--amber)' : r.name === 'p95' ? 'var(--cyan)' : 'var(--accent)';
+                  return (
+                    <div key={r.name} style={{display:'flex', alignItems:'center', gap:12}}>
+                      <span className="label" style={{margin:0, width:32}}>{r.name}</span>
+                      <div style={{flex:1, background:'var(--bg-3)', borderRadius:1, height:14, overflow:'hidden'}}>
+                        <div style={{width:Math.min(100, (r.value / rtMax) * 100) + '%', height:'100%', background:barColor, borderRadius:1}} />
+                      </div>
+                      <span className="mono" style={{fontSize:11, width:70, textAlign:'right', color:'var(--ink)'}}>{r.value}ms</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <div style={{marginTop:8, fontSize:10.5, fontFamily:"'JetBrains Mono', monospace", color:'var(--ink-faint)'}}>
+                scans total: {(m.scans_total || 0).toLocaleString()} · errors: {(m.scan_errors_total || 0).toLocaleString()}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="box">
+        <div className="box-title">
+          <span className="t">Evadex Run History</span>
+          <span className="k">GET /v1/evadex/runs · last 30</span>
+        </div>
+        {evadexRuns.length === 0 ? (
+          <div className="muted mono" style={{fontSize:11, padding:'8px 0'}}>
+            {ex.source === 'loading' ? 'loading…' : 'No evadex runs persisted yet.'}
+          </div>
+        ) : (
+          <table style={{width:'100%', borderCollapse:'collapse', fontSize:11, fontFamily:"'JetBrains Mono', monospace"}}>
+            <thead>
+              <tr style={{borderBottom:'1px solid var(--line)'}}>
+                {['Run ID','Tier','Variants','Bypassed','Detection Rate','Date'].map(function(h) {
+                  return <th key={h} style={{textAlign:'left', padding:'3px 8px', color:'var(--ink-faint)', fontWeight:600, letterSpacing:'0.08em', textTransform:'uppercase', fontSize:9.5}}>{h}</th>;
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {evadexRuns.map(function(r, i) {
+                const rateColor = r.detection_rate == null ? 'var(--ink-dim)' : r.detection_rate >= 95 ? 'var(--safe)' : r.detection_rate >= 85 ? 'var(--amber)' : 'var(--threat)';
+                return (
+                  <tr key={r.run_id || i} style={{borderBottom:'1px solid var(--line-soft)'}}>
+                    <td style={{padding:'5px 8px', color:'var(--ink-soft)', fontSize:10.5}}>{r.run_id || '—'}</td>
+                    <td style={{padding:'5px 8px'}}><span className="chip chip--ghost" style={{fontSize:9.5}}>{r.tier || '—'}</span></td>
+                    <td style={{padding:'5px 8px', color:'var(--ink)'}}>{r.total_variants != null ? r.total_variants.toLocaleString() : '—'}</td>
+                    <td style={{padding:'5px 8px', color: r.bypassed > 0 ? 'var(--threat)' : 'var(--safe)'}}>
+                      {r.bypassed != null ? r.bypassed.toLocaleString() : '—'}
+                    </td>
+                    <td style={{padding:'5px 8px'}}>
+                      <span style={{color:rateColor, fontWeight:600}}>
+                        {r.detection_rate != null ? (+r.detection_rate).toFixed(1) + '%' : '—'}
+                      </span>
+                    </td>
+                    <td style={{padding:'5px 8px', color:'var(--ink-soft)', whiteSpace:'nowrap'}}>
+                      {r.created_at ? window.siphonFormatRelative(r.created_at) : '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        <div style={{marginTop:10, textAlign:'right'}}>
+          <button className="btn ghost" style={{fontSize:10, padding:'2px 8px'}}
+                  onClick={function() { go && go('adversarial'); }}>
+            → Adversarial Testing surface
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Toast notification system ───────────────────────────────────────────────
+(function() {
+  var _toasts = [];
+  var _listeners = [];
+  var _seq = 0;
+
+  window.c2Toasts = {
+    subscribe: function(fn) {
+      _listeners.push(fn);
+      return function() { _listeners = _listeners.filter(function(l) { return l !== fn; }); };
+    },
+    getAll: function() { return _toasts; },
+    dismiss: function(id) {
+      _toasts = _toasts.filter(function(t) { return t.id !== id; });
+      _listeners.forEach(function(fn) { fn(_toasts); });
+    },
+  };
+
+  window.c2Toast = function(message, type) {
+    var id = ++_seq;
+    var t = { id: id, message: message, type: type || 'info', at: Date.now() };
+    _toasts = [t].concat(_toasts).slice(0, 6);
+    _listeners.forEach(function(fn) { fn(_toasts); });
+    setTimeout(function() { window.c2Toasts.dismiss(id); }, 4000);
+  };
+})();
+
+function ToastContainer() {
+  var [toasts, setToasts] = React.useState(function() { return window.c2Toasts.getAll(); });
+
+  React.useEffect(function() {
+    return window.c2Toasts.subscribe(setToasts);
+  }, []);
+
+  var typeColor = function(type) {
+    return ({ success:'var(--safe)', warning:'var(--amber)', error:'var(--threat)', info:'var(--cyan)' }[type] || 'var(--cyan)');
+  };
+  var typeIcon = function(type) {
+    return ({ success:'✓', warning:'⚠', error:'✗', info:'ℹ' }[type] || 'ℹ');
+  };
+
+  if (toasts.length === 0) return null;
+
+  return (
+    <div style={{position:'fixed', bottom:24, right:24, zIndex:9998, display:'flex', flexDirection:'column', gap:8, pointerEvents:'none'}}>
+      {toasts.map(function(t) {
+        var col = typeColor(t.type);
+        return (
+          <div key={t.id} style={{
+            display:'flex', alignItems:'flex-start', gap:10,
+            padding:'10px 14px',
+            background:'var(--bg-2)',
+            border:'1px solid var(--line-strong)',
+            borderLeft:'3px solid ' + col,
+            borderRadius:'var(--radius-md)',
+            boxShadow:'0 4px 20px rgba(0,0,0,0.4)',
+            minWidth:260, maxWidth:400,
+            pointerEvents:'all',
+            fontFamily:"'IBM Plex Sans', sans-serif",
+            fontSize:12,
+          }}>
+            <span style={{fontSize:13, color:col, flexShrink:0, lineHeight:1.4}}>{typeIcon(t.type)}</span>
+            <span style={{flex:1, color:'var(--ink)', lineHeight:1.4}}>{t.message}</span>
+            <button onClick={function() { window.c2Toasts.dismiss(t.id); }}
+                    style={{background:'none', border:'none', color:'var(--ink-faint)', cursor:'pointer', padding:0, fontSize:12, flexShrink:0}}>✕</button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+Object.assign(window, { Analytics, ToastContainer });
+</script>
+
+<script type="text/babel" data-presets="react">
 /* ===== app.jsx ===== */
 // Main app — shell + route + tweaks + editmode wiring
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
@@ -19358,7 +19893,7 @@ function App() {
           Compliance, Testing, AssureOverview, DetectOverview, Settings, Logs, Topbar, WorkspaceBar, SurfaceBar, TweaksPanel,
           Investigations, Alerts, Tokenization, Corpora, Audit, Integrations, ApiKeys, Agents, Users,
           LiveScan, CorpusRunner, ApiExplorer, ScanDiff, ProcessState, FPTool, FpQueue, Profiles,
-          EvadexAdversarial,
+          EvadexAdversarial, Analytics, ToastContainer,
           DocsSurface, HelpModal } = window;
 
   // expose go() globally so nested surfaces (e.g. DetectOverview cards) can navigate.
@@ -19411,6 +19946,7 @@ function App() {
       integrations:   <Integrations />,
       keys:           <ApiKeys />,
       agents:         <Agents />,
+      analytics:      <Analytics go={go} />,
     }[surface] || <div style={{padding: 40}}>Coming soon</div>;
   }
 
@@ -19423,6 +19959,7 @@ function App() {
       <TweaksPanel on={tweakOpen} state={tweaks} set={setTweak} />
       {HelpModal && <HelpModal />}
       {cmdOpen && <CommandPalette onClose={() => setCmdOpen(false)} go={go} />}
+      {ToastContainer && <ToastContainer />}
     </div>
   );
 }

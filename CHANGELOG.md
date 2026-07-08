@@ -14,7 +14,7 @@ starting from this file.
 
 ---
 
-## 2026-06-21
+## 2026-07-08
 
 ### siphon-core 2.2.0
 
@@ -39,6 +39,133 @@ starting from this file.
   endpoint in quick succession.
 
 ---
+
+## 2026-07-04
+
+### siphon-core 2.1.7
+
+Extends the morse alt-decode path to tolerate surrounding text for the
+delimited digit-morse variants. Stacks on 2.1.6.
+
+- fix(core): new `find_embedded_digit_morse_delimited()` recovers a run of
+  digit-only morse tokens joined by a consistent `/`, `,`, or `|` delimiter when
+  it is embedded in larger text (a filename preamble on the file-scan path, or a
+  prose prefix such as `card `). The whole-input decoders
+  `try_decode_digit_morse_slash` / `_comma` bail as soon as a non-morse token
+  pollutes the input, and no whole-input digit decoder covered pipe at all — so
+  `invoice.txt\n<comma-morse-card>` previously bypassed even though the *nosep*
+  path already tolerated a preamble (PR #336). Wired as a fallback after each
+  whole-input decoder in `generate_alternative_decodings`. Accepts only runs of
+  4..=20 valid 5-char digit codes; Luhn/checksum still gates the result, so
+  false-positive risk stays negligible. 5 new regression tests.
+
+### siphon-core 2.1.6
+
+Closes open-ended Unicode-digit and letter-confusable evasion classes surfaced
+by evadex. Stacks on 2.1.5.
+
+- fix(core): Stage 10 gains a Unicode decimal-digit (Nd) fallback,
+  `fold_unicode_digit()`, so every Unicode `Nd` script folds to ASCII —
+  Devanagari, Bengali, Gujarati, Tamil, mathematical bold/monospace digits, and
+  fullwidth — not just the four scripts (Arabic-Indic, Extended Arabic-Indic,
+  Thai, fullwidth) the hand-maintained homoglyph table previously covered. Runs
+  only when the homoglyph map has no explicit entry, so existing mappings are
+  unchanged.
+- fix(core): new Stage 11, `fold_confusable_digit_runs`, folds letter-shaped
+  digit substitutions (`O`/`o`→0, `l`/`I`→1, Greek `Ο`/`ο`→0, Cyrillic `О`/`о`→0)
+  to ASCII digits — but **only inside a long, digit-dense run** so prose is never
+  touched. A run must be ≥12 chars, hold ≥8 real ASCII digits, and be >60%
+  digits before any confusable letter in it is folded; Luhn/checksum still
+  gates the result. Closes the `leet_aggressive`, `greek_omicron`, and
+  Devanagari-digit detection gaps. 6 new regression tests.
+
+### siphon-core 2.1.5
+
+Closes gaps surfaced by running `evadex mutate` against bypassing credit-card
+variants. Overall mutate bypass rate dropped from 84.4% to 79.7% on the
+`bench_http_northam` survivor population; all canonical single-technique
+variants in the spot-check corpus (15/15) now detect.
+
+- fix(core): new normalization stage `strip_consistent_digit_separators`
+  (pipeline stage 6c) strips a single *consistent* separator injected between
+  pure-digit groups. Defeats the delimiter families the existing delimiter
+  stages don't cover (`|`, `,`, `:`, `;`, `~`, `+`, `=`) and consistent-noise
+  evasion (`4532*0151*1283*0366`, including non-ASCII separators such as U+00B7
+  MIDDLE DOT). Conservative by construction: the separator must be identical and
+  repeat ≥3 times between 12–40 digits, each group 1–6 digits, flanked by
+  non-alphanumeric characters; `.`/`-`/`/`/`_`/`\` are left to the dedicated
+  delimiter stages (which protect emails, IPs, and ICD-10 codes). Mixed-noise
+  (`4532#0151@1283$0366`) and letter-noise are deliberately left intact — an
+  inconsistent separator is not a reliable evasion signal. A matching cheap
+  marker was added to `has_evasion_markers` so pure-ASCII payloads still enter
+  the pipeline.
+- fix(core): new `recover_case_folded_base64_digits` recovers case-folded
+  base64 of a numeric secret (the `base64_mixed_case` / `_uppercase` /
+  `_lowercase` families). Base64 is case-sensitive, but when the plaintext is
+  all ASCII digits the original casing can be recovered per independent
+  4-symbol block by enumerating the ≤2⁴ upper/lower combinations that decode to
+  digit bytes. Wired into `generate_alternative_decodings()` and also run on the
+  ROT13 shell so `base64` → `rot13` mixed-case is covered. Bounded (token ≤64
+  chars, ≤16 candidates); checksum/Luhn validation still gates every match.
+- note(core): the existing zero-width stripping set already covered all evadex
+  zero-width variants (U+200B/C/D, U+2060, U+FEFF, U+00AD, U+180E, U+034F) — no
+  change needed.
+
+### siphon-core 2.1.4
+
+- fix(core): em-dash (U+2014), en-dash (U+2013), Unicode minus sign (U+2212),
+  and horizontal bar (U+2015) added to `HOMOGLYPH_MAP`, normalising them to
+  ASCII hyphen before pattern matching. Morse-code evasion variants that replace
+  the standard `-` symbol with typographic dashes are now detected.
+- fix(core): new `try_decode_mixed_alpha_nosep` decoder added to
+  `generate_alternative_decodings()`. Handles IBAN-style values where non-digit
+  characters (country code letters, bank/branch codes) pass through literally
+  while digit characters are no-sep morse-encoded. After `collapse_padding` the
+  space-sep and newline-sep evadex variants collapse to this mixed form; the new
+  decoder reconstructs the original value and allows IBAN Generic (specificity
+  0.90, always-run) to fire in the alt-decoding path.
+- fix(core): `try_decode_digit_morse_slash` and `try_decode_digit_morse_comma`
+  now accept all-alpha multi-char tokens as literal passthrough. Stage 6b
+  (`strip_alnum_adjacent_delimiters`) merges adjacent alpha chars separated
+  by slashes before the alt-decodings pass runs (e.g. `G/B` → `GB`,
+  `W/E/S/T` → `WEST`), breaking IBAN slash-sep detection. The new branch
+  recognises these merged alpha runs and passes them through verbatim,
+  covering the evadex `slash_sep` morse variant for IBAN numbers.
+
+### siphon-api 2.4.0
+
+- feat(api): read-only admin-console endpoints (PR #345) — three endpoints
+  shipped in the codebase without a version bump or changelog entry; this
+  release records them:
+  - `GET /v1/categories` — enumerates every detection category with its
+    `pattern_count` and the list of `sub_categories`, plus a `total` count.
+    Backs the category picker in the C2 console.
+  - `POST /v1/scan/explain` — scans a `{text, options?}` body like `POST /scan`
+    but returns a per-finding pipeline trace instead of bare findings: for each
+    match it reports `validation_passed`, `context_present`, `final_confidence`,
+    and the raw `pipeline_events` stage log. Enables operators to see *why* a
+    value was (or was not) flagged. Same 10 MB payload cap as `/scan`.
+  - `GET /v1/health/detailed` — extended health beyond `/health`: pod identity,
+    `version`/`core_version`, uptime, `patterns_loaded`/`categories_loaded`, a
+    `db` block (connected, latency_ms, findings_count — degrades gracefully when
+    Postgres is unconfigured or unreachable), and a `scans` block
+    (scans_total, findings_total, scan_errors_total, scans_per_minute).
+
+### siphon-api 2.3.1
+
+- fix(api): recover from a poisoned rate-limiter mutex instead of panicking.
+  `rate_limit_middleware` held the lock with `.lock().unwrap()`; if any request
+  panicked while the guard was held, the poisoned lock turned every subsequent
+  request into a panic — a self-inflicted denial of service. It now recovers
+  the guard with `unwrap_or_else(|e| e.into_inner())`, matching the existing
+  pattern already used by `GET /v1/ratelimit`.
+- fix(api): clamp pagination `offset` to a non-negative value on
+  `GET /v1/findings/pg` and `GET /v1/lsh/history`. A negative `offset` query
+  parameter previously reached Postgres verbatim and produced a 500; it is now
+  floored at 0 so bad input returns the first page instead of an error.
+- docs(api): document the previously undocumented `GET /v1/health/detailed`,
+  `POST /v1/scan/explain`, and `GET /v1/lsh/history` endpoints in
+  `docs/enterprise/api.md`.
 
 ## 2026-06-14
 

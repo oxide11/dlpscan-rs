@@ -1,0 +1,93 @@
+name: evadex quality gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/siphon-core/src/normalize/**'
+      - 'crates/siphon-core/src/patterns/**'
+      - 'crates/siphon-core/src/scanner/**'
+      - 'crates/siphon-core/src/validation/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'crates/siphon-core/src/normalize/**'
+      - 'crates/siphon-core/src/patterns/**'
+      - 'crates/siphon-core/src/scanner/**'
+      - 'crates/siphon-core/src/validation/**'
+  workflow_dispatch:
+
+jobs:
+  evadex-gate:
+    name: Run evadex quality gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout dlpscan-rs
+        uses: actions/checkout@v7
+
+      - name: Checkout evadex
+        uses: actions/checkout@v7
+        with:
+          repository: tbustenk/evadex
+          path: evadex
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build Siphon CLI (release)
+        run: cargo build --release --bin siphon
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install evadex
+        working-directory: evadex
+        run: pip install -e ".[dev]"
+
+      - name: Run evadex unit tests
+        working-directory: evadex
+        run: python -m pytest tests/unit -q --tb=short
+
+      - name: Run evadex quality gate (siphon-cli adapter)
+        working-directory: evadex
+        env:
+          SIPHON_BIN: ${{ github.workspace }}/target/release/siphon
+        run: |
+          # `evadex ci` selects the scanner from an evadex.yaml (tool + exe)
+          # and forwards --config to the underlying `evadex scan`; thresholds
+          # are on a 0-100 scale (--min-detection / --max-fp).
+          cat > evadex.gate.yaml <<YAML
+          tool: siphon-cli
+          exe: ${SIPHON_BIN}
+          YAML
+          python -m evadex ci \
+            --config evadex.gate.yaml \
+            --tier northam \
+            --min-detection 70 \
+            --max-fp 5 \
+            | tee evadex-gate-report.txt
+
+      - name: Upload quality gate report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evadex-quality-gate-report
+          path: evadex/evadex-gate-report.txt
+          if-no-files-found: ignore
+          retention-days: 30

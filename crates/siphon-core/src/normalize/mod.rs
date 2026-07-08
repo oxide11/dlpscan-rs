@@ -189,6 +189,12 @@ static HOMOGLYPH_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
         ('\u{FF20}', '@'),
         ('\u{FF3F}', '_'),
         ('\u{FF0A}', '*'),
+        // Unicode dashes that substitute for ASCII hyphen/minus in morse evasion
+        // (em-dash, en-dash, and minus sign used as the '-' symbol in morse code)
+        ('\u{2013}', '-'), // en-dash (–)
+        ('\u{2014}', '-'), // em-dash (—)
+        ('\u{2212}', '-'), // minus sign (−)
+        ('\u{2015}', '-'), // horizontal bar (―)
         // Mathematical/script homoglyphs (commonly used for evasion)
         ('\u{2070}', '0'),
         ('\u{00B9}', '1'),
@@ -639,7 +645,25 @@ fn should_strip_dot(bytes: &[u8], pos: usize) -> bool {
         .iter()
         .take_while(|b| b.is_ascii_digit())
         .count();
-    (1..=6).contains(&before) && (1..=6).contains(&after)
+    if !((1..=6).contains(&before) && (1..=6).contains(&after)) {
+        return false;
+    }
+    // An ASCII letter bounding either digit run means the dot belongs to an
+    // alphanumeric identifier (e.g. `D123.4567`, a driver-licence / part
+    // number where the dot is structural), not a purely numeric group
+    // separator like `4532.0151` — leave those dots intact. Hyphens in the
+    // same identifiers are still stripped by the delimiter branch; only the
+    // dot rule is this conservative because dots also delimit emails, hosts,
+    // and version/ICD-10 codes.
+    let before_run_start = pos - before;
+    if before_run_start > 0 && bytes[before_run_start - 1].is_ascii_alphabetic() {
+        return false;
+    }
+    let after_run_end = pos + 1 + after;
+    if after_run_end < bytes.len() && bytes[after_run_end].is_ascii_alphabetic() {
+        return false;
+    }
+    true
 }
 
 /// Returns a bitmask of dot positions that belong to a valid IPv4 address.
@@ -768,6 +792,131 @@ fn strip_alnum_adjacent_delimiters(input: &str, in_offsets: &[usize]) -> (String
     }
 
     (String::from_utf8_lossy(&out).into_owned(), offsets)
+}
+
+/// Returns `true` if `c` is a candidate "injected separator" character for
+/// [`strip_consistent_digit_separators`]: any non-alphanumeric, non-whitespace
+/// character that is NOT already handled by the dedicated delimiter stages
+/// (`.`, `-`, `/`, `_`, `\`). Includes ASCII punctuation (`|`, `,`, `:`, `;`,
+/// `~`, `+`, `=`, `*`, `#`, `@`, `$`, …) and non-ASCII symbols (e.g. U+00B7
+/// MIDDLE DOT).
+#[inline]
+fn is_consistent_sep(c: char) -> bool {
+    !c.is_ascii_alphanumeric() && !c.is_whitespace() && !matches!(c, '.' | '-' | '/' | '_' | '\\')
+}
+
+/// Strip a single, *consistent* separator character injected between pure-digit
+/// groups — the delimiter-injection and consistent-noise evasion families that
+/// the dedicated delimiter stages don't cover.
+///
+/// Defeats (each with an identical separator repeated ≥ 3×):
+///   * `4532|0151|1283|0366`  (pipe / `,` / `:` / `;` / `~` / `+` / `=` …)
+///   * `4532*0151*1283*0366`  (asterisk / `#` / `@` / `$` consistent noise)
+///   * `4532·0151·1283·0366`  (U+00B7 middle-dot, non-ASCII)
+///
+/// Deliberately conservative to protect legitimate text:
+///   * the separator must be *identical* at every position — mixed noise like
+///     `4532#0151@1283$0366` is left intact because inconsistency is not a
+///     reliable evasion signal and stripping it would be guesswork;
+///   * the separator may not be a digit, ASCII letter, or whitespace, and the
+///     `.`/`-`/`/`/`_`/`\` characters are excluded (handled by
+///     [`strip_alnum_adjacent_delimiters`], which carefully protects emails,
+///     IPs, and ICD-10 codes);
+///   * each digit group must be 1–6 digits, the separator must repeat ≥ 3
+///     times, the concatenated run must be 12–40 digits, and the whole span
+///     must be flanked by non-alphanumeric characters (never strip *inside* an
+///     identifier);
+///   * downstream checksum/Luhn validation still gates every resulting match.
+fn strip_consistent_digit_separators(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+    let cs: Vec<char> = input.chars().collect();
+    let starts: Vec<usize> = input.char_indices().map(|(b, _)| b).collect();
+    let n = cs.len();
+    if n < 15 {
+        // Shortest strippable span is 12 digits + 3 separators.
+        return (input.to_string(), in_offsets.to_vec());
+    }
+    let mut remove = vec![false; n];
+    let mut any = false;
+
+    let mut i = 0;
+    while i < n {
+        if !cs[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        // Left boundary: never start mid-identifier (alphanumeric to the left).
+        if i > 0 && cs[i - 1].is_ascii_alphanumeric() {
+            while i < n && cs[i].is_ascii_digit() {
+                i += 1;
+            }
+            continue;
+        }
+        // First digit group.
+        let mut j = i;
+        while j < n && cs[j].is_ascii_digit() {
+            j += 1;
+        }
+        let first_len = j - i;
+        if !((1..=6).contains(&first_len) && j < n && is_consistent_sep(cs[j])) {
+            i = j.max(i + 1);
+            continue;
+        }
+        let sep = cs[j];
+        let mut sep_positions: Vec<usize> = Vec::new();
+        let mut total_digits = first_len;
+        let mut groups_ok = true;
+        let mut k = j;
+        loop {
+            if k < n && cs[k] == sep {
+                let g = k + 1;
+                let mut m = g;
+                while m < n && cs[m].is_ascii_digit() {
+                    m += 1;
+                }
+                let glen = m - g;
+                if glen == 0 {
+                    break; // trailing separator with no following digit group
+                }
+                if !(1..=6).contains(&glen) {
+                    groups_ok = false;
+                    break;
+                }
+                sep_positions.push(k);
+                total_digits += glen;
+                k = m;
+            } else {
+                break;
+            }
+        }
+        // Right boundary must not continue into an identifier.
+        let right_ok = k >= n || !cs[k].is_ascii_alphanumeric();
+        if groups_ok && right_ok && sep_positions.len() >= 3 && (12..=40).contains(&total_digits) {
+            for &p in &sep_positions {
+                remove[p] = true;
+            }
+            any = true;
+        }
+        i = k.max(i + 1);
+    }
+
+    if !any {
+        return (input.to_string(), in_offsets.to_vec());
+    }
+
+    let mut out = String::with_capacity(input.len());
+    let mut offsets: Vec<usize> = Vec::with_capacity(input.len());
+    for idx in 0..n {
+        if remove[idx] {
+            continue;
+        }
+        let ch = cs[idx];
+        let byte_idx = starts[idx];
+        out.push(ch);
+        for b in 0..ch.len_utf8() {
+            offsets.push(orig_offset(in_offsets, byte_idx + b));
+        }
+    }
+    (out, offsets)
 }
 
 /// Strip zero-width characters with offset composition.
@@ -929,6 +1078,17 @@ fn is_encoded_char(b: u8) -> bool {
 /// non-whitespace chars. Shared by all codecs.
 fn validate_decoded(decoded_bytes: &[u8]) -> Option<String> {
     let decoded_str = std::str::from_utf8(decoded_bytes).ok()?;
+    // Reject immediately if decoded bytes contain any C0 control character
+    // other than tab (0x09), line-feed (0x0A), or carriage-return (0x0D).
+    // These (especially NUL/0x00 and ENQ/0x05) are never present in
+    // meaningful encoded text, but DO appear when a digit-only string (like
+    // a credit-card number) is incorrectly decoded as hex bytes.
+    if decoded_bytes
+        .iter()
+        .any(|&b| b < 0x09 || (b > 0x0D && b < 0x20) || b == 0x7F)
+    {
+        return None;
+    }
     let printable = decoded_str
         .bytes()
         .filter(|&b| (0x20..=0x7E).contains(&b) || b == b'\n' || b == b'\r' || b == b'\t')
@@ -1514,6 +1674,15 @@ fn try_decode_digit_morse_slash(text: &str) -> Option<String> {
         } else if token.len() == 1 && token[0].is_ascii() {
             // Single ASCII char: literal passthrough from the evadex encoder
             result.push(token[0] as char);
+        } else if token.iter().all(|&b| b.is_ascii_alphabetic()) {
+            // All-alpha token: literal passthrough.  Stage 6b
+            // (strip_alnum_adjacent_delimiters) merges adjacent alpha chars
+            // separated by slashes (e.g. G/B → GB, W/E/S/T → WEST) before
+            // alt-decodings run, so a multi-char all-alpha token is a valid
+            // pass-through in IBAN country-code / bank-code position.
+            for &b in *token {
+                result.push(b as char);
+            }
         } else {
             // Multi-char but not a 5-char digit code: try letter morse table
             // (handles fully-encoded non-digit characters).
@@ -1566,6 +1735,10 @@ fn try_decode_digit_morse_comma(text: &str) -> Option<String> {
             digit_count += 1;
         } else if token.len() == 1 && token[0].is_ascii() {
             result.push(token[0] as char);
+        } else if token.iter().all(|&b| b.is_ascii_alphabetic()) {
+            for &b in *token {
+                result.push(b as char);
+            }
         } else {
             if let Ok(s) = std::str::from_utf8(token) {
                 if let Some(&ch) = MORSE_TABLE.get(s) {
@@ -1631,6 +1804,120 @@ fn try_decode_digit_morse_nosep(text: &[u8]) -> Option<String> {
     }
 
     Some(result)
+}
+
+/// Scan text for an embedded no-separator digit-only morse segment.
+///
+/// Unlike `try_decode_digit_morse_nosep` which requires the ENTIRE input to be
+/// morse, this function finds maximal runs of '.' and '-' embedded within a
+/// larger text (e.g., text with a prepended filename context line) and tries to
+/// decode each candidate segment.  Used in the alt-decodings pass so that
+/// file-scan paths that prepend filename preamble don't break morse detection.
+///
+/// Decoding constraints are identical to `try_decode_digit_morse_nosep`:
+/// length must be an exact multiple of 5, every 5-char chunk must be a valid
+/// digit morse code, and the digit count must be in 4..=20.
+fn find_embedded_digit_morse_nosep(text: &[u8]) -> Option<String> {
+    let mut i = 0;
+    while i < text.len() {
+        if text[i] == b'.' || text[i] == b'-' {
+            let seg_start = i;
+            while i < text.len() && (text[i] == b'.' || text[i] == b'-') {
+                i += 1;
+            }
+            let segment = &text[seg_start..i];
+            if segment.len().is_multiple_of(5) {
+                let count = segment.len() / 5;
+                if (4..=20).contains(&count) {
+                    let mut result = String::with_capacity(count);
+                    let mut valid = true;
+                    for chunk in segment.chunks_exact(5) {
+                        match MORSE_DIGITS.iter().find(|(code, _)| *code == chunk) {
+                            Some(&(_, digit)) => result.push(digit as char),
+                            None => {
+                                valid = false;
+                                break;
+                            }
+                        }
+                    }
+                    if valid {
+                        return Some(result);
+                    }
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// Scan `text` for an embedded run of digit-only morse tokens joined by a single
+/// consistent delimiter `delim` (one of `/`, `,`, `|`) and decode it.
+///
+/// This is the delimited analogue of [`find_embedded_digit_morse_nosep`]. The
+/// whole-input decoders [`try_decode_digit_morse_slash`] /
+/// [`try_decode_digit_morse_comma`] bail as soon as any non-morse text pollutes
+/// a token, so a filename preamble or surrounding prose (e.g. the file-scan path
+/// that prepends `invoice.txt\n` before the payload, or a `card ` prefix)
+/// defeats them — even though the nosep path already tolerates exactly that.
+/// This closes that asymmetry for the delimited variants.
+///
+/// A candidate run is a maximal sequence `TOKEN (DELIM TOKEN)*` where every
+/// `TOKEN` is a run of `.`/`-` and `DELIM` is `delim` throughout. The run is
+/// accepted only when it holds 4..=20 tokens and **every** token is a valid
+/// 5-char digit morse code — the same low-false-positive constraints as the
+/// nosep embedded scan (Luhn/checksum still gates the decoded digits downstream).
+fn find_embedded_digit_morse_delimited(text: &str, delim: u8) -> Option<String> {
+    if !text.is_ascii() {
+        return None;
+    }
+    let raw = text.as_bytes();
+    let is_morse = |b: u8| b == b'.' || b == b'-';
+    let mut i = 0;
+    while i < raw.len() {
+        if !is_morse(raw[i]) {
+            i += 1;
+            continue;
+        }
+        // Walk a maximal `TOKEN (DELIM TOKEN)*` run starting at `i`.
+        let run_start = i;
+        let mut tokens: Vec<&[u8]> = Vec::new();
+        let mut j = i;
+        loop {
+            let tok_start = j;
+            while j < raw.len() && is_morse(raw[j]) {
+                j += 1;
+            }
+            tokens.push(&raw[tok_start..j]);
+            // Continue only across a single `delim` that is followed by another
+            // morse token; anything else terminates the run.
+            if j + 1 < raw.len() && raw[j] == delim && is_morse(raw[j + 1]) {
+                j += 1;
+            } else {
+                break;
+            }
+        }
+        if (4..=20).contains(&tokens.len()) {
+            let mut result = String::with_capacity(tokens.len());
+            let mut ok = true;
+            for token in &tokens {
+                match decode_morse_digit_token(token) {
+                    Some(ch) => result.push(ch),
+                    None => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if ok {
+                return Some(result);
+            }
+        }
+        // Advance past this run (guaranteed progress: j > run_start).
+        i = j.max(run_start + 1);
+    }
+    None
 }
 
 /// Apply ROT13 transformation to alphabetic characters.
@@ -1755,6 +2042,13 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     // doubled-delimiter evasion has already been collapsed to a single char.
     apply_stage!(strip_alnum_adjacent_delimiters, current, offsets);
 
+    // Stage 6c: Strip a consistent separator injected between digit groups.
+    // Covers the delimiter families the previous stages don't (`|`, `,`, `:`,
+    // `;`, `~`, `+`, `=`) and consistent-noise evasion (`4532*0151*1283*0366`,
+    // including non-ASCII separators like U+00B7). Conservative: identical
+    // separator repeated ≥3× between 12–40 digits only.
+    apply_stage!(strip_consistent_digit_separators, current, offsets);
+
     // Stages 7-10: Unicode normalization (only if non-ASCII remaining)
     if !is_ascii_only(&current) {
         // Stage 7: Strip zero-width characters
@@ -1778,11 +2072,30 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
         current = r.0;
         offsets = r.1;
 
-        // Stage 10: Homoglyph map
-        let r = remap_char_transform(&current, &offsets, |c| *HOMOGLYPH_MAP.get(&c).unwrap_or(&c));
+        // Stage 10: Homoglyph map, with a Unicode decimal-digit (Nd) fallback
+        // so *every* digit script folds to ASCII (Devanagari, Bengali, Tamil,
+        // …), not just the handful hard-coded in HOMOGLYPH_MAP.
+        let r = remap_char_transform(&current, &offsets, |c| {
+            if let Some(&mapped) = HOMOGLYPH_MAP.get(&c) {
+                mapped
+            } else if let Some(d) = fold_unicode_digit(c) {
+                d
+            } else {
+                c
+            }
+        });
         current = r.0;
         offsets = r.1;
     }
+
+    // Stage 11: Fold digit-confusable letters (Latin/Greek/Cyrillic O→0, l→1,
+    // …) that sit inside a long, digit-dense run — homoglyph/leet substitution
+    // inside a candidate card/account number (e.g. `4532O151l283O366`). This
+    // runs OUTSIDE the `!is_ascii_only` block above because the substituted
+    // letters are themselves ASCII, so Stage 10 would never see them.
+    let r = fold_confusable_digit_runs(&current, &offsets);
+    current = r.0;
+    offsets = r.1;
 
     // If nothing changed, return empty offsets (identity)
     if current == text {
@@ -1818,6 +2131,200 @@ pub const MAX_ALTERNATIVE_DECODING_TOTAL: usize = 64 * 1024;
 /// to cover the short-document case the second pass is designed for
 /// (a few KB) while refusing to multiply an attacker-controlled blob
 /// into N full copies in memory.
+/// Decode evadex-style morse where digit chars are nosep-encoded and non-digit
+/// ASCII chars (letters, hyphens, etc.) pass through literally, with both
+/// types directly adjacent or separated by spaces.
+///
+/// Handles IBAN-style values (e.g. "GB82WEST12345698765432") after evadex
+/// space-sep or no-sep encoding and normalize_text's collapse_padding:
+///   "G B---....---W E S T.----..---...--..."  → "GB82WEST12345698765432"
+///
+/// Constraints:
+/// - Input must contain at least one morse symbol (`.` or `-`) AND one alpha letter.
+/// - Contiguous runs of `.`/`-` must have length divisible by 5; each 5-char
+///   chunk must be a valid ITU-R digit code.
+/// - At least 4 digits must be decoded to avoid false positives on short noise.
+/// - Any character that is not a space, ASCII alpha, or `.`/`-` causes failure.
+fn try_decode_mixed_alpha_nosep(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+
+    // Require at least one morse symbol AND at least one alpha letter.
+    // Without alpha: use try_decode_digit_morse_nosep instead.
+    // Without morse: this isn't morse at all.
+    if !bytes.iter().any(|&b| b == b'.' || b == b'-') {
+        return None;
+    }
+    if !bytes.iter().any(|b| b.is_ascii_alphabetic()) {
+        return None;
+    }
+
+    let mut result = String::with_capacity(text.len());
+    let mut digit_count = 0usize;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b' ' || b == b'\t' {
+            i += 1;
+            continue;
+        }
+        if b.is_ascii_alphabetic() {
+            result.push(b as char);
+            i += 1;
+            continue;
+        }
+        if b == b'.' || b == b'-' {
+            let seg_start = i;
+            while i < bytes.len() && (bytes[i] == b'.' || bytes[i] == b'-') {
+                i += 1;
+            }
+            let segment = &bytes[seg_start..i];
+            if segment.is_empty() || !segment.len().is_multiple_of(5) {
+                return None;
+            }
+            for chunk in segment.chunks_exact(5) {
+                match MORSE_DIGITS.iter().find(|(code, _)| *code == chunk) {
+                    Some(&(_, digit)) => {
+                        result.push(digit as char);
+                        digit_count += 1;
+                    }
+                    None => return None,
+                }
+            }
+            continue;
+        }
+        // Unknown character — not a valid mixed-alpha-nosep morse input
+        return None;
+    }
+
+    if digit_count < 4 {
+        return None;
+    }
+    Some(result)
+}
+
+/// Recover a case-folded base64 token that encodes a purely numeric secret
+/// (credit-card / SSN / bank-account numbers).
+///
+/// Base64 is case-sensitive, so upper-, lower-, or mixed-casing an encoded blob
+/// corrupts a standard decode — this is the `base64_mixed_case` (and
+/// `base64_uppercase` / `base64_lowercase`) evasion family. But base64 decodes
+/// in independent 4-symbol → 3-byte blocks, and when the *plaintext* is all
+/// ASCII digits there is (almost always) exactly one assignment of upper/lower
+/// case to each letter in a block that yields three digit bytes. We enumerate
+/// the ≤2⁴ case combinations per block, keep those whose bytes are all digits,
+/// and return the cartesian product as candidate digit strings for the caller
+/// to re-scan (Luhn / checksum validation still gates every match).
+///
+/// Returns an empty vec unless the token could plausibly be a case-folded
+/// numeric payload. Bounded: token ≤ 64 chars, ≤ `MAX_CANDIDATES` results.
+fn recover_case_folded_base64_digits(token: &str) -> Vec<String> {
+    const MAX_LEN: usize = 64;
+    const MAX_CANDIDATES: usize = 16;
+
+    if token.len() > MAX_LEN {
+        return Vec::new();
+    }
+    let stripped = token.trim_end_matches('=');
+    // Need at least 16 base64 symbols (≈12 decoded digits) to be worth it, and
+    // a valid base64 body length is never ≡1 (mod 4).
+    if stripped.len() < 16 || stripped.len() % 4 == 1 {
+        return Vec::new();
+    }
+    let sym = stripped.as_bytes();
+    if sym
+        .iter()
+        .any(|&b| !(b.is_ascii_alphanumeric() || b == b'+' || b == b'/'))
+    {
+        return Vec::new();
+    }
+
+    // Candidate 6-bit value(s) per symbol. Letters carry two candidates (their
+    // upper-case value 0–25 and lower-case value 26–51); everything else one.
+    let opts: Vec<[Option<u8>; 2]> = sym
+        .iter()
+        .map(|&b| {
+            if b.is_ascii_alphabetic() {
+                let up = b.to_ascii_uppercase() - b'A';
+                let lo = (b.to_ascii_lowercase() - b'a') + 26;
+                [Some(up), Some(lo)]
+            } else if b.is_ascii_digit() {
+                [Some(52 + (b - b'0')), None]
+            } else if b == b'+' {
+                [Some(62), None]
+            } else {
+                [Some(63), None] // '/'
+            }
+        })
+        .collect();
+
+    // Solve block-by-block (base64 blocks are independent).
+    let mut per_block: Vec<Vec<String>> = Vec::new();
+    let mut idx = 0;
+    while idx < opts.len() {
+        let end = (idx + 4).min(opts.len());
+        let block = &opts[idx..end];
+        let bn = block.len();
+        let choice_positions: Vec<usize> = (0..bn).filter(|&p| block[p][1].is_some()).collect();
+        let combos = 1usize << choice_positions.len();
+        let mut block_strs: Vec<String> = Vec::new();
+        for mask in 0..combos {
+            let mut vals = [0u8; 4];
+            for (p, slot) in vals.iter_mut().enumerate().take(bn) {
+                let sel = choice_positions
+                    .iter()
+                    .position(|&c| c == p)
+                    .map(|bit| (mask >> bit) & 1)
+                    .unwrap_or(0);
+                *slot = block[p][sel].unwrap();
+            }
+            let out_bytes: Vec<u8> = match bn {
+                4 => vec![
+                    (vals[0] << 2) | (vals[1] >> 4),
+                    ((vals[1] & 0x0f) << 4) | (vals[2] >> 2),
+                    ((vals[2] & 0x03) << 6) | vals[3],
+                ],
+                3 => vec![
+                    (vals[0] << 2) | (vals[1] >> 4),
+                    ((vals[1] & 0x0f) << 4) | (vals[2] >> 2),
+                ],
+                2 => vec![(vals[0] << 2) | (vals[1] >> 4)],
+                _ => Vec::new(),
+            };
+            if !out_bytes.is_empty() && out_bytes.iter().all(|b| b.is_ascii_digit()) {
+                let s: String = out_bytes.iter().map(|&b| b as char).collect();
+                if !block_strs.contains(&s) {
+                    block_strs.push(s);
+                }
+            }
+        }
+        if block_strs.is_empty() {
+            return Vec::new(); // this block can't be all-digits → token isn't numeric
+        }
+        per_block.push(block_strs);
+        idx = end;
+    }
+
+    // Bounded cartesian product of the per-block digit strings.
+    let mut results: Vec<String> = vec![String::new()];
+    for block_strs in &per_block {
+        let mut next: Vec<String> = Vec::new();
+        'outer: for prefix in &results {
+            for bs in block_strs {
+                next.push(format!("{prefix}{bs}"));
+                if next.len() >= MAX_CANDIDATES {
+                    break 'outer;
+                }
+            }
+        }
+        results = next;
+    }
+    results.retain(|s| s.len() >= 12);
+    results.sort();
+    results.dedup();
+    results
+}
+
 pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     if text.len() > MAX_ALTERNATIVE_DECODING_INPUT {
         return Vec::new();
@@ -1889,6 +2396,27 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // like SSNs ("123-45-6789") where the hyphen separator is not itself morse-encoded.
     if let Some(decoded) = try_decode_digit_morse_slash(text) {
         push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    } else if let Some(decoded) = find_embedded_digit_morse_delimited(text, b'/') {
+        // Fallback: slash-morse embedded in surrounding text (filename preamble,
+        // prose prefix) — the whole-input decoder above bails on the first
+        // polluted token, mirroring the nosep embedded fallback below.
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    }
+
+    // Evadex-style digit-only morse: comma-separated (evadex comma_sep variant).
+    if let Some(decoded) = try_decode_digit_morse_comma(text) {
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    } else if let Some(decoded) = find_embedded_digit_morse_delimited(text, b',') {
+        // Fallback: comma-morse embedded in surrounding text.
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    }
+
+    // Pipe-separated digit morse embedded in surrounding text. The full-alphabet
+    // decode_morse() handles bare pipe-morse, but bails on any non-morse prefix;
+    // no whole-input digit decoder covers pipe, so this is the only digit path
+    // that tolerates a preamble for the pipe variant.
+    if let Some(decoded) = find_embedded_digit_morse_delimited(text, b'|') {
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
     }
 
     // Evadex-style digit-only morse: comma-separated (evadex comma_sep variant).
@@ -1905,6 +2433,23 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // correctly fall through to None rather than producing a garbled decode.
     if let Some(decoded) = try_decode_digit_morse_nosep(text.as_bytes()) {
         push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    } else {
+        // Fallback: scan for embedded morse segments within a larger text.
+        // Handles the file-scan path where a filename preamble is prepended to
+        // the text before scanning (pipeline.process_file prepends filename
+        // context words followed by \n, which breaks the pure-bytes check above).
+        if let Some(decoded) = find_embedded_digit_morse_nosep(text.as_bytes()) {
+            push_if_room(decoded, &mut alternatives, &mut total_bytes);
+        }
+    }
+
+    // Mixed alpha + nosep digit-morse decoder. Handles IBAN-style values where
+    // non-digit characters (country code letters, bank code) pass through
+    // literally and digit characters are nosep-encoded. After collapse_padding
+    // the space-sep and newline-sep variants collapse to this mixed form:
+    //   "G B---....---W E S T.----..---..." → "GB82WEST12345698765432"
+    if let Some(decoded) = try_decode_mixed_alpha_nosep(text) {
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
     }
 
     // Two-stage encoding chain: base64 → ROT13.
@@ -1917,11 +2462,15 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // didn't fire because it was embedded mid-sentence with no whitespace).
     if let Some(b64_decoded) = try_decode_base64(text) {
         let (rot_of_b64, _) = apply_rot13(&b64_decoded, &[]);
-        push_if_room(rot_of_b64, &mut alternatives, &mut total_bytes);
-        // Also push the raw b64 decoded form in case the caller's
-        // normalize_text didn't reach it (avoids the chain requiring the
-        // ROT13 outer to be double-ROT13'd back).
-        push_if_room(b64_decoded, &mut alternatives, &mut total_bytes);
+        // Only emit the chain result when ROT13 actually transformed the
+        // decoded bytes. If the payload has no letters (e.g. a pure-digit
+        // SSN/PAN), ROT13 is a no-op and `rot_of_b64` collapses to a plain
+        // single-layer base64 decode — which belongs to the normalization
+        // pipeline (stage 4c), not the alt-decodings pass. Emitting it here
+        // would re-introduce raw base64 output that stage 4c already covers.
+        if rot_of_b64 != b64_decoded {
+            push_if_room(rot_of_b64, &mut alternatives, &mut total_bytes);
+        }
     }
 
     // Two-stage encoding chain: ROT13 → base64.
@@ -1952,6 +2501,18 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
             push_if_room(b64_decoded, &mut alternatives, &mut total_bytes);
         }
         push_if_room(hex_decoded, &mut alternatives, &mut total_bytes);
+    }
+
+    // Case-folded base64 of a numeric secret (`base64_mixed_case` /
+    // `_uppercase` / `_lowercase`). Recover the original digits per 4-symbol
+    // block. Also try the ROT13 shell so `base64_then_rot13` mixed-case is
+    // covered: rot13(rot13(base64)) restores the base64 letters (with folded
+    // case) which then recovers the same way.
+    let rot_text = apply_rot13(text, &[]).0;
+    for src in [text.trim(), rot_text.trim()] {
+        for recovered in recover_case_folded_base64_digits(src) {
+            push_if_room(recovered, &mut alternatives, &mut total_bytes);
+        }
     }
 
     alternatives
@@ -2020,6 +2581,34 @@ fn has_evasion_markers(text: &str) -> bool {
     // \xHH hex-escape sequences
     if bytes.windows(2).any(|w| w[0] == b'\\' && w[1] == b'x') {
         return true;
+    }
+    // Consistent separator injected between digit groups (e.g.
+    // `4532|0151|1283|0366`, `4532*0151*1283*0366`). Cheap ASCII byte scan:
+    // the same non-alphanumeric, non-whitespace separator flanked by ASCII
+    // digits appearing ≥3× enters the pipeline for
+    // `strip_consistent_digit_separators`. Non-ASCII separators (U+00B7 …)
+    // fail `is_ascii_only` and enter the pipeline anyway. `.`/`-`/`/`/`_`/`\`
+    // are excluded here (handled by the dedicated delimiter stages/markers).
+    if bytes.len() >= 15 {
+        let mut counts = [0u8; 128];
+        for w in bytes.windows(3) {
+            let s = w[1];
+            if w[0].is_ascii_digit()
+                && w[2].is_ascii_digit()
+                && s < 128
+                && !s.is_ascii_alphanumeric()
+                && s != b' '
+                && s != b'\t'
+                && s != b'\n'
+                && s != b'\r'
+                && !matches!(s, b'.' | b'-' | b'/' | b'_' | b'\\')
+            {
+                counts[s as usize] = counts[s as usize].saturating_add(1);
+                if counts[s as usize] >= 3 {
+                    return true;
+                }
+            }
+        }
     }
     // Single delimiter between alphanumeric chars where at least one side is a
     // digit or uppercase letter — identifier-delimiter evasion (e.g. `D123-4567`).
@@ -2101,6 +2690,120 @@ fn remap_char_transform(
     (output, output_offsets)
 }
 
+/// Fold any Unicode decimal digit (general category Nd) to its ASCII
+/// equivalent. Rather than hand-maintaining a 10-entry table per script (the
+/// old approach in `HOMOGLYPH_MAP`, which covered only Arabic/Thai and let
+/// Devanagari, Bengali, Tamil, … through), this walks the fixed set of Nd
+/// block starts — the "zero" code point of each contiguous 0–9 run — so a new
+/// digit script never needs a code change. `char::to_digit` is not usable
+/// here: it only understands ASCII digits and a–z.
+fn fold_unicode_digit(c: char) -> Option<char> {
+    // ASCII digits are already canonical; skip the scan.
+    if c.is_ascii() {
+        return None;
+    }
+    // Start code point ("digit zero") of every Unicode Nd block, ascending.
+    const ZERO_BASES: &[u32] = &[
+        0x0660, 0x06F0, 0x07C0, 0x0966, 0x09E6, 0x0A66, 0x0AE6, 0x0B66, 0x0BE6, 0x0C66, 0x0CE6,
+        0x0D66, 0x0DE6, 0x0E50, 0x0ED0, 0x0F20, 0x1040, 0x1090, 0x17E0, 0x1810, 0x1946, 0x19D0,
+        0x1A80, 0x1A90, 0x1B50, 0x1BB0, 0x1C40, 0x1C50, 0xA620, 0xA8D0, 0xA900, 0xA9D0, 0xA9F0,
+        0xAA50, 0xABF0, 0xFF10, // Supplementary planes
+        0x1_04A0, 0x1_0D30, 0x1_1066, 0x1_10F0, 0x1_1136, 0x1_11D0, 0x1_12F0, 0x1_1450, 0x1_14D0,
+        0x1_1650, 0x1_16C0, 0x1_1730, 0x1_18E0, 0x1_1950, 0x1_1C50, 0x1_1D50, 0x1_1DA0, 0x1_1F50,
+        0x1_6A60, 0x1_6AC0, 0x1_6B50, 0x1_D7CE, 0x1_D7D8, 0x1_D7E2, 0x1_D7EC, 0x1_D7F6, 0x1_E140,
+        0x1_E2F0, 0x1_E4F0, 0x1_E950, 0x1_FBF0,
+    ];
+    let cp = c as u32;
+    for &base in ZERO_BASES {
+        if base > cp {
+            break; // list is sorted ascending; no later block can match
+        }
+        if cp <= base + 9 {
+            return Some((b'0' + (cp - base) as u8) as char);
+        }
+    }
+    None
+}
+
+/// Letters/symbols that visually stand in for a digit. These fold to a digit
+/// ONLY inside a long, digit-dense run (see `fold_confusable_digit_runs`) —
+/// folding every 'O' → '0' unconditionally would wreck ordinary prose, so the
+/// caller gates on run length and digit density.
+#[inline]
+fn confusable_to_digit(c: char) -> Option<char> {
+    match c {
+        // zero look-alikes: Latin O/o, Greek omicron Ο/ο, Cyrillic O/о
+        'O' | 'o' | '\u{039F}' | '\u{03BF}' | '\u{041E}' | '\u{043E}' => Some('0'),
+        // one look-alikes: Latin l/I/i, bar, Greek Iota Ι, Cyrillic Byelo-Ukr І
+        'l' | 'I' | 'i' | '|' | '\u{0399}' | '\u{0406}' => Some('1'),
+        _ => None,
+    }
+}
+
+#[inline]
+fn is_digit_run_member(c: char) -> bool {
+    c.is_ascii_digit() || confusable_to_digit(c).is_some()
+}
+
+/// Fold digit-confusable letters to ASCII digits, but only inside a maximal
+/// run of ≥12 chars that is ≥60% real ASCII digits (and has ≥8 of them). This
+/// defeats homoglyph/leet substitution inside a candidate card/account number
+/// (e.g. `4532O151l283O366` → `4532015112830366`) while leaving ordinary text
+/// untouched. Each char maps to exactly one char, so byte offsets are
+/// preserved the same way `remap_char_transform` does it.
+fn fold_confusable_digit_runs(input: &str, input_offsets: &[usize]) -> (String, Vec<usize>) {
+    let chars: Vec<(usize, char)> = input.char_indices().collect();
+    let n = chars.len();
+    let mut fold = vec![false; n];
+    let mut any = false;
+    let mut i = 0;
+    while i < n {
+        if !is_digit_run_member(chars[i].1) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut ascii_digits = 0usize;
+        while i < n && is_digit_run_member(chars[i].1) {
+            if chars[i].1.is_ascii_digit() {
+                ascii_digits += 1;
+            }
+            i += 1;
+        }
+        let len = i - start;
+        // len ≥ 12, ≥ 8 real digits, > 60% real digits, and at least one
+        // confusable to actually fold (else the run is already plain digits).
+        if len > ascii_digits && len >= 12 && ascii_digits >= 8 && ascii_digits * 10 > len * 6 {
+            for slot in fold.iter_mut().take(i).skip(start) {
+                *slot = true;
+            }
+            any = true;
+        }
+    }
+    if !any {
+        return (input.to_string(), input_offsets.to_vec());
+    }
+    let mut output = String::with_capacity(input.len());
+    let mut output_offsets = Vec::with_capacity(input.len());
+    for (idx, &(byte_idx, ch)) in chars.iter().enumerate() {
+        let replacement = if fold[idx] {
+            confusable_to_digit(ch).unwrap_or(ch)
+        } else {
+            ch
+        };
+        output.push(replacement);
+        let orig_start = if byte_idx < input_offsets.len() {
+            input_offsets[byte_idx]
+        } else {
+            byte_idx
+        };
+        for _ in 0..replacement.len_utf8() {
+            output_offsets.push(orig_start);
+        }
+    }
+    (output, output_offsets)
+}
+
 /// Apply NFKC normalization while maintaining byte-level offset map.
 /// NFKC can expand or contract characters (e.g., fullwidth '０' → '0',
 /// ligature 'ﬁ' → 'fi'). Each output char inherits the original byte offset
@@ -2133,6 +2836,134 @@ fn remap_nfkc(input: &str, input_offsets: &[usize]) -> (String, Vec<usize>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- Consistent digit-separator stripping (stage 6c) ----
+
+    fn norm(s: &str) -> String {
+        normalize_text(s).0
+    }
+
+    #[test]
+    fn test_consistent_sep_pipe() {
+        assert_eq!(norm("4532|0151|1283|0366"), "4532015112830366");
+    }
+
+    #[test]
+    fn test_consistent_sep_variants() {
+        for sep in [',', ':', ';', '~', '+', '=', '*', '#', '@', '$'] {
+            let input = format!("4532{sep}0151{sep}1283{sep}0366");
+            assert_eq!(
+                norm(&input),
+                "4532015112830366",
+                "separator {sep:?} not stripped"
+            );
+        }
+    }
+
+    #[test]
+    fn test_consistent_sep_unicode_middot() {
+        assert_eq!(
+            norm("4532\u{00B7}0151\u{00B7}1283\u{00B7}0366"),
+            "4532015112830366"
+        );
+    }
+
+    #[test]
+    fn test_inconsistent_noise_left_intact() {
+        // Mixed separators are NOT a reliable evasion signal — leave them.
+        let input = "4532#0151@1283$0366";
+        assert_eq!(norm(input), input);
+    }
+
+    #[test]
+    fn test_letter_noise_left_intact() {
+        // Letters are never treated as separators (would corrupt identifiers).
+        let input = "4532x0151y1283z0366";
+        assert_eq!(norm(input), input);
+    }
+
+    #[test]
+    fn test_consistent_sep_too_few_seps() {
+        // Only two separators — below the ≥3 threshold, left intact.
+        let input = "45320151:1283:0366";
+        assert_eq!(norm(input), input);
+    }
+
+    #[test]
+    fn test_consistent_sep_preserves_ipv4() {
+        // Dots are excluded, and even so IPv4 must survive untouched.
+        let input = "10.0.0.1 and 192.168.1.1";
+        assert_eq!(norm(input), input);
+    }
+
+    #[test]
+    fn test_consistent_sep_not_inside_identifier() {
+        // Alphanumeric boundary on the left → don't strip (part number, etc.).
+        let input = "AB4532:0151:1283:0366";
+        assert_eq!(norm(input), input);
+    }
+
+    #[test]
+    fn test_strip_consistent_offsets_are_valid() {
+        let input = "4532*0151*1283*0366";
+        let (out, offsets) = strip_consistent_digit_separators(input, &[]);
+        assert_eq!(out, "4532015112830366");
+        assert_eq!(offsets.len(), out.len());
+        // Every offset must point back inside the original string.
+        assert!(offsets.iter().all(|&o| o < input.len()));
+    }
+
+    // ---- Case-folded base64 numeric recovery ----
+
+    #[test]
+    fn test_recover_case_folded_base64_uppercased() {
+        use base64::{engine::general_purpose, Engine};
+        let b64 = general_purpose::STANDARD.encode("4532015112830366");
+        let got = recover_case_folded_base64_digits(&b64.to_uppercase());
+        assert!(
+            got.contains(&"4532015112830366".to_string()),
+            "recovered = {got:?}"
+        );
+    }
+
+    #[test]
+    fn test_recover_case_folded_base64_lowercased() {
+        use base64::{engine::general_purpose, Engine};
+        let b64 = general_purpose::STANDARD.encode("4532015112830366");
+        let got = recover_case_folded_base64_digits(&b64.to_lowercase());
+        assert!(got.contains(&"4532015112830366".to_string()));
+    }
+
+    #[test]
+    fn test_recover_case_folded_base64_rejects_non_numeric() {
+        // A base64 blob whose plaintext has letters must not "recover" digits.
+        use base64::{engine::general_purpose, Engine};
+        let b64 = general_purpose::STANDARD.encode("hello world secret");
+        assert!(recover_case_folded_base64_digits(&b64.to_uppercase()).is_empty());
+    }
+
+    #[test]
+    fn test_recover_case_folded_base64_alt_decoding() {
+        use base64::{engine::general_purpose, Engine};
+        let b64 = general_purpose::STANDARD.encode("4532015112830366");
+        // Mixed-case the encoded blob deterministically.
+        let mixed: String = b64
+            .chars()
+            .enumerate()
+            .map(|(i, c)| {
+                if i % 2 == 0 {
+                    c.to_ascii_uppercase()
+                } else {
+                    c.to_ascii_lowercase()
+                }
+            })
+            .collect();
+        let alts = generate_alternative_decodings(&mixed);
+        assert!(
+            alts.iter().any(|a| a.contains("4532015112830366")),
+            "alts = {alts:?}"
+        );
+    }
 
     #[test]
     fn test_strip_zero_width_no_change() {
@@ -2997,6 +3828,83 @@ mod tests {
         assert!(try_decode_digit_morse_slash(".----..---...--....-").is_none());
     }
 
+    // === Embedded delimited digit-morse (preamble-tolerant) tests ===
+
+    // Helper: encode a digit string as delimited morse.
+    fn enc_delim_morse(digits: &str, delim: char) -> String {
+        let codes: Vec<String> = digits
+            .chars()
+            .map(|d| {
+                let (code, _) = MORSE_DIGITS
+                    .iter()
+                    .find(|(_, dd)| *dd == d as u8)
+                    .expect("digit");
+                String::from_utf8(code.to_vec()).unwrap()
+            })
+            .collect();
+        codes.join(&delim.to_string())
+    }
+
+    #[test]
+    fn test_embedded_comma_morse_with_preamble() {
+        // A filename preamble (as prepended on the file-scan path) must not defeat
+        // comma-separated digit morse the way the whole-input decoder does.
+        let cc = enc_delim_morse("4532015112830366", ',');
+        let payload = format!("invoice.txt\n{cc}");
+        // Whole-input decoder bails on the polluted first token…
+        assert!(try_decode_digit_morse_comma(&payload).is_none());
+        // …but the embedded scan recovers the run.
+        assert_eq!(
+            find_embedded_digit_morse_delimited(&payload, b','),
+            Some("4532015112830366".to_string())
+        );
+    }
+
+    #[test]
+    fn test_embedded_slash_morse_with_word_prefix() {
+        let cc = enc_delim_morse("4532015112830366", '/');
+        let payload = format!("card {cc}");
+        assert_eq!(
+            find_embedded_digit_morse_delimited(&payload, b'/'),
+            Some("4532015112830366".to_string())
+        );
+    }
+
+    #[test]
+    fn test_embedded_pipe_morse_with_preamble() {
+        let cc = enc_delim_morse("4532015112830366", '|');
+        let payload = format!("leak.log\n{cc}");
+        assert_eq!(
+            find_embedded_digit_morse_delimited(&payload, b'|'),
+            Some("4532015112830366".to_string())
+        );
+    }
+
+    #[test]
+    fn test_embedded_delimited_morse_via_generate_alternatives() {
+        // End-to-end through the alt-decoding entry point for all three delimiters.
+        for delim in [',', '/', '|'] {
+            let cc = enc_delim_morse("4532015112830366", delim);
+            let payload = format!("invoice.txt\n{cc}");
+            let alts = generate_alternative_decodings(&payload);
+            assert!(
+                alts.iter().any(|a| a.contains("4532015112830366")),
+                "delim {delim:?}: expected recovered CC in alternatives, got {alts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_embedded_delimited_morse_rejects_prose() {
+        // The lone '.' in "invoice.txt" (and any other short/invalid run) must not
+        // be mistaken for a digit-morse run.
+        assert!(find_embedded_digit_morse_delimited("invoice.txt is here", b',').is_none());
+        assert!(find_embedded_digit_morse_delimited("a.b/c.d/e.f", b'/').is_none());
+        // Fewer than 4 tokens → rejected.
+        let short = enc_delim_morse("453", ',');
+        assert!(find_embedded_digit_morse_delimited(&format!("x {short}"), b',').is_none());
+    }
+
     #[test]
     fn test_greek_epsilon_homoglyph() {
         // Greek ε (U+03B5) should normalize to 'e'
@@ -3059,5 +3967,172 @@ mod tests {
         let input = "\u{0E50}\u{0E51}\u{0E52}\u{0E53}";
         let (result, _) = normalize_text(input);
         assert_eq!(result, "0123");
+    }
+
+    #[test]
+    fn test_devanagari_and_bengali_digits_normalized() {
+        // Devanagari १२३ and Bengali ৪৫৬ fold via the Unicode Nd fallback,
+        // not a hand-maintained per-script table.
+        let (deva, _) = normalize_text("\u{0967}\u{0968}\u{0969}");
+        assert_eq!(deva, "123");
+        let (beng, _) = normalize_text("\u{09EA}\u{09EB}\u{09EC}");
+        assert_eq!(beng, "456");
+    }
+
+    #[test]
+    fn test_fold_unicode_digit_covers_supplementary_scripts() {
+        // Mathematical bold digits (U+1D7CE..) and fullwidth digits fold too.
+        assert_eq!(fold_unicode_digit('\u{1D7CE}'), Some('0'));
+        assert_eq!(fold_unicode_digit('\u{1D7D7}'), Some('9'));
+        assert_eq!(fold_unicode_digit('\u{FF15}'), Some('5'));
+        // Non-digits and ASCII return None.
+        assert_eq!(fold_unicode_digit('A'), None);
+        assert_eq!(fold_unicode_digit('5'), None);
+        assert_eq!(fold_unicode_digit('\u{0966}'), Some('0')); // Devanagari zero
+    }
+
+    #[test]
+    fn test_confusable_digits_fold_in_dense_run() {
+        // Latin O→0 and l→1 inside a 16-char, digit-dense run (leet evasion).
+        let (result, _) = normalize_text("4532O151l283O366");
+        assert_eq!(result, "4532015112830366");
+    }
+
+    #[test]
+    fn test_confusable_greek_and_cyrillic_o_fold_in_run() {
+        // Greek omicron (U+039F) and Cyrillic O (U+041E) standing in for '0'
+        // inside a digit run both fold to ASCII '0'.
+        let (greek, _) = normalize_text("4532\u{039F}15112830366");
+        assert_eq!(greek, "4532015112830366");
+        let (cyr, _) = normalize_text("4532\u{041E}15112830366");
+        assert_eq!(cyr, "4532015112830366");
+    }
+
+    #[test]
+    fn test_confusable_fold_does_not_touch_prose() {
+        // Ordinary words with O/o/l/I must NOT be rewritten — the run gate
+        // (≥12 chars, ≥8 real digits, >60% digits) protects normal text.
+        let (r1, _) = normalize_text("Hello world, I lost my wallet OoOo");
+        assert_eq!(r1, "Hello world, I lost my wallet OoOo");
+        // Short number-ish token below the 12-char threshold is untouched.
+        let (r2, _) = normalize_text("Order IOl only 12345");
+        assert_eq!(r2, "Order IOl only 12345");
+    }
+
+    #[test]
+    fn test_confusable_fold_requires_digit_density() {
+        // A long run that is mostly letters (≤60% digits) is left alone even
+        // if it exceeds the length threshold.
+        let sparse = "OIlOIlOIl123456"; // 15 chars, only 6 real digits
+        let (result, _) = normalize_text(sparse);
+        assert_eq!(result, sparse);
+    }
+
+    #[test]
+    fn test_em_dash_normalized_to_hyphen() {
+        // Em-dash (U+2014) and en-dash (U+2013) should map to ASCII hyphen
+        let em = "\u{2014}";
+        let (result, _) = normalize_text(em);
+        assert_eq!(result, "-", "em-dash should normalize to '-'");
+
+        let en = "\u{2013}";
+        let (result, _) = normalize_text(en);
+        assert_eq!(result, "-", "en-dash should normalize to '-'");
+
+        let minus = "\u{2212}";
+        let (result, _) = normalize_text(minus);
+        assert_eq!(result, "-", "minus sign should normalize to '-'");
+    }
+
+    #[test]
+    fn test_em_dash_morse_via_homoglyph() {
+        // Morse where ASCII '-' is replaced with em-dash: after homoglyph normalization
+        // the em-dashes become '-' and the nosep decoder can decode the result.
+        // "4532" standard nosep: "....-" + "....." + "...--" + "..---"
+        let standard = concat!("....-", ".....", "...--", "..---");
+        let em = '\u{2014}';
+        let nosep_4532_em: String = standard
+            .chars()
+            .map(|c| if c == '-' { em } else { c })
+            .collect();
+        let (normalized, _) = normalize_text(&nosep_4532_em);
+        let alts = generate_alternative_decodings(&normalized);
+        assert!(
+            alts.iter().any(|a| a == "4532"),
+            "em-dash morse should decode to digits after normalization; norm={:?} alts={:?}",
+            normalized,
+            alts
+        );
+    }
+
+    #[test]
+    fn test_mixed_alpha_nosep_basic() {
+        // "AB1234" with digits nosep-encoded and alpha passing through:
+        // A, B pass through; 1=.---- 2=..--- 3=...-- 4=....-
+        let input = concat!("AB", ".----", "..---", "...--", "....-");
+        let decoded = try_decode_mixed_alpha_nosep(input);
+        assert_eq!(
+            decoded.as_deref(),
+            Some("AB1234"),
+            "mixed nosep should decode alpha+digits; got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn test_mixed_alpha_nosep_with_spaces() {
+        // Space-separated letters (post-collapse form): "A B.----..---...--....-"
+        let input = "A B.----..---...--....-";
+        let decoded = try_decode_mixed_alpha_nosep(input);
+        assert_eq!(
+            decoded.as_deref(),
+            Some("AB1234"),
+            "mixed nosep should skip spaces between letters; got {decoded:?}"
+        );
+    }
+
+    #[test]
+    fn test_mixed_alpha_nosep_rejects_pure_nosep() {
+        // Pure nosep (no alpha) must return None — use existing nosep decoder instead
+        let pure = ".----..---...--....-";
+        assert!(
+            try_decode_mixed_alpha_nosep(pure).is_none(),
+            "pure nosep should not match mixed decoder"
+        );
+    }
+
+    #[test]
+    fn test_mixed_alpha_nosep_rejects_bad_segment_length() {
+        // A morse segment whose length is not a multiple of 5 → None
+        // "A---" has "---" (3 chars), not a multiple of 5
+        assert!(
+            try_decode_mixed_alpha_nosep("A---BCDE").is_none(),
+            "segment of length 3 should reject"
+        );
+    }
+
+    #[test]
+    fn test_mixed_alpha_nosep_rejects_too_few_digits() {
+        // Only 3 digits decoded (< 4 minimum) → None
+        // 3 digit nosep = ".----..---...--" (15 chars)
+        let input = "A.----..---...--";
+        assert!(
+            try_decode_mixed_alpha_nosep(input).is_none(),
+            "3 decoded digits should reject (< 4 minimum)"
+        );
+    }
+
+    #[test]
+    fn test_slash_decoder_multi_char_alpha_token() {
+        // After stage 6b (strip_alnum_adjacent_delimiters), G/B becomes GB and
+        // W/E/S/T becomes WEST in the slash-sep IBAN form.  The slash decoder
+        // must accept all-alpha multi-char tokens as literal passthrough.
+        // digits "82" encoded as "---..'' / "..---"; 4 more digits to meet minimum
+        let input = "GB/---../..---/WEST/.----/..---/...--/....-/...../-..../----./---../--.../-..../...../....-/...--/..---";
+        let decoded = try_decode_digit_morse_slash(input);
+        assert_eq!(
+            decoded.as_deref(),
+            Some("GB82WEST12345698765432"),
+            "multi-char alpha tokens should pass through literally"
+        );
     }
 }

@@ -111,8 +111,11 @@ and `/ready` are unauthenticated (kubelet probes).
 ```
 GET  /health                    pod identity + liveness
 GET  /ready                     readiness probe
+GET  /v1/health/detailed        extended health: versions, uptime, patterns/categories loaded, DB block (connected/latency/findings_count), scan stats
 POST /scan                      text → findings (JSON body: {text, options?})
 POST /scan/batch                [{text, id}] → [{id, findings}]
+POST /v1/scan/explain           scan + per-finding pipeline trace (validation/context/confidence + stage events — "why did this match?")
+GET  /v1/categories             detection categories with pattern_count + sub_categories
 GET  /v1/policies               loaded *.yaml rulesets (read-only)
 GET  /v1/allowlist              current allowlist
 GET  /v1/audit                  recent events from audit ring buffer
@@ -201,20 +204,10 @@ C2 wireframe:
 
 | PR | Branch | Summary |
 |---|---|---|
-| #297 | dependabot/cargo/calamine-0.35.0 | deps: bump calamine 0.34→0.35 |
-| #311 | fix/morse-trim-trailing-whitespace | fix(core): trim trailing whitespace in morse no-sep decoder (in progress) |
-
-### Recently merged (2026-06-21)
-
-| PR | Branch | Summary |
-|---|---|---|
-| #312 | feat/findings-persistence | feat(api): findings persistence to postgres |
-| #313 | feat/findings-history-tab | feat(wireframes): Findings History tab — postgres-backed |
-| #314 | feat/batch-file-scan-persistence | feat(api,fs): findings persistence for batch and file scans |
-| #315 | feat/findings-retention | feat(api): findings retention policy |
-| #318 | feat/siphon-serve | feat(cli): siphon serve subcommand |
-| #320 | feat/lsh-persistence | feat(api): LSH document similarity persistence to postgres |
-| #321 | feat/evadex-persistence | feat(api): evadex adversarial-run persistence to postgres |
+The findings-persistence wave (#312–#321), the retention/export/EDM/LSH/evadex
+work, the admin-console endpoints (#345: categories/explain/detailed-health),
+the kube 4.0 bump (#330), and the 2.3.1 hardening + 2.4.0 record (#362/#360)
+have all merged to `main` — see CHANGELOG `siphon-api 2.3.0`–`2.4.0`.
 
 ### siphon-fs routes
 

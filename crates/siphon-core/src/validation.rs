@@ -924,9 +924,13 @@ pub fn is_valid_us_phone(phone: &str) -> bool {
     if !is_valid_nanp_npa(&digits[..3]) {
         return false;
     }
-    // Exchange code (NXX): positions 3-5. First digit must be 2-9.
+    // Exchange code (NXX): positions 3-5.
+    // Reject 0XX (operator-prefix reserved) and N11 service codes (211/311/…/911).
+    // Accepting 1XX allows non-standard but real-world exchange codes like 123 to
+    // be detected — strict NANP routing requires N=2-9, but DLP should flag any
+    // number that looks like a US phone regardless of routing constraints.
     let exchange = digits.as_bytes();
-    if !(b'2'..=b'9').contains(&exchange[3]) {
+    if exchange[3] == b'0' {
         return false;
     }
     if exchange[4] == b'1' && exchange[5] == b'1' {
@@ -5671,6 +5675,9 @@ mod tests {
         // 11-digit with leading 1.
         assert!(is_valid_us_phone("14155552671"));
         assert!(is_valid_us_phone("1-415-555-2671"));
+        // Exchange code starting with 1 — accepted for DLP (non-standard routing but real-world).
+        assert!(is_valid_us_phone("5551234567")); // exchange 123
+        assert!(is_valid_us_phone("+1 (555) 123-4567")); // formatted +1 NXX variant
     }
 
     #[test]
@@ -5678,9 +5685,8 @@ mod tests {
         // Invalid NPA.
         assert!(!is_valid_us_phone("0155552671")); // NPA 015
         assert!(!is_valid_us_phone("9115552671")); // NPA 911 (N11)
-                                                   // Invalid exchange code (first digit 0 or 1).
+                                                   // Invalid exchange code: first digit 0 (operator-reserved).
         assert!(!is_valid_us_phone("4150555267")); // exchange 055
-        assert!(!is_valid_us_phone("4151555267")); // exchange 155
                                                    // N11 exchange.
         assert!(!is_valid_us_phone("4152115555")); // exchange 211
                                                    // All-same garbage.

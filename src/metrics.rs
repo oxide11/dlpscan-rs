@@ -234,6 +234,7 @@ mod tests {
 
     #[test]
     fn collector_accumulates_fields() {
+        let _guard = CALLBACK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         clear_metrics_callback();
 
         let mut collector = MetricsCollector::new();
@@ -251,6 +252,7 @@ mod tests {
 
     #[test]
     fn callback_is_invoked_on_finish() {
+        let _guard = CALLBACK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = Arc::clone(&counter);
 
@@ -271,6 +273,7 @@ mod tests {
 
     #[test]
     fn clear_callback_prevents_invocation() {
+        let _guard = CALLBACK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = Arc::clone(&counter);
 
