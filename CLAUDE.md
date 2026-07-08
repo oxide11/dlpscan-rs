@@ -193,16 +193,17 @@ Env vars for postgres:
 | `SIPHON_FINDINGS_RETENTION_DAYS` | 90 | Days to retain findings (0 = keep forever) |
 
 C2 wireframe:
-- `docs/wireframes/siphon-c2.html` — FindingsHistory component added
+- `docs/wireframes/siphon-c2.html` — current full-stack C2 dashboard
+- Command palette `Ctrl+K` — full surface search + quick actions, keyboard-navigable
+- LiveScan — `Ctrl+Enter` shortcut, last-5-scan session history, green no-findings banner
+- FindingsHistory tab — sortable columns, CSV export button (`↓ CSV` → `/v1/findings/export`), postgres-backed pagination
 - History tab polls `/v1/findings/stats` every 60s, `/v1/findings/pg` on filter change
-- Live tab unchanged — fans out to `/v1/findings` ring per pod
+- Live tab fans out to `/v1/findings` ring per pod; Adversarial Testing tab shows evadex bridge metrics
 
 ## Open PRs
 
 | PR | Branch | Summary |
 |---|---|---|
-| #349 | fix/morse-regional-context | fix(core): em-dash/en-dash homoglyphs + IBAN mixed-nosep morse decoder |
-
 The findings-persistence wave (#312–#321), the retention/export/EDM/LSH/evadex
 work, the admin-console endpoints (#345: categories/explain/detailed-health),
 the kube 4.0 bump (#330), and the 2.3.1 hardening + 2.4.0 record (#362/#360)

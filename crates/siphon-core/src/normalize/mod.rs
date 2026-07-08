@@ -2419,6 +2419,11 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
         push_if_room(decoded, &mut alternatives, &mut total_bytes);
     }
 
+    // Evadex-style digit-only morse: comma-separated (evadex comma_sep variant).
+    if let Some(decoded) = try_decode_digit_morse_comma(text) {
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    }
+
     // No-separator digit morse. Catches:
     //   1. Original no-sep encoding (.----..---...)
     //   2. Space-sep after normalize_text collapses spaces between non-alpha chars
