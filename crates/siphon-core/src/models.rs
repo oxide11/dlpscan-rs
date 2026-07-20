@@ -161,6 +161,17 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
         "AML Case ID" => 0.60,
         "OFAC SDN Entry" => 0.15,
         "Compliance Case Number" => 0.55,
+        // Financial Crime Reports (AML/CFT filings — FinCEN SAR/CTR, FINTRAC STR/LCTR).
+        // The signature titles and regulator/statute markers are distinctive
+        // multi-word phrases with near-zero false-positive risk, so they run
+        // always (>= 0.85, like TLP markings) rather than via the keyword
+        // prefilter — a SAR/STR title should be detected wherever it appears.
+        "FinCEN SAR Form" => 0.85,
+        "SAR Confidentiality Notice" => 0.88,
+        "FinCEN SAR" | "FinCEN CTR" | "FINTRAC STR" | "FINTRAC LCTR" | "FINTRAC Regime" => 0.85,
+        // Generic legal phrase — must stay keyword-gated (suppressed in
+        // non-AML prose), so kept below the always-run threshold.
+        "Reasonable Grounds To Suspect" => 0.55,
         "PIN Block" => 0.65,
         "HSM Key" => 0.55,
         "Encryption Key" => 0.50,
@@ -494,6 +505,13 @@ pub fn is_context_required(sub_category: &str) -> bool {
             | "Information Barrier"
             | "Inside Information"
             | "Investment Restricted"
+            // AML/CFT filings. The SAR/STR signature titles and statute
+            // markers are distinctive enough to always run, but "reasonable
+            // grounds to suspect" is ordinary legal phrasing that appears in
+            // unrelated prose, so it stays keyword-gated. Its PatternDef
+            // already sets context_required: true; this entry keeps the two
+            // sources in lockstep (see tests/audit_spec.rs).
+            | "Reasonable Grounds To Suspect"
             // Compliance labels
             | "PII Label"
             | "PHI Label"

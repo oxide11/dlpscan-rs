@@ -383,6 +383,92 @@ pub static PATTERNS: &[PatternDef] = &[
         specificity: 0.55,
         context_required: false,
     },
+    // ─── Financial Crime Reports (AML/CFT filings) ───────────────────
+    // Detects the filings *themselves* — FinCEN SARs/CTRs (US, BSA) and
+    // FINTRAC STRs/LCTRs (Canada, PCMLTFA) — via their signature titles,
+    // form numbers, statutory citations, and the tipping-off/no-disclosure
+    // banners these reports legally carry. Distinct from the numeric
+    // "Regulatory Identifiers" above, which match IDs *inside* such reports.
+    PatternDef {
+        category: "Financial Crime Reports",
+        sub_category: "FinCEN SAR",
+        // "Suspicious Activity Report" — the SAR document title.
+        regex: r"\b[Ss]uspicious\s+[Aa]ctivity\s+[Rr]eports?\b",
+        case_insensitive: false,
+        specificity: 0.85,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Financial Crime Reports",
+        sub_category: "FinCEN SAR Form",
+        // FinCEN SAR product markers: "FinCEN Form 111", "FinCEN SAR",
+        // "BSA E-Filing" (the filing channel for BSA reports).
+        regex: r"\b(?:FinCEN\s+(?:Form\s+111|SAR)|BSA\s+E-?Filing)\b",
+        case_insensitive: true,
+        specificity: 0.85,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Financial Crime Reports",
+        sub_category: "FinCEN CTR",
+        // Currency Transaction Report — FinCEN Form 112.
+        regex: r"\b(?:[Cc]urrency\s+[Tt]ransaction\s+[Rr]eports?|FinCEN\s+Form\s+112)\b",
+        case_insensitive: false,
+        specificity: 0.85,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Financial Crime Reports",
+        sub_category: "SAR Confidentiality Notice",
+        // Statutory SAR-confidentiality / anti-tipping-off citations:
+        // 31 U.S.C. 5318(g) and 31 CFR 1020.320. Very high signal — these
+        // strings essentially only appear on/around an actual SAR.
+        // `\s*` and optional `.` tolerate the normalizer stripping the
+        // inter-token space ("U.S.C. 5318" -> "U.S.C.5318") and the dot in
+        // "1020.320" -> "1020320" before matching.
+        regex: r"\b31\s*(?:U\.?S\.?C\.?\s*5318\s*\(g\)|CFR\s*1020\.?320)",
+        case_insensitive: true,
+        specificity: 0.88,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Financial Crime Reports",
+        sub_category: "FINTRAC STR",
+        // "Suspicious Transaction Report" — the FINTRAC STR title.
+        regex: r"\b[Ss]uspicious\s+[Tt]ransaction\s+[Rr]eports?\b",
+        case_insensitive: false,
+        specificity: 0.85,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Financial Crime Reports",
+        sub_category: "FINTRAC LCTR",
+        // Large Cash Transaction Report (Canada).
+        regex: r"\b[Ll]arge\s+[Cc]ash\s+[Tt]ransaction\s+[Rr]eports?\b",
+        case_insensitive: false,
+        specificity: 0.85,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Financial Crime Reports",
+        sub_category: "FINTRAC Regime",
+        // Canada's AML statute + regulator markers: PCMLTFA, FINTRAC /
+        // CANAFE, and the full "Proceeds of Crime (Money Laundering)…" title.
+        regex: r"\b(?:PCMLTFA|FINTRAC|CANAFE|Proceeds\s+of\s+Crime\s+\(Money\s+Laundering\))\b",
+        case_insensitive: true,
+        specificity: 0.85,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Financial Crime Reports",
+        sub_category: "Reasonable Grounds To Suspect",
+        // The FINTRAC STR legal threshold phrase. Appears in general legal
+        // prose too, so gate on money-laundering / STR context keywords.
+        regex: r"\b[Rr]easonable\s+[Gg]rounds\s+to\s+[Ss]uspect\b",
+        case_insensitive: false,
+        specificity: 0.55,
+        context_required: true,
+    },
     PatternDef {
         category: "Banking Authentication",
         sub_category: "PIN Block",
@@ -4786,10 +4872,12 @@ mod tests {
 
     #[test]
     fn test_pattern_count() {
-        // 568 = 560 base + Medical Record Number (HIPAA #8) + 6
+        // 576 = 560 base + Medical Record Number (HIPAA #8) + 6
         // Traffic Light Protocol patterns (TLP:RED, TLP:AMBER,
-        // TLP:AMBER+STRICT, TLP:GREEN, TLP:CLEAR, TLP:WHITE) + VALOR.
-        assert_eq!(PATTERNS.len(), 568);
+        // TLP:AMBER+STRICT, TLP:GREEN, TLP:CLEAR, TLP:WHITE) + VALOR + 8
+        // Financial Crime Reports (FinCEN SAR/CTR/SAR-Form/confidentiality,
+        // FINTRAC STR/LCTR/Regime, Reasonable Grounds To Suspect).
+        assert_eq!(PATTERNS.len(), 576);
     }
 
     #[test]

@@ -1113,6 +1113,101 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
             distance: 50,
         },
     ),
+    // Financial Crime Reports (AML/CFT filings — FinCEN SAR/CTR, FINTRAC STR/LCTR)
+    (
+        "Financial Crime Reports",
+        "FinCEN SAR",
+        ContextEntry {
+            keywords: &[
+                "fincen",
+                "sar",
+                "bsa",
+                "bank secrecy act",
+                "suspicious activity",
+                "filing institution",
+                "31 cfr 1020.320",
+            ],
+            distance: 80,
+        },
+    ),
+    (
+        "Financial Crime Reports",
+        "FinCEN CTR",
+        ContextEntry {
+            keywords: &[
+                "fincen",
+                "ctr",
+                "currency transaction",
+                "cash transaction",
+                "form 112",
+                "bank secrecy act",
+            ],
+            distance: 80,
+        },
+    ),
+    (
+        "Financial Crime Reports",
+        "SAR Confidentiality Notice",
+        ContextEntry {
+            keywords: &[
+                "confidential",
+                "prohibited from disclosing",
+                "tipping off",
+                "shall not disclose",
+                "unlawful to disclose",
+                "safe harbor",
+                "no person shall notify",
+            ],
+            distance: 100,
+        },
+    ),
+    (
+        "Financial Crime Reports",
+        "FINTRAC STR",
+        ContextEntry {
+            keywords: &[
+                "fintrac",
+                "canafe",
+                "str",
+                "pcmltfa",
+                "reporting entity",
+                "money laundering",
+                "terrorist financing",
+            ],
+            distance: 80,
+        },
+    ),
+    (
+        "Financial Crime Reports",
+        "FINTRAC LCTR",
+        ContextEntry {
+            keywords: &[
+                "fintrac",
+                "lctr",
+                "large cash transaction",
+                "reporting entity",
+                "10,000",
+                "cash receipt",
+            ],
+            distance: 80,
+        },
+    ),
+    (
+        "Financial Crime Reports",
+        "Reasonable Grounds To Suspect",
+        ContextEntry {
+            keywords: &[
+                "fintrac",
+                "str",
+                "suspicious transaction",
+                "money laundering",
+                "terrorist financing",
+                "pcmltfa",
+                "reporting entity",
+            ],
+            distance: 80,
+        },
+    ),
     // Banking Authentication
     (
         "Banking Authentication",

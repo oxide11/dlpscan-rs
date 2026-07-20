@@ -1182,3 +1182,98 @@ fn test_classification_blocks_even_when_preset_omits_category() {
         DlpError::ClassificationPolicyViolation { .. }
     ));
 }
+
+// ─── Financial Crime Reports (AML/CFT filings) ───────────────────────
+// FinCEN SARs/CTRs (US) and FINTRAC STRs/LCTRs (Canada). These detect the
+// filing documents themselves so DLP can flag/block their exfiltration.
+
+#[test]
+fn test_detects_fincen_sar_title() {
+    let matches = scan_text("CONFIDENTIAL — Suspicious Activity Report filed with FinCEN").unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "FinCEN SAR"),
+        "should detect the SAR document title"
+    );
+}
+
+#[test]
+fn test_detects_fincen_sar_form() {
+    let matches = scan_text("Attached: FinCEN Form 111 submitted via BSA E-Filing").unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "FinCEN SAR Form"),
+        "should detect FinCEN SAR form / BSA E-Filing markers"
+    );
+}
+
+#[test]
+fn test_detects_fincen_ctr() {
+    let matches = scan_text("Currency Transaction Report for cash deposit over $10,000").unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "FinCEN CTR"),
+        "should detect a CTR"
+    );
+}
+
+#[test]
+fn test_detects_sar_confidentiality_notice() {
+    let matches =
+        scan_text("Disclosure is prohibited under 31 U.S.C. 5318(g) and 31 CFR 1020.320.").unwrap();
+    assert!(
+        matches
+            .iter()
+            .any(|m| m.sub_category == "SAR Confidentiality Notice"),
+        "should detect the SAR-confidentiality statutory citation"
+    );
+}
+
+#[test]
+fn test_detects_fintrac_str_title() {
+    let matches = scan_text("Suspicious Transaction Report submitted to FINTRAC").unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "FINTRAC STR"),
+        "should detect the FINTRAC STR title"
+    );
+}
+
+#[test]
+fn test_detects_fintrac_regime() {
+    let matches =
+        scan_text("Reporting obligations under the PCMLTFA administered by FINTRAC/CANAFE")
+            .unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "FINTRAC Regime"),
+        "should detect FINTRAC/PCMLTFA regime markers"
+    );
+}
+
+#[test]
+fn test_detects_fintrac_lctr() {
+    let matches = scan_text("Large Cash Transaction Report filed by the reporting entity").unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "FINTRAC LCTR"),
+        "should detect a FINTRAC LCTR"
+    );
+}
+
+#[test]
+fn test_reasonable_grounds_context_gated() {
+    // Context-required: fires when money-laundering context is present…
+    let with_ctx =
+        scan_text("The reporting entity has reasonable grounds to suspect money laundering.")
+            .unwrap();
+    assert!(
+        with_ctx
+            .iter()
+            .any(|m| m.sub_category == "Reasonable Grounds To Suspect"),
+        "should fire with STR/AML context nearby"
+    );
+    // …and is suppressed in unrelated legal prose (no AML keywords).
+    let no_ctx =
+        scan_text("The court found reasonable grounds to suspect the witness lied.").unwrap();
+    assert!(
+        !no_ctx
+            .iter()
+            .any(|m| m.sub_category == "Reasonable Grounds To Suspect"),
+        "should be suppressed without AML/STR context"
+    );
+}
