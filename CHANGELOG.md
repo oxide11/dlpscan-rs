@@ -16,6 +16,27 @@ starting from this file.
 
 ## 2026-07-22
 
+### siphon-core 2.2.2
+
+- fix(core): eliminate a normalization denial-of-service. `collapse_padding`
+  was O(n²) — it rescanned forward from every whitespace byte — so a
+  mostly-whitespace input (accepted up to the 10 MB limit; the scan timeout
+  is only checked after normalization) could pin a core for minutes: a
+  512 KiB whitespace run took ~86 s. The run is now processed in one step;
+  the same input normalizes in 7.7 ms and a 4 MB run in 93 ms.
+- fix(core): `scan_high_entropy_tokens` (optional entropy-scan modes) panicked
+  on non-ASCII input. The Gated context window sliced a separately-lowercased
+  string with offsets from the un-lowercased text, and the Assignment prefix
+  window sliced at a fixed byte offset without snapping to a UTF-8 char
+  boundary — both could land mid-sequence. Windows are now char-boundary-safe.
+- fix(core): entropy-token span mapping used the multibyte-corrupting
+  `offset_map[norm_end-1]+1` form; aligned it to `offset_map[norm_end]` to
+  match the primary regex path.
+- fix(core): `decode_hex_escapes` mojibake-corrupted non-ASCII text (and
+  desynced the offset map) whenever a literal `\x` escape was present, by
+  copying passthrough bytes through `char` (Latin-1 reinterpretation). It now
+  buffers raw bytes like every other byte-level normalization stage.
+
 ### siphon-core 2.2.1
 
 - fix(core): `pattern_specificity()` had three dead map keys that matched
