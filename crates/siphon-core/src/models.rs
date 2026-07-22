@@ -174,7 +174,15 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
 
         // Contact Info
         "Email Address" => 0.90,
-        "Phone Number (E.164)" => 0.70,
+        // NB: no entry for "E.164 Phone Number" — it intentionally uses
+        // DEFAULT_SPECIFICITY (0.40) like "US Phone Number" and
+        // "UK Phone Number", so the country-specific phone patterns win
+        // dedup ties over the generic E.164 shape. An earlier revision
+        // carried a dead "Phone Number (E.164)" => 0.70 key here that
+        // matched no pattern; raising E.164 above the country patterns
+        // makes the generic label win dedup and mislabels findings
+        // (caught by tests/detection_quality.rs), so the key was removed
+        // rather than renamed.
         "IPv4 Address" => 0.60,
         "IPv6 Address" => 0.80,
         "MAC Address" => 0.80,
@@ -217,7 +225,7 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
         "Bearer Token" => 0.80,
         "JWT Token" => 0.95,
         "Private Key" => 0.95,
-        "API Key Generic" | "Generic API Key" => 0.50,
+        "Generic API Key" => 0.50,
         "Database Connection String" => 0.90,
         "AWS Access Key" => 0.95,
         "AWS Secret Key" => 0.90,
@@ -227,7 +235,12 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
         "Stripe Secret Key" => 0.95,
         "Stripe Publishable Key" => 0.85,
         "Slack Bot Token" | "Slack User Token" => 0.95,
-        "Slack Webhook URL" => 0.90,
+        // NB: the real sub_category name is "Slack Webhook" — an earlier
+        // revision keyed this as "Slack Webhook URL", which matched no
+        // pattern and silently left the webhook pattern at
+        // DEFAULT_SPECIFICITY = 0.40 despite its highly specific
+        // hooks.slack.com regex.
+        "Slack Webhook" => 0.90,
         "SendGrid API Key" => 0.95,
         "Twilio API Key" | "Mailgun API Key" => 0.90,
 
@@ -405,6 +418,9 @@ pub fn is_context_required(sub_category: &str) -> bool {
             | "Australia Passport"         // 1-2 letters + 7 digits
             | "Australia Medicare"         // 4-6 + 9 digits (loose shape)
             | "Saudi Arabia National ID"   // 1 or 2 + 9 digits
+            | "Malta TIN"                  // 7 digits + letter
+            | "Chile RUN/RUT"              // 7-8 digits + check char (loose seps)
+            | "Tanzania NIDA"              // bare 20-digit run
             // US MBI (Medicare Beneficiary Identifier) has a very
             // tight 11-character structural pattern (specific
             // digit/letter positions, excluded-letter alphabet)

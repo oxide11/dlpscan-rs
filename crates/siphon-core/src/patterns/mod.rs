@@ -1,6 +1,6 @@
 //! All DLP regex patterns, ported from the Python dlpscan codebase.
 //!
-//! Contains 560 pattern definitions covering credit cards, banking, PII,
+//! Contains 568 pattern definitions covering credit cards, banking, PII,
 //! secrets, cryptocurrency, classification labels, cloud providers, code
 //! platforms, payment services, messaging services, and regional identifiers
 //! for North America, Europe, Asia-Pacific, Latin America, Middle East, and
@@ -1511,7 +1511,7 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "Slack Webhook",
         regex: r"https://hooks\.slack\.com/services/T[A-Za-z0-9]+/B[A-Za-z0-9]+/[A-Za-z0-9]+",
         case_insensitive: false,
-        specificity: 0.40,
+        specificity: 0.90,
         context_required: false,
     },
     PatternDef {

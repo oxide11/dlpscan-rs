@@ -6373,7 +6373,6 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "hetu",
                 "finnish personal identity",
                 "personal identity code",
-                "henkilotunnus",
             ],
             distance: 50,
         },
