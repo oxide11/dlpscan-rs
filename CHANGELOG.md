@@ -14,6 +14,27 @@ starting from this file.
 
 ---
 
+## 2026-07-22
+
+### siphon-core 2.2.1
+
+- fix(core): `pattern_specificity()` had three dead map keys that matched
+  no pattern sub_category. `"Slack Webhook URL"` => 0.90 was renamed to
+  the real `"Slack Webhook"` name — the webhook pattern had been silently
+  falling back to the 0.40 default and now scores 0.90. The dead
+  `"Phone Number (E.164)"` and `"API Key Generic"` keys were removed
+  (E.164 intentionally stays at the calibrated 0.40 default so the
+  country-specific phone patterns win dedup ties).
+- fix(core): `is_context_required()` was missing Malta TIN, Chile
+  RUN/RUT, and Tanzania NIDA, which the corresponding `PatternDef`
+  entries mark context-required — the `context_required_drift_zero`
+  audit test failed. Runtime behavior is unchanged (the scanner ORs both
+  sources); the lists are back in lockstep.
+- docs: `docs/PATTERNS.md` and `docs/KEYWORDS.md` are now generated from
+  the scanner sources by `scripts/gen-pattern-docs.py` (with a `--check`
+  mode), fixing 5 missing patterns, 8 missing keyword groups, 174 stale
+  specificity/context values, and 7 outdated regexes in the docs.
+
 ## 2026-07-08
 
 ### siphon-core 2.2.0
