@@ -5,9 +5,17 @@
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
 
-  // Custom domain is attached separately (see README). Once the route is
-  // added, siphon.polygoncyber.com resolves to this Worker, which forwards
-  // to the container.
+  // Custom domain, declared here so deploys are fully reproducible from CI
+  // rather than needing dashboard clicks. Cloudflare creates the DNS record
+  // and issues the certificate on first deploy. The zone must already be
+  // active on the account.
+  "routes": [
+    {
+      "pattern": "siphon.polygoncyber.com",
+      "custom_domain": true
+    }
+  ],
+
   "observability": {
     "enabled": true
   },

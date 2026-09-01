@@ -40,30 +40,45 @@ from client input, so it is trustworthy at this hop.
 ## Prerequisites
 
 - A Cloudflare account on **Workers Paid** ($5/mo) — Containers requires it.
-- The domain active on Cloudflare.
-- Docker running locally (Wrangler builds and pushes the image).
-- `linux/amd64` build output. On Apple Silicon, Wrangler handles this, but a
-  manual `docker build` needs `--platform linux/amd64`.
+- The domain active on Cloudflare (the zone must exist; the DNS record and
+  certificate are created for you on first deploy).
 
-## Deploy
+## Deploy via CI (recommended)
+
+`.github/workflows/deploy-cloudflare.yml` builds and deploys on pushes to
+`main` that touch `deploy/cloudflare/**` or `deploy/Dockerfile.api`, and on
+manual dispatch. Pull requests run typecheck only and never deploy.
+
+One-time setup — add three **repository secrets** (GitHub → Settings →
+Secrets and variables → Actions):
+
+| Secret | Where it comes from |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard → My Profile → API Tokens. Needs Workers Scripts:Edit and Containers permissions on the zone. |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard → Workers & Pages (right sidebar). |
+| `SIPHON_API_KEY` | Any strong random string you generate. Uploaded to the Worker as a secret on every deploy, so rotating it is just a secret change. |
+
+Then run the workflow (Actions → **deploy-cloudflare** → Run workflow), or
+merge a change under `deploy/cloudflare/`. The hostname in `wrangler.jsonc`
+`routes` is created automatically — no dashboard clicking.
+
+The deploy job builds `deploy/Dockerfile.api`, a full cargo release build of
+the workspace, so it is substantially slower than `ci.yml`. It is
+path-filtered so ordinary pushes never trigger it.
+
+## Deploy from a laptop (alternative)
+
+Only needed if you want to deploy without CI. Requires Docker running
+locally, since Wrangler shells out to it to build the image.
 
 ```bash
 cd deploy/cloudflare
 npm install
-
-# Upstream API key. The Worker injects this so demo callers need no
-# credential of their own; the demo's protection is the edge rate limit
-# and the path allowlist.
-wrangler secret put SIPHON_API_KEY
-
+wrangler secret put SIPHON_API_KEY   # one-time
 npm run deploy
 ```
 
-Then attach the hostname — Workers → `siphon-demo` → Settings → Domains &
-Routes → **Add custom domain** → `siphon.<your-domain>`. Cloudflare creates
-the DNS record and issues the certificate.
-
-Verify:
+## Verify
 
 ```bash
 curl https://siphon.<your-domain>/health

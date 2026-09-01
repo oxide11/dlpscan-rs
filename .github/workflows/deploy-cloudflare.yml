@@ -1,0 +1,115 @@
+name: deploy-cloudflare
+
+# Deploys the Siphon demo (deploy/cloudflare) to Cloudflare Workers +
+# Containers.
+#
+#   · PR touching deploy/cloudflare/**  → validate only (typecheck, no deploy)
+#   · push to `main` touching those paths → deploy
+#   · manual run                         → deploy from the chosen branch
+#
+# Deploying builds deploy/Dockerfile.api, which is a full cargo release
+# build of the workspace — expect this job to take considerably longer than
+# ci.yml. It is path-filtered so ordinary pushes never trigger it.
+#
+# Required repository secrets:
+#   CLOUDFLARE_API_TOKEN   token with Workers Scripts:Edit + Workers R2/
+#                          Containers permissions for the zone
+#   CLOUDFLARE_ACCOUNT_ID  target account
+#   SIPHON_API_KEY         upstream API key the Worker injects; uploaded to
+#                          the Worker as a secret on every deploy
+on:
+  pull_request:
+    paths: ['deploy/cloudflare/**', '.github/workflows/deploy-cloudflare.yml']
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/cloudflare/**'
+      - 'deploy/Dockerfile.api'
+      - '.github/workflows/deploy-cloudflare.yml'
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy (false = validate only)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: deploy/cloudflare
+
+jobs:
+  validate:
+    name: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: deploy/cloudflare/package-lock.json
+
+      - run: npm ci
+      - run: npm run typecheck
+
+  deploy:
+    name: deploy
+    needs: validate
+    # Never deploy from a pull request — a fork PR must not be able to push
+    # to the live Worker.
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy)
+    runs-on: ubuntu-latest
+    environment: siphon-demo
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: deploy/cloudflare/package-lock.json
+
+      - run: npm ci
+
+      # wrangler shells out to the Docker CLI to build the container image
+      # before uploading it. ubuntu-latest ships Docker, so no setup step is
+      # needed, but the image must be linux/amd64 — which is the runner's
+      # native architecture, so no emulation is involved.
+      - name: Deploy Worker + Container
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: deploy/cloudflare
+          # Uploads SIPHON_API_KEY as a Worker secret as part of the deploy,
+          # so it never needs to be set by hand and rotating it is just a
+          # change to the repository secret.
+          secrets: |
+            SIPHON_API_KEY
+        env:
+          SIPHON_API_KEY: ${{ secrets.SIPHON_API_KEY }}
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          # First request after a deploy wakes a cold container, which pays
+          # the ~324 ms regex/automaton init plus container start, so allow
+          # generous time and a few attempts before calling it a failure.
+          for attempt in 1 2 3 4 5; do
+            code=$(curl -sS -o /tmp/health.txt -w '%{http_code}' \
+              --max-time 60 https://siphon.polygoncyber.com/health || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "health ok: $(cat /tmp/health.txt)"
+              exit 0
+            fi
+            echo "attempt $attempt: HTTP $code, retrying..."
+            sleep 15
+          done
+          echo "health check never returned 200" >&2
+          exit 1
