@@ -1,0 +1,70 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "siphon-demo",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Custom domain is attached separately (see README). Once the route is
+  // added, siphon.polygoncyber.com resolves to this Worker, which forwards
+  // to the container.
+  "observability": {
+    "enabled": true
+  },
+
+  // ── Container ────────────────────────────────────────────────────
+  // `image` points at the repo's existing API Dockerfile. The build
+  // context is the repo root because Dockerfile.api COPYs the whole
+  // workspace (Cargo.toml, crates/, src/) for the cargo build.
+  //
+  // instance_type sizing — Siphon is CPU-bound (rayon fans 568 regexes
+  // across cores) and memory-light (Helm asks 256Mi, limit 1Gi), but
+  // Cloudflare bills memory on *provisioned* capacity and custom
+  // instances enforce >= 3 GiB per vCPU. "standard-1" (1/2 vCPU, 4 GiB)
+  // is the pragmatic demo pick: "basic" (1/4 vCPU) roughly doubles the
+  // cold-start penalty measured below, and "standard-2" (1 vCPU, 6 GiB)
+  // costs ~50% more memory-hours for a demo that is idle most of the day.
+  "containers": [
+    {
+      "class_name": "SiphonContainer",
+      "image": "../Dockerfile.api",
+      "image_build_context": "../..",
+      "instance_type": "standard-1",
+      "max_instances": 2
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SIPHON",
+        "class_name": "SiphonContainer"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["SiphonContainer"]
+    }
+  ],
+
+  // ── Edge rate limiting ───────────────────────────────────────────
+  // siphon-api's own SIPHON_RATE_LIMIT is per-IP via ConnectInfo<SocketAddr>
+  // and has no CF-Connecting-IP / X-Forwarded-For handling, so behind any
+  // proxy every request appears to come from one address and the limit
+  // collapses to a single global bucket. For a public demo that is both an
+  // abuse vector and a self-DoS, so the real limit is enforced here at the
+  // edge, keyed on the true client IP.
+  "ratelimits": [
+    {
+      "name": "DEMO_LIMITER",
+      "namespace_id": "1001",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    }
+  ]
+}
