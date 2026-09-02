@@ -50,8 +50,16 @@ updates:
           - patch
 
   # ── Docker base images ────────────────────────────────────────
-  # rust:1.95-bookworm + debian:bookworm-slim. Weekly check for
+  # rust:1.98-bookworm + debian:bookworm-slim. Weekly check for
   # security updates + newer rust minors.
+  #
+  # NOTE on rust:* bumps: a Dockerfile-only bump cannot be merged.
+  # rust-toolchain.toml is not copied into the image build, so the base
+  # image tag alone decides which compiler builds the shipped binary —
+  # letting it drift from CI means shipping artifacts built by a compiler
+  # CI never tested. scripts/check-version-sync.sh enforces this and will
+  # fail such a PR. Treat a rust:* bump as a signal to do the coordinated
+  # five-place upgrade described in CLAUDE.md, then close the bot's PR.
   - package-ecosystem: docker
     directory: /deploy
     schedule:

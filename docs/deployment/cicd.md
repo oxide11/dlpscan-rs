@@ -15,7 +15,7 @@ actually be published.
 | release | `release.yml` | `main`, `v*` tags, dispatch |
 | deploy-cloudflare | `deploy-cloudflare.yml` | `deploy/cloudflare/**` changes, dispatch |
 
-The toolchain is pinned to **Rust 1.95** in every workflow, matching
+The toolchain is pinned to **Rust 1.98** in every workflow, matching
 `rust-toolchain.toml` and each `Cargo.toml`'s `rust-version`. Bump all of
 them together (see `CLAUDE.md` → Toolchain).
 
@@ -180,7 +180,7 @@ variables:
 
 check:
   stage: check
-  image: rust:1.95
+  image: rust:1.98
   script:
     - cargo fmt --check
     - cargo clippy --lib -- -D warnings -A dead-code -A unused-imports
@@ -188,7 +188,7 @@ check:
 
 test:
   stage: test
-  image: rust:1.95
+  image: rust:1.98
   script:
     - cargo test --lib
     - cargo test --test integration_test

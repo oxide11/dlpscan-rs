@@ -3,6 +3,11 @@
 //! Designed for maximum throughput using RegexSet two-phase matching, zero-copy
 //! scanning, and rayon parallelism.
 
+// See the matching note in siphon-core/src/lib.rs — `chunks_exact` is kept
+// deliberately over Rust 1.98 clippy's `as_chunks` suggestion (here the call
+// site is the UTF-16 reader in `extractors`).
+#![allow(clippy::chunks_exact_to_as_chunks)]
+
 // Re-export siphon-core modules so existing `crate::models`, `crate::scanner`, etc.
 // references in this crate keep compiling unchanged.
 pub use siphon_core::classification;

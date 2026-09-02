@@ -8,6 +8,16 @@
 //! Ingestion pods (siphon-fs, siphon-api, siphon-ds, siphon-gw)
 //! depend on this crate for detection logic.
 
+// Rust 1.98's clippy added `chunks_exact_to_as_chunks`, which suggests
+// rewriting `chunks_exact(N)` as `as_chunks::<N>().0`. We keep
+// `chunks_exact`: the call sites are the morse-digit decoders in
+// `normalize` and the OLE string reader in `forensics::legacy_office`,
+// and `as_chunks` yields `&[u8; N]` rather than `&[u8]`. That breaks the
+// `*code == chunk` comparisons against `MORSE_DIGITS: &[(&[u8], u8)]`
+// and would mean editing evasion-critical decode paths for a style
+// preference. The existing form is correct and clearer here.
+#![allow(clippy::chunks_exact_to_as_chunks)]
+
 pub mod audit;
 pub mod bin_lookup;
 pub mod classification;

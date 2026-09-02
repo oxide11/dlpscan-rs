@@ -4,7 +4,7 @@ version = "2.2.2"
 edition = "2021"
 description = "Polygon Siphon scanner engine — patterns, validators, and detection pipeline"
 license = "MIT"
-rust-version = "1.95"
+rust-version = "1.98"
 
 [dependencies]
 regex = "1"

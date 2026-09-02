@@ -127,6 +127,42 @@ chart_app_ver="$(awk -F\" '/^appVersion:/{print $2; exit}' deploy/helm/siphon/Ch
 check "  deploy/helm/siphon/Chart.yaml appVersion" "${root_ver}" "${chart_app_ver}"
 
 # ---------------------------------------------------------------------------
+# Rust toolchain lockstep
+# ---------------------------------------------------------------------------
+# CLAUDE.md pins the toolchain in five places that must move together:
+# rust-toolchain.toml, every crate's `rust-version`, the CI workflows, and
+# the Dockerfile base images. The Dockerfiles matter most and were the ones
+# nothing checked: rust-toolchain.toml is NOT copied into the image build
+# (see the COPY list in deploy/Dockerfile.api), so there is no rustup
+# override inside the container — the base image tag alone decides which
+# compiler builds the shipped binary. When it drifts from the CI toolchain,
+# production artifacts are built by a compiler that CI never tested against,
+# silently. That is exactly what happened: the Dockerfiles sat on 1.96 while
+# everything else was on 1.95.
+rust_toolchain_ver="$(awk -F\" '/^channel[[:space:]]*=/{print $2; exit}' rust-toolchain.toml)"
+echo "rust toolchain ${rust_toolchain_ver}"
+
+for f in Cargo.toml crates/*/Cargo.toml; do
+    rv="$(awk -F\" '/^rust-version[[:space:]]*=/{print $2; exit}' "$f")"
+    [[ -n "${rv}" ]] && check "  ${f} rust-version" "${rust_toolchain_ver}" "${rv}"
+done
+
+for f in deploy/Dockerfile deploy/Dockerfile.api deploy/Dockerfile.fs; do
+    bv="$(awk '/^FROM rust:/{sub(/^FROM rust:/, ""); sub(/-.*$/, ""); print; exit}' "$f")"
+    check "  ${f} base image" "${rust_toolchain_ver}" "${bv}"
+done
+
+# CI workflows pin the toolchain explicitly per job.
+while read -r wf ver; do
+    check "  ${wf} toolchain" "${rust_toolchain_ver}" "${ver}"
+done < <(grep -hoE '^\s*toolchain: "[0-9.]+"' -r .github/workflows/*.yml >/dev/null 2>&1; \
+         grep -rlE '^\s*toolchain: "[0-9.]+"' .github/workflows/*.yml 2>/dev/null | while read -r f; do
+             grep -oE '^\s*toolchain: "[0-9.]+"' "$f" | grep -oE '[0-9.]+' | sort -u | while read -r v; do
+                 echo "${f} ${v}"
+             done
+         done)
+
+# ---------------------------------------------------------------------------
 # siphon-core + siphon-launcher: standalone — no downstream artifacts to
 # check. Their versions live only in their own Cargo.toml.
 # ---------------------------------------------------------------------------
