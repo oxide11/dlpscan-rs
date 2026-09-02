@@ -332,6 +332,46 @@ first time someone finds a large, convenient dataset.
 documents may serve as *carriers* only after passing the screening gate below.
 The sensitive values themselves are always synthetic.
 
+### Exemption: official public records of officials acting in official capacity
+
+Added 2026-09-02 by owner decision, after the legislative directories below
+proved their value. This is a **narrow, bounded** carve-out from the "no real
+personal data" rule, not a softening of it.
+
+Such records may be committed to the repository **as-is** when *all* of the
+following hold:
+
+1. Published by a government or public body, either under a legal mandate or
+   deliberately for public use.
+2. It concerns individuals **acting in an official or institutional capacity** —
+   an elected representative, a public office holder.
+3. The contact details are **institutional**: office telephone, office address,
+   official email. Never home addresses, personal mobiles or private email.
+4. Freely accessible without authentication, and not disallowed by the
+   publisher's `robots.txt`.
+5. Provenance is recorded — source URL, retrieval date, publishing authority —
+   in a `PROVENANCE.md` beside the data.
+
+Currently exercised by `tests/corpus/public_records/`.
+
+**The exemption does not reach**, and no argument from "it is public" extends
+it to:
+
+- Breach dumps and leaked databases. Unchanged and absolute.
+- Scraped or brokered consumer directories.
+- Personal contact details of private individuals, however obtained.
+- Records that are *about* a person rather than about their office. Public
+  sector compensation disclosures sit exactly on this boundary: lawfully
+  published under statute, but a named individual's salary is personal
+  information rather than institutional contact data. Treat case by case, and
+  prefer using such sources as **negative** corpora — documents where the
+  scanner should find little — over retaining the personal fields.
+
+The distinction the exemption turns on is **institutional versus personal**,
+not **public versus private**. A minister's switchboard number is the
+organisation's data; their home number would not be, even if a newspaper
+printed it.
+
 ### Permitted
 
 - **Public-domain or openly licensed documents, used as carriers.**

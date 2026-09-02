@@ -76,6 +76,15 @@ jobs:
       # regressions had no automated signal. Both fixed; keep it green.
       - name: Detection quality (labelled corpus)
         run: cargo test --test detection_quality
+      # Detection baselines against real public-record documents (legislative
+      # directories of elected representatives). Unlike every other suite these
+      # are documents we did not write, so they measure behaviour on real-world
+      # formatting rather than on fixtures that encode what we already expected.
+      # Several assertions pin known defects at today's numbers so they cannot
+      # silently worsen; a failure here caused by *better* detection means the
+      # baseline should be re-derived and raised.
+      - name: Public records baselines
+        run: cargo test --test public_records_test
 
   clippy:
     name: Clippy
