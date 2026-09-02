@@ -1448,7 +1448,24 @@ fn scan_high_entropy_tokens(
     config: &ScanConfig,
 ) -> Vec<Match> {
     let mut results = Vec::new();
-    let normalized_lower = normalized.to_lowercase();
+
+    // Snap a byte offset down/up to the nearest UTF-8 char boundary in
+    // `normalized`. Entropy windows are computed by subtracting/adding a
+    // fixed byte budget from a regex match offset, which can land inside
+    // a multibyte sequence; slicing there would panic. `norm_start` /
+    // `norm_end` themselves are always boundaries (regex match bounds).
+    let floor_boundary = |mut b: usize| {
+        while b > 0 && !normalized.is_char_boundary(b) {
+            b -= 1;
+        }
+        b
+    };
+    let ceil_boundary = |mut b: usize| {
+        while b < normalized.len() && !normalized.is_char_boundary(b) {
+            b += 1;
+        }
+        b
+    };
 
     // Walk non-delimiter runs in a single regex pass. The previous
     // implementation tokenized via `split(delimiters)` and then
@@ -1492,10 +1509,16 @@ fn scan_high_entropy_tokens(
         // Apply gating based on mode
         let (has_context, sub_category) = match config.entropy_scan {
             EntropyMode::Gated => {
-                // Check if any context keyword appears within 80 chars
-                let search_start = norm_start.saturating_sub(80);
-                let search_end = (norm_end + 80).min(normalized_lower.len());
-                let context_window = &normalized_lower[search_start..search_end];
+                // Check if any context keyword appears within ~80 bytes.
+                // Snap both ends to char boundaries so the slice is valid
+                // on multibyte input, then lowercase just the window
+                // (previously the whole normalized string was lowercased
+                // up front and sliced with offsets from the un-lowercased
+                // string — a boundary/length mismatch that could panic
+                // when a char's lowercase form has a different byte length).
+                let search_start = floor_boundary(norm_start.saturating_sub(80));
+                let search_end = ceil_boundary((norm_end + 80).min(normalized.len()));
+                let context_window = normalized[search_start..search_end].to_lowercase();
                 let found = ENTROPY_CONTEXT_KEYWORDS
                     .iter()
                     .any(|kw| context_window.contains(kw));
@@ -1505,8 +1528,11 @@ fn scan_high_entropy_tokens(
                 (true, "Potential Secret (Context)")
             }
             EntropyMode::Assignment => {
-                // Check if preceded by an assignment pattern (key=, "key":, export KEY=)
-                let prefix_start = norm_start.saturating_sub(60);
+                // Check if preceded by an assignment pattern (key=, "key":,
+                // export KEY=). Snap the window start to a char boundary —
+                // `norm_start - 60` can land inside a multibyte sequence and
+                // slicing there would panic on non-ASCII input.
+                let prefix_start = floor_boundary(norm_start.saturating_sub(60));
                 let prefix = &normalized[prefix_start..norm_start];
                 if !ASSIGNMENT_RE.is_match(prefix) {
                     continue;
@@ -1523,15 +1549,20 @@ fn scan_high_entropy_tokens(
             continue;
         }
 
-        // Map back to original text position
+        // Map normalized byte positions back to original byte positions.
+        // Use `offset_map[norm_end]` (the start of the byte after the
+        // match) rather than the old `offset_map[norm_end - 1] + 1`, which
+        // corrupted spans whenever the original byte at that position was
+        // part of a multibyte UTF-8 sequence — the same fix already applied
+        // to the primary regex path above.
         let (orig_start, orig_end) = if !offset_map.is_empty() {
             let os = if norm_start < offset_map.len() {
                 offset_map[norm_start]
             } else {
-                continue;
+                original_text.len()
             };
-            let oe = if norm_end > 0 && norm_end <= offset_map.len() {
-                offset_map[norm_end - 1] + 1
+            let oe = if norm_end < offset_map.len() {
+                offset_map[norm_end]
             } else {
                 original_text.len()
             };
@@ -1649,6 +1680,50 @@ mod tests {
     fn test_scan_email() {
         let result = scan_text("Contact us at test@example.com for info.").unwrap();
         assert!(result.iter().any(|m| m.sub_category == "Email Address"));
+    }
+
+    /// Regression: the entropy scanner sliced its context/assignment
+    /// windows at fixed byte offsets that could land inside a multibyte
+    /// UTF-8 sequence, panicking on non-ASCII input. All three entropy
+    /// modes must complete without panicking when a high-entropy token
+    /// is surrounded by multibyte characters.
+    #[test]
+    fn entropy_scan_multibyte_no_panic() {
+        let high_entropy = "Xq7Zp2Rv9Lm4Nt8Bw3Yh6Jd1Fg5Sc0";
+        let cases = [
+            // Assignment mode: multibyte chars in the 60-byte prefix window.
+            (
+                EntropyMode::Assignment,
+                format!("{} k={high_entropy}", "é".repeat(45)),
+            ),
+            // Gated mode: multibyte chars in the ±80-byte context window,
+            // including 'İ' whose lowercase form is a different byte length.
+            (
+                EntropyMode::Gated,
+                format!("{} secret {high_entropy}", "İ".repeat(80)),
+            ),
+            // All mode: multibyte on both sides of the token.
+            (
+                EntropyMode::All,
+                format!("{}{high_entropy}{}", "ü".repeat(30), "ß".repeat(30)),
+            ),
+        ];
+        for (mode, text) in cases {
+            let config = ScanConfig {
+                entropy_scan: mode,
+                ..Default::default()
+            };
+            let r = scan_text_with_config(&text, &config);
+            assert!(r.is_ok(), "{mode:?} panicked/errored on multibyte input");
+            // Any emitted span must be a valid char boundary in the original.
+            for m in r.unwrap() {
+                assert!(
+                    text.is_char_boundary(m.span.0) && text.is_char_boundary(m.span.1),
+                    "{mode:?} produced a non-char-boundary span {:?}",
+                    m.span
+                );
+            }
+        }
     }
 
     #[test]

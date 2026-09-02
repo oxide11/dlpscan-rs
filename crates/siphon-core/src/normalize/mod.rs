@@ -526,34 +526,55 @@ fn collapse_padding(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
         return (input.to_string(), in_offsets.to_vec());
     }
 
+    let is_ws = |c: u8| c == b' ' || c == b'\n' || c == b'\r' || c == b'\t';
+
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut offsets = Vec::with_capacity(bytes.len());
+    // Last non-whitespace byte already emitted to `out` — i.e. the
+    // "previous non-whitespace byte in output". Tracked incrementally
+    // rather than rescanned, since dropped/kept whitespace never changes
+    // it (the old reverse `find` skipped whitespace anyway).
+    let mut prev_non_ws: Option<u8> = None;
     let mut i = 0;
 
     while i < bytes.len() {
         let b = bytes[i];
-        if b == b' ' || b == b'\n' || b == b'\r' || b == b'\t' {
-            // Find previous non-whitespace byte in output
-            let prev_non_ws = out
-                .iter()
-                .rev()
-                .find(|&&c| c != b' ' && c != b'\n' && c != b'\r' && c != b'\t')
-                .copied();
-            // Find next non-whitespace byte in input
-            let next_non_ws = bytes[i + 1..]
-                .iter()
-                .find(|&&c| c != b' ' && c != b'\n' && c != b'\r' && c != b'\t')
-                .copied();
+        if is_ws(b) {
+            // Process the whole whitespace run at once. Both the previous
+            // non-ws byte (constant during the run) and the next non-ws
+            // byte (the first non-ws after the run) are identical for
+            // every byte in the run, so the original per-byte drop
+            // decision is uniform across the run — we compute it once.
+            //
+            // Perf: the previous implementation rescanned forward from
+            // every whitespace byte to find the next non-ws, which is
+            // O(k^2) for a run of length k and a remotely-triggerable DoS
+            // on large whitespace-padded inputs (a 512 KiB space run took
+            // ~86 s). Handling the run in one step makes this O(n).
+            let run_start = i;
+            let mut j = i;
+            while j < bytes.len() && is_ws(bytes[j]) {
+                j += 1;
+            }
+            let next_non_ws = bytes.get(j).copied();
 
-            if let (Some(p), Some(n)) = (prev_non_ws, next_non_ws) {
-                if !p.is_ascii_alphabetic() && !n.is_ascii_alphabetic() {
-                    i += 1;
-                    continue;
+            let drop_run = matches!(
+                (prev_non_ws, next_non_ws),
+                (Some(p), Some(n)) if !p.is_ascii_alphabetic() && !n.is_ascii_alphabetic()
+            );
+
+            if !drop_run {
+                for (off, &byte) in bytes[run_start..j].iter().enumerate() {
+                    out.push(byte);
+                    offsets.push(orig_offset(in_offsets, run_start + off));
                 }
             }
+            i = j;
+            continue;
         }
         out.push(b);
         offsets.push(orig_offset(in_offsets, i));
+        prev_non_ws = Some(b);
         i += 1;
     }
 
@@ -1031,7 +1052,7 @@ fn decode_hex_escapes(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>)
         return (input.to_string(), in_offsets.to_vec());
     }
 
-    let mut out = String::with_capacity(input.len());
+    let mut out: Vec<u8> = Vec::with_capacity(input.len());
     let mut offsets: Vec<usize> = Vec::with_capacity(input.len());
     let mut i = 0;
 
@@ -1040,20 +1061,27 @@ fn decode_hex_escapes(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>)
             if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 2]), hex_val(bytes[i + 3])) {
                 let decoded = (hi << 4) | lo;
                 if (0x20..=0x7E).contains(&decoded) {
-                    out.push(decoded as char);
+                    out.push(decoded);
                     offsets.push(orig_offset(in_offsets, i));
                     i += 4;
                     continue;
                 }
             }
         }
-        // Emit one byte (preserving multi-byte UTF-8 chars where possible).
-        out.push(bytes[i] as char);
+        // Copy the raw byte through unchanged. Buffering into a Vec<u8>
+        // and finishing with from_utf8_lossy (as every other byte-level
+        // stage does) preserves multibyte UTF-8 sequences verbatim. The
+        // previous `String::push(bytes[i] as char)` reinterpreted any
+        // byte >= 0x80 as a Latin-1 code point that re-encodes to two
+        // UTF-8 bytes, which both mojibake-corrupted non-ASCII input and
+        // desynced the offset map (two output bytes for one offset entry).
+        // One offset entry per input byte keeps the map byte-aligned.
+        out.push(bytes[i]);
         offsets.push(orig_offset(in_offsets, i));
         i += 1;
     }
 
-    (out, offsets)
+    (String::from_utf8_lossy(&out).into_owned(), offsets)
 }
 
 // ---------------------------------------------------------------------------
@@ -2841,6 +2869,60 @@ mod tests {
 
     fn norm(s: &str) -> String {
         normalize_text(s).0
+    }
+
+    // ---- collapse_padding: linear-time run handling (regression) ----
+
+    #[test]
+    fn test_collapse_padding_between_digits() {
+        // Whitespace between two non-alphabetic chars is stripped; the
+        // digit-adjacent dashes are then removed by stage 6b, so the
+        // spaced-out evasion form collapses to the bare digit run.
+        assert_eq!(norm("1 2 3 - 4 5 - 6 7 8 9"), "123456789");
+    }
+
+    #[test]
+    fn test_collapse_padding_preserves_word_spacing() {
+        // Whitespace bordered by an alphabetic char on either side stays.
+        let s = "social security number";
+        assert_eq!(norm(s), s);
+    }
+
+    #[test]
+    fn test_collapse_padding_large_run_is_linear() {
+        // Regression for the O(n^2) forward-rescan in collapse_padding
+        // (a remotely-triggerable DoS). A 256 KiB whitespace run between
+        // two digits must normalize in well under a second; the old
+        // implementation took ~22 s on this input.
+        let text = format!("4{}2", " ".repeat(256 * 1024));
+        let start = std::time::Instant::now();
+        let out = norm(&text);
+        let elapsed = start.elapsed();
+        assert_eq!(out, "42", "padding between digits should collapse");
+        assert!(
+            elapsed.as_secs() < 2,
+            "collapse_padding took {elapsed:?} — likely quadratic again"
+        );
+    }
+
+    // ---- decode_hex_escapes: multibyte-safe passthrough (regression) ----
+
+    #[test]
+    fn test_hex_escape_decodes_printable() {
+        // \x41 -> 'A'; presence of \x triggers the stage.
+        assert_eq!(norm(r"\x41\x42\x43"), "ABC");
+    }
+
+    #[test]
+    fn test_hex_escape_preserves_nonascii() {
+        // Regression: a literal \x escape alongside non-ASCII text used to
+        // mojibake the multibyte chars (u8 as char -> Latin-1) and desync
+        // the offset map. The decoded escape should resolve and the
+        // non-ASCII text must survive byte-for-byte.
+        let (out, offsets) = normalize_text(r"café \x41 münchen");
+        assert_eq!(out, "café A münchen");
+        // Offset map stays byte-aligned with the output.
+        assert_eq!(offsets.len(), out.len());
     }
 
     #[test]

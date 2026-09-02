@@ -14,6 +14,48 @@ starting from this file.
 
 ---
 
+## 2026-07-22
+
+### siphon-core 2.2.2
+
+- fix(core): eliminate a normalization denial-of-service. `collapse_padding`
+  was O(n²) — it rescanned forward from every whitespace byte — so a
+  mostly-whitespace input (accepted up to the 10 MB limit; the scan timeout
+  is only checked after normalization) could pin a core for minutes: a
+  512 KiB whitespace run took ~86 s. The run is now processed in one step;
+  the same input normalizes in 7.7 ms and a 4 MB run in 93 ms.
+- fix(core): `scan_high_entropy_tokens` (optional entropy-scan modes) panicked
+  on non-ASCII input. The Gated context window sliced a separately-lowercased
+  string with offsets from the un-lowercased text, and the Assignment prefix
+  window sliced at a fixed byte offset without snapping to a UTF-8 char
+  boundary — both could land mid-sequence. Windows are now char-boundary-safe.
+- fix(core): entropy-token span mapping used the multibyte-corrupting
+  `offset_map[norm_end-1]+1` form; aligned it to `offset_map[norm_end]` to
+  match the primary regex path.
+- fix(core): `decode_hex_escapes` mojibake-corrupted non-ASCII text (and
+  desynced the offset map) whenever a literal `\x` escape was present, by
+  copying passthrough bytes through `char` (Latin-1 reinterpretation). It now
+  buffers raw bytes like every other byte-level normalization stage.
+
+### siphon-core 2.2.1
+
+- fix(core): `pattern_specificity()` had three dead map keys that matched
+  no pattern sub_category. `"Slack Webhook URL"` => 0.90 was renamed to
+  the real `"Slack Webhook"` name — the webhook pattern had been silently
+  falling back to the 0.40 default and now scores 0.90. The dead
+  `"Phone Number (E.164)"` and `"API Key Generic"` keys were removed
+  (E.164 intentionally stays at the calibrated 0.40 default so the
+  country-specific phone patterns win dedup ties).
+- fix(core): `is_context_required()` was missing Malta TIN, Chile
+  RUN/RUT, and Tanzania NIDA, which the corresponding `PatternDef`
+  entries mark context-required — the `context_required_drift_zero`
+  audit test failed. Runtime behavior is unchanged (the scanner ORs both
+  sources); the lists are back in lockstep.
+- docs: `docs/PATTERNS.md` and `docs/KEYWORDS.md` are now generated from
+  the scanner sources by `scripts/gen-pattern-docs.py` (with a `--check`
+  mode), fixing 5 missing patterns, 8 missing keyword groups, 174 stale
+  specificity/context values, and 7 outdated regexes in the docs.
+
 ## 2026-07-08
 
 ### siphon-core 2.2.0
