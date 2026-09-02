@@ -218,7 +218,11 @@ have all merged to `main` — see CHANGELOG `siphon-api 2.3.0`–`2.4.0`.
 
 ### siphon-fs routes
 
-Same auth and health/ready as siphon-api. One additional endpoint:
+Same auth and health/ready as siphon-api — bearer `SIPHON_API_KEY`, empty
+counts as unset, and the service refuses to start without one unless
+`SIPHON_ALLOW_UNAUTHENTICATED` is set. (This was documented long before it
+was true: siphon-fs had no authentication at all until 2026-09-02.)
+One additional endpoint:
 
 ```
 POST /scan    multipart/form-data file upload → extraction → findings
