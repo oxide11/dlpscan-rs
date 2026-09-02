@@ -1277,3 +1277,74 @@ fn test_reasonable_grounds_context_gated() {
         "should be suppressed without AML/STR context"
     );
 }
+
+// ─── Financial Crime Reports — extended jurisdictions ─────────────────
+// US Form 8300, Canada EFTR/TPR, Australia (AUSTRAC), UK (NCA/UKFIU).
+
+#[test]
+fn test_detects_fincen_form_8300() {
+    let matches = scan_text("IRS Form 8300 filed for the cash payment").unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "FinCEN Form 8300"),
+        "should detect Form 8300"
+    );
+}
+
+#[test]
+fn test_detects_fintrac_eftr_context_gated() {
+    let with_ctx = scan_text("EFTR submitted by the reporting entity to FINTRAC").unwrap();
+    assert!(
+        with_ctx.iter().any(|m| m.sub_category == "FINTRAC EFTR"),
+        "should detect EFTR with FINTRAC context"
+    );
+}
+
+#[test]
+fn test_detects_fintrac_terrorist_property_report() {
+    let matches = scan_text("Terrorist Property Report filed under the Criminal Code").unwrap();
+    assert!(
+        matches
+            .iter()
+            .any(|m| m.sub_category == "FINTRAC Terrorist Property Report"),
+        "should detect a Terrorist Property Report"
+    );
+}
+
+#[test]
+fn test_detects_austrac_smr() {
+    let matches = scan_text("Suspicious Matter Report lodged with AUSTRAC").unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "AUSTRAC SMR"),
+        "should detect an AUSTRAC SMR"
+    );
+}
+
+#[test]
+fn test_detects_austrac_ttr() {
+    let matches =
+        scan_text("Threshold Transaction Report for physical currency over AUD 10,000").unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "AUSTRAC TTR"),
+        "should detect an AUSTRAC TTR"
+    );
+}
+
+#[test]
+fn test_detects_austrac_regime() {
+    let matches = scan_text("Reporting obligations under the AML/CTF Act to AUSTRAC").unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "AUSTRAC Regime"),
+        "should detect AUSTRAC regime markers"
+    );
+}
+
+#[test]
+fn test_detects_uk_nca_sar() {
+    let matches =
+        scan_text("A DAML request was submitted via UKFIU under the Proceeds of Crime Act 2002")
+            .unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "UK NCA SAR"),
+        "should detect a UK NCA SAR / DAML"
+    );
+}

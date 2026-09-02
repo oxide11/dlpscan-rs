@@ -461,6 +461,73 @@ pub static PATTERNS: &[PatternDef] = &[
     },
     PatternDef {
         category: "Financial Crime Reports",
+        sub_category: "FinCEN Form 8300",
+        // IRS/FinCEN Form 8300 — "Report of Cash Payments Over $10,000
+        // Received in a Trade or Business".
+        regex: r"\b(?:(?:IRS\s+)?Form\s+8300|Report\s+of\s+Cash\s+Payments\s+Over)\b",
+        case_insensitive: true,
+        specificity: 0.85,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Financial Crime Reports",
+        sub_category: "FINTRAC EFTR",
+        // Electronic Funds Transfer Report (Canada). "Electronic funds
+        // transfer" is ubiquitous in banking, so gate on FINTRAC context;
+        // the bare EFTR acronym is distinctive but kept gated for safety.
+        regex: r"\b(?:EFTR|[Ee]lectronic\s+[Ff]unds\s+[Tt]ransfer\s+[Rr]eports?)\b",
+        case_insensitive: false,
+        specificity: 0.60,
+        context_required: true,
+    },
+    PatternDef {
+        category: "Financial Crime Reports",
+        sub_category: "FINTRAC Terrorist Property Report",
+        // Terrorist Property Report (Canada, PCMLTFA / Criminal Code).
+        regex: r"\b[Tt]errorist\s+[Pp]roperty\s+[Rr]eports?\b",
+        case_insensitive: false,
+        specificity: 0.85,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Financial Crime Reports",
+        sub_category: "AUSTRAC SMR",
+        // Suspicious Matter Report (Australia, AML/CTF Act 2006).
+        regex: r"\b[Ss]uspicious\s+[Mm]atter\s+[Rr]eports?\b",
+        case_insensitive: false,
+        specificity: 0.85,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Financial Crime Reports",
+        sub_category: "AUSTRAC TTR",
+        // Threshold Transaction Report (Australia) — cash ≥ AUD 10,000.
+        regex: r"\b[Tt]hreshold\s+[Tt]ransaction\s+[Rr]eports?\b",
+        case_insensitive: false,
+        specificity: 0.85,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Financial Crime Reports",
+        sub_category: "AUSTRAC Regime",
+        // Australia's FIU + statute + IFTI report markers.
+        regex: r"\b(?:AUSTRAC|International\s+Funds\s+Transfer\s+Instruction|IFTI|AML/CTF\s+Act)\b",
+        case_insensitive: true,
+        specificity: 0.85,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Financial Crime Reports",
+        sub_category: "UK NCA SAR",
+        // UK SAR regime (POCA 2002 → National Crime Agency / UKFIU),
+        // including the DAML "Defence Against Money Laundering" consent path.
+        regex: r"\b(?:UKFIU|DAML|Defence\s+Against\s+Money\s+Laundering|Proceeds\s+of\s+Crime\s+Act\s+2002)\b",
+        case_insensitive: true,
+        specificity: 0.85,
+        context_required: false,
+    },
+    PatternDef {
+        category: "Financial Crime Reports",
         sub_category: "Reasonable Grounds To Suspect",
         // The FINTRAC STR legal threshold phrase. Appears in general legal
         // prose too, so gate on money-laundering / STR context keywords.
@@ -4872,12 +4939,13 @@ mod tests {
 
     #[test]
     fn test_pattern_count() {
-        // 576 = 560 base + Medical Record Number (HIPAA #8) + 6
+        // 583 = 560 base + Medical Record Number (HIPAA #8) + 6
         // Traffic Light Protocol patterns (TLP:RED, TLP:AMBER,
-        // TLP:AMBER+STRICT, TLP:GREEN, TLP:CLEAR, TLP:WHITE) + VALOR + 8
-        // Financial Crime Reports (FinCEN SAR/CTR/SAR-Form/confidentiality,
-        // FINTRAC STR/LCTR/Regime, Reasonable Grounds To Suspect).
-        assert_eq!(PATTERNS.len(), 576);
+        // TLP:AMBER+STRICT, TLP:GREEN, TLP:CLEAR, TLP:WHITE) + VALOR + 15
+        // Financial Crime Reports (FinCEN SAR/CTR/8300/SAR-Form/confidentiality,
+        // FINTRAC STR/LCTR/EFTR/TPR/Regime, AUSTRAC SMR/TTR/Regime, UK NCA SAR,
+        // Reasonable Grounds To Suspect).
+        assert_eq!(PATTERNS.len(), 583);
     }
 
     #[test]

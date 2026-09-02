@@ -62,17 +62,23 @@ starting from this file.
 
 - feat(core): AML/CFT filing detection — new **Financial Crime Reports**
   category detects the regulatory filings themselves so DLP can flag or block
-  their exfiltration. Covers FinCEN Suspicious Activity Reports (SAR) and
-  Currency Transaction Reports (CTR) in the US (Bank Secrecy Act) and FINTRAC
-  Suspicious Transaction Reports (STR) and Large Cash Transaction Reports
-  (LCTR) in Canada (PCMLTFA), via signature titles, form numbers (FinCEN Form
-  111/112, BSA E-Filing), regulator/statute markers (PCMLTFA, FINTRAC/CANAFE),
-  and the statutory confidentiality / anti-tipping-off banners these filings
-  carry (31 U.S.C. 5318(g), 31 CFR 1020.320). The distinctive multi-word
-  signatures run always (≥ 0.85, like TLP markings); the generic "reasonable
-  grounds to suspect" phrase stays keyword-gated to avoid false positives in
-  ordinary legal prose. Adds 8 patterns + 6 context-keyword groups, a
-  `rulesets/aml-sar-str.yaml` policy (FINTRAC + FinCEN), and 8 detection tests.
+  their exfiltration, across the major FIU regimes:
+    - **US** (FinCEN / Bank Secrecy Act): SAR, CTR, Form 8300, plus form
+      markers (Form 111/112, BSA E-Filing) and the statutory confidentiality /
+      anti-tipping-off citations (31 U.S.C. 5318(g), 31 CFR 1020.320)
+    - **Canada** (FINTRAC / PCMLTFA): STR, LCTR, EFTR, Terrorist Property
+      Report, plus PCMLTFA / FINTRAC / CANAFE markers
+    - **Australia** (AUSTRAC / AML/CTF Act): SMR, TTR, IFTI
+    - **UK** (NCA / UKFIU / POCA 2002): SAR, DAML "Defence Against Money
+      Laundering"
+
+  The distinctive multi-word signatures and regulator/statute markers run
+  always (≥ 0.85, like TLP markings) so a filing title is detected wherever it
+  appears; "electronic funds transfer" (EFTR) and the generic "reasonable
+  grounds to suspect" phrase stay keyword-gated to avoid false positives in
+  ordinary banking/legal prose. Adds 15 patterns + 13 context-keyword groups, a
+  `rulesets/aml-sar-str.yaml` policy (FinCEN + FINTRAC + AUSTRAC + UK), and 15
+  detection tests.
 
 ### siphon-core 2.2.0
 

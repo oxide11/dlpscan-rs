@@ -169,6 +169,18 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
         "FinCEN SAR Form" => 0.85,
         "SAR Confidentiality Notice" => 0.88,
         "FinCEN SAR" | "FinCEN CTR" | "FINTRAC STR" | "FINTRAC LCTR" | "FINTRAC Regime" => 0.85,
+        // Extended jurisdictions: US Form 8300, Canada TPR, Australia
+        // (AUSTRAC SMR/TTR/regime), UK (NCA/UKFIU/DAML). Distinctive titles
+        // and regulator/statute markers — always-run like the SAR/STR titles.
+        "FinCEN Form 8300"
+        | "FINTRAC Terrorist Property Report"
+        | "AUSTRAC SMR"
+        | "AUSTRAC TTR"
+        | "AUSTRAC Regime"
+        | "UK NCA SAR" => 0.85,
+        // Electronic Funds Transfer Report — "electronic funds transfer" is
+        // common banking language, so keep it keyword-gated (below always-run).
+        "FINTRAC EFTR" => 0.60,
         // Generic legal phrase — must stay keyword-gated (suppressed in
         // non-AML prose), so kept below the always-run threshold.
         "Reasonable Grounds To Suspect" => 0.55,
@@ -506,12 +518,13 @@ pub fn is_context_required(sub_category: &str) -> bool {
             | "Inside Information"
             | "Investment Restricted"
             // AML/CFT filings. The SAR/STR signature titles and statute
-            // markers are distinctive enough to always run, but "reasonable
-            // grounds to suspect" is ordinary legal phrasing that appears in
-            // unrelated prose, so it stays keyword-gated. Its PatternDef
-            // already sets context_required: true; this entry keeps the two
-            // sources in lockstep (see tests/audit_spec.rs).
+            // markers are distinctive enough to always run, but these two are
+            // ordinary banking/legal phrasing that appears in unrelated prose,
+            // so they stay keyword-gated. Both PatternDefs already set
+            // context_required: true; these entries keep the two sources in
+            // lockstep (see tests/audit_spec.rs).
             | "Reasonable Grounds To Suspect"
+            | "FINTRAC EFTR"
             // Compliance labels
             | "PII Label"
             | "PHI Label"

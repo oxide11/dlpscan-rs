@@ -1,13 +1,15 @@
 name: AML Suspicious Activity / Transaction Reports
 description: >
-  Detects AML/CFT regulatory filings and blocks their exfiltration — FinCEN
-  Suspicious Activity Reports (SAR) and Currency Transaction Reports (CTR) in
-  the US (Bank Secrecy Act), and FINTRAC Suspicious Transaction Reports (STR)
-  and Large Cash Transaction Reports (LCTR) in Canada (PCMLTFA). Also catches
-  the statutory confidentiality / anti-tipping-off banners these filings carry
-  (31 U.S.C. 5318(g), 31 CFR 1020.320). These documents are among the most
-  sensitive an institution holds: their disclosure is a criminal offence, so
-  DLP should flag or block them leaving controlled systems.
+  Detects AML/CFT regulatory filings across major FIU regimes and blocks their
+  exfiltration:
+    - US (FinCEN, Bank Secrecy Act): SAR, CTR, Form 8300
+    - Canada (FINTRAC, PCMLTFA): STR, LCTR, EFTR, Terrorist Property Report
+    - Australia (AUSTRAC, AML/CTF Act): SMR, TTR, IFTI
+    - UK (NCA / UKFIU, POCA 2002): SAR, DAML
+  Also catches the statutory confidentiality / anti-tipping-off banners these
+  filings carry (e.g. 31 U.S.C. 5318(g), 31 CFR 1020.320). These documents are
+  among the most sensitive an institution holds: their disclosure is a criminal
+  offence, so DLP should flag or block them leaving controlled systems.
 
 version: "1"
 
