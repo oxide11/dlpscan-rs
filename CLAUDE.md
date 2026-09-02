@@ -20,7 +20,13 @@ chart, k8s manifests). Rulesets live in `rulesets/` as **YAML** files.
 
 - **Rust: 1.95** (pinned in `rust-toolchain.toml`, mirrored in every
   `Cargo.toml` `rust-version`, CI workflows, and Dockerfile base images). Bump
-  all five in lockstep when upgrading.
+  all five in lockstep when upgrading — `scripts/check-version-sync.sh`
+  enforces this and CI runs it, so a partial bump lands as a red check.
+  The Dockerfile base image is the one that bites: `rust-toolchain.toml` is
+  not copied into the image build, so there is no rustup override inside the
+  container and the base tag alone decides which compiler builds the shipped
+  binary. Letting it drift means production artifacts are compiled by a
+  toolchain CI never tested against.
 - **Edition: 2021**
 - `Cargo.lock` is committed. Dockerfiles build with `--locked`; do not
   regenerate the lockfile without intent.
