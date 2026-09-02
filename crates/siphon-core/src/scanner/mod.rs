@@ -568,6 +568,13 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         // src/models.rs), which means CRITICAL_ALWAYS_RUN membership
         // would defeat the gate and reintroduce the blind-test FPs.
         "MEID",
+        // Postal codes — structurally tight enough to stand alone, and the
+        // patterns most damaged by keyword gating: a rendered address block
+        // ("Edmonton, Alberta / T5A 1B7") carries no label, so gated postal
+        // patterns never ran on real addresses at all. Measured 0/408 on the
+        // Canadian MP directory before this promotion.
+        "Canada Postal Code",
+        "UK Postcode",
         // Financial
         "ABA Routing Number",
         "CUSIP",
@@ -1011,6 +1018,27 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     cp.def.context_required,
                     config.pattern_field_overrides.as_ref(),
                 ) {
+                    continue;
+                }
+
+                // The alt path also demands more of the pattern itself, for the
+                // same reason: it runs against a *transformed* text with no
+                // context index to corroborate anything, so a loose pattern
+                // firing there has compounded uncertainty.
+                //
+                // ROT13 is the sharp case. It maps letters onto letters, so for
+                // a letter-shaped pattern it behaves as a generator of
+                // plausible candidates rather than as a decoder: the product
+                // code `AB1-2CD` normalises to `AB12CD`, whose ROT13 is
+                // `NO12PQ` — a structurally valid UK postcode appearing nowhere
+                // in the document. Structural validation cannot catch that,
+                // because the string genuinely is well formed.
+                //
+                // Decoding earns its keep for high-entropy secrets and
+                // structured identifiers, which sit at or above the always-run
+                // threshold on their own merits. Nobody base64-encodes a
+                // postcode to exfiltrate it.
+                if crate::models::pattern_specificity(cp.def.sub_category) < SPECIFICITY_THRESHOLD {
                     continue;
                 }
 
