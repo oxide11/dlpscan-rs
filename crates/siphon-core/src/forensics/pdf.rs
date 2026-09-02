@@ -122,7 +122,7 @@ pub(crate) fn parse_xmp(xml: &str, meta: &mut FileMetadata) {
             }
             Ok(Event::Text(e)) => {
                 if let Some(tag) = &cur {
-                    let text = String::from_utf8_lossy(e.as_ref()).trim().to_string();
+                    let text = e.as_ref().trim().to_string();
                     if text.is_empty() {
                         continue;
                     }
@@ -135,7 +135,7 @@ pub(crate) fn parse_xmp(xml: &str, meta: &mut FileMetadata) {
             Ok(Event::Empty(e)) => {
                 for attr in e.attributes().flatten() {
                     let key = tag_local_name(attr.key.as_ref());
-                    let val = String::from_utf8_lossy(&attr.value).into_owned();
+                    let val = attr.value.as_ref().to_string();
                     if !val.is_empty() {
                         assign_xmp(meta, &key, val);
                     }
@@ -194,11 +194,12 @@ fn assign_xmp(meta: &mut FileMetadata, tag: &str, value: String) {
 }
 
 /// Namespace-strip a tag name: `dc:creator` -> `creator`.
-fn tag_local_name(qname: &[u8]) -> String {
-    let full = std::str::from_utf8(qname).unwrap_or("");
-    match full.rfind(':') {
-        Some(i) => full[i + 1..].to_string(),
-        None => full.to_string(),
+// quick-xml 0.42 yields `str` for names and attribute values, so the UTF-8
+// decode that used to live here is now handled by the parser.
+fn tag_local_name(qname: &str) -> String {
+    match qname.rfind(':') {
+        Some(i) => qname[i + 1..].to_string(),
+        None => qname.to_string(),
     }
 }
 

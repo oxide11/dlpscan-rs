@@ -181,7 +181,7 @@ fn parse_settings_rsids(xml: &str, meta: &mut FileMetadata) -> Result<(), Forens
                 // The interesting tags are rsidRoot + rsid. Both carry
                 // the hex ID as the `w:val` attribute.
                 if local == "rsidRoot" || local == "rsid" {
-                    if let Some(val) = attr_value(&e, b"val") {
+                    if let Some(val) = attr_value(&e, "val") {
                         if local == "rsidRoot" {
                             rsid_root = Some(val);
                         } else {
@@ -224,40 +224,41 @@ fn parse_settings_rsids(xml: &str, meta: &mut FileMetadata) -> Result<(), Forens
 // with each other, stripping the prefix keeps the parse loop tidy.
 // ---------------------------------------------------------------------------
 
-fn tag_local_name(qname: &[u8]) -> String {
-    let full = std::str::from_utf8(qname).unwrap_or("");
-    match full.rfind(':') {
-        Some(i) => full[i + 1..].to_string(),
-        None => full.to_string(),
+// quick-xml 0.42 hands names and attribute values back as `str` rather than
+// raw bytes, so the UTF-8 decoding these helpers used to do is now the
+// library's job — the signatures take `&str` and the `from_utf8` dance is gone.
+fn tag_local_name(qname: &str) -> String {
+    match qname.rfind(':') {
+        Some(i) => qname[i + 1..].to_string(),
+        None => qname.to_string(),
     }
 }
 
 /// Decode a BytesText into an owned String, unescaping XML entities.
-/// `quick_xml::escape::unescape` handles `&amp;` / `&lt;` / `&#NN;`
-/// etc.; lossy UTF-8 decoding keeps us moving if a producer wrote
-/// an invalid byte sequence.
+/// `quick_xml::escape::unescape` handles `&amp;` / `&lt;` / `&#NN;` etc. As of
+/// quick-xml 0.42 the parser yields `str`, so it owns UTF-8 validation and the
+/// lossy decode that used to live here is no longer needed; an unescape failure
+/// still falls back to the raw text rather than dropping the value.
 fn decode_text(e: &quick_xml::events::BytesText<'_>) -> String {
-    let raw = String::from_utf8_lossy(e.as_ref());
-    match quick_xml::escape::unescape(&raw) {
+    let raw = e.as_ref();
+    match quick_xml::escape::unescape(raw) {
         Ok(cow) => cow.into_owned(),
-        Err(_) => raw.into_owned(),
+        Err(_) => raw.to_string(),
     }
 }
 
 /// Find an attribute's value by local name on a start/empty tag.
 /// Returns None if the attribute is missing or unreadable.
-fn attr_value(e: &quick_xml::events::BytesStart, local: &[u8]) -> Option<String> {
+fn attr_value(e: &quick_xml::events::BytesStart, local: &str) -> Option<String> {
     for attr in e.attributes().flatten() {
         let key = attr.key.as_ref();
         // Strip any `w:` / `xmlns:` prefix before comparing.
-        let key_local = match key.iter().rposition(|&b| b == b':') {
+        let key_local = match key.rfind(':') {
             Some(i) => &key[i + 1..],
             None => key,
         };
         if key_local == local {
-            return std::str::from_utf8(attr.value.as_ref())
-                .ok()
-                .map(|s| s.to_string());
+            return Some(attr.value.as_ref().to_string());
         }
     }
     None
