@@ -1884,8 +1884,75 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
     let max_decompressed =
         std::cmp::min(src_meta.len().saturating_mul(100), MAX_EXTRACT_TOTAL_SIZE);
 
-    sevenz_rust::decompress_file(file_path, tmp_dir.path())
-        .map_err(|e| format!("Failed to extract 7z: {e}"))?;
+    // Extract entry by entry rather than via `sevenz_rust::decompress_file`,
+    // which is unsafe here on two counts.
+    //
+    // Path traversal: its `default_entry_extract_fn` builds the output path as
+    // `dest.join(entry.name())` with no sanitisation at all, so an entry named
+    // `../../../etc/cron.d/x` escapes the temp directory and an absolute name
+    // discards the base entirely — `Path::join` on an absolute path returns
+    // that path. Every entry name here goes through `sanitize_archive_path`,
+    // the same guard `extract_rar` already uses.
+    //
+    // Decompression bombs: the size ceiling used to be checked *after*
+    // `decompress_file` returned, by which point the archive was already on
+    // disk. A 2 MB 7z expanding to 50 GB filled the disk and was then politely
+    // rejected. The budget is now enforced as entries are written, so the
+    // extraction aborts partway through rather than after the damage.
+    let mut running_total: u64 = 0;
+    let mut traversal_blocked = 0u32;
+    let dest_root = tmp_dir.path().to_path_buf();
+
+    sevenz_rust::decompress_file_with_extract_fn(file_path, &dest_root, |entry, reader, _| {
+        if entry.is_directory() {
+            return Ok(true);
+        }
+        let Some(safe_path) = sanitize_archive_path(&dest_root, entry.name()) else {
+            // Refuse the entry and keep going: a hostile name should not stop
+            // us scanning the legitimate contents alongside it.
+            traversal_blocked += 1;
+            return Ok(true);
+        };
+
+        running_total = running_total.saturating_add(entry.size());
+        if running_total > max_decompressed {
+            return Err(sevenz_rust::Error::other(format!(
+                "7z archive exceeds maximum extracted size: {running_total} bytes \
+                 (max {max_decompressed} bytes)"
+            )));
+        }
+
+        if let Some(parent) = safe_path.parent() {
+            std::fs::create_dir_all(parent).map_err(sevenz_rust::Error::io)?;
+        }
+        let mut out = std::io::BufWriter::new(
+            std::fs::File::create(&safe_path).map_err(sevenz_rust::Error::io)?,
+        );
+        // Cap the copy itself as well. `entry.size()` is attacker-supplied
+        // header metadata, so a lying header must not become an unbounded read.
+        let budget = max_decompressed
+            .saturating_sub(running_total)
+            .saturating_add(1);
+        // `&mut dyn Read` is itself `Read + Sized`, so reborrowing gives a
+        // receiver `take` can be called on.
+        let mut limited = std::io::Read::take(&mut *reader, budget);
+        let written = std::io::copy(&mut limited, &mut out).map_err(sevenz_rust::Error::io)?;
+        if written >= budget {
+            return Err(sevenz_rust::Error::other(
+                "7z entry exceeded the declared extraction budget".to_string(),
+            ));
+        }
+        Ok(true)
+    })
+    .map_err(|e| format!("Failed to extract 7z: {e}"))?;
+
+    if traversal_blocked > 0 {
+        tracing::warn!(
+            blocked = traversal_blocked,
+            file = %file_path,
+            "7z entries rejected for path traversal"
+        );
+    }
 
     let mut file_count = 0u32;
     let text_extensions = [
