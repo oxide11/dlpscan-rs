@@ -45,7 +45,7 @@ jobs:
       # version stays in lockstep with the rest of CI.
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.95"
+          toolchain: "1.98"
 
       - name: Install cargo-deny
         run: cargo install --locked cargo-deny

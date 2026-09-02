@@ -18,7 +18,7 @@ chart, k8s manifests). Rulesets live in `rulesets/` as **YAML** files.
 
 ## Toolchain
 
-- **Rust: 1.95** (pinned in `rust-toolchain.toml`, mirrored in every
+- **Rust: 1.98** (pinned in `rust-toolchain.toml`, mirrored in every
   `Cargo.toml` `rust-version`, CI workflows, and Dockerfile base images). Bump
   all five in lockstep when upgrading — `scripts/check-version-sync.sh`
   enforces this and CI runs it, so a partial bump lands as a red check.
