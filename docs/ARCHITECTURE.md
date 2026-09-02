@@ -55,7 +55,7 @@ for the full pod inventory, deployment topology, and migration path.
 `scan_text_with_config(&str, &ScanConfig) → Vec<Match>`. Every pod
 (ingestion or detector) ultimately calls this or a derivative.
 
-The scanner runs **560+ regex patterns** across **126 categories**,
+The scanner runs **583 regex patterns** across **128 categories**,
 with **72 checksum validators** and **5,000+ context keywords** across
 6 languages. A single scan passes through the pipeline below.
 

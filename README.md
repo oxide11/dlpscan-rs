@@ -5,15 +5,15 @@
 <h1 align="center">Polygon Siphon</h1>
 
 <p align="center">
-  High-performance DLP scanner written in Rust. Detects, redacts, and protects
-  sensitive data with exceptional throughput.
+  DLP scanner written in Rust. Detects, redacts, and protects sensitive data —
+  checksum-validated matches behind an evasion-resistant normalizer.
 </p>
 
-**561 patterns** across **126 categories**. **72 checksum validators** for
+**583 patterns** across **128 categories**. **72 checksum validators** for
 national IDs, financial identifiers, and crypto addresses. **5,000+ context
 keywords** across English, French, Spanish, German, Italian, and Portuguese.
-**510+ tests** passing across the lib, integration, evasion, and
-detection-quality harnesses, with an enforced labeled-corpus regression suite
+**680+ tests** passing across the lib, integration, evasion, forensics, and
+detection-quality harnesses, with a CI-enforced labeled-corpus regression suite
 (**80/80 recall, 0 false positives**).
 
 ### Highlights
@@ -32,14 +32,21 @@ detection-quality harnesses, with an enforced labeled-corpus regression suite
 
 ## Performance
 
-Throughput at 1 MB, median across 4 runs, default build (`cargo build --release`):
+Throughput at 1 MB, median across 4 runs, default build (`cargo build --release`,
+`lto = true`, `codegen-units = 1`), measured on a 4-core Intel Xeon @ 2.80 GHz
+with 16 GB RAM under Linux 6.18 / Rust 1.98:
 
-| Scenario | Full (561 patterns) | Baseline (100 patterns) |
+| Scenario | Full (583 patterns) | Baseline (122 patterns) |
 |---|---:|---:|
-| Clean text | ~82 MB/s | ~83 MB/s |
-| Mixed content | ~22 MB/s | ~22 MB/s |
-| Dense sensitive data | ~15 MB/s | ~16 MB/s |
-| Keyword-heavy text | ~29 MB/s | ~30 MB/s |
+| Clean text | ~43 MB/s | ~43 MB/s |
+| Mixed content | ~8.9 MB/s | ~9.1 MB/s |
+| Dense sensitive data | ~6.5 MB/s | ~6.5 MB/s |
+| Keyword-heavy text | ~13 MB/s | ~13.6 MB/s |
+
+Throughput is hardware-bound and these figures come from a modest shared
+4-core box, so treat them as a floor rather than a ceiling — the ratios
+between scenarios travel better than the absolute numbers. Always re-measure
+on your own target before making a capacity plan.
 
 The Aho-Corasick context prefilter means full and baseline throughput are
 effectively identical at 10 KB and above: context-gated patterns whose
@@ -48,12 +55,12 @@ regex runs, so the extra patterns cost almost nothing on a keyword-free
 page. The `baseline_only` mode is only meaningfully faster on small (< 10 KB)
 documents where fixed AC-index build cost dominates.
 
-Dense-sensitive-data throughput (~15 MB/s) reflects the cost of running
-the checksum validators added across the `quality/checksums-batch-*`
-branches — every matched credit card runs Luhn, every IBAN runs mod-97,
-every national ID runs its algorithm-specific check. That cost is what
-took false positives on the blind-test corpus from ~95% to near-zero
-on the same pattern set.
+Dense sensitive data is the slowest scenario (~6.5 MB/s) because it is the
+one that actually exercises validation: every matched credit card runs Luhn,
+every IBAN runs mod-97, every national ID runs its algorithm-specific check.
+That cost is what took false positives on the blind-test corpus from ~95% to
+near-zero on the same pattern set — it buys precision, and dense input is the
+worst case for it by construction.
 
 To reproduce these numbers locally:
 
@@ -280,7 +287,7 @@ compressed content:
 
 ### Baseline-only mode
 
-For high-throughput pipelines, restrict scanning to only the 108 highest-confidence
+For high-throughput pipelines, restrict scanning to only the 122 highest-confidence
 patterns (SSNs, credit cards, national IDs, secrets, crypto addresses):
 
 ```rust
@@ -312,7 +319,7 @@ let matches = scan_text_with_config("Card: 4532015112830366", &config)?;
 
 siphon detects sensitive data using a two-layer system:
 
-1. **560 regex patterns** match data formats (credit cards, SSNs, IBANs, API keys, etc.)
+1. **583 regex patterns** match data formats (credit cards, SSNs, IBANs, API keys, etc.)
 2. **5,000+ context keywords** (English, French, Spanish, German, Italian, Portuguese) confirm detections via Aho-Corasick proximity matching
 
 Each pattern has a **specificity score** (0.0-1.0) indicating base confidence.
@@ -339,7 +346,7 @@ crédito` / `Kreditkarte` / `carta di credito` / `cartão de crédito`).
 | Geolocation & Postal | 8 | GPS coordinates, geohash, ZIP+4, UK postcode |
 
 Full reference:
-- **[docs/PATTERNS.md](docs/PATTERNS.md)** -- All 560 patterns with regex, specificity scores, and context-required flags
+- **[docs/PATTERNS.md](docs/PATTERNS.md)** -- All 583 patterns with regex, specificity scores, and context-required flags
 - **[docs/KEYWORDS.md](docs/KEYWORDS.md)** -- All 3,100+ context keywords (English + French) with proximity distances
 
 ## Modules
@@ -349,8 +356,8 @@ Full reference:
 | Module | Description |
 |---|---|
 | `scanner` | Core engine — parallel regex matching with Rayon, AC prefilter |
-| `patterns` | 560 compiled regex patterns across 126 categories |
-| `context` | Aho-Corasick keyword proximity matching (560+ keywords) |
+| `patterns` | 583 compiled regex patterns across 128 categories |
+| `context` | Aho-Corasick keyword proximity matching (5,000+ keywords) |
 | `normalize` | Unicode normalization (zero-width, homoglyphs, whitespace) |
 | `scoring` | Confidence scoring and overlapping match deduplication |
 | `validation` | Luhn check, input validation |
@@ -408,7 +415,7 @@ ingestion or detection:
 ```
                     ┌─────────────────┐
                     │   Siphon-Core   │ ← scanner engine (library)
-                    │  561 patterns,  │
+                    │  583 patterns,  │
                     │ 72 validators   │
                     └────────┬────────┘
     ┌─────────────┬──────────┼──────────┬──────────────┐
@@ -630,7 +637,7 @@ See [docs/enterprise/security.md](docs/enterprise/security.md) for full details.
 | [docs/getting-started/quickstart.md](docs/getting-started/quickstart.md) | Quick start guide with CLI and Rust API examples |
 | [docs/getting-started/configuration.md](docs/getting-started/configuration.md) | Full configuration reference (config file, env vars, CLI, policies) |
 | [docs/getting-started/installation.md](docs/getting-started/installation.md) | Build from source, Docker, feature flags |
-| [docs/PATTERNS.md](docs/PATTERNS.md) | All 560 patterns with regex, specificity, and context flags |
+| [docs/PATTERNS.md](docs/PATTERNS.md) | All 583 patterns with regex, specificity, and context flags |
 | [docs/KEYWORDS.md](docs/KEYWORDS.md) | All 5,000+ context keywords (6 languages) with proximity distances |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Performance analysis and optimization journey |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Version history |

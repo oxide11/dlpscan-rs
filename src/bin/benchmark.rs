@@ -1,6 +1,9 @@
 //! Benchmark binary for siphon-rs.
 //!
-//! Compares full scan (560 patterns) vs baseline-only (~108 always-run patterns).
+//! Compares a full scan against baseline-only (always-run patterns). Both
+//! counts are derived from `patterns::PATTERNS` at runtime rather than written
+//! out here — hardcoding them meant the banner drifted every time a pattern
+//! landed, and it was reporting 560/108 against an actual 583/122.
 
 use siphon::guard::{Action, InputGuard, Mode, Preset};
 use std::time::Instant;
@@ -97,7 +100,14 @@ fn main() {
 
     let mut rows: Vec<(BenchResult, BenchResult)> = Vec::new();
 
-    eprintln!("Rust siphon: Full (560 patterns) vs Baseline (~108 always-run patterns)");
+    let total_patterns = siphon::patterns::PATTERNS.len();
+    let baseline_patterns = siphon::patterns::PATTERNS
+        .iter()
+        .filter(|p| siphon::scanner::is_always_run(p.sub_category))
+        .count();
+    eprintln!(
+        "Rust siphon: Full ({total_patterns} patterns) vs Baseline ({baseline_patterns} always-run patterns)"
+    );
     eprintln!("{}", "=".repeat(76));
     eprintln!(
         "  {:35}  {:>10}  {:>10}  {:>8}",
