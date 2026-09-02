@@ -14,6 +14,32 @@ starting from this file.
 
 ---
 
+## 2026-09-02
+
+### siphon 2.2.1
+
+- fix(cli): **RUSTSEC-2026-0245** — 7z path-traversal vulnerability fixed.
+  `extract_7z` previously called `sevenz_rust::decompress_file`, whose internal
+  `decompress_impl` builds each output path as `dest.join(entry.name())` with no
+  sanitisation: a `../` entry escapes the temp directory, and an absolute entry
+  name discards it entirely (`Path::join` on an absolute path returns that path).
+  The extractor now drives extraction entry-by-entry via
+  `decompress_file_with_extract_fn`, routing every name through
+  `sanitize_archive_path` before any write is attempted. Hostile entries are
+  skipped with a `WARN` log line; benign contents continue to scan normally.
+  Decompression-bomb enforcement is also moved into the extraction loop so the
+  size budget is enforced as bytes are written rather than after the full
+  archive is on disk. Regression tests added in `tests/archive_security_test.rs`.
+- chore(deps): bump `anyhow` 1.0.102 → 1.0.104 (RUSTSEC-2026-0190,
+  memory-corruption in `Error::downcast_mut`).
+- chore(deps): bump `h2` 0.4.15 → 0.4.19 (RUSTSEC-2026-0258, DoS via
+  unbounded empty DATA frames).
+- chore(deps): bump `lru` 0.18.0 → 0.18.3 (RUSTSEC-2026-0253, potential
+  use-after-free in `LruCache::pop`).
+- chore(deps): bump `chacha20` 0.10.0 → 0.10.2 (yanked version).
+
+---
+
 ## 2026-07-22
 
 ### siphon-core 2.2.2
