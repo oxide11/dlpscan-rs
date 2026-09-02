@@ -1117,6 +1117,16 @@ fn decode_hex_spaced(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<u
     let mut offsets = Vec::with_capacity(bytes.len());
     let mut i = 0;
     let mut changed = false;
+    // Reused across candidate runs rather than allocated per candidate.
+    //
+    // Most candidates are rejected below by the `pairs.len() >= 3` test, and
+    // ordinary English trips this matcher constantly: any word ending in two
+    // hex letters followed by a space and a number opens a candidate, so
+    // "dated 2024" scans as `ed 20`. A fresh `Vec` per candidate meant 1 MB of
+    // such prose performed ~21,000 heap allocations that were populated with
+    // two entries and immediately discarded — against ~24 allocations for the
+    // whole rest of the pipeline.
+    let mut pairs: Vec<(usize, u8)> = Vec::new();
 
     while i < bytes.len() {
         // Try to match a hex-spaced run: XX SP XX SP XX ...
@@ -1129,7 +1139,7 @@ fn decode_hex_spaced(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<u
         {
             // Count how many hex pairs follow
             let run_start = i;
-            let mut pairs = Vec::new();
+            pairs.clear();
             loop {
                 if i + 1 < bytes.len()
                     && bytes[i].is_ascii_hexdigit()
@@ -3225,6 +3235,21 @@ mod tests {
         // `decode_hex_spaced` is skipped without an `XX SP XX` window.
         // "48 65 6c 6c 6f" is "Hello".
         assert!(norm("48 65 6c 6c 6f").contains("Hello"));
+    }
+
+    #[test]
+    fn test_hex_spaced_buffer_is_cleared_between_candidates() {
+        // `decode_hex_spaced` reuses one `pairs` buffer across candidate runs
+        // instead of allocating per candidate. That is only correct while the
+        // buffer is cleared each time: "ab 12" is a two-pair run and gets
+        // rejected by the `>= 3` test, so if its entries survived into the
+        // following real run they would prepend two junk bytes to the decode.
+        let out = norm("ab 12 then 48 65 6c 6c 6f end");
+        assert!(out.contains("Hello"), "real run should still decode: {out}");
+        assert!(
+            !out.contains("\u{ab}") && !out.contains('\u{12}'),
+            "rejected candidate leaked into the next run: {out}"
+        );
     }
 
     // ---- Case-folded base64 numeric recovery ----
