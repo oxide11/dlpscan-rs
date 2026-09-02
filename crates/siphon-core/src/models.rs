@@ -594,5 +594,25 @@ pub fn is_context_required(sub_category: &str) -> bool {
             // regardless; honouring the declaration made it displace phone
             // numbers and NPIs in deduplication. See patterns/mod.rs.
             | "Geohash"
+            // Unstructured numeric identifiers: the regex is a bare digit run,
+            // so each matches every number of its length in any document.
+            // Checksums do not save them — an NHS mod-11, a BSN 11-proef or an
+            // ABA check all admit roughly one arbitrary number in ten or
+            // eleven — and until 2026-09-02 all nine were always-run, which
+            // bypasses the prefilter entirely. Scored above US Phone Number,
+            // they won deduplication against it: measured on a held-out corpus
+            // split, phone recall was 45.9%, with real numbers returned as
+            // Peru Carnet Extranjeria or British NHS. A bare digit run is only
+            // evidence of an identifier when something nearby says which
+            // identifier it is.
+            | "British NHS"
+            | "Germany Tax ID"
+            | "Netherlands BSN"
+            | "Poland PESEL"
+            | "Japan My Number"
+            | "Israel Teudat Zehut"
+            | "South Africa ID"
+            | "MERS MIN"
+            | "USA Routing Number"
     )
 }
