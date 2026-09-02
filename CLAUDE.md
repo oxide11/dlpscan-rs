@@ -147,7 +147,8 @@ Key env vars for siphon-api:
 |---|---|---|
 | `SIPHON_PORT` | 8080 | |
 | `SIPHON_BIND` | 127.0.0.1 | |
-| `SIPHON_API_KEY` | — | required in production |
+| `SIPHON_API_KEY` | — | **required**; empty counts as unset. Without it the service refuses to start |
+| `SIPHON_ALLOW_UNAUTHENTICATED` | false | opt in to running with no auth — local dev only |
 | `SIPHON_TLS_CERT` / `SIPHON_TLS_KEY` | — | PEM paths |
 | `SIPHON_CORS_ORIGINS` | none | comma-separated |
 | `SIPHON_RATE_LIMIT` | 120 | req/min per IP |

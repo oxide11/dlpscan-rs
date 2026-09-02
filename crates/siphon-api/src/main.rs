@@ -7,7 +7,12 @@
 //! Configuration via environment variables:
 //!   SIPHON_PORT                      Listen port (default: 8080)
 //!   SIPHON_BIND                      Bind address (default: 127.0.0.1)
-//!   SIPHON_API_KEY                   Required API key (SHA-256 hashed at rest)
+//!   SIPHON_API_KEY                   Required API key (SHA-256 hashed at rest).
+//!                                    Empty counts as unset. Absent means the
+//!                                    service refuses to start unless
+//!                                    SIPHON_ALLOW_UNAUTHENTICATED is set.
+//!   SIPHON_ALLOW_UNAUTHENTICATED     Opt in to serving every endpoint without
+//!                                    authentication. Local development only.
 //!   SIPHON_TLS_CERT                  TLS certificate path (PEM)
 //!   SIPHON_TLS_KEY                   TLS private key path (PEM)
 //!   SIPHON_CORS_ORIGINS              Comma-separated allowed origins (default: none)
@@ -5282,6 +5287,11 @@ async fn admin_reload(
 // Main
 // ---------------------------------------------------------------------------
 
+/// Below this length an API key is very likely a placeholder rather than a
+/// generated secret. Not enforced — rejecting short keys would break existing
+/// deployments on upgrade — but warned about loudly at startup.
+const MIN_API_KEY_LEN: usize = 16;
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -5299,15 +5309,70 @@ async fn main() {
 
     let bind = std::env::var("SIPHON_BIND").unwrap_or_else(|_| "127.0.0.1".into());
 
-    let api_key_hash = std::env::var("SIPHON_API_KEY").ok().map(|key| {
-        let mut hasher = Sha256::new();
-        hasher.update(key.as_bytes());
-        let hash: [u8; 32] = hasher.finalize().into();
-        tracing::info!("API key authentication enabled");
-        hash
-    });
+    // An empty or whitespace-only value counts as unset, not as a key.
+    //
+    // `env::var` returns `Ok("")` for a variable that is set-but-empty, so
+    // without this filter the empty string was hashed and became the expected
+    // credential: the service logged "API key authentication enabled" and then
+    // accepted `Authorization: Bearer ` with nothing after it. That is not
+    // hypothetical — deploy/docker-compose.yml sets
+    // `SIPHON_API_KEY=${SIPHON_API_KEY:-}`, which is exactly an empty value
+    // whenever the variable is absent from the environment.
+    let api_key_hash = std::env::var("SIPHON_API_KEY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+        .map(|key| {
+            if key.len() < MIN_API_KEY_LEN {
+                tracing::warn!(
+                    len = key.len(),
+                    minimum = MIN_API_KEY_LEN,
+                    "SIPHON_API_KEY is shorter than the recommended minimum — \
+                     generate one with `openssl rand -hex 32`"
+                );
+            }
+            let mut hasher = Sha256::new();
+            hasher.update(key.as_bytes());
+            let hash: [u8; 32] = hasher.finalize().into();
+            tracing::info!("API key authentication enabled");
+            hash
+        });
+
     if api_key_hash.is_none() {
-        tracing::warn!("SIPHON_API_KEY not set — running WITHOUT authentication (dev mode only)");
+        // Fail closed. Previously an absent key meant the service came up
+        // serving an unauthenticated API, which is the wrong failure mode for
+        // a tool whose whole surface returns other people's sensitive data: a
+        // pod that crash-loops gets noticed, a pod quietly serving an open
+        // scanner does not.
+        //
+        // Running without authentication is still possible, but it now has to
+        // be asked for.
+        let allow_open = std::env::var("SIPHON_ALLOW_UNAUTHENTICATED")
+            .map(|v| {
+                let v = v.trim();
+                v.eq_ignore_ascii_case("true") || v == "1"
+            })
+            .unwrap_or(false);
+
+        if !allow_open {
+            eprintln!(
+                "FATAL: SIPHON_API_KEY is not set (or is empty), so every endpoint would be\n\
+                 served without authentication. Refusing to start.\n\
+                 \n\
+                 Set an API key:\n\
+                 \n\
+                     export SIPHON_API_KEY=\"$(openssl rand -hex 32)\"\n\
+                 \n\
+                 Or, for local development only, opt in to running open:\n\
+                 \n\
+                     export SIPHON_ALLOW_UNAUTHENTICATED=true\n"
+            );
+            std::process::exit(1);
+        }
+
+        tracing::warn!(
+            "SIPHON_ALLOW_UNAUTHENTICATED is set — every endpoint is served WITHOUT \
+             authentication. Never use this outside local development."
+        );
     }
 
     let rate_limit: u32 = std::env::var("SIPHON_RATE_LIMIT")
