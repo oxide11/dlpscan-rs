@@ -152,6 +152,7 @@ Key env vars for siphon-api:
 | `SIPHON_TLS_CERT` / `SIPHON_TLS_KEY` | — | PEM paths |
 | `SIPHON_CORS_ORIGINS` | none | comma-separated |
 | `SIPHON_RATE_LIMIT` | 120 | req/min per IP |
+| `SIPHON_TRUSTED_PROXIES` | — | comma-separated IPs/CIDRs whose `X-Forwarded-For` is believed for rate-limit keying. Unset = key on the TCP peer, which behind a proxy puts every client in one bucket. Only the right-most forwarded entry is used |
 | `SIPHON_REQUEST_TIMEOUT_SECS` | 30 | |
 | `SIPHON_AUDIT_LOG_PATH` | — | JSONL audit file |
 | `SIPHON_AUDIT_SIGNING_KEY_HEX` | — | enables HMAC-SHA256 chain |
@@ -161,6 +162,8 @@ Key env vars for siphon-api:
 | `SIPHON_POLICIES_DIR` | — | directory of *.yaml rulesets |
 | `SIPHON_ALLOWLIST_PATH` | — | JSON allowlist |
 | `SIPHON_DATABASE_URL` | — | Postgres (optional) |
+| `SIPHON_DATABASE_TLS` | require | `require` or `disable`. Findings rows carry matched sensitive values, so the Postgres hop is encrypted by default; `require` pins `sslmode=require` and verifies the server certificate |
+| `SIPHON_DATABASE_CA_FILE` | — | extra PEM CA bundle for a self-signed Postgres certificate |
 | `SIPHON_FINDINGS_RETENTION_DAYS` | 90 | Days to retain findings (0 = keep forever) |
 | `SIPHON_OVERRIDES_PATH` | — | PatternOverrides YAML (hot-reloadable) |
 
@@ -197,6 +200,8 @@ Env vars for postgres:
 | Variable | Default | Notes |
 |---|---|---|
 | `SIPHON_DATABASE_URL` | — | Postgres connection string (optional) |
+| `SIPHON_DATABASE_TLS` | require | `require` or `disable` (see above); applies to siphon-api and siphon-fs alike |
+| `SIPHON_DATABASE_CA_FILE` | — | extra PEM CA bundle for a self-signed Postgres certificate |
 | `SIPHON_FINDINGS_RETENTION_DAYS` | 90 | Days to retain findings (0 = keep forever) |
 
 C2 wireframe:

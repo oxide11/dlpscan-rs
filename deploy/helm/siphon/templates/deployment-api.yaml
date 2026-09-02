@@ -104,6 +104,14 @@ spec:
               value: {{ .Release.Namespace | quote }}
             - name: RUST_LOG
               value: info
+            {{- with .Values.api.trustedProxies }}
+            # Every request reaches siphon-api from the nginx pod, so per-IP
+            # rate limiting keys on nginx and collapses all callers into one
+            # bucket unless the forwarded address is believed. Only set this
+            # to networks that cannot be spoofed by a client.
+            - name: SIPHON_TRUSTED_PROXIES
+              value: {{ . | quote }}
+            {{- end }}
             {{- if .Values.api.auth.secretName }}
             - name: SIPHON_API_KEY
               valueFrom:
@@ -131,6 +139,18 @@ spec:
                 secretKeyRef:
                   name: {{ required "postgres.secretName is required when postgres.enabled is true" .Values.postgres.secretName }}
                   key: password
+            # siphon-api defaults to requiring TLS on the Postgres hop,
+            # because findings rows carry the sensitive values the scanner
+            # exists to detect. The chart's bundled Postgres serves no
+            # certificate, so the default would crashloop against it — hence
+            # an explicit mode here. Point postgres.external at a managed
+            # instance and set postgres.sslMode=require to encrypt the hop.
+            - name: SIPHON_DATABASE_TLS
+              value: {{ .Values.postgres.sslMode | quote }}
+            {{- with .Values.postgres.caFile }}
+            - name: SIPHON_DATABASE_CA_FILE
+              value: {{ . | quote }}
+            {{- end }}
             {{- end }}
             {{- with .Values.api.extraEnv }}
             {{- toYaml . | nindent 12 }}

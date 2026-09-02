@@ -120,6 +120,10 @@ impl LiveOverrides {
 
 struct AppState {
     api_key_hash: Option<[u8; 32]>,
+    /// Networks whose `X-Forwarded-For` is believed. Empty means the TCP peer
+    /// is used directly — correct for a direct deployment, and the safe
+    /// default because an unconfigured proxy must never grant header trust.
+    trusted_proxies: Vec<TrustedNet>,
     rate_limiter: Arc<Mutex<RateLimiter>>,
     rate_limit: u32,
     policies: Arc<Vec<Policy>>,
@@ -561,13 +565,114 @@ fn endpoint_rate_limit(path: &str) -> Option<u32> {
     }
 }
 
+/// Resolve the client address to rate-limit on.
+///
+/// `ConnectInfo` gives the TCP peer, which behind a reverse proxy is the proxy
+/// itself. In the Helm topology every request arrives from the nginx pod, so
+/// keying on it collapses every client into a single bucket: one noisy caller
+/// exhausts the limit for everyone, and per-IP limiting isolates nothing.
+///
+/// The fix is not simply to read `X-Forwarded-For`. A client can send that
+/// header itself, so trusting it unconditionally lets anyone *evade* the limit
+/// by rotating a forged value — strictly worse than the bucket collapse it
+/// would cure.
+///
+/// So the header is honoured only when the immediate peer is a configured
+/// trusted proxy (`SIPHON_TRUSTED_PROXIES`, comma-separated IPs or CIDRs), and
+/// the value taken is the **right-most** entry, which is the one that proxy
+/// appended. Everything to its left was supplied by whoever spoke to the proxy
+/// and is attacker-controlled. With no trusted proxies configured the peer
+/// address is used unchanged, which is correct for a direct deployment.
+fn client_ip(trusted: &[TrustedNet], peer: &SocketAddr, headers: &HeaderMap) -> String {
+    if trusted.is_empty() || !is_trusted_proxy(trusted, peer.ip()) {
+        return peer.ip().to_string();
+    }
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.rsplit(',').next())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s.parse::<std::net::IpAddr>().is_ok())
+        .unwrap_or_else(|| peer.ip().to_string())
+}
+
+fn is_trusted_proxy(trusted: &[TrustedNet], ip: std::net::IpAddr) -> bool {
+    trusted.iter().any(|net| net.contains(ip))
+}
+
+/// Parse `SIPHON_TRUSTED_PROXIES` into networks. Accepts bare IPs (treated as
+/// /32 or /128) and CIDRs. Unparseable entries are dropped with a warning
+/// rather than silently widening or narrowing trust.
+fn parse_trusted_proxies(raw: &str) -> Vec<TrustedNet> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .filter_map(|entry| match TrustedNet::parse(entry) {
+            Some(n) => Some(n),
+            None => {
+                tracing::warn!(entry, "ignoring unparseable SIPHON_TRUSTED_PROXIES entry");
+                None
+            }
+        })
+        .collect()
+}
+
+/// A trusted-proxy network. Deliberately hand-rolled rather than pulling in an
+/// IP-network crate: the whole job is a prefix comparison on bytes we already
+/// have, and a new dependency in the auth path is a worse trade.
+#[derive(Clone, Debug)]
+pub struct TrustedNet {
+    addr: std::net::IpAddr,
+    prefix: u8,
+}
+
+impl TrustedNet {
+    fn parse(s: &str) -> Option<Self> {
+        let (host, prefix) = match s.split_once('/') {
+            Some((h, p)) => (h, p.parse::<u8>().ok()?),
+            None => (s, u8::MAX),
+        };
+        let addr: std::net::IpAddr = host.parse().ok()?;
+        let max = if addr.is_ipv4() { 32 } else { 128 };
+        let prefix = if prefix == u8::MAX { max } else { prefix };
+        if prefix > max {
+            return None;
+        }
+        Some(Self { addr, prefix })
+    }
+
+    fn contains(&self, ip: std::net::IpAddr) -> bool {
+        let (a, b) = match (self.addr, ip) {
+            (std::net::IpAddr::V4(a), std::net::IpAddr::V4(b)) => {
+                (a.octets().to_vec(), b.octets().to_vec())
+            }
+            (std::net::IpAddr::V6(a), std::net::IpAddr::V6(b)) => {
+                (a.octets().to_vec(), b.octets().to_vec())
+            }
+            // Never match across families; an IPv4-mapped IPv6 peer must be
+            // configured as such rather than matching a bare IPv4 entry.
+            _ => return false,
+        };
+        let full = (self.prefix / 8) as usize;
+        if a[..full] != b[..full] {
+            return false;
+        }
+        let rem = self.prefix % 8;
+        if rem == 0 {
+            return true;
+        }
+        let mask = 0xffu8 << (8 - rem);
+        a[full] & mask == b[full] & mask
+    }
+}
+
 async fn rate_limit_middleware(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let ip = addr.ip().to_string();
+    let ip = client_ip(&state.trusted_proxies, &addr, request.headers());
     let path = request.uri().path().to_string();
 
     let allowed = {
@@ -5597,8 +5702,22 @@ async fn main() {
         tracing::info!("database migrations applied");
     }
 
+    let trusted_proxies = std::env::var("SIPHON_TRUSTED_PROXIES")
+        .map(|raw| parse_trusted_proxies(&raw))
+        .unwrap_or_default();
+    if trusted_proxies.is_empty() {
+        tracing::info!(
+            "SIPHON_TRUSTED_PROXIES not set — rate limiting keys on the TCP peer. \
+             Behind a reverse proxy that collapses every client into one bucket; \
+             set it to the proxy's address to key on X-Forwarded-For instead."
+        );
+    } else {
+        tracing::info!(count = trusted_proxies.len(), "trusted proxies configured");
+    }
+
     let state = Arc::new(AppState {
         api_key_hash,
+        trusted_proxies,
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
         rate_limit,
         policies: Arc::new(policies),
@@ -6067,5 +6186,107 @@ mod tests {
             StatusCode::FORBIDDEN,
             "operator must not pass an AdminAction gate",
         );
+    }
+}
+
+#[cfg(test)]
+mod trusted_proxy_tests {
+    use super::*;
+    use std::net::IpAddr;
+
+    fn net(s: &str) -> TrustedNet {
+        TrustedNet::parse(s).unwrap_or_else(|| panic!("failed to parse {s}"))
+    }
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn bare_ip_matches_only_itself() {
+        let n = net("10.0.0.5");
+        assert!(n.contains(ip("10.0.0.5")));
+        assert!(!n.contains(ip("10.0.0.6")));
+    }
+
+    #[test]
+    fn cidr_matches_within_prefix() {
+        let n = net("10.0.0.0/24");
+        assert!(n.contains(ip("10.0.0.1")));
+        assert!(n.contains(ip("10.0.0.255")));
+        assert!(!n.contains(ip("10.0.1.1")));
+    }
+
+    #[test]
+    fn non_byte_aligned_prefix_is_honoured() {
+        // /28 covers .0-.15 only; the naive whole-byte comparison would let
+        // the entire /24 through.
+        let n = net("192.168.1.0/28");
+        assert!(n.contains(ip("192.168.1.15")));
+        assert!(!n.contains(ip("192.168.1.16")));
+    }
+
+    #[test]
+    fn families_never_cross() {
+        // An IPv4-mapped IPv6 peer must be configured explicitly rather than
+        // matching a bare IPv4 entry, or trust widens silently on a
+        // dual-stack listener.
+        assert!(!net("10.0.0.1").contains(ip("::ffff:10.0.0.1")));
+        assert!(!net("::1").contains(ip("127.0.0.1")));
+    }
+
+    #[test]
+    fn malformed_entries_are_dropped_not_widened() {
+        let nets = parse_trusted_proxies("10.0.0.1, not-an-ip, 10.0.0.0/99, , 192.168.0.0/16");
+        assert_eq!(nets.len(), 2, "only the two valid entries should survive");
+        assert!(nets.iter().any(|n| n.contains(ip("10.0.0.1"))));
+        assert!(nets.iter().any(|n| n.contains(ip("192.168.5.5"))));
+    }
+
+    #[test]
+    fn untrusted_peer_cannot_spoof_its_own_address() {
+        // The whole point: a direct client sending X-Forwarded-For must not be
+        // able to choose its own rate-limit bucket.
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "1.2.3.4".parse().unwrap());
+        let trusted = vec![net("10.0.0.1")];
+        let peer: SocketAddr = "203.0.113.9:5000".parse().unwrap();
+        assert_eq!(
+            client_ip(&trusted, &peer, &headers),
+            "203.0.113.9",
+            "an untrusted peer's forwarded header was believed"
+        );
+    }
+
+    #[test]
+    fn trusted_proxy_supplies_the_client_address() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "1.2.3.4".parse().unwrap());
+        let trusted = vec![net("10.0.0.1")];
+        let peer: SocketAddr = "10.0.0.1:5000".parse().unwrap();
+        assert_eq!(client_ip(&trusted, &peer, &headers), "1.2.3.4");
+    }
+
+    #[test]
+    fn rightmost_entry_wins_so_prepended_values_are_ignored() {
+        // A client that sends its own XFF before reaching the proxy prepends
+        // to the list; the proxy appends the real peer. Taking the left-most
+        // would believe the forgery.
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            "9.9.9.9, 8.8.8.8, 1.2.3.4".parse().unwrap(),
+        );
+        let trusted = vec![net("10.0.0.1")];
+        let peer: SocketAddr = "10.0.0.1:5000".parse().unwrap();
+        assert_eq!(client_ip(&trusted, &peer, &headers), "1.2.3.4");
+    }
+
+    #[test]
+    fn garbage_forwarded_value_falls_back_to_the_peer() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "not-an-ip".parse().unwrap());
+        let trusted = vec![net("10.0.0.1")];
+        let peer: SocketAddr = "10.0.0.1:5000".parse().unwrap();
+        assert_eq!(client_ip(&trusted, &peer, &headers), "10.0.0.1");
     }
 }
