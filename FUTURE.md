@@ -23,6 +23,9 @@ interesting work below. Right now the scanner cannot answer *"which of our 128
 categories is weakest?"*, and no roadmap item can be validated without that
 answer.
 
+Foundation 1 is governed by the **Data provenance policy**, which is binding:
+real public documents as carriers, synthetic values, no breach data.
+
 ---
 
 ## Evidence base
@@ -125,10 +128,10 @@ is the primary path rather than a shortcut.
 
 ### How to obtain it
 
-The hard constraint: **nothing containing real personal data may enter the
-repository.** Everything committed is synthetic or public-domain. If real
-customer data is ever used for validation it stays outside git entirely, in a
-gitignored fixture store or a separate private corpus, and never in CI logs.
+All of it is governed by the **Data provenance policy** below, which is binding
+rather than advisory. In short: real public documents may serve as carriers
+after screening, the sensitive values are always synthetic, and breach dumps
+are out of the question.
 
 **Performance corpus (1a) — public documents, no labels.**
 
@@ -192,6 +195,164 @@ Synthetic data bootstraps a model but will not teach it the false positives
 that actually occur in a customer's documents. That signal only comes from
 analyst feedback on real findings, which is why item 1 in the sequence below is
 a feedback column rather than a model.
+
+---
+
+### Worked example: what real carriers found in minutes
+
+On 2026-09-02 a public dataset — the US House of Representatives office
+directory, 442 rows of name / phone / office address as an `.xlsx` — was run
+through the scanner as a provenance screening test. It is squarely within the
+policy below: official contact details of elected officials in their official
+capacity, published by design, US government work.
+
+**The scanner returned zero findings**, from a document containing 441 valid US
+phone numbers. Extraction was fine (30,164 characters recovered), so this was a
+detection failure, and reducing it gave:
+
+| Input | Detected |
+|---|---|
+| `202-225-8490` | yes |
+| `Phone: 202-225-8490` | yes (with context) |
+| `202-225-8490 CHOB` | yes |
+| `202-225-8490 417` | **no** |
+
+The cause is in normalization, not in the phone pattern:
+
+```
+"202-225-8490 417"   ->  "2022258490417"     13-digit run, matches nothing
+"202-225-8490 CHOB"  ->  "2022258490 CHOB"   10-digit run, matches
+```
+
+`collapse_padding` drops whitespace between two non-alphabetic characters to
+defeat `4 5 3 2 0 1 5 1` padding evasion. Digits are not alphabetic, so it also
+**fuses adjacent numeric fields**. Any sensitive number followed by another
+number — a room number, an extension, an employee ID, a date, an amount —
+becomes invisible. That is the normal shape of a spreadsheet row, and
+spreadsheets are a headline supported format.
+
+This is not a simple fix, because the same fusing is *required* elsewhere: a
+card number written `4532 0151 1283 0366` is only detected because
+`collapse_padding` fuses it. One destructive normalization cannot serve both
+cases.
+
+Two candidate directions, neither yet chosen:
+
+- **Scan the original text alongside the normalized text.** The scanner already
+  has an alternatives mechanism for alt-decodings; raw text becomes one more
+  candidate. Costs roughly a second matching pass, and fixes the whole family
+  of "normalization destroyed the evidence" bugs — of which the GPS coordinate
+  miss fixed earlier that day was another instance, patched by special-casing
+  rather than at the root.
+- **Make `collapse_padding` sensitive to run length**, on the theory that
+  padding evasion uses single-character groups while legitimate adjacent fields
+  are multi-digit. Cheaper, but a heuristic layered on a heuristic.
+
+The finding matters more than the fix. **One real document, minutes of work,
+and it surfaced a recall bug across an entire supported file format that 80
+synthetic fixtures had not.** Synthetic data validates what we thought to
+encode; real carriers surface what we did not.
+
+---
+
+## Data provenance policy
+
+Binding, not aspirational. Written down because it will be re-litigated the
+first time someone finds a large, convenient dataset.
+
+### The rule
+
+**No real personal data enters this repository, in any form, ever.** Real
+documents may serve as *carriers* only after passing the screening gate below.
+The sensitive values themselves are always synthetic.
+
+### Permitted
+
+- **Public-domain or openly licensed documents, used as carriers.**
+  CourtListener / the RECAP archive (US federal court records — US government
+  works are not copyrightable), SEC EDGAR filings, GovDocs1, Project Gutenberg,
+  public source repositories.
+- **Synthetic identifiers from our own generators** (`src/guard/obfuscate.rs`,
+  extended per validator).
+- **evadex adversarial output**, which is generated rather than collected.
+- **Synthetic labelled sets** with compatible licences, e.g.
+  `ai4privacy/pii-masking`, for cross-checking our own generators.
+- **DUA-gated de-identification corpora** such as i2b2/n2c2 — real clinical
+  documents with *surrogate* identifiers substituted in. This is the pattern
+  the de-identification research community converged on, and it is the right
+  model: real structure, fake values. Usable only under the executed agreement,
+  and never committed here.
+
+### Prohibited
+
+- **Breach dumps and leaked databases.** No lawful basis exists for processing
+  them under GDPR Art. 6 — possession and processing are the regulated acts,
+  and "it was already public" is not a basis. Several US state regimes and CFAA
+  theories reach them as well.
+
+  The commercial argument is stronger than the legal one. Siphon is sold as a
+  compliance tool; a test corpus built from breach data would be an existential
+  trust event and a probable breach of any signed DPA. Git history is
+  permanent, so this is not a decision that can be quietly reversed later.
+
+  They are also poor data for the purpose: mostly single-field credential
+  tables with none of the document context the detection corpus needs.
+
+- **Scraped or commercially aggregated people-directories.** Murky provenance,
+  and purpose limitation bites — data published so the public can find a
+  licensed physician does not thereby permit bulk reuse as training data.
+  Genuinely public registries published *by design* (business registries,
+  professional licensing boards) are a different case and are permitted as
+  carriers.
+
+- **Any real PII committed to the repository** — including fixtures, CI logs,
+  benchmark inputs and issue attachments.
+
+### The grey area, handled explicitly: court records
+
+Court filings are public record, cleanly licensed, and genuinely the most
+realistic carrier material available. They are also **well documented as
+containing PII that should have been redacted and was not** — researchers have
+repeatedly recovered SSNs, financial account numbers and minors' names from
+PACER filings.
+
+So they are permitted as carriers, but *only* through the screening gate. Their
+public-record status is a better footing than breach data; it is not a blanket
+exemption, and under GDPR "publicly available" is a factor rather than a
+defence.
+
+### The screening gate
+
+Every real document ingested as a carrier is scanned with Siphon before it is
+committed. Anything producing a high-confidence finding is excluded or
+redacted.
+
+This has a useful recursive property: **our own tool becomes the intake
+filter**, and every finding raised during screening is a real-world example of
+how PII appears in the wild. Record the *shape* — the formatting, the
+surrounding context, the failure mode — as a case for the synthetic generator.
+Never retain the value.
+
+### If real data must ever be used
+
+For validation against a customer's own corpus, or under a DUA:
+
+- It never enters git. Access-controlled external storage, with the lawful
+  basis or agreement documented alongside it.
+- It never reaches CI logs or artifacts.
+- Only aggregate metrics cross that boundary — counts and rates, never spans or
+  matched text.
+
+### Why the hybrid wins on merit, not only on caution
+
+Real data arrives **unlabelled**. Labelling it means people reading real PII at
+volume, which compounds the exposure, and yields a few thousand labels for
+weeks of effort. Synthetic injection yields exact spans, free, at any volume.
+
+Real PII is therefore *more* work, *more* risk and *less* useful output. The
+one thing it genuinely offers — the distribution of how identifiers actually
+appear in real documents — is captured by using real documents as carriers,
+which the policy above already permits.
 
 ---
 
