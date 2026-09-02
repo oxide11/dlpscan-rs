@@ -276,6 +276,84 @@ containing nothing but Canadian office contact details.
 **The 0% versus 100% on postal codes is the same pattern class**, and the
 explanation is the most valuable finding of the exercise.
 
+### First held-out measurement, and what it found
+
+A 13,551-record Canadian public-professional-contact corpus (27,102 annotated
+samples, 218,150 entity spans, train/validation/test split with zero
+person-level leakage) was audited independently and then used to measure the
+scanner on its **test split** — 2,586 samples never used for anything else.
+
+Audit first, since the numbers below only mean something if the corpus is
+sound: all 218,150 annotation offsets verified, zero out-of-bounds, zero
+overlapping spans, zero split leakage, label counts matching the manifest, and
+3,872 of 3,875 postal values independently confirmed by our own
+`is_valid_canada_postal_code` (the three rejects are documented `NA`/`-`
+placeholders). The province distribution derived from district letters is
+Ontario 2,028 / Quebec 1,566 with everything else small — the National Capital
+Region dominating a federal directory, which is a semantic signature synthetic
+data rarely reproduces.
+
+**One interoperability trap:** annotation offsets are **character** offsets,
+the Python convention. 60% of samples contain non-ASCII (the corpus is
+bilingual) and 116,155 of 218,150 spans would be wrong if read as **byte**
+offsets. Rust strings are byte-indexed and `Match.span` is byte-based, so any
+Rust consumer must convert. Reading them raw silently corrupts exactly the
+French records.
+
+Recall on the held-out test split, for the three labels the scanner supports at
+all:
+
+| Label | Found | Missed | Recall |
+|---|---:|---:|---:|
+| EMAIL_ADDRESS | 1,160 | 8 | 99.3% |
+| POSTAL_CODE | 2,314 | 150 | 93.9% |
+| PHONE_NUMBER | 920 | 1,086 | **45.9%** |
+
+The remaining six labels — PERSON_NAME, JOB_TITLE, ORGANIZATION,
+STREET_ADDRESS, CITY, REGION — the scanner cannot detect at all. That is the
+NER gap, now quantified rather than asserted.
+
+### Phone numbers are not missed, they are misattributed
+
+45.9% looks like a recall failure and is not one. The spans *are* detected; they
+are labelled as the wrong thing:
+
+    343-553-1633  ->  Peru Carnet Extranjeria
+    519-827-9864  ->  Peru Carnet Extranjeria
+    343-990-8909  ->  British NHS
+
+For a DLP tool this is worse than a miss, because a finding routed to the wrong
+category is routed to the wrong policy.
+
+The competing patterns explain it:
+
+| Pattern | Regex | Specificity | Always-run |
+|---|---|---:|---|
+| British NHS | `\d{3}\s?\d{3}\s?\d{4}` | 0.65 | yes |
+| Peru Carnet Extranjeria | `\d{9,12}` | 0.40 | no |
+| Colombia Cedula | `\d{6,10}` | 0.40 | no |
+| US Phone Number | `(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}` | 0.40 | yes |
+
+`British NHS` matches every ten-digit number on earth, is always-run, and
+outranks the phone pattern, so it wins deduplication. It is not an unvalidated
+pattern — NHS numbers carry a mod-11 check digit and we verify it — but roughly
+one in eleven arbitrary ten-digit numbers passes that check by chance, and
+`3439908909` is one of them.
+
+The defect is the **ranking**, not the validation. A `NNN-NNN-NNNN` string that
+also satisfies NANP structure is far more likely to be a telephone number than
+an NHS number that merely passed a one-in-eleven checksum, yet the phone
+pattern is scored 0.40 against the NHS pattern's 0.65. Specificity is being
+used as a proxy for confidence while being assigned by hand and never
+calibrated against outcomes.
+
+This is the concrete case for the calibration item below, and the corpus is now
+the instrument for it: 2,586 held-out samples with known answers make it
+possible to fit specificity to observed precision instead of guessing. It also
+explains the ~250 "false positives" measured earlier on the Canadian MP
+directory, which were largely not spurious findings at all but real phone
+numbers wearing foreign identity-document labels.
+
 ### `context_required: false` does not mean the pattern runs
 
 `Canada Postal Code` and `UK Postcode` both declare `context_required: false`,
@@ -517,6 +595,95 @@ Table and column awareness: a column of 9-digit numbers under a header reading
 extractors. Related: language identification, to select one keyword set rather
 than running all six.
 
+### Metadata-driven routing: activate patterns by document evidence
+
+The scanner currently runs the same 583 patterns and 5,178 keywords across six
+languages against every document, regardless of what the document is. A
+French-Canadian Word file is scanned for Peruvian immigration cards with
+exactly the same enthusiasm as a Peruvian one.
+
+That is not only wasteful, it is a measured precision problem. The false
+positives fixed on 2026-09-02 came overwhelmingly from **foreign-language short
+keywords** — `ce` (Peru), `cc` (Colombia), `ci` (Venezuela), `cf` (Italy) —
+firing inside ordinary English words. Word boundaries fixed the mechanism; they
+did not address the deeper oddity, which is that those keyword sets were live
+at all in a document with no connection to those jurisdictions.
+
+The structure to aim for is a **sparsely activated** one: a cheap routing
+signal decides which pattern and keyword families are plausible for this
+document, and the rest stay dormant. The scanner already has the shape of it —
+the Aho-Corasick prefilter *is* a router — it simply routes on the wrong
+signal, using hand-assigned specificity where it could use evidence about the
+document in hand.
+
+#### The signals already exist and are already extracted
+
+`forensics/` parses OOXML and PDF metadata today and hands it to a separate
+report; **the detection path consumes none of it**.
+
+| Signal | Where it lives | Notes |
+|---|---|---|
+| `dc:language` | OOXML `docProps/core.xml`, PDF XMP | Already captured — `parse_core_xml`'s catch-all files it under `raw["cp:language"]`, a mislabelled prefix since it is Dublin Core |
+| Editing language | OOXML `word/settings.xml` `w:themeFontLang` (`en-US`, `fr-CA`) | Strong signal; the language the author's Word was configured for. Not yet parsed |
+| Timezone offset | `created_at` / `modified_at` ISO 8601 strings | Already stored verbatim, offset included. `-05:00` narrows to the Americas |
+| Producer locale | `application` (`xmp:CreatorTool`, OOXML `<Application>`) | Often carries a locale suffix |
+| Organisation | `company` (OOXML `<Company>`) | Populated on domain-joined installs |
+
+Adding a first-class `language` and `locale` field to `FileMetadata`, and
+parsing `w:themeFontLang`, is a small change with the signals mostly in hand.
+
+#### How it should be used: a prior, never a filter
+
+Two constraints make the difference between a good feature and a vulnerability.
+
+**Metadata is attacker-controlled.** Any of these fields is trivially editable
+in a document someone is trying to exfiltrate through. If metadata *gates*
+detection, then setting `dc:language` to `zh` becomes a one-line evasion for
+every non-Chinese pattern — a far worse bug than the false positives it would
+fix. Metadata may therefore **weight confidence**; it must never suppress a
+pattern outright.
+
+**Metadata is frequently absent or wrong.** Scanned PDFs, stripped documents,
+plain text and anything through a converter carry nothing. The routing must
+degrade to today's behaviour rather than fail closed.
+
+Both point the same way: **language identified from the document text is the
+more robust signal**, with metadata corroborating it rather than the other way
+round. Text-derived language cannot be edited without editing the document, and
+it is present whenever there is text to scan at all.
+
+#### What it buys
+
+- **Precision.** A `de-DE` document with a bare nine-digit number is far more
+  likely to hold a German identifier than a Peru Carnet Extranjeria. This is
+  the same misattribution class that put phone recall at 45.9%, attacked from a
+  different side: instead of asking which pattern is more specific in the
+  abstract, ask which is more plausible *here*.
+- **Speed.** Five of six keyword languages skipped shrinks the automaton
+  materially, and the prefilter is the pipeline's largest throughput win
+  already.
+- **Corroboration, and the postal case is the worked example.**
+  `canada_postal_district_region()` maps a district letter to a province:
+  metadata region, postal district and city name are three independent signals
+  that either agree or contradict. `B3P` beside "Halifax" in an `en-CA`
+  document is coherent and should score up; `T5A` beside "Nova Scotia" is
+  incoherent and should score down. Today each finding is scored alone, so
+  none of that is expressible.
+
+#### Suggested first step
+
+Not the routing. First make the signals visible: add `language` and `locale` to
+`FileMetadata`, parse `w:themeFontLang`, correct the `dc:language` prefix, and
+**report what is found without acting on it**. Then measure how often real
+documents actually carry usable locale metadata, using the public-records
+corpus and whatever else is to hand.
+
+If the answer is "rarely", text-derived language identification is the whole
+feature and metadata is a footnote. If it is "usually", the routing is worth
+building. That is a day's work and it decides the shape of everything after it
+— which is the same discipline the rest of this document argues for: measure
+the premise before building on it.
+
 ### Vectorscan for the matching stage
 
 The clearest unexplored speed lever. The current design — `RegexSet` phase 1 to
@@ -621,10 +788,17 @@ why both foundations come first.
 | 4 | Grow the labelled detection corpus | 3 | no |
 | 5 | Calibrate confidence scores | 2, 4 | no |
 | 6 | Document-level aggregation | 2 | no |
-| 7 | Vectorscan evaluation | 2, 4 | no |
-| 8 | GBDT false-positive reranker | 1, 4 | yes |
-| 9 | Optional NER stage | 4, 8 | yes |
+| 7 | Locale-signal survey — measure, don't build | — | no |
+| 8 | Metadata/language routing, if the survey supports it | 2, 7 | no |
+| 9 | Vectorscan evaluation | 2, 4 | no |
+| 10 | GBDT false-positive reranker | 1, 4 | yes |
+| 11 | Optional NER stage | 4, 10 | yes |
 
-Items 1-4 are the foundations the user identified. Items 5-7 need no ML at all
-and are worth doing regardless. Items 8-9 only become possible — and only
-become measurable — once the rest exists.
+Items 1-4 are the two foundations. Items 5-9 need no ML at all and are worth
+doing regardless of whether any model is ever trained. Items 10-11 only become
+possible — and, more to the point, only become *measurable* — once the rest
+exists.
+
+Item 7 is deliberately a survey rather than a build. Whether locale metadata is
+usually present or usually absent in real documents decides whether item 8 is a
+feature or a footnote, and that is a day's measurement rather than a guess.

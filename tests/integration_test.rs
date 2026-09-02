@@ -739,24 +739,31 @@ fn test_lsh_save_and_load() {
 
 #[test]
 fn test_filename_provides_context_for_sin() {
-    // A file named "sin.txt" should provide "sin" as a context keyword,
-    // boosting confidence for Canadian SIN patterns in the content.
-    let f = tempfile::Builder::new()
-        .prefix("sin")
-        .suffix(".txt")
-        .tempfile()
-        .unwrap();
-    // Write a 9-digit number that could be a SIN (no keywords in content)
-    std::fs::write(f.path(), "reference number 246 100 002 for the account").unwrap();
+    // A filename carrying "sin" should supply it as a context keyword for
+    // Canadian SIN patterns in the content.
+    //
+    // This test used to build its temp file with `.prefix("sin")`, which yields
+    // names like `sin4f2a91.txt` — "sin" glued to random characters rather than
+    // standing as a word. It nonetheless passed, because its assertion is an
+    // OR against `!matches.is_empty()` and the body text
+    // ("...for the account") was firing Colombia Cedula: `cc` inside "account"
+    // activated it through the context prefilter, which matched keyword
+    // substrings. So the test never exercised filename context at all; it
+    // passed on an unrelated false positive, and only failed once that false
+    // positive was fixed.
+    //
+    // It now uses a filename a person would actually write, and asserts the
+    // behaviour it claims to.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sin_records.txt");
+    std::fs::write(&path, "reference number 246 100 002 for the file").unwrap();
 
     let pipeline = siphon::Pipeline::new().with_min_confidence(0.0);
-    let result = pipeline.process_file(f.path());
+    let result = pipeline.process_file(&path);
 
-    // The filename "sin*.txt" should provide "sin" context
-    let has_context_match = result.matches.iter().any(|m| m.has_context);
     assert!(
-        has_context_match || !result.matches.is_empty(),
-        "File named 'sin.txt' should boost context for SIN-like numbers. Matches: {:?}",
+        result.matches.iter().any(|m| m.has_context),
+        "filename 'sin_records.txt' should supply SIN context. Matches: {:?}",
         result
             .matches
             .iter()
