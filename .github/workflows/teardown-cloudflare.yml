@@ -1,0 +1,85 @@
+name: teardown-cloudflare
+
+# Takes the Siphon demo offline: deletes the Worker, its container instances,
+# and the siphon.polygoncyber.com custom domain binding.
+#
+# Manual dispatch only, and never on a push. Deleting a live public endpoint
+# is not something that should be reachable by merging a branch.
+#
+# Reversible: `deploy-cloudflare` recreates the Worker, the DNS record and the
+# certificate from `wrangler.jsonc`. Nothing here is stored only in Cloudflare
+# — the configuration is all in the repository — so a teardown costs a
+# redeploy, not a rebuild.
+#
+# What is NOT removed:
+#   · repository secrets — still needed to redeploy
+#   · the polygoncyber.com zone itself
+#   · container images already pushed to Cloudflare's registry
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DELETE to confirm taking the demo offline'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: deploy/cloudflare
+
+jobs:
+  teardown:
+    name: teardown
+    runs-on: ubuntu-latest
+    environment: siphon-demo
+    steps:
+      # Guard first, before any credential is touched. A dispatch with an empty
+      # or mistyped box stops here rather than part-way through a delete.
+      - name: Confirm intent
+        run: |
+          if [ "${{ inputs.confirm }}" != "DELETE" ]; then
+            echo "confirmation was '${{ inputs.confirm }}', expected DELETE" >&2
+            echo "nothing has been changed." >&2
+            exit 1
+          fi
+          echo "confirmed — taking siphon.polygoncyber.com offline"
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: deploy/cloudflare/package-lock.json
+
+      - run: npm ci
+
+      - name: Delete Worker and container
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: deploy/cloudflare
+          command: delete --force
+
+      - name: Confirm the endpoint is gone
+        run: |
+          set -uo pipefail
+          # Deletion propagates through Cloudflare's edge, so a couple of
+          # requests may still be served by a cached route. Anything other
+          # than 200 means the demo is no longer answering.
+          for attempt in 1 2 3 4 5 6; do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
+              https://siphon.polygoncyber.com/health || echo 000)
+            if [ "$code" != "200" ]; then
+              echo "offline (HTTP $code after $attempt attempt(s))"
+              exit 0
+            fi
+            echo "attempt $attempt: still serving 200, waiting..."
+            sleep 10
+          done
+          echo "still returning 200 after 6 attempts — check the Cloudflare dashboard" >&2
+          exit 1
