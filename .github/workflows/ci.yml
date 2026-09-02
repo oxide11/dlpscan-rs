@@ -68,6 +68,14 @@ jobs:
         run: cargo test --test forensics_test
       - name: Evadex regression tests
         run: cargo test --test evadex_regressions
+      # Labelled-corpus recall + false-positive gate. Asserts 80/80 recall
+      # across the positive corpus and zero forbidden matches across the
+      # negatives. Was red on main for a long time — a GPS coordinate the
+      # normalizer destroyed before matching, and a US phone whose validator
+      # disagreed with the corpus — so it ran nowhere and detection
+      # regressions had no automated signal. Both fixed; keep it green.
+      - name: Detection quality (labelled corpus)
+        run: cargo test --test detection_quality
 
   clippy:
     name: Clippy

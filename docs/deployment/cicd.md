@@ -31,7 +31,7 @@ independent jobs; `test` is the only one that waits on `build`.
 | Job | What it runs |
 |---|---|
 | Build | `cargo build --release` |
-| Test | `--lib`, `audit_spec`, `integration_test`, `evasion_test`, `forensics_test`, `evadex_regressions` |
+| Test | `--lib`, `audit_spec`, `integration_test`, `evasion_test`, `forensics_test`, `evadex_regressions`, `detection_quality` |
 | Clippy | `cargo clippy --lib -- -D warnings -A dead-code -A unused-imports` |
 | Format | `cargo fmt --check` |
 | Version sync | `scripts/check-version-sync.sh` |
@@ -54,29 +54,33 @@ forgotten Helm tag lands as a red check, not a silent drift.
 
 ### Harnesses CI does not run
 
-`detection_quality`, `fp_probe`, and `encoding_diag` appear in **no**
-workflow. They are the harnesses listed in `CLAUDE.md` under "Other test
-harnesses", and they have to be run by hand:
+`fp_probe` and `encoding_diag` appear in **no** workflow. They are
+investigation tools rather than gates — run them by hand when chasing a
+false positive:
 
 ```bash
-cargo test --test detection_quality   # labeled-corpus recall + FP
-cargo test --test fp_probe            # false-positive investigation
+cargo test --test fp_probe       # false-positive investigation
 ```
 
-Run `detection_quality` after any change to normalization, scoring, or
-dedup. It is **not** currently green on `main` — a `GPS Coordinates` recall
-miss and a `US Phone Number` false positive on an implausible number predate
-the current branch — so compare against a baseline run rather than expecting
-a clean pass, and fix that before wiring it into CI or it will only add
-noise.
+Two harnesses used to be in this list and are now part of the `test` job:
 
-`audit_spec` used to be in this list and is now part of the `test` job. It
-guards the lockstep between `PatternDef.specificity` / `.context_required`
-in `patterns/mod.rs` and `pattern_specificity()` / `is_context_required()`
-in `models.rs`; the scanner consults both, so a disagreement means one
-source is lying. Nothing ran it automatically for a long time, which is how
-the Malta TIN, Chile RUN/RUT and Tanzania NIDA divergences accumulated
-unnoticed.
+- **`audit_spec`** guards the lockstep between `PatternDef.specificity` /
+  `.context_required` in `patterns/mod.rs` and `pattern_specificity()` /
+  `is_context_required()` in `models.rs`. The scanner consults both, so a
+  disagreement means one source is lying. Nothing ran it automatically for a
+  long time, which is how the Malta TIN, Chile RUN/RUT and Tanzania NIDA
+  divergences accumulated unnoticed — and later the AML `Reasonable Grounds
+  To Suspect` / `FINTRAC EFTR` pair.
+- **`detection_quality`** asserts 80/80 recall over the labelled positive
+  corpus and zero forbidden matches over the negatives. It was red on `main`
+  for a long time for two unrelated reasons — the normalizer stripped the
+  decimal points out of a GPS coordinate before the pattern could match, and
+  `is_valid_us_phone` admitted `1XX` exchanges that the corpus explicitly
+  forbids — so it ran nowhere and detection regressions had no automated
+  signal at all. Both are fixed; it is now a gate.
+
+Run `detection_quality` locally after any change to normalization, scoring,
+or dedup — it is the only check that will notice a silent recall loss.
 
 ### evadex quality gate (`evadex-quality-gate.yml`)
 

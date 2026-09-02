@@ -712,6 +712,84 @@ fn mark_ipv4_dot_positions(bytes: &[u8]) -> Vec<bool> {
     protected
 }
 
+/// Mark dots belonging to a decimal coordinate pair
+/// (`-?d{1,3}.d{4,8} , -?d{1,3}.d{4,8}`) so stage 6b leaves them alone.
+///
+/// Mirrors `mark_ipv4_dot_positions` and exists for the same reason.
+/// Without it, `37.7749,-122.4194` normalizes to `377749,-1224194`, and the
+/// `GPS Coordinates` pattern — which requires literal dots — can never fire.
+/// That was a silent recall hole: the coordinate was destroyed before phase-1
+/// ever saw it.
+///
+/// The shape is deliberately tight — the integer half is capped at 3 digits,
+/// a comma between the two halves is mandatory, and both halves need 4-8
+/// decimal places — so ordinary delimiter evasion (`4111.1111.1111.1111`,
+/// which has four groups, no comma, and 4-digit integer parts) is unaffected.
+fn mark_decimal_coord_dot_positions(bytes: &[u8]) -> Vec<bool> {
+    let mut protected = vec![false; bytes.len()];
+    let mut i = 0;
+    while i < bytes.len() {
+        // Anchor only at the start of a candidate: a '-' or digit that isn't
+        // continuing a longer numeric run.
+        let fresh = i == 0 || (!bytes[i - 1].is_ascii_digit() && bytes[i - 1] != b'.');
+        if fresh && (bytes[i] == b'-' || bytes[i].is_ascii_digit()) {
+            if let Some(end) = try_match_coord_pair(bytes, i) {
+                for (j, &b) in bytes.iter().enumerate().take(end).skip(i) {
+                    if b == b'.' {
+                        protected[j] = true;
+                    }
+                }
+                i = end;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    protected
+}
+
+/// Match one `-?d{1,3}.d{4,8}` coordinate component starting at `start`.
+/// Returns `Some(end)` (exclusive) on success.
+fn try_match_coord_component(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut pos = start;
+    if pos < bytes.len() && bytes[pos] == b'-' {
+        pos += 1;
+    }
+    let int_start = pos;
+    while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+        pos += 1;
+    }
+    if !(1..=3).contains(&(pos - int_start)) {
+        return None;
+    }
+    if pos >= bytes.len() || bytes[pos] != b'.' {
+        return None;
+    }
+    pos += 1;
+    let frac_start = pos;
+    while pos < bytes.len() && bytes[pos].is_ascii_digit() {
+        pos += 1;
+    }
+    if !(4..=8).contains(&(pos - frac_start)) {
+        return None;
+    }
+    Some(pos)
+}
+
+/// Match a full `lat,lon` decimal coordinate pair starting at `start`.
+fn try_match_coord_pair(bytes: &[u8], start: usize) -> Option<usize> {
+    let mid = try_match_coord_component(bytes, start)?;
+    if mid >= bytes.len() || bytes[mid] != b',' {
+        return None;
+    }
+    let mut pos = mid + 1;
+    // The GPS pattern allows an optional single space after the comma.
+    if pos < bytes.len() && bytes[pos] == b' ' {
+        pos += 1;
+    }
+    try_match_coord_component(bytes, pos)
+}
+
 /// Attempt to match a complete IPv4 address (`d{1,3}.d{1,3}.d{1,3}.d{1,3}`)
 /// starting at `start`.  Returns `Some(end)` (exclusive) on success.
 fn try_match_ipv4(bytes: &[u8], start: usize) -> Option<usize> {
@@ -771,6 +849,7 @@ fn strip_alnum_adjacent_delimiters(input: &str, in_offsets: &[usize]) -> (String
     }
 
     let ip_dots = mark_ipv4_dot_positions(bytes);
+    let coord_dots = mark_decimal_coord_dot_positions(bytes);
 
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut offsets: Vec<usize> = Vec::with_capacity(bytes.len());
@@ -778,7 +857,7 @@ fn strip_alnum_adjacent_delimiters(input: &str, in_offsets: &[usize]) -> (String
 
     for i in 0..bytes.len() {
         let b = bytes[i];
-        if b == b'.' && !ip_dots[i] && should_strip_dot(bytes, i) {
+        if b == b'.' && !ip_dots[i] && !coord_dots[i] && should_strip_dot(bytes, i) {
             changed = true;
             continue;
         }
@@ -2903,6 +2982,39 @@ mod tests {
             elapsed.as_secs() < 2,
             "collapse_padding took {elapsed:?} — likely quadratic again"
         );
+    }
+
+    // ---- decimal coordinate dot protection (regression) ----
+
+    #[test]
+    fn test_gps_coordinate_dots_survive_normalization() {
+        // Regression: stage 6b stripped the decimal points, turning
+        // `37.7749,-122.4194` into `377749,-1224194` so the GPS Coordinates
+        // pattern (which needs literal dots) could never match. The labelled
+        // corpus recorded this as a permanent recall miss.
+        let line = "[2024-11-02 14:22:12] geo tag 37.7749,-122.4194 attached";
+        assert!(
+            norm(line).contains("37.7749,-122.4194"),
+            "coordinates were mangled: {}",
+            norm(line)
+        );
+    }
+
+    #[test]
+    fn test_gps_coordinate_space_variant() {
+        // A space after the comma is legitimately collapsed by
+        // `collapse_padding` (it sits between two non-alphabetic bytes), so
+        // the pair arrives as `51.5074,-0.1278`. What matters is that the
+        // decimal points survive — the GPS regex accepts `,\s?` either way.
+        assert!(norm("at 51.5074, -0.1278 today").contains("51.5074,-0.1278"));
+    }
+
+    #[test]
+    fn test_coordinate_protection_does_not_shield_card_evasion() {
+        // The protection must stay tight enough that dot-delimited card
+        // evasion is still collapsed: four groups, no comma, 4-digit
+        // integer parts — none of which match the coordinate shape.
+        assert_eq!(norm("4532.0151.1283.0366"), "4532015112830366");
     }
 
     // ---- decode_hex_escapes: multibyte-safe passthrough (regression) ----
