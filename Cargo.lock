@@ -753,7 +753,7 @@ dependencies = [
  "encoding_rs",
  "fast-float2",
  "log",
- "quick-xml",
+ "quick-xml 0.41.0",
  "serde",
  "zip",
 ]
@@ -3924,6 +3924,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "quick-xml"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41b1177fdf999d2321d3fb46ff47159d9c1fb9ad66a4879f8c50a0b504615e9b"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "quinn"
 version = "0.11.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4940,7 +4949,7 @@ dependencies = [
  "pdf-extract",
  "prometheus",
  "pyo3",
- "quick-xml",
+ "quick-xml 0.42.0",
  "rand 0.10.2",
  "ratatui",
  "rayon",
@@ -5011,7 +5020,7 @@ dependencies = [
  "hmac",
  "lopdf 0.44.0",
  "once_cell",
- "quick-xml",
+ "quick-xml 0.42.0",
  "rand 0.10.2",
  "rayon",
  "regex",
