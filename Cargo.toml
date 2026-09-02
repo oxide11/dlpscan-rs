@@ -195,7 +195,7 @@ license-file = ["LICENSE", "0"]
 extended-description = """\
 dlpscan is a high-performance Data Loss Prevention scanner that detects,
 redacts, tokenizes, and protects sensitive data including credit card
-numbers, SSNs, API keys, and 560+ other patterns across structured and
+numbers, SSNs, API keys, and 580+ other patterns across structured and
 unstructured documents. Includes built-in REST API server, RBAC, audit
 logging, and EDM/LSH for known-value matching."""
 section = "utils"

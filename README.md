@@ -5,8 +5,8 @@
 <h1 align="center">Polygon Siphon</h1>
 
 <p align="center">
-  High-performance DLP scanner written in Rust. Detects, redacts, and protects
-  sensitive data with exceptional throughput.
+  DLP scanner written in Rust. Detects, redacts, and protects sensitive data —
+  checksum-validated matches behind an evasion-resistant normalizer.
 </p>
 
 **583 patterns** across **128 categories**. **72 checksum validators** for
