@@ -4922,7 +4922,7 @@ version = "2.2.0"
 dependencies = [
  "aho-corasick",
  "arrow",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "calamine",
  "cfb",
@@ -5005,7 +5005,7 @@ name = "siphon-core"
 version = "2.3.0"
 dependencies = [
  "aho-corasick",
- "base64 0.22.1",
+ "base64 0.23.1",
  "cfb",
  "hex",
  "hmac",
