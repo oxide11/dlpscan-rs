@@ -869,7 +869,13 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b[0-9bcdefghjkmnpqrstuvwxyz]{7,12}\b",
         case_insensitive: false,
         specificity: 0.60,
-        context_required: false,
+        // Matches any 7-12 character run of digits and most lowercase letters,
+        // i.e. a large share of ordinary words and identifiers. It was declared
+        // context-free while the AC prefilter silently gated it anyway; when the
+        // prefilter was made to honour the flag, this pattern displaced US/UK
+        // phone numbers, E.164 and US NPI in deduplication and cost four
+        // labelled findings. The declaration was simply wrong.
+        context_required: true,
     },
     PatternDef {
         category: "Postal Codes",

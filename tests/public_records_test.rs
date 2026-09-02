@@ -89,17 +89,21 @@ fn canada_mp_addresses_phone_recall() {
     );
 }
 
-/// 408 Canadian postal codes, of which the scanner finds **none**.
+/// 408 Canadian postal codes in rendered address blocks.
 ///
+/// This test previously asserted that the scanner found **none** of them.
 /// `Canada Postal Code` declares `context_required: false`, but its specificity
-/// (0.75) is below the 0.85 always-run threshold, so the Aho-Corasick prefilter
-/// gates it on a keyword anyway. Address blocks as humans write them carry no
-/// such keyword, so the pattern never runs. Compare `uk_mps_postcode_recall`,
-/// where a CSV column header supplies one and recall is total.
+/// (0.75) sat below the 0.85 always-run threshold, so the Aho-Corasick
+/// prefilter keyword-gated it regardless — and an address block as a human
+/// writes it ("Edmonton, Alberta / T5A 1B7") carries no keyword, so the pattern
+/// never ran. `uk_mps_postcode_recall` scored 100% on the same class of data
+/// purely because its CSV has a `Postcode` column header.
 ///
-/// This asserts the bug. When the gating is fixed, this test should fail.
+/// Promoting both postal patterns to always-run fixed it: 0 -> 404 of 408, with
+/// no regression in any other suite and no change to the false-positive counts
+/// below. The assertion is now recall, as the old failure message instructed.
 #[test]
-fn canada_mp_addresses_postal_codes_are_missed() {
+fn canada_mp_addresses_postal_code_recall() {
     let text = corpus("ca_mp_addresses.txt");
     let truth = count_shape(
         &text,
@@ -120,12 +124,14 @@ fn canada_mp_addresses_postal_codes_are_missed() {
     );
 
     let m = scan_text(&text).unwrap();
-    assert_eq!(
-        found(&m, "Canada Postal Code"),
-        0,
-        "postal codes are now detected in a bare address block — the prefilter \
-         gating described in FUTURE.md has changed. That is an improvement: \
-         update this test to assert recall instead of absence."
+    let hits = found(&m, "Canada Postal Code");
+    let recall = hits as f64 / truth as f64;
+
+    // Baseline 2026-09-02, after the always-run promotion: 404/408 = 99.0%.
+    assert!(
+        recall >= 0.95,
+        "Canada postal recall fell to {recall:.3} ({hits}/{truth}); the \
+         always-run promotion may have been reverted"
     );
 }
 
@@ -145,11 +151,18 @@ fn canada_mp_addresses_false_positive_ceiling() {
         "PAN false positives rose to {pans} (baseline 8) on a contact directory"
     );
 
-    // Total findings that are not phone numbers, i.e. the FP surface.
-    let non_phone = m.len() - found(&m, "US Phone Number");
+    // The false-positive surface: everything that is neither a phone number nor
+    // a postal code, both of which this document genuinely contains.
+    //
+    // Postal codes were excluded from this count on 2026-09-02. Before the
+    // always-run promotion they were undetected, so "not a phone number" was a
+    // serviceable proxy for "wrong"; afterwards the 404 correctly-found postal
+    // codes pushed it from 269 to 673 and the proxy stopped meaning anything.
+    let expected = found(&m, "US Phone Number") + found(&m, "Canada Postal Code");
+    let false_surface = m.len() - expected;
     assert!(
-        non_phone <= 320,
-        "non-phone findings rose to {non_phone} (baseline ~269); the \
+        false_surface <= 320,
+        "spurious findings rose to {false_surface} (baseline ~269); the \
          false-positive surface on benign public data is growing"
     );
 }

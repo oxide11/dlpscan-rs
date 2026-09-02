@@ -568,6 +568,13 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         // src/models.rs), which means CRITICAL_ALWAYS_RUN membership
         // would defeat the gate and reintroduce the blind-test FPs.
         "MEID",
+        // Postal codes — structurally tight enough to stand alone, and the
+        // patterns most damaged by keyword gating: a rendered address block
+        // ("Edmonton, Alberta / T5A 1B7") carries no label, so gated postal
+        // patterns never ran on real addresses at all. Measured 0/408 on the
+        // Canadian MP directory before this promotion.
+        "Canada Postal Code",
+        "UK Postcode",
         // Financial
         "ABA Routing Number",
         "CUSIP",

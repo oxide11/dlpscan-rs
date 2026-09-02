@@ -588,5 +588,11 @@ pub fn is_context_required(sub_category: &str) -> bool {
             // turns "Date ISO" into "ISO-formatted date of birth"
             // which is the actual DLP intent.
             | "Date ISO" | "Date US" | "Date EU"
+            // Geohash matches any 7-12 character run of digits and most
+            // lowercase letters, so it fires on a large share of ordinary
+            // words. It was declared context-free while the prefilter gated it
+            // regardless; honouring the declaration made it displace phone
+            // numbers and NPIs in deduplication. See patterns/mod.rs.
+            | "Geohash"
     )
 }
