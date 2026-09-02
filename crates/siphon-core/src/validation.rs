@@ -961,6 +961,165 @@ pub fn is_valid_us_phone(phone: &str) -> bool {
     true
 }
 
+/// Canada Post forward sortation area letters. The first character of a postal
+/// code is the postal district, and each maps to a province or region:
+///
+/// | | | | |
+/// |---|---|---|---|
+/// | A Newfoundland and Labrador | B Nova Scotia | C Prince Edward Island | E New Brunswick |
+/// | G eastern Quebec | H Montreal | J western Quebec | K eastern Ontario |
+/// | L central Ontario | M Toronto | N southwestern Ontario | P northern Ontario |
+/// | R Manitoba | S Saskatchewan | T Alberta | V British Columbia |
+/// | X Northwest Territories / Nunavut | Y Yukon | | |
+///
+/// `D`, `F`, `I`, `O`, `Q` and `U` appear nowhere in a postal code — they are
+/// omitted because handwriting and OCR confuse them with `0`, `1` and other
+/// letters. `W` and `Z` are additionally never the first character.
+const CANADA_DISTRICT_LETTERS: &[u8] = b"ABCEGHJKLMNPRSTVXY";
+
+/// Letters permitted in the second and third letter positions of a Canadian
+/// postal code: everything except the six never used at all. Unlike the leading
+/// district letter, `W` and `Z` are allowed here.
+const CANADA_INTERIOR_LETTERS: &[u8] = b"ABCEGHJKLMNPRSTVWXYZ";
+
+/// Structural validation for a Canadian postal code (`A1A 1A1`).
+///
+/// The pattern regex is `[A-Z]\d[A-Z]\s?\d[A-Z]\d`, which accepts codes that
+/// cannot exist — `D5Q 9Z8` matches it despite `D`, `Q` and a leading `D` all
+/// being impossible. Canada Post allocates from a restricted alphabet, so this
+/// is genuine structural validation rather than a heuristic: roughly a quarter
+/// of shape-matching strings are rejectable on the letter sets alone.
+///
+/// Deliberately *not* checked here: whether the specific forward sortation area
+/// is in service. That needs a Canada Post data file, changes over time, and
+/// would turn a pure function into a data dependency for little precision gain.
+pub fn is_valid_canada_postal_code(code: &str) -> bool {
+    let c: Vec<u8> = code
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace())
+        .map(|b| b.to_ascii_uppercase())
+        .collect();
+    if c.len() != 6 {
+        return false;
+    }
+    // Alternating letter / digit / letter / digit / letter / digit.
+    if !(c[0].is_ascii_alphabetic() && c[2].is_ascii_alphabetic() && c[4].is_ascii_alphabetic()) {
+        return false;
+    }
+    if !(c[1].is_ascii_digit() && c[3].is_ascii_digit() && c[5].is_ascii_digit()) {
+        return false;
+    }
+    if !CANADA_DISTRICT_LETTERS.contains(&c[0]) {
+        return false;
+    }
+    CANADA_INTERIOR_LETTERS.contains(&c[2]) && CANADA_INTERIOR_LETTERS.contains(&c[4])
+}
+
+/// Province or territory implied by a Canadian postal code's district letter.
+/// Returns `None` for a letter that is not a valid district.
+///
+/// Exposed for cross-field corroboration — a `B` code beside "Nova Scotia" or
+/// "Halifax" is coherent, whereas a `T` code beside "Nova Scotia" is not. The
+/// scoring side of that is not wired up yet; this is the lookup it needs.
+pub fn canada_postal_district_region(code: &str) -> Option<&'static str> {
+    let first = code
+        .bytes()
+        .find(|b| !b.is_ascii_whitespace())?
+        .to_ascii_uppercase();
+    Some(match first {
+        b'A' => "Newfoundland and Labrador",
+        b'B' => "Nova Scotia",
+        b'C' => "Prince Edward Island",
+        b'E' => "New Brunswick",
+        b'G' | b'H' | b'J' => "Quebec",
+        b'K' | b'L' | b'M' | b'N' | b'P' => "Ontario",
+        b'R' => "Manitoba",
+        b'S' => "Saskatchewan",
+        b'T' => "Alberta",
+        b'V' => "British Columbia",
+        b'X' => "Northwest Territories or Nunavut",
+        b'Y' => "Yukon",
+        _ => return None,
+    })
+}
+
+/// Structural validation for a UK postcode, per the Royal Mail address
+/// specification.
+///
+/// Accepted outward forms are `A9`, `A99`, `A9A`, `AA9`, `AA99` and `AA9A`,
+/// always followed by an inward code of digit + two letters. Position-specific
+/// letter restrictions do most of the work:
+///
+/// * first letter never `Q`, `V` or `X`
+/// * second letter never `I`, `J` or `Z`
+/// * third position, when a letter (the `A9A` form), only `ABCDEFGHJKPSTUW`
+/// * fourth position, when a letter (the `AA9A` form), only `ABEHMNPRVWXY`
+/// * the final two letters never contain `C`, `I`, `K`, `M`, `O` or `V`
+///
+/// The last rule alone rejects a large share of accidental matches, since the
+/// pattern regex ends in a bare `[A-Z]{2}`.
+pub fn is_valid_uk_postcode(code: &str) -> bool {
+    let c: Vec<u8> = code
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace())
+        .map(|b| b.to_ascii_uppercase())
+        .collect();
+    // Shortest is A9 9AA (5), longest AA99 9AA (7).
+    if !(5..=7).contains(&c.len()) {
+        return false;
+    }
+    let (out, inward) = c.split_at(c.len() - 3);
+
+    // Inward: digit followed by two letters, neither from the excluded set.
+    if !inward[0].is_ascii_digit() {
+        return false;
+    }
+    const INWARD_EXCLUDED: &[u8] = b"CIKMOV";
+    for &b in &inward[1..] {
+        if !b.is_ascii_alphabetic() || INWARD_EXCLUDED.contains(&b) {
+            return false;
+        }
+    }
+
+    // Outward: 2-4 characters, always starting with a letter.
+    if !out[0].is_ascii_alphabetic() || b"QVX".contains(&out[0]) {
+        return false;
+    }
+    match out.len() {
+        // A9
+        2 => out[1].is_ascii_digit(),
+        // A99 or A9A
+        3 => {
+            if !out[1].is_ascii_digit() {
+                // AA9
+                return out[1].is_ascii_alphabetic()
+                    && !b"IJZ".contains(&out[1])
+                    && out[2].is_ascii_digit();
+            }
+            if out[2].is_ascii_digit() {
+                return true; // A99
+            }
+            // A9A — third position is a restricted letter set.
+            b"ABCDEFGHJKPSTUW".contains(&out[2])
+        }
+        // AA99 or AA9A
+        4 => {
+            if !out[1].is_ascii_alphabetic() || b"IJZ".contains(&out[1]) {
+                return false;
+            }
+            if !out[2].is_ascii_digit() {
+                return false;
+            }
+            if out[3].is_ascii_digit() {
+                return true; // AA99
+            }
+            // AA9A — fourth position is a restricted letter set.
+            b"ABEHMNPRVWXY".contains(&out[3])
+        }
+        _ => false,
+    }
+}
+
 /// Validate a DEA (Drug Enforcement Administration) registration number
 /// using the weighted mod-10 check digit algorithm.
 ///
@@ -4317,6 +4476,13 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         "E.164 Phone Number" => is_valid_e164_phone(matched_text),
         "US Phone Number" => is_valid_us_phone(matched_text),
         "UK Phone Number" => is_plausible_phone(matched_text),
+        // Postal codes are allocated from restricted alphabets, so the bare
+        // `[A-Z]` classes in their regexes accept codes that cannot exist.
+        // Both patterns are always-run (they are structurally tight enough to
+        // need no keyword), which makes structural validation the only thing
+        // standing between them and every shape-alike string in a document.
+        "Canada Postal Code" => is_valid_canada_postal_code(matched_text),
+        "UK Postcode" => is_valid_uk_postcode(matched_text),
         // Vehicle Identification Number — ISO 3779 transliteration
         // + weighted mod-11 check digit at position 8. Closes the
         // last "high-risk 16" pattern that has a published checksum
@@ -5716,6 +5882,100 @@ mod tests {
         assert!(!is_valid_us_phone("+15551234567")); // exchange 123
         assert!(!is_valid_us_phone("5551234567"));
         assert!(!is_valid_us_phone("4151995555")); // exchange 199
+    }
+
+    // ---- Postal codes: structural validation ----
+
+    #[test]
+    fn test_canada_postal_code_valid() {
+        // Real codes from the public-records corpus, spanning districts.
+        assert!(is_valid_canada_postal_code("B3P 2R5")); // Halifax, Nova Scotia
+        assert!(is_valid_canada_postal_code("T5A 1B7")); // Edmonton, Alberta
+        assert!(is_valid_canada_postal_code("L6J 1G7")); // Oakville, Ontario
+        assert!(is_valid_canada_postal_code("K1A 0A6")); // Ottawa — rural marker 0
+                                                         // Whitespace and case are incidental.
+        assert!(is_valid_canada_postal_code("b3p2r5"));
+        assert!(is_valid_canada_postal_code("  B3P  2R5  "));
+        // W and Z are legal in the interior letter positions.
+        assert!(is_valid_canada_postal_code("B3W 2Z5"));
+    }
+
+    #[test]
+    fn test_canada_postal_code_rejects_impossible_letters() {
+        // D, F, I, O, Q and U appear nowhere in a Canadian postal code.
+        for bad in [
+            "D3P 2R5", "F3P 2R5", "I3P 2R5", "O3P 2R5", "Q3P 2R5", "U3P 2R5",
+        ] {
+            assert!(!is_valid_canada_postal_code(bad), "{bad} should be invalid");
+        }
+        for bad in ["B3D 2R5", "B3Q 2R5", "B3P 2I5", "B3P 2O5"] {
+            assert!(!is_valid_canada_postal_code(bad), "{bad} should be invalid");
+        }
+        // W and Z are legal inside but never lead.
+        assert!(!is_valid_canada_postal_code("W3P 2R5"));
+        assert!(!is_valid_canada_postal_code("Z3P 2R5"));
+    }
+
+    #[test]
+    fn test_canada_postal_code_rejects_wrong_shape() {
+        assert!(!is_valid_canada_postal_code("B3P 2R"));
+        assert!(!is_valid_canada_postal_code("B3P 2R55"));
+        assert!(!is_valid_canada_postal_code("33P 2R5")); // digit where a letter belongs
+        assert!(!is_valid_canada_postal_code("BBP 2R5")); // letter where a digit belongs
+        assert!(!is_valid_canada_postal_code(""));
+    }
+
+    #[test]
+    fn test_canada_postal_district_region() {
+        assert_eq!(
+            canada_postal_district_region("B3P 2R5"),
+            Some("Nova Scotia")
+        );
+        assert_eq!(canada_postal_district_region("T5A 1B7"), Some("Alberta"));
+        assert_eq!(canada_postal_district_region("M5H 2N2"), Some("Ontario"));
+        assert_eq!(canada_postal_district_region("H3B 1A1"), Some("Quebec"));
+        // Not a district letter.
+        assert_eq!(canada_postal_district_region("D3P 2R5"), None);
+    }
+
+    #[test]
+    fn test_uk_postcode_valid_forms() {
+        assert!(is_valid_uk_postcode("SW1A 0AA")); // AA9A — Westminster
+        assert!(is_valid_uk_postcode("M1 1AE")); //  A9
+        assert!(is_valid_uk_postcode("B33 8TH")); // A99
+        assert!(is_valid_uk_postcode("CR2 6XH")); // AA9
+        assert!(is_valid_uk_postcode("DN55 1PT")); // AA99
+        assert!(is_valid_uk_postcode("W1A 0AX")); // A9A
+        assert!(is_valid_uk_postcode("ec1a 1bb")); // case-insensitive
+        assert!(is_valid_uk_postcode("EC1A1BB")); // space optional
+    }
+
+    #[test]
+    fn test_uk_postcode_rejects_impossible_letters() {
+        // First letter never Q, V or X.
+        for bad in ["QW1A 0AA", "VW1A 0AA", "XW1A 0AA"] {
+            assert!(!is_valid_uk_postcode(bad), "{bad} should be invalid");
+        }
+        // Second letter never I, J or Z.
+        for bad in ["SI1A 0AA", "SJ1A 0AA", "SZ1A 0AA"] {
+            assert!(!is_valid_uk_postcode(bad), "{bad} should be invalid");
+        }
+        // Final two letters never contain C, I, K, M, O or V. This is the rule
+        // that rejects most accidental matches, the regex ending in [A-Z]{2}.
+        for bad in [
+            "SW1A 0CA", "SW1A 0AI", "SW1A 0KA", "SW1A 0MA", "SW1A 0OA", "SW1A 0VA",
+        ] {
+            assert!(!is_valid_uk_postcode(bad), "{bad} should be invalid");
+        }
+    }
+
+    #[test]
+    fn test_uk_postcode_rejects_wrong_shape() {
+        assert!(!is_valid_uk_postcode("SW1A 0A")); // inward too short
+        assert!(!is_valid_uk_postcode("SW1A 0AAA")); // inward too long
+        assert!(!is_valid_uk_postcode("1W1A 0AA")); // must start with a letter
+        assert!(!is_valid_uk_postcode("SW1A AAA")); // inward must start with a digit
+        assert!(!is_valid_uk_postcode(""));
     }
 
     /// The valid-exchange boundary: 2XX must still pass, so tightening the
