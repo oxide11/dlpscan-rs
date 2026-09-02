@@ -66,6 +66,25 @@ The deploy job builds `deploy/Dockerfile.api`, a full cargo release build of
 the workspace, so it is substantially slower than `ci.yml`. It is
 path-filtered so ordinary pushes never trigger it.
 
+## Taking it offline
+
+`.github/workflows/teardown-cloudflare.yml` deletes the Worker, its container
+instances and the custom domain binding. Manual dispatch only — deleting a live
+public endpoint should not be reachable by merging a branch — and it requires
+typing `DELETE` into the confirmation box.
+
+    Actions → teardown-cloudflare → Run workflow → type DELETE
+
+It is reversible. Every piece of configuration lives in this repository, so
+`deploy-cloudflare` recreates the Worker, the DNS record and the certificate
+from `wrangler.jsonc`. A teardown costs a redeploy, not a rebuild. Repository
+secrets are left alone, since they are what a redeploy needs.
+
+Worth knowing before reaching for it: the container already sleeps after 15
+minutes idle and charges stop while it sleeps, so an unused demo costs close to
+the $5/mo base plan on its own. Tear down to free the hostname or to stop
+serving a stale API, not to save money.
+
 ## Deploy from a laptop (alternative)
 
 Only needed if you want to deploy without CI. Requires Docker running
