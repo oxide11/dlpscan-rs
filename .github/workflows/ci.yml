@@ -73,6 +73,12 @@ jobs:
       # while writing a canary outside the extraction directory.
       - name: Archive security tests
         run: cargo test --test archive_security_test
+      # siphon-fs auth enforcement. This service had no authentication of any
+      # kind until 2026-09-02, while CLAUDE.md and the nginx config both said
+      # it did — and nginx omits its Authelia gate for /fs/ on the strength of
+      # that claim. These tests keep the claim true.
+      - name: siphon-fs auth tests
+        run: cargo test -p siphon-fs --test auth_test
       - name: Evadex regression tests
         run: cargo test --test evadex_regressions
       # Labelled-corpus recall + false-positive gate. Asserts 80/80 recall
