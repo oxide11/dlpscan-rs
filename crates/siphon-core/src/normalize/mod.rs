@@ -349,10 +349,10 @@ fn has_percent_encoding(bytes: &[u8]) -> bool {
 }
 
 /// Single pass of URL percent-decoding (%XX → byte, printable ASCII only).
-fn decode_percent_single(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+fn decode_percent_single(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
     let bytes = input.as_bytes();
     if !has_percent_encoding(bytes) {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
     let mut out = Vec::with_capacity(bytes.len());
@@ -378,23 +378,26 @@ fn decode_percent_single(input: &str, in_offsets: &[usize]) -> (String, Vec<usiz
     }
 
     if out.len() == bytes.len() {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
-    (String::from_utf8_lossy(&out).into_owned(), offsets)
+    Some((String::from_utf8_lossy(&out).into_owned(), offsets))
 }
 
 /// Decode URL percent-encoding with double-decode support (%25XX → %XX → char).
-fn decode_percent_encoding(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
-    let (first, first_off) = decode_percent_single(input, in_offsets);
-    // Second pass catches double-encoding (%2541 → %41 → A)
-    decode_percent_single(&first, &first_off)
+fn decode_percent_encoding(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
+    // If the first pass decodes nothing there is nothing for a second pass to
+    // find either, so propagate "unchanged" straight out.
+    let (first, first_off) = decode_percent_single(input, in_offsets)?;
+    // Second pass catches double-encoding (%2541 → %41 → A). When it finds
+    // nothing, the first pass's result still stands.
+    Some(decode_percent_single(&first, &first_off).unwrap_or((first, first_off)))
 }
 
 /// Decode HTML numeric character references: decimal `&#NNN;` and hex `&#xHH;`.
-fn decode_html_entities(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+fn decode_html_entities(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
     if !input.contains("&#") {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
     let bytes = input.as_bytes();
@@ -471,16 +474,16 @@ fn decode_html_entities(input: &str, in_offsets: &[usize]) -> (String, Vec<usize
     }
 
     if out.len() == input.len() && out == input {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
-    (out, offsets)
+    Some((out, offsets))
 }
 
 /// Strip empty CSS comments (`/**/`) and empty HTML comments (`<!---->`) from text.
-fn strip_comments(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+fn strip_comments(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
     if !input.contains("/**/") && !input.contains("<!---->") {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
     let bytes = input.as_bytes();
@@ -505,10 +508,10 @@ fn strip_comments(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
     }
 
     if out.len() == bytes.len() {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
-    (String::from_utf8_lossy(&out).into_owned(), offsets)
+    Some((String::from_utf8_lossy(&out).into_owned(), offsets))
 }
 
 /// Collapse whitespace padding between non-alphabetic characters.
@@ -517,13 +520,13 @@ fn strip_comments(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
 /// two non-alphabetic characters (digits, punctuation, symbols). This defeats
 /// evasion techniques like `1 2 3 - 4 5 - 6 7 8 9` while preserving natural
 /// language spacing like `social security number`.
-fn collapse_padding(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+fn collapse_padding(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
     let bytes = input.as_bytes();
     if !bytes
         .iter()
         .any(|&b| b == b' ' || b == b'\n' || b == b'\r' || b == b'\t')
     {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
     let is_ws = |c: u8| c == b' ' || c == b'\n' || c == b'\r' || c == b'\t';
@@ -579,18 +582,29 @@ fn collapse_padding(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
     }
 
     if out.len() == bytes.len() {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
-    (String::from_utf8_lossy(&out).into_owned(), offsets)
+    Some((String::from_utf8_lossy(&out).into_owned(), offsets))
 }
 
 /// Normalize excessive delimiters between alphanumeric characters.
 ///
 /// Collapses runs of repeated hyphens or dots (e.g. `123--45` → `123-45`)
 /// only when surrounded by alphanumeric characters on both sides.
-fn normalize_delimiters(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+fn normalize_delimiters(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
     let bytes = input.as_bytes();
+    // Cheap necessary condition, checked before allocating. This stage only
+    // rewrites *runs* of two or more identical `-`/`.`, so text without a
+    // doubled delimiter cannot change — and previously still paid for two
+    // full-length vectors plus a byte-by-byte walk (~9 ms per MB) to find
+    // that out.
+    if !bytes
+        .windows(2)
+        .any(|w| (w[0] == b'-' || w[0] == b'.') && w[1] == w[0])
+    {
+        return None;
+    }
     let mut out = Vec::with_capacity(bytes.len());
     let mut offsets = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -637,10 +651,10 @@ fn normalize_delimiters(input: &str, in_offsets: &[usize]) -> (String, Vec<usize
     }
 
     if !changed {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
-    (String::from_utf8_lossy(&out).into_owned(), offsets)
+    Some((String::from_utf8_lossy(&out).into_owned(), offsets))
 }
 
 /// Returns `true` if the dot at `pos` in `bytes` should be stripped.
@@ -839,13 +853,16 @@ fn try_match_ipv4(bytes: &[u8], start: usize) -> Option<usize> {
 /// Runs after `normalize_delimiters` so doubled-delimiter evasion (e.g.
 /// `123--456`) has already been collapsed to a single delimiter before this
 /// stage strips it entirely.
-fn strip_alnum_adjacent_delimiters(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+fn strip_alnum_adjacent_delimiters(
+    input: &str,
+    in_offsets: &[usize],
+) -> Option<(String, Vec<usize>)> {
     let bytes = input.as_bytes();
     if !bytes
         .iter()
         .any(|&b| b == b'-' || b == b'.' || b == b'/' || b == b'\\' || b == b'_')
     {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
     let ip_dots = mark_ipv4_dot_positions(bytes);
@@ -888,10 +905,10 @@ fn strip_alnum_adjacent_delimiters(input: &str, in_offsets: &[usize]) -> (String
     }
 
     if !changed {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
-    (String::from_utf8_lossy(&out).into_owned(), offsets)
+    Some((String::from_utf8_lossy(&out).into_owned(), offsets))
 }
 
 /// Returns `true` if `c` is a candidate "injected separator" character for
@@ -927,13 +944,41 @@ fn is_consistent_sep(c: char) -> bool {
 ///     must be flanked by non-alphanumeric characters (never strip *inside* an
 ///     identifier);
 ///   * downstream checksum/Luhn validation still gates every resulting match.
-fn strip_consistent_digit_separators(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+fn strip_consistent_digit_separators(
+    input: &str,
+    in_offsets: &[usize],
+) -> Option<(String, Vec<usize>)> {
+    // Cheap necessary condition, checked *before* the two collects below.
+    // Those materialise a `Vec<char>` (4 bytes/char) plus a `Vec<usize>` index
+    // (8 bytes/char) — about 12 MB for a 1 MB input — and this stage only ever
+    // acts on a `digit / consistent-separator / digit` triple. Scanning for
+    // one first is allocation-free and skips ~9 ms per MB on text that has no
+    // such triple (which includes most ordinary documents, since `.`, `-`,
+    // `/`, `_` and `\` are deliberately excluded from `is_consistent_sep`).
+    //
+    // Only taken for all-ASCII input: a non-ASCII separator such as U+00B7 is
+    // multi-byte, so a 3-byte window cannot see it and the text falls through
+    // to the full path unchanged. `is_ascii` is a cheap vectorised check, and
+    // the byte scan below is several times faster than walking `chars()` —
+    // decoding UTF-8 per character costs more than the work it saves.
+    if input.is_ascii()
+        && !input.as_bytes().windows(3).any(|w| {
+            w[0].is_ascii_digit()
+                && w[2].is_ascii_digit()
+                && !w[1].is_ascii_alphanumeric()
+                && !w[1].is_ascii_whitespace()
+                && !matches!(w[1], b'.' | b'-' | b'/' | b'_' | b'\\')
+        })
+    {
+        return None;
+    }
+
     let cs: Vec<char> = input.chars().collect();
     let starts: Vec<usize> = input.char_indices().map(|(b, _)| b).collect();
     let n = cs.len();
     if n < 15 {
         // Shortest strippable span is 12 digits + 3 separators.
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
     let mut remove = vec![false; n];
     let mut any = false;
@@ -1000,7 +1045,7 @@ fn strip_consistent_digit_separators(input: &str, in_offsets: &[usize]) -> (Stri
     }
 
     if !any {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
     let mut out = String::with_capacity(input.len());
@@ -1016,14 +1061,14 @@ fn strip_consistent_digit_separators(input: &str, in_offsets: &[usize]) -> (Stri
             offsets.push(orig_offset(in_offsets, byte_idx + b));
         }
     }
-    (out, offsets)
+    Some((out, offsets))
 }
 
 /// Strip zero-width characters with offset composition.
-fn remap_strip_zero_width(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+fn remap_strip_zero_width(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
     let has_zw = input.chars().any(|c| ZERO_WIDTH_CHARS.contains(&c));
     if !has_zw {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
     let mut result = String::with_capacity(input.len());
@@ -1038,18 +1083,33 @@ fn remap_strip_zero_width(input: &str, in_offsets: &[usize]) -> (String, Vec<usi
         }
     }
 
-    (result, offsets)
+    Some((result, offsets))
 }
 
 /// Decode hex-spaced byte sequences: `34 35 33 32` → `4532`.
 ///
 /// Heuristic: if the text looks like space-separated pairs of hex digits
 /// (at least 3 pairs), decode them to ASCII.
-fn decode_hex_spaced(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+fn decode_hex_spaced(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
     let bytes = input.as_bytes();
     // Quick check: need at least "XX XX XX" = 8 chars
     if bytes.len() < 8 {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
+    }
+
+    // Cheap necessary condition, checked before allocating: a hex-spaced run
+    // needs at least `XX SP XX`. Mirrors the same window test
+    // `has_evasion_markers` uses to route text here in the first place, so a
+    // document that reached this stage for some *other* marker no longer pays
+    // a full allocate-and-walk (~9 ms per MB) to discover there is no hex.
+    if !bytes.windows(5).any(|w| {
+        w[0].is_ascii_hexdigit()
+            && w[1].is_ascii_hexdigit()
+            && w[2] == b' '
+            && w[3].is_ascii_hexdigit()
+            && w[4].is_ascii_hexdigit()
+    }) {
+        return None;
     }
 
     // Scan for runs of hex-space-hex patterns
@@ -1115,20 +1175,20 @@ fn decode_hex_spaced(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) 
     }
 
     if !changed {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
-    (String::from_utf8_lossy(&out).into_owned(), offsets)
+    Some((String::from_utf8_lossy(&out).into_owned(), offsets))
 }
 
 /// Decode `\xHH` hex-escape sequences (e.g. `\x31\x32\x33` → `123`).
 ///
 /// Only replaces sequences where both digits are valid hex and the decoded byte
 /// is printable ASCII (0x20–0x7E). Other sequences are passed through unchanged.
-fn decode_hex_escapes(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+fn decode_hex_escapes(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
     let bytes = input.as_bytes();
     if !bytes.windows(2).any(|w| w[0] == b'\\' && w[1] == b'x') {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
     let mut out: Vec<u8> = Vec::with_capacity(input.len());
@@ -1160,7 +1220,7 @@ fn decode_hex_escapes(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>)
         i += 1;
     }
 
-    (String::from_utf8_lossy(&out).into_owned(), offsets)
+    Some((String::from_utf8_lossy(&out).into_owned(), offsets))
 }
 
 // ---------------------------------------------------------------------------
@@ -1461,7 +1521,7 @@ fn try_decode_any(token: &str) -> Option<String> {
 /// base64-alphabet. 12 chars is the sweet spot: an encoded 9-byte value
 /// (like a short SSN `123-45-6789` without separators) is exactly 12 chars
 /// of base64, so we catch the smallest realistic evasion payload.
-fn decode_encoded_tokens(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+fn decode_encoded_tokens(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
     let bytes = input.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut offsets: Vec<usize> = Vec::with_capacity(bytes.len());
@@ -1531,10 +1591,10 @@ fn decode_encoded_tokens(input: &str, in_offsets: &[usize]) -> (String, Vec<usiz
     }
 
     if !changed {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
-    (String::from_utf8_lossy(&out).into_owned(), offsets)
+    Some((String::from_utf8_lossy(&out).into_owned(), offsets))
 }
 
 /// Standard base32 alphabet (RFC 4648).
@@ -2028,11 +2088,20 @@ fn find_embedded_digit_morse_delimited(text: &str, delim: u8) -> Option<String> 
 }
 
 /// Apply ROT13 transformation to alphabetic characters.
-fn apply_rot13(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
+/// `apply_rot13` reports `None` when the input holds no letters to rotate.
+/// The alt-decoding callers below want the rotated text either way, so this
+/// collapses "unchanged" back to an owned copy of the original for them.
+fn rot13_or_same(text: &str) -> String {
+    apply_rot13(text, &[])
+        .map(|(s, _)| s)
+        .unwrap_or_else(|| text.to_string())
+}
+
+fn apply_rot13(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
     let bytes = input.as_bytes();
     // Only apply if text has letters (no point on pure digits)
     if !bytes.iter().any(|b| b.is_ascii_alphabetic()) {
-        return (input.to_string(), in_offsets.to_vec());
+        return None;
     }
 
     let mut out = Vec::with_capacity(bytes.len());
@@ -2048,7 +2117,7 @@ fn apply_rot13(input: &str, in_offsets: &[usize]) -> (String, Vec<usize>) {
         offsets.push(orig_offset(in_offsets, i));
     }
 
-    (String::from_utf8_lossy(&out).into_owned(), offsets)
+    Some((String::from_utf8_lossy(&out).into_owned(), offsets))
 }
 
 /// Full normalization pipeline with accurate byte-level offset tracking.
@@ -2078,13 +2147,24 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     let mut current = text.to_string();
     let mut offsets: Vec<usize> = Vec::new(); // empty = identity mapping
 
-    // Helper macro: only call a stage if its quick-check would pass,
-    // avoiding the allocation of (String, Vec) on the no-change path.
+    // Helper macro: adopt a stage's output only when the stage actually
+    // changed something.
+    //
+    // Stages return `None` for "unchanged". That matters far more than it
+    // looks: the offset map is one `usize` per input byte, so it is 8x the
+    // size of the text itself, and a stage that cloned it just to report no
+    // change cost ~9 MB of memcpy per megabyte scanned. With 13 stages and 19
+    // such bail-out points, normalising 1 MB of ordinary text (anything
+    // holding a date or a parenthesised number takes this path) allocated
+    // ~130 MB — and a max-size 10 MB input extrapolated to ~1.3 GB of
+    // transient allocation for a single scan, which is an OOM surface under
+    // concurrent load rather than merely slow.
     macro_rules! apply_stage {
         ($fn:ident, $current:expr, $offsets:expr) => {{
-            let r = $fn(&$current, &$offsets);
-            $current = r.0;
-            $offsets = r.1;
+            if let Some((s, o)) = $fn(&$current, &$offsets) {
+                $current = s;
+                $offsets = o;
+            }
         }};
     }
 
@@ -2109,9 +2189,7 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     }
 
     // Stage 4b: Decode \xHH hex-escape sequences
-    let r = decode_hex_escapes(&current, &offsets);
-    current = r.0;
-    offsets = r.1;
+    apply_stage!(decode_hex_escapes, current, offsets);
 
     // Stage 4c: Token-level encoded-data decode (base64, base32, hex)
     //
@@ -2122,13 +2200,17 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     //
     // This runs BEFORE collapse_padding so the decoded result gets the
     // same whitespace/delimiter normalization as everything else.
+    // `None` now reports "nothing decoded" directly, which also retires the
+    // full `r.0 == current` string comparison this loop used to run on every
+    // iteration to discover the same fact.
     for _decode_iteration in 0..3 {
-        let r = decode_encoded_tokens(&current, &offsets);
-        if r.0 == current {
-            break; // No more decoding possible
+        match decode_encoded_tokens(&current, &offsets) {
+            Some((s, o)) => {
+                current = s;
+                offsets = o;
+            }
+            None => break, // No more decoding possible
         }
-        current = r.0;
-        offsets = r.1;
     }
 
     // Stage 5: Collapse whitespace padding between non-alpha chars
@@ -2159,9 +2241,7 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     // Stages 7-10: Unicode normalization (only if non-ASCII remaining)
     if !is_ascii_only(&current) {
         // Stage 7: Strip zero-width characters
-        let r = remap_strip_zero_width(&current, &offsets);
-        current = r.0;
-        offsets = r.1;
+        apply_stage!(remap_strip_zero_width, current, offsets);
 
         // Stage 8: Normalize exotic whitespace
         let r = remap_char_transform(&current, &offsets, |c| {
@@ -2460,7 +2540,7 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // supports nested decode up to 3 iterations.
 
     // Try ROT13
-    let (rot, _) = apply_rot13(text, &[]);
+    let rot = rot13_or_same(text);
     push_if_room(rot, &mut alternatives, &mut total_bytes);
 
     // NOTE: a reverse-text transformation used to live here, based
@@ -2568,7 +2648,7 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // *normalised* text is still base64-encoded (e.g. the token-splitter
     // didn't fire because it was embedded mid-sentence with no whitespace).
     if let Some(b64_decoded) = try_decode_base64(text) {
-        let (rot_of_b64, _) = apply_rot13(&b64_decoded, &[]);
+        let rot_of_b64 = rot13_or_same(&b64_decoded);
         // Only emit the chain result when ROT13 actually transformed the
         // decoded bytes. If the payload has no letters (e.g. a pure-digit
         // SSN/PAN), ROT13 is a no-op and `rot_of_b64` collapses to a plain
@@ -2589,7 +2669,7 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // step handles the mixed-content case where rot13(base64(token)) is
     // embedded among other text and the token-splitter can isolate it.
     {
-        let (rot_text, _) = apply_rot13(text, &[]);
+        let rot_text = rot13_or_same(text);
         if let Some(b64_decoded) = try_decode_base64(&rot_text) {
             push_if_room(b64_decoded, &mut alternatives, &mut total_bytes);
         }
@@ -2615,7 +2695,7 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // block. Also try the ROT13 shell so `base64_then_rot13` mixed-case is
     // covered: rot13(rot13(base64)) restores the base64 letters (with folded
     // case) which then recovers the same way.
-    let rot_text = apply_rot13(text, &[]).0;
+    let rot_text = rot13_or_same(text);
     for src in [text.trim(), rot_text.trim()] {
         for recovered in recover_case_folded_base64_digits(src) {
             push_if_room(recovered, &mut alternatives, &mut total_bytes);
@@ -3100,11 +3180,51 @@ mod tests {
     #[test]
     fn test_strip_consistent_offsets_are_valid() {
         let input = "4532*0151*1283*0366";
-        let (out, offsets) = strip_consistent_digit_separators(input, &[]);
+        // The stage reports `None` for "unchanged"; this input must change.
+        let (out, offsets) =
+            strip_consistent_digit_separators(input, &[]).expect("separators should be stripped");
         assert_eq!(out, "4532015112830366");
         assert_eq!(offsets.len(), out.len());
         // Every offset must point back inside the original string.
         assert!(offsets.iter().all(|&o| o < input.len()));
+    }
+
+    // ---- Stage prescan boundaries ----
+    //
+    // Three stages gained a cheap "can this possibly do anything?" check in
+    // front of their allocation. Each check must be a *necessary* condition —
+    // if it can ever reject input the stage would have transformed, the
+    // scanner silently loses an evasion defence. These pin the boundaries.
+
+    #[test]
+    fn test_prescan_keeps_non_ascii_separator_stripping() {
+        // The `strip_consistent_digit_separators` prescan is a byte-window
+        // scan, so it only runs for all-ASCII input; a multi-byte separator
+        // like U+00B7 cannot be seen in a 3-byte window and must fall through
+        // to the full path instead of being rejected.
+        assert!(norm("4532·0151·1283·0366").contains("4532015112830366"));
+    }
+
+    #[test]
+    fn test_prescan_keeps_ascii_separator_stripping() {
+        // The ASCII side of the same prescan must still admit real evasion.
+        assert!(norm("4532*0151*1283*0366").contains("4532015112830366"));
+        assert!(norm("4532|0151|1283|0366").contains("4532015112830366"));
+    }
+
+    #[test]
+    fn test_prescan_keeps_doubled_delimiter_collapse() {
+        // `normalize_delimiters` is skipped unless two identical `-`/`.` sit
+        // adjacent, which is precisely what it collapses.
+        assert!(norm("4532--0151--1283--0366").contains("4532015112830366"));
+        assert!(norm("4532..0151..1283..0366").contains("4532015112830366"));
+    }
+
+    #[test]
+    fn test_prescan_keeps_hex_spaced_decoding() {
+        // `decode_hex_spaced` is skipped without an `XX SP XX` window.
+        // "48 65 6c 6c 6f" is "Hello".
+        assert!(norm("48 65 6c 6c 6f").contains("Hello"));
     }
 
     // ---- Case-folded base64 numeric recovery ----
