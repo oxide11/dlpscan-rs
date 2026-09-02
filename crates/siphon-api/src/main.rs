@@ -2439,6 +2439,13 @@ struct ApplyResponse {
 /// configured overrides path, keeping a timestamped backup of the
 /// previous contents (if any). Does NOT hot-reload the scanner.
 async fn overrides_apply(
+    // Rewriting the override set is the most destructive call in the API: it
+    // can disable every pattern or bind an allow-list that lets the data this
+    // scanner exists to catch pass silently. `findings/prune` and
+    // `admin/reload` were already admin-gated while this was not, so with
+    // SIPHON_ALLOW_UNAUTHENTICATED the open-mode Operator role was refused
+    // the lesser call and granted this one.
+    _: RequireAdminAction,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(new_overrides): Json<siphon_core::overrides::PatternOverrides>,
@@ -2629,6 +2636,9 @@ struct ReloadResponse {
 }
 
 async fn overrides_reload(
+    // Same reach as `overrides_apply`: swaps the live override set, just
+    // sourced from disk rather than the request body.
+    _: RequireAdminAction,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Result<Json<ReloadResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -3450,6 +3460,9 @@ struct RevertResponse {
 /// file is backed up FIRST so a revert is itself undoable via
 /// another revert.
 async fn overrides_revert(
+    // Restores a previous override set over the live one — a policy rewrite
+    // by another name.
+    _: RequireAdminAction,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<RevertRequest>,
@@ -5381,11 +5394,14 @@ async fn scan_stream(State(state): State<Arc<AppState>>, Json(req): Json<ScanReq
 /// management endpoints).  Returns the same `ReloadResponse` shape as
 /// POST /v1/overrides/reload so C2 tooling can use either endpoint.
 async fn admin_reload(
-    _: RequireAdminAction,
+    admin: RequireAdminAction,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Result<Json<ReloadResponse>, (StatusCode, Json<ErrorResponse>)> {
-    overrides_reload(State(state), ConnectInfo(addr)).await
+    // Hand our own gate token down rather than re-deriving one: this caller
+    // already proved AdminAction, and passing it keeps the delegation
+    // honest if the callee's gate ever changes.
+    overrides_reload(admin, State(state), ConnectInfo(addr)).await
 }
 
 // ---------------------------------------------------------------------------
