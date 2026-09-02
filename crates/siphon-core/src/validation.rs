@@ -5969,6 +5969,22 @@ mod tests {
         }
     }
 
+    /// ROT13 maps letters onto letters, so for a letter-shaped pattern the
+    /// alt-decoding pass generates plausible candidates rather than recovering
+    /// hidden ones. `AB1-2CD` normalises to `AB12CD`, whose ROT13 is `NO12PQ` —
+    /// well formed, and therefore not something structural validation can
+    /// reject. The scanner keeps sub-threshold patterns off the alt path for
+    /// exactly this reason; these assertions pin the two halves of the trap.
+    #[test]
+    fn test_uk_postcode_rot13_trap() {
+        // The product code itself is correctly rejected: C is excluded from the
+        // final letter pair.
+        assert!(!is_valid_uk_postcode("AB12CD"));
+        // Its ROT13 image is genuinely valid, which is why this cannot be
+        // solved in the validator and is handled in the scanner instead.
+        assert!(is_valid_uk_postcode("NO12PQ"));
+    }
+
     #[test]
     fn test_uk_postcode_rejects_wrong_shape() {
         assert!(!is_valid_uk_postcode("SW1A 0A")); // inward too short

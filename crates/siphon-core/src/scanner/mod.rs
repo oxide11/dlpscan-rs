@@ -1021,6 +1021,27 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     continue;
                 }
 
+                // The alt path also demands more of the pattern itself, for the
+                // same reason: it runs against a *transformed* text with no
+                // context index to corroborate anything, so a loose pattern
+                // firing there has compounded uncertainty.
+                //
+                // ROT13 is the sharp case. It maps letters onto letters, so for
+                // a letter-shaped pattern it behaves as a generator of
+                // plausible candidates rather than as a decoder: the product
+                // code `AB1-2CD` normalises to `AB12CD`, whose ROT13 is
+                // `NO12PQ` — a structurally valid UK postcode appearing nowhere
+                // in the document. Structural validation cannot catch that,
+                // because the string genuinely is well formed.
+                //
+                // Decoding earns its keep for high-entropy secrets and
+                // structured identifiers, which sit at or above the always-run
+                // threshold on their own merits. Nobody base64-encodes a
+                // postcode to exfiltrate it.
+                if crate::models::pattern_specificity(cp.def.sub_category) < SPECIFICITY_THRESHOLD {
+                    continue;
+                }
+
                 // Apply pattern_regex_overrides on the alt path too so
                 // an analyst tightening a pattern in the overrides file
                 // doesn't get bypassed via base32/base64/ROT13 decoding.

@@ -228,3 +228,72 @@ fn uk_mps_no_spurious_identifier_findings() {
         &unexpected[..unexpected.len().min(8)]
     );
 }
+
+// ---------------------------------------------------------------------------
+// Negative controls
+// ---------------------------------------------------------------------------
+
+/// Near-miss strings that look like contact data and are not. Supplied with the
+/// public-records corpus build as deliberate false-positive traps.
+///
+/// Two are known to still fire and are listed as such rather than quietly
+/// excluded: a dotted version string that satisfies the British NHS pattern,
+/// and a bare ten-digit checksum that satisfies US Phone Number. Both predate
+/// the postal work and neither has a fix yet; pinning the count stops the set
+/// from growing unnoticed.
+#[test]
+fn negative_controls_do_not_fire() {
+    let cases: &[(&str, &str)] = &[
+        ("NEG001", "Build 2026.09.02 completed in 613 ms."),
+        ("NEG002", "Release candidate AB1-2CD passed 416 checks."),
+        ("NEG003", "Service returned HTTP 404 from node 10.0.0.8."),
+        ("NEG004", "Ticket K1A-0A6-DEV is assigned to queue PARL."),
+        (
+            "NEG005",
+            "Version 514.398.6400 is not a telephone number in this context.",
+        ),
+        (
+            "NEG006",
+            "Use placeholder user@example.invalid in documentation.",
+        ),
+        (
+            "NEG007",
+            "The string Jane Doe is a generic placeholder, not a director.",
+        ),
+        ("NEG008", "Checksum 6139920946 failed validation."),
+    ];
+    // Known-firing controls, with the pattern each currently trips.
+    const KNOWN_FIRING: &[&str] = &["NEG005", "NEG008"];
+
+    let mut unexpected = Vec::new();
+    for (id, text) in cases {
+        let n = scan_text(text).unwrap().len();
+        let expected_to_fire = KNOWN_FIRING.contains(id);
+        if n > 0 && !expected_to_fire {
+            unexpected.push(format!("{id} fired {n} time(s): {text}"));
+        }
+        if n == 0 && expected_to_fire {
+            unexpected.push(format!(
+                "{id} no longer fires — a false positive was fixed; \
+                 remove it from KNOWN_FIRING"
+            ));
+        }
+    }
+    assert!(unexpected.is_empty(), "{unexpected:#?}");
+}
+
+/// NEG002 specifically: `AB1-2CD` is a product code whose ROT13 image
+/// (`NO12PQ`) is a structurally valid UK postcode. It fired once UK Postcode
+/// became always-run, because the alt-decoding pass had no specificity floor.
+/// Regression guard for that floor.
+#[test]
+fn rot13_alt_decoding_does_not_manufacture_postcodes() {
+    let m = scan_text("Release candidate AB1-2CD passed 416 checks.").unwrap();
+    assert!(
+        !m.iter().any(|x| x.sub_category == "UK Postcode"),
+        "ROT13 alt-decoding produced a postcode from a product code: {:?}",
+        m.iter()
+            .map(|x| (&x.sub_category, &x.text))
+            .collect::<Vec<_>>()
+    );
+}
