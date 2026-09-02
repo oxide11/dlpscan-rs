@@ -5870,6 +5870,13 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         ContextEntry {
             keywords: &[
                 "steueridentifikationsnummer",
+                // German writes this compound open as often as closed, and the
+                // closed form above cannot match "Steuerliche
+                // Identifikationsnummer". Added when Germany Tax ID moved from
+                // always-run to context-gated and the labelled corpus turned up
+                // exactly that spelling.
+                "identifikationsnummer",
+                "steuerliche",
                 "steuer-id",
                 "tax identification",
                 "tin",

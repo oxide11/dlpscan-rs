@@ -476,7 +476,6 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         // is_context_required + the AC prefilter is the correct
         // discipline: the pattern runs whenever an EIN or
         // passport keyword is present in the text.
-        "USA Routing Number",
         "US Phone Number",
         // US MBI removed: context-gated via is_context_required
         // (no published checksum; rely on keyword proximity +
@@ -488,7 +487,6 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         // check digit. Context-gated.
         // UK
         "UK NIN",
-        "British NHS",
         // UK Passport deliberately removed from always-run — the
         // regex is bare `\b\d{9}\b` with no published check digit.
         // Context-gated via is_context_required. Keeping it
@@ -496,13 +494,10 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         // in any document.
         // Europe
         "France NIR",
-        "Germany Tax ID",
-        "Netherlands BSN",
         "Spain DNI",
         "Italy Codice Fiscale",
         "Italy SSN",
         "Sweden PIN",
-        "Poland PESEL",
         "Belgium NRN",
         "Denmark CPR",
         // Asia-Pacific
@@ -514,7 +509,6 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "India Aadhaar",
         "India PAN",
         "China Resident ID",
-        "Japan My Number",
         "South Korea RRN",
         "Singapore NRIC",
         "Singapore FIN",
@@ -526,9 +520,7 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "Argentina CUIL/CUIT",
         "Chile RUN/RUT",
         // Middle East
-        "Israel Teudat Zehut",
         "UAE Emirates ID",
-        "South Africa ID",
         // Saudi Arabia National ID removed: bare `[12]\d{9}`
         // matches any 10-digit sequence starting with 1 or 2.
         // Context-gated via is_context_required.
@@ -575,6 +567,15 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         // Canadian MP directory before this promotion.
         "Canada Postal Code",
         "UK Postcode",
+        // Removed 2026-09-02: nine patterns whose regex is a bare digit run
+        // (British NHS, Germany Tax ID, Netherlands BSN, Poland PESEL, Japan My
+        // Number, Israel Teudat Zehut, South Africa ID, MERS MIN, USA Routing
+        // Number). Always-run bypasses the prefilter entirely, so each of them
+        // matched every digit run of its length in every document — and, being
+        // scored above US Phone Number, won deduplication against it. Measured
+        // on a held-out corpus split, that took phone recall to 45.9%, with
+        // numbers coming back labelled Peru Carnet Extranjeria or British NHS.
+        // They are now context-gated; see is_context_required in models.rs.
         // Financial
         "ABA Routing Number",
         "CUSIP",
@@ -582,7 +583,6 @@ static CRITICAL_ALWAYS_RUN: Lazy<HashSet<&'static str>> = Lazy::new(|| {
         "SEDOL",
         "LEI",
         "Universal Loan Identifier",
-        "MERS MIN",
         "Fedwire IMAD",
         "Ticker Symbol",
         "ICCID",

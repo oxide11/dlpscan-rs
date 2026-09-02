@@ -312,7 +312,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{18}\b",
         case_insensitive: false,
         specificity: 0.50,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Loan and Mortgage Data",
@@ -1776,7 +1776,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{9}\b",
         case_insensitive: false,
         specificity: 0.40,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "North America - United States",
@@ -2612,7 +2612,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{3}\s?\d{3}\s?\d{4}\b",
         case_insensitive: false,
         specificity: 0.65,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Europe - United Kingdom",
@@ -2671,7 +2671,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{11}\b",
         case_insensitive: false,
         specificity: 0.65,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Europe - Germany",
@@ -2783,7 +2783,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{9}\b",
         case_insensitive: false,
         specificity: 0.65,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Europe - Netherlands",
@@ -2855,7 +2855,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{11}\b",
         case_insensitive: false,
         specificity: 0.65,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Europe - Poland",
@@ -3762,7 +3762,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{12}\b",
         case_insensitive: false,
         specificity: 0.65,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Asia-Pacific - Japan",
@@ -4535,7 +4535,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{9}\b",
         case_insensitive: false,
         specificity: 0.65,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Middle East - Israel",
@@ -4663,7 +4663,7 @@ pub static PATTERNS: &[PatternDef] = &[
         regex: r"\b\d{13}\b",
         case_insensitive: false,
         specificity: 0.65,
-        context_required: false,
+        context_required: true,
     },
     PatternDef {
         category: "Africa - South Africa",

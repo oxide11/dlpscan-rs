@@ -144,6 +144,17 @@ pub fn build_hit_index(text: &str) -> Option<ContextHitIndex> {
     let mut hits: Vec<Vec<u32>> = vec![Vec::new(); CONTEXT_KEYWORDS.len()];
 
     for mat in ac.find_iter(text) {
+        // Aho-Corasick matches substrings, so without this an ordinary word
+        // containing a short keyword activates the pattern it gates. 294
+        // keywords are three characters or fewer and fourteen are two, which
+        // made this constant rather than occasional: "Mexi(co)" fired Czech
+        // ICO, "a(cc)ount" fired Colombia Cedula, and "Offi(ce)" fired Peru
+        // Carnet Extranjeria. Those spurious activations are what produced
+        // ~250 findings on a Canadian contact directory that contains no
+        // foreign identifiers at all.
+        if !is_word_bounded(text, mat.start(), mat.end()) {
+            continue;
+        }
         let ac_pattern_idx = mat.pattern().as_usize();
         let start = mat.start().min(u32::MAX as usize) as u32;
         // Each AC pattern maps to 1+ pattern IDs (because of keyword dedup)
@@ -162,6 +173,58 @@ pub fn build_hit_index(text: &str) -> Option<ContextHitIndex> {
     }
 
     Some(ContextHitIndex { hits })
+}
+
+/// Is the match at `start..end` a whole word rather than part of a longer one?
+///
+/// The boundary requirement applies per edge, and only where the keyword's own
+/// edge character is alphanumeric. That matters because keywords are not all
+/// bare words: `mc:` and `tlp:` end in punctuation and are routinely followed
+/// by a digit, while `/mc` begins with one. Demanding a non-alphanumeric
+/// neighbour on those edges would reject exactly the matches they exist to
+/// catch.
+///
+/// Character classification is Unicode-aware rather than ASCII-only, so an
+/// accented letter still counts as part of a word — `nif` inside `nifté` is a
+/// substring hit, not a keyword.
+fn is_word_bounded(text: &str, start: usize, end: usize) -> bool {
+    let kw = &text[start..end];
+
+    // Left edge is always required. This is the rule that does the work:
+    // "Mexi(co)", "a(cc)ount" and "Offi(ce)" all fail here because the keyword
+    // begins mid-word, which is what makes them coincidences rather than
+    // mentions.
+    if kw.chars().next().is_some_and(char::is_alphanumeric)
+        && text[..start]
+            .chars()
+            .next_back()
+            .is_some_and(char::is_alphanumeric)
+    {
+        return false;
+    }
+
+    // The right edge is only required for very short keywords. Longer ones are
+    // deliberately allowed to match a word's prefix, because inflection and
+    // compounding extend words at the end and the keyword lists are stems:
+    // German writes "Steuerliche Identifikationsnummer", and demanding a right
+    // boundary would stop `steuer` matching it. That is not hypothetical — it
+    // cost two labelled findings when this check was first written without the
+    // length exemption.
+    //
+    // Short keywords get no such latitude, since a two- or three-character
+    // prefix lands inside ordinary words constantly: `ce` would match
+    // "certain", `sin` would match "since", `run` would match "running".
+    const PREFIX_MATCH_MIN_LEN: usize = 4;
+    if kw.chars().count() < PREFIX_MATCH_MIN_LEN
+        && kw.chars().last().is_some_and(char::is_alphanumeric)
+        && text[end..]
+            .chars()
+            .next()
+            .is_some_and(char::is_alphanumeric)
+    {
+        return false;
+    }
+    true
 }
 
 /// Get context distance for a category.
@@ -368,5 +431,80 @@ mod tests {
     #[test]
     fn test_levenshtein_exceeds() {
         assert!(levenshtein_distance("hello", "world", 2) > 2);
+    }
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::*;
+
+    fn activates(text: &str, category: &str, sub: &str) -> bool {
+        build_hit_index(text)
+            .map(|ix| ix.hit_keys().any(|(c, s)| c == category && s == sub))
+            .unwrap_or(false)
+    }
+
+    /// Short keywords landing inside ordinary words were the dominant source of
+    /// spurious pattern activation: 294 keywords are three characters or fewer.
+    #[test]
+    fn short_keyword_inside_a_word_does_not_activate() {
+        // `ico` gates Czech ICO, and lives inside "Mexico".
+        assert!(!activates(
+            "Mexico office records",
+            "Europe - Czech Republic",
+            "Czech ICO"
+        ));
+        // `cc` gates Colombia Cedula, and lives inside "account".
+        assert!(!activates(
+            "account totals for the year",
+            "Latin America - Colombia",
+            "Colombia Cedula"
+        ));
+    }
+
+    /// Short keywords must not prefix-match either, or `ce` would fire on
+    /// "certain" and `sin` on "since".
+    #[test]
+    fn short_keyword_as_a_word_prefix_does_not_activate() {
+        assert!(!activates(
+            "certain conditions apply",
+            "Latin America - Peru",
+            "Peru Carnet Extranjeria"
+        ));
+    }
+
+    /// The genuine mention still activates, which is the whole point.
+    #[test]
+    fn standalone_short_keyword_activates() {
+        assert!(activates(
+            "Czech ICO: 12345678",
+            "Europe - Czech Republic",
+            "Czech ICO"
+        ));
+        assert!(activates(
+            "Cedula CC for the applicant",
+            "Latin America - Colombia",
+            "Colombia Cedula"
+        ));
+    }
+
+    /// Longer keywords keep prefix matching, because inflection and compounding
+    /// extend words at the end and the keyword lists hold stems. German writes
+    /// "Steuerliche Identifikationsnummer"; requiring a right boundary here
+    /// cost two labelled corpus findings when this check was first written.
+    #[test]
+    fn long_keyword_may_match_a_word_prefix() {
+        assert!(activates(
+            "Steuerliche Identifikationsnummer 65929970489",
+            "Europe - Germany",
+            "Germany Tax ID"
+        ));
+    }
+
+    /// Keywords whose own edge is punctuation get no boundary requirement on
+    /// that edge — `mc:` is routinely followed immediately by a digit.
+    #[test]
+    fn punctuation_edged_keyword_still_matches_against_a_digit() {
+        assert!(is_word_bounded("mc:5425233430109903", 0, 3));
     }
 }
