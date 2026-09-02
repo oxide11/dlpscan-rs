@@ -925,12 +925,22 @@ pub fn is_valid_us_phone(phone: &str) -> bool {
         return false;
     }
     // Exchange code (NXX): positions 3-5.
-    // Reject 0XX (operator-prefix reserved) and N11 service codes (211/311/…/911).
-    // Accepting 1XX allows non-standard but real-world exchange codes like 123 to
-    // be detected — strict NANP routing requires N=2-9, but DLP should flag any
-    // number that looks like a US phone regardless of routing constraints.
+    //
+    // NANP reserves N = 2-9 for the exchange's first digit, so both 0XX
+    // (operator-prefix reserved) and 1XX are structurally impossible. N11
+    // service codes (211/311/…/911) are also excluded.
+    //
+    // A previous revision deliberately admitted 1XX, reasoning that DLP should
+    // flag anything phone-shaped regardless of routing validity. That is the
+    // wrong trade here: 1XX exchanges cannot exist, so admitting them buys no
+    // recall on real numbers while costing precision on the phone-shaped digit
+    // runs that turn up in ordinary documents. It also contradicted the
+    // labelled corpus, which lists `+15551234567` under
+    // `negatives/phones_implausible.txt` with the rule spelled out
+    // ("exchange code must start 2..9"). That disagreement is what kept
+    // tests/detection_quality.rs red.
     let exchange = digits.as_bytes();
-    if exchange[3] == b'0' {
+    if exchange[3] == b'0' || exchange[3] == b'1' {
         return false;
     }
     if exchange[4] == b'1' && exchange[5] == b'1' {
@@ -5675,9 +5685,13 @@ mod tests {
         // 11-digit with leading 1.
         assert!(is_valid_us_phone("14155552671"));
         assert!(is_valid_us_phone("1-415-555-2671"));
-        // Exchange code starting with 1 — accepted for DLP (non-standard routing but real-world).
-        assert!(is_valid_us_phone("5551234567")); // exchange 123
-        assert!(is_valid_us_phone("+1 (555) 123-4567")); // formatted +1 NXX variant
+        // NB: 1XX exchanges used to be asserted valid here, on the theory that
+        // DLP should flag anything phone-shaped. That directly contradicted
+        // `negatives/phones_implausible.txt`, which lists the very same number
+        // as a required non-match, and the disagreement kept
+        // tests/detection_quality.rs permanently red. NANP reserves N = 2-9 for
+        // the exchange, so 1XX cannot occur in a real number; the cases moved
+        // to `test_us_phone_invalid`.
     }
 
     #[test]
@@ -5695,6 +5709,22 @@ mod tests {
         // Wrong length.
         assert!(!is_valid_us_phone("415555267"));
         assert!(!is_valid_us_phone("41555526710"));
+        // Exchange first digit 1 — structurally impossible in NANP, which
+        // reserves N = 2-9. A previous revision admitted 1XX deliberately;
+        // that disagreed with negatives/phones_implausible.txt and kept
+        // detection_quality red.
+        assert!(!is_valid_us_phone("+15551234567")); // exchange 123
+        assert!(!is_valid_us_phone("5551234567"));
+        assert!(!is_valid_us_phone("4151995555")); // exchange 199
+    }
+
+    /// The valid-exchange boundary: 2XX must still pass, so tightening the
+    /// first-digit rule to 2-9 cannot silently cost recall on real numbers.
+    #[test]
+    fn test_us_phone_exchange_boundary() {
+        assert!(is_valid_us_phone("+14152005678")); // exchange 200 — lowest valid
+        assert!(is_valid_us_phone("+14159995678")); // exchange 999 — highest valid
+        assert!(is_valid_us_phone("+14155551234")); // the corpus positive
     }
 
     #[test]
