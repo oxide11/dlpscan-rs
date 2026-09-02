@@ -39,6 +39,10 @@ jobs:
       # Guard first, before any credential is touched. A dispatch with an empty
       # or mistyped box stops here rather than part-way through a delete.
       - name: Confirm intent
+        # Runs before checkout, so it cannot inherit the job-level
+        # working-directory (deploy/cloudflare does not exist yet). The
+        # workspace root does exist from the moment the job starts.
+        working-directory: ${{ github.workspace }}
         run: |
           if [ "${{ inputs.confirm }}" != "DELETE" ]; then
             echo "confirmation was '${{ inputs.confirm }}', expected DELETE" >&2
