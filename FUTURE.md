@@ -253,6 +253,72 @@ and it surfaced a recall bug across an entire supported file format that 80
 synthetic fixtures had not.** Synthetic data validates what we thought to
 encode; real carriers surface what we did not.
 
+### Three legislative directories, measured
+
+Extending the same exercise to the Canadian House of Commons address list and
+the UK Parliament members CSV — both official public directories of elected
+representatives, both squarely within the policy below — gives the first real
+per-category numbers we have ever had:
+
+| Source | Ground truth | Detected | Recall |
+|---|---:|---:|---:|
+| US House directory (xlsx) | 441 phones | 0 | **0%** |
+| Canada MP addresses (html) | 1,306 phones | 1,141 | 87% |
+| Canada MP addresses | 408 postal codes | 0 | **0%** |
+| UK MPs (csv) | 649 postcodes | 649 | **100%** |
+| UK MPs (csv) | 643 emails | 643 | **100%** |
+
+Canada also produced roughly **250 false positives** across fifteen foreign
+identifier categories — Colombia Cedula, British NHS, Thailand Tax ID, Indiana
+DL, India Aadhaar and eight **credit-card PANs** among them — on a document
+containing nothing but Canadian office contact details.
+
+**The 0% versus 100% on postal codes is the same pattern class**, and the
+explanation is the most valuable finding of the exercise.
+
+### `context_required: false` does not mean the pattern runs
+
+`Canada Postal Code` and `UK Postcode` both declare `context_required: false`,
+and `docs/PATTERNS.md` reports "Context Required: No" for both. Neither fires
+on a bare address block:
+
+| Input | Detected |
+|---|---|
+| `Edmonton, Alberta T5A 1B7` | no |
+| `Postal code: T5A 1B7` | yes |
+| `House of Commons London SW1A 0AA` | no |
+| `Postcode` (header) then `SW1A 0AA` | yes |
+
+The cause is that **two independent gates exist and only one is documented.**
+Beyond the pattern's own `context_required` flag, the scanner's Aho-Corasick
+prefilter drops any pattern whose specificity is below the 0.85 always-run
+threshold unless one of its keywords is present. Canada Postal Code is 0.75 and
+UK Postcode is 0.70, so both are keyword-gated in practice no matter what their
+flag says.
+
+The UK CSV scored 100% purely because it has a `Postcode` column header
+supplying that keyword. The Canadian page renders addresses as humans write
+them, with no label, so the same pattern never ran. **Detection therefore
+depends on document formatting in a way the pattern definitions actively deny.**
+
+This affects every one of the 461 context-gated patterns that declares
+`context_required: false`, and it makes `docs/PATTERNS.md` misleading rather
+than merely incomplete. Two things follow: the generated documentation should
+report the effective gate rather than the declared one, and the specificity
+threshold deserves review against real unlabelled address and contact data.
+
+### The same defect cuts both ways
+
+The Canadian false positives are the *same* normalization behaviour as the US
+recall miss, seen from the other side. Matches such as
+`306-975-4051\n1-620` (PAN) and `613-498-3100\n29` (Aadhaar) are phone numbers
+fused across a line break into digit runs long enough to satisfy a card or
+national-ID pattern.
+
+One behaviour, two failure modes: numbers that should match become too long to
+match, and numbers that should not match become long enough to. Any fix has to
+be evaluated against both.
+
 ---
 
 ## Data provenance policy
