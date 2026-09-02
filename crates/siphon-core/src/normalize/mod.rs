@@ -973,9 +973,42 @@ fn strip_consistent_digit_separators(
         return None;
     }
 
-    let cs: Vec<char> = input.chars().collect();
-    let starts: Vec<usize> = input.char_indices().map(|(b, _)| b).collect();
-    let n = cs.len();
+    // For all-ASCII input — nearly every real document — a character index is
+    // a byte index, so neither of these vectors carries information the byte
+    // slice does not already have. Building them anyway cost a `Vec<char>` (4
+    // bytes/char) plus a `Vec<usize>` index map (8 bytes/char): ~12 MB for a
+    // 1 MB input, allocated before the scan below decides whether there is
+    // anything to strip (usually there is not). They are now built only for
+    // genuinely non-ASCII input, where char and byte indices diverge.
+    let ascii = input.is_ascii();
+    let bytes = input.as_bytes();
+    let cs: Vec<char> = if ascii {
+        Vec::new()
+    } else {
+        input.chars().collect()
+    };
+    let starts: Vec<usize> = if ascii {
+        Vec::new()
+    } else {
+        input.char_indices().map(|(b, _)| b).collect()
+    };
+    let n = if ascii { bytes.len() } else { cs.len() };
+    // One scan body serves both paths; the branch is loop-invariant and
+    // perfectly predicted, which is far cheaper than the allocation it avoids.
+    let ch = |i: usize| -> char {
+        if ascii {
+            bytes[i] as char
+        } else {
+            cs[i]
+        }
+    };
+    let start_of = |i: usize| -> usize {
+        if ascii {
+            i
+        } else {
+            starts[i]
+        }
+    };
     if n < 15 {
         // Shortest strippable span is 12 digits + 3 separators.
         return None;
@@ -985,37 +1018,37 @@ fn strip_consistent_digit_separators(
 
     let mut i = 0;
     while i < n {
-        if !cs[i].is_ascii_digit() {
+        if !ch(i).is_ascii_digit() {
             i += 1;
             continue;
         }
         // Left boundary: never start mid-identifier (alphanumeric to the left).
-        if i > 0 && cs[i - 1].is_ascii_alphanumeric() {
-            while i < n && cs[i].is_ascii_digit() {
+        if i > 0 && ch(i - 1).is_ascii_alphanumeric() {
+            while i < n && ch(i).is_ascii_digit() {
                 i += 1;
             }
             continue;
         }
         // First digit group.
         let mut j = i;
-        while j < n && cs[j].is_ascii_digit() {
+        while j < n && ch(j).is_ascii_digit() {
             j += 1;
         }
         let first_len = j - i;
-        if !((1..=6).contains(&first_len) && j < n && is_consistent_sep(cs[j])) {
+        if !((1..=6).contains(&first_len) && j < n && is_consistent_sep(ch(j))) {
             i = j.max(i + 1);
             continue;
         }
-        let sep = cs[j];
+        let sep = ch(j);
         let mut sep_positions: Vec<usize> = Vec::new();
         let mut total_digits = first_len;
         let mut groups_ok = true;
         let mut k = j;
         loop {
-            if k < n && cs[k] == sep {
+            if k < n && ch(k) == sep {
                 let g = k + 1;
                 let mut m = g;
-                while m < n && cs[m].is_ascii_digit() {
+                while m < n && ch(m).is_ascii_digit() {
                     m += 1;
                 }
                 let glen = m - g;
@@ -1034,7 +1067,7 @@ fn strip_consistent_digit_separators(
             }
         }
         // Right boundary must not continue into an identifier.
-        let right_ok = k >= n || !cs[k].is_ascii_alphanumeric();
+        let right_ok = k >= n || !ch(k).is_ascii_alphanumeric();
         if groups_ok && right_ok && sep_positions.len() >= 3 && (12..=40).contains(&total_digits) {
             for &p in &sep_positions {
                 remove[p] = true;
@@ -1050,14 +1083,14 @@ fn strip_consistent_digit_separators(
 
     let mut out = String::with_capacity(input.len());
     let mut offsets: Vec<usize> = Vec::with_capacity(input.len());
-    for idx in 0..n {
-        if remove[idx] {
+    for (idx, &dropped) in remove.iter().enumerate() {
+        if dropped {
             continue;
         }
-        let ch = cs[idx];
-        let byte_idx = starts[idx];
-        out.push(ch);
-        for b in 0..ch.len_utf8() {
+        let c = ch(idx);
+        let byte_idx = start_of(idx);
+        out.push(c);
+        for b in 0..c.len_utf8() {
             offsets.push(orig_offset(in_offsets, byte_idx + b));
         }
     }
@@ -2290,9 +2323,7 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     // inside a candidate card/account number (e.g. `4532O151l283O366`). This
     // runs OUTSIDE the `!is_ascii_only` block above because the substituted
     // letters are themselves ASCII, so Stage 10 would never see them.
-    let r = fold_confusable_digit_runs(&current, &offsets);
-    current = r.0;
-    offsets = r.1;
+    apply_stage!(fold_confusable_digit_runs, current, offsets);
 
     // If nothing changed, return empty offsets (identity)
     if current == text {
@@ -2948,42 +2979,71 @@ fn is_digit_run_member(c: char) -> bool {
 /// (e.g. `4532O151l283O366` → `4532015112830366`) while leaving ordinary text
 /// untouched. Each char maps to exactly one char, so byte offsets are
 /// preserved the same way `remap_char_transform` does it.
-fn fold_confusable_digit_runs(input: &str, input_offsets: &[usize]) -> (String, Vec<usize>) {
-    let chars: Vec<(usize, char)> = input.char_indices().collect();
-    let n = chars.len();
-    let mut fold = vec![false; n];
-    let mut any = false;
-    let mut i = 0;
-    while i < n {
-        if !is_digit_run_member(chars[i].1) {
-            i += 1;
-            continue;
-        }
-        let start = i;
-        let mut ascii_digits = 0usize;
-        while i < n && is_digit_run_member(chars[i].1) {
-            if chars[i].1.is_ascii_digit() {
+fn fold_confusable_digit_runs(
+    input: &str,
+    input_offsets: &[usize],
+) -> Option<(String, Vec<usize>)> {
+    // A run qualifies when it is ≥ 12 chars with ≥ 8 real digits, is more than
+    // 60% real digits, and contains at least one confusable to actually fold
+    // (otherwise the run is already plain digits).
+    fn qualifies(len: usize, ascii_digits: usize) -> bool {
+        len > ascii_digits && len >= 12 && ascii_digits >= 8 && ascii_digits * 10 > len * 6
+    }
+
+    // Detection streams over the input instead of collecting `char_indices()`
+    // into a `Vec<(usize, char)>`. That vector is 16 bytes per character — 16 MB
+    // for a 1 MB input — and was built before knowing whether anything folds,
+    // which for ordinary text it never does. Qualifying runs are recorded as
+    // character ranges, so this vector stays empty on the common path.
+    //
+    // This stage runs unconditionally (confusables like `l`/`O` are themselves
+    // ASCII, so the non-ASCII guard upstream cannot skip it), which is why it
+    // was the single largest allocator in the pipeline at ~38 MB per 1 MB
+    // scanned.
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    let mut run_start: Option<usize> = None;
+    let mut run_len = 0usize;
+    let mut ascii_digits = 0usize;
+
+    for (idx, ch) in input.chars().enumerate() {
+        if is_digit_run_member(ch) {
+            if run_start.is_none() {
+                run_start = Some(idx);
+                run_len = 0;
+                ascii_digits = 0;
+            }
+            run_len += 1;
+            if ch.is_ascii_digit() {
                 ascii_digits += 1;
             }
-            i += 1;
-        }
-        let len = i - start;
-        // len ≥ 12, ≥ 8 real digits, > 60% real digits, and at least one
-        // confusable to actually fold (else the run is already plain digits).
-        if len > ascii_digits && len >= 12 && ascii_digits >= 8 && ascii_digits * 10 > len * 6 {
-            for slot in fold.iter_mut().take(i).skip(start) {
-                *slot = true;
+        } else if let Some(s) = run_start.take() {
+            if qualifies(run_len, ascii_digits) {
+                runs.push((s, s + run_len));
             }
-            any = true;
         }
     }
-    if !any {
-        return (input.to_string(), input_offsets.to_vec());
+    // A run ending at end-of-input is closed here rather than by a separator.
+    if let Some(s) = run_start {
+        if qualifies(run_len, ascii_digits) {
+            runs.push((s, s + run_len));
+        }
     }
+
+    if runs.is_empty() {
+        return None;
+    }
+
     let mut output = String::with_capacity(input.len());
     let mut output_offsets = Vec::with_capacity(input.len());
-    for (idx, &(byte_idx, ch)) in chars.iter().enumerate() {
-        let replacement = if fold[idx] {
+    // `runs` is sorted and non-overlapping by construction, so a single cursor
+    // walks it alongside the characters.
+    let mut r = 0usize;
+    for (idx, (byte_idx, ch)) in input.char_indices().enumerate() {
+        while r < runs.len() && idx >= runs[r].1 {
+            r += 1;
+        }
+        let in_run = r < runs.len() && idx >= runs[r].0;
+        let replacement = if in_run {
             confusable_to_digit(ch).unwrap_or(ch)
         } else {
             ch
@@ -2998,7 +3058,7 @@ fn fold_confusable_digit_runs(input: &str, input_offsets: &[usize]) -> (String, 
             output_offsets.push(orig_start);
         }
     }
-    (output, output_offsets)
+    Some((output, output_offsets))
 }
 
 /// Apply NFKC normalization while maintaining byte-level offset map.
@@ -3213,6 +3273,39 @@ mod tests {
         // like U+00B7 cannot be seen in a 3-byte window and must fall through
         // to the full path instead of being rejected.
         assert!(norm("4532·0151·1283·0366").contains("4532015112830366"));
+    }
+
+    #[test]
+    fn test_separator_stripping_ascii_and_char_paths_agree() {
+        // `strip_consistent_digit_separators` now indexes bytes directly for
+        // all-ASCII input and only builds char/index vectors when the text is
+        // genuinely non-ASCII. The two paths must produce identical results
+        // for the same logical input, so this pins an ASCII separator against
+        // its non-ASCII counterpart.
+        assert!(norm("4532*0151*1283*0366").contains("4532015112830366"));
+        assert!(norm("4532·0151·1283·0366").contains("4532015112830366"));
+        // Mixed: a non-ASCII character elsewhere in the text forces the char
+        // path even though the separator itself is ASCII.
+        assert!(norm("café 4532*0151*1283*0366").contains("4532015112830366"));
+    }
+
+    #[test]
+    fn test_confusable_fold_survives_streaming_detection() {
+        // `fold_confusable_digit_runs` detects qualifying runs by streaming
+        // rather than collecting every char up front, then re-walks the input
+        // to emit. Runs closed by a separator and runs closed by end-of-input
+        // take different branches, so both are pinned here.
+        // Only O→0 and l/I→1 are confusables; letters like S are not folded.
+        let mid = norm("card 4532Ol5112830366 here");
+        let end = norm("card 4532Ol5112830366");
+        assert!(
+            mid.contains("4532015112830366"),
+            "run closed by separator: {mid}"
+        );
+        assert!(
+            end.contains("4532015112830366"),
+            "run closed by end-of-input: {end}"
+        );
     }
 
     #[test]
