@@ -85,6 +85,32 @@ jobs:
       # baseline should be re-derived and raised.
       - name: Public records baselines
         run: cargo test --test public_records_test
+      # The held-out corpus is too large for git (~49 MB here, ~600 MB for the
+      # US one), so it is fetched and checksum-verified. Cached on the
+      # committed SHA256SUMS.txt, which changes only when the corpus does.
+      - name: Cache corpora
+        uses: actions/cache@v4
+        with:
+          path: |
+            tests/corpus/canada_contact_v1/*.csv
+            tests/corpus/canada_contact_v1/*.jsonl
+          key: corpora-${{ hashFiles('tests/corpus/*/SHA256SUMS.txt') }}
+      - name: Fetch corpora
+        # Absent SIPHON_CORPUS_BASE_URL the script reports what is missing and
+        # exits 0, and the suite below skips rather than fails — so CI stays
+        # green on a fork or before the bucket is configured, and starts
+        # enforcing the moment the URL is set.
+        env:
+          SIPHON_CORPUS_BASE_URL: ${{ vars.SIPHON_CORPUS_BASE_URL }}
+        run: scripts/fetch-corpus.sh
+      # Per-label recall against a held-out corpus split (2,586 samples used
+      # for nothing else). This is the only suite that can state a recall
+      # figure rather than a pass/fail: labels.jsonl holds 80 positives over 73
+      # sub-categories, roughly one example each. Floors sit below the measured
+      # values; a failure means recall fell, and a rise means the baseline
+      # should be re-derived and raised.
+      - name: Held-out recall baselines
+        run: cargo test --test held_out_recall_test
 
   clippy:
     name: Clippy

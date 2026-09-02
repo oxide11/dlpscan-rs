@@ -22,3 +22,11 @@ certs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Large test corpora — fetched, not committed. See scripts/fetch-corpus.sh and
+# tests/corpus/*/PROVENANCE.md. The threshold is 1 MB per file; everything
+# smaller (provenance, manifest, checksums, registries) stays in git so a
+# fetched copy is verifiable.
+tests/corpus/*/*.jsonl
+tests/corpus/*/polygon_siphon_entities_v1.csv
+tests/corpus/*/polygon_siphon_dlp_eval_v1.csv
