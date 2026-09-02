@@ -1,0 +1,9 @@
+control_id,text,expected_labels,notes
+NEG001,Build 2026.09.02 completed in 613 ms.,,"date and latency, not contact data"
+NEG002,Release candidate AB1-2CD passed 416 checks.,,product code and count
+NEG003,Service returned HTTP 404 from node 10.0.0.8.,,status code and private IP
+NEG004,Ticket K1A-0A6-DEV is assigned to queue PARL.,,postal-code-like ticket
+NEG005,Version 514.398.6400 is not a telephone number in this context.,,version-like numeric token
+NEG006,Use placeholder user@example.invalid in documentation.,,reserved invalid email domain
+NEG007,"The string Jane Doe is a generic placeholder, not a directory record.",,placeholder name
+NEG008,Checksum 6139920946 failed validation.,,10-digit checksum
