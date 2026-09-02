@@ -123,9 +123,9 @@ A pattern is "always-run" (`is_always_run`, line ~267) if either:
   addresses, core PCI/PII)
 
 The prefilter is the biggest throughput win in the whole pipeline. On a
-clean English-prose document with zero sensitive keywords, ~80% of the
-560 patterns are dropped before their regex ever compiles a match
-attempt.
+clean English-prose document with zero sensitive keywords, the 461
+context-gated patterns (of 583 total) are dropped before their regex ever
+compiles a match attempt.
 
 ---
 

@@ -45,7 +45,7 @@ Input text
 ## Patterns
 
 A **pattern** is a regex that matches a specific type of sensitive data.
-dlpscan ships with **560 patterns** across **126 categories**.
+dlpscan ships with **583 patterns** across **128 categories**.
 
 Each pattern has:
 

@@ -41,7 +41,7 @@ card numbers) appear near relevant keywords (e.g., "credit card", "payment",
 ```
 
 Each pattern match in the text triggers a context check, which searches for
-keywords in the surrounding window. With 560 patterns and potentially thousands
+keywords in the surrounding window. With 583 patterns and potentially thousands
 of matches, this creates O(M x K) context checks per scan.
 
 ### How Aho-Corasick Works

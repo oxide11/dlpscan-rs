@@ -57,7 +57,7 @@ Expected output:
 ```
 dlpscan v2.1.0
 
-Patterns:    560 across 126 categories
+Patterns:    583 across 128 categories
 Features:    core, metrics
 
 Supported formats: 59 file types

@@ -46,7 +46,7 @@ logic. Zero file-format dependencies — operates on `&str` input only.
 
 **Modules:**
 - `scanner` — parallel regex matching with Rayon + AC prefilter
-- `patterns` — 561 compiled patterns across 126 categories
+- `patterns` — 583 compiled patterns across 128 categories
 - `validation` — 72 checksum validators
 - `normalize` — 10-stage evasion defense pipeline
 - `context` — Aho-Corasick keyword proximity matching
@@ -190,7 +190,7 @@ the same pipeline as long as they expose a common `Detector` interface.
   │Regex Detector│  │  ML Detector    │  │Classifier     │
   │  (in-proc)   │  │  (remote gRPC)  │  │  (remote gRPC)│
   │              │  │                 │  │               │
-  │561 patterns  │  │BERT NER, PII,   │  │Doc type,      │
+  │583 patterns  │  │BERT NER, PII,   │  │Doc type,      │
   │72 validators │  │custom models    │  │intent, toxic  │
   └──────────────┘  └─────────────────┘  └───────────────┘
 ```
