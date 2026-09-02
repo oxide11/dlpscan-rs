@@ -69,8 +69,8 @@ mod archives {
         let archive = tmp.path().join("benign.7z");
         craft_7z(&archive, "notes.txt", b"card 4532015112830366 inside");
 
-        let out = siphon::extract_text(archive.to_str().unwrap())
-            .expect("benign 7z should extract");
+        let out =
+            siphon::extract_text(archive.to_str().unwrap()).expect("benign 7z should extract");
         assert!(
             out.text.contains("4532015112830366"),
             "benign entry was not extracted: {:?}",
