@@ -31,7 +31,7 @@ independent jobs; `test` is the only one that waits on `build`.
 | Job | What it runs |
 |---|---|
 | Build | `cargo build --release` |
-| Test | `--lib`, `integration_test`, `evasion_test`, `forensics_test`, `evadex_regressions` |
+| Test | `--lib`, `audit_spec`, `integration_test`, `evasion_test`, `forensics_test`, `evadex_regressions` |
 | Clippy | `cargo clippy --lib -- -D warnings -A dead-code -A unused-imports` |
 | Format | `cargo fmt --check` |
 | Version sync | `scripts/check-version-sync.sh` |
@@ -54,25 +54,29 @@ forgotten Helm tag lands as a red check, not a silent drift.
 
 ### Harnesses CI does not run
 
-`detection_quality`, `fp_probe`, `audit_spec`, and `encoding_diag` appear in
-**no** workflow. They are the harnesses listed in `CLAUDE.md` under "Other
-test harnesses", and they have to be run by hand:
+`detection_quality`, `fp_probe`, and `encoding_diag` appear in **no**
+workflow. They are the harnesses listed in `CLAUDE.md` under "Other test
+harnesses", and they have to be run by hand:
 
 ```bash
-cargo test --test audit_spec          # pattern/model lockstep
 cargo test --test detection_quality   # labeled-corpus recall + FP
 cargo test --test fp_probe            # false-positive investigation
 ```
 
-This is worth knowing because these are the tests that catch a specific and
-recurring class of problem. `audit_spec` asserts that
-`PatternDef.specificity` / `.context_required` in `patterns/mod.rs` stay in
-lockstep with `pattern_specificity()` / `is_context_required()` in
-`models.rs` — the scanner consults both, so a disagreement means one source
-is lying. Because nothing runs it automatically, drift there accumulates
-silently until someone thinks to check. Run `audit_spec` after any change to
-patterns, specificity, or context gating; run `detection_quality` after any
-change to normalization, scoring, or dedup.
+Run `detection_quality` after any change to normalization, scoring, or
+dedup. It is **not** currently green on `main` — a `GPS Coordinates` recall
+miss and a `US Phone Number` false positive on an implausible number predate
+the current branch — so compare against a baseline run rather than expecting
+a clean pass, and fix that before wiring it into CI or it will only add
+noise.
+
+`audit_spec` used to be in this list and is now part of the `test` job. It
+guards the lockstep between `PatternDef.specificity` / `.context_required`
+in `patterns/mod.rs` and `pattern_specificity()` / `is_context_required()`
+in `models.rs`; the scanner consults both, so a disagreement means one
+source is lying. Nothing ran it automatically for a long time, which is how
+the Malta TIN, Chile RUN/RUT and Tanzania NIDA divergences accumulated
+unnoticed.
 
 ### evadex quality gate (`evadex-quality-gate.yml`)
 

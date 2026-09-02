@@ -50,6 +50,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Unit tests
         run: cargo test --lib
+      # Pattern/model lockstep. PatternDef.specificity and
+      # .context_required in patterns/mod.rs must agree with
+      # pattern_specificity() / is_context_required() in models.rs —
+      # the scanner consults both, so a disagreement means one source
+      # is lying and the admin-console catalog misreports scanner
+      # behaviour. Cheap (no fixtures, runs in well under a second) and
+      # previously ran in no workflow, which is how Malta TIN, Chile
+      # RUN/RUT and Tanzania NIDA silently diverged.
+      - name: Pattern/model lockstep audit
+        run: cargo test --test audit_spec
       - name: Integration tests
         run: cargo test --test integration_test
       - name: Evasion tests
