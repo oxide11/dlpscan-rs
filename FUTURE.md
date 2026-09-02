@@ -276,6 +276,84 @@ containing nothing but Canadian office contact details.
 **The 0% versus 100% on postal codes is the same pattern class**, and the
 explanation is the most valuable finding of the exercise.
 
+### First held-out measurement, and what it found
+
+A 13,551-record Canadian public-professional-contact corpus (27,102 annotated
+samples, 218,150 entity spans, train/validation/test split with zero
+person-level leakage) was audited independently and then used to measure the
+scanner on its **test split** — 2,586 samples never used for anything else.
+
+Audit first, since the numbers below only mean something if the corpus is
+sound: all 218,150 annotation offsets verified, zero out-of-bounds, zero
+overlapping spans, zero split leakage, label counts matching the manifest, and
+3,872 of 3,875 postal values independently confirmed by our own
+`is_valid_canada_postal_code` (the three rejects are documented `NA`/`-`
+placeholders). The province distribution derived from district letters is
+Ontario 2,028 / Quebec 1,566 with everything else small — the National Capital
+Region dominating a federal directory, which is a semantic signature synthetic
+data rarely reproduces.
+
+**One interoperability trap:** annotation offsets are **character** offsets,
+the Python convention. 60% of samples contain non-ASCII (the corpus is
+bilingual) and 116,155 of 218,150 spans would be wrong if read as **byte**
+offsets. Rust strings are byte-indexed and `Match.span` is byte-based, so any
+Rust consumer must convert. Reading them raw silently corrupts exactly the
+French records.
+
+Recall on the held-out test split, for the three labels the scanner supports at
+all:
+
+| Label | Found | Missed | Recall |
+|---|---:|---:|---:|
+| EMAIL_ADDRESS | 1,160 | 8 | 99.3% |
+| POSTAL_CODE | 2,314 | 150 | 93.9% |
+| PHONE_NUMBER | 920 | 1,086 | **45.9%** |
+
+The remaining six labels — PERSON_NAME, JOB_TITLE, ORGANIZATION,
+STREET_ADDRESS, CITY, REGION — the scanner cannot detect at all. That is the
+NER gap, now quantified rather than asserted.
+
+### Phone numbers are not missed, they are misattributed
+
+45.9% looks like a recall failure and is not one. The spans *are* detected; they
+are labelled as the wrong thing:
+
+    343-553-1633  ->  Peru Carnet Extranjeria
+    519-827-9864  ->  Peru Carnet Extranjeria
+    343-990-8909  ->  British NHS
+
+For a DLP tool this is worse than a miss, because a finding routed to the wrong
+category is routed to the wrong policy.
+
+The competing patterns explain it:
+
+| Pattern | Regex | Specificity | Always-run |
+|---|---|---:|---|
+| British NHS | `\d{3}\s?\d{3}\s?\d{4}` | 0.65 | yes |
+| Peru Carnet Extranjeria | `\d{9,12}` | 0.40 | no |
+| Colombia Cedula | `\d{6,10}` | 0.40 | no |
+| US Phone Number | `(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}` | 0.40 | yes |
+
+`British NHS` matches every ten-digit number on earth, is always-run, and
+outranks the phone pattern, so it wins deduplication. It is not an unvalidated
+pattern — NHS numbers carry a mod-11 check digit and we verify it — but roughly
+one in eleven arbitrary ten-digit numbers passes that check by chance, and
+`3439908909` is one of them.
+
+The defect is the **ranking**, not the validation. A `NNN-NNN-NNNN` string that
+also satisfies NANP structure is far more likely to be a telephone number than
+an NHS number that merely passed a one-in-eleven checksum, yet the phone
+pattern is scored 0.40 against the NHS pattern's 0.65. Specificity is being
+used as a proxy for confidence while being assigned by hand and never
+calibrated against outcomes.
+
+This is the concrete case for the calibration item below, and the corpus is now
+the instrument for it: 2,586 held-out samples with known answers make it
+possible to fit specificity to observed precision instead of guessing. It also
+explains the ~250 "false positives" measured earlier on the Canadian MP
+directory, which were largely not spurious findings at all but real phone
+numbers wearing foreign identity-document labels.
+
 ### `context_required: false` does not mean the pattern runs
 
 `Canada Postal Code` and `UK Postcode` both declare `context_required: false`,
