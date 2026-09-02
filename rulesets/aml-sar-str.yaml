@@ -1,0 +1,41 @@
+name: AML Suspicious Activity / Transaction Reports
+description: >
+  Detects AML/CFT regulatory filings across major FIU regimes and blocks their
+  exfiltration:
+    - US (FinCEN, Bank Secrecy Act): SAR, CTR, Form 8300
+    - Canada (FINTRAC, PCMLTFA): STR, LCTR, EFTR, Terrorist Property Report
+    - Australia (AUSTRAC, AML/CTF Act): SMR, TTR, IFTI
+    - UK (NCA / UKFIU, POCA 2002): SAR, DAML
+  Also catches the statutory confidentiality / anti-tipping-off banners these
+  filings carry (e.g. 31 U.S.C. 5318(g), 31 CFR 1020.320). These documents are
+  among the most sensitive an institution holds: their disclosure is a criminal
+  offence, so DLP should flag or block them leaving controlled systems.
+
+version: "1"
+
+# "Financial Crime Reports" is part of the Internal Financial baseline
+# (alongside the Regulatory Identifiers that appear inside such filings).
+baselines:
+  - internal_financial
+
+# Detection policy. Switch to `reject` to hard-block egress of AML filings;
+# `flag` (the default here) surfaces them for review without breaking
+# legitimate internal compliance workflows.
+action: flag
+mode: denylist
+min_confidence: 0.6
+require_context: false
+
+overrides:
+  # The signature titles, form numbers, regulator/statute markers, and
+  # confidentiality banners are distinctive enough to run without nearby
+  # keywords — a SAR/STR title is a finding wherever it appears.
+  - category: Financial Crime Reports
+    require_context: false
+    min_confidence: 0.6
+  # The numeric identifiers *inside* a filing (SAR/CTR/FinCEN report numbers,
+  # AML case IDs) are bare digit runs — keep them keyword-gated to avoid
+  # firing on unrelated numbers.
+  - category: Regulatory Identifiers
+    require_context: true
+    min_confidence: 0.5

@@ -58,6 +58,28 @@ starting from this file.
 
 ## 2026-07-08
 
+### siphon-core 2.3.0
+
+- feat(core): AML/CFT filing detection — new **Financial Crime Reports**
+  category detects the regulatory filings themselves so DLP can flag or block
+  their exfiltration, across the major FIU regimes:
+    - **US** (FinCEN / Bank Secrecy Act): SAR, CTR, Form 8300, plus form
+      markers (Form 111/112, BSA E-Filing) and the statutory confidentiality /
+      anti-tipping-off citations (31 U.S.C. 5318(g), 31 CFR 1020.320)
+    - **Canada** (FINTRAC / PCMLTFA): STR, LCTR, EFTR, Terrorist Property
+      Report, plus PCMLTFA / FINTRAC / CANAFE markers
+    - **Australia** (AUSTRAC / AML/CTF Act): SMR, TTR, IFTI
+    - **UK** (NCA / UKFIU / POCA 2002): SAR, DAML "Defence Against Money
+      Laundering"
+
+  The distinctive multi-word signatures and regulator/statute markers run
+  always (≥ 0.85, like TLP markings) so a filing title is detected wherever it
+  appears; "electronic funds transfer" (EFTR) and the generic "reasonable
+  grounds to suspect" phrase stay keyword-gated to avoid false positives in
+  ordinary banking/legal prose. Adds 15 patterns + 13 context-keyword groups, a
+  `rulesets/aml-sar-str.yaml` policy (FinCEN + FINTRAC + AUSTRAC + UK), and 15
+  detection tests.
+
 ### siphon-core 2.2.0
 
 - feat(core): regional digit homoglyph coverage extended — Arabic-Indic
