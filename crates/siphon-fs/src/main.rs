@@ -829,11 +829,40 @@ fn cors_layer() -> CorsLayer {
                 base.allow_origin(AllowOrigin::list(allowed))
             }
         }
-        // No SIPHON_FS_CORS_ORIGINS set → local-dev default. Production
-        // deployments should set SIPHON_FS_CORS_ORIGINS to a specific
-        // origin list — the explicit branch above takes precedence.
-        _ => CorsLayer::permissive(),
+        // No SIPHON_FS_CORS_ORIGINS set → default-deny cross-origin. This used
+        // to fall back to CorsLayer::permissive(), which let any web page POST
+        // a file here and read the findings back — a cross-origin exfiltration
+        // path from a victim's browser. Opt back into permissive for local dev
+        // with SIPHON_ALLOW_PERMISSIVE_CORS=true; production sets an explicit
+        // SIPHON_FS_CORS_ORIGINS allowlist.
+        _ => {
+            if allow_permissive_cors() {
+                warn!(
+                    "SIPHON_ALLOW_PERMISSIVE_CORS is set — reflecting any Origin. \
+                     Local development only; set SIPHON_FS_CORS_ORIGINS in production."
+                );
+                CorsLayer::permissive()
+            } else {
+                info!(
+                    "SIPHON_FS_CORS_ORIGINS not set — cross-origin browser requests \
+                     are denied. Set it to an origin allowlist, or \
+                     SIPHON_ALLOW_PERMISSIVE_CORS=true for local dev."
+                );
+                CorsLayer::new()
+            }
+        }
     }
+}
+
+/// Whether the operator has opted into permissive (any-origin) CORS for local
+/// development. Mirrors siphon-api and `SIPHON_ALLOW_UNAUTHENTICATED`.
+fn allow_permissive_cors() -> bool {
+    std::env::var("SIPHON_ALLOW_PERMISSIVE_CORS")
+        .map(|v| {
+            let v = v.trim();
+            v.eq_ignore_ascii_case("true") || v == "1"
+        })
+        .unwrap_or(false)
 }
 
 /// Below this length an API key is very likely a placeholder rather than a

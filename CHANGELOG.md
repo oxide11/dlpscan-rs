@@ -14,6 +14,31 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — CORS defaults to deny
+
+Both HTTP services fell back to `CorsLayer::permissive()` (reflect any Origin)
+when their CORS origins variable was unset. For a service that returns detected
+card numbers and SSNs — and for siphon-fs, accepts file uploads — insecure-by-
+default is the wrong posture. Bearer-token auth limited the blast radius
+(cross-origin JS can't read the key), but the default now denies cross-origin.
+
+### siphon-api 2.5.2
+
+- **fix(api): default-deny cross-origin when `SIPHON_CORS_ORIGINS` is unset.**
+  Was permissive. Now an unset value denies cross-origin browser requests; set
+  an explicit origin allowlist in production, or `SIPHON_ALLOW_PERMISSIVE_CORS=true`
+  for local dev (the admin console served from `file://` / `Origin: null` needs
+  it). An explicit `SIPHON_CORS_ORIGINS=*` still reflects any origin.
+
+### siphon-fs 1.1.3
+
+- **fix(fs): default-deny cross-origin when `SIPHON_FS_CORS_ORIGINS` is unset.**
+  Same change as siphon-api. Previously any web page could POST a file to
+  siphon-fs and read the findings back cross-origin — a browser-driven
+  exfiltration path. Opt back in for dev with `SIPHON_ALLOW_PERMISSIVE_CORS=true`.
+
+---
+
 ## 2026-09-03 — nested archives no longer a silent gap
 
 Follow-up from the ZIP DLP-bypass work. Sensitive data one archive layer deep
