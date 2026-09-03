@@ -40,11 +40,14 @@ static LEET_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
         ('8', 'b'),
         ('(', 'c'),
         ('3', 'e'),
+        ('\u{20AC}', 'e'), // € → e
         ('6', 'g'),
         ('#', 'h'),
         ('!', 'i'),
         ('1', 'l'),
+        ('|', 'l'), // | → l
         ('0', 'o'),
+        ('$', 's'), // $ → s
         ('5', 's'),
         ('7', 't'),
         ('+', 't'),
@@ -482,7 +485,9 @@ fn decode_html_entities(input: &str, in_offsets: &[usize]) -> Option<(String, Ve
 
 /// Strip empty CSS comments (`/**/`) and empty HTML comments (`<!---->`) from text.
 fn strip_comments(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
-    if !input.contains("/**/") && !input.contains("<!---->") {
+    let has_css = input.contains("/*");
+    let has_html = input.contains("<!--");
+    if !has_css && !has_html {
         return None;
     }
 
@@ -492,14 +497,44 @@ fn strip_comments(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usiz
     let mut i = 0;
 
     while i < bytes.len() {
-        // Check for /**/  (4 bytes)
-        if i + 3 < bytes.len() && &bytes[i..i + 4] == b"/**/" {
-            i += 4;
+        // Strip /* ... */ CSS/C comments (including empty /**/).
+        if has_css && i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            let start = i;
+            let mut j = i + 2;
+            let mut found = false;
+            while j + 1 < bytes.len() {
+                if bytes[j] == b'*' && bytes[j + 1] == b'/' {
+                    i = j + 2;
+                    found = true;
+                    break;
+                }
+                j += 1;
+            }
+            if !found {
+                out.push(bytes[start]);
+                offsets.push(orig_offset(in_offsets, start));
+                i = start + 1;
+            }
             continue;
         }
-        // Check for <!---->  (7 bytes)
-        if i + 6 < bytes.len() && &bytes[i..i + 7] == b"<!---->" {
-            i += 7;
+        // Strip <!-- ... --> HTML comments (including empty <!---->) .
+        if has_html && i + 3 < bytes.len() && &bytes[i..i + 4] == b"<!--" {
+            let start = i;
+            let mut j = i + 4;
+            let mut found = false;
+            while j + 2 < bytes.len() {
+                if &bytes[j..j + 3] == b"-->" {
+                    i = j + 3;
+                    found = true;
+                    break;
+                }
+                j += 1;
+            }
+            if !found {
+                out.push(bytes[start]);
+                offsets.push(orig_offset(in_offsets, start));
+                i = start + 1;
+            }
             continue;
         }
         out.push(bytes[i]);
