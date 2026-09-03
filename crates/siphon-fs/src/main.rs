@@ -19,8 +19,10 @@
 //! Graceful shutdown on SIGTERM lands in Phase 5.
 
 use axum::{
-    extract::{DefaultBodyLimit, Multipart, Query, State},
-    http::StatusCode,
+    body::Body,
+    extract::{DefaultBodyLimit, Multipart, Query, Request, State},
+    http::{header, HeaderValue, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Json as JsonResponse, Response},
     routing::{get, post},
     Router,
@@ -37,7 +39,8 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 
 mod db;
@@ -118,6 +121,10 @@ impl LiveOverrides {
 
 #[derive(Clone)]
 struct AppState {
+    /// SHA-256 of the configured API key, or `None` when the operator has
+    /// explicitly opted into running unauthenticated. Mirrors siphon-api:
+    /// the key is never held in plaintext beyond startup.
+    api_key_hash: Option<[u8; 32]>,
     findings: Arc<FindingsRing>,
     /// Hot-reloadable overrides. See LiveOverrides above.
     live_overrides: Arc<std::sync::RwLock<LiveOverrides>>,
@@ -740,6 +747,190 @@ async fn overrides_reload(State(state): State<AppState>) -> Response {
     .into_response()
 }
 
+async fn security_headers(_request: Request<Body>, next: Next) -> Response {
+    let mut response = next.run(_request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
+    headers.insert("x-xss-protection", HeaderValue::from_static("0"));
+    headers.insert(
+        "cache-control",
+        HeaderValue::from_static("no-store, no-cache, must-revalidate"),
+    );
+    headers.insert(
+        "content-security-policy",
+        HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+    );
+    if headers.get("strict-transport-security").is_none() {
+        headers.insert(
+            "strict-transport-security",
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        );
+    }
+    headers.insert(
+        "referrer-policy",
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
+    );
+    headers.insert(
+        "permissions-policy",
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
+    response
+}
+
+fn cors_layer() -> CorsLayer {
+    match std::env::var("SIPHON_FS_CORS_ORIGINS") {
+        Ok(origins) if !origins.is_empty() => {
+            let trimmed = origins.trim();
+            let base = CorsLayer::new()
+                .allow_methods([axum::http::Method::POST, axum::http::Method::GET])
+                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
+            if trimmed == "*" {
+                CorsLayer::permissive()
+            } else {
+                let allowed: Vec<HeaderValue> = trimmed
+                    .split(',')
+                    .filter_map(|o| o.trim().parse().ok())
+                    .collect();
+                base.allow_origin(AllowOrigin::list(allowed))
+            }
+        }
+        // No SIPHON_FS_CORS_ORIGINS set → local-dev default. Production
+        // deployments should set SIPHON_FS_CORS_ORIGINS to a specific
+        // origin list — the explicit branch above takes precedence.
+        _ => CorsLayer::permissive(),
+    }
+}
+
+/// Below this length an API key is very likely a placeholder rather than a
+/// generated secret. Warned about, not enforced — same policy as siphon-api.
+const MIN_API_KEY_LEN: usize = 16;
+
+/// Resolve the API key at startup, failing closed when none is configured.
+///
+/// siphon-fs previously had no authentication of any kind: `POST /scan` took
+/// uploads, `GET /v1/findings` returned previously scanned findings, and
+/// `POST /v1/overrides/reload` mutated detection config, all without a
+/// credential. `CLAUDE.md` and the nginx config both asserted otherwise —
+/// nginx omits its Authelia gate for `/fs/` on the stated grounds that
+/// "siphon-fs validates SIPHON_API_KEY itself", which was never true.
+///
+/// Semantics match siphon-api exactly, so the two services cannot drift:
+/// empty counts as unset, unset refuses to start, and running open requires
+/// SIPHON_ALLOW_UNAUTHENTICATED.
+fn resolve_api_key_hash() -> Option<[u8; 32]> {
+    let configured = std::env::var("SIPHON_API_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty());
+
+    if let Some(key) = configured {
+        if key.len() < MIN_API_KEY_LEN {
+            tracing::warn!(
+                len = key.len(),
+                minimum = MIN_API_KEY_LEN,
+                "SIPHON_API_KEY is shorter than the recommended minimum — \
+                 generate one with `openssl rand -hex 32`"
+            );
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(key.as_bytes());
+        tracing::info!("API key authentication enabled");
+        return Some(hasher.finalize().into());
+    }
+
+    let allow_open = std::env::var("SIPHON_ALLOW_UNAUTHENTICATED")
+        .map(|v| {
+            let v = v.trim();
+            v.eq_ignore_ascii_case("true") || v == "1"
+        })
+        .unwrap_or(false);
+
+    if !allow_open {
+        eprintln!(
+            "FATAL: SIPHON_API_KEY is not set (or is empty), so file upload and\n\
+             findings endpoints would be served without authentication.\n\
+             Refusing to start.\n\
+             \n\
+             Set an API key:\n\
+             \n\
+                 export SIPHON_API_KEY=\"$(openssl rand -hex 32)\"\n\
+             \n\
+             Or, for local development only, opt in to running open:\n\
+             \n\
+                 export SIPHON_ALLOW_UNAUTHENTICATED=true\n"
+        );
+        std::process::exit(1);
+    }
+
+    tracing::warn!(
+        "SIPHON_ALLOW_UNAUTHENTICATED is set — file upload and findings endpoints \
+         are served WITHOUT authentication. Never use this outside local development."
+    );
+    None
+}
+
+/// Bearer-token gate over every route except the kubelet probes.
+///
+/// `/health` and `/ready` stay open for the same reason as in siphon-api: a
+/// kubelet cannot present a token, and gating the probes crash-loops the pod
+/// on every rollout.
+async fn auth_middleware(
+    State(state): State<AppState>,
+    request: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    let path = request.uri().path();
+    if path == "/health" || path == "/ready" {
+        return next.run(request).await;
+    }
+
+    let Some(expected) = state.api_key_hash else {
+        // Explicitly opted into open mode at startup.
+        return next.run(request).await;
+    };
+
+    let provided = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .filter(|k| !k.is_empty());
+
+    match provided {
+        Some(key) => {
+            let mut hasher = Sha256::new();
+            hasher.update(key.as_bytes());
+            let got: [u8; 32] = hasher.finalize().into();
+            // Constant-time comparison — a byte-wise early return would leak
+            // the expected hash a byte at a time under timing analysis.
+            let mut diff = 0u8;
+            for (a, b) in expected.iter().zip(got.iter()) {
+                diff |= a ^ b;
+            }
+            if diff != 0 {
+                tracing::warn!(path = %path, "auth_failed: invalid API key");
+                return unauthorized();
+            }
+            next.run(request).await
+        }
+        None => {
+            tracing::warn!(path = %path, "auth_failed: missing bearer token");
+            unauthorized()
+        }
+    }
+}
+
+fn unauthorized() -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        JsonResponse(serde_json::json!({ "error": "invalid or missing API key" })),
+    )
+        .into_response()
+}
+
 fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -748,13 +939,18 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/findings", get(list_findings))
         .route("/v1/capabilities", get(capabilities))
         .route("/v1/overrides/reload", post(overrides_reload))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ))
         .with_state(state)
         // 100 MB upload cap. Matches siphon::extractors::extract_text's
         // own per-file limit so a larger payload is rejected at the
         // HTTP edge rather than wasting the extract path. Override via
         // SIPHON_FS_BODY_LIMIT_MB for ad-hoc testing.
         .layer(DefaultBodyLimit::max(body_limit_bytes()))
-        .layer(CorsLayer::permissive())
+        .layer(middleware::from_fn(security_headers))
+        .layer(cors_layer())
         .layer(TraceLayer::new_for_http())
 }
 
@@ -804,6 +1000,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let temp_dir = temp_dir_path();
 
     let state = AppState {
+        // Resolved before the listener binds, so a misconfigured deployment
+        // fails at startup rather than serving an open upload endpoint.
+        api_key_hash: resolve_api_key_hash(),
         findings: Arc::new(FindingsRing::new(FINDINGS_RING_CAP)),
         live_overrides: Arc::new(std::sync::RwLock::new(live_overrides)),
         overrides_path: Arc::new(std::path::PathBuf::from(&overrides_path)),

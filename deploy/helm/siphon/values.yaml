@@ -44,12 +44,28 @@ api:
 
   image:
     repository: oxide11/siphon-api
-    tag: "2.4.0"
+    tag: "2.5.0"
     pullPolicy: ""  # inherits global.imagePullPolicy
 
   service:
     type: ClusterIP
     port: 8080
+
+  # Networks whose X-Forwarded-For siphon-api believes, comma-separated,
+  # as bare IPs or CIDRs.
+  #
+  # In this chart every request arrives from the nginx pod, so the per-IP
+  # rate limiter otherwise sees a single client and one noisy caller
+  # exhausts the budget for everyone. Setting this to the pod CIDR makes
+  # nginx's forwarded address the rate-limit key instead.
+  #
+  # Left empty by default because it must match your cluster: the pod CIDR
+  # is cluster-specific (10.42.0.0/16 on k3d/k3s, 10.244.0.0/16 on kubeadm
+  # and kind, 10.0.0.0/8 on many managed clusters — check with
+  # `kubectl get node -o jsonpath='{.items[*].spec.podCIDR}'`). Widening it
+  # past the networks your proxy actually occupies lets anything in range
+  # forge its own rate-limit bucket, so do not simply set 0.0.0.0/0.
+  trustedProxies: ""
 
   # `k8sRoll` gates the cargo-build `k8s-roll` feature from the
   # runtime side. When true, a Role + RoleBinding grants the
@@ -132,7 +148,7 @@ fs:
     repository: oxide11/siphon-fs
     # Pinned per the per-crate SemVer rules in CLAUDE.md. Bump
     # this in lockstep with crates/siphon-fs/Cargo.toml.
-    tag: "1.0.0"
+    tag: "1.1.0"
     pullPolicy: ""
 
   service:
@@ -241,6 +257,23 @@ postgres:
   database: siphon
   username: siphon
   secretName: ""  # e.g. "siphon-postgres"
+
+  # TLS on the api→Postgres hop. Findings rows contain the card numbers,
+  # national IDs and credentials the scanner matched, so this link is worth
+  # encrypting even inside the cluster — a compromised node or a sniffing
+  # sidecar reads it otherwise.
+  #
+  # Defaults to "disable" only because the bundled postgres:17-alpine above
+  # serves no certificate; siphon-api's own default is "require". When you
+  # point at a managed Postgres (RDS, Cloud SQL, Neon — all of which present
+  # a real certificate) set this to "require". For an in-cluster Postgres you
+  # have given a self-signed certificate, set "require" and mount the issuing
+  # CA, then name its path in caFile.
+  #
+  # "require" verifies the server certificate against the platform root store
+  # plus caFile; it is not libpq's weaker verify-nothing "require".
+  sslMode: disable
+  caFile: ""  # e.g. "/etc/siphon/pg-ca.crt"
 
   resources:
     requests:

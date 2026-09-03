@@ -20,6 +20,13 @@
     "enabled": true
   },
 
+  // ── CORS note ────────────────────────────────────────────────────
+  // siphon-api defaults to CorsLayer::permissive() when SIPHON_CORS_ORIGINS
+  // is unset, which is intentional for this open demo. For a production
+  // deployment, add SIPHON_CORS_ORIGINS to the container envVars below
+  // (comma-separated list of allowed origins, e.g. "https://app.example.com")
+  // so the backend enforces a specific origin allowlist.
+  //
   // ── Container ────────────────────────────────────────────────────
   // `image` points at the repo's existing API Dockerfile. The build
   // context is the repo root because Dockerfile.api COPYs the whole

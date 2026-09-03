@@ -129,7 +129,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
-    image: siphon-api:2.4.0
+    image: siphon-api:2.5.0
     profiles: [auth]
     environment:
       # siphon-api reads SIPHON_BIND + SIPHON_PORT separately, never
@@ -138,10 +138,19 @@ services:
       # explicitly, matching the Helm chart.
       - SIPHON_BIND=0.0.0.0
       - SIPHON_PORT=8080
-      # Remove SIPHON_API_KEY to run the service in dev mode without
-      # a bearer-token check — Nginx + Authelia are the real front
-      # door in this stack.
+      # `${SIPHON_API_KEY:-}` expands to an empty string when the variable is
+      # absent, and siphon-api now treats empty as unset and refuses to start
+      # rather than silently accepting `Authorization: Bearer ` with nothing
+      # after it — which is what the previous behaviour did while logging
+      # "API key authentication enabled".
+      #
+      # So either export a key:
+      #     export SIPHON_API_KEY="$(openssl rand -hex 32)"
+      # or opt in explicitly to running without authentication, which is only
+      # reasonable because Nginx + Authelia are the real front door here:
+      #     export SIPHON_ALLOW_UNAUTHENTICATED=true
       - SIPHON_API_KEY=${SIPHON_API_KEY:-}
+      - SIPHON_ALLOW_UNAUTHENTICATED=${SIPHON_ALLOW_UNAUTHENTICATED:-}
       - RUST_LOG=info
     expose: ["8080"]
     restart: unless-stopped
@@ -157,7 +166,7 @@ services:
       dockerfile: deploy/Dockerfile.fs
     # Pinned per the per-crate SemVer rules in CLAUDE.md. Bump
     # in lockstep with crates/siphon-fs/Cargo.toml.
-    image: siphon-fs:1.0.0
+    image: siphon-fs:1.1.0
     profiles: [auth]
     environment:
       - SIPHON_FS_BIND=0.0.0.0:8081

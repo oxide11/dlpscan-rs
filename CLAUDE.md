@@ -147,10 +147,12 @@ Key env vars for siphon-api:
 |---|---|---|
 | `SIPHON_PORT` | 8080 | |
 | `SIPHON_BIND` | 127.0.0.1 | |
-| `SIPHON_API_KEY` | — | required in production |
+| `SIPHON_API_KEY` | — | **required**; empty counts as unset. Without it the service refuses to start |
+| `SIPHON_ALLOW_UNAUTHENTICATED` | false | opt in to running with no auth — local dev only |
 | `SIPHON_TLS_CERT` / `SIPHON_TLS_KEY` | — | PEM paths |
 | `SIPHON_CORS_ORIGINS` | none | comma-separated |
 | `SIPHON_RATE_LIMIT` | 120 | req/min per IP |
+| `SIPHON_TRUSTED_PROXIES` | — | comma-separated IPs/CIDRs whose `X-Forwarded-For` is believed for rate-limit keying. Unset = key on the TCP peer, which behind a proxy puts every client in one bucket. Only the right-most forwarded entry is used |
 | `SIPHON_REQUEST_TIMEOUT_SECS` | 30 | |
 | `SIPHON_AUDIT_LOG_PATH` | — | JSONL audit file |
 | `SIPHON_AUDIT_SIGNING_KEY_HEX` | — | enables HMAC-SHA256 chain |
@@ -160,6 +162,8 @@ Key env vars for siphon-api:
 | `SIPHON_POLICIES_DIR` | — | directory of *.yaml rulesets |
 | `SIPHON_ALLOWLIST_PATH` | — | JSON allowlist |
 | `SIPHON_DATABASE_URL` | — | Postgres (optional) |
+| `SIPHON_DATABASE_TLS` | require | `require` or `disable`. Findings rows carry matched sensitive values, so the Postgres hop is encrypted by default; `require` pins `sslmode=require` and verifies the server certificate |
+| `SIPHON_DATABASE_CA_FILE` | — | extra PEM CA bundle for a self-signed Postgres certificate |
 | `SIPHON_FINDINGS_RETENTION_DAYS` | 90 | Days to retain findings (0 = keep forever) |
 | `SIPHON_OVERRIDES_PATH` | — | PatternOverrides YAML (hot-reloadable) |
 
@@ -196,6 +200,8 @@ Env vars for postgres:
 | Variable | Default | Notes |
 |---|---|---|
 | `SIPHON_DATABASE_URL` | — | Postgres connection string (optional) |
+| `SIPHON_DATABASE_TLS` | require | `require` or `disable` (see above); applies to siphon-api and siphon-fs alike |
+| `SIPHON_DATABASE_CA_FILE` | — | extra PEM CA bundle for a self-signed Postgres certificate |
 | `SIPHON_FINDINGS_RETENTION_DAYS` | 90 | Days to retain findings (0 = keep forever) |
 
 C2 wireframe:
@@ -217,14 +223,21 @@ have all merged to `main` — see CHANGELOG `siphon-api 2.3.0`–`2.4.0`.
 
 ### siphon-fs routes
 
-Same auth and health/ready as siphon-api. One additional endpoint:
+Same auth and health/ready as siphon-api — bearer `SIPHON_API_KEY`, empty
+counts as unset, and the service refuses to start without one unless
+`SIPHON_ALLOW_UNAUTHENTICATED` is set. (This was documented long before it
+was true: siphon-fs had no authentication at all until 2026-09-02.)
+One additional endpoint:
 
 ```
 POST /scan    multipart/form-data file upload → extraction → findings
 GET  /v1/findings
 ```
 
-Max body: `SIPHON_FS_BODY_LIMIT_MB` (default 100 MB). File formats supported
+Max body: `SIPHON_FS_BODY_LIMIT_MB` (default 100 MB). CORS origins:
+`SIPHON_FS_CORS_ORIGINS` (comma-separated; unset falls back to permissive for
+local dev — set it in production, or any page can upload to this service and
+read the findings back). File formats supported
 (parenthetical = feature gate controlling the dep):
 
 - Plain text, RTF, EML — always available

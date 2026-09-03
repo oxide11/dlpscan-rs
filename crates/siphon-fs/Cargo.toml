@@ -1,6 +1,6 @@
 [package]
 name = "siphon-fs"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 description = "Polygon Siphon FS — file-scanner HTTP service (multipart in, findings out)"
 license = "MIT"
@@ -46,3 +46,7 @@ deadpool-postgres = "0.14"
 
 # Misc
 uuid = { version = "1", features = ["v4"] }
+tokio-postgres-rustls = { version = "0.14.0", features = ["ring"] }
+rustls = { version = "0.23.43", features = ["ring"] }
+webpki-roots = "1.0.9"
+rustls-pemfile = "2.2.0"

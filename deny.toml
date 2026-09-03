@@ -11,18 +11,28 @@
 unmaintained = "workspace"
 yanked = "deny"
 ignore = [
-    # RUSTSEC-2026-0194 (O(N^2) duplicate-attribute check) and
-    # RUSTSEC-2026-0195 (unbounded namespace-declaration allocation in
-    # NsReader) are both quick-xml < 0.41 DoS advisories, both fixed in
-    # 0.41.0. Our DIRECT dep is bumped to 0.41 (see Cargo.toml and
-    # crates/siphon-core/Cargo.toml), which covers the office/forensics XML
-    # parsing that touches untrusted uploads. The only remaining affected
-    # instance for both is quick-xml 0.39.x pulled transitively by calamine
-    # 0.35 (latest release, 2026-05-10) — no calamine version yet ships
-    # against quick-xml 0.41, so neither can be resolved by an upgrade.
-    # Scoped ignores until calamine bumps its quick-xml dependency.
-    { id = "RUSTSEC-2026-0194", reason = "transitive via calamine 0.35 (latest); no fixed calamine release yet. Direct dep already on 0.41." },
-    { id = "RUSTSEC-2026-0195", reason = "transitive via calamine 0.35 (latest); no fixed calamine release yet. Direct dep already on 0.41." },
+    # RUSTSEC-2026-0245 — sevenz-rust path traversal via `decompress_file`.
+    # The vulnerability is in `decompress_impl`, which calls `dest.join(entry.name())`
+    # without sanitising the entry name, allowing `../` sequences and absolute paths
+    # to escape the extraction directory.
+    #
+    # Mitigation: `extract_7z` (src/extractors.rs) does NOT call `decompress_file`.
+    # It drives extraction entry-by-entry via `decompress_file_with_extract_fn`,
+    # routing every entry name through `sanitize_archive_path` before any write is
+    # attempted — relative components are stripped, absolute paths are rejected, and
+    # the resolved path is re-checked against the base directory. The regression test
+    # in tests/archive_security_test.rs verifies that crafted traversal entries land
+    # nowhere outside the temp directory.
+    #
+    # Long-term: migrate to `sevenz-rust2` (the advisory-recommended maintained
+    # successor) when the extraction API surface is next touched. See BACKLOG.md.
+    { id = "RUSTSEC-2026-0245", reason = "mitigated: extract_7z uses decompress_file_with_extract_fn + sanitize_archive_path; no unsafe write occurs. See tests/archive_security_test.rs." },
+
+    # RUSTSEC-2026-0246 — sevenz-rust unmaintained.
+    # Noted in BACKLOG.md; migration to sevenz-rust2 is the tracked follow-on work.
+    # The traversal vulnerability (0245) is mitigated above; no known exploitable
+    # issue remains in our controlled use of the API surface.
+    { id = "RUSTSEC-2026-0246", reason = "unmaintained; tracked in BACKLOG.md for migration to sevenz-rust2. Traversal risk mitigated by custom extraction wrapper." },
 ]
 
 [licenses]

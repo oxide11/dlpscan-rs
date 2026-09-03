@@ -1,6 +1,21 @@
 # Siphon Backlog
 
-Last updated: 2026-07-08
+Last updated: 2026-09-02
+
+## Security debt — unmaintained dependencies
+
+Five transitive dependencies are flagged unmaintained by RustSec. None has a
+known exploit as of this writing; they are tracked here so they are not
+silently forgotten between dependency audits. Replace opportunistically when a
+maintained alternative exists and the migration risk is low.
+
+| Crate | RustSec ID | Notes |
+|---|---|---|
+| `ring` | RUSTSEC-2026-0243 | Cryptography primitive used by rustls. The maintainership situation is well-known in the ecosystem; `aws-lc-rs` is the leading maintained alternative but requires a C toolchain. Revisit when rustls makes the switch by default. |
+| `rustls-pemfile` | RUSTSEC-2026-0244 | PEM parsing used by the TLS feature. Consider migrating to `rustls-pki-types` (the newer rustls-endorsed crate) when the TLS plumbing is next touched. |
+| `ttf-parser` | RUSTSEC-2026-0249 | Font parsing pulled in by the PDF extraction chain. No maintained drop-in; revisit when the PDF dep tree updates. |
+| `paste` | RUSTSEC-2026-0251 | Proc-macro helper; used only at compile time, no runtime attack surface. Prefer inlining or switching to std `concat_idents!` / `format_ident!` (from `syn`) when the using code is next touched. |
+| `proc-macro-error2` | RUSTSEC-2026-0252 | Build-time only (proc-macro support). No exploitable runtime surface; track the originating crate's migration to `proc-macro-error` v2 or `syn` diagnostics. |
 
 ## Ready to build
 

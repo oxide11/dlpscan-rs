@@ -16,9 +16,19 @@ interface Env {
   SIPHON_API_KEY: string;
 }
 
-/** Reject bodies larger than this at the edge, before any container time is
- *  billed. siphon-core rejects >10 MB itself, but a demo has no reason to
- *  accept anything near that. */
+/**
+ * Reject bodies larger than this at the edge, before any container time is
+ * billed. siphon-core rejects >10 MB itself, but a demo has no reason to
+ * accept anything near that.
+ *
+ * IMPORTANT — this is a courtesy/cost-control check, NOT a security boundary.
+ * It reads the client-supplied Content-Length header, which a caller can lie
+ * about or omit entirely (e.g. chunked Transfer-Encoding carries no
+ * Content-Length). In practice the check is bounded by Cloudflare's
+ * platform-level request-size limit and siphon-core's own 10 MB hard cap, so
+ * there is no exploitable gap — but do not rely on this check alone for
+ * enforcement. The real enforcement is upstream (platform + origin).
+ */
 const MAX_BODY_BYTES = 256 * 1024;
 
 /**

@@ -16,7 +16,7 @@
 //! failures crash the process so the operator sees the crashloop
 //! instead of a half-applied schema.
 
-use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime};
+use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime, SslMode};
 use std::time::Duration;
 use tokio_postgres::NoTls;
 
@@ -110,7 +110,21 @@ pub async fn init_optional(
         ..Default::default()
     });
 
-    let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls)?;
+    let pool = match build_tls()? {
+        MaybeTls::Plain => cfg.create_pool(Some(Runtime::Tokio1), NoTls)?,
+        MaybeTls::Tls(c) => {
+            // Supplying a TLS connector is not by itself enough to get an
+            // encrypted link. tokio-postgres defaults to `SslMode::Prefer`,
+            // which negotiates TLS and then *silently continues in clear
+            // text* if the server declines — so a stripped or misconfigured
+            // server downgrades us without a word, which is precisely the
+            // exposure `require` is supposed to close. deadpool applies this
+            // field after parsing the URL, so it also overrides an
+            // `sslmode=` the connection string may carry.
+            cfg.ssl_mode = Some(SslMode::Require);
+            cfg.create_pool(Some(Runtime::Tokio1), *c)?
+        }
+    };
 
     // Round-trip a single connection at startup so unreachable
     // Postgres surfaces immediately instead of on first scan.
@@ -671,4 +685,93 @@ pub async fn persist_edm_registration(
         .await?;
 
     Ok(())
+}
+
+/// Build the TLS connector for Postgres.
+///
+/// Findings rows carry the sensitive data this product exists to detect —
+/// matched card numbers, national IDs, credentials — so the link to Postgres
+/// carried them in clear text on `NoTls`. In-cluster with a NetworkPolicy that
+/// is a narrower exposure than an open port, but "narrower" is not "none": a
+/// compromised node, a sniffing sidecar, or a mesh misconfiguration all read
+/// it.
+///
+/// Controlled by `SIPHON_DATABASE_TLS`:
+///
+/// * `disable` — plaintext. The historical behaviour, and still right when a
+///   service mesh already provides mTLS on this hop (the chart can inject
+///   linkerd via `global.linkerd.enabled`, off by default), or for a loopback
+///   Postgres in local development. The bundled chart Postgres serves no
+///   certificate, so the chart sets this explicitly rather than inheriting
+///   the `require` default.
+/// * `require` *(default)* — TLS with the platform root store, plus any extra
+///   CA in `SIPHON_DATABASE_CA_FILE` for the self-signed certificate an
+///   in-cluster Postgres usually presents.
+///
+/// The default changed to `require` deliberately. A deployment that silently
+/// sends other people's identifiers unencrypted is the wrong thing to get by
+/// accident; one that fails to connect is noticed and fixed.
+fn build_tls() -> Result<MaybeTls, String> {
+    let mode = std::env::var("SIPHON_DATABASE_TLS").unwrap_or_else(|_| "require".into());
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "disable" | "off" | "false" => {
+            tracing::warn!(
+                "SIPHON_DATABASE_TLS=disable — the Postgres link is unencrypted. \
+                 Findings rows contain the sensitive data this scanner detects; \
+                 only do this when a service mesh secures the hop or Postgres is \
+                 on loopback."
+            );
+            Ok(MaybeTls::Plain)
+        }
+        "require" | "on" | "true" => {
+            let mut roots = rustls::RootCertStore::empty();
+            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+            if let Ok(path) = std::env::var("SIPHON_DATABASE_CA_FILE") {
+                let pem = std::fs::read(&path)
+                    .map_err(|e| format!("reading SIPHON_DATABASE_CA_FILE {path}: {e}"))?;
+                let mut added = 0usize;
+                for cert in rustls_pemfile::certs(&mut pem.as_slice()).flatten() {
+                    roots
+                        .add(cert)
+                        .map_err(|e| format!("adding CA from {path}: {e}"))?;
+                    added += 1;
+                }
+                if added == 0 {
+                    return Err(format!("no certificates found in {path}"));
+                }
+                tracing::info!(path, added, "loaded extra Postgres CA certificates");
+            }
+
+            // rustls 0.23 requires the provider to be named when it cannot
+            // infer one from features alone. Building the config with an
+            // explicit provider is better than installing a process-wide
+            // default: siphon-api also drives rustls for its own TLS listener,
+            // and a global install couples two unrelated call sites through
+            // hidden state. Without this the connector panics at first use —
+            // "Could not automatically determine the process-level
+            // CryptoProvider".
+            let config = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .map_err(|e| format!("configuring Postgres TLS: {e}"))?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+            tracing::info!("Postgres TLS enabled");
+            Ok(MaybeTls::Tls(Box::new(
+                tokio_postgres_rustls::MakeRustlsConnect::new(config),
+            )))
+        }
+        other => Err(format!(
+            "SIPHON_DATABASE_TLS={other:?} is not recognised (expected 'require' or 'disable')"
+        )),
+    }
+}
+
+/// Either connector, resolved at startup. Boxed because the rustls variant is
+/// substantially larger than the unit-sized `NoTls`.
+enum MaybeTls {
+    Plain,
+    Tls(Box<tokio_postgres_rustls::MakeRustlsConnect>),
 }
