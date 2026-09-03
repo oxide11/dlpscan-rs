@@ -219,12 +219,26 @@ within it is limited to the Deployments you name.
 
 ## Linkerd mTLS
 
-`global.linkerd.enabled: true` adds `linkerd.io/inject: enabled`
-to every pod. Prereq: the control plane is installed in the
-cluster (`linkerd install | kubectl apply -f -`). Pods come up
-with a sidecar, every in-chart call is mTLS'd with an identity
-rotated every 24h, and `linkerd viz stat deploy -n siphon`
-shows MESHED=1/1 across the board.
+**On by default** (`global.linkerd.enabled: true`). It adds
+`linkerd.io/inject: enabled` to every pod so all pod-to-pod traffic
+is mTLS-encrypted and mutually authenticated — the baseline for
+encrypting the in-cluster hops, and the reason siphon-fs (which
+serves no TLS of its own but takes file uploads full of sensitive
+data) is not sending cleartext across the pod network.
+
+**Prerequisite: the Linkerd control plane must be installed**
+(`linkerd install | kubectl apply -f -`). The inject annotation is
+inert without it — pods start with no sidecar and traffic is
+unencrypted. Verify the mesh is actually active:
+
+```
+linkerd check
+linkerd viz stat deploy -n siphon   # expect MESHED 1/1 across the board
+```
+
+If your cluster has no Linkerd and you set `global.linkerd.enabled=false`,
+you own securing the pod-to-pod hops another way (a different mesh, or
+TLS terminated at the ingress with a NetworkPolicy restricting egress).
 
 ## Production checklist
 
@@ -241,8 +255,11 @@ Before pointing real traffic at the release:
       `4.38` and should match the Authelia version you've
       exercised in staging.
 - [ ] Flip `ingress.tls.enabled=true` and provide `secretName`.
-- [ ] Set `global.linkerd.enabled=true` (or bring your own
-      mesh) so pod-to-pod traffic is authenticated.
+- [ ] Confirm Linkerd is installed and the pods are meshed
+      (`linkerd viz stat deploy -n siphon` → MESHED 1/1). mTLS is
+      on by default (`global.linkerd.enabled=true`); if you disabled
+      it or run a different mesh, make sure pod-to-pod traffic is
+      still encrypted and authenticated some other way.
 - [ ] Verify `kubectl auth can-i patch deployments.apps -n siphon
       --as=system:serviceaccount:siphon:siphon-api` returns
       `yes` only for the Deployments you listed in

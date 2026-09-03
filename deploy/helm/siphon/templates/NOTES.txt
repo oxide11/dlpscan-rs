@@ -67,11 +67,20 @@ Next steps:
       --from-literal=storage_encryption_key="$(openssl rand -hex 32)"
 {{- end }}
 
-{{- if not .Values.global.linkerd.enabled }}
+{{- if .Values.global.linkerd.enabled }}
 
-ℹ Linkerd sidecar injection is OFF. For production-grade
-  pod-to-pod mTLS, install Linkerd's control plane and set
-  `global.linkerd.enabled=true`.
+✓ Linkerd sidecar injection is ON — pod-to-pod traffic is mTLS-
+  encrypted and mutually authenticated. This REQUIRES the Linkerd
+  control plane in the cluster; without it the pods start with no
+  sidecar and traffic is UNENCRYPTED. Verify with:
+    linkerd check && linkerd viz stat deploy -n {{ .Release.Namespace }}
+{{- else }}
+
+⚠ Linkerd sidecar injection is OFF (global.linkerd.enabled=false).
+  Pod-to-pod traffic — including siphon-fs file uploads full of the
+  sensitive data this scanner detects — is UNENCRYPTED on the pod
+  network. Re-enable the mesh, or secure the hops another way, before
+  running this in production.
 {{- end }}
 
 Docs:
