@@ -28,12 +28,26 @@ global:
   commonLabels: {}
   commonAnnotations: {}
 
-  # Linkerd sidecar injection. When enabled, every pod picks up
-  # the `linkerd.io/inject: enabled` annotation and the Linkerd
-  # control plane adds a sidecar for automatic mTLS.
-  # Prerequisite: `linkerd install | kubectl apply -f -` in the cluster.
+  # Linkerd sidecar injection — the baseline for pod-to-pod mTLS.
+  # When enabled, every pod picks up the `linkerd.io/inject: enabled`
+  # annotation and the Linkerd control plane adds a sidecar that
+  # transparently mTLS-encrypts and mutually-authenticates all
+  # pod-to-pod traffic (api↔fs↔nginx↔postgres) with certificates it
+  # rotates automatically. This is the recommended way to encrypt the
+  # in-cluster hops — siphon-fs in particular takes file uploads full
+  # of the sensitive data the scanner detects and serves no TLS of its
+  # own, so without a mesh that traffic crosses the pod network in the
+  # clear.
+  #
+  # Enabled by default. **Prerequisite: the Linkerd control plane must
+  # be installed in the cluster** (`linkerd install | kubectl apply -f -`).
+  # The inject annotation is inert if the control plane is absent — pods
+  # start without a sidecar and traffic is unencrypted — so a cluster
+  # without Linkerd should either install it or set this to false
+  # knowingly and secure the hops another way (e.g. a different mesh, or
+  # app-level TLS terminated at the ingress).
   linkerd:
-    enabled: false
+    enabled: true
 
 # ---------------------------------------------------------------------------
 # siphon-api — REST scanner + k8s discovery endpoints

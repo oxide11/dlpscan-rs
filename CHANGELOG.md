@@ -14,6 +14,24 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — pod-to-pod mTLS on by default
+
+### Helm chart 2.3.0
+
+- **feat(chart): default `global.linkerd.enabled=true`.** Pod-to-pod traffic —
+  including siphon-fs file uploads, which carry the sensitive data the scanner
+  detects and cross the pod network with no service-level TLS — is now
+  mTLS-encrypted and mutually authenticated by default via Linkerd sidecar
+  injection. **Requires the Linkerd control plane installed in the cluster**
+  (`linkerd install`); the inject annotation is inert without it, so a cluster
+  with no Linkerd must install it or knowingly set the flag back to false and
+  secure the hops another way. The default-deny NetworkPolicy (already on)
+  complements this. NOTES.txt now confirms mTLS when on and warns when off;
+  README documents the prerequisite and verification (`linkerd viz stat`).
+  Chart `version` 2.2.0 → 2.3.0; `appVersion` stays 2.2.4 (no crate moved).
+
+---
+
 ## 2026-09-03 — pentest wave PT-1..PT-6 + service hardening
 
 A parallel adversarial pentest (separate session). Merged alongside the CORS /
