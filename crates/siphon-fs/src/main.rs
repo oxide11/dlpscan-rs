@@ -788,12 +788,8 @@ async fn security_headers(_request: Request<Body>, next: Next) -> Response {
         "content-security-policy",
         HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
     );
-    if headers.get("strict-transport-security").is_none() {
-        headers.insert(
-            "strict-transport-security",
-            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
-        );
-    }
+    // siphon-fs does not support TLS — never emit HSTS over plaintext
+    // (RFC 6797 §7.2: browsers ignore HSTS received over HTTP).
     headers.insert(
         "referrer-policy",
         HeaderValue::from_static("strict-origin-when-cross-origin"),
@@ -822,10 +818,13 @@ fn cors_layer() -> CorsLayer {
                 base.allow_origin(AllowOrigin::list(allowed))
             }
         }
-        // No SIPHON_FS_CORS_ORIGINS set → local-dev default. Production
-        // deployments should set SIPHON_FS_CORS_ORIGINS to a specific
-        // origin list — the explicit branch above takes precedence.
-        _ => CorsLayer::permissive(),
+        // No SIPHON_FS_CORS_ORIGINS set → deny all cross-origin requests.
+        // Set SIPHON_FS_CORS_ORIGINS to a comma-separated origin list
+        // (or "*" for permissive) to allow browser clients.
+        _ => {
+            warn!("SIPHON_FS_CORS_ORIGINS not set — cross-origin requests blocked by default");
+            CorsLayer::new()
+        }
     }
 }
 
