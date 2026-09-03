@@ -14,6 +14,39 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — pen-test follow-ups
+
+Found while pen-testing the merged hardening wave. The first is a silent DLP
+bypass — the scanner's core job failing quietly — which is the most serious
+class of defect for this product.
+
+### siphon 2.2.2
+
+- **fix(cli): scan text files inside plain ZIP archives.** The generic-ZIP
+  extractor only ever collected Office XML entries (`word/`, `xl/`, `ppt/`),
+  so a plain `.zip` containing a `.txt`, `.csv`, `.eml` etc. extracted to
+  nothing and was never scanned — `zip out.zip secrets.txt` defeated the
+  scanner outright, and the empty extraction surfaced as a confusing 500. The
+  generic path now walks every entry and scans text-like files by content, the
+  same treatment `extract_rar` and `extract_7z` already gave theirs, under the
+  identical per-entry / total-size / compression-ratio guards. Entries are read
+  by name into memory, never written to disk, so this path carries no archive
+  traversal risk. The three archive walkers now share one `ARCHIVE_TEXT_EXTENSIONS`
+  list so they cannot drift. Regression tests in `tests/archive_security_test.rs`.
+
+### siphon-fs 1.1.1
+
+- **fix(fs): return a clean empty result when a file has no extractable text.**
+  A file that parsed cleanly but yielded no text (a binary-only or nested-only
+  archive, an image with no barcode, an empty document) was passed to the core
+  scanner, which rejects empty input, turning "nothing to find" into a 500
+  "scan processing failed". The handler now short-circuits to a 200 with zero
+  findings and a `no extractable text in file` warning, which is the correct
+  answer and denies an attacker a trivial way to force 500s with empty-but-valid
+  uploads.
+
+---
+
 ## 2026-09-03 — security hardening wave
 
 Consolidates the work previously split across PRs #407-#411. Two crates change
