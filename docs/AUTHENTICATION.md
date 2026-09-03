@@ -225,13 +225,15 @@ metadata:
 ```
 
 Any pod scheduled into `siphon-lab` inherits the injection. The
-Helm chart gates the same annotation on a values flag so prod
-clusters opt in explicitly:
+Helm chart gates the same annotation on a values flag, **on by
+default**, so pod-to-pod mTLS is the baseline; a cluster without
+Linkerd must install the control plane (see below) or set the flag
+to `false` knowingly and secure the hops another way:
 
 ```yaml
 # values.yaml
 linkerd:
-  enabled: true
+  enabled: true   # default; the control plane must be installed
 ```
 
 ### Install prerequisite
