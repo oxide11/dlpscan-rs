@@ -14,6 +14,33 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — purple-team remediations (evasion + startup guards)
+
+A parallel purple-team exercise (separate session). Merged after the main wave.
+
+### siphon-core 2.3.2
+
+- **BYPASS-07: expand the leet-speak map.** Added `|`→`l`, `$`→`s`, and `€`
+  (U+20AC)→`e`. The 14-entry map missed these, so payloads like `$0ci@l
+  $ecur1ty` slipped past leet normalization.
+- **BYPASS-12: strip non-empty CSS/HTML comments.** `strip_comments` matched
+  only the empty literal forms `/**/` and `<!---->`; it now scans and strips any
+  `/* ... */` or `<!-- ... -->` regardless of interior content, closing the
+  comment-injection evasion family (e.g. `4111/*junk*/1111...`). Unterminated
+  openers are left as literal text.
+
+### siphon-api 2.5.3
+
+- **GAP-01: refuse `SIPHON_ALLOW_UNAUTHENTICATED` on a non-loopback bind.** If
+  `SIPHON_BIND` is not `127.0.0.1`/`::1`/`localhost`, the service now exits at
+  startup rather than serving an open API on a network interface. The flag stays
+  valid for loopback local dev.
+- **GAP-07: require `SIPHON_AUDIT_LOG_PATH` in production.** An in-memory ring is
+  not durable enough for a PCI-DSS audit trail; the service exits if the path is
+  unset and `SIPHON_DEV_MODE` is not `true`.
+
+---
+
 ## 2026-09-03 — pod-to-pod mTLS on by default
 
 ### Helm chart 2.3.0
