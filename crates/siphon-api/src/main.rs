@@ -1044,9 +1044,14 @@ async fn health_detailed(State(state): State<Arc<AppState>>) -> Json<DetailedHea
 async fn scan(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<ScanRequest>,
 ) -> Result<Json<ScanResponse>, (StatusCode, Json<ErrorResponse>)> {
     let source_ip = addr.ip().to_string();
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned());
 
     if req.text.is_empty() {
         return Err((
@@ -1219,6 +1224,7 @@ async fn scan(
         let api_key_hash_bytes_for_edm = api_key_hash_bytes.clone();
         let api_key_hash_bytes_for_lsh = api_key_hash_bytes.clone();
         let input_hash_bytes_for_lsh = input_hash_bytes.clone();
+        let tenant_id_clone = tenant_id.clone();
         tokio::spawn(async move {
             if let Err(e) = db::persist_scan(
                 &pool_clone,
@@ -1234,6 +1240,7 @@ async fn scan(
                 None,
                 None,
                 None,
+                tenant_id_clone.as_deref(),
             )
             .await
             {
@@ -1428,8 +1435,13 @@ struct BatchScanResponse {
 async fn scan_batch(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(items): Json<Vec<BatchItem>>,
 ) -> Result<Json<BatchScanResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned());
     const MAX_BATCH: usize = 500;
     if items.is_empty() {
         return Err((
@@ -1593,6 +1605,7 @@ async fn scan_batch(
                 .collect();
             let pool_clone = state.db_pool.clone();
             let api_key_hash_clone = api_key_hash_bytes.clone();
+            let tenant_id_clone = tenant_id.clone();
             tokio::spawn(async move {
                 if let Err(e) = db::persist_scan(
                     &pool_clone,
@@ -1608,6 +1621,7 @@ async fn scan_batch(
                     None,
                     None,
                     None,
+                    tenant_id_clone.as_deref(),
                 )
                 .await
                 {

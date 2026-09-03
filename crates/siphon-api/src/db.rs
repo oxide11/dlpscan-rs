@@ -66,6 +66,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "0007_evadex",
         include_str!("../migrations/0007_evadex.sql"),
     ),
+    (
+        8,
+        "0008_tenant_id",
+        include_str!("../migrations/0008_tenant_id.sql"),
+    ),
 ];
 
 /// Initialise an optional database pool from the environment.
@@ -275,6 +280,7 @@ pub async fn persist_scan(
     file_name: Option<&str>,
     file_hash: Option<&[u8]>,
     mime_type: Option<&str>,
+    tenant_id: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let Some(pool) = pool else {
         return Ok(());
@@ -319,8 +325,8 @@ pub async fn persist_scan(
             "INSERT INTO scans \
              (id, source_pod, scanner_version, api_key_hash, input_hash, \
               input_length, finding_count, duration_ms, action, \
-              file_name, file_hash, mime_type) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+              file_name, file_hash, mime_type, tenant_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
             &[
                 &scan_id,
                 &source_pod,
@@ -334,6 +340,7 @@ pub async fn persist_scan(
                 &file_name,
                 &file_hash,
                 &mime_type,
+                &tenant_id,
             ],
         )
         .await?;
@@ -364,8 +371,9 @@ pub async fn persist_scan(
                 "INSERT INTO findings \
                  (scan_id, source_pod, scanner_version, api_key_hash, input_hash, \
                   input_length, category, sub_category, confidence, \
-                  span_start, span_end, matched_text, has_context, context_required, metadata) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+                  span_start, span_end, matched_text, has_context, context_required, \
+                  metadata, tenant_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
                 &[
                     &scan_id,
                     &source_pod,
@@ -382,6 +390,7 @@ pub async fn persist_scan(
                     &has_context,
                     &context_required,
                     &metadata,
+                    &tenant_id,
                 ],
             )
             .await?;

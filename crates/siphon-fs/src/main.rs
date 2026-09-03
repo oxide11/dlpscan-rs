@@ -330,7 +330,15 @@ fn err(code: StatusCode, msg: impl Into<String>) -> Response {
 }
 
 // ─── /scan handler ───────────────────────────────────────────────
-async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Response {
+async fn scan(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    mut multipart: Multipart,
+) -> Response {
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned());
     let request_id = uuid::Uuid::new_v4().to_string();
     let start = Instant::now();
 
@@ -631,6 +639,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
             })
             .collect();
         let pool_clone = state.db_pool.clone();
+        let tenant_id_clone = tenant_id.clone();
         tokio::spawn(async move {
             if let Err(e) = db::persist_scan(
                 &pool_clone,
@@ -644,6 +653,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
                 file_name_clone.as_deref(),
                 Some(&file_hash),
                 mime_type_clone.as_deref(),
+                tenant_id_clone.as_deref(),
             )
             .await
             {

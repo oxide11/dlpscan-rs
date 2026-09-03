@@ -6730,7 +6730,10 @@ function DashV4_Canvas() {
         </div>
 
         <div className="box">
-          <div className="box-title"><span className="t">Recent scans</span><span className="k">from /v1/findings</span></div>
+          <div className="box-title"><span className="t">Recent scans</span><span className="k">in-memory ring · /v1/findings · <span style={{color:'var(--amber)'}}>not durable — pod death clears</span></span></div>
+          <div className="margin-note" style={{marginBottom:6, fontSize:11}}>
+            For durable history across pods, see the <strong>Findings History</strong> tab (Postgres · /v1/findings/pg).
+          </div>
           {recentFindings.length === 0
             ? <div className="muted" style={{padding:'10px 0', fontFamily:"'JetBrains Mono', monospace", fontSize:11, textAlign:'center'}}>— ring empty —</div>
             : recentFindings.slice(0, 5).map((f, i) => (
