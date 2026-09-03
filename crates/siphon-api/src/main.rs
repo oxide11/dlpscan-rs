@@ -5554,6 +5554,27 @@ async fn main() {
             std::process::exit(1);
         }
 
+        // GAP-01: Refuse to serve unauthenticated on a non-loopback interface.
+        // SIPHON_ALLOW_UNAUTHENTICATED is intended only for local dev; allowing
+        // it on a network-facing bind address silently exposes sensitive scan
+        // results to any host that can reach the pod/VM.
+        let is_loopback = matches!(bind.trim(), "127.0.0.1" | "::1" | "localhost");
+        if !is_loopback {
+            eprintln!(
+                "FATAL: SIPHON_ALLOW_UNAUTHENTICATED cannot be used with a non-loopback \
+                 bind address ({bind}).\n\
+                 \n\
+                 Set an API key instead:\n\
+                 \n\
+                     export SIPHON_API_KEY=\"$(openssl rand -hex 32)\"\n\
+                 \n\
+                 Or restrict the bind address to loopback for local development:\n\
+                 \n\
+                     export SIPHON_BIND=127.0.0.1\n"
+            );
+            std::process::exit(1);
+        }
+
         tracing::warn!(
             "SIPHON_ALLOW_UNAUTHENTICATED is set — every endpoint is served WITHOUT \
              authentication. Never use this outside local development."
@@ -5581,6 +5602,34 @@ async fn main() {
         .unwrap_or(500);
     let audit_ring: Arc<Mutex<VecDeque<AuditEvent>>> =
         Arc::new(Mutex::new(VecDeque::with_capacity(audit_ring_cap)));
+
+    // GAP-07: Require a durable audit log path in production.
+    // An in-memory ring alone is not PCI-DSS compliant — events are lost on
+    // restart. SIPHON_DEV_MODE=true bypasses this check for local development.
+    let dev_mode = std::env::var("SIPHON_DEV_MODE")
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            v == "true" || v == "1"
+        })
+        .unwrap_or(false);
+    if !dev_mode
+        && std::env::var("SIPHON_AUDIT_LOG_PATH")
+            .ok()
+            .map_or(true, |v| v.trim().is_empty())
+    {
+        eprintln!(
+            "FATAL: SIPHON_AUDIT_LOG_PATH is not set.\n\
+             \n\
+             A durable audit log is required for PCI-DSS compliance. Set the path:\n\
+             \n\
+                 export SIPHON_AUDIT_LOG_PATH=/var/log/siphon/audit.log\n\
+             \n\
+             For local development only, opt out of this check:\n\
+             \n\
+                 export SIPHON_DEV_MODE=true\n"
+        );
+        std::process::exit(1);
+    }
 
     // Install the global audit logger with the ring handler always, and
     // the rotating-file handler if SIPHON_AUDIT_LOG_PATH is set.
