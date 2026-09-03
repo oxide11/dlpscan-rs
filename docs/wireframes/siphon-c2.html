@@ -2325,7 +2325,11 @@ if (_RO) {
   };
 
   // Fan-out across every enabled pod in the registry → union findings.
-  // Same shape both consoles consume.
+  // Routing: tries /v1/findings/pg (postgres, durable) on the primary
+  // API pod first. Falls back to per-pod in-memory ring /v1/findings
+  // only when the postgres endpoint is unavailable (DB not configured,
+  // connection failure, or HTTP error). The returned shape is the same
+  // in both paths: { findings, total, returned, capacity }.
   window.useFindingsUnion = function (qs, deps) {
     const [tick, setTick] = React.useState(0);
     const [state, setState] = React.useState({
@@ -2345,51 +2349,73 @@ if (_RO) {
       let cancelled = false;
       setState(s => ({ ...s, loading: true, error: null }));
 
-      const fetchFrom = (pod) => {
-        const url = pod.url.replace(/\/$/, '') + '/v1/findings' + (qs || '');
-        return window.siphonFetch(url, { method: 'GET' })
-          .then(async r => {
-            if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
-            return r.json();
-          })
-          .then(data => ({ pod, ok: true, data, error: null }))
-          .catch(e => ({ pod, ok: false, data: null, error: String(e.message || e) }));
-      };
+      // ── Primary path: postgres-backed, cross-pod authoritative view ──
+      const pgUrl = window.SIPHON_API_URL().replace(/\/$/, '') + '/v1/findings/pg' + (qs || '');
+      window.siphonFetch(pgUrl, { method: 'GET' })
+        .then(async r => {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(data => {
+          if (cancelled) return;
+          const findings = data.findings || [];
+          setState({
+            loading: false,
+            data: { total: data.total || findings.length, returned: findings.length, capacity: null, findings, backend: 'pg' },
+            error: null,
+            perPod: [{ url: window.SIPHON_API_URL(), label: 'api', role: 'api', ok: true, error: null, data }],
+            source: 'live',
+          });
+        })
+        .catch(() => {
+          if (cancelled) return;
+          // ── Fallback path: per-pod in-memory ring (not durable) ──────
+          const fetchFrom = (pod) => {
+            const url = pod.url.replace(/\/$/, '') + '/v1/findings' + (qs || '');
+            return window.siphonFetch(url, { method: 'GET' })
+              .then(async r => {
+                if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+                return r.json();
+              })
+              .then(data => ({ pod, ok: true, data, error: null }))
+              .catch(e => ({ pod, ok: false, data: null, error: String(e.message || e) }));
+          };
 
-      Promise.all(effectivePods.map(fetchFrom)).then((results) => {
-        if (cancelled) return;
+          Promise.all(effectivePods.map(fetchFrom)).then((results) => {
+            if (cancelled) return;
 
-        const findings = results
-          .flatMap(r => (r.data && r.data.findings) || [])
-          .sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+            const findings = results
+              .flatMap(r => (r.data && r.data.findings) || [])
+              .sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
 
-        const m = (qs || '').match(/[?&]limit=(\d+)/);
-        const limit = m ? parseInt(m[1], 10) : findings.length;
-        const trimmed = findings.slice(0, limit);
+            const m = (qs || '').match(/[?&]limit=(\d+)/);
+            const limit = m ? parseInt(m[1], 10) : findings.length;
+            const trimmed = findings.slice(0, limit);
 
-        const total    = results.reduce((a, r) => a + ((r.data && r.data.total)    || 0), 0);
-        const capacity = results.reduce((a, r) => a + ((r.data && r.data.capacity) || 0), 0);
+            const total    = results.reduce((a, r) => a + ((r.data && r.data.total)    || 0), 0);
+            const capacity = results.reduce((a, r) => a + ((r.data && r.data.capacity) || 0), 0);
 
-        const perPod = results.map(r => ({
-          url: r.pod.url, label: r.pod.label || '', role: r.pod.role || 'auto',
-          ok: r.ok, error: r.error, data: r.data,
-        }));
-        let source;
-        if (perPod.length === 0) source = 'offline';
-        else if (perPod.every(p => p.ok)) source = 'live';
-        else if (perPod.some(p => p.ok)) source = 'partial';
-        else source = 'offline';
+            const perPod = results.map(r => ({
+              url: r.pod.url, label: r.pod.label || '', role: r.pod.role || 'auto',
+              ok: r.ok, error: r.error, data: r.data,
+            }));
+            let source;
+            if (perPod.length === 0) source = 'offline';
+            else if (perPod.every(p => p.ok)) source = 'live';
+            else if (perPod.some(p => p.ok)) source = 'partial';
+            else source = 'offline';
 
-        setState({
-          loading: false,
-          data: { total, returned: trimmed.length, capacity, findings: trimmed },
-          error: source === 'offline'
-            ? (perPod.length === 0 ? 'no pods in registry' : (perPod[0] && perPod[0].error) || 'no pods reachable')
-            : null,
-          perPod,
-          source,
+            setState({
+              loading: false,
+              data: { total, returned: trimmed.length, capacity, findings: trimmed, backend: 'ring' },
+              error: source === 'offline'
+                ? (perPod.length === 0 ? 'no pods in registry' : (perPod[0] && perPod[0].error) || 'no pods reachable')
+                : null,
+              perPod,
+              source,
+            });
+          });
         });
-      });
 
       return () => { cancelled = true; };
     }, [...(deps || []), qs, tick, podsKey]);
@@ -6730,9 +6756,9 @@ function DashV4_Canvas() {
         </div>
 
         <div className="box">
-          <div className="box-title"><span className="t">Recent scans</span><span className="k">in-memory ring · /v1/findings · <span style={{color:'var(--amber)'}}>not durable — pod death clears</span></span></div>
+          <div className="box-title"><span className="t">Recent scans</span><span className="k">postgres → ring fallback · /v1/findings/pg · /v1/findings</span></div>
           <div className="margin-note" style={{marginBottom:6, fontSize:11}}>
-            For durable history across pods, see the <strong>Findings History</strong> tab (Postgres · /v1/findings/pg).
+            Live data: postgres-backed when DB is available; falls back to in-memory ring (not durable) when DB is offline. For full history and filters, see the <strong>Findings History</strong> tab.
           </div>
           {recentFindings.length === 0
             ? <div className="muted" style={{padding:'10px 0', fontFamily:"'JetBrains Mono', monospace", fontSize:11, textAlign:'center'}}>— ring empty —</div>

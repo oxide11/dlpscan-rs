@@ -83,6 +83,32 @@ are responsible for:
 
 ---
 
+## API key rotation
+
+Siphon supports zero-downtime API key rotation via a secondary key accepted in
+parallel with the primary.
+
+### Procedure
+
+1. Generate a new key: `openssl rand -hex 32`
+2. Set `SIPHON_API_KEY_SECONDARY=<new key>` on every pod. Both the old and new
+   keys are now accepted simultaneously.
+3. Update all clients to present the new key.
+4. Once all clients are migrated, promote the new key:
+   `SIPHON_API_KEY=<new key>` — and remove `SIPHON_API_KEY_SECONDARY`.
+5. Restart pods to complete the rotation.
+
+### Security properties
+
+- Both keys are SHA-256 hashed at rest. Neither plaintext key is stored in
+  process memory after startup.
+- Both keys are checked with the same constant-time XOR-fold. There is no
+  timing oracle that distinguishes the primary from the secondary key.
+- The secondary key accepts all the same permissions as the primary. It is a
+  temporary escape valve for rotation — not a separate role.
+
+---
+
 ## Per-pod findings ring
 
 Each `siphon-api` and `siphon-fs` replica maintains an in-memory ring buffer

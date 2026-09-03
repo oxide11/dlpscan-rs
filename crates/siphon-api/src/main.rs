@@ -8,6 +8,7 @@
 //!   SIPHON_PORT                      Listen port (default: 8080)
 //!   SIPHON_BIND                      Bind address (default: 127.0.0.1)
 //!   SIPHON_API_KEY                   Required API key (SHA-256 hashed at rest).
+//!   SIPHON_API_KEY_SECONDARY         Optional second key accepted during rotation.
 //!                                    Empty counts as unset. Absent means the
 //!                                    service refuses to start unless
 //!                                    SIPHON_ALLOW_UNAUTHENTICATED is set.
@@ -120,6 +121,10 @@ impl LiveOverrides {
 
 struct AppState {
     api_key_hash: Option<[u8; 32]>,
+    /// Secondary key accepted simultaneously with the primary during key rotation.
+    /// Set SIPHON_API_KEY_SECONDARY while clients migrate to a new key; once all
+    /// clients are updated, promote the new key to SIPHON_API_KEY and clear this.
+    api_key_hash_secondary: Option<[u8; 32]>,
     /// Networks whose `X-Forwarded-For` is believed. Empty means the TCP peer
     /// is used directly — correct for a direct deployment, and the safe
     /// default because an unconfigured proxy must never grant header trust.
@@ -494,11 +499,22 @@ async fn auth_middleware(
             hasher.update(key.as_bytes());
             let provided_hash: [u8; 32] = hasher.finalize().into();
 
-            let mut diff = 0u8;
-            for (a, b) in expected_hash.iter().zip(provided_hash.iter()) {
-                diff |= a ^ b;
-            }
-            if diff != 0 {
+            let matches_primary = {
+                let mut diff = 0u8;
+                for (a, b) in expected_hash.iter().zip(provided_hash.iter()) {
+                    diff |= a ^ b;
+                }
+                diff == 0
+            };
+            let matches_secondary = state.api_key_hash_secondary.as_ref().map_or(false, |sec| {
+                let mut diff = 0u8;
+                for (a, b) in sec.iter().zip(provided_hash.iter()) {
+                    diff |= a ^ b;
+                }
+                diff == 0
+            });
+
+            if !matches_primary && !matches_secondary {
                 tracing::warn!("auth_failed: invalid API key");
                 if let Ok(event) = AuditEvent::new("REJECT") {
                     emit_audit(
@@ -1099,13 +1115,32 @@ async fn scan(
         g.clone()
     };
 
+    // Tenant policy baseline: when X-Siphon-Tenant is present, find the
+    // matching policy by name and use its scan config as the floor.
+    // Per-request options (min_confidence, categories, require_context)
+    // override the policy baseline when explicitly set by the caller.
+    let tenant_policy = tenant_id.as_deref().and_then(|tid| {
+        state.policies.iter().find(|p| p.name == tid)
+    });
+    let policy_min_confidence = tenant_policy.map(|p| p.scan.min_confidence).unwrap_or(0.0);
+    let policy_require_context = tenant_policy.map(|p| p.scan.require_context).unwrap_or(false);
+    let policy_categories: Option<HashSet<String>> = tenant_policy.and_then(|p| {
+        if p.scan.categories.is_empty() {
+            None
+        } else {
+            Some(p.scan.categories.iter().cloned().collect())
+        }
+    });
+
     let mut config = ScanConfig {
-        min_confidence: req.options.min_confidence.unwrap_or(0.0),
+        // Caller values win; policy baseline fills the gap.
+        min_confidence: req.options.min_confidence.unwrap_or(policy_min_confidence),
         categories: req
             .options
             .categories
-            .map(|c| c.into_iter().collect::<HashSet<_>>()),
-        require_context: req.options.require_context.unwrap_or(false),
+            .map(|c| c.into_iter().collect::<HashSet<_>>())
+            .or(policy_categories),
+        require_context: req.options.require_context.unwrap_or(policy_require_context),
         baseline_only: req.options.baseline_only.unwrap_or(false),
         deduplicate: req.options.deduplicate.unwrap_or(true),
         trace: trace_sink.clone(),
@@ -1486,6 +1521,20 @@ async fn scan_batch(
         h.finalize().to_vec()
     };
 
+    // Tenant policy baseline (shared across all items in the batch).
+    let tenant_policy = tenant_id.as_deref().and_then(|tid| {
+        state.policies.iter().find(|p| p.name == tid)
+    });
+    let policy_min_confidence = tenant_policy.map(|p| p.scan.min_confidence).unwrap_or(0.0);
+    let policy_require_context = tenant_policy.map(|p| p.scan.require_context).unwrap_or(false);
+    let policy_categories: Option<HashSet<String>> = tenant_policy.and_then(|p| {
+        if p.scan.categories.is_empty() {
+            None
+        } else {
+            Some(p.scan.categories.iter().cloned().collect())
+        }
+    });
+
     let mut results: Vec<BatchItemResult> = Vec::with_capacity(items.len());
     let mut total_findings: usize = 0;
 
@@ -1500,13 +1549,14 @@ async fn scan_batch(
         }
 
         let mut config = ScanConfig {
-            min_confidence: item.options.min_confidence.unwrap_or(0.0),
+            min_confidence: item.options.min_confidence.unwrap_or(policy_min_confidence),
             categories: item
                 .options
                 .categories
                 .clone()
-                .map(|c| c.into_iter().collect::<HashSet<_>>()),
-            require_context: item.options.require_context.unwrap_or(false),
+                .map(|c| c.into_iter().collect::<HashSet<_>>())
+                .or_else(|| policy_categories.clone()),
+            require_context: item.options.require_context.unwrap_or(policy_require_context),
             baseline_only: item.options.baseline_only.unwrap_or(false),
             deduplicate: item.options.deduplicate.unwrap_or(true),
             disabled_patterns: Some(ov.disabled_patterns.clone()),
@@ -5524,6 +5574,29 @@ async fn main() {
             hash
         });
 
+    // Secondary key: accepted concurrently with the primary during key rotation.
+    // Set SIPHON_API_KEY_SECONDARY on every pod while clients migrate, then
+    // promote it to SIPHON_API_KEY (and clear the secondary) once all clients
+    // are updated. Both keys are checked with the same constant-time XOR-fold
+    // so there is no timing oracle distinguishing primary from secondary.
+    let api_key_hash_secondary = std::env::var("SIPHON_API_KEY_SECONDARY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+        .map(|key| {
+            if key.len() < MIN_API_KEY_LEN {
+                tracing::warn!(
+                    len = key.len(),
+                    minimum = MIN_API_KEY_LEN,
+                    "SIPHON_API_KEY_SECONDARY is shorter than the recommended minimum"
+                );
+            }
+            let mut hasher = Sha256::new();
+            hasher.update(key.as_bytes());
+            let hash: [u8; 32] = hasher.finalize().into();
+            tracing::info!("Secondary API key loaded — key rotation mode active");
+            hash
+        });
+
     if api_key_hash.is_none() {
         // Fail closed. Previously an absent key meant the service came up
         // serving an unauthenticated API, which is the wrong failure mode for
@@ -5852,6 +5925,7 @@ async fn main() {
 
     let state = Arc::new(AppState {
         api_key_hash,
+        api_key_hash_secondary,
         trusted_proxies,
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
         rate_limit,
