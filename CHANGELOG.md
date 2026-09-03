@@ -14,6 +14,29 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — space-separated SSN evasion
+
+Found while pen-testing the detection engine.
+
+### siphon-core 2.3.1
+
+- **fix(core): stop the hex-spaced normalizer from swallowing space-separated
+  numeric PII.** A space-separated SSN like `457 55 5462` evaded detection
+  entirely: the `decode_hex_spaced` stage began a run mid-token (at offset 1)
+  and read `57 55 54` as three hex bytes, rewriting the digits to `WUT` before
+  any pattern ran. The regex, validator and context gate were all fine — the
+  data was destroyed in normalization. The decoder now requires a run to begin
+  at a token boundary and each pair to be a complete two-hex-digit token, which
+  is what a genuine hex dump (`34 35 33 32`) looks like and what formatted
+  decimal data (3/2/4 groups) is not. Real hex-spaced evasion still decodes;
+  space/dot-grouped SSNs now survive and are detected. Regression tests added in
+  `normalize` (unit) and `evasion_test` (end-to-end); detection_quality and
+  fp_probe corpora unchanged and green.
+
+  This is a library fix; it reaches the CLI and services on their next release.
+
+---
+
 ## 2026-09-03 — CSV formula injection
 
 Found while pen-testing the findings-export path. CWE-1236.
