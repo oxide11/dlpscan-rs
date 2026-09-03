@@ -128,4 +128,42 @@ mod archives {
             out.text
         );
     }
+
+    /// A nested archive (`.zip` inside a `.zip`) is not recursed, but it must
+    /// not vanish silently — the extractor surfaces a warning so an analyst
+    /// knows unscanned content is present. Otherwise a sensitive file one layer
+    /// deep scans to zero findings with no signal at all.
+    #[test]
+    fn nested_zip_surfaces_a_warning() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+
+        // inner.zip holds the sensitive file
+        let mut inner = Vec::new();
+        {
+            let mut z = zip::ZipWriter::new(std::io::Cursor::new(&mut inner));
+            z.start_file::<_, ()>("secret.txt", zip::write::FileOptions::default())
+                .unwrap();
+            z.write_all(b"card 4532015112830366").unwrap();
+            z.finish().unwrap();
+        }
+
+        // outer.zip wraps inner.zip
+        let outer_path = tmp.path().join("outer.zip");
+        {
+            let f = std::fs::File::create(&outer_path).unwrap();
+            let mut z = zip::ZipWriter::new(f);
+            z.start_file::<_, ()>("inner.zip", zip::write::FileOptions::default())
+                .unwrap();
+            z.write_all(&inner).unwrap();
+            z.finish().unwrap();
+        }
+
+        let out = siphon::extract_text(outer_path.to_str().unwrap()).expect("outer zip extracts");
+        assert!(
+            out.warnings.iter().any(|w| w.contains("nested archive")),
+            "nested archive should produce a warning, got: {:?}",
+            out.warnings
+        );
+    }
 }

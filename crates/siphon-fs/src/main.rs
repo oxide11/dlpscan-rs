@@ -492,6 +492,13 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
     // denies an attacker a trivial way to make the endpoint 500 by uploading
     // an empty-but-valid container.
     if extract.text.trim().is_empty() {
+        // Preserve any extraction warnings (e.g. "nested archive not scanned")
+        // — for a container holding only a nested or encrypted archive the text
+        // is empty but that warning is the whole point: it is the only signal
+        // that unscanned sensitive content may be present. Dropping it here
+        // would turn a flagged gap back into a silent one.
+        let mut warnings = extract.warnings.clone();
+        warnings.push("no extractable text in file".to_string());
         return JsonResponse(ScanResponse {
             request_id,
             filename,
@@ -499,7 +506,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
             bytes: file_len,
             duration_ms: start.elapsed().as_secs_f64() * 1000.0,
             parsed_as: extract.format.clone(),
-            warnings: vec!["no extractable text in file".to_string()],
+            warnings,
             findings: vec![],
             trace: None,
             error: None,

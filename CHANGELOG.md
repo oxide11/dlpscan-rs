@@ -14,6 +14,33 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — nested archives no longer a silent gap
+
+Follow-up from the ZIP DLP-bypass work. Sensitive data one archive layer deep
+(a `.zip`/`.7z`/`.rar` inside another archive) was skipped with no signal.
+Rather than recurse — deep recursion is where zip-bomb amplification lives — the
+extractors now flag it so an analyst sees that unscanned content is present.
+
+### siphon 2.2.4
+
+- **fix(cli): surface a warning for nested and encrypted archive entries.** The
+  ZIP, RAR and 7z walkers previously skipped an inner archive (or an encrypted
+  entry) in silence, so a sensitive file inside `outer.zip → inner.zip` scanned
+  to zero findings with no indication anything was missed. They now emit a
+  `nested archive not scanned: <name>` (or `encrypted entry not scanned`)
+  warning via `ExtractionResult::warnings`, capped at 20 per file. No recursion,
+  so no new bomb-amplification surface.
+
+### siphon-fs 1.1.2
+
+- **fix(fs): preserve extraction warnings on the empty-text path.** A container
+  holding only a nested/encrypted archive extracts to empty text; the empty-text
+  short-circuit was replacing the extractor's warnings with a fixed
+  "no extractable text" note, dropping the `nested archive not scanned` signal
+  that is the whole point for that file. The warnings are now merged.
+
+---
+
 ## 2026-09-03 — space-separated SSN evasion
 
 Found while pen-testing the detection engine.

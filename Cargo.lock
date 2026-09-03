@@ -4968,7 +4968,7 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "siphon"
-version = "2.2.3"
+version = "2.2.4"
 dependencies = [
  "aho-corasick",
  "arrow",
@@ -5080,7 +5080,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-fs"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "axum",
  "deadpool-postgres",
