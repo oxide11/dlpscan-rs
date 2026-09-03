@@ -14,43 +14,66 @@ starting from this file.
 
 ---
 
-## 2026-09-02 (wave 2)
+## 2026-09-03 — security hardening wave
 
-### siphon-api 2.4.1
+Consolidates the work previously split across PRs #407-#411. Two crates change
+their **startup contract** and are therefore MINOR, not PATCH: siphon-api and
+siphon-fs now refuse to start without an API key. Read the siphon-fs note
+before upgrading — a deployment that never set `SIPHON_API_KEY` will not boot.
 
-- fix(api): Gate `PATCH /v1/pipeline/stages`, `POST /v1/overrides/revert`,
-  `POST /v1/evadex/runs`, and `GET /v1/findings/export` behind
-  `RequireAdminAction`. Previously any valid API key holder could call these
-  write-level and bulk-export endpoints; they now require `Permission::AdminAction`.
-  Most sensitive: `findings_export` can return up to 100 k rows of matched
-  findings (card numbers, SSNs, etc.) and should never be reachable by a
-  read-only or scanner-role caller.
-- fix(api): Add `Referrer-Policy: strict-origin-when-cross-origin` and
-  `Permissions-Policy: camera=(), microphone=(), geolocation=()` to the
-  `security_headers` middleware. These were already added by the nginx proxy
-  and Cloudflare edge in the stack deployments, but are now set at the service
-  level so every deployment path is covered.
+### siphon-api 2.5.0
 
-### siphon-fs 1.0.1
+- **fix(api)!: fail closed when no API key is configured.** An unset *or empty*
+  `SIPHON_API_KEY` previously started the service with every endpoint open.
+  Empty now counts as unset, and startup aborts unless
+  `SIPHON_ALLOW_UNAUTHENTICATED=true` is set explicitly.
+- **fix(api): require TLS to Postgres.** Findings rows carry the card numbers,
+  national IDs and credentials the scanner exists to detect, and they crossed
+  the wire on `NoTls`. `SIPHON_DATABASE_TLS` now defaults to `require`, with
+  `SIPHON_DATABASE_CA_FILE` for a self-signed server certificate. Supplying a
+  TLS connector is not sufficient on its own: tokio-postgres defaults to
+  `SslMode::Prefer`, which negotiates TLS and then continues in clear text if
+  the server declines, so `ssl_mode` is pinned explicitly. Because rustls
+  verifies the server certificate, this is stronger than libpq's `require`.
+- **fix(api): key rate limits on the real client.** `ConnectInfo` yields the TCP
+  peer, which behind a reverse proxy is the proxy — collapsing every caller into
+  one bucket. `X-Forwarded-For` is now honoured, but only from networks listed
+  in `SIPHON_TRUSTED_PROXIES`, and only its right-most entry (the one the
+  trusted proxy appended). Trusting the header unconditionally would be worse
+  than the collapse: any client could forge a value and evade the limit.
+- **fix(api): gate every policy-mutating endpoint on `AdminAction`.**
+  `POST /v1/overrides/apply`, `/reload` and `/revert`, `PATCH /v1/pipeline/stages`,
+  `POST /v1/evadex/runs`, and `GET /v1/findings/export` were reachable without
+  the permission, while the less destructive `/v1/findings/prune` and
+  `/v1/admin/reload` were gated. Two distinct exposures: in open mode the
+  `Operator` role could rewrite the detection policy outright (disable every
+  pattern, or bind an allow-list that passes the data the scanner exists to
+  catch), and `findings_export` returns up to 100k rows of matched findings to
+  any key holder.
+- fix(api): add `Referrer-Policy` and `Permissions-Policy` to the
+  `security_headers` middleware, so every deployment path is covered rather
+  than only those behind the nginx proxy and Cloudflare edge.
 
-- fix(fs): Replace unconditional `CorsLayer::permissive()` with an
-  env-var-aware `cors_layer()` function that reads `SIPHON_FS_CORS_ORIGINS`
-  (comma-separated allowed origins). Falls back to permissive only when unset,
-  identical behaviour to siphon-api's `SIPHON_CORS_ORIGINS` handling.
-  Previously any page could make cross-origin multipart uploads to siphon-fs
-  and read the scan response, enabling file-content exfiltration from a
-  victim's browser.
-- fix(fs): Add `security_headers` middleware to siphon-fs (mirrors siphon-api).
-  Sets `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
-  `X-XSS-Protection: 0`, `Cache-Control: no-store`, `Content-Security-Policy:
-  default-src 'none'; frame-ancestors 'none'`, `Strict-Transport-Security`,
-  `Referrer-Policy`, and `Permissions-Policy` on every response. Previously
-  these headers were only applied by the nginx proxy; siphon-fs responses
-  were bare when reached directly inside the cluster.
+### siphon-fs 1.1.0
 
----
-
-## 2026-09-02
+- **fix(fs)!: add authentication, which this service never had.** `POST /scan`
+  accepted uploads, `GET /v1/findings` returned previously scanned findings, and
+  `POST /v1/overrides/reload` mutated detection config — all without a
+  credential. `CLAUDE.md` and the nginx config both asserted otherwise, and
+  nginx omits its Authelia gate for `/fs/` on the stated grounds that
+  "siphon-fs validates SIPHON_API_KEY itself", which was never true. Bearer-token
+  auth now matches siphon-api exactly (constant-time compare, empty counts as
+  unset, `/health` and `/ready` stay open for kubelet). **Upgrading requires
+  `SIPHON_API_KEY` to be set, or `SIPHON_ALLOW_UNAUTHENTICATED=true` for local
+  development.** Covered by `crates/siphon-fs/tests/auth_test.rs`.
+- fix(fs): require TLS to Postgres, mirroring siphon-api's implementation and
+  env vars.
+- fix(fs): replace unconditional `CorsLayer::permissive()` with an
+  env-aware `cors_layer()` reading `SIPHON_FS_CORS_ORIGINS`. Previously any page
+  could make cross-origin multipart uploads and read the scan response,
+  enabling file-content exfiltration from a victim's browser.
+- fix(fs): add the `security_headers` middleware (mirrors siphon-api).
+  siphon-fs responses were bare when reached directly inside the cluster.
 
 ### siphon 2.2.1
 
@@ -65,7 +88,7 @@ starting from this file.
   skipped with a `WARN` log line; benign contents continue to scan normally.
   Decompression-bomb enforcement is also moved into the extraction loop so the
   size budget is enforced as bytes are written rather than after the full
-  archive is on disk. Regression tests added in `tests/archive_security_test.rs`.
+  archive is on disk. Regression tests in `tests/archive_security_test.rs`.
 - chore(deps): bump `anyhow` 1.0.102 → 1.0.104 (RUSTSEC-2026-0190,
   memory-corruption in `Error::downcast_mut`).
 - chore(deps): bump `h2` 0.4.15 → 0.4.19 (RUSTSEC-2026-0258, DoS via
@@ -73,6 +96,18 @@ starting from this file.
 - chore(deps): bump `lru` 0.18.0 → 0.18.3 (RUSTSEC-2026-0253, potential
   use-after-free in `LruCache::pop`).
 - chore(deps): bump `chacha20` 0.10.0 → 0.10.2 (yanked version).
+
+### Helm chart 2.2.0
+
+- feat(chart): `postgres.sslMode` (default `disable`) and `postgres.caFile` wire
+  the new TLS controls. The default is `disable` only because the chart's
+  bundled `postgres:17-alpine` serves no certificate — inheriting siphon-api's
+  `require` default would crashloop it. Set `require` when pointing at a managed
+  Postgres.
+- feat(chart): `api.trustedProxies` sets `SIPHON_TRUSTED_PROXIES`. Left empty by
+  default because the pod CIDR is cluster-specific; widening it past the
+  networks your proxy actually occupies lets anything in range forge its own
+  rate-limit bucket.
 
 ---
 

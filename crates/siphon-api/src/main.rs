@@ -3473,7 +3473,6 @@ async fn overrides_revert(
     // by another name.
     _: RequireAdminAction,
     State(state): State<Arc<AppState>>,
-    _: RequireAdminAction,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<RevertRequest>,
 ) -> Result<Json<RevertResponse>, (StatusCode, Json<ErrorResponse>)> {
