@@ -795,12 +795,8 @@ async fn security_headers(_request: Request<Body>, next: Next) -> Response {
         "content-security-policy",
         HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
     );
-    if headers.get("strict-transport-security").is_none() {
-        headers.insert(
-            "strict-transport-security",
-            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
-        );
-    }
+    // siphon-fs does not support TLS — never emit HSTS over plaintext
+    // (RFC 6797 §7.2: browsers ignore HSTS received over HTTP).
     headers.insert(
         "referrer-policy",
         HeaderValue::from_static("strict-origin-when-cross-origin"),

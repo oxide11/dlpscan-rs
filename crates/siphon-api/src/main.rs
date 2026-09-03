@@ -970,6 +970,10 @@ struct DetailedHealthResponse {
     categories_loaded: usize,
     db: DetailedDbHealth,
     scans: DetailedScanStats,
+    /// Total findings ring evictions since pod start. Non-zero values
+    /// indicate the ring was flooded; operators should increase
+    /// SIPHON_FINDINGS_RING_CAP or investigate per-key scan volume.
+    ring_evictions_total: u64,
 }
 
 async fn health_detailed(State(state): State<Arc<AppState>>) -> Json<DetailedHealthResponse> {
@@ -1045,6 +1049,7 @@ async fn health_detailed(State(state): State<Arc<AppState>>) -> Json<DetailedHea
             scan_errors_total: state.metrics.scan_errors_total.load(Ordering::Relaxed),
             scans_per_minute,
         },
+        ring_evictions_total: state.findings.eviction_count(),
     })
 }
 
@@ -4303,6 +4308,7 @@ struct EvadexRunsResponse {
 }
 
 async fn list_evadex_runs(
+    _: RequireAdminAction,
     Query(q): Query<EvadexRunsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<EvadexRunsResponse> {
@@ -4399,7 +4405,10 @@ struct EvadexRunsStats {
     last_run_at: Option<String>,
 }
 
-async fn evadex_runs_stats(State(state): State<Arc<AppState>>) -> Json<EvadexRunsStats> {
+async fn evadex_runs_stats(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<EvadexRunsStats> {
     let empty = || {
         Json(EvadexRunsStats {
             total_runs: 0,
@@ -4655,7 +4664,7 @@ struct FindingsStatsResponse {
     lsh: Option<LshStats>,
 }
 
-async fn findings_stats(State(state): State<Arc<AppState>>) -> Response {
+async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>>) -> Response {
     // Return cached response if fresh enough (avoids repeated DB COUNT scans).
     {
         let cache = state.stats_cache.lock().unwrap_or_else(|e| e.into_inner());
@@ -4891,6 +4900,7 @@ struct PgFindingsResponse {
 }
 
 async fn list_pg_findings(
+    _: RequireAdminAction,
     Query(q): Query<PgFindingsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<PgFindingsResponse> {
@@ -5214,6 +5224,7 @@ struct FindingsResponse {
 }
 
 async fn list_findings(
+    _: RequireAdminAction,
     Query(q): Query<FindingsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<FindingsResponse> {

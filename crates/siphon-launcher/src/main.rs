@@ -329,6 +329,36 @@ async fn start_process(State(state): State<AppState>, Json(req): Json<StartReque
     }
 
     if let Some(extra) = req.env {
+        // Allowlist env key prefixes to prevent injection of security-
+        // critical variables (SIPHON_API_KEY, SIPHON_AUDIT_LOG_PATH,
+        // SIPHON_BIND, LD_PRELOAD, etc.) via the launcher's start API.
+        const ALLOWED_PREFIXES: &[&str] = &["SIPHON_", "RUST_LOG", "RUST_BACKTRACE"];
+        // Explicitly block keys that could downgrade security posture
+        // even within the SIPHON_ prefix.
+        const BLOCKED_KEYS: &[&str] = &[
+            "SIPHON_API_KEY",
+            "SIPHON_AUDIT_LOG_PATH",
+            "SIPHON_BIND",
+            "SIPHON_FS_BIND",
+            // Disabling SSRF defences globally via an env injection must
+            // not be possible through the launcher start API.
+            "SIPHON_ALLOW_PRIVATE_DESTINATIONS",
+        ];
+        for key in extra.keys() {
+            let allowed = ALLOWED_PREFIXES
+                .iter()
+                .any(|prefix| key.starts_with(prefix));
+            let blocked = BLOCKED_KEYS.iter().any(|blocked| key == blocked);
+            if !allowed || blocked {
+                return err(
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "env key {:?} is not permitted; allowed prefixes: {:?}",
+                        key, ALLOWED_PREFIXES
+                    ),
+                );
+            }
+        }
         for (k, v) in extra {
             cmd.env(k, v);
         }
