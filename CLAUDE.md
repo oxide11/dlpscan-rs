@@ -114,6 +114,14 @@ Auth: every request requires `Authorization: Bearer <key>` header (SHA-256 hashe
 at rest from `SIPHON_API_KEY` env var; stateless per-request check). `/health`
 and `/ready` are unauthenticated (kubelet probes).
 
+Endpoints marked **(admin)** additionally require the `AdminAction` RBAC
+permission (`RequireAdminAction` extractor). Under the single-key model every
+authenticated caller resolves to `Admin`, so this only bites in open mode
+(`SIPHON_ALLOW_UNAUTHENTICATED`, where callers are `Operator`) or once multi-key
+role mapping ships. The gated set covers every policy-mutating route **and** the
+raw finding/evadex read endpoints — those return unredacted matched values, so
+they are admin-only, not merely authenticated.
+
 ```
 GET  /health                    pod identity + liveness
 GET  /ready                     readiness probe
@@ -125,20 +133,20 @@ GET  /v1/categories             detection categories with pattern_count + sub_ca
 GET  /v1/policies               loaded *.yaml rulesets (read-only)
 GET  /v1/allowlist              current allowlist
 GET  /v1/audit                  recent events from audit ring buffer
-GET  /v1/findings               recent findings from this pod's FindingsRing (in-memory)
-GET  /v1/findings/pg            Postgres-backed paginated findings (?category=&limit=&offset=)
-GET  /v1/findings/stats         category breakdown + daily counts (cached 60s) + LSH section
-GET  /v1/findings/export        bulk CSV/JSON export (?format=csv|json&category=&from=&to=&limit=, max 100k rows; 5/min rate limit)
+GET  /v1/findings               recent findings from this pod's FindingsRing (in-memory) (admin)
+GET  /v1/findings/pg            Postgres-backed paginated findings (?category=&limit=&offset=) (admin)
+GET  /v1/findings/stats         category breakdown + daily counts (cached 60s) + LSH section (admin)
+GET  /v1/findings/export        bulk CSV/JSON export (?format=csv|json&category=&from=&to=&limit=, max 100k rows; 5/min rate limit) (admin)
 POST /v1/findings/prune         manual retention trigger — admin only
-POST /v1/overrides/apply        hot-reload PatternOverrides (no restart)
+POST /v1/overrides/apply        hot-reload PatternOverrides (no restart) (admin)
 GET  /v1/overrides/current      current PatternOverrides snapshot
 GET  /v1/metrics                scans_total, findings_total, scan_errors_total
 GET  /v1/db/health              Postgres pool state
 GET  /v1/lsh/history            paginated LSH query history from Postgres (?limit=&offset=&matched_only=)
-POST /v1/evadex/runs            ingest completed evadex scan from bridge (idempotent on run_id)
-GET  /v1/evadex/runs            paginated evadex run history (?limit=&offset=, max 500)
-GET  /v1/evadex/runs/stats      aggregated detection rate + top-10 bypassed techniques
-POST /v1/overrides/roll         annotate k8s Deployment for auto-rollout (feature: k8s-roll)
+POST /v1/evadex/runs            ingest completed evadex scan from bridge (idempotent on run_id) (admin)
+GET  /v1/evadex/runs            paginated evadex run history (?limit=&offset=, max 500) (admin)
+GET  /v1/evadex/runs/stats      aggregated detection rate + top-10 bypassed techniques (admin)
+POST /v1/overrides/roll         annotate k8s Deployment for auto-rollout (feature: k8s-roll) (admin)
 ```
 
 Key env vars for siphon-api:
@@ -148,14 +156,15 @@ Key env vars for siphon-api:
 | `SIPHON_PORT` | 8080 | |
 | `SIPHON_BIND` | 127.0.0.1 | |
 | `SIPHON_API_KEY` | — | **required**; empty counts as unset. Without it the service refuses to start |
-| `SIPHON_ALLOW_UNAUTHENTICATED` | false | opt in to running with no auth — local dev only |
+| `SIPHON_ALLOW_UNAUTHENTICATED` | false | opt in to running with no auth — local dev only. **Refused on a non-loopback `SIPHON_BIND`**: the service exits at startup rather than serve an open API on a network interface |
+| `SIPHON_DEV_MODE` | false | marks a local-dev run; currently relaxes the production startup guard that otherwise requires `SIPHON_AUDIT_LOG_PATH` |
 | `SIPHON_TLS_CERT` / `SIPHON_TLS_KEY` | — | PEM paths |
 | `SIPHON_CORS_ORIGINS` | none | comma-separated allowlist; `*` reflects any origin. Unset = **cross-origin denied** (default-deny) |
 | `SIPHON_ALLOW_PERMISSIVE_CORS` | false | dev-only opt-in to any-origin CORS when `SIPHON_CORS_ORIGINS` is unset (e.g. admin console from `file://`) |
 | `SIPHON_RATE_LIMIT` | 120 | req/min per IP |
 | `SIPHON_TRUSTED_PROXIES` | — | comma-separated IPs/CIDRs whose `X-Forwarded-For` is believed for rate-limit keying. Unset = key on the TCP peer, which behind a proxy puts every client in one bucket. Only the right-most forwarded entry is used |
 | `SIPHON_REQUEST_TIMEOUT_SECS` | 30 | |
-| `SIPHON_AUDIT_LOG_PATH` | — | JSONL audit file |
+| `SIPHON_AUDIT_LOG_PATH` | — | JSONL audit file. **Required to start in production** (an in-memory ring alone is not a durable audit trail); startup is refused if unset unless `SIPHON_DEV_MODE=true` |
 | `SIPHON_AUDIT_SIGNING_KEY_HEX` | — | enables HMAC-SHA256 chain |
 | `SIPHON_AUDIT_TAIL_PATH` | — | chain tail state file |
 | `SIPHON_AUDIT_RING_CAP` | 500 | in-memory event buffer |
@@ -247,7 +256,11 @@ upload here and read the findings back.) File formats supported
 - PDF (`pdf`) — pdf-extract
 - DOCX/XLSX/PPTX/ODS/ODT (`office`) — calamine + quick-xml
 - ZIP/RAR/7Z (`archives`) — 10k file limit, 500 MB total, 100:1 compression
-  ratio bomb detection, path traversal sanitized
+  ratio bomb detection, path traversal sanitized. Text-like entries are scanned
+  by content (a plain `.zip` of a `.txt` is no longer a bypass); a *nested*
+  archive or an encrypted entry is not recursed into but is surfaced as a
+  `nested archive not scanned` / `encrypted entry not scanned` warning rather
+  than skipped silently
 - Parquet/SQLite (`data-formats`) — arrow + rusqlite
 - PNG/JPG/GIF/BMP/TIFF/WebP barcode & QR (`barcode`) — rxing + image
 - Outlook MSG (`msg`) — cfb OLE2
@@ -478,6 +491,18 @@ CI mirrors these in `.github/workflows/ci.yml`.
 - Audit chain uses HMAC-SHA256 when `SIPHON_AUDIT_SIGNING_KEY_HEX` is set.
 - `siphon-launcher` hard-exits if `SIPHON_LAUNCHER_BIND` is set to a
   non-loopback address — it has no authentication and is local-only by design.
+  Its `POST /start` env passthrough is allowlisted: only `SIPHON_*`, `RUST_LOG`
+  and `RUST_BACKTRACE` keys are accepted, and `SIPHON_API_KEY`,
+  `SIPHON_AUDIT_LOG_PATH`, `SIPHON_BIND`, `SIPHON_FS_BIND` and
+  `SIPHON_ALLOW_PRIVATE_DESTINATIONS` are blocked outright, so a spawned pod
+  can't have security-critical env injected through the launcher.
+- Pod-to-pod traffic is mTLS-encrypted by default via Linkerd sidecar injection
+  (`global.linkerd.enabled=true` in the chart) — requires the Linkerd control
+  plane installed; without it pods start unmeshed and unencrypted. The
+  siphon-api→Postgres hop is additionally encrypted at the app level
+  (`SIPHON_DATABASE_TLS=require`). siphon-fs serves no TLS of its own and relies
+  on the mesh; it therefore emits no HSTS header (HSTS over plaintext is ignored
+  per RFC 6797).
 
 ## Where things live
 
