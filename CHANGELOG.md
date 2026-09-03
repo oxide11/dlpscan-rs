@@ -14,6 +14,53 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — pentest wave PT-1..PT-6 + service hardening
+
+A parallel adversarial pentest (separate session). Merged alongside the CORS /
+archive / SSN wave; the shared `siphon-fs` CORS default was reconciled to keep
+the `SIPHON_ALLOW_PERMISSIVE_CORS` dev opt-in, and HSTS-over-HTTP was removed.
+
+### siphon-api 2.5.2 (also carries)
+
+- **PT-1**: gate `GET /v1/findings`, `/v1/findings/pg`, `/v1/findings/stats`,
+  `/v1/evadex/runs`, `/v1/evadex/runs/stats` behind `RequireAdminAction`. These
+  five read handlers had no RBAC check — any valid key could dump the full
+  unredacted finding stream, acute once multi-key role mapping ships.
+- **PT-2**: the `contains` filter now searches category / sub_category only, not
+  raw `matched_text`, closing a boolean-oracle against stored PAN/SSN values.
+- **PT-4** (surfacing): `ring_evictions_total` exposed in `/v1/health/detailed`.
+- **PT-5**: `variant_value` redacted (first-4 + `****`) before INSERT into
+  `evadex_findings`, removing plaintext PAN/SSN from the Postgres test table.
+
+### siphon-core 2.3.1 (also carries)
+
+- **PT-4**: `FindingsRing::push()` logs and increments an `AtomicU64` eviction
+  counter when the ring is full, so operators can detect ring-flooding.
+
+### siphon 2.2.4 (also carries)
+
+- **PT-3**: the syslog SIEM adapter host now passes through `is_safe_url()`
+  before the TCP/UDP connection, closing the SSRF gap that remained while the
+  HTTP-based adapters were already validated.
+
+### siphon-fs 1.1.3 (also carries)
+
+- **fix(fs): remove HSTS over plaintext.** siphon-fs serves no TLS, and browsers
+  ignore `Strict-Transport-Security` received over HTTP (RFC 6797 §7.2), so the
+  header was noise. Removed from `security_headers`.
+
+### siphon-launcher 2.1.1
+
+- **fix(launcher): allowlist env keys on the start API.** Only `SIPHON_*`,
+  `RUST_LOG`, `RUST_BACKTRACE` prefixes are accepted, and `SIPHON_API_KEY`,
+  `SIPHON_AUDIT_LOG_PATH`, `SIPHON_BIND`, `SIPHON_FS_BIND` are blocked outright —
+  a spawned pod can no longer have security-critical env injected through the
+  launcher.
+- **PT-6**: `SIPHON_ALLOW_PRIVATE_DESTINATIONS` added to the blocked keys, so env
+  injection can't globally disable the SSRF defences.
+
+---
+
 ## 2026-09-03 — CORS defaults to deny
 
 Both HTTP services fell back to `CorsLayer::permissive()` (reflect any Origin)

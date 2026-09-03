@@ -1,6 +1,6 @@
 [package]
 name = "siphon-launcher"
-version = "2.1.0"
+version = "2.1.1"
 edition = "2021"
 description = "Polygon Siphon launcher — local-dev process manager for siphon-api / siphon-fs"
 license = "MIT"

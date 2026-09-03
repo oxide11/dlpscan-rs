@@ -5105,7 +5105,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-launcher"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "axum",
  "libc",
