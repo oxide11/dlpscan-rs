@@ -475,7 +475,13 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
                     // Validate the syslog host against the SSRF filter.
                     // Build a dummy https:// URL so is_safe_url() can parse
                     // the host component — the scheme is not transmitted.
-                    let probe = format!("https://{}:{}", host, p);
+                    // RFC 3986: bare IPv6 addresses must be wrapped in
+                    // brackets so parse_url splits host/port correctly.
+                    let probe = if host.contains(':') {
+                        format!("https://[{}]:{}", host, p)
+                    } else {
+                        format!("https://{}:{}", host, p)
+                    };
                     if !crate::webhooks::is_safe_url(&probe) {
                         tracing::error!(
                             host = %host,

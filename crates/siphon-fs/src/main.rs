@@ -864,12 +864,24 @@ fn resolve_api_key_hash() -> Option<[u8; 32]> {
         return Some(hasher.finalize().into());
     }
 
-    let allow_open = std::env::var("SIPHON_ALLOW_UNAUTHENTICATED")
-        .map(|v| {
-            let v = v.trim();
-            v.eq_ignore_ascii_case("true") || v == "1"
-        })
-        .unwrap_or(false);
+    let allow_open = {
+        let env_val = std::env::var("SIPHON_ALLOW_UNAUTHENTICATED")
+            .map(|v| {
+                let v = v.trim().to_owned();
+                v.eq_ignore_ascii_case("true") || v == "1"
+            })
+            .unwrap_or(false);
+        if env_val && !cfg!(feature = "allow-unauthenticated") {
+            tracing::warn!(
+                "SIPHON_ALLOW_UNAUTHENTICATED is set but this binary was compiled \
+                 without the `allow-unauthenticated` feature — ignoring. \
+                 Rebuild with --features allow-unauthenticated for local dev."
+            );
+            false
+        } else {
+            env_val
+        }
+    };
 
     if !allow_open {
         eprintln!(

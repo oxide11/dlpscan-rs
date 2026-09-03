@@ -1221,7 +1221,7 @@ fn strip_consistent_digit_separators(
         // Non-ASCII (exotic) separators almost never appear in legitimate data,
         // so a single occurrence is sufficient signal. ASCII punctuation keeps
         // the conservative ≥3 threshold to avoid stripping e.g. 0151:1283:0366.
-        let min_seps: usize = if is_exotic_sep(sep) { 1 } else { 3 };
+        let min_seps: usize = if is_exotic_sep(sep) { 2 } else { 3 };
         if groups_ok
             && right_ok
             && sep_positions.len() >= min_seps

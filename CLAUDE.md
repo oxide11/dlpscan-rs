@@ -235,9 +235,10 @@ GET  /v1/findings
 ```
 
 Max body: `SIPHON_FS_BODY_LIMIT_MB` (default 100 MB). CORS origins:
-`SIPHON_FS_CORS_ORIGINS` (comma-separated; unset falls back to permissive for
-local dev — set it in production, or any page can upload to this service and
-read the findings back). File formats supported
+`SIPHON_FS_CORS_ORIGINS` (comma-separated; unset **blocks all cross-origin
+requests** — browser clients including the C2 dashboard and evadex bridge will
+be CORS-blocked until this is set. Use `*` for local dev permissive mode.
+Set a specific origin list in production). File formats supported
 (parenthetical = feature gate controlling the dep):
 
 - Plain text, RTF, EML — always available

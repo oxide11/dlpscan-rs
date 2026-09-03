@@ -5519,12 +5519,28 @@ async fn main() {
         //
         // Running without authentication is still possible, but it now has to
         // be asked for.
-        let allow_open = std::env::var("SIPHON_ALLOW_UNAUTHENTICATED")
-            .map(|v| {
-                let v = v.trim();
-                v.eq_ignore_ascii_case("true") || v == "1"
-            })
-            .unwrap_or(false);
+        let allow_open = {
+            let env_val = std::env::var("SIPHON_ALLOW_UNAUTHENTICATED")
+                .map(|v| {
+                    let v = v.trim().to_owned();
+                    v.eq_ignore_ascii_case("true") || v == "1"
+                })
+                .unwrap_or(false);
+            // Gate: this binary must be compiled with --features allow-unauthenticated
+            // for the env var to take effect. Production binaries are compiled
+            // without it so the escape hatch is compile-time-absent, not just
+            // runtime-guarded.
+            if env_val && !cfg!(feature = "allow-unauthenticated") {
+                tracing::warn!(
+                    "SIPHON_ALLOW_UNAUTHENTICATED is set but this binary was compiled \
+                     without the `allow-unauthenticated` feature — ignoring. \
+                     Rebuild with --features allow-unauthenticated for local dev."
+                );
+                false
+            } else {
+                env_val
+            }
+        };
 
         if !allow_open {
             eprintln!(

@@ -343,6 +343,10 @@ async fn start_process(State(state): State<AppState>, Json(req): Json<StartReque
             // Disabling SSRF defences globally via an env injection must
             // not be possible through the launcher start API.
             "SIPHON_ALLOW_PRIVATE_DESTINATIONS",
+            // Removing authentication or audit-log enforcement via the
+            // launcher start API must not be possible.
+            "SIPHON_ALLOW_UNAUTHENTICATED",
+            "SIPHON_DEV_MODE",
         ];
         for key in extra.keys() {
             let allowed = ALLOWED_PREFIXES

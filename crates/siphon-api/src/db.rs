@@ -632,8 +632,9 @@ pub async fn persist_evadex_run(
             .and_then(|v| v.get("value"))
             .and_then(|v| v.as_str())
             .map(|v| {
-                if v.len() > 4 {
-                    format!("{}****", &v[..4])
+                let prefix: String = v.chars().take(4).collect();
+                if prefix.len() < v.chars().count() {
+                    format!("{}****", prefix)
                 } else {
                     "****".to_string()
                 }

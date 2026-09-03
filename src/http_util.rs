@@ -94,7 +94,22 @@ pub fn parse_url(url: &str) -> Result<ParsedUrl<'_>, String> {
         .unwrap_or((after_userinfo, "/"));
 
     let default_port: u16 = if scheme == "https" { 443 } else { 80 };
-    let (host, port) = if let Some(i) = host_port.find(':') {
+    let (host, port) = if host_port.starts_with('[') {
+        // RFC 3986 IPv6 bracket notation: [::1]:514 or [::1]
+        match host_port.find(']') {
+            Some(bracket_end) => {
+                let bare = &host_port[1..bracket_end];
+                let port_part = &host_port[bracket_end + 1..];
+                let p = if let Some(colon_rest) = port_part.strip_prefix(':') {
+                    colon_rest.parse::<u16>().unwrap_or(default_port)
+                } else {
+                    default_port
+                };
+                (bare, p)
+            }
+            None => return Err("Malformed URL: IPv6 address missing closing ']'".to_string()),
+        }
+    } else if let Some(i) = host_port.find(':') {
         (
             &host_port[..i],
             host_port[i + 1..].parse::<u16>().unwrap_or(default_port),

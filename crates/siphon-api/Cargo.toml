@@ -81,6 +81,9 @@ default = []
 # Enable POST /v1/overrides/roll end-to-end — includes the kube +
 # k8s-openapi deps required to patch Deployment annotations.
 k8s-roll = ["dep:kube", "dep:k8s-openapi"]
+# Allow SIPHON_ALLOW_UNAUTHENTICATED env var to disable bearer-token auth.
+# Local development only. Production binaries must NOT enable this feature.
+allow-unauthenticated = []
 
 [dev-dependencies]
 tempfile = "3"
