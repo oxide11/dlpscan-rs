@@ -247,6 +247,111 @@ static HOMOGLYPH_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
         ('\u{0E57}', '7'),
         ('\u{0E58}', '8'),
         ('\u{0E59}', '9'),
+        // Superscript digits 4–9 (⁰¹²³ already above; NFKC handles these but kept as backup)
+        ('\u{2074}', '4'), // ⁴
+        ('\u{2075}', '5'), // ⁵
+        ('\u{2076}', '6'), // ⁶
+        ('\u{2077}', '7'), // ⁷
+        ('\u{2078}', '8'), // ⁸
+        ('\u{2079}', '9'), // ⁹
+        // Devanagari digits: ०१२३४५६७८९ (U+0966–U+096F)
+        ('\u{0966}', '0'),
+        ('\u{0967}', '1'),
+        ('\u{0968}', '2'),
+        ('\u{0969}', '3'),
+        ('\u{096A}', '4'),
+        ('\u{096B}', '5'),
+        ('\u{096C}', '6'),
+        ('\u{096D}', '7'),
+        ('\u{096E}', '8'),
+        ('\u{096F}', '9'),
+        // Bengali digits: ০১২৩৪৫৬৭৮৯ (U+09E6–U+09EF)
+        ('\u{09E6}', '0'),
+        ('\u{09E7}', '1'),
+        ('\u{09E8}', '2'),
+        ('\u{09E9}', '3'),
+        ('\u{09EA}', '4'),
+        ('\u{09EB}', '5'),
+        ('\u{09EC}', '6'),
+        ('\u{09ED}', '7'),
+        ('\u{09EE}', '8'),
+        ('\u{09EF}', '9'),
+        // Gujarati digits: ૦૧૨૩૪૫૬૭૮૯ (U+0AE6–U+0AEF)
+        ('\u{0AE6}', '0'),
+        ('\u{0AE7}', '1'),
+        ('\u{0AE8}', '2'),
+        ('\u{0AE9}', '3'),
+        ('\u{0AEA}', '4'),
+        ('\u{0AEB}', '5'),
+        ('\u{0AEC}', '6'),
+        ('\u{0AED}', '7'),
+        ('\u{0AEE}', '8'),
+        ('\u{0AEF}', '9'),
+        // Gurmukhi digits: ੦੧੨੩੪੫੬੭੮੯ (U+0A66–U+0A6F)
+        ('\u{0A66}', '0'),
+        ('\u{0A67}', '1'),
+        ('\u{0A68}', '2'),
+        ('\u{0A69}', '3'),
+        ('\u{0A6A}', '4'),
+        ('\u{0A6B}', '5'),
+        ('\u{0A6C}', '6'),
+        ('\u{0A6D}', '7'),
+        ('\u{0A6E}', '8'),
+        ('\u{0A6F}', '9'),
+        // Khmer digits: ០១២៣៤៥៦៧៨៩ (U+17E0–U+17E9)
+        ('\u{17E0}', '0'),
+        ('\u{17E1}', '1'),
+        ('\u{17E2}', '2'),
+        ('\u{17E3}', '3'),
+        ('\u{17E4}', '4'),
+        ('\u{17E5}', '5'),
+        ('\u{17E6}', '6'),
+        ('\u{17E7}', '7'),
+        ('\u{17E8}', '8'),
+        ('\u{17E9}', '9'),
+        // Myanmar digits: ၀၁၂၃၄၅၆၇၈၉ (U+1040–U+1049)
+        ('\u{1040}', '0'),
+        ('\u{1041}', '1'),
+        ('\u{1042}', '2'),
+        ('\u{1043}', '3'),
+        ('\u{1044}', '4'),
+        ('\u{1045}', '5'),
+        ('\u{1046}', '6'),
+        ('\u{1047}', '7'),
+        ('\u{1048}', '8'),
+        ('\u{1049}', '9'),
+        // Mathematical bold digits: 𝟎–𝟗 (U+1D7CE–U+1D7D7) — backup for NFKC
+        ('\u{1D7CE}', '0'),
+        ('\u{1D7CF}', '1'),
+        ('\u{1D7D0}', '2'),
+        ('\u{1D7D1}', '3'),
+        ('\u{1D7D2}', '4'),
+        ('\u{1D7D3}', '5'),
+        ('\u{1D7D4}', '6'),
+        ('\u{1D7D5}', '7'),
+        ('\u{1D7D6}', '8'),
+        ('\u{1D7D7}', '9'),
+        // Mathematical sans-serif bold digits: 𝟬–𝟵 (U+1D7EC–U+1D7F5) — backup for NFKC
+        ('\u{1D7EC}', '0'),
+        ('\u{1D7ED}', '1'),
+        ('\u{1D7EE}', '2'),
+        ('\u{1D7EF}', '3'),
+        ('\u{1D7F0}', '4'),
+        ('\u{1D7F1}', '5'),
+        ('\u{1D7F2}', '6'),
+        ('\u{1D7F3}', '7'),
+        ('\u{1D7F4}', '8'),
+        ('\u{1D7F5}', '9'),
+        // Roman numeral lookalikes
+        ('\u{2160}', 'I'), // Ⅰ → I
+        ('\u{2165}', 'V'), // Ⅵ → V (closest single-char visual match)
+        // Script/mathematical letter lookalikes
+        ('\u{2113}', 'l'), // ℓ SCRIPT SMALL L → l
+        // Mathematical double-struck letters (ℕℚℝℤ) — not normalized by NFKC
+        ('\u{2115}', 'N'), // ℕ → N
+        ('\u{211A}', 'Q'), // ℚ → Q
+        ('\u{211D}', 'R'), // ℝ → R
+        ('\u{2124}', 'Z'), // ℤ → Z
         // Other common lookalikes
         ('\u{0131}', 'i'), // dotless i
         ('\u{0237}', 'j'), // dotless j
@@ -957,6 +1062,16 @@ fn is_consistent_sep(c: char) -> bool {
     !c.is_ascii_alphanumeric() && !c.is_whitespace() && !matches!(c, '.' | '-' | '/' | '_' | '\\')
 }
 
+/// Returns `true` if `c` is a non-ASCII separator — i.e. an exotic Unicode
+/// character that virtually never appears as a legitimate structured separator
+/// (middle dot, bullet, dagger, etc.). A single occurrence of an exotic
+/// separator is a reliable evasion signal, so [`strip_consistent_digit_separators`]
+/// uses a lower repetition threshold for these than for ASCII punctuation.
+#[inline]
+fn is_exotic_sep(c: char) -> bool {
+    !c.is_ascii() && is_consistent_sep(c)
+}
+
 /// Strip a single, *consistent* separator character injected between pure-digit
 /// groups — the delimiter-injection and consistent-noise evasion families that
 /// the dedicated delimiter stages don't cover.
@@ -1103,7 +1218,15 @@ fn strip_consistent_digit_separators(
         }
         // Right boundary must not continue into an identifier.
         let right_ok = k >= n || !ch(k).is_ascii_alphanumeric();
-        if groups_ok && right_ok && sep_positions.len() >= 3 && (12..=40).contains(&total_digits) {
+        // Non-ASCII (exotic) separators almost never appear in legitimate data,
+        // so a single occurrence is sufficient signal. ASCII punctuation keeps
+        // the conservative ≥3 threshold to avoid stripping e.g. 0151:1283:0366.
+        let min_seps: usize = if is_exotic_sep(sep) { 1 } else { 3 };
+        if groups_ok
+            && right_ok
+            && sep_positions.len() >= min_seps
+            && (12..=40).contains(&total_digits)
+        {
             for &p in &sep_positions {
                 remove[p] = true;
             }
