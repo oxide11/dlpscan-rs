@@ -5600,7 +5600,11 @@ async fn main() {
             v == "true" || v == "1"
         })
         .unwrap_or(false);
-    if !dev_mode && std::env::var("SIPHON_AUDIT_LOG_PATH").ok().map_or(true, |v| v.trim().is_empty()) {
+    if !dev_mode
+        && std::env::var("SIPHON_AUDIT_LOG_PATH")
+            .ok()
+            .map_or(true, |v| v.trim().is_empty())
+    {
         eprintln!(
             "FATAL: SIPHON_AUDIT_LOG_PATH is not set.\n\
              \n\
