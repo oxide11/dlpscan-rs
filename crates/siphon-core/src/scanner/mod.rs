@@ -1418,6 +1418,17 @@ const ENTROPY_CONTEXT_KEYWORDS: &[&str] = &[
     "aws_secret",
     "github_token",
     "slack_token",
+    "jwt",
+    "oauth",
+    "oauth_token",
+    "pat",
+    "personal_access_token",
+    "access_token",
+    "refresh_token",
+    "api_token",
+    "private",
+    "client_secret",
+    "hmac",
     // French
     "mot de passe",
     "clé privée",
@@ -1520,11 +1531,6 @@ fn scan_high_entropy_tokens(
             .chars()
             .all(|c| c.is_ascii_digit() || c == '-' || c == '.')
         {
-            continue;
-        }
-
-        // Skip tokens that are common words (all lowercase alpha, no mixed case/digits)
-        if token.chars().all(|c| c.is_ascii_lowercase()) {
             continue;
         }
 
