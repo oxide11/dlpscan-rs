@@ -603,6 +603,18 @@ fn is_trusted_proxy(trusted: &[TrustedNet], ip: std::net::IpAddr) -> bool {
 /// Parse `SIPHON_TRUSTED_PROXIES` into networks. Accepts bare IPs (treated as
 /// /32 or /128) and CIDRs. Unparseable entries are dropped with a warning
 /// rather than silently widening or narrowing trust.
+/// Whether the operator has opted into permissive (any-origin) CORS for local
+/// development. Accepts `true`/`1` case-insensitively, mirroring
+/// `SIPHON_ALLOW_UNAUTHENTICATED`.
+fn allow_permissive_cors() -> bool {
+    std::env::var("SIPHON_ALLOW_PERMISSIVE_CORS")
+        .map(|v| {
+            let v = v.trim();
+            v.eq_ignore_ascii_case("true") || v == "1"
+        })
+        .unwrap_or(false)
+}
+
 fn parse_trusted_proxies(raw: &str) -> Vec<TrustedNet> {
     raw.split(',')
         .map(str::trim)
@@ -958,6 +970,10 @@ struct DetailedHealthResponse {
     categories_loaded: usize,
     db: DetailedDbHealth,
     scans: DetailedScanStats,
+    /// Total findings ring evictions since pod start. Non-zero values
+    /// indicate the ring was flooded; operators should increase
+    /// SIPHON_FINDINGS_RING_CAP or investigate per-key scan volume.
+    ring_evictions_total: u64,
 }
 
 async fn health_detailed(State(state): State<Arc<AppState>>) -> Json<DetailedHealthResponse> {
@@ -1033,6 +1049,7 @@ async fn health_detailed(State(state): State<Arc<AppState>>) -> Json<DetailedHea
             scan_errors_total: state.metrics.scan_errors_total.load(Ordering::Relaxed),
             scans_per_minute,
         },
+        ring_evictions_total: state.findings.eviction_count(),
     })
 }
 
@@ -4291,6 +4308,7 @@ struct EvadexRunsResponse {
 }
 
 async fn list_evadex_runs(
+    _: RequireAdminAction,
     Query(q): Query<EvadexRunsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<EvadexRunsResponse> {
@@ -4387,7 +4405,10 @@ struct EvadexRunsStats {
     last_run_at: Option<String>,
 }
 
-async fn evadex_runs_stats(State(state): State<Arc<AppState>>) -> Json<EvadexRunsStats> {
+async fn evadex_runs_stats(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<EvadexRunsStats> {
     let empty = || {
         Json(EvadexRunsStats {
             total_runs: 0,
@@ -4643,7 +4664,7 @@ struct FindingsStatsResponse {
     lsh: Option<LshStats>,
 }
 
-async fn findings_stats(State(state): State<Arc<AppState>>) -> Response {
+async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>>) -> Response {
     // Return cached response if fresh enough (avoids repeated DB COUNT scans).
     {
         let cache = state.stats_cache.lock().unwrap_or_else(|e| e.into_inner());
@@ -4879,6 +4900,7 @@ struct PgFindingsResponse {
 }
 
 async fn list_pg_findings(
+    _: RequireAdminAction,
     Query(q): Query<PgFindingsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<PgFindingsResponse> {
@@ -5202,6 +5224,7 @@ struct FindingsResponse {
 }
 
 async fn list_findings(
+    _: RequireAdminAction,
     Query(q): Query<FindingsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<FindingsResponse> {
@@ -5660,14 +5683,36 @@ async fn main() {
                 base.allow_origin(AllowOrigin::list(allowed))
             }
         }
-        // No SIPHON_CORS_ORIGINS set → local-dev default. The admin
-        // console is typically served from file:// (Origin: null) or a
-        // sibling origin like the lab ingress, so without a permissive
-        // default every browser fetch 'Load failed's on CORS. Matches
-        // siphon-fs exactly for parity. Production deployments should
-        // set SIPHON_CORS_ORIGINS to a specific origin list — the
-        // explicit branch above takes precedence.
-        _ => CorsLayer::permissive(),
+        // No SIPHON_CORS_ORIGINS set → default-deny cross-origin. This used to
+        // fall back to CorsLayer::permissive(), which reflects any Origin — a
+        // service that returns other people's detected card numbers and SSNs
+        // should not do that by accident. Bearer-token auth limits the blast
+        // radius (cross-origin JS can't read the key), but "insecure unless
+        // configured" is the wrong default for a DLP control plane.
+        //
+        // Opt back into permissive for local dev with
+        // SIPHON_ALLOW_PERMISSIVE_CORS=true (the admin console served from
+        // file:// / Origin: null needs it); production sets an explicit
+        // SIPHON_CORS_ORIGINS allowlist instead.
+        _ => {
+            if allow_permissive_cors() {
+                tracing::warn!(
+                    "SIPHON_ALLOW_PERMISSIVE_CORS is set — reflecting any Origin. \
+                     Local development only; set SIPHON_CORS_ORIGINS in production."
+                );
+                CorsLayer::permissive()
+            } else {
+                tracing::info!(
+                    "SIPHON_CORS_ORIGINS not set — cross-origin browser requests are \
+                     denied. Set it to an explicit origin allowlist, or \
+                     SIPHON_ALLOW_PERMISSIVE_CORS=true for local dev."
+                );
+                // A bare CorsLayer allows no cross-origin origin, so browsers
+                // block cross-site reads while same-origin and non-browser
+                // clients (which don't enforce CORS) are unaffected.
+                CorsLayer::new()
+            }
+        }
     };
 
     // Optional policies directory — loaded once at startup. Endpoints that

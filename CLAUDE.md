@@ -150,7 +150,8 @@ Key env vars for siphon-api:
 | `SIPHON_API_KEY` | — | **required**; empty counts as unset. Without it the service refuses to start |
 | `SIPHON_ALLOW_UNAUTHENTICATED` | false | opt in to running with no auth — local dev only |
 | `SIPHON_TLS_CERT` / `SIPHON_TLS_KEY` | — | PEM paths |
-| `SIPHON_CORS_ORIGINS` | none | comma-separated |
+| `SIPHON_CORS_ORIGINS` | none | comma-separated allowlist; `*` reflects any origin. Unset = **cross-origin denied** (default-deny) |
+| `SIPHON_ALLOW_PERMISSIVE_CORS` | false | dev-only opt-in to any-origin CORS when `SIPHON_CORS_ORIGINS` is unset (e.g. admin console from `file://`) |
 | `SIPHON_RATE_LIMIT` | 120 | req/min per IP |
 | `SIPHON_TRUSTED_PROXIES` | — | comma-separated IPs/CIDRs whose `X-Forwarded-For` is believed for rate-limit keying. Unset = key on the TCP peer, which behind a proxy puts every client in one bucket. Only the right-most forwarded entry is used |
 | `SIPHON_REQUEST_TIMEOUT_SECS` | 30 | |
@@ -235,9 +236,11 @@ GET  /v1/findings
 ```
 
 Max body: `SIPHON_FS_BODY_LIMIT_MB` (default 100 MB). CORS origins:
-`SIPHON_FS_CORS_ORIGINS` (comma-separated; unset falls back to permissive for
-local dev — set it in production, or any page can upload to this service and
-read the findings back). File formats supported
+`SIPHON_FS_CORS_ORIGINS` (comma-separated allowlist; `*` reflects any origin).
+Unset denies cross-origin browser requests by default — set an allowlist in
+production, or `SIPHON_ALLOW_PERMISSIVE_CORS=true` for local dev. (Before the
+default flipped, an unset value fell back to permissive, so any page could
+upload here and read the findings back.) File formats supported
 (parenthetical = feature gate controlling the dep):
 
 - Plain text, RTF, EML — always available

@@ -49,6 +49,31 @@ fn archive_entry_is_text(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Archive/container extensions that appear *inside* another archive. We do
+/// not recurse into these — deep recursion is where zip-bomb amplification
+/// lives — but we must not skip them silently either: a sensitive file one
+/// archive layer deep would otherwise pass with zero findings and no signal.
+/// Instead the extractors surface a warning so an analyst sees that unscanned
+/// content exists. Keep in sync with the formats the extractors otherwise
+/// handle at the top level.
+const NESTED_ARCHIVE_EXTENSIONS: &[&str] = &[
+    "zip", "7z", "rar", "gz", "tgz", "bz2", "tbz2", "xz", "txz", "tar", "cab", "lz", "lzma", "z",
+    "zst", "zstd", "arj", "lha", "lzh",
+];
+
+/// Whether an archive entry is itself a nested archive/container.
+fn archive_entry_is_nested_archive(name: &str) -> bool {
+    std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| NESTED_ARCHIVE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// Cap on how many distinct nested-archive warnings we record for one file, so
+/// a container packed with 10k inner archives can't produce 10k warning lines.
+const MAX_NESTED_ARCHIVE_WARNINGS: usize = 20;
+
 /// Check whether a ZIP entry's declared size vs. its compressed size
 /// exceeds the configured bomb threshold. Returns true if the entry
 /// should be skipped. Entries with a compressed_size of 0 (e.g. stored
@@ -704,6 +729,7 @@ fn extract_zip_archive(
     // Entries are read into memory by name, never written to disk, so archive
     // path traversal ("zip slip") is not a write risk on this path; the guards
     // below are about resource exhaustion, matching the Office branch.
+    let mut nested_warnings: Vec<String> = Vec::new();
     if format == "zip" {
         use std::io::Read;
         for i in 0..archive.len() {
@@ -714,6 +740,25 @@ fn extract_zip_archive(
                 continue;
             };
             let name = file.name().to_string();
+            // A nested archive is not recursed into — deep recursion is where
+            // zip-bomb amplification lives — but it must not vanish silently
+            // either: a sensitive file one layer deep would otherwise scan to
+            // zero findings with no signal. Surface a warning so an analyst
+            // knows unscanned content is present.
+            if archive_entry_is_nested_archive(&name) {
+                if nested_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+                    nested_warnings.push(format!("nested archive not scanned: {name}"));
+                }
+                continue;
+            }
+            // An encrypted entry cannot be read without the password. Same
+            // reasoning: flag it rather than skip in silence.
+            if file.encrypted() {
+                if nested_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+                    nested_warnings.push(format!("encrypted entry not scanned: {name}"));
+                }
+                continue;
+            }
             if !archive_entry_is_text(&name) {
                 continue;
             }
@@ -751,7 +796,11 @@ fn extract_zip_archive(
         }
     }
 
-    Ok(ExtractionResult::new(text.trim().to_string(), format))
+    let mut result = ExtractionResult::new(text.trim().to_string(), format);
+    for w in nested_warnings {
+        result = result.with_warning(&w);
+    }
+    Ok(result)
 }
 
 /// Simple XML tag stripper that preserves text content.
@@ -1943,6 +1992,17 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
 
     let mut result = ExtractionResult::new(text.trim().to_string(), "rar");
     result = result.with_metadata("file_count", &file_count.to_string());
+    // Nested archives inside the RAR are not recursed (bomb-amplification
+    // risk); warn so they are not a silent gap, matching the ZIP/7z walkers.
+    let mut nested_seen = 0usize;
+    for name in &file_names {
+        if archive_entry_is_nested_archive(name) {
+            if nested_seen < MAX_NESTED_ARCHIVE_WARNINGS {
+                result = result.with_warning(&format!("nested archive not scanned: {name}"));
+            }
+            nested_seen += 1;
+        }
+    }
     Ok(result)
 }
 
@@ -2100,6 +2160,7 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
     }
 
     // Extract text from small text files (with path traversal guard)
+    let mut nested_warnings: Vec<String> = Vec::new();
     for f in &files {
         // Ensure file is actually under the temp dir using canonicalize
         if let Ok(canonical) = f.canonicalize() {
@@ -2128,11 +2189,22 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
                     }
                 }
             }
+        } else if NESTED_ARCHIVE_EXTENSIONS.contains(&ext.as_str())
+            && nested_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS
+        {
+            // Nested archive: not recursed (bomb-amplification risk), but
+            // surfaced as a warning so it is not a silent gap. Matches the
+            // ZIP/RAR walkers.
+            let rel = f.strip_prefix(tmp_dir.path()).unwrap_or(f);
+            nested_warnings.push(format!("nested archive not scanned: {}", rel.display()));
         }
     }
 
     let mut result = ExtractionResult::new(text.trim().to_string(), "7z");
     result = result.with_metadata("file_count", &file_count.to_string());
+    for w in nested_warnings {
+        result = result.with_warning(&w);
+    }
     Ok(result)
 }
 

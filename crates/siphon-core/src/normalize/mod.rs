@@ -1163,7 +1163,14 @@ fn decode_hex_spaced(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<u
 
     while i < bytes.len() {
         // Try to match a hex-spaced run: XX SP XX SP XX ...
-        if i + 4 < bytes.len()
+        // A run may only begin at a token boundary (start of input or just
+        // after a space). Without this, a run could start in the middle of a
+        // longer digit group: `457 55 5462` starting at offset 1 reads
+        // `57 55 54` as three pairs and decodes an SSN to `WUT`. See the
+        // per-pair token check below for the other half of this guard.
+        let at_left_boundary = i == 0 || bytes[i - 1] == b' ';
+        if at_left_boundary
+            && i + 4 < bytes.len()
             && bytes[i].is_ascii_hexdigit()
             && bytes[i + 1].is_ascii_hexdigit()
             && bytes[i + 2] == b' '
@@ -1174,10 +1181,20 @@ fn decode_hex_spaced(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<u
             let run_start = i;
             pairs.clear();
             loop {
-                if i + 1 < bytes.len()
+                // Each pair must be a *complete* space-delimited token: exactly
+                // two hex digits bounded by a space (or string end) on the
+                // right. The left side is already a boundary — the run starts at
+                // one and every subsequent pair begins right after the mandatory
+                // space. Requiring the right boundary too is what separates a
+                // real hex dump (`34 35 33 32`, every token two chars) from
+                // formatted decimal data (`457 55 5462`, groups of 3/2/4): a
+                // 3-char group like `457` or `567` offers two hex digits but is
+                // not a 2-char token, so it never contributes a pair.
+                let has_pair = i + 1 < bytes.len()
                     && bytes[i].is_ascii_hexdigit()
-                    && bytes[i + 1].is_ascii_hexdigit()
-                {
+                    && bytes[i + 1].is_ascii_hexdigit();
+                let right_boundary = i + 2 >= bytes.len() || bytes[i + 2] == b' ';
+                if has_pair && right_boundary {
                     if let (Some(h), Some(l)) = (hex_val(bytes[i]), hex_val(bytes[i + 1])) {
                         pairs.push((i, (h << 4) | l));
                     }
@@ -3851,6 +3868,37 @@ mod tests {
         // 15-digit Amex display format.
         let (result, _) = normalize_text("3782 822463 10005");
         assert_eq!(result, "378282246310005");
+    }
+
+    #[test]
+    fn test_hex_spaced_does_not_eat_space_separated_ssn() {
+        // Regression for a silent DLP bypass found during pen-testing: a
+        // space-separated SSN `457 55 5462` was mangled to `4WUT62` because the
+        // hex-spaced decoder started mid-token at offset 1 and read `57 55 54`
+        // (0x57 0x55 0x54) as three pairs -> "WUT". A run must now begin at a
+        // token boundary and every pair must be a complete 2-char token, so the
+        // 3/2/4 digit grouping no longer forms a hex run. The SSN survives
+        // normalization and the context-gated SSN pattern can match it.
+        // The digits must survive intact. Downstream digit-group collapse
+        // then joins them to a contiguous run (same as the no-space form),
+        // which is exactly what the SSN pattern needs — the point is that no
+        // hex letters (W/U/T) appear and no digits are lost.
+        let (result, _) = normalize_text("457 55 5462");
+        assert_eq!(result, "457555462", "space-separated SSN was corrupted");
+        let (result, _) = normalize_text("123 45 6789");
+        assert_eq!(result, "123456789");
+        let (result, _) = normalize_text("555 12 3456");
+        assert_eq!(result, "555123456");
+    }
+
+    #[test]
+    fn test_hex_spaced_rejects_partial_token_run() {
+        // A 3-char trailing group must not be partially consumed: `12 34 567`
+        // offers pairs 0x12, 0x34, then `56` from `567` — but `567` is not a
+        // 2-char token, so the run stops at two pairs (below the threshold) and
+        // nothing is decoded.
+        let (result, _) = normalize_text("12 34 567");
+        assert_eq!(result, "1234567");
     }
 
     #[test]
