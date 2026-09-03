@@ -4981,7 +4981,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-api"
-version = "2.4.0"
+version = "2.4.1"
 dependencies = [
  "axum",
  "axum-server",
@@ -5037,7 +5037,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-fs"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "axum",
  "deadpool-postgres",

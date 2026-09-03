@@ -14,6 +14,42 @@ starting from this file.
 
 ---
 
+## 2026-09-02 (wave 2)
+
+### siphon-api 2.4.1
+
+- fix(api): Gate `PATCH /v1/pipeline/stages`, `POST /v1/overrides/revert`,
+  `POST /v1/evadex/runs`, and `GET /v1/findings/export` behind
+  `RequireAdminAction`. Previously any valid API key holder could call these
+  write-level and bulk-export endpoints; they now require `Permission::AdminAction`.
+  Most sensitive: `findings_export` can return up to 100 k rows of matched
+  findings (card numbers, SSNs, etc.) and should never be reachable by a
+  read-only or scanner-role caller.
+- fix(api): Add `Referrer-Policy: strict-origin-when-cross-origin` and
+  `Permissions-Policy: camera=(), microphone=(), geolocation=()` to the
+  `security_headers` middleware. These were already added by the nginx proxy
+  and Cloudflare edge in the stack deployments, but are now set at the service
+  level so every deployment path is covered.
+
+### siphon-fs 1.0.1
+
+- fix(fs): Replace unconditional `CorsLayer::permissive()` with an
+  env-var-aware `cors_layer()` function that reads `SIPHON_FS_CORS_ORIGINS`
+  (comma-separated allowed origins). Falls back to permissive only when unset,
+  identical behaviour to siphon-api's `SIPHON_CORS_ORIGINS` handling.
+  Previously any page could make cross-origin multipart uploads to siphon-fs
+  and read the scan response, enabling file-content exfiltration from a
+  victim's browser.
+- fix(fs): Add `security_headers` middleware to siphon-fs (mirrors siphon-api).
+  Sets `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `X-XSS-Protection: 0`, `Cache-Control: no-store`, `Content-Security-Policy:
+  default-src 'none'; frame-ancestors 'none'`, `Strict-Transport-Security`,
+  `Referrer-Policy`, and `Permissions-Policy` on every response. Previously
+  these headers were only applied by the nginx proxy; siphon-fs responses
+  were bare when reached directly inside the cluster.
+
+---
+
 ## 2026-09-02
 
 ### siphon 2.2.1

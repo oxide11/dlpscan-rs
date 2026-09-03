@@ -19,8 +19,10 @@
 //! Graceful shutdown on SIGTERM lands in Phase 5.
 
 use axum::{
-    extract::{DefaultBodyLimit, Multipart, Query, State},
-    http::StatusCode,
+    body::Body,
+    extract::{DefaultBodyLimit, Multipart, Query, Request, State},
+    http::{header, HeaderValue, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Json as JsonResponse, Response},
     routing::{get, post},
     Router,
@@ -37,7 +39,8 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 
 mod db;
@@ -740,6 +743,64 @@ async fn overrides_reload(State(state): State<AppState>) -> Response {
     .into_response()
 }
 
+async fn security_headers(_request: Request<Body>, next: Next) -> Response {
+    let mut response = next.run(_request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
+    headers.insert("x-xss-protection", HeaderValue::from_static("0"));
+    headers.insert(
+        "cache-control",
+        HeaderValue::from_static("no-store, no-cache, must-revalidate"),
+    );
+    headers.insert(
+        "content-security-policy",
+        HeaderValue::from_static("default-src 'none'; frame-ancestors 'none'"),
+    );
+    if headers.get("strict-transport-security").is_none() {
+        headers.insert(
+            "strict-transport-security",
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        );
+    }
+    headers.insert(
+        "referrer-policy",
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
+    );
+    headers.insert(
+        "permissions-policy",
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
+    response
+}
+
+fn cors_layer() -> CorsLayer {
+    match std::env::var("SIPHON_FS_CORS_ORIGINS") {
+        Ok(origins) if !origins.is_empty() => {
+            let trimmed = origins.trim();
+            let base = CorsLayer::new()
+                .allow_methods([axum::http::Method::POST, axum::http::Method::GET])
+                .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
+            if trimmed == "*" {
+                CorsLayer::permissive()
+            } else {
+                let allowed: Vec<HeaderValue> = trimmed
+                    .split(',')
+                    .filter_map(|o| o.trim().parse().ok())
+                    .collect();
+                base.allow_origin(AllowOrigin::list(allowed))
+            }
+        }
+        // No SIPHON_FS_CORS_ORIGINS set → local-dev default. Production
+        // deployments should set SIPHON_FS_CORS_ORIGINS to a specific
+        // origin list — the explicit branch above takes precedence.
+        _ => CorsLayer::permissive(),
+    }
+}
+
 fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -754,7 +815,8 @@ fn build_router(state: AppState) -> Router {
         // HTTP edge rather than wasting the extract path. Override via
         // SIPHON_FS_BODY_LIMIT_MB for ad-hoc testing.
         .layer(DefaultBodyLimit::max(body_limit_bytes()))
-        .layer(CorsLayer::permissive())
+        .layer(middleware::from_fn(security_headers))
+        .layer(cors_layer())
         .layer(TraceLayer::new_for_http())
 }
 

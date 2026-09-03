@@ -632,6 +632,14 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
             HeaderValue::from_static("max-age=31536000; includeSubDomains"),
         );
     }
+    headers.insert(
+        "referrer-policy",
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
+    );
+    headers.insert(
+        "permissions-policy",
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
     response
 }
 
@@ -2172,6 +2180,7 @@ struct StagesPatchRequest {
 
 async fn pipeline_stages_patch(
     State(state): State<Arc<AppState>>,
+    _: RequireAdminAction,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<StagesPatchRequest>,
 ) -> Response {
@@ -3341,6 +3350,7 @@ struct RevertResponse {
 /// another revert.
 async fn overrides_revert(
     State(state): State<Arc<AppState>>,
+    _: RequireAdminAction,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<RevertRequest>,
 ) -> Result<Json<RevertResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -4058,6 +4068,7 @@ struct EvadexIngestRequest {
 
 async fn ingest_evadex_run(
     State(state): State<Arc<AppState>>,
+    _: RequireAdminAction,
     Json(body): Json<EvadexIngestRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     if state.db_pool.is_none() {
@@ -4855,6 +4866,7 @@ struct ExportQuery {
 async fn findings_export(
     Query(q): Query<ExportQuery>,
     State(state): State<Arc<AppState>>,
+    _: RequireAdminAction,
 ) -> Response {
     let format = q.format.as_deref().unwrap_or("csv");
     let limit = q.limit.unwrap_or(EXPORT_MAX_ROWS).min(EXPORT_MAX_ROWS);
