@@ -274,6 +274,24 @@ fn test_zero_width_dense_evasion() {
     );
 }
 
+#[test]
+fn test_space_separated_ssn_not_swallowed_by_hex_decoder() {
+    // Found during pen-testing: a space-separated SSN `457 55 5462` evaded
+    // detection entirely because the hex-spaced normalization stage read
+    // `57 55 54` (starting mid-token) as three hex bytes and rewrote the run
+    // to `WUT`, destroying the digits before any pattern saw them. The
+    // decoder now requires each hex pair to be a complete space-delimited
+    // token, so ordinary 3/2/4 SSN grouping survives and is detected under
+    // the SSN keyword context.
+    let text = "Employee SSN: 457 55 5462 on file.";
+    let matches = siphon::scan_text(text).unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "USA SSN"),
+        "space-separated SSN should be detected, got: {:?}",
+        matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 4. Archive Extraction Limits (Zip Bomb Protection)
 // ---------------------------------------------------------------------------

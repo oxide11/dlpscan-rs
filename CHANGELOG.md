@@ -14,6 +14,81 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — CORS defaults to deny
+
+Both HTTP services fell back to `CorsLayer::permissive()` (reflect any Origin)
+when their CORS origins variable was unset. For a service that returns detected
+card numbers and SSNs — and for siphon-fs, accepts file uploads — insecure-by-
+default is the wrong posture. Bearer-token auth limited the blast radius
+(cross-origin JS can't read the key), but the default now denies cross-origin.
+
+### siphon-api 2.5.2
+
+- **fix(api): default-deny cross-origin when `SIPHON_CORS_ORIGINS` is unset.**
+  Was permissive. Now an unset value denies cross-origin browser requests; set
+  an explicit origin allowlist in production, or `SIPHON_ALLOW_PERMISSIVE_CORS=true`
+  for local dev (the admin console served from `file://` / `Origin: null` needs
+  it). An explicit `SIPHON_CORS_ORIGINS=*` still reflects any origin.
+
+### siphon-fs 1.1.3
+
+- **fix(fs): default-deny cross-origin when `SIPHON_FS_CORS_ORIGINS` is unset.**
+  Same change as siphon-api. Previously any web page could POST a file to
+  siphon-fs and read the findings back cross-origin — a browser-driven
+  exfiltration path. Opt back in for dev with `SIPHON_ALLOW_PERMISSIVE_CORS=true`.
+
+---
+
+## 2026-09-03 — nested archives no longer a silent gap
+
+Follow-up from the ZIP DLP-bypass work. Sensitive data one archive layer deep
+(a `.zip`/`.7z`/`.rar` inside another archive) was skipped with no signal.
+Rather than recurse — deep recursion is where zip-bomb amplification lives — the
+extractors now flag it so an analyst sees that unscanned content is present.
+
+### siphon 2.2.4
+
+- **fix(cli): surface a warning for nested and encrypted archive entries.** The
+  ZIP, RAR and 7z walkers previously skipped an inner archive (or an encrypted
+  entry) in silence, so a sensitive file inside `outer.zip → inner.zip` scanned
+  to zero findings with no indication anything was missed. They now emit a
+  `nested archive not scanned: <name>` (or `encrypted entry not scanned`)
+  warning via `ExtractionResult::warnings`, capped at 20 per file. No recursion,
+  so no new bomb-amplification surface.
+
+### siphon-fs 1.1.2
+
+- **fix(fs): preserve extraction warnings on the empty-text path.** A container
+  holding only a nested/encrypted archive extracts to empty text; the empty-text
+  short-circuit was replacing the extractor's warnings with a fixed
+  "no extractable text" note, dropping the `nested archive not scanned` signal
+  that is the whole point for that file. The warnings are now merged.
+
+---
+
+## 2026-09-03 — space-separated SSN evasion
+
+Found while pen-testing the detection engine.
+
+### siphon-core 2.3.1
+
+- **fix(core): stop the hex-spaced normalizer from swallowing space-separated
+  numeric PII.** A space-separated SSN like `457 55 5462` evaded detection
+  entirely: the `decode_hex_spaced` stage began a run mid-token (at offset 1)
+  and read `57 55 54` as three hex bytes, rewriting the digits to `WUT` before
+  any pattern ran. The regex, validator and context gate were all fine — the
+  data was destroyed in normalization. The decoder now requires a run to begin
+  at a token boundary and each pair to be a complete two-hex-digit token, which
+  is what a genuine hex dump (`34 35 33 32`) looks like and what formatted
+  decimal data (3/2/4 groups) is not. Real hex-spaced evasion still decodes;
+  space/dot-grouped SSNs now survive and are detected. Regression tests added in
+  `normalize` (unit) and `evasion_test` (end-to-end); detection_quality and
+  fp_probe corpora unchanged and green.
+
+  This is a library fix; it reaches the CLI and services on their next release.
+
+---
+
 ## 2026-09-03 — CSV formula injection
 
 Found while pen-testing the findings-export path. CWE-1236.

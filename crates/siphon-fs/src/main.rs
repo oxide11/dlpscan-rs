@@ -492,6 +492,13 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
     // denies an attacker a trivial way to make the endpoint 500 by uploading
     // an empty-but-valid container.
     if extract.text.trim().is_empty() {
+        // Preserve any extraction warnings (e.g. "nested archive not scanned")
+        // — for a container holding only a nested or encrypted archive the text
+        // is empty but that warning is the whole point: it is the only signal
+        // that unscanned sensitive content may be present. Dropping it here
+        // would turn a flagged gap back into a silent one.
+        let mut warnings = extract.warnings.clone();
+        warnings.push("no extractable text in file".to_string());
         return JsonResponse(ScanResponse {
             request_id,
             filename,
@@ -499,7 +506,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
             bytes: file_len,
             duration_ms: start.elapsed().as_secs_f64() * 1000.0,
             parsed_as: extract.format.clone(),
-            warnings: vec!["no extractable text in file".to_string()],
+            warnings,
             findings: vec![],
             trace: None,
             error: None,
@@ -822,11 +829,40 @@ fn cors_layer() -> CorsLayer {
                 base.allow_origin(AllowOrigin::list(allowed))
             }
         }
-        // No SIPHON_FS_CORS_ORIGINS set → local-dev default. Production
-        // deployments should set SIPHON_FS_CORS_ORIGINS to a specific
-        // origin list — the explicit branch above takes precedence.
-        _ => CorsLayer::permissive(),
+        // No SIPHON_FS_CORS_ORIGINS set → default-deny cross-origin. This used
+        // to fall back to CorsLayer::permissive(), which let any web page POST
+        // a file here and read the findings back — a cross-origin exfiltration
+        // path from a victim's browser. Opt back into permissive for local dev
+        // with SIPHON_ALLOW_PERMISSIVE_CORS=true; production sets an explicit
+        // SIPHON_FS_CORS_ORIGINS allowlist.
+        _ => {
+            if allow_permissive_cors() {
+                warn!(
+                    "SIPHON_ALLOW_PERMISSIVE_CORS is set — reflecting any Origin. \
+                     Local development only; set SIPHON_FS_CORS_ORIGINS in production."
+                );
+                CorsLayer::permissive()
+            } else {
+                info!(
+                    "SIPHON_FS_CORS_ORIGINS not set — cross-origin browser requests \
+                     are denied. Set it to an origin allowlist, or \
+                     SIPHON_ALLOW_PERMISSIVE_CORS=true for local dev."
+                );
+                CorsLayer::new()
+            }
+        }
     }
+}
+
+/// Whether the operator has opted into permissive (any-origin) CORS for local
+/// development. Mirrors siphon-api and `SIPHON_ALLOW_UNAUTHENTICATED`.
+fn allow_permissive_cors() -> bool {
+    std::env::var("SIPHON_ALLOW_PERMISSIVE_CORS")
+        .map(|v| {
+            let v = v.trim();
+            v.eq_ignore_ascii_case("true") || v == "1"
+        })
+        .unwrap_or(false)
 }
 
 /// Below this length an API key is very likely a placeholder rather than a
