@@ -77,4 +77,55 @@ mod archives {
             out.text
         );
     }
+
+    /// A sensitive text file inside a *plain* ZIP must be scanned, exactly as
+    /// it would be inside a 7z or RAR. Regression for a silent DLP bypass: the
+    /// generic-zip path used to collect only Office XML entries, so `zip
+    /// out.zip secrets.txt` sailed through with zero findings (and a confusing
+    /// 500 from the empty extraction). Found during pen-testing of siphon-fs.
+    #[test]
+    fn plain_zip_text_entry_is_scanned() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("secrets.zip");
+        let f = std::fs::File::create(&archive).unwrap();
+        let mut z = zip::ZipWriter::new(f);
+        z.start_file::<_, ()>("secrets.txt", zip::write::FileOptions::default())
+            .unwrap();
+        z.write_all(b"card 4532015112830366 and SSN 457-55-5462\n")
+            .unwrap();
+        z.finish().unwrap();
+
+        let out = siphon::extract_text(archive.to_str().unwrap())
+            .expect("plain zip with a text entry should extract");
+        assert!(
+            out.text.contains("4532015112830366"),
+            "sensitive .txt inside a plain .zip was not extracted: {:?}",
+            out.text
+        );
+    }
+
+    /// The Office path must keep working after the generic-zip branch was
+    /// added — a .docx is a ZIP too, and its content still comes from the
+    /// Office XML pass, not the generic text walk.
+    #[test]
+    fn docx_like_zip_still_extracts_xml_body() {
+        use std::io::Write;
+        let tmp = tempfile::tempdir().unwrap();
+        let archive = tmp.path().join("doc.docx");
+        let f = std::fs::File::create(&archive).unwrap();
+        let mut z = zip::ZipWriter::new(f);
+        z.start_file::<_, ()>("word/document.xml", zip::write::FileOptions::default())
+            .unwrap();
+        z.write_all(b"<w:document><w:t>SSN 457-55-5462</w:t></w:document>")
+            .unwrap();
+        z.finish().unwrap();
+
+        let out = siphon::extract_text(archive.to_str().unwrap()).expect("docx should extract");
+        assert!(
+            out.text.contains("457-55-5462"),
+            "docx XML body was not extracted: {:?}",
+            out.text
+        );
+    }
 }

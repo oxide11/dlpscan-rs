@@ -484,6 +484,30 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
         }
     };
 
+    // A file that parsed cleanly but yielded no text has nothing to scan —
+    // an image with no barcode, a binary-only archive, an empty document.
+    // The core scanner rejects empty input with an error, so passing it
+    // through would turn "nothing to find" into a 500. Short-circuit to a
+    // clean empty result instead: no findings is the correct answer, and it
+    // denies an attacker a trivial way to make the endpoint 500 by uploading
+    // an empty-but-valid container.
+    if extract.text.trim().is_empty() {
+        return JsonResponse(ScanResponse {
+            request_id,
+            filename,
+            content_type,
+            bytes: file_len,
+            duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+            parsed_as: extract.format.clone(),
+            warnings: vec!["no extractable text in file".to_string()],
+            findings: vec![],
+            trace: None,
+            error: None,
+            error_code: None,
+        })
+        .into_response();
+    }
+
     // Caller opted into tracing — allocate a sink the scanner drains
     // into; None disables tracing at the hot path (no per-candidate
     // allocs).

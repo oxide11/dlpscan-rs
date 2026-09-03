@@ -29,6 +29,26 @@ const MAX_EXTRACT_FILE_COUNT: usize = 10_000;
 /// inside per-entry and total-size caps.
 const MAX_ZIP_COMPRESSION_RATIO: u64 = 100;
 
+/// Extensions inside an archive whose bytes are scanned as plain text.
+/// Shared by the ZIP, RAR and 7z extractors so a sensitive file is caught
+/// the same way whatever container it arrived in — a `.txt` full of card
+/// numbers must not slip through just because it was zipped rather than
+/// 7z'd. Keep the three walkers pointed at this one list.
+const ARCHIVE_TEXT_EXTENSIONS: &[&str] = &[
+    "txt", "csv", "tsv", "log", "json", "xml", "html", "yml", "yaml", "toml", "ini", "cfg", "conf",
+    "md", "eml", "vcf", "ics", "sql", "env",
+];
+
+/// Whether an archive entry name has a text extension we scan by content.
+/// Case-insensitive on the extension only.
+fn archive_entry_is_text(name: &str) -> bool {
+    std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| ARCHIVE_TEXT_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
 /// Check whether a ZIP entry's declared size vs. its compressed size
 /// exceeds the configured bomb threshold. Returns true if the entry
 /// should be skipped. Entries with a compressed_size of 0 (e.g. stored
@@ -666,6 +686,66 @@ fn extract_zip_archive(
                 entry_count += 1;
                 // Simple XML text extraction: strip tags
                 text.push_str(&strip_xml_tags(&xml_content));
+                text.push('\n');
+            }
+        }
+    }
+
+    // Generic (non-Office) ZIP. The format detector fell through to "zip",
+    // so the Office XML pass above matched nothing and `text` is still empty.
+    // Walk every entry and scan the text-like files by content — the same
+    // treatment `extract_rar` and `extract_7z` already give their entries.
+    //
+    // Without this, a sensitive file inside a plain `.zip` is never scanned:
+    // `zip out.zip secrets.txt` defeats the scanner entirely, and the empty
+    // extraction then surfaces to the caller as a confusing 500 rather than a
+    // finding. This was a silent DLP bypass — the worst kind for this product.
+    //
+    // Entries are read into memory by name, never written to disk, so archive
+    // path traversal ("zip slip") is not a write risk on this path; the guards
+    // below are about resource exhaustion, matching the Office branch.
+    if format == "zip" {
+        use std::io::Read;
+        for i in 0..archive.len() {
+            if entry_count >= MAX_EXTRACT_FILE_COUNT {
+                break;
+            }
+            let Ok(mut file) = archive.by_index(i) else {
+                continue;
+            };
+            let name = file.name().to_string();
+            if !archive_entry_is_text(&name) {
+                continue;
+            }
+            let size = file.size();
+            if size > MAX_EXTRACT_ENTRY_SIZE {
+                continue;
+            }
+            if zip_entry_is_bomb(size, file.compressed_size()) {
+                tracing::warn!(
+                    entry = %name,
+                    uncompressed = size,
+                    compressed = file.compressed_size(),
+                    ratio_cap = MAX_ZIP_COMPRESSION_RATIO,
+                    "ZIP entry exceeds compression ratio cap — skipping"
+                );
+                continue;
+            }
+            if total_read + size > MAX_EXTRACT_TOTAL_SIZE {
+                break;
+            }
+            // Bound the read by the per-entry cap regardless of the
+            // header-declared `size`, which is attacker-controlled: a lying
+            // header must not turn into an unbounded read.
+            let mut buf = Vec::new();
+            if (&mut file)
+                .take(MAX_EXTRACT_ENTRY_SIZE)
+                .read_to_end(&mut buf)
+                .is_ok()
+            {
+                total_read += buf.len() as u64;
+                entry_count += 1;
+                text.push_str(&String::from_utf8_lossy(&buf));
                 text.push('\n');
             }
         }
@@ -1759,10 +1839,9 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
     }
 
     // Extract and read text content from small text files
-    let text_extensions = [
-        "txt", "csv", "tsv", "log", "json", "xml", "html", "yml", "yaml", "toml", "ini", "cfg",
-        "conf", "md", "eml", "vcf", "ics", "sql", "env",
-    ];
+    // Shared with the ZIP walker via ARCHIVE_TEXT_EXTENSIONS so the three
+    // archive extractors cannot drift apart on what counts as scannable text.
+    let text_extensions = ARCHIVE_TEXT_EXTENSIONS;
 
     let tmp_dir = tempfile::TempDir::new().map_err(|e| e.to_string())?;
 
@@ -1952,10 +2031,9 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
     }
 
     let mut file_count = 0u32;
-    let text_extensions = [
-        "txt", "csv", "tsv", "log", "json", "xml", "html", "yml", "yaml", "toml", "ini", "cfg",
-        "conf", "md", "eml", "vcf", "ics", "sql", "env",
-    ];
+    // Shared with the ZIP walker via ARCHIVE_TEXT_EXTENSIONS so the three
+    // archive extractors cannot drift apart on what counts as scannable text.
+    let text_extensions = ARCHIVE_TEXT_EXTENSIONS;
 
     // Walk extracted files
     fn walk_dir(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
