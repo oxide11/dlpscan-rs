@@ -516,18 +516,28 @@ pub fn results_to_json(results: &[PipelineResult], pretty: bool) -> crate::Resul
 }
 
 fn escape_csv_field(field: &str) -> String {
-    let needs_quoting = field.contains(',')
-        || field.contains('"')
-        || field.contains('\n')
-        || field.contains('\r')
-        || field.starts_with('=')
-        || field.starts_with('+')
-        || field.starts_with('-')
-        || field.starts_with('@');
-    if needs_quoting {
-        format!("\"{}\"", field.replace('"', "\"\""))
+    // Formula injection (CWE-1236): a spreadsheet evaluates any cell that
+    // begins with =, +, -, @, TAB or CR as a formula. RFC-4180 quoting does
+    // NOT stop this — the app strips the quotes before evaluating — so the
+    // previous quote-only guard here detected the danger but did not defuse it.
+    // Prefix a single quote to force the cell to text, then quote for
+    // delimiters. (file_path and error can both carry attacker-influenced text,
+    // e.g. a filename that starts with `=`.)
+    let dangerous_lead = field
+        .chars()
+        .next()
+        .is_some_and(|c| matches!(c, '=' | '+' | '-' | '@' | '\t' | '\r'));
+    let neutralized;
+    let body: &str = if dangerous_lead {
+        neutralized = format!("'{field}");
+        &neutralized
     } else {
-        field.to_string()
+        field
+    };
+    if body.contains(',') || body.contains('"') || body.contains('\n') || body.contains('\r') {
+        format!("\"{}\"", body.replace('"', "\"\""))
+    } else {
+        body.to_string()
     }
 }
 
@@ -545,4 +555,29 @@ pub fn results_to_csv(results: &[PipelineResult]) -> String {
         ));
     }
     output
+}
+
+#[cfg(test)]
+mod csv_escape_tests {
+    use super::escape_csv_field;
+
+    #[test]
+    fn formula_leads_are_forced_to_text() {
+        // Quoting alone does not stop a spreadsheet evaluating these; the
+        // leading apostrophe does. Regression for a quote-only guard that
+        // detected the danger but left the payload live.
+        for p in ["=1+1", "+1", "-2+3", "@SUM(A1)"] {
+            let out = escape_csv_field(p);
+            assert!(
+                out.starts_with('\'') || out.starts_with("\"'"),
+                "{p:?} not neutralized -> {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_and_delimited_values() {
+        assert_eq!(escape_csv_field("report.pdf"), "report.pdf");
+        assert_eq!(escape_csv_field("a,b"), "\"a,b\"");
+    }
 }
