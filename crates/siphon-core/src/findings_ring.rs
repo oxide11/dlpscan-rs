@@ -12,6 +12,7 @@
 
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// One emitted finding, enriched with routing metadata so it's
@@ -65,6 +66,11 @@ pub fn severity_for(category: &str, confidence: f64) -> &'static str {
 pub struct FindingsRing {
     buf: Mutex<VecDeque<FindingRecord>>,
     cap: usize,
+    /// Total entries evicted since startup. Monotonically increasing;
+    /// surfaced in /v1/health/detailed so operators can detect ring
+    /// flooding (e.g. a single API key submitting junk scans to push
+    /// real findings out of the live window).
+    evictions: AtomicU64,
 }
 
 impl FindingsRing {
@@ -72,6 +78,7 @@ impl FindingsRing {
         Self {
             buf: Mutex::new(VecDeque::with_capacity(cap)),
             cap,
+            evictions: AtomicU64::new(0),
         }
     }
 
@@ -79,10 +86,21 @@ impl FindingsRing {
         self.cap
     }
 
+    /// Total entries evicted since startup.
+    pub fn eviction_count(&self) -> u64 {
+        self.evictions.load(Ordering::Relaxed)
+    }
+
     pub fn push(&self, rec: FindingRecord) {
         let mut guard = self.buf.lock().unwrap_or_else(|e| e.into_inner());
         if guard.len() >= self.cap {
             guard.pop_front();
+            self.evictions.fetch_add(1, Ordering::Relaxed);
+            tracing::warn!(
+                capacity = self.cap,
+                "findings ring at capacity — evicting oldest entry; \
+                 consider increasing SIPHON_FINDINGS_RING_CAP"
+            );
         }
         guard.push_back(rec);
     }
@@ -112,8 +130,10 @@ pub fn filter_findings<'a>(
         .filter(|f| severity.is_none_or(|s| f.severity == s))
         .filter(|f| {
             needle.as_deref().is_none_or(|n| {
-                f.text.to_ascii_lowercase().contains(n)
-                    || f.category.to_ascii_lowercase().contains(n)
+                // Intentionally omits f.text — searching the raw matched
+                // value would let callers oracle-check whether a specific
+                // PAN or SSN flowed through the scanner.
+                f.category.to_ascii_lowercase().contains(n)
                     || f.sub_category.to_ascii_lowercase().contains(n)
             })
         })
@@ -153,6 +173,7 @@ mod tests {
         assert_eq!(snap.len(), 2);
         assert_eq!(snap[0].id, "c"); // newest first
         assert_eq!(snap[1].id, "b");
+        assert_eq!(r.eviction_count(), 1);
     }
 
     #[test]
@@ -173,7 +194,11 @@ mod tests {
         assert_eq!(only_email.len(), 1);
         assert_eq!(only_email[0].id, "a");
 
-        let contains_hit = filter_findings(&snap, None, None, Some("hello"), None);
-        assert_eq!(contains_hit.len(), 2);
+        // contains now searches category/sub_category only, not raw text
+        let contains_hit = filter_findings(&snap, None, None, Some("email"), None);
+        assert_eq!(contains_hit.len(), 1);
+        assert_eq!(contains_hit[0].id, "a");
+        let no_hit = filter_findings(&snap, None, None, Some("hello"), None);
+        assert_eq!(no_hit.len(), 0);
     }
 }

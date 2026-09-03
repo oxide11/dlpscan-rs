@@ -471,7 +471,19 @@ pub fn create_siem_from_env() -> Option<Box<dyn SIEMAdapter>> {
                 std::env::var("DLPSCAN_SIEM_HOST"),
                 std::env::var("DLPSCAN_SIEM_PORT"),
             ) {
-                if let Ok(p) = port.parse() {
+                if let Ok(p) = port.parse::<u16>() {
+                    // Validate the syslog host against the SSRF filter.
+                    // Build a dummy https:// URL so is_safe_url() can parse
+                    // the host component — the scheme is not transmitted.
+                    let probe = format!("https://{}:{}", host, p);
+                    if !crate::webhooks::is_safe_url(&probe) {
+                        tracing::error!(
+                            host = %host,
+                            "syslog host rejected by SSRF filter — \
+                             refusing to configure syslog adapter"
+                        );
+                        return None;
+                    }
                     adapter = adapter.with_address(&host, p);
                 }
             }

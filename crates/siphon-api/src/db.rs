@@ -623,10 +623,22 @@ pub async fn persist_evadex_run(
             .and_then(|v| v.get("technique"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let variant_value: Option<&str> = f
+        // Redact before persisting: store only a structural prefix so
+        // real PANs/SSNs don't land in the evadex_findings table in
+        // clear text. First 4 chars + **** preserves enough structure
+        // for deduplication without retaining the sensitive payload.
+        let redacted_variant: Option<String> = f
             .get("variant")
             .and_then(|v| v.get("value"))
-            .and_then(|v| v.as_str());
+            .and_then(|v| v.as_str())
+            .map(|v| {
+                if v.len() > 4 {
+                    format!("{}****", &v[..4])
+                } else {
+                    "****".to_string()
+                }
+            });
+        let variant_value: Option<&str> = redacted_variant.as_deref();
         let det: bool = f.get("detected").and_then(|v| v.as_bool()).unwrap_or(false);
         let confidence: Option<f32> = f
             .get("confidence")
