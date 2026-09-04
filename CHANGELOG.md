@@ -14,6 +14,50 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — RBAC hardening: admin gate on eight additional endpoints + streaming audit
+
+### siphon-api 2.6.2
+
+- **fix(api,security): gate `GET /v1/audit` behind `RequireAdminAction`.** Audit
+  events contain source IPs, operation metadata, and timing of every scan — any
+  authenticated caller could enumerate the full audit ring. Endpoint is now
+  admin-only.
+
+- **fix(api,security): gate `GET /v1/allowlist` behind `RequireAdminAction`.**
+  The allowlist contains the exact text strings and regex patterns that cause the
+  scanner to suppress findings — exposing this to non-admins hands callers a
+  complete DLP bypass map. Endpoint is now admin-only.
+
+- **fix(api,security): gate `GET /v1/overrides/current` and `GET
+  /v1/overrides/disk` behind `RequireAdminAction`.** Both endpoints return the
+  live and on-disk pattern override configs (disabled patterns, field overrides,
+  runtime regex swaps). Previously readable by any authenticated caller. Now
+  admin-only.
+
+- **fix(api,security): gate `GET /v1/policies` behind `RequireAdminAction`.**
+  The response includes `source` — the `SIPHON_POLICIES_DIR` filesystem path —
+  and the full policy list (baseline configurations). Previously readable by any
+  authenticated caller. Now admin-only.
+
+- **fix(api,security): gate `GET /v1/metrics` behind `RequireAdminAction`.**
+  Metrics (uptime, scan totals, error counts, pattern counts) are operational
+  state useful for fingerprinting the scanner. Now admin-only.
+
+- **fix(api,security): gate `GET /v1/ratelimit` behind `RequireAdminAction`.**
+  Returns active bucket counts that could be used to time attacks. Now
+  admin-only.
+
+- **fix(api,security): gate `GET /v1/version` behind `RequireAdminAction`.**
+  Returns `target_triple`, `rust_version`, and `build_profile` — build
+  fingerprinting info. Now admin-only.
+
+- **fix(api,compliance): emit SCAN audit events from `POST /scan/stream`.**
+  Streaming scans were not recorded in the audit log, creating a PCI-DSS gap
+  where significant scan activity was invisible. `scan_stream` now emits a SCAN
+  audit event (with source IP, finding count, duration) on success and on error.
+
+---
+
 ## 2026-09-03 — RBAC hardening: admin gate on six unprotected endpoints
 
 ### siphon-api 2.6.1

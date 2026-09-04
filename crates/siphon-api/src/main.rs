@@ -2089,7 +2089,7 @@ struct PoliciesResponse {
     policies: Vec<Policy>,
 }
 
-async fn list_policies(State(state): State<Arc<AppState>>) -> Json<PoliciesResponse> {
+async fn list_policies(_: RequireAdminAction, State(state): State<Arc<AppState>>) -> Json<PoliciesResponse> {
     let source = std::env::var("SIPHON_POLICIES_DIR").ok();
     Json(PoliciesResponse {
         loaded: source.is_some(),
@@ -2216,7 +2216,7 @@ struct MetricsResponse {
     policies_loaded: usize,
 }
 
-async fn metrics_snapshot(State(state): State<Arc<AppState>>) -> Json<MetricsResponse> {
+async fn metrics_snapshot(_: RequireAdminAction, State(state): State<Arc<AppState>>) -> Json<MetricsResponse> {
     Json(MetricsResponse {
         uptime_secs: state.metrics.started_at.elapsed().as_secs(),
         scans_total: state.metrics.scans_total.load(Ordering::Relaxed),
@@ -2239,7 +2239,7 @@ struct VersionResponse {
     categories_loaded: usize,
 }
 
-async fn version() -> Json<VersionResponse> {
+async fn version(_: RequireAdminAction) -> Json<VersionResponse> {
     Json(VersionResponse {
         api_version: env!("CARGO_PKG_VERSION"),
         core_version: siphon_core::VERSION,
@@ -2482,7 +2482,7 @@ struct OverridesStateResponse {
     overrides: siphon_core::overrides::PatternOverrides,
 }
 
-async fn overrides_current(State(state): State<Arc<AppState>>) -> Json<OverridesStateResponse> {
+async fn overrides_current(_: RequireAdminAction, State(state): State<Arc<AppState>>) -> Json<OverridesStateResponse> {
     let loaded = state
         .live_overrides
         .read()
@@ -2497,6 +2497,7 @@ async fn overrides_current(State(state): State<Arc<AppState>>) -> Json<Overrides
 }
 
 async fn overrides_disk(
+    _: RequireAdminAction,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<OverridesStateResponse>, (StatusCode, Json<ErrorResponse>)> {
     use siphon_core::overrides::{LoadError, PatternOverrides};
@@ -4090,6 +4091,7 @@ struct AuditResponse {
 }
 
 async fn list_audit_events(
+    _: RequireAdminAction,
     Query(q): Query<AuditQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<AuditResponse> {
@@ -4154,7 +4156,7 @@ struct RateLimitResponse {
     total_recent_requests: usize,
 }
 
-async fn rate_limit_status(State(state): State<Arc<AppState>>) -> Json<RateLimitResponse> {
+async fn rate_limit_status(_: RequireAdminAction, State(state): State<Arc<AppState>>) -> Json<RateLimitResponse> {
     let guard = state.rate_limiter.lock().unwrap_or_else(|e| e.into_inner());
     let (active, slots) = guard.snapshot();
     Json(RateLimitResponse {
@@ -4245,7 +4247,7 @@ struct AllowlistEntries {
     paths: Vec<String>,
 }
 
-async fn list_allowlist(State(state): State<Arc<AppState>>) -> Json<AllowlistResponse> {
+async fn list_allowlist(_: RequireAdminAction, State(state): State<Arc<AppState>>) -> Json<AllowlistResponse> {
     let a = &state.allowlist;
     Json(AllowlistResponse {
         loaded_from: std::env::var("SIPHON_ALLOWLIST_PATH").ok(),
@@ -5495,7 +5497,11 @@ async fn findings_prune(
 /// The endpoint accepts a POST body even though `EventSource` in browsers
 /// only supports GET.  Use `fetch()` + `ReadableStream` on the client side
 /// (or curl with `--no-buffer`).
-async fn scan_stream(State(state): State<Arc<AppState>>, Json(req): Json<ScanRequest>) -> Response {
+async fn scan_stream(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(req): Json<ScanRequest>,
+) -> Response {
     use axum::response::sse::{Event, KeepAlive, Sse};
     use tokio_stream::wrappers::ReceiverStream;
 
@@ -5558,6 +5564,7 @@ async fn scan_stream(State(state): State<Arc<AppState>>, Json(req): Json<ScanReq
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, std::convert::Infallible>>(128);
     let text = req.text;
     let metrics = state.metrics.clone();
+    let source_ip = addr.ip().to_string();
 
     tokio::spawn(async move {
         let start = Instant::now();
@@ -5584,6 +5591,16 @@ async fn scan_stream(State(state): State<Arc<AppState>>, Json(req): Json<ScanReq
                     .findings_total
                     .fetch_add(count as u64, Ordering::Relaxed);
                 let duration_ms = start.elapsed().as_millis() as u64;
+                if let Ok(event) = AuditEvent::new("SCAN") {
+                    emit_audit(
+                        event
+                            .with_action("scan_stream")
+                            .with_outcome("success")
+                            .with_source_ip(&source_ip)
+                            .with_metadata("findings", serde_json::json!(count))
+                            .with_metadata("duration_ms", serde_json::json!(duration_ms)),
+                    );
+                }
                 let done = serde_json::json!({
                     "done": true,
                     "total": count,
@@ -5594,6 +5611,14 @@ async fn scan_stream(State(state): State<Arc<AppState>>, Json(req): Json<ScanReq
             }
             Err(e) => {
                 metrics.scan_errors_total.fetch_add(1, Ordering::Relaxed);
+                if let Ok(event) = AuditEvent::new("SCAN") {
+                    emit_audit(
+                        event
+                            .with_action("scan_stream")
+                            .with_outcome("error")
+                            .with_source_ip(&source_ip),
+                    );
+                }
                 let err = serde_json::json!({ "error": e.to_string() }).to_string();
                 let _ = tx.send(Ok(Event::default().data(err))).await;
             }
