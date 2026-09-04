@@ -3,7 +3,18 @@
 use crate::errors::DlpError;
 
 /// Maximum input size (10 MB).
-pub const MAX_INPUT_SIZE: usize = 10 * 1024 * 1024;
+/// Largest text the scanner will accept, in bytes.
+///
+/// Raised from 10 MB once the normalization offset map moved to `u32`
+/// (siphon-core 2.5.0), which halved the dominant allocation. Measured cost of
+/// a single scan is roughly 5.5 MB of RSS per MB of input, so 30 MB peaks
+/// around 320 MB — see `deploy/helm/siphon/values.yaml`, whose memory limits
+/// are sized from that measurement rather than from an estimate.
+///
+/// This is the *text* cap, not a message or upload cap. siphon-fs accepts
+/// larger uploads and extracts them; text beyond this is reported as
+/// `TEXT_EXCEEDS_SCANNER_LIMIT` with the file marked not scanned, never clean.
+pub const MAX_INPUT_SIZE: usize = 30 * 1024 * 1024;
 
 /// Validate scanner input text.
 pub fn validate_text_input(text: &str) -> crate::Result<()> {

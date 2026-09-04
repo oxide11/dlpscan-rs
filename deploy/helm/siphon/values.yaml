@@ -96,12 +96,18 @@ api:
       - siphon-fs
 
   resources:
+    # Sized from measurement, not estimate. A single scan at the 30 MB
+    # MAX_INPUT_SIZE peaks at ~336 MB RSS (measured: 5 MB->189, 9 MB->211,
+    # 20 MB->279, 30 MB->336) and takes ~3.1 s. At the previous 1Gi limit
+    # only two concurrent maximum-size scans fit before the pod is OOM-killed.
+    # 2Gi leaves room for roughly five, which is the headroom a burst of large
+    # attachments needs.
     requests:
       cpu: 250m
-      memory: 256Mi
+      memory: 512Mi
     limits:
       cpu: "2"
-      memory: 1Gi
+      memory: 2Gi
 
   autoscaling:
     enabled: false
@@ -170,12 +176,18 @@ fs:
     port: 8081
 
   resources:
+    # Sized from measurement, not estimate. A single scan at the 30 MB
+    # MAX_INPUT_SIZE peaks at ~336 MB RSS (measured: 5 MB->189, 9 MB->211,
+    # 20 MB->279, 30 MB->336) and takes ~3.1 s. At the previous 1Gi limit
+    # only two concurrent maximum-size scans fit before the pod is OOM-killed.
+    # 2Gi leaves room for roughly five, which is the headroom a burst of large
+    # attachments needs.
     requests:
       cpu: 200m
-      memory: 256Mi
+      memory: 512Mi
     limits:
       cpu: "2"
-      memory: 1Gi
+      memory: 2Gi
 
   livenessProbe:
     httpGet:
