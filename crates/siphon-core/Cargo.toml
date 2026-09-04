@@ -1,6 +1,6 @@
 [package]
 name = "siphon-core"
-version = "2.5.0"
+version = "2.6.0"
 edition = "2021"
 description = "Polygon Siphon scanner engine — patterns, validators, and detection pipeline"
 license = "MIT"
@@ -35,6 +35,7 @@ lopdf = { version = "0.44", optional = true, default-features = false }
 # streams). Already in the dep graph via the root crate's `msg`
 # feature; optional here so non-forensics builds skip it.
 cfb = { version = "0.14", optional = true }
+mail-parser = { version = "0.11.8", default-features = false, features = ["full_encoding"] }
 
 [features]
 bin-data = []

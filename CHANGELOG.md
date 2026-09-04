@@ -14,6 +14,64 @@ starting from this file.
 
 ---
 
+## 2026-09-04 — Shared MIME layer: .eml attachments were never scanned
+
+### siphon-core 2.6.0
+
+- **feat(core): `mime` — shared MIME decomposition.** Turns a raw RFC 5322
+  message into a flat list of scannable parts, each addressed by dotted MIME
+  path (`"2.1.4"`) rather than an ordinal, because MIME nests and a path stays
+  stable across an MTA retry.
+
+  Shared deliberately. The `.eml` extractor and the forthcoming mail path need
+  the same walk, and two parsers disagreeing about what a message contains is
+  a bypass: an attacker who makes our boundary handling differ from the
+  recipient's MUA gets content past us that the recipient still sees. For the
+  same reason the parsing itself is `mail-parser`'s rather than hand-rolled.
+
+  Bounded throughout, since message structure is attacker-controlled: part
+  count, nesting depth and total decoded bytes. Exceeding any of them emits a
+  warning rather than truncating quietly — content that was not inspected must
+  never be reported as clean. Malformed input yields a plain-text part rather
+  than an error, so a scanner cannot be switched off by malforming its input.
+
+  `ParsedMessage::context_envelope(path)` supplies the surrounding material for
+  scanning one part in isolation, excluding the part itself so a part can never
+  supply its own context and have a local keyword scored as though it came
+  from elsewhere.
+
+### siphon 2.3.0
+
+- **fix(cli,security): `.eml` attachments were never scanned.** The EML
+  extractor read the file as a UTF-8 string, scraped six headers, and appended
+  the remaining lines as plain text. No boundary handling, no MIME walk, no
+  transfer-encoding decode. A base64 attachment therefore reached the scanner
+  still encoded, matched nothing, and the message came back clean.
+
+  Demonstrated before fixing: an `.eml` whose attachment held
+  `4111111111111111` returned two findings — the two header addresses — and
+  missed the card entirely. The normalizer's base64 stage does not cover it,
+  because MUAs wrap base64 at 76 columns and decoding wrapped base64 per token
+  yields noise.
+
+  The extractor now delegates to `siphon_core::mime` and runs each attachment
+  through the full extractor registry, so a PDF, spreadsheet or archive
+  attached to a message is read exactly as it would be if uploaded directly.
+  An intermediate version of this fix only *named* attachments in a warning,
+  which made the gap visible without closing it — the payload was still never
+  scanned.
+
+  Recursion is bounded by depth rather than by refusing nested mail: a
+  forwarded message carrying a spreadsheet is ordinary traffic, and declining
+  to open it would be the same class of gap. An attachment that fails
+  extraction produces a warning, never silence.
+
+  Also reads bytes rather than a UTF-8 `String`. Real mail carries 8-bit
+  bodies and legacy charsets, and `read_to_string` turned a perfectly
+  decodable message into a failed extraction.
+
+---
+
 ## 2026-09-04 — Halve the offset map
 
 ### siphon-core 2.5.0

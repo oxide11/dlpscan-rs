@@ -1,8 +1,8 @@
 {
   "name": "siphon-ui",
-  "version": "2.2.4",
+  "version": "2.3.0",
   "private": true,
-  "description": "Siphon analyst UI — Next.js SPA served from the Nginx /ui/ subpath.",
+  "description": "Siphon analyst UI \u2014 Next.js SPA served from the Nginx /ui/ subpath.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
