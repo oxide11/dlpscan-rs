@@ -71,6 +71,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "0008_tenant_id",
         include_str!("../migrations/0008_tenant_id.sql"),
     ),
+    (
+        9,
+        "0009_scan_rollup",
+        include_str!("../migrations/0009_scan_rollup.sql"),
+    ),
 ];
 
 /// Initialise an optional database pool from the environment.
@@ -796,4 +801,347 @@ fn build_tls() -> Result<MaybeTls, String> {
 enum MaybeTls {
     Plain,
     Tls(Box<tokio_postgres_rustls::MakeRustlsConnect>),
+}
+
+// ---------------------------------------------------------------------------
+// Scan rollup — aggregate counters for all scanned traffic
+// ---------------------------------------------------------------------------
+
+/// One accumulator bucket, keyed by (hour, tenant, channel).
+///
+/// Counts are kept in memory and flushed periodically rather than written per
+/// scan. At mail-gateway volume a row per scan is the difference between a
+/// table that grows with time and one that grows with traffic; see
+/// `migrations/0009_scan_rollup.sql`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RollupCounts {
+    pub scans_total: u64,
+    pub scans_with_findings: u64,
+    pub findings_total: u64,
+    pub bytes_scanned: u64,
+    pub duration_ms_sum: u64,
+    pub oversize_skipped: u64,
+    pub scan_errors: u64,
+}
+
+impl RollupCounts {
+    fn merge(&mut self, other: &RollupCounts) {
+        self.scans_total += other.scans_total;
+        self.scans_with_findings += other.scans_with_findings;
+        self.findings_total += other.findings_total;
+        self.bytes_scanned += other.bytes_scanned;
+        self.duration_ms_sum += other.duration_ms_sum;
+        self.oversize_skipped += other.oversize_skipped;
+        self.scan_errors += other.scan_errors;
+    }
+
+    fn is_empty(&self) -> bool {
+        *self == RollupCounts::default()
+    }
+}
+
+/// Bucket key. `tenant_id` is an empty string rather than None so it matches
+/// the table's NOT NULL primary-key column — see the migration for why NULL
+/// would break aggregation.
+pub type RollupKey = (chrono::DateTime<chrono::Utc>, String, String);
+
+/// In-process accumulator, flushed to `scan_rollup` on an interval.
+///
+/// A `Mutex<HashMap>` rather than per-field atomics: the unit of work is a
+/// whole bucket, and holding the lock for a handful of integer adds is far
+/// cheaper than the scan that produced them. Contention here is not close to
+/// being the bottleneck at any volume the scanner itself can sustain.
+#[derive(Default)]
+pub struct RollupAccumulator {
+    buckets: std::sync::Mutex<std::collections::HashMap<RollupKey, RollupCounts>>,
+}
+
+impl RollupAccumulator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record one scan's worth of counts. Cheap and infallible: this sits on
+    /// the request path, so it must never block on I/O or fail a scan.
+    pub fn record(&self, tenant_id: Option<&str>, channel: &str, counts: RollupCounts) {
+        let bucket_hour = truncate_to_hour(chrono::Utc::now());
+        let key = (
+            bucket_hour,
+            tenant_id.unwrap_or("").to_string(),
+            channel.to_string(),
+        );
+        let mut guard = self
+            .buckets
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        guard.entry(key).or_default().merge(&counts);
+    }
+
+    /// Remove and return everything accumulated so far.
+    ///
+    /// Taking the buckets out under the lock means a concurrent `record` lands
+    /// in a fresh bucket rather than being lost to the flush, and the lock is
+    /// not held across the database round trip.
+    fn drain(&self) -> Vec<(RollupKey, RollupCounts)> {
+        let mut guard = self
+            .buckets
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        std::mem::take(&mut *guard).into_iter().collect()
+    }
+
+    /// Put drained counts back after a failed flush, merging with anything
+    /// recorded in the meantime, so a database blip costs latency rather than
+    /// data. Buckets are additive, so re-merging is exact, not approximate.
+    fn restore(&self, drained: Vec<(RollupKey, RollupCounts)>) {
+        let mut guard = self
+            .buckets
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for (key, counts) in drained {
+            guard.entry(key).or_default().merge(&counts);
+        }
+    }
+}
+
+fn truncate_to_hour(ts: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    use chrono::{Timelike, Utc};
+    ts.with_minute(0)
+        .and_then(|t| t.with_second(0))
+        .and_then(|t| t.with_nanosecond(0))
+        .unwrap_or_else(|| {
+            // with_* only fails on values out of range, which 0 never is;
+            // fall back rather than panic on the request path.
+            tracing::warn!("failed to truncate timestamp to hour; using raw value");
+            Utc::now()
+        })
+}
+
+/// Flush accumulated counters to `scan_rollup`.
+///
+/// Writes are additive UPSERTs (`SET col = scan_rollup.col + EXCLUDED.col`),
+/// so every pod flushes independently and the totals sum without coordination
+/// — no leader, no partitioning of the counter space, and a pod that misses a
+/// flush simply contributes late rather than double-counting.
+pub async fn flush_rollup(
+    pool: &Option<Pool>,
+    acc: &RollupAccumulator,
+) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+    let Some(pool) = pool else {
+        // No database configured: drop the counts rather than growing the map
+        // without bound.
+        let _ = acc.drain();
+        return Ok(0);
+    };
+
+    let drained = acc.drain();
+    if drained.is_empty() {
+        return Ok(0);
+    }
+
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            acc.restore(drained);
+            return Err(Box::new(e));
+        }
+    };
+
+    let mut written = 0usize;
+    for (key, counts) in &drained {
+        if counts.is_empty() {
+            continue;
+        }
+        let (bucket_hour, tenant_id, channel) = key;
+        let res = client
+            .execute(
+                "INSERT INTO scan_rollup \
+                 (bucket_hour, tenant_id, channel, scans_total, scans_with_findings, \
+                  findings_total, bytes_scanned, duration_ms_sum, oversize_skipped, scan_errors) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
+                 ON CONFLICT (bucket_hour, tenant_id, channel) DO UPDATE SET \
+                   scans_total         = scan_rollup.scans_total         + EXCLUDED.scans_total, \
+                   scans_with_findings = scan_rollup.scans_with_findings + EXCLUDED.scans_with_findings, \
+                   findings_total      = scan_rollup.findings_total      + EXCLUDED.findings_total, \
+                   bytes_scanned       = scan_rollup.bytes_scanned       + EXCLUDED.bytes_scanned, \
+                   duration_ms_sum     = scan_rollup.duration_ms_sum     + EXCLUDED.duration_ms_sum, \
+                   oversize_skipped    = scan_rollup.oversize_skipped    + EXCLUDED.oversize_skipped, \
+                   scan_errors         = scan_rollup.scan_errors         + EXCLUDED.scan_errors",
+                &[
+                    bucket_hour,
+                    tenant_id,
+                    channel,
+                    &(counts.scans_total as i64),
+                    &(counts.scans_with_findings as i64),
+                    &(counts.findings_total as i64),
+                    &(counts.bytes_scanned as i64),
+                    &(counts.duration_ms_sum as i64),
+                    &(counts.oversize_skipped as i64),
+                    &(counts.scan_errors as i64),
+                ],
+            )
+            .await;
+
+        match res {
+            Ok(_) => written += 1,
+            Err(e) => {
+                // Restore only what has not been written, so a mid-flush
+                // failure neither loses nor double-counts.
+                let remaining: Vec<_> = drained.iter().skip(written).cloned().collect();
+                acc.restore(remaining);
+                return Err(Box::new(e));
+            }
+        }
+    }
+
+    Ok(written)
+}
+
+#[cfg(test)]
+mod rollup_tests {
+    use super::*;
+
+    #[test]
+    fn record_merges_into_one_bucket_per_key() {
+        let acc = RollupAccumulator::new();
+        acc.record(
+            Some("acme"),
+            "api",
+            RollupCounts {
+                scans_total: 1,
+                findings_total: 3,
+                ..Default::default()
+            },
+        );
+        acc.record(
+            Some("acme"),
+            "api",
+            RollupCounts {
+                scans_total: 1,
+                scans_with_findings: 1,
+                findings_total: 2,
+                ..Default::default()
+            },
+        );
+
+        let drained = acc.drain();
+        assert_eq!(drained.len(), 1, "same key must collapse into one bucket");
+        let (_, counts) = &drained[0];
+        assert_eq!(counts.scans_total, 2);
+        assert_eq!(counts.findings_total, 5);
+        assert_eq!(counts.scans_with_findings, 1);
+    }
+
+    #[test]
+    fn distinct_tenants_and_channels_do_not_merge() {
+        let acc = RollupAccumulator::new();
+        let one = RollupCounts {
+            scans_total: 1,
+            ..Default::default()
+        };
+        acc.record(Some("acme"), "api", one);
+        acc.record(Some("globex"), "api", one);
+        acc.record(Some("acme"), "icap", one);
+        assert_eq!(acc.drain().len(), 3);
+    }
+
+    #[test]
+    fn untenanted_scans_share_the_empty_string_key() {
+        let acc = RollupAccumulator::new();
+        let one = RollupCounts {
+            scans_total: 1,
+            ..Default::default()
+        };
+        acc.record(None, "api", one);
+        acc.record(Some(""), "api", one);
+        let drained = acc.drain();
+        assert_eq!(
+            drained.len(),
+            1,
+            "None and empty tenant must aggregate together, not split"
+        );
+        assert_eq!(drained[0].1.scans_total, 2);
+    }
+
+    #[test]
+    fn drain_empties_so_counts_are_not_flushed_twice() {
+        let acc = RollupAccumulator::new();
+        acc.record(
+            None,
+            "api",
+            RollupCounts {
+                scans_total: 5,
+                ..Default::default()
+            },
+        );
+        assert_eq!(acc.drain().len(), 1);
+        assert!(acc.drain().is_empty(), "second drain must yield nothing");
+    }
+
+    #[test]
+    fn restore_merges_rather_than_overwrites() {
+        // A failed flush must not clobber counts recorded while it was in
+        // flight.
+        let acc = RollupAccumulator::new();
+        acc.record(
+            None,
+            "api",
+            RollupCounts {
+                scans_total: 2,
+                ..Default::default()
+            },
+        );
+        let drained = acc.drain();
+
+        acc.record(
+            None,
+            "api",
+            RollupCounts {
+                scans_total: 3,
+                ..Default::default()
+            },
+        );
+        acc.restore(drained);
+
+        let after = acc.drain();
+        assert_eq!(after.len(), 1);
+        assert_eq!(
+            after[0].1.scans_total, 5,
+            "restored and concurrent counts must sum"
+        );
+    }
+
+    #[test]
+    fn oversize_and_errors_stay_out_of_scans_total() {
+        // A scan that did not happen must not inflate the denominator — that
+        // would quietly improve the apparent detection rate.
+        let acc = RollupAccumulator::new();
+        acc.record(
+            None,
+            "icap",
+            RollupCounts {
+                oversize_skipped: 4,
+                scan_errors: 2,
+                ..Default::default()
+            },
+        );
+        let drained = acc.drain();
+        let counts = &drained[0].1;
+        assert_eq!(counts.scans_total, 0);
+        assert_eq!(counts.oversize_skipped, 4);
+        assert_eq!(counts.scan_errors, 2);
+    }
+
+    #[test]
+    fn timestamps_truncate_to_the_hour() {
+        use chrono::TimeZone;
+        let ts = chrono::Utc
+            .with_ymd_and_hms(2026, 9, 4, 13, 47, 31)
+            .unwrap();
+        let truncated = truncate_to_hour(ts);
+        assert_eq!(
+            truncated,
+            chrono::Utc.with_ymd_and_hms(2026, 9, 4, 13, 0, 0).unwrap()
+        );
+    }
 }
