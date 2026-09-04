@@ -141,7 +141,7 @@ by how the work was split, across 30% of the pattern set.
 |---|---|---|
 | **1** | **Context envelope** — pass body text, subject and filenames as an additional context source for every part's scan | Core API change: context sourced from a string separate from the scanned text |
 | 2 | Message-level second pass over concatenated text, gated categories only | Doubles work on the gated set; reintroduces the §5 memory problem on large messages |
-| 3 | Accept the gap; rely on the 410 ungated patterns | Free, but knowingly weakens a third of the corpus on the channel being built |
+| 3 | Accept the gap; rely on the 409 ungated patterns | Free, but knowingly weakens a third of the corpus on the channel being built |
 
 **Decision: option 1.** It is the only one that keeps parts independently
 scannable — which §4 depends on — while preserving gated detection. It
