@@ -55,8 +55,18 @@ starting from this file.
   `oversize_skipped` and `scan_errors` are counted separately and deliberately
   excluded from `scans_total`: content that was never inspected must not
   inflate the denominator and quietly improve the apparent detection rate.
-  Rates are derived by the caller rather than stored, so a rate can never be
-  wrong because one of its two inputs was updated and the other was not.
+
+- **feat(api): `GET /v1/stats/throughput`.** The denominator side of detection
+  metrics — `/v1/findings/stats` reports what was found, this reports what was
+  looked at, including clean scans that store no row of their own. Returns raw
+  counters per `(hour, tenant, channel)` plus derived `detection_rate`,
+  `findings_per_scan`, `mean_duration_ms` and `coverage_gap`
+  (`?hours=&tenant=&channel=`, admin-only, 30 req/min).
+
+  Rates are computed on read rather than stored, so they cannot drift from the
+  counts they summarise, and every rate is `null` rather than `0.0` when its
+  denominator is zero — a rate over nothing is undefined, and `0.0` reads as
+  "nothing was detected" rather than "nothing was scanned".
 
 ### siphon-fs 1.1.4
 

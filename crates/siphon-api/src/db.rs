@@ -1224,3 +1224,70 @@ mod persist_scan_sql_tests {
         );
     }
 }
+
+/// One `scan_rollup` row as returned to the stats endpoint.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RollupBucket {
+    pub bucket_hour: chrono::DateTime<chrono::Utc>,
+    pub tenant_id: String,
+    pub channel: String,
+    pub scans_total: i64,
+    pub scans_with_findings: i64,
+    pub findings_total: i64,
+    pub bytes_scanned: i64,
+    pub duration_ms_sum: i64,
+    pub oversize_skipped: i64,
+    pub scan_errors: i64,
+}
+
+/// Read rollup buckets in a time range, newest first.
+///
+/// Returns raw counts. Rates are computed by the caller from these, never
+/// stored — a stored rate can be wrong because one of its two inputs was
+/// updated and the other was not.
+pub async fn query_rollup(
+    pool: &Option<Pool>,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+    tenant_id: Option<&str>,
+    channel: Option<&str>,
+    limit: i64,
+) -> Result<Vec<RollupBucket>, Box<dyn std::error::Error + Send + Sync>> {
+    let Some(pool) = pool else {
+        return Ok(Vec::new());
+    };
+    let client = pool.get().await?;
+
+    // Both optional filters are expressed as "$n IS NULL OR col = $n" so the
+    // statement text is constant — no string building, and therefore no path
+    // by which a caller-supplied value reaches the SQL.
+    let rows = client
+        .query(
+            "SELECT bucket_hour, tenant_id, channel, scans_total, scans_with_findings, \
+                    findings_total, bytes_scanned, duration_ms_sum, oversize_skipped, scan_errors \
+             FROM scan_rollup \
+             WHERE bucket_hour >= $1 AND bucket_hour <= $2 \
+               AND ($3::text IS NULL OR tenant_id = $3) \
+               AND ($4::text IS NULL OR channel   = $4) \
+             ORDER BY bucket_hour DESC \
+             LIMIT $5",
+            &[&from, &to, &tenant_id, &channel, &limit],
+        )
+        .await?;
+
+    Ok(rows
+        .iter()
+        .map(|r| RollupBucket {
+            bucket_hour: r.get("bucket_hour"),
+            tenant_id: r.get("tenant_id"),
+            channel: r.get("channel"),
+            scans_total: r.get("scans_total"),
+            scans_with_findings: r.get("scans_with_findings"),
+            findings_total: r.get("findings_total"),
+            bytes_scanned: r.get("bytes_scanned"),
+            duration_ms_sum: r.get("duration_ms_sum"),
+            oversize_skipped: r.get("oversize_skipped"),
+            scan_errors: r.get("scan_errors"),
+        })
+        .collect())
+}

@@ -137,6 +137,9 @@ GET  /v1/audit                  recent events from audit ring buffer
 GET  /v1/findings               recent findings from this pod's FindingsRing (in-memory) (admin)
 GET  /v1/findings/pg            Postgres-backed paginated findings (?category=&limit=&offset=) (admin)
 GET  /v1/findings/stats         category breakdown + daily counts (cached 60s) + LSH section (admin)
+GET  /v1/stats/throughput       scanned-traffic counters + derived rates from scan_rollup
+                                (?hours=&tenant=&channel=); the denominator side of detection
+                                metrics — covers clean scans, which store no row of their own (admin)
 GET  /v1/findings/export        bulk CSV/JSON export (?format=csv|json&category=&from=&to=&limit=, max 100k rows; 5/min rate limit) (admin)
 POST /v1/findings/prune         manual retention trigger — admin only
 POST /v1/overrides/apply        hot-reload PatternOverrides (no restart) (admin)
@@ -176,6 +179,7 @@ Key env vars for siphon-api:
 | `SIPHON_DATABASE_TLS` | require | `require` or `disable`. Findings rows carry matched sensitive values, so the Postgres hop is encrypted by default; `require` pins `sslmode=require` and verifies the server certificate |
 | `SIPHON_DATABASE_CA_FILE` | — | extra PEM CA bundle for a self-signed Postgres certificate |
 | `SIPHON_FINDINGS_RETENTION_DAYS` | 90 | Days to retain findings (0 = keep forever) |
+| `SIPHON_ROLLUP_FLUSH_SECS` | 60 | How often aggregate scan counters are flushed to `scan_rollup`. Counters accumulate in memory between flushes, so a pod killed mid-window loses at most that much *counting* — findings themselves are unaffected |
 | `SIPHON_OVERRIDES_PATH` | — | PatternOverrides YAML (hot-reloadable) |
 
 The `LiveOverrides` state is an `Arc<RwLock<…>>` snapshot cloned per request —
