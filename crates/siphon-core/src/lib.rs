@@ -26,6 +26,9 @@ pub mod edm;
 pub mod errors;
 pub mod findings_ring;
 pub mod lsh;
+/// MIME message decomposition, shared by the `.eml` extractor and the mail
+/// path so both agree on what a message contains.
+pub mod mime;
 pub mod models;
 pub mod normalize;
 pub mod overrides;

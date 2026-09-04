@@ -555,38 +555,174 @@ fn parse_rtf(input: &str) -> String {
 }
 
 /// Extract text from an EML (email) file.
+///
+/// Delegates the MIME walk to `siphon_core::mime` so this path and the mail
+/// path cannot disagree about what a message contains.
+///
+/// This previously scraped six headers and appended the remaining lines as
+/// plain text, with no boundary handling and no transfer-encoding decode. A
+/// base64 attachment therefore reached the scanner as base64 and matched
+/// nothing — a `.eml` carrying a card number in an attachment came back
+/// clean. The normalizer's base64 stage does not cover it either, because
+/// MUAs wrap base64 at 76 columns and per-token decoding of wrapped base64
+/// produces noise.
 fn extract_eml(file_path: &str) -> Result<ExtractionResult, String> {
-    let content = std::fs::read_to_string(file_path).map_err(|e| e.to_string())?;
-    let mut text = String::new();
-    let mut in_headers = true;
-    let mut headers = HashMap::new();
+    // Read bytes, not a String. Real mail carries 8-bit content and legacy
+    // charsets in headers; `read_to_string` rejects anything non-UTF-8, which
+    // turned a decodable message into a failed extraction.
+    let raw = std::fs::read(file_path).map_err(|e| e.to_string())?;
+    let parsed = siphon_core::mime::parse_message(&raw);
 
-    for line in content.lines() {
-        if in_headers {
-            if line.is_empty() {
-                in_headers = false;
-                continue;
+    let mut text = String::new();
+    // Headers first, so address and subject content is scannable and so a
+    // keyword in the subject sits near the body it describes.
+    if let Some(v) = &parsed.headers.from {
+        text.push_str(&format!("from: {v}\n"));
+    }
+    if !parsed.headers.to.is_empty() {
+        text.push_str(&format!("to: {}\n", parsed.headers.to.join(", ")));
+    }
+    if let Some(v) = &parsed.headers.subject {
+        text.push_str(&format!("subject: {v}\n"));
+    }
+    if let Some(v) = &parsed.headers.date {
+        text.push_str(&format!("date: {v}\n"));
+    }
+    text.push('\n');
+
+    // Every decoded textual part, including text attachments, which is the
+    // content the old implementation lost.
+    for part in &parsed.parts {
+        if let Some(t) = &part.text {
+            if let Some(name) = &part.filename {
+                // The filename is context for what follows it.
+                text.push_str(&format!("[attachment: {name}]\n"));
             }
-            if let Some(pos) = line.find(':') {
-                let key = line[..pos].trim().to_lowercase();
-                let value = line[pos + 1..].trim().to_string();
-                // Include important headers
-                if ["from", "to", "subject", "date", "cc", "bcc"].contains(&key.as_str()) {
-                    text.push_str(&format!("{key}: {value}\n"));
-                    headers.insert(key, value);
-                }
-            }
-        } else {
-            text.push_str(line);
+            text.push_str(t);
             text.push('\n');
         }
     }
 
-    let mut result = ExtractionResult::new(text, "eml");
-    for (k, v) in headers {
-        result = result.with_metadata(&k, &v);
+    // Constructed after the attachment loop below would be cleaner, but the
+    // metadata calls read better here; `text` is moved in at the end instead.
+    let mut result = ExtractionResult::new(String::new(), "eml");
+    if let Some(v) = &parsed.headers.from {
+        result = result.with_metadata("from", v);
     }
+    if !parsed.headers.to.is_empty() {
+        result = result.with_metadata("to", &parsed.headers.to.join(", "));
+    }
+    if let Some(v) = &parsed.headers.subject {
+        result = result.with_metadata("subject", v);
+    }
+    if let Some(v) = &parsed.headers.message_id {
+        result = result.with_metadata("message_id", v);
+    }
+    if let Some(v) = &parsed.headers.date {
+        result = result.with_metadata("date", v);
+    }
+
+    // Attachments are run through the full extractor registry, so a PDF or
+    // spreadsheet attached to a message is read the same way it would be if
+    // uploaded directly. Naming them without reading them — the first version
+    // of this fix — still left the payload unscanned; it only made the gap
+    // visible instead of invisible.
+    for a in parsed.attachments() {
+        let Some(bytes) = &a.data else { continue };
+        let name = a.filename.as_deref().unwrap_or("attachment");
+        match extract_attachment_bytes(bytes, name) {
+            Ok(Some(sub)) => {
+                text.push_str(&format!("\n[attachment: {name}]\n"));
+                text.push_str(&sub.text);
+                text.push('\n');
+                for w in &sub.warnings {
+                    result = result.with_warning(&format!("{name}: {w}"));
+                }
+            }
+            // Nothing readable in it — an image with no barcode, an empty
+            // container. Not an error, and not worth a warning.
+            Ok(None) => {}
+            Err(e) => {
+                // Content exists that this pass did not read. Say so: an
+                // extraction failure must not leave the message looking clean.
+                result = result.with_warning(&format!(
+                    "attachment not scanned: {name} ({}, {} bytes): {e}",
+                    a.content_type, a.size
+                ));
+            }
+        }
+    }
+    for w in &parsed.warnings {
+        result = result.with_warning(w);
+    }
+    result.text = text;
     Ok(result)
+}
+
+/// Run one decoded attachment through the extractor registry.
+///
+/// Writes to a temp file because the registry dispatches on path extension
+/// and every extractor reads from disk. Returns `Ok(None)` when the
+/// attachment yielded no text.
+///
+/// Recursion is bounded by a depth counter rather than by refusing nested
+/// messages: a forwarded mail carrying a spreadsheet is ordinary traffic, and
+/// declining to open it would be the same class of gap this change closes. The
+/// counter stops `.eml` inside `.eml` inside `.eml` from recursing without
+/// end.
+fn extract_attachment_bytes(bytes: &[u8], name: &str) -> Result<Option<ExtractionResult>, String> {
+    use std::cell::Cell;
+    thread_local! {
+        static DEPTH: Cell<usize> = const { Cell::new(0) };
+    }
+    const MAX_ATTACHMENT_DEPTH: usize = 4;
+
+    if bytes.is_empty() {
+        return Ok(None);
+    }
+    if bytes.len() > MAX_EXTRACT_SIZE {
+        return Err(format!(
+            "attachment is {} bytes, above the {} byte extractor limit",
+            bytes.len(),
+            MAX_EXTRACT_SIZE
+        ));
+    }
+
+    let depth = DEPTH.with(|d| d.get());
+    if depth >= MAX_ATTACHMENT_DEPTH {
+        return Err(format!(
+            "nested deeper than {MAX_ATTACHMENT_DEPTH} levels of attachment"
+        ));
+    }
+
+    // Preserve the extension so the registry dispatches correctly; without a
+    // recognised one it falls back to magic-byte sniffing, which is the same
+    // path a renamed file takes.
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("bin");
+    let dir = std::env::temp_dir().join(format!(
+        "siphon-att-{}-{:x}",
+        std::process::id(),
+        bytes.len()
+    ));
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("part.{ext}"));
+    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+
+    DEPTH.with(|d| d.set(depth + 1));
+    let out = extract_text(path.to_str().unwrap_or_default());
+    DEPTH.with(|d| d.set(depth));
+
+    // Best-effort cleanup; a leftover temp file must not fail a scan.
+    std::fs::remove_dir_all(&dir).ok();
+
+    match out {
+        Ok(r) if r.text.trim().is_empty() => Ok(None),
+        Ok(r) => Ok(Some(r)),
+        Err(e) => Err(e),
+    }
 }
 
 /// Extract text from ZIP-based formats (docx, xlsx, pptx).
@@ -2587,6 +2723,189 @@ pub fn is_likely_encrypted(file_path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    /// A `.eml` whose attachment is base64 was a live bypass: the payload
+    /// reached the scanner still encoded, matched nothing, and the file came
+    /// back clean. Wrapped at 76 columns, as MUAs emit it — unwrapped base64
+    /// is decoded incidentally by the normalizer, so only the wrapped form
+    /// A binary attachment must be run through the extractor registry, not
+    /// merely named. The first version of this fix listed attachments in a
+    /// warning, which made the gap visible without closing it — the payload
+    /// was still never scanned.
+    #[test]
+    fn eml_zip_attachment_is_extracted_and_scanned() {
+        use std::io::Write;
+
+        // A ZIP holding a text file with a card number: exercises
+        // eml -> attachment -> archive extractor -> text.
+        let zip_bytes = {
+            let mut buf = std::io::Cursor::new(Vec::new());
+            {
+                let mut z = zip::ZipWriter::new(&mut buf);
+                z.start_file::<_, ()>("cards.txt", zip::write::SimpleFileOptions::default())
+                    .unwrap();
+                z.write_all(b"primary card 4111111111111111\n").unwrap();
+                z.finish().unwrap();
+            }
+            buf.into_inner()
+        };
+        let b64 = {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.encode(&zip_bytes)
+        };
+        let wrapped = b64
+            .as_bytes()
+            .chunks(76)
+            .map(|c| String::from_utf8_lossy(c).into_owned())
+            .collect::<Vec<_>>()
+            .join("\r\n");
+
+        let eml = format!(
+            "From: a@example.com\r\nSubject: archive\r\n\
+             Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n\
+             --B\r\nContent-Type: text/plain\r\n\r\nsee zip\r\n\
+             --B\r\nContent-Type: application/zip; name=\"cards.zip\"\r\n\
+             Content-Transfer-Encoding: base64\r\n\r\n{wrapped}\r\n--B--\r\n"
+        );
+
+        let dir = std::env::temp_dir().join(format!("siphon-emlzip-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("probe.eml");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(eml.as_bytes())
+            .unwrap();
+
+        let r = extract_text(path.to_str().unwrap()).expect("eml should extract");
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(
+            r.text.contains("4111111111111111"),
+            "a ZIP attached to a message must be extracted and scanned, not \
+             just named; extracted: {:?}",
+            r.text
+        );
+    }
+
+    /// Attachment recursion must terminate. A message attached to a message
+    /// attached to a message is legitimate traffic, so the guard is a depth
+    /// bound rather than a refusal to open nested mail.
+    #[test]
+    fn eml_nested_attachments_terminate() {
+        use std::io::Write;
+
+        // Build .eml nested 8 deep, past MAX_ATTACHMENT_DEPTH.
+        let mut inner =
+            String::from("Content-Type: text/plain\r\n\r\ndeep card 4111111111111111\r\n");
+        for _ in 0..8 {
+            let b64 = {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD.encode(inner.as_bytes())
+            };
+            let wrapped = b64
+                .as_bytes()
+                .chunks(76)
+                .map(|c| String::from_utf8_lossy(c).into_owned())
+                .collect::<Vec<_>>()
+                .join("\r\n");
+            inner = format!(
+                "Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n\
+                 --B\r\nContent-Type: message/rfc822; name=\"n.eml\"\r\n\
+                 Content-Transfer-Encoding: base64\r\n\r\n{wrapped}\r\n--B--\r\n"
+            );
+        }
+
+        let dir = std::env::temp_dir().join(format!("siphon-emldeep-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("deep.eml");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(inner.as_bytes())
+            .unwrap();
+
+        // The assertion is that this returns at all rather than recursing
+        // without end or exhausting the stack.
+        let r = extract_text(path.to_str().unwrap());
+        std::fs::remove_dir_all(&dir).ok();
+        assert!(
+            r.is_ok(),
+            "deeply nested attachments must terminate cleanly"
+        );
+    }
+
+    /// exercised the gap.
+    #[test]
+    fn eml_base64_attachment_reaches_the_scanner_decoded() {
+        use std::io::Write;
+
+        let payload = b"acct,card\nprimary,4111111111111111\n";
+        let b64 = {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD.encode(payload)
+        };
+        let wrapped = b64
+            .as_bytes()
+            .chunks(76)
+            .map(|c| String::from_utf8_lossy(c).into_owned())
+            .collect::<Vec<_>>()
+            .join("\r\n");
+
+        let eml = format!(
+            "From: a@example.com\r\nTo: b@example.com\r\nSubject: Q3\r\n\
+             Content-Type: multipart/mixed; boundary=\"BND\"\r\n\r\n\
+             --BND\r\nContent-Type: text/plain\r\n\r\nSee attached.\r\n\
+             --BND\r\nContent-Type: text/csv; name=\"cards.csv\"\r\n\
+             Content-Transfer-Encoding: base64\r\n\r\n{wrapped}\r\n--BND--\r\n"
+        );
+
+        let dir = std::env::temp_dir().join(format!("siphon-eml-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("probe.eml");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(eml.as_bytes()).unwrap();
+        drop(f);
+
+        let r = extract_text(path.to_str().unwrap()).expect("eml should extract");
+        std::fs::remove_dir_all(&dir).ok();
+
+        assert!(
+            r.text.contains("4111111111111111"),
+            "base64 attachment must be decoded before the scanner sees it; \
+             extracted text was: {:?}",
+            r.text
+        );
+    }
+
+    /// Real mail carries 8-bit bodies and legacy charsets. Reading the file as
+    /// a UTF-8 String turned a decodable message into a failed extraction.
+    #[test]
+    fn eml_with_non_utf8_bytes_still_extracts() {
+        use std::io::Write;
+
+        let mut eml: Vec<u8> = b"From: a@example.com\r\nSubject: caf\xe9\r\n\
+                                 Content-Type: text/plain\r\n\r\n"
+            .to_vec();
+        // A latin-1 byte in the body, invalid as UTF-8.
+        eml.extend_from_slice(b"card 4111111111111111 caf\xe9\r\n");
+
+        let dir = std::env::temp_dir().join(format!("siphon-eml8-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("probe8.eml");
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(&eml)
+            .unwrap();
+
+        let r = extract_text(path.to_str().unwrap());
+        std::fs::remove_dir_all(&dir).ok();
+
+        let r = r.expect("non-UTF-8 mail must not fail extraction outright");
+        assert!(
+            r.text.contains("4111111111111111"),
+            "content beside a non-UTF-8 byte must still be extracted: {:?}",
+            r.text
+        );
+    }
     use super::*;
 
     #[test]
