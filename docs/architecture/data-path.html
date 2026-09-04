@@ -1,0 +1,533 @@
+<title>Siphon Data Path</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --ground:#f2f6f6; --surface:#ffffff; --surface-2:#e9eff0;
+  --ink:#0f1416; --ink-2:#3b494d; --muted:#5f7075;
+  --line:#d3dedf; --line-strong:#aebfc1;
+  --accent:#1a6a70; --accent-soft:#dcecec;
+  --pass:#2f7a4f; --drop:#a3392f; --emit:#a76a1e;
+  --pass-bg:#e4f0e9; --drop-bg:#f6e4e2; --emit-bg:#f7ecdc;
+  --idle:#9fb2b4;
+  --sans:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0d1213; --surface:#141b1d; --surface-2:#1b2426;
+    --ink:#e8eff0; --ink-2:#c0cdcf; --muted:#8ea0a3;
+    --line:#263134; --line-strong:#3d4d50;
+    --accent:#5cc0c4; --accent-soft:#122c2e;
+    --pass:#6cc48c; --drop:#e08b7f; --emit:#e0ac6a;
+    --pass-bg:#12251a; --drop-bg:#2a1614; --emit-bg:#2a2013;
+    --idle:#4a5b5e;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0d1213; --surface:#141b1d; --surface-2:#1b2426;
+  --ink:#e8eff0; --ink-2:#c0cdcf; --muted:#8ea0a3;
+  --line:#263134; --line-strong:#3d4d50;
+  --accent:#5cc0c4; --accent-soft:#122c2e;
+  --pass:#6cc48c; --drop:#e08b7f; --emit:#e0ac6a;
+  --pass-bg:#12251a; --drop-bg:#2a1614; --emit-bg:#2a2013;
+  --idle:#4a5b5e;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1200px;margin:0 auto;padding:38px 22px 90px}
+code,.mono{font-family:var(--mono);font-variant-ligatures:none}
+
+.masthead{display:flex;flex-wrap:wrap;gap:26px;align-items:flex-end;justify-content:space-between;border-bottom:2px solid var(--ink);padding-bottom:18px}
+.masthead h1{margin:0;font-size:clamp(29px,4.3vw,44px);font-weight:700;letter-spacing:-.025em;line-height:1.03;text-wrap:balance}
+.masthead .sub{margin:9px 0 0;color:var(--muted);max-width:58ch;font-size:15.5px}
+.eyebrow{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin:0 0 9px}
+.stamp{font-family:var(--mono);font-size:11.5px;color:var(--muted);display:grid;gap:3px;text-align:right}
+.stamp b{color:var(--ink-2);font-weight:500}
+
+section{margin-top:46px}
+h2{font-size:12px;font-family:var(--mono);font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 6px;display:flex;align-items:center;gap:10px}
+h2::after{content:"";flex:1;height:1px;background:var(--line)}
+.lede{margin:0 0 20px;max-width:74ch;color:var(--ink-2)}
+
+figure{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+figure svg{display:block;width:100%;height:auto;max-width:100%}
+figcaption{padding:11px 16px;border-top:1px solid var(--line);font-size:13px;color:var(--muted);background:var(--surface-2)}
+
+/* map */
+.mapwrap{padding:8px 10px 2px}
+.node-box{cursor:pointer}
+.node-box rect{transition:fill .18s,stroke .18s}
+.node-box:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* controls */
+.routes{display:grid;grid-template-columns:repeat(auto-fit,minmax(184px,1fr));gap:9px;margin-bottom:14px}
+.route{appearance:none;text-align:left;cursor:pointer;font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:11px 13px;display:grid;gap:2px;transition:border-color .12s,background .12s}
+.route:hover{border-color:var(--line-strong)}
+.route:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.route[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.route .rname{font-weight:600;font-size:14px}
+.route .rmeta{font-family:var(--mono);font-size:10.5px;color:var(--muted)}
+
+/* pipeline layout */
+.plab{display:grid;grid-template-columns:1.05fr .95fr;gap:16px;align-items:start}
+@media (max-width:900px){.plab{grid-template-columns:1fr}}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:4px}
+.probe{padding:15px 17px;border-bottom:1px solid var(--line)}
+.probe h3{margin:0 0 3px;font-size:15px;font-weight:600}
+.probe p{margin:0 0 11px;font-size:13.5px;color:var(--muted)}
+.samples{display:grid;gap:7px}
+.sample{appearance:none;cursor:pointer;font:inherit;text-align:left;color:var(--ink);background:var(--surface-2);border:1px solid var(--line);border-radius:3px;padding:9px 11px;display:grid;gap:3px;transition:border-color .12s}
+.sample:hover{border-color:var(--line-strong)}
+.sample:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.sample[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.sample .stext{font-family:var(--mono);font-size:12px;color:var(--ink-2);word-break:break-word}
+.sample .swhy{font-size:12px;color:var(--muted)}
+.verdictline{padding:13px 17px;display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;border-bottom:1px solid var(--line);min-height:52px}
+.vpill{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;padding:3px 9px;border-radius:2px}
+.v-drop{background:var(--drop-bg);color:var(--drop)}
+.v-emit{background:var(--emit-bg);color:var(--emit)}
+.v-idle{background:var(--surface-2);color:var(--muted)}
+.verdictline .vtext{font-size:13.5px;color:var(--ink-2);flex:1;min-width:200px}
+
+.detail{padding:16px 18px}
+.detail h3{margin:0 0 2px;font-size:18px;font-weight:600;letter-spacing:-.01em}
+.detail .loc{font-family:var(--mono);font-size:11.5px;color:var(--accent);margin:0 0 12px}
+.detail p{margin:0 0 12px;max-width:64ch;color:var(--ink-2);font-size:14px}
+.detail h4{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:16px 0 8px}
+.branch{display:grid;gap:6px}
+.brow{display:grid;grid-template-columns:58px 1fr;gap:10px;align-items:start;font-size:13.5px;padding:8px 10px;border-radius:3px;background:var(--surface-2)}
+.brow .verdict{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;padding:2px 0;text-align:center;border-radius:2px}
+.v-pass{background:var(--pass-bg);color:var(--pass)}
+.gotcha{margin-top:15px;border-left:3px solid var(--drop);background:var(--drop-bg);padding:10px 13px;border-radius:0 3px 3px 0}
+.gotcha b{color:var(--drop);font-size:12.5px}
+.gotcha p{margin:3px 0 0;color:var(--ink-2);font-size:13px;max-width:62ch}
+
+.notes{display:grid;gap:8px;margin-top:14px}
+.note{display:grid;grid-template-columns:auto 1fr;gap:9px;align-items:start;font-size:13.5px;color:var(--ink-2)}
+.tag{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:2px 6px;border-radius:2px;white-space:nowrap;margin-top:2px}
+.tag.gap{background:var(--drop-bg);color:var(--drop)}
+.tag.note{background:var(--surface-2);color:var(--muted)}
+.tag.design{background:var(--pass-bg);color:var(--pass)}
+
+.scroller{overflow-x:auto;border:1px solid var(--line);border-radius:4px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:600px}
+th,td{text-align:left;padding:8px 13px;border-bottom:1px solid var(--line)}
+th{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);background:var(--surface-2)}
+tbody tr:last-child td{border-bottom:0}
+td.mono{font-family:var(--mono);font-size:12.5px}
+.chip{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;padding:2px 7px;border-radius:2px}
+
+.facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.fact{background:var(--surface);padding:13px 15px;display:grid;gap:2px}
+.fact .n{font-family:var(--mono);font-size:22px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.fact .l{font-size:12.5px;color:var(--muted);line-height:1.35}
+
+footer{margin-top:54px;padding-top:16px;border-top:1px solid var(--line);font-family:var(--mono);font-size:11.5px;color:var(--muted);display:flex;flex-wrap:wrap;gap:14px;justify-content:space-between}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <div>
+    <p class="eyebrow">Engineering reference</p>
+    <h1>Siphon Data Path</h1>
+    <p class="sub">Where bytes enter, what the pipeline does to them, and every point a candidate is thrown away.
+      Drawn from the code, with file references so you can read the real thing.</p>
+  </div>
+  <div class="stamp">
+    <b>siphon-core 2.4.0</b>
+    <span>api 2.8.0 &middot; fs 1.1.4 &middot; icap 0.1.2</span>
+    <span>cli 2.2.4 &middot; launcher 2.1.1</span>
+  </div>
+</header>
+
+<section>
+  <h2>Component map</h2>
+  <p class="lede">Every pod is a different way of getting bytes into one pure function and a different thing to do with
+    what comes back. Select a route to light its path — dashed edges are designed but not built.</p>
+
+  <div class="routes" role="group" aria-label="Ingest route">
+    <button class="route" data-route="api" aria-pressed="true"><span class="rname">HTTP text</span><span class="rmeta">siphon-api :8080</span></button>
+    <button class="route" data-route="fs" aria-pressed="false"><span class="rname">File upload</span><span class="rmeta">siphon-fs :8081</span></button>
+    <button class="route" data-route="icap" aria-pressed="false"><span class="rname">Proxy body</span><span class="rmeta">siphon-icap :1344</span></button>
+    <button class="route" data-route="mail" aria-pressed="false"><span class="rname">Email part</span><span class="rmeta">siphon-milter &mdash; design</span></button>
+  </div>
+
+  <figure>
+    <div class="mapwrap">
+      <svg viewBox="0 0 980 340" role="img" aria-label="Component map: four ingest pods feed siphon-core, which returns matches that each pod persists or acts on">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- column headers -->
+        <text x="24" y="26" font-family="IBM Plex Mono, monospace" font-size="10.5" letter-spacing="1.6" fill="var(--muted)">INGEST</text>
+        <text x="404" y="26" font-family="IBM Plex Mono, monospace" font-size="10.5" letter-spacing="1.6" fill="var(--muted)">DETECT</text>
+        <text x="726" y="26" font-family="IBM Plex Mono, monospace" font-size="10.5" letter-spacing="1.6" fill="var(--muted)">OUTPUT</text>
+
+        <!-- edges: drawn before nodes so nodes sit on top -->
+        <g id="edges" fill="none" stroke-width="1.6">
+          <path id="e-api"  d="M242,72  C310,72 330,150 392,158"  stroke="var(--idle)" marker-end="url(#ah)"/>
+          <path id="e-fs"   d="M242,133 C320,133 336,152 392,166" stroke="var(--idle)" marker-end="url(#ah)"/>
+          <path id="e-icap" d="M242,194 C320,194 336,180 392,178" stroke="var(--idle)" marker-end="url(#ah)"/>
+          <path id="e-mail" d="M242,255 C310,255 330,205 392,188" stroke="var(--idle)" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+          <path id="o-api"  d="M596,158 C660,150 664,80  712,74"  stroke="var(--idle)" marker-end="url(#ah)"/>
+          <path id="o-fs"   d="M596,166 C660,166 668,140 712,135" stroke="var(--idle)" marker-end="url(#ah)"/>
+          <path id="o-icap" d="M596,178 C660,186 668,196 712,196" stroke="var(--idle)" marker-end="url(#ah)"/>
+          <path id="o-mail" d="M596,188 C660,215 668,250 712,257" stroke="var(--idle)" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+        </g>
+
+        <!-- ingest nodes -->
+        <g class="node-box" data-node="api" tabindex="0" role="button" aria-label="siphon-api">
+          <rect x="24" y="50" width="218" height="44" rx="3" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+          <text x="38" y="70" font-size="13" font-weight="600" fill="var(--ink)">siphon-api</text>
+          <text x="38" y="85" font-family="IBM Plex Mono, monospace" font-size="10.5" fill="var(--muted)">:8080 &middot; POST /scan</text>
+        </g>
+        <g class="node-box" data-node="fs" tabindex="0" role="button" aria-label="siphon-fs">
+          <rect x="24" y="111" width="218" height="44" rx="3" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+          <text x="38" y="131" font-size="13" font-weight="600" fill="var(--ink)">siphon-fs</text>
+          <text x="38" y="146" font-family="IBM Plex Mono, monospace" font-size="10.5" fill="var(--muted)">:8081 &middot; multipart &rarr; 27 extractors</text>
+        </g>
+        <g class="node-box" data-node="icap" tabindex="0" role="button" aria-label="siphon-icap">
+          <rect x="24" y="172" width="218" height="44" rx="3" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+          <text x="38" y="192" font-size="13" font-weight="600" fill="var(--ink)">siphon-icap</text>
+          <text x="38" y="207" font-family="IBM Plex Mono, monospace" font-size="10.5" fill="var(--muted)">:1344 &middot; REQMOD / RESPMOD</text>
+        </g>
+        <g class="node-box" data-node="mail" tabindex="0" role="button" aria-label="siphon-milter, design only">
+          <rect x="24" y="233" width="218" height="44" rx="3" fill="none" stroke="var(--line-strong)" stroke-dasharray="5 4"/>
+          <text x="38" y="253" font-size="13" font-weight="600" fill="var(--muted)">siphon-milter</text>
+          <text x="38" y="268" font-family="IBM Plex Mono, monospace" font-size="10.5" fill="var(--muted)">design &middot; MIME tree walk</text>
+        </g>
+
+        <!-- core -->
+        <rect x="392" y="120" width="204" height="96" rx="3" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.6"/>
+        <text x="494" y="150" text-anchor="middle" font-size="14" font-weight="700" fill="var(--accent)">siphon-core</text>
+        <text x="494" y="169" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--ink-2)">&amp;str &rarr; Vec&lt;Match&gt;</text>
+        <text x="494" y="186" text-anchor="middle" font-size="11" fill="var(--muted)">583 patterns &middot; no I/O</text>
+        <text x="494" y="202" text-anchor="middle" font-size="11" fill="var(--muted)">no network</text>
+
+        <!-- outputs -->
+        <g><rect x="712" y="52" width="244" height="44" rx="3" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+          <text x="726" y="72" font-size="13" font-weight="600" fill="var(--ink)">findings + scans</text>
+          <text x="726" y="87" font-family="IBM Plex Mono, monospace" font-size="10.5" fill="var(--muted)">Postgres &middot; idempotent on scan_id</text></g>
+        <g><rect x="712" y="113" width="244" height="44" rx="3" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+          <text x="726" y="133" font-size="13" font-weight="600" fill="var(--ink)">scan_rollup</text>
+          <text x="726" y="148" font-family="IBM Plex Mono, monospace" font-size="10.5" fill="var(--muted)">hour &times; tenant &times; channel</text></g>
+        <g><rect x="712" y="174" width="244" height="44" rx="3" fill="var(--surface-2)" stroke="var(--line-strong)"/>
+          <text x="726" y="194" font-size="13" font-weight="600" fill="var(--ink)">allow / 403 block</text>
+          <text x="726" y="209" font-family="IBM Plex Mono, monospace" font-size="10.5" fill="var(--muted)">X-DLP-* on ICAP response</text></g>
+        <g><rect x="712" y="235" width="244" height="44" rx="3" fill="none" stroke="var(--line-strong)" stroke-dasharray="5 4"/>
+          <text x="726" y="255" font-size="13" font-weight="600" fill="var(--muted)">X-Siphon-* headers</text>
+          <text x="726" y="270" font-family="IBM Plex Mono, monospace" font-size="10.5" fill="var(--muted)">MTA enforces the verdict</text></g>
+
+        <!-- edge labels -->
+        <text id="lbl-api"  x="300" y="104" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)">text</text>
+        <text id="lbl-fs"   x="300" y="150" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)">extracted text</text>
+        <text id="lbl-icap" x="300" y="212" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)">body</text>
+        <text id="lbl-mail" x="300" y="272" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)">per MIME part</text>
+        <text x="614" y="112" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--muted)">matches</text>
+      </svg>
+    </div>
+    <figcaption id="mapcap">Detection is identical on every route — the pods differ only in how bytes arrive and what the verdict is used for.</figcaption>
+  </figure>
+
+  <div class="notes" id="r-notes"></div>
+</section>
+
+<section>
+  <h2>The scan pipeline</h2>
+  <p class="lede">Ten stages in <code>scan_text_with_config</code>. Click a stage to read it, or send one of the sample
+    inputs through and watch where it dies — four of the ten stages can end a candidate's life, and knowing which one
+    fired is most of debugging a missing finding.</p>
+
+  <div class="plab">
+    <figure>
+      <svg id="pipe" viewBox="0 0 470 950" role="img" aria-label="Vertical pipeline of ten scan stages with drop paths branching to the right">
+        <defs>
+          <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g id="pipe-body"></g>
+        <circle id="dot" r="7" cx="150" cy="-40" fill="var(--accent)" opacity="0"/>
+      </svg>
+      <figcaption>Spine reads top to bottom; branches to the right are exits. A candidate that survives all ten is
+        returned to the calling pod.</figcaption>
+    </figure>
+
+    <div>
+      <div class="panel">
+        <div class="probe">
+          <h3>Send a candidate through</h3>
+          <p>Each sample dies at a different stage — or survives.</p>
+          <div class="samples" id="samples"></div>
+        </div>
+        <div class="verdictline" id="verdict">
+          <span class="vpill v-idle">idle</span>
+          <span class="vtext">Pick a sample above to trace it through the pipeline.</span>
+        </div>
+        <div class="detail" id="detail"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Trace vocabulary</h2>
+  <p class="lede">With <code>ScanConfig::trace</code> set, every candidate emits a <code>StageEvent</code> at each
+    decision. This is the complete set the scanner can produce — three phases, because runtime and alternate patterns
+    take shorter paths than the primary loop. It is what <code>/v1/scan/explain</code> returns.</p>
+  <div class="scroller">
+    <table><thead><tr><th>Phase</th><th>Step</th><th>Verdict</th><th>Meaning</th></tr></thead>
+    <tbody id="matrix"></tbody></table>
+  </div>
+</section>
+
+<section>
+  <h2>By the numbers</h2>
+  <div class="facts">
+    <div class="fact"><span class="n">583</span><span class="l">patterns across 128 categories</span></div>
+    <div class="fact"><span class="n">174</span><span class="l">context-gated (30%); 409 always run</span></div>
+    <div class="fact"><span class="n">581</span><span class="l">keyword sets, 6 languages</span></div>
+    <div class="fact"><span class="n">27</span><span class="l">file extractors + magic-byte fallback</span></div>
+    <div class="fact"><span class="n">10 MB</span><span class="l">hard input cap (<code>MAX_INPUT_SIZE</code>)</span></div>
+    <div class="fact"><span class="n">~80%</span><span class="l">of patterns skipped by the prefilter</span></div>
+  </div>
+</section>
+
+<footer>
+  <span>Drawn from the working tree &middot; paths relative to repo root</span>
+  <span>siphon-core is the only crate that detects anything</span>
+</footer>
+</div>
+
+<script>
+/* ---------------- data ---------------- */
+const STAGES=[
+ {n:"01",name:"Input validation",drops:true,loc:"validation.rs:9 · validate_text_input",
+  body:"Rejects empty input and anything over <code>MAX_INPUT_SIZE</code> (10 MB) before a regex compiles. The only gate that runs before normalization.",
+  branches:[["drop","Empty — <code>DlpError::EmptyInput</code>"],["drop","Over 10 MB — <code>InputTooLarge</code>, returned to the caller"],["pass","Everything else continues"]],
+  gotcha:["Callers decide what the error means.","siphon-icap turns oversize into pass-through-unscanned. The scanner reports; the pod sets policy — so the same rejection is a hard failure on one route and a silent coverage gap on another."]},
+ {n:"02",name:"Normalization",drops:false,loc:"normalize/mod.rs · normalize_text",
+  body:"Eleven numbered stages undo evasion: percent-decode (twice), HTML entities, empty comments, hex-spaced and <code>\\xHH</code> sequences, nested base64/base32/hex, padding collapse, delimiter normalization — then, only if non-ASCII remains, zero-width stripping, exotic whitespace, NFKC, homoglyphs and digit-confusable folding.",
+  branches:[["pass","Never drops; rewrites the text and returns an offset map"]],
+  gotcha:["The offset map is the expensive part.","One <code>usize</code> per output byte — 8 bytes per input byte. A 10 MB input carries an 80 MB offset vector, and stages hold input and output vectors at once. That is why raising the input cap is a memory decision, not a constant edit."]},
+ {n:"03",name:"Aho-Corasick prefilter",drops:true,loc:"scanner/mod.rs · active_gated",
+  body:"Builds a keyword hit index over the normalized text, then drops every context-gated pattern whose keywords appear nowhere — typically ~80% of the set, before any regex runs. This is why a scan is fast.",
+  branches:[["drop","Gated pattern, keyword absent from text and envelope"],["pass","Always-run patterns bypass the prefilter"],["pass","Gated patterns whose keywords are present"]],
+  gotcha:["This runs before any per-match context check.","A pattern excluded here is excluded for the whole scan. When the context envelope was added, forgetting to union the envelope's keys here made the feature compile, pass most tests, and do nothing."]},
+ {n:"04",name:"Parallel regex",drops:false,loc:"scanner/mod.rs · active_patterns.par_iter()",
+  body:"Surviving patterns run across cores with rayon, capped at 10,000 matches each. One scan saturates a pod's CPU on its own — which is why batch items are scanned sequentially rather than concurrently.",
+  branches:[["pass","Each match becomes a candidate with a span in normalized coordinates"]],
+  gotcha:["Spans are normalized, not original.","Everything downstream maps back through the stage-02 offset map. A bug there surfaces as findings pointing at the wrong characters, not as a crash."]},
+ {n:"05",name:"Checksum validation",drops:true,loc:"validation.rs · validate_match",
+  body:"Structure-aware checks: Luhn for cards, mod-97 for IBAN, plus dedicated validators for SWIFT, CUSIP, SEDOL, Australian TFN, Canadian SIN and dozens more. This is what stops a 16-digit order number being reported as a card.",
+  branches:[["drop","Checksum failed — discarded outright"],["pass","Checksum passed, or the pattern has no validator"]],gotcha:null},
+ {n:"06",name:"Context gate",drops:true,loc:"context/mod.rs · check_context",
+  body:"For the 174 gated patterns, requires a keyword within <code>context_distance</code> of the match. Since 2.4.0 a second source exists: <code>context_envelope</code> supplies surrounding material — an email body, subject, filenames — for when one document is scanned as separate parts.",
+  branches:[["pass","Keyword near the match — <em>local</em>, the strong signal"],["pass","Keyword only in the envelope — opens the gate, scored lower"],["drop","Gated, no keyword either place"],["drop","Caller set <code>require_context</code> and none found"]],
+  gotcha:["Local is checked first and wins.","Supplying an envelope never downgrades a match that had a keyword beside it. Envelope context is positionally unanchored — it says the message mentions this data, not that this number is that data."]},
+ {n:"07",name:"Confidence scoring",drops:true,loc:"scoring.rs · compute_confidence_from_source",
+  body:"Base specificity per pattern, adjusted by where context came from: +0.20 local, +0.10 envelope. A gated pattern with no context is multiplied by 0.3 rather than dropped, so it can still surface to a reviewer who lowers the threshold.",
+  branches:[["drop","Below <code>min_confidence</code>"],["pass","At or above the threshold"]],
+  gotcha:["The envelope boost is half of local, deliberately.","Equal credit would let one mention of “bank account” in a covering email promote every long digit string in every attachment to full confidence."]},
+ {n:"08",name:"Deduplication",drops:true,loc:"scoring.rs · overlapping match removal",
+  body:"Where two patterns match overlapping spans, the higher-confidence one survives. Runs when <code>deduplicate</code> is set, which is the default.",
+  branches:[["drop","Overlapped by a higher-confidence match"],["pass","Highest-confidence match for its span"]],gotcha:null},
+ {n:"09",name:"Overrides",drops:true,loc:"overrides.rs · LiveOverrides snapshot",
+  body:"Operator policy applied last: disabled patterns, runtime regex swaps, match-list bindings (allow / block / mask / tag), unique-count thresholds. Read from an <code>Arc&lt;RwLock&gt;</code> snapshot cloned per request, so policy swaps without a restart.",
+  branches:[["drop","Pattern disabled, or value on an allow list"],["pass","Survives policy, possibly masked or tagged"]],gotcha:null},
+ {n:"10",name:"Emission",drops:false,loc:"scanner/mod.rs · sort by confidence",
+  body:"Survivors are sorted by confidence and returned. The calling pod decides everything after this: persist, annotate a proxy response, stamp a mail header, print to a terminal.",
+  branches:[["emit","Returned to the caller as a <code>Match</code>"]],gotcha:null}
+];
+
+const SAMPLES=[
+ {id:"big",text:"a 14 MB extracted spreadsheet",why:"exceeds the input cap",stop:0,
+  verdict:"drop",msg:"Rejected at input validation — <code>InputTooLarge</code>. Never normalized, never matched."},
+ {id:"bare",text:"Reference 493028461037 for the batch.",why:"gated pattern, no keyword",stop:2,
+  verdict:"drop",msg:"US Bank Account Number is gated and no keyword appears anywhere, so the prefilter removes the pattern before any regex runs."},
+ {id:"luhn",text:"Order 4111111111111112 shipped",why:"fails the Luhn check",stop:4,
+  verdict:"drop",msg:"Matched the card regex, then failed checksum validation. This is the stage that stops order numbers being reported as cards."},
+ {id:"env",text:"Reference 493028461037 · envelope: “payroll bank account details attached”",why:"context from another part",stop:9,
+  verdict:"emit",msg:"The envelope's keyword survives the prefilter, opens the context gate, and scores +0.10 rather than +0.20 — emitted at lower confidence than a locally contextualised match."}
+];
+
+const MATRIX=[["primary","regex","pass","Candidate produced by the main pattern loop"],
+ ["primary","validation","drop","Checksum validator rejected it"],["primary","validation","pass","Checksum validator accepted it"],
+ ["primary","ctx_required","drop","Pattern requires context; none nearby or in the envelope"],
+ ["primary","require_context","drop","Caller forced require_context and none found"],
+ ["primary","context","pass","Context satisfied, from either source"],
+ ["primary","min_confidence","drop","Scored below the caller's threshold"],["primary","emit","emit","Returned to the caller"],
+ ["alt","alt_regex","pass","Alternate-form pattern matched"],["alt","alt_validation","drop","Alternate form failed validation"],
+ ["alt","alt_confidence","drop","Alternate form scored too low"],["alt","alt_emit","emit","Alternate form returned"],
+ ["runtime","ctx_required","drop","Operator-defined custom pattern, no context"],
+ ["runtime","require_context","drop","Caller forced require_context"],["runtime","min_confidence","drop","Below threshold"],
+ ["runtime","emit","emit","Custom pattern returned"]];
+
+const ROUTE_NOTES={
+ api:[["note","Text arrives already decoded — the only route with no extraction step. The body <em>is</em> the scan input."],
+      ["note","<code>/scan/batch</code> loops items sequentially and counts each separately; a batch is transport, not one scan."],
+      ["gap","<code>/scan/batch</code> hardcodes its own <code>10 * 1024 * 1024</code> rather than using <code>MAX_INPUT_SIZE</code>, so raising the constant would miss it."]],
+ fs:[["note","Dispatch is by extension (<code>extractors.rs:183</code>); unknown extensions fall through to <code>detect_and_extract</code>, which sniffs magic bytes."],
+     ["note","PDF, Office, archives, Parquet/SQLite, barcode and MSG each sit behind a cargo feature — a binary built without one silently cannot read that format."],
+     ["note","Archives expand to entries: 10k file limit, 500 MB total, 100:1 ratio bomb detection, path traversal sanitised. Nested archives are surfaced as a warning, not recursed into."],
+     ["gap","Extraction feeds the same 10 MB scanner cap, so a large spreadsheet can extract to more text than the scanner accepts."]],
+ icap:[["note","<code>SIPHON_ICAP_ALLOWED_NETS</code> is required at startup — ICAP has no auth of its own, so the service refuses to start without a CIDR allowlist."],
+       ["gap","Bodies over <code>SIPHON_ICAP_MAX_BODY_BYTES</code> (10 MB) are <strong>passed through unscanned</strong>. Fail-open by design; a coverage gap in practice."],
+       ["gap","Bodies more than 30% non-printable in the first 512 bytes are treated as binary and skipped."],
+       ["note","Flag mode writes <code>X-DLP-*</code> onto the <em>ICAP response</em> and reflects HTTP headers back untouched — it annotates the protocol conversation, not the message."]],
+ mail:[["design","Not built. The MTA holds the message under a bounded timeout (~30 s Postfix), so scanning and reconciliation must finish inside that budget."],
+       ["design","Parts are keyed by MIME path (<code>2.1.4</code>), not an ordinal — MIME nests, and a path stays stable across MTA retries."],
+       ["gap","Scanning parts independently loses cross-part context: a body reading “SSN attached” is in a different part from the numbers. That is what the context envelope fixes."],
+       ["design","<code>indeterminate</code> is a real verdict. Nineteen clean attachments and one timeout is not a clean message."]]
+};
+
+/* ---------------- pipeline drawing ---------------- */
+const NODE_X=30,NODE_W=240,NODE_H=54,GAP=41,TOP=24;
+const cy=i=>TOP+i*(NODE_H+GAP)+NODE_H/2;
+const svgns="http://www.w3.org/2000/svg";
+function el(t,a){const e=document.createElementNS(svgns,t);for(const k in a)e.setAttribute(k,a[k]);return e;}
+
+const body=document.getElementById("pipe-body");
+STAGES.forEach((s,i)=>{
+  const y=TOP+i*(NODE_H+GAP);
+  if(i<STAGES.length-1){
+    body.appendChild(el("line",{x1:NODE_X+NODE_W/2,y1:y+NODE_H,x2:NODE_X+NODE_W/2,y2:y+NODE_H+GAP,
+      stroke:"var(--line-strong)","stroke-width":1.6,"marker-end":"url(#ah2)",color:"var(--line-strong)"}));
+  }
+  if(s.drops){
+    const c=y+NODE_H/2;
+    body.appendChild(el("path",{d:`M${NODE_X+NODE_W},${c} L${NODE_X+NODE_W+52},${c}`,fill:"none",
+      stroke:"var(--drop)","stroke-width":1.4,"stroke-dasharray":"4 3","marker-end":"url(#ah2)",color:"var(--drop)",opacity:.75}));
+    const t=el("text",{x:NODE_X+NODE_W+60,y:c+4,"font-family":"IBM Plex Mono, monospace","font-size":10.5,fill:"var(--drop)"});
+    t.textContent="dropped";body.appendChild(t);
+  }
+  const g=el("g",{class:"node-box","data-stage":i,tabindex:"0",role:"button","aria-label":s.name});
+  g.appendChild(el("rect",{id:`sr-${i}`,x:NODE_X,y:y,width:NODE_W,height:NODE_H,rx:3,
+    fill:"var(--surface-2)",stroke:"var(--line-strong)","stroke-width":1.2}));
+  const num=el("text",{x:NODE_X+14,y:y+23,"font-family":"IBM Plex Mono, monospace","font-size":10.5,fill:"var(--muted)"});
+  num.textContent=s.n;g.appendChild(num);
+  const nm=el("text",{id:`sn-${i}`,x:NODE_X+14,y:y+40,"font-size":13.5,"font-weight":600,fill:"var(--ink)"});
+  nm.textContent=s.name;g.appendChild(nm);
+  body.appendChild(g);
+});
+
+let selected=5;
+function paintStages(activeIdx,stopIdx,verdict){
+  STAGES.forEach((s,i)=>{
+    const r=document.getElementById(`sr-${i}`);
+    let fill="var(--surface-2)",stroke="var(--line-strong)",w=1.2;
+    if(stopIdx!==null&&i<stopIdx){fill="var(--pass-bg)";stroke="var(--pass)";}
+    if(stopIdx!==null&&i===stopIdx){
+      fill=verdict==="drop"?"var(--drop-bg)":"var(--emit-bg)";
+      stroke=verdict==="drop"?"var(--drop)":"var(--emit)";w=2;
+    }
+    if(i===activeIdx&&stopIdx===null){fill="var(--accent-soft)";stroke="var(--accent)";w=2;}
+    r.setAttribute("fill",fill);r.setAttribute("stroke",stroke);r.setAttribute("stroke-width",w);
+  });
+}
+function showDetail(i){
+  const s=STAGES[i];
+  document.getElementById("detail").innerHTML=
+   `<h3>${s.name}</h3><p class="loc">${s.loc}</p><p>${s.body}</p>
+    <h4>Branches</h4><div class="branch">${s.branches.map(([v,t])=>
+      `<div class="brow"><span class="verdict v-${v}">${v}</span><span>${t}</span></div>`).join("")}</div>
+    ${s.gotcha?`<div class="gotcha"><b>${s.gotcha[0]}</b><p>${s.gotcha[1]}</p></div>`:""}`;
+}
+function selectStage(i){selected=i;paintStages(i,null);showDetail(i);}
+document.getElementById("pipe").addEventListener("click",e=>{
+  const g=e.target.closest("[data-stage]");if(g){resetProbe();selectStage(+g.dataset.stage);}});
+document.getElementById("pipe").addEventListener("keydown",e=>{
+  const g=e.target.closest("[data-stage]");
+  if(g&&(e.key==="Enter"||e.key===" ")){e.preventDefault();resetProbe();selectStage(+g.dataset.stage);}});
+
+/* ---------------- probe animation ---------------- */
+const dot=document.getElementById("dot"),vline=document.getElementById("verdict");
+let timer=null;
+const reduce=window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function resetProbe(){
+  if(timer){clearTimeout(timer);timer=null;}
+  dot.setAttribute("opacity","0");
+  document.querySelectorAll(".sample").forEach(b=>b.setAttribute("aria-pressed","false"));
+}
+function runSample(s){
+  if(timer){clearTimeout(timer);timer=null;}
+  document.querySelectorAll(".sample").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.id===s.id)));
+  vline.innerHTML=`<span class="vpill v-idle">tracing</span><span class="vtext">Running through the pipeline…</span>`;
+  dot.setAttribute("opacity","1");
+  dot.setAttribute("fill",s.verdict==="drop"?"var(--drop)":"var(--emit)");
+  // Stages behind the dot are cleared, the dot's own stage is live, the rest
+  // are untouched — so the trail shows exactly how far the candidate got.
+  const land=i=>{
+    dot.setAttribute("cy",cy(i));
+    STAGES.forEach((_,k)=>{
+      const r=document.getElementById(`sr-${k}`);
+      if(k<i){r.setAttribute("fill","var(--pass-bg)");r.setAttribute("stroke","var(--pass)");r.setAttribute("stroke-width",1.2);}
+      else if(k===i){r.setAttribute("fill","var(--accent-soft)");r.setAttribute("stroke","var(--accent)");r.setAttribute("stroke-width",2);}
+      else{r.setAttribute("fill","var(--surface-2)");r.setAttribute("stroke","var(--line-strong)");r.setAttribute("stroke-width",1.2);}
+    });
+  };
+  if(reduce){
+    land(s.stop);paintStages(null,s.stop,s.verdict);finish(s);return;
+  }
+  let i=0;
+  const step=()=>{
+    land(i);
+    if(i===s.stop){finish(s);return;}
+    i++;timer=setTimeout(step,300);
+  };
+  step();
+}
+function finish(s){
+  paintStages(null,s.stop,s.verdict);
+  showDetail(s.stop);selected=s.stop;
+  vline.innerHTML=`<span class="vpill v-${s.verdict}">${s.verdict==="drop"?"dropped":"emitted"}</span>
+    <span class="vtext">${s.msg}</span>`;
+}
+document.getElementById("samples").innerHTML=SAMPLES.map(s=>
+  `<button class="sample" data-id="${s.id}" aria-pressed="false">
+     <span class="stext">${s.text}</span><span class="swhy">${s.why}</span></button>`).join("");
+document.querySelectorAll(".sample").forEach(b=>
+  b.addEventListener("click",()=>runSample(SAMPLES.find(x=>x.id===b.dataset.id))));
+
+/* ---------------- component map ---------------- */
+const rNotes=document.getElementById("r-notes"),mapcap=document.getElementById("mapcap");
+const CAPS={api:"HTTP text goes straight to the scanner and its findings land in Postgres.",
+ fs:"An upload is extracted to text by one of 27 extractors before the scanner ever sees it.",
+ icap:"A proxy body is size- and binary-checked, then the verdict becomes an allow or a 403.",
+ mail:"Designed: each MIME part is scanned separately and reconciled into one header verdict."};
+function drawRoute(key){
+  ["api","fs","icap","mail"].forEach(k=>{
+    const on=k===key;
+    [`e-${k}`,`o-${k}`].forEach(id=>{
+      const p=document.getElementById(id);
+      p.setAttribute("stroke",on?"var(--accent)":"var(--idle)");
+      p.setAttribute("stroke-width",on?2.2:1.6);
+      p.setAttribute("color",on?"var(--accent)":"var(--idle)");
+    });
+    const l=document.getElementById(`lbl-${k}`);
+    l.setAttribute("fill",on?"var(--accent)":"var(--muted)");
+  });
+  document.querySelectorAll(".route").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.route===key)));
+  mapcap.textContent=CAPS[key];
+  rNotes.innerHTML=ROUTE_NOTES[key].map(([tag,text])=>
+    `<div class="note"><span class="tag ${tag}">${tag==="gap"?"gap":tag==="design"?"design":"note"}</span><span>${text}</span></div>`).join("");
+}
+document.querySelectorAll(".route").forEach(b=>b.addEventListener("click",()=>drawRoute(b.dataset.route)));
+document.querySelectorAll("[data-node]").forEach(g=>{
+  g.addEventListener("click",()=>drawRoute(g.dataset.node));
+  g.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();drawRoute(g.dataset.node);}});
+});
+
+document.getElementById("matrix").innerHTML=MATRIX.map(([p,s,v,m])=>
+  `<tr><td class="mono">${p}</td><td class="mono">${s}</td><td><span class="chip v-${v}">${v}</span></td><td>${m}</td></tr>`).join("");
+
+drawRoute("api");
+selectStage(5);
+</script>

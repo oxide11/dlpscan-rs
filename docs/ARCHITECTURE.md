@@ -233,6 +233,7 @@ Key design points:
 | **[architecture/context-matching.md](architecture/context-matching.md)** | The Aho-Corasick prefilter, the keyword hit index, why `MatchKind::LeftmostLongest` matters, and the shared-keyword fan-out fix. |
 | **[architecture/validation.md](architecture/validation.md)** | Pattern validation: how `validate_match` is wired, the always-run vs context-gated split, the validator inventory, and the labeled-corpus regression harness. |
 | **[architecture/extending.md](architecture/extending.md)** | "I want to add X" cookbook: new pattern, new validator, new corpus test, new keyword set, new file extractor. |
+| **[architecture/data-path.html](architecture/data-path.html)** | *Interactive — open in a browser.* Clickable component map of the four ingest routes, and the ten-stage scan pipeline with sample candidates you can send through to see which stage drops them. Counts are a snapshot of the tree at the time of writing. |
 | **[architecture/email-dlp.md](architecture/email-dlp.md)** | *Design, not yet built.* The mail path: annotate-don't-block via milter X-headers, the message/parts tree (MIME paths, not indices), the context envelope that keeps the 174 context-gated patterns working when a message is split into parts, verdict aggregation including `indeterminate`, and why cross-message content dedup has to go. |
 
 ## Cross-cutting concerns
