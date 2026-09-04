@@ -132,13 +132,19 @@ pub async fn persist_scan(
     let duration_ms_i32 = duration_ms as i32;
     let source_pod_opt: Option<&str> = Some(source_pod);
 
-    client
+    // Idempotent on the primary key, matching siphon-api's persist_scan: the
+    // same scan_id written twice (retried spawn, at-least-once delivery) must
+    // not duplicate the findings hanging off it. Deliberately keyed on
+    // scan_id and not on content — see the note in siphon-api/src/db.rs for
+    // why content-hash dedup silently discarded distinct scans.
+    let inserted = client
         .execute(
             "INSERT INTO scans \
              (id, source_pod, scanner_version, input_hash, \
               input_length, finding_count, duration_ms, action, \
               file_name, file_hash, mime_type, tenant_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+             ON CONFLICT (id) DO NOTHING",
             &[
                 &scan_id,
                 &source_pod_opt,
@@ -155,6 +161,16 @@ pub async fn persist_scan(
             ],
         )
         .await?;
+
+    // `findings` has no unique constraint to conflict on, so writing them
+    // against an already-stored scan would duplicate every row.
+    if inserted == 0 {
+        tracing::debug!(
+            %scan_id,
+            "scan already persisted under this id — skipping duplicate write"
+        );
+        return Ok(());
+    }
 
     for f in findings {
         let category = f.get("category").and_then(|v| v.as_str()).unwrap_or("");

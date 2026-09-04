@@ -14,6 +14,61 @@ starting from this file.
 
 ---
 
+## 2026-09-04 — Scan accounting: stop dropping distinct scans; count all scanned traffic
+
+### siphon-api 2.8.0
+
+- **fix(api,security): stop discarding distinct scans that share content.**
+  `persist_scan` skipped storing any scan whose `input_hash` had been seen in
+  the previous 60 seconds, to absorb client retries. It suppressed far more
+  than retries. Identical content is not a duplicate event: two people mailing
+  the same attachment are two events, and the same signature image across a
+  thousand messages is a thousand events. The check also carried **no tenant
+  predicate**, so one tenant scanning a document made another tenant's scan of
+  it disappear — and it logged at `debug`, so the loss was invisible.
+
+  On any channel where a stored scan backs a delivery decision, dropping one
+  means clearing content that was never recorded as scanned. Idempotency now
+  keys on `scan_id` via `ON CONFLICT (id) DO NOTHING`, which suppresses the
+  case that is genuinely a duplicate — the same scan persisted twice — at no
+  extra round trip. The old check cost a `SELECT` per scan whose scanned range
+  grew with traffic.
+
+  Suppressing a *client* retry needs a caller-supplied idempotency key, since
+  `scan_id` is generated server-side per request; that is recorded as
+  follow-up. Until then a retry records two rows: over-recording is
+  recoverable, under-recording is not.
+
+- **feat(api): `scan_rollup` — aggregate counters for all scanned traffic.**
+  Detection rate needs a denominator, but a row per scan means recording that
+  nothing was found for every clean scan — at mail-gateway volume, the
+  overwhelming majority of the table and the one thing that would force a
+  columnar tier. New `scan_rollup` table (migration `0009`) counts scans per
+  `(hour, tenant, channel)`, so storage scales with time and cardinality
+  rather than with traffic, while identified events keep full rows.
+
+  Counters accumulate in process and flush on an interval as additive
+  UPSERTs, so pods flush independently and their counts sum with no
+  coordination. A failed flush restores drained buckets by merging rather than
+  overwriting, so a database blip costs latency rather than counts.
+
+  `oversize_skipped` and `scan_errors` are counted separately and deliberately
+  excluded from `scans_total`: content that was never inspected must not
+  inflate the denominator and quietly improve the apparent detection rate.
+  Rates are derived by the caller rather than stored, so a rate can never be
+  wrong because one of its two inputs was updated and the other was not.
+
+### siphon-fs 1.1.4
+
+- **fix(fs): make scan persistence idempotent on `scan_id`.** siphon-fs never
+  carried the content-hash dedup, but its scan insert had no conflict handling
+  either, so the same `scan_id` written twice would duplicate every finding row
+  hanging off it (`findings` has no unique constraint to conflict on). Now
+  matches siphon-api: `ON CONFLICT (id) DO NOTHING`, and the findings loop is
+  skipped when the scan was already stored.
+
+---
+
 ## 2026-09-04
 
 ### siphon-api 2.7.0

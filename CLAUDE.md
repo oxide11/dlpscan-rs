@@ -184,11 +184,32 @@ Findings rings are per-pod; each replica maintains its own ring.
 
 ## Findings persistence layer (postgres)
 
-Migration files in `crates/siphon-api/src/migrations/`:
+Backed by `tokio-postgres` + `deadpool-postgres`. **Not sqlx** — it is absent
+from the workspace entirely, because its umbrella crate carries a hard-coded
+`links = "sqlite3"` (via sqlx-sqlite) that would collide with rusqlite's
+libsqlite3-sys further down the dep graph.
+
+Migration files in `crates/siphon-api/migrations/`, registered in the
+`MIGRATIONS` table in `db.rs` (adding a file without registering it does
+nothing):
 - `0001_init.sql` — pgcrypto, pg_trgm, db_health table
 - `0002_findings.sql` — scans + findings tables, 6 indexes including GIN trigram
 - `0003_file_scans.sql` — adds file_name, file_hash, mime_type to scans
 - `0004_retention.sql` — prune_findings() PL/pgSQL function + retention index
+- `0005_edm.sql` — EDM registration/query tables
+- `0006_lsh.sql` — LSH registration/query tables
+- `0007_evadex.sql` — evadex run + finding tables
+- `0008_tenant_id.sql` — tenant_id on scans + findings
+- `0009_scan_rollup.sql` — aggregate scan counters per (hour, tenant, channel)
+
+Note the GIN trigram index in `0002` is built on `category`, though
+`0001_init.sql` states the extension was installed for `matched_text` /
+`sub_category`. `matched_text` has no index on any migration.
+
+**Scan persistence is idempotent on `scan_id`** (`ON CONFLICT (id) DO
+NOTHING`), never on content. An earlier content-hash window dropped genuinely
+distinct scans — including across tenants — so do not reintroduce dedup keyed
+on `input_hash`.
 
 Key functions in `crates/siphon-api/src/db.rs`:
 - `init_optional()` → `(PoolState, Option<Pool>)` — three states: Unconfigured/Connected/StartupFailed
@@ -347,8 +368,10 @@ Global flags: `--format {text,json,csv,sarif}`, `--min-confidence`,
 resolver v2 so features don't leak between members. Specifically, `siphon-api`
 depends on siphon with `default-features = false, features = ["metrics"]` to
 drop all file-extraction deps (PDF, Office, archives, rusqlite) — those live in
-`siphon-fs`. Without resolver v2, rusqlite's libsqlite3-sys would conflict with
-sqlx's copy. Don't change this dep declaration without understanding the linkage.
+`siphon-fs`. Don't change this dep declaration without understanding the
+linkage. (The `links = "sqlite3"` collision this used to describe is avoided a
+second way as well: the Postgres layer uses tokio-postgres/deadpool and sqlx is
+not a workspace dependency at all.)
 
 ### Ruleset YAML format
 

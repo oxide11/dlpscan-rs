@@ -23,6 +23,19 @@ use tokio_postgres::NoTls;
 const MAX_POOL_SIZE: usize = 8;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Scan insert, idempotent on the primary key.
+///
+/// Named rather than inline so its two load-bearing properties can be
+/// asserted in tests — there is no Postgres in the test environment, so this
+/// is the only available regression guard against the content-hash dedup this
+/// replaced (which silently discarded distinct scans across tenants).
+const INSERT_SCAN_SQL: &str = "INSERT INTO scans \
+     (id, source_pod, scanner_version, api_key_hash, input_hash, \
+      input_length, finding_count, duration_ms, action, \
+      file_name, file_hash, mime_type, tenant_id) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
+     ON CONFLICT (id) DO NOTHING";
+
 /// Connection-state classification surfaced via /v1/db/health.
 /// Kept separate from the pool's `Option<Pool>` representation so
 /// the smoke endpoint can tell "URL absent" apart from "URL set but
@@ -307,31 +320,34 @@ pub async fn persist_scan(
     let finding_count_i32 = findings.len() as i32;
     let duration_ms_i32 = duration_ms as i32;
 
-    // Deduplication: skip if we already stored a scan with the same input_hash
-    // within the last 60 seconds (prevents double-writes from client retries).
-    if !input_hash.is_empty() {
-        let existing = client
-            .query_opt(
-                "SELECT id FROM scans \
-                 WHERE input_hash = $1 \
-                 AND created_at > NOW() - INTERVAL '60 seconds' \
-                 LIMIT 1",
-                &[&input_hash],
-            )
-            .await?;
-        if existing.is_some() {
-            tracing::debug!("skipping duplicate scan (same input_hash within 60s)");
-            return Ok(());
-        }
-    }
-
-    client
+    // Idempotency is on scan_id, not on content.
+    //
+    // This previously skipped any scan whose input_hash had been seen in the
+    // last 60 seconds, to absorb client retries. That suppressed far more than
+    // retries: it discarded genuinely distinct scans of identical content, and
+    // did so with no tenant predicate, so one tenant scanning a document made
+    // another tenant's scan of the same document vanish. It logged at debug,
+    // so the loss was invisible.
+    //
+    // Identical content is not a duplicate event. Two people mailing the same
+    // attachment are two events; the same signature image on a thousand
+    // messages is a thousand events. On a channel where a stored scan backs a
+    // delivery decision, dropping one means clearing content that was never
+    // recorded as scanned — which is a bypass, not a saving.
+    //
+    // ON CONFLICT on the primary key gives exact idempotency for the case that
+    // is genuinely a duplicate: the same scan_id persisted twice (a retried
+    // spawn, an at-least-once queue). It costs no extra round trip, where the
+    // old check cost a SELECT per scan whose scan window grew with traffic.
+    //
+    // Suppressing a *client* retry needs a caller-supplied idempotency key —
+    // scan_id is generated server-side per request, so a retry legitimately
+    // looks like a new scan from here. That is deliberate follow-up work, not
+    // something content hashing can approximate safely. Until then a retry
+    // records two rows: over-recording is recoverable, under-recording is not.
+    let inserted = client
         .execute(
-            "INSERT INTO scans \
-             (id, source_pod, scanner_version, api_key_hash, input_hash, \
-              input_length, finding_count, duration_ms, action, \
-              file_name, file_hash, mime_type, tenant_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+            INSERT_SCAN_SQL,
             &[
                 &scan_id,
                 &source_pod,
@@ -349,6 +365,17 @@ pub async fn persist_scan(
             ],
         )
         .await?;
+
+    // Zero rows means this scan_id is already stored. `findings` has no unique
+    // constraint to conflict on, so proceeding would duplicate every finding
+    // row against the existing scan.
+    if inserted == 0 {
+        tracing::debug!(
+            %scan_id,
+            "scan already persisted under this id — skipping duplicate write"
+        );
+        return Ok(());
+    }
 
     for f in findings {
         let category = f.get("category").and_then(|v| v.as_str()).unwrap_or("");
@@ -1142,6 +1169,58 @@ mod rollup_tests {
         assert_eq!(
             truncated,
             chrono::Utc.with_ymd_and_hms(2026, 9, 4, 13, 0, 0).unwrap()
+        );
+    }
+}
+
+#[cfg(test)]
+mod persist_scan_sql_tests {
+    use super::INSERT_SCAN_SQL;
+
+    // There is no Postgres in the test environment, so these assert the
+    // properties of the statement rather than its runtime behaviour. They
+    // exist because the bug they guard against was invisible: the previous
+    // content-hash dedup dropped scans at debug level, so nothing failed and
+    // nothing was logged above debug when real events went missing.
+
+    #[test]
+    fn scan_insert_is_idempotent_on_primary_key() {
+        assert!(
+            INSERT_SCAN_SQL.contains("ON CONFLICT (id) DO NOTHING"),
+            "scan insert must be idempotent on scan_id; without it a retried \
+             persist duplicates every finding row hanging off the scan"
+        );
+    }
+
+    #[test]
+    fn scan_insert_does_not_dedupe_on_content() {
+        let sql = INSERT_SCAN_SQL.to_ascii_lowercase();
+        assert!(
+            !sql.contains("input_hash = $"),
+            "must not suppress a scan because another scan had the same \
+             content: identical content is not a duplicate event, and \
+             matching on it discarded distinct scans across tenants"
+        );
+        assert!(
+            !sql.contains("interval"),
+            "must not reintroduce a time-window dedup — the 60-second window \
+             dropped genuinely distinct scans, and on a channel backing a \
+             delivery decision that clears content never recorded as scanned"
+        );
+        assert!(
+            !sql.contains("on conflict (input_hash"),
+            "conflict target must be the scan's identity, not its content"
+        );
+    }
+
+    #[test]
+    fn scan_insert_carries_tenant_id() {
+        // The dropped dedup had no tenant predicate, which is what made one
+        // tenant's scan erase another's. Tenant must be stored so any future
+        // uniqueness rule can be scoped by it.
+        assert!(
+            INSERT_SCAN_SQL.contains("tenant_id"),
+            "tenant_id must be persisted with every scan"
         );
     }
 }
