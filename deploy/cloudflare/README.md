@@ -140,9 +140,30 @@ fires a warmup scan to move that cost off the first user request, and
 why they are not in the allowlist. Add a managed Postgres (Neon, Supabase)
 and set the variable if you want history.
 
-**No on-disk audit chain.** `SIPHON_AUDIT_LOG_PATH` / `SIPHON_AUDIT_TAIL_PATH`
-are unset on purpose. Ephemeral disk would reset the tamper-evident HMAC
-chain on every wake, making it silently discontinuous — worse than absent.
+**Durable audit chain, in DO SQLite.** siphon-api writes its audit JSONL to
+container-local `/tmp`, which does not survive a wake — so the Durable
+Object, whose SQLite storage *is* durable, owns the record. Every
+`AUDIT_DRAIN_INTERVAL_SECONDS` (and again on container stop) the DO drains
+`GET /v1/audit` into its `audit_events` table and stores the newest signature
+in `audit_chain`. On the next cold start it passes that signature back as
+`SIPHON_AUDIT_CHAIN_SEED`, so the first event of the new process links to the
+last event of the old one and the HMAC chain stays continuous across wakes.
+
+Events are stored **verbatim**. Rewriting any field would invalidate the
+signature computed over its canonical JSON — a record you cannot verify is
+not an audit trail. Note that this includes `source_ip`: under this topology
+that is the container-network peer the origin sees, not the visitor's IP
+(the Worker terminates the client connection), but confirm that before
+treating the table as free of personal data.
+
+The correctness constraint is drain cadence versus ring capacity. Events that
+overflow `SIPHON_AUDIT_RING_CAP` between two drains are evicted before the DO
+sees them, leaving a real gap. The ring is raised to 2000 against a 30s
+interval for headroom, and the drain logs a warning whenever the ring reports
+a total beyond its own capacity.
+
+Set `SIPHON_AUDIT_SIGNING_KEY_HEX` (`wrangler secret put`) to make the chain
+tamper-evident; without it events are still drained and stored, just unsigned.
 
 **Sizing.** Siphon is CPU-bound and memory-light (Helm asks 256Mi, limits
 1Gi), but Cloudflare bills memory on *provisioned* capacity and custom

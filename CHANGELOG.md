@@ -14,6 +14,32 @@ starting from this file.
 
 ---
 
+## 2026-09-04
+
+### siphon-api 2.7.0
+
+- **feat(api): `SIPHON_AUDIT_CHAIN_SEED` resumes the audit chain on hosts with
+  no durable disk.** The tamper-evident HMAC chain persisted its tail to
+  `SIPHON_AUDIT_TAIL_PATH`, a local file. On a host whose filesystem does not
+  survive a restart — Cloudflare Containers, scratch-FS pods — that file is
+  gone on every cold start, so the chain silently restarted and the
+  tamper-evidence it exists to provide was lost across restarts.
+
+  An external store can now hand the last tail signature it observed back to
+  the process at startup, and the first event of the new process links to it.
+  `RotatingFileAuditHandler::with_seeded_chain()` already existed in
+  siphon-core; it simply had no path from configuration.
+
+  Precedence is deliberate: the seed is applied *before* the tail file, so a
+  live tail written by the running process — strictly fresher than anything an
+  external drain has observed — still wins, and the seed only takes effect on
+  a genuinely cold start. A non-hex seed is refused with a warning and starts
+  a fresh chain rather than linking to garbage.
+
+  No behaviour change when the variable is unset.
+
+---
+
 ## 2026-09-03 — Security: section-hdr OOM fix in siphon-icap; admin gate on patterns/categories + siphon-fs overrides/reload
 
 ### siphon-icap 0.1.2

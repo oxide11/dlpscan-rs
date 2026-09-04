@@ -21,11 +21,20 @@
   },
 
   // ── CORS note ────────────────────────────────────────────────────
-  // siphon-api defaults to CorsLayer::permissive() when SIPHON_CORS_ORIGINS
-  // is unset, which is intentional for this open demo. For a production
-  // deployment, add SIPHON_CORS_ORIGINS to the container envVars below
-  // (comma-separated list of allowed origins, e.g. "https://app.example.com")
-  // so the backend enforces a specific origin allowlist.
+  // siphon-api CORS defaults to DENY when SIPHON_CORS_ORIGINS is unset (it
+  // was permissive until the 2026-09 hardening wave). That default is
+  // correct and does not need overriding here: browsers talk to the Worker,
+  // not to the container, and the Worker is the only client of the origin.
+  // If you ever expose the container directly, set SIPHON_CORS_ORIGINS in
+  // the envVars in src/index.ts to an explicit allowlist.
+  //
+  // ── Secrets ──────────────────────────────────────────────────────
+  // This file is committed. Secrets go in Wrangler's secret store, never
+  // here:
+  //   wrangler secret put SIPHON_API_KEY
+  //   wrangler secret put SIPHON_AUDIT_SIGNING_KEY_HEX   # openssl rand -hex 32
+  // The audit signing key is what makes the persisted chain tamper-evident;
+  // without it the audit log is still written and drained, just unsigned.
   //
   // ── Container ────────────────────────────────────────────────────
   // `image` points at the repo's existing API Dockerfile. The build
