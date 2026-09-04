@@ -14,6 +14,35 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — RBAC hardening: admin gate on six unprotected endpoints
+
+### siphon-api 2.6.1
+
+- **fix(api,security): gate `GET /v1/overrides/history` and `GET
+  /v1/overrides/content` behind `RequireAdminAction`.** Previously any
+  authenticated caller could enumerate backup file paths and read their contents.
+  Both endpoints now require the admin role.
+
+- **fix(api,security): gate `GET /v1/integrations` behind `RequireAdminAction`.**
+  The endpoint returns the active SIEM URL (which may embed credentials) and is
+  now restricted to admins.
+
+- **fix(api,security): gate `GET /v1/lsh/history` behind `RequireAdminAction`.**
+  Also added to `endpoint_rate_limit()` at 30 req/min — it runs an up-to-1000-row
+  DB query and was not previously covered by the per-endpoint throttle.
+
+- **fix(api,security): gate `GET /v1/k8s/pods` behind `RequireAdminAction` (both
+  feature variants).** Any authenticated caller could previously enumerate the
+  cluster pod inventory. Fix applied to both the k8s-roll and stub variants.
+
+- **fix(api,security): `POST /v1/scan/explain` — sanitise 500 error body and
+  emit audit events.** Internal scan engine errors were reflected verbatim in the
+  response body. The body now returns a static `"scan processing failed"` string;
+  the raw error is logged internally. AUDIT events are emitted on both success
+  and failure paths.
+
+---
+
 ## 2026-09-03 — Key rotation, tenant isolation, pg-first aggregation, fs rate limiter
 
 ### siphon-fs 1.1.2

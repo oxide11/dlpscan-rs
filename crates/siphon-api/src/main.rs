@@ -576,6 +576,7 @@ fn endpoint_rate_limit(path: &str) -> Option<u32> {
         "/v1/findings/export" => Some(5), // expensive — file download
         "/v1/findings/pg" => Some(30),    // DB query
         "/v1/findings/stats" => Some(60), // cached, lighter
+        "/v1/lsh/history" => Some(30),    // DB query, up to 1000 rows
         _ => None,
     }
 }
@@ -1875,10 +1876,18 @@ async fn scan_explain(
             .metrics
             .scan_errors_total
             .fetch_add(1, Ordering::Relaxed);
+        tracing::warn!(error = %e, "scan_explain_failed");
+        if let Ok(event) = AuditEvent::new("SCAN") {
+            emit_audit(
+                event
+                    .with_action("scan_explain")
+                    .with_outcome("error"),
+            );
+        }
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("scan processing failed: {e}"),
+                error: "scan processing failed".into(),
             }),
         )
     })?;
@@ -1931,6 +1940,15 @@ async fn scan_explain(
         .collect();
 
     let count = findings.len();
+    if let Ok(event) = AuditEvent::new("SCAN") {
+        emit_audit(
+            event
+                .with_action("scan_explain")
+                .with_outcome("success")
+                .with_metadata("finding_count", serde_json::json!(count))
+                .with_metadata("duration_ms", serde_json::json!(duration_ms)),
+        );
+    }
     Ok(Json(ExplainResponse {
         source_pod: "siphon-api",
         request_id,
@@ -3067,6 +3085,7 @@ struct PodListResponse {
 
 #[cfg(not(feature = "k8s-roll"))]
 async fn k8s_pods(
+    _: RequireAdminAction,
     _state: State<Arc<AppState>>,
     _addr: ConnectInfo<SocketAddr>,
 ) -> (StatusCode, Json<ErrorResponse>) {
@@ -3083,6 +3102,7 @@ async fn k8s_pods(
 
 #[cfg(feature = "k8s-roll")]
 async fn k8s_pods(
+    _: RequireAdminAction,
     State(_state): State<Arc<AppState>>,
     ConnectInfo(_addr): ConnectInfo<SocketAddr>,
 ) -> Result<Json<PodListResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -3398,6 +3418,7 @@ fn format_iso8601(secs: i64, nanos: u32) -> String {
 }
 
 async fn overrides_history(
+    _: RequireAdminAction,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HistoryResponse>, (StatusCode, Json<ErrorResponse>)> {
     let path = state.overrides_path.as_path();
@@ -3475,6 +3496,7 @@ struct OverridesContentResponse {
 }
 
 async fn overrides_content(
+    _: RequireAdminAction,
     State(state): State<Arc<AppState>>,
     Query(q): Query<OverridesContentQuery>,
 ) -> Result<Json<OverridesContentResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -4173,7 +4195,7 @@ struct IntegrationsResponse {
     integrations: Vec<IntegrationItem>,
 }
 
-async fn list_integrations() -> Json<IntegrationsResponse> {
+async fn list_integrations(_: RequireAdminAction) -> Json<IntegrationsResponse> {
     // Honest read of env vars that siem.rs inspects. We don't try to
     // instantiate the adapters here (that lives in create_siem_from_env).
     let siem_type = std::env::var("DLPSCAN_SIEM_TYPE").ok();
@@ -4620,6 +4642,7 @@ struct LshHistoryResponse {
 }
 
 async fn lsh_history(
+    _: RequireAdminAction,
     Query(q): Query<LshHistoryQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<LshHistoryResponse> {
