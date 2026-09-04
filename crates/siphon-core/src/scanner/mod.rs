@@ -936,12 +936,12 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 // the normalized buffer (no successor byte to read).
                 let (orig_start, orig_end) = if !offset_map.is_empty() {
                     let os = if norm_start < offset_map.len() {
-                        offset_map[norm_start]
+                        offset_map[norm_start] as usize
                     } else {
                         text.len()
                     };
                     let oe = if norm_end < offset_map.len() {
-                        offset_map[norm_end]
+                        offset_map[norm_end] as usize
                     } else {
                         text.len()
                     };
@@ -1540,7 +1540,7 @@ static ENTROPY_TOKEN_RE: Lazy<Regex> =
 fn scan_high_entropy_tokens(
     original_text: &str,
     normalized: &str,
-    offset_map: &[usize],
+    offset_map: &[crate::normalize::Offset],
     config: &ScanConfig,
 ) -> Vec<Match> {
     let mut results = Vec::new();
@@ -1660,12 +1660,12 @@ fn scan_high_entropy_tokens(
         // to the primary regex path above.
         let (orig_start, orig_end) = if !offset_map.is_empty() {
             let os = if norm_start < offset_map.len() {
-                offset_map[norm_start]
+                offset_map[norm_start] as usize
             } else {
                 original_text.len()
             };
             let oe = if norm_end < offset_map.len() {
-                offset_map[norm_end]
+                offset_map[norm_end] as usize
             } else {
                 original_text.len()
             };

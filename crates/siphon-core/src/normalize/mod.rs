@@ -366,7 +366,38 @@ static HOMOGLYPH_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
 
 /// Strip zero-width characters from text.
 /// Returns (cleaned_text, offset_map) where offset_map[i] = original position of char i.
-pub fn strip_zero_width(text: &str) -> (String, Vec<usize>) {
+/// A byte offset into the caller's original, un-normalized input.
+///
+/// `u32` rather than `usize` deliberately. The offset map holds one entry per
+/// byte of normalized output, which makes it the largest allocation in the
+/// scan path — larger than the text itself. On 64-bit, halving the element
+/// width halves that: at the 10 MB input cap the map goes from ~80 MB to
+/// ~40 MB, and every stage holds both an input and an output map at once.
+///
+/// Safe by construction: `MAX_INPUT_SIZE` is orders of magnitude below
+/// `u32::MAX` (4 GiB), and normalization shrinks far more often than it grows.
+/// `offset_fits` asserts the invariant rather than trusting it.
+pub type Offset = u32;
+
+/// One [`Offset`] per byte of normalized output.
+pub type OffsetMap = Vec<Offset>;
+
+/// Narrow a byte index to an [`Offset`].
+///
+/// Saturates rather than wrapping. A wrap would silently point a finding at
+/// the wrong part of the document, which is worse than clamping to the last
+/// addressable byte — and the debug assertion catches it in tests long before
+/// an input that large could reach production.
+#[inline]
+fn to_offset(idx: usize) -> Offset {
+    debug_assert!(
+        idx <= Offset::MAX as usize,
+        "offset {idx} exceeds Offset::MAX; input cap should have prevented this"
+    );
+    idx.min(Offset::MAX as usize) as Offset
+}
+
+pub fn strip_zero_width(text: &str) -> (String, OffsetMap) {
     // Fast path: check if any zero-width chars exist
     let has_zw = text.chars().any(|c| ZERO_WIDTH_CHARS.contains(&c));
     if !has_zw {
@@ -382,7 +413,7 @@ pub fn strip_zero_width(text: &str) -> (String, Vec<usize>) {
             result.push(ch);
             // Map each byte of the output char to the original byte index
             for i in 0..ch.len_utf8() {
-                offset_map.push(byte_idx + i);
+                offset_map.push(to_offset(byte_idx + i));
             }
         }
     }
@@ -423,9 +454,10 @@ fn is_ascii_only(text: &str) -> bool {
 
 /// Get the original byte offset, handling identity mapping (empty offsets = identity).
 #[inline]
-fn orig_offset(offsets: &[usize], byte_idx: usize) -> usize {
+fn orig_offset(offsets: &[Offset], byte_idx: usize) -> Offset {
     if offsets.is_empty() || byte_idx >= offsets.len() {
-        byte_idx
+        // Empty map means identity: the stage did not move anything.
+        to_offset(byte_idx)
     } else {
         offsets[byte_idx]
     }
@@ -457,7 +489,7 @@ fn has_percent_encoding(bytes: &[u8]) -> bool {
 }
 
 /// Single pass of URL percent-decoding (%XX → byte, printable ASCII only).
-fn decode_percent_single(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
+fn decode_percent_single(input: &str, in_offsets: &[Offset]) -> Option<(String, OffsetMap)> {
     let bytes = input.as_bytes();
     if !has_percent_encoding(bytes) {
         return None;
@@ -493,7 +525,7 @@ fn decode_percent_single(input: &str, in_offsets: &[usize]) -> Option<(String, V
 }
 
 /// Decode URL percent-encoding with double-decode support (%25XX → %XX → char).
-fn decode_percent_encoding(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
+fn decode_percent_encoding(input: &str, in_offsets: &[Offset]) -> Option<(String, OffsetMap)> {
     // If the first pass decodes nothing there is nothing for a second pass to
     // find either, so propagate "unchanged" straight out.
     let (first, first_off) = decode_percent_single(input, in_offsets)?;
@@ -503,7 +535,7 @@ fn decode_percent_encoding(input: &str, in_offsets: &[usize]) -> Option<(String,
 }
 
 /// Decode HTML numeric character references: decimal `&#NNN;` and hex `&#xHH;`.
-fn decode_html_entities(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
+fn decode_html_entities(input: &str, in_offsets: &[Offset]) -> Option<(String, OffsetMap)> {
     if !input.contains("&#") {
         return None;
     }
@@ -589,7 +621,7 @@ fn decode_html_entities(input: &str, in_offsets: &[usize]) -> Option<(String, Ve
 }
 
 /// Strip empty CSS comments (`/**/`) and empty HTML comments (`<!---->`) from text.
-fn strip_comments(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
+fn strip_comments(input: &str, in_offsets: &[Offset]) -> Option<(String, OffsetMap)> {
     let has_css = input.contains("/*");
     let has_html = input.contains("<!--");
     if !has_css && !has_html {
@@ -660,7 +692,7 @@ fn strip_comments(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usiz
 /// two non-alphabetic characters (digits, punctuation, symbols). This defeats
 /// evasion techniques like `1 2 3 - 4 5 - 6 7 8 9` while preserving natural
 /// language spacing like `social security number`.
-fn collapse_padding(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
+fn collapse_padding(input: &str, in_offsets: &[Offset]) -> Option<(String, OffsetMap)> {
     let bytes = input.as_bytes();
     if !bytes
         .iter()
@@ -732,7 +764,7 @@ fn collapse_padding(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<us
 ///
 /// Collapses runs of repeated hyphens or dots (e.g. `123--45` → `123-45`)
 /// only when surrounded by alphanumeric characters on both sides.
-fn normalize_delimiters(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
+fn normalize_delimiters(input: &str, in_offsets: &[Offset]) -> Option<(String, OffsetMap)> {
     let bytes = input.as_bytes();
     // Cheap necessary condition, checked before allocating. This stage only
     // rewrites *runs* of two or more identical `-`/`.`, so text without a
@@ -995,8 +1027,8 @@ fn try_match_ipv4(bytes: &[u8], start: usize) -> Option<usize> {
 /// stage strips it entirely.
 fn strip_alnum_adjacent_delimiters(
     input: &str,
-    in_offsets: &[usize],
-) -> Option<(String, Vec<usize>)> {
+    in_offsets: &[Offset],
+) -> Option<(String, OffsetMap)> {
     let bytes = input.as_bytes();
     if !bytes
         .iter()
@@ -1009,7 +1041,7 @@ fn strip_alnum_adjacent_delimiters(
     let coord_dots = mark_decimal_coord_dot_positions(bytes);
 
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut offsets: Vec<usize> = Vec::with_capacity(bytes.len());
+    let mut offsets: OffsetMap = Vec::with_capacity(bytes.len());
     let mut changed = false;
 
     for i in 0..bytes.len() {
@@ -1096,8 +1128,8 @@ fn is_exotic_sep(c: char) -> bool {
 ///   * downstream checksum/Luhn validation still gates every resulting match.
 fn strip_consistent_digit_separators(
     input: &str,
-    in_offsets: &[usize],
-) -> Option<(String, Vec<usize>)> {
+    in_offsets: &[Offset],
+) -> Option<(String, OffsetMap)> {
     // Cheap necessary condition, checked *before* the two collects below.
     // Those materialise a `Vec<char>` (4 bytes/char) plus a `Vec<usize>` index
     // (8 bytes/char) — about 12 MB for a 1 MB input — and this stage only ever
@@ -1240,7 +1272,7 @@ fn strip_consistent_digit_separators(
     }
 
     let mut out = String::with_capacity(input.len());
-    let mut offsets: Vec<usize> = Vec::with_capacity(input.len());
+    let mut offsets: OffsetMap = Vec::with_capacity(input.len());
     for (idx, &dropped) in remove.iter().enumerate() {
         if dropped {
             continue;
@@ -1256,7 +1288,7 @@ fn strip_consistent_digit_separators(
 }
 
 /// Strip zero-width characters with offset composition.
-fn remap_strip_zero_width(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
+fn remap_strip_zero_width(input: &str, in_offsets: &[Offset]) -> Option<(String, OffsetMap)> {
     let has_zw = input.chars().any(|c| ZERO_WIDTH_CHARS.contains(&c));
     if !has_zw {
         return None;
@@ -1281,7 +1313,7 @@ fn remap_strip_zero_width(input: &str, in_offsets: &[usize]) -> Option<(String, 
 ///
 /// Heuristic: if the text looks like space-separated pairs of hex digits
 /// (at least 3 pairs), decode them to ASCII.
-fn decode_hex_spaced(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
+fn decode_hex_spaced(input: &str, in_offsets: &[Offset]) -> Option<(String, OffsetMap)> {
     let bytes = input.as_bytes();
     // Quick check: need at least "XX XX XX" = 8 chars
     if bytes.len() < 8 {
@@ -1403,14 +1435,14 @@ fn decode_hex_spaced(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<u
 ///
 /// Only replaces sequences where both digits are valid hex and the decoded byte
 /// is printable ASCII (0x20–0x7E). Other sequences are passed through unchanged.
-fn decode_hex_escapes(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
+fn decode_hex_escapes(input: &str, in_offsets: &[Offset]) -> Option<(String, OffsetMap)> {
     let bytes = input.as_bytes();
     if !bytes.windows(2).any(|w| w[0] == b'\\' && w[1] == b'x') {
         return None;
     }
 
     let mut out: Vec<u8> = Vec::with_capacity(input.len());
-    let mut offsets: Vec<usize> = Vec::with_capacity(input.len());
+    let mut offsets: OffsetMap = Vec::with_capacity(input.len());
     let mut i = 0;
 
     while i < bytes.len() {
@@ -1739,10 +1771,10 @@ fn try_decode_any(token: &str) -> Option<String> {
 /// base64-alphabet. 12 chars is the sweet spot: an encoded 9-byte value
 /// (like a short SSN `123-45-6789` without separators) is exactly 12 chars
 /// of base64, so we catch the smallest realistic evasion payload.
-fn decode_encoded_tokens(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
+fn decode_encoded_tokens(input: &str, in_offsets: &[Offset]) -> Option<(String, OffsetMap)> {
     let bytes = input.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
-    let mut offsets: Vec<usize> = Vec::with_capacity(bytes.len());
+    let mut offsets: OffsetMap = Vec::with_capacity(bytes.len());
     let mut i = 0;
     let mut changed = false;
 
@@ -2315,7 +2347,7 @@ fn rot13_or_same(text: &str) -> String {
         .unwrap_or_else(|| text.to_string())
 }
 
-fn apply_rot13(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)> {
+fn apply_rot13(input: &str, in_offsets: &[Offset]) -> Option<(String, OffsetMap)> {
     let bytes = input.as_bytes();
     // Only apply if text has letters (no point on pure digits)
     if !bytes.iter().any(|b| b.is_ascii_alphabetic()) {
@@ -2355,7 +2387,7 @@ fn apply_rot13(input: &str, in_offsets: &[usize]) -> Option<(String, Vec<usize>)
 /// The returned offset_map maps each byte index in the normalized output back
 /// to the corresponding byte index in the original input. Empty offset_map
 /// means identity mapping (nothing changed).
-pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
+pub fn normalize_text(text: &str) -> (String, OffsetMap) {
     // Fast path: pure ASCII with no evasion markers
     let ascii = is_ascii_only(text);
     if ascii && !has_evasion_markers(text) {
@@ -2363,7 +2395,7 @@ pub fn normalize_text(text: &str) -> (String, Vec<usize>) {
     }
 
     let mut current = text.to_string();
-    let mut offsets: Vec<usize> = Vec::new(); // empty = identity mapping
+    let mut offsets: OffsetMap = Vec::new(); // empty = identity mapping
 
     // Helper macro: adopt a stage's output only when the stage actually
     // changed something.
@@ -3067,9 +3099,9 @@ fn is_ascii_ws(b: u8) -> bool {
 /// The transform function maps each input char to exactly one output char.
 fn remap_char_transform(
     input: &str,
-    input_offsets: &[usize],
+    input_offsets: &[Offset],
     transform: impl Fn(char) -> char,
-) -> (String, Vec<usize>) {
+) -> (String, OffsetMap) {
     let mut output = String::with_capacity(input.len());
     let mut output_offsets = Vec::with_capacity(input.len());
 
@@ -3081,7 +3113,7 @@ fn remap_char_transform(
         let orig_start = if byte_idx < input_offsets.len() {
             input_offsets[byte_idx]
         } else {
-            byte_idx
+            to_offset(byte_idx)
         };
 
         // Map each byte of the output char to the original offset
@@ -3156,8 +3188,8 @@ fn is_digit_run_member(c: char) -> bool {
 /// preserved the same way `remap_char_transform` does it.
 fn fold_confusable_digit_runs(
     input: &str,
-    input_offsets: &[usize],
-) -> Option<(String, Vec<usize>)> {
+    input_offsets: &[Offset],
+) -> Option<(String, OffsetMap)> {
     // A run qualifies when it is ≥ 12 chars with ≥ 8 real digits, is more than
     // 60% real digits, and contains at least one confusable to actually fold
     // (otherwise the run is already plain digits).
@@ -3227,7 +3259,7 @@ fn fold_confusable_digit_runs(
         let orig_start = if byte_idx < input_offsets.len() {
             input_offsets[byte_idx]
         } else {
-            byte_idx
+            to_offset(byte_idx)
         };
         for _ in 0..replacement.len_utf8() {
             output_offsets.push(orig_start);
@@ -3240,7 +3272,7 @@ fn fold_confusable_digit_runs(
 /// NFKC can expand or contract characters (e.g., fullwidth '０' → '0',
 /// ligature 'ﬁ' → 'fi'). Each output char inherits the original byte offset
 /// of the input char that produced it.
-fn remap_nfkc(input: &str, input_offsets: &[usize]) -> (String, Vec<usize>) {
+fn remap_nfkc(input: &str, input_offsets: &[Offset]) -> (String, OffsetMap) {
     let mut output = String::with_capacity(input.len());
     let mut output_offsets = Vec::with_capacity(input.len());
 
@@ -3249,7 +3281,7 @@ fn remap_nfkc(input: &str, input_offsets: &[usize]) -> (String, Vec<usize>) {
         let orig_offset = if byte_idx < input_offsets.len() {
             input_offsets[byte_idx]
         } else {
-            byte_idx
+            to_offset(byte_idx)
         };
 
         // NFKC decompose this single character
@@ -3263,6 +3295,96 @@ fn remap_nfkc(input: &str, input_offsets: &[usize]) -> (String, Vec<usize>) {
     }
 
     (output, output_offsets)
+}
+
+#[cfg(test)]
+mod offset_width_tests {
+    use super::*;
+
+    /// The whole point of the change: the offset map is the largest
+    /// allocation in the scan path, and its element width sets that cost.
+    /// If someone widens `Offset` back to `usize` this fails on 64-bit.
+    #[test]
+    fn offset_is_four_bytes() {
+        assert_eq!(
+            std::mem::size_of::<Offset>(),
+            4,
+            "Offset sets the size of the largest allocation in a scan; \
+             widening it doubles peak memory per concurrent scan"
+        );
+    }
+
+    /// At the input cap the map must stay well inside what an Offset can
+    /// address, with room for normalization stages that grow the text
+    /// (NFKC can expand a character into several).
+    #[test]
+    fn input_cap_fits_the_offset_width_with_headroom() {
+        let cap = crate::validation::MAX_INPUT_SIZE;
+        assert!(
+            cap < Offset::MAX as usize / 16,
+            "input cap {cap} leaves too little headroom below Offset::MAX \
+             ({}) for stages that expand the text",
+            Offset::MAX
+        );
+    }
+
+    #[test]
+    fn to_offset_is_identity_within_range() {
+        assert_eq!(to_offset(0), 0);
+        assert_eq!(to_offset(12_345), 12_345);
+        assert_eq!(
+            to_offset(crate::validation::MAX_INPUT_SIZE),
+            crate::validation::MAX_INPUT_SIZE as Offset
+        );
+    }
+
+    /// Two-layer contract, and the layers differ by build profile.
+    ///
+    /// In debug the assertion fires, because an offset that large means the
+    /// input cap has been bypassed and we want that loud, in a test, not
+    /// discovered in production. In release it saturates: a wrapped offset
+    /// would point a finding at an unrelated part of the document — a
+    /// silently wrong answer — where a clamped one is merely imprecise at a
+    /// boundary no real input reaches.
+    #[test]
+    #[should_panic(expected = "exceeds Offset::MAX")]
+    fn to_offset_asserts_in_debug_when_the_cap_is_bypassed() {
+        let _ = to_offset(Offset::MAX as usize + 1_000);
+    }
+
+    /// The saturating half of that contract, exercised at the boundary the
+    /// assertion still permits.
+    #[test]
+    fn to_offset_handles_the_maximum_addressable_value() {
+        assert_eq!(to_offset(Offset::MAX as usize), Offset::MAX);
+    }
+
+    /// Spans must still resolve to the caller's original bytes after the
+    /// width change — the map is only useful if it round-trips.
+    #[test]
+    fn offsets_still_resolve_to_original_bytes() {
+        // Zero-width joiner inside a card number: normalization removes it,
+        // so normalized indices no longer match original ones.
+        let original = "card 4111\u{200b}1111 1111 1111 here";
+        let (normalized, offsets) = normalize_text(original);
+        assert!(
+            normalized.contains("4111"),
+            "normalization should strip the ZWSP"
+        );
+        assert_eq!(
+            offsets.len(),
+            normalized.len(),
+            "one offset per byte of normalized output"
+        );
+        for (norm_idx, &orig) in offsets.iter().enumerate() {
+            assert!(
+                (orig as usize) <= original.len(),
+                "offset {orig} at normalized byte {norm_idx} points past the \
+                 original input ({} bytes)",
+                original.len()
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3431,7 +3553,7 @@ mod tests {
         assert_eq!(out, "4532015112830366");
         assert_eq!(offsets.len(), out.len());
         // Every offset must point back inside the original string.
-        assert!(offsets.iter().all(|&o| o < input.len()));
+        assert!(offsets.iter().all(|&o| (o as usize) < input.len()));
     }
 
     // ---- Stage prescan boundaries ----
@@ -3669,7 +3791,7 @@ mod tests {
         let original_token_start = input.find("MTIz").unwrap();
         if !offsets.is_empty() {
             assert_eq!(
-                offsets[decoded_start], original_token_start,
+                offsets[decoded_start] as usize, original_token_start,
                 "offset map should point decoded bytes to the original token start"
             );
         }
