@@ -598,6 +598,7 @@ async fn scan(
             span: (m.span.0, m.span.1),
             metadata: HashMap::new(),
             severity: severity_for(&m.category, m.confidence),
+            tenant_id: tenant_id.clone(),
         });
     }
 
@@ -714,8 +715,15 @@ struct FindingsResponse {
 
 async fn list_findings(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Query(q): Query<FindingsQuery>,
 ) -> JsonResponse<FindingsResponse> {
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_owned());
+
     let snapshot = state.findings.snapshot();
     let total = snapshot.len();
     let capacity = state.findings.capacity();
@@ -726,6 +734,7 @@ async fn list_findings(
         q.severity.as_deref(),
         q.contains.as_deref(),
         q.since.as_deref(),
+        tenant_id.as_deref(),
     );
 
     let cap = q.limit.unwrap_or(200).min(capacity);

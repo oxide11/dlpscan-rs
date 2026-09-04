@@ -169,11 +169,10 @@ struct AppState {
     /// the operator can tell "URL not configured" apart from
     /// "URL set but the pool failed to come up at startup".
     db_state: db::PoolState,
-    /// Short-lived cache for GET /v1/findings/stats. Avoids repeated
-    /// full-table scans on every poll from the C2. Holds the last
-    /// serialized response body and the time it was computed; the
-    /// handler replaces it after STATS_CACHE_SECS seconds.
-    stats_cache: Arc<Mutex<Option<(Instant, serde_json::Value)>>>,
+    /// Short-lived cache for GET /v1/findings/stats. Keyed by tenant_id
+    /// (None = admin/unscoped) so one tenant's cached aggregate is never
+    /// returned to another. Entries expire after STATS_CACHE_SECS seconds.
+    stats_cache: Arc<Mutex<HashMap<Option<String>, (Instant, serde_json::Value)>>>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -691,6 +690,22 @@ async fn rate_limit_middleware(
     let ip = client_ip(&state.trusted_proxies, &addr, request.headers());
     let path = request.uri().path().to_string();
 
+    // Derive a stable per-key bucket key from the bearer token so that a
+    // compromised or abusive key cannot exhaust the IP-level quota for all
+    // other callers behind a shared egress (NAT, corporate proxy). We hash
+    // only the raw token value — the hash is never stored beyond this frame.
+    let key_bucket: Option<String> = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .filter(|s| !s.trim().is_empty())
+        .map(|token| {
+            let mut h = Sha256::new();
+            h.update(token.as_bytes());
+            format!("key:{}", hex::encode(h.finalize()))
+        });
+
     let allowed = {
         // Recover from a poisoned lock rather than panicking: a single panic
         // while the guard is held would otherwise turn every subsequent request
@@ -698,12 +713,17 @@ async fn rate_limit_middleware(
         let mut limiter = state.rate_limiter.lock().unwrap_or_else(|e| e.into_inner());
         // Global per-IP limit
         let global_ok = limiter.check(&ip, state.rate_limit);
-        // Per-endpoint tighter limit (uses "ep:<path>:<ip>" as bucket key)
+        // Global per-key limit (same cap as IP; both must pass)
+        let key_ok = key_bucket
+            .as_deref()
+            .map_or(true, |kb| limiter.check(kb, state.rate_limit));
+        // Per-endpoint tighter limit (uses "ep:<path>:<key|ip>" as bucket key)
+        let ep_key = key_bucket.as_deref().unwrap_or(&ip);
         let endpoint_ok = match endpoint_rate_limit(&path) {
-            Some(ep_limit) => limiter.check(&format!("ep:{path}:{ip}"), ep_limit),
+            Some(ep_limit) => limiter.check(&format!("ep:{path}:{ep_key}"), ep_limit),
             None => true,
         };
-        global_ok && endpoint_ok
+        global_ok && key_ok && endpoint_ok
     };
 
     if !allowed {
@@ -1380,6 +1400,7 @@ async fn scan(
             span: f.span,
             metadata: f.metadata.clone(),
             severity: severity_for(&f.category, f.confidence),
+            tenant_id: tenant_id.clone(),
         });
     }
 
@@ -1414,7 +1435,8 @@ async fn scan(
                 .with_duration_ms(duration_ms)
                 .with_request_id(&request_id)
                 .with_source_ip(&source_ip)
-                .with_metadata("text_len", serde_json::json!(req.text.len())),
+                .with_metadata("text_len", serde_json::json!(req.text.len()))
+                .with_metadata("tenant_id", serde_json::json!(tenant_id)),
         );
     }
 
@@ -1627,6 +1649,7 @@ async fn scan_batch(
                 span: f.span,
                 metadata: f.metadata.clone(),
                 severity: severity_for(&f.category, f.confidence),
+                tenant_id: tenant_id.clone(),
             });
         }
 
@@ -1713,7 +1736,8 @@ async fn scan_batch(
                 .with_duration_ms(total_duration_ms as f64)
                 .with_request_id(&batch_id)
                 .with_source_ip(&source_ip)
-                .with_metadata("batch_size", serde_json::json!(items.len())),
+                .with_metadata("batch_size", serde_json::json!(items.len()))
+                .with_metadata("tenant_id", serde_json::json!(tenant_id)),
         );
     }
 
@@ -4716,11 +4740,22 @@ struct FindingsStatsResponse {
     lsh: Option<LshStats>,
 }
 
-async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>>) -> Response {
-    // Return cached response if fresh enough (avoids repeated DB COUNT scans).
+async fn findings_stats(
+    _: RequireAdminAction,
+    headers: HeaderMap,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_owned());
+
+    // Return cached response if fresh enough — keyed by tenant so one
+    // tenant's aggregate is never served to another.
     {
         let cache = state.stats_cache.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((cached_at, ref cached_body)) = *cache {
+        if let Some((cached_at, ref cached_body)) = cache.get(&tenant_id) {
             if cached_at.elapsed().as_secs() < STATS_CACHE_SECS {
                 let body = serde_json::to_vec(cached_body).unwrap_or_default();
                 return (
@@ -4734,6 +4769,8 @@ async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>
             }
         }
     }
+
+    let tenant_filter = tenant_id.as_deref();
 
     let Some(pool) = state.db_pool.as_ref() else {
         return Json(FindingsStatsResponse {
@@ -4766,10 +4803,11 @@ async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>
         .query(
             "SELECT category, COUNT(*) as cnt \
              FROM findings \
+             WHERE ($1::text IS NULL OR tenant_id = $1) \
              GROUP BY category \
              ORDER BY cnt DESC \
              LIMIT 20",
-            &[],
+            &[&tenant_filter],
         )
         .await
     {
@@ -4792,9 +4830,10 @@ async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>
             "SELECT DATE_TRUNC('day', created_at) as day, COUNT(*) as cnt \
              FROM scans \
              WHERE created_at >= NOW() - INTERVAL '30 days' \
+               AND ($1::text IS NULL OR tenant_id = $1) \
              GROUP BY day \
              ORDER BY day DESC",
-            &[],
+            &[&tenant_filter],
         )
         .await
     {
@@ -4816,7 +4855,13 @@ async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>
     };
 
     // Total findings count.
-    let total_findings: i64 = match client.query_one("SELECT COUNT(*) FROM findings", &[]).await {
+    let total_findings: i64 = match client
+        .query_one(
+            "SELECT COUNT(*) FROM findings WHERE ($1::text IS NULL OR tenant_id = $1)",
+            &[&tenant_filter],
+        )
+        .await
+    {
         Ok(row) => row.get::<_, i64>(0),
         Err(e) => {
             tracing::warn!("findings_stats: total_findings query failed: {e}");
@@ -4826,7 +4871,10 @@ async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>
 
     // Last scan timestamp.
     let last_scan_at: Option<String> = match client
-        .query_one("SELECT MAX(created_at) FROM scans", &[])
+        .query_one(
+            "SELECT MAX(created_at) FROM scans WHERE ($1::text IS NULL OR tenant_id = $1)",
+            &[&tenant_filter],
+        )
         .await
     {
         Ok(row) => {
@@ -4899,10 +4947,10 @@ async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>
         lsh: Some(lsh_stats),
     };
 
-    // Populate cache.
+    // Populate cache, keyed by tenant_id.
     if let Ok(json_val) = serde_json::to_value(&response) {
         let mut cache = state.stats_cache.lock().unwrap_or_else(|e| e.into_inner());
-        *cache = Some((Instant::now(), json_val));
+        cache.insert(tenant_id, (Instant::now(), json_val));
     }
 
     Json(response).into_response()
@@ -5302,9 +5350,16 @@ struct FindingsResponse {
 
 async fn list_findings(
     _: RequireAdminAction,
+    headers: HeaderMap,
     Query(q): Query<FindingsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<FindingsResponse> {
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_owned());
+
     let snapshot = state.findings.snapshot();
     let total = snapshot.len();
     let capacity = state.findings.capacity();
@@ -5315,6 +5370,7 @@ async fn list_findings(
         q.severity.as_deref(),
         q.contains.as_deref(),
         q.since.as_deref(),
+        tenant_id.as_deref(),
     );
 
     let cap = q.limit.unwrap_or(200).min(capacity);
@@ -5968,7 +6024,7 @@ async fn main() {
         disabled_stages: Arc::new(RwLock::new(HashSet::new())),
         db_pool,
         db_state,
-        stats_cache: Arc::new(Mutex::new(None)),
+        stats_cache: Arc::new(Mutex::new(HashMap::new())),
     });
 
     // Retention pruning background task — runs once per day when
