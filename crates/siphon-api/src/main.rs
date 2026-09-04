@@ -24,6 +24,13 @@
 //!                                    tamper-evident chain mode)
 //!   SIPHON_AUDIT_TAIL_PATH           Chain tail state path (persists chain
 //!                                    across process restarts; requires key)
+//!   SIPHON_AUDIT_CHAIN_SEED          Hex tail signature to resume the chain
+//!                                    from when there is no durable disk for
+//!                                    SIPHON_AUDIT_TAIL_PATH (e.g. Cloudflare
+//!                                    Containers, scratch-FS pods). An
+//!                                    external store supplies the last tail it
+//!                                    saw; a live tail file still wins.
+//!                                    Requires key
 //!   SIPHON_POLICIES_DIR              Optional directory of *.toml policies
 //!                                    exposed read-only via GET /v1/policies
 //!   SIPHON_ALLOWLIST_PATH            Optional JSON file {texts,patterns,paths}
@@ -299,6 +306,7 @@ fn build_audit_logger(
     log_path: Option<&str>,
     signing_key_hex: Option<&str>,
     tail_path: Option<&str>,
+    chain_seed: Option<&str>,
 ) -> Option<AuditLogger> {
     let path = log_path?;
     // 50 MB / 10 rotated files — matches the RotatingFileAuditHandler
@@ -309,12 +317,36 @@ fn build_audit_logger(
         match hex::decode(hex_key) {
             Ok(key) if key.len() >= 16 => {
                 handler = handler.with_chain_key(&key);
+                // Order matters. The seed is the cold-start fallback for hosts
+                // with no durable disk (Cloudflare Containers, scratch FS
+                // pods): an external store hands us the tail it last saw. The
+                // tail *file* is applied second so that a live tail written by
+                // this same container — which is strictly fresher than
+                // anything an external drain has observed — wins. When the
+                // file is absent, with_chain_tail_path's NotFound branch
+                // leaves last_signature untouched, so the seed survives.
+                if let Some(seed) = chain_seed {
+                    let seed = seed.trim();
+                    if !seed.is_empty() && seed.chars().all(|c| c.is_ascii_hexdigit()) {
+                        handler = handler.with_seeded_chain(seed);
+                        tracing::info!("Audit chain seeded from SIPHON_AUDIT_CHAIN_SEED");
+                    } else if !seed.is_empty() {
+                        // Do not fall back to a fresh chain silently: an
+                        // operator who set this expects continuity, and a
+                        // malformed value means the external store handed us
+                        // something wrong.
+                        tracing::warn!(
+                            "SIPHON_AUDIT_CHAIN_SEED is not hex; ignoring and starting fresh chain"
+                        );
+                    }
+                }
                 if let Some(tp) = tail_path {
                     handler = handler.with_chain_tail_path(tp);
                 }
                 tracing::info!(
                     log_path = %path,
                     tail = tail_path.is_some(),
+                    seeded = chain_seed.is_some(),
                     "Audit log chain signing enabled"
                 );
             }
@@ -5899,6 +5931,7 @@ async fn main() {
             .ok()
             .as_deref(),
         std::env::var("SIPHON_AUDIT_TAIL_PATH").ok().as_deref(),
+        std::env::var("SIPHON_AUDIT_CHAIN_SEED").ok().as_deref(),
     ) {
         Some(mut l) => {
             l.add_handler(ring_handler);
@@ -6413,11 +6446,15 @@ mod tests {
     fn test_build_audit_logger_none_without_path() {
         // No log path => no logger. Signing key alone is not enough;
         // without a file to write to, signatures have nowhere to go.
-        assert!(build_audit_logger(None, None, None).is_none());
-        assert!(build_audit_logger(None, Some("deadbeef"), None).is_none());
+        assert!(build_audit_logger(None, None, None, None).is_none());
+        assert!(build_audit_logger(None, Some("deadbeef"), None, None).is_none());
         assert!(
-            build_audit_logger(None, Some("deadbeef"), Some("/tmp/tail")).is_none(),
+            build_audit_logger(None, Some("deadbeef"), Some("/tmp/tail"), None).is_none(),
             "tail path without log path must not synthesise a logger"
+        );
+        assert!(
+            build_audit_logger(None, Some("deadbeef"), None, Some("abcd")).is_none(),
+            "chain seed without log path must not synthesise a logger"
         );
     }
 
@@ -6425,7 +6462,7 @@ mod tests {
     fn test_build_audit_logger_unsigned_writes_events() {
         let dir = tempfile::tempdir().unwrap();
         let log_path = dir.path().join("audit.jsonl");
-        let logger = build_audit_logger(Some(log_path.to_str().unwrap()), None, None)
+        let logger = build_audit_logger(Some(log_path.to_str().unwrap()), None, None, None)
             .expect("logger should be built");
 
         logger.log(&AuditEvent::new("SCAN").unwrap().with_user("test-user"));
@@ -6450,6 +6487,7 @@ mod tests {
             Some(log_path.to_str().unwrap()),
             Some(&key_hex),
             Some(tail_path.to_str().unwrap()),
+            None,
         )
         .expect("logger should be built with chain mode");
 
@@ -6481,6 +6519,140 @@ mod tests {
         assert_eq!(tail, events[1].signature.clone().unwrap());
     }
 
+    /// The Cloudflare Containers case: the tail file's filesystem does not
+    /// survive a wake, so the chain would restart on every cold start. An
+    /// external store (the Durable Object) hands back the last tail it drained
+    /// via SIPHON_AUDIT_CHAIN_SEED, and the first event of the new process
+    /// links to it instead of starting a fresh chain.
+    #[test]
+    fn test_build_audit_logger_chain_seed_resumes_across_lost_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_hex = "bb".repeat(32);
+        let key = hex::decode(&key_hex).unwrap();
+
+        // ── First container lifetime: writes one event, then dies.
+        let log1 = dir.path().join("audit1.jsonl");
+        let tail1 = dir.path().join("audit1.tail");
+        let logger1 = build_audit_logger(
+            Some(log1.to_str().unwrap()),
+            Some(&key_hex),
+            Some(tail1.to_str().unwrap()),
+            None,
+        )
+        .unwrap();
+        logger1.log(&AuditEvent::new("SCAN").unwrap().with_user("before"));
+        let first: AuditEvent = serde_json::from_str(
+            std::fs::read_to_string(&log1)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        let drained_tail = first.signature.clone().unwrap();
+
+        // ── Second lifetime: fresh disk. New log path, and the tail file the
+        // handler would have read is simply not there.
+        let log2 = dir.path().join("audit2.jsonl");
+        let tail2 = dir.path().join("audit2.tail");
+        assert!(
+            !tail2.exists(),
+            "second lifetime must start with no tail file"
+        );
+        let logger2 = build_audit_logger(
+            Some(log2.to_str().unwrap()),
+            Some(&key_hex),
+            Some(tail2.to_str().unwrap()),
+            Some(&drained_tail),
+        )
+        .unwrap();
+        logger2.log(&AuditEvent::new("SCAN").unwrap().with_user("after"));
+
+        let second: AuditEvent = serde_json::from_str(
+            std::fs::read_to_string(&log2)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            second.prev_signature.as_deref(),
+            Some(drained_tail.as_str()),
+            "first event after a wake must link to the externally persisted tail"
+        );
+        assert!(second.verify(&key));
+    }
+
+    /// A tail file written by *this* container is strictly fresher than
+    /// anything an external drain has seen, so it must win over the seed.
+    /// Otherwise a restart within one container lifetime would rewind the
+    /// chain to the last drained point and fork it.
+    #[test]
+    fn test_build_audit_logger_live_tail_file_beats_chain_seed() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("audit.jsonl");
+        let tail_path = dir.path().join("audit.tail");
+        let key_hex = "cc".repeat(32);
+
+        let live_tail = "ab".repeat(32);
+        let stale_seed = "cd".repeat(32);
+        std::fs::write(&tail_path, &live_tail).unwrap();
+
+        let logger = build_audit_logger(
+            Some(log_path.to_str().unwrap()),
+            Some(&key_hex),
+            Some(tail_path.to_str().unwrap()),
+            Some(&stale_seed),
+        )
+        .unwrap();
+        logger.log(&AuditEvent::new("SCAN").unwrap());
+
+        let event: AuditEvent = serde_json::from_str(
+            std::fs::read_to_string(&log_path)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            event.prev_signature.as_deref(),
+            Some(live_tail.as_str()),
+            "on-disk tail must take precedence over the cold-start seed"
+        );
+    }
+
+    /// A malformed seed must not silently masquerade as continuity.
+    #[test]
+    fn test_build_audit_logger_non_hex_chain_seed_starts_fresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("audit.jsonl");
+        let key_hex = "dd".repeat(32);
+
+        let logger = build_audit_logger(
+            Some(log_path.to_str().unwrap()),
+            Some(&key_hex),
+            None,
+            Some("not-a-signature!"),
+        )
+        .unwrap();
+        logger.log(&AuditEvent::new("SCAN").unwrap());
+
+        let event: AuditEvent = serde_json::from_str(
+            std::fs::read_to_string(&log_path)
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            event.prev_signature.is_none(),
+            "a non-hex seed must start a fresh chain, not link to garbage"
+        );
+    }
+
     #[test]
     fn test_build_audit_logger_invalid_hex_key_falls_back_to_unsigned() {
         let dir = tempfile::tempdir().unwrap();
@@ -6488,6 +6660,7 @@ mod tests {
         let logger = build_audit_logger(
             Some(log_path.to_str().unwrap()),
             Some("not-valid-hex!"),
+            None,
             None,
         )
         .expect("logger should still be built, just unsigned");

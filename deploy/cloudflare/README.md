@@ -5,9 +5,10 @@ endpoint, using a Worker at the edge and a Container running the unmodified
 `deploy/Dockerfile.api` image.
 
 > **Scope: demo and testing.** This configuration deliberately runs without
-> Postgres persistence and without the on-disk audit chain — see
-> [Trade-offs](#trade-offs). Do not put regulated or production data through
-> it.
+> Postgres persistence; the audit chain is persisted to Durable Object
+> storage rather than disk, with a bounded loss window on an ungraceful exit
+> — see [Trade-offs](#trade-offs). Do not put regulated or production data
+> through it.
 
 ## Why Containers and not a Worker
 
@@ -45,9 +46,14 @@ from client input, so it is trustworthy at this hop.
 
 ## Deploy via CI (recommended)
 
-`.github/workflows/deploy-cloudflare.yml` builds and deploys on pushes to
-`main` that touch `deploy/cloudflare/**` or `deploy/Dockerfile.api`, and on
-manual dispatch. Pull requests run typecheck only and never deploy.
+`.github/workflows/deploy-cloudflare.yml` deploys on **manual dispatch
+only**. Auto-deploy on pushes to `main` is commented out until the demo is
+ready to go live; the block in the workflow shows exactly what to restore.
+Pull requests run typecheck only and never deploy.
+
+The first deploy must also clear the orphaned Cloudflare application
+`siphon-demo-siphoncontainer`, which is bound to a stale durable object
+namespace and fails the deploy step until it is removed.
 
 One-time setup — add three **repository secrets** (GitHub → Settings →
 Secrets and variables → Actions):
@@ -140,9 +146,54 @@ fires a warmup scan to move that cost off the first user request, and
 why they are not in the allowlist. Add a managed Postgres (Neon, Supabase)
 and set the variable if you want history.
 
-**No on-disk audit chain.** `SIPHON_AUDIT_LOG_PATH` / `SIPHON_AUDIT_TAIL_PATH`
-are unset on purpose. Ephemeral disk would reset the tamper-evident HMAC
-chain on every wake, making it silently discontinuous — worse than absent.
+**Durable audit chain, in DO SQLite.** siphon-api writes its audit JSONL to
+container-local `/tmp`, which does not survive a wake — so the Durable
+Object, whose SQLite storage *is* durable, owns the record. Every
+`AUDIT_DRAIN_INTERVAL_SECONDS` (and again on container stop) the DO drains
+`GET /v1/audit` into its `audit_events` table and stores the newest signature
+in `audit_chain`. On the next cold start it passes that signature back as
+`SIPHON_AUDIT_CHAIN_SEED`, so the first event of the new process links to the
+last event of the old one and the HMAC chain stays continuous across wakes.
+
+Events are stored **verbatim**. Rewriting any field would invalidate the
+signature computed over its canonical JSON — a record you cannot verify is
+not an audit trail. Note that this includes `source_ip`: under this topology
+that is the container-network peer the origin sees, not the visitor's IP
+(the Worker terminates the client connection), but confirm that before
+treating the table as free of personal data.
+
+The correctness constraint is drain cadence versus ring capacity. Events that
+overflow `SIPHON_AUDIT_RING_CAP` between two drains are evicted before the DO
+sees them, leaving a real gap. The ring is raised to 2000 against a 30s
+interval for headroom, and each drain takes a full ring's worth so nothing is
+left behind for the next tick.
+
+Eviction is detected using the chain itself: the oldest event in a drained
+page must link back to the tail already stored, and a mismatch means events
+existed that were never drained. (The endpoint's `total` cannot serve here —
+it reports the ring's current length, which is bounded by its own capacity,
+so it can never indicate overflow.)
+
+**Crash recovery, and what it does not give you.** On a graceful stop the
+final drain runs, so the stored tail is the true last event and the next
+container resumes exactly. On an *ungraceful* exit — OOM, SIGKILL, host loss —
+events written since the last drain die with the container's `/tmp`, and the
+next container is seeded from that same last-drained tail. The stored chain
+still verifies end to end; the lost events are simply absent, and no property
+of the chain can reveal that. Tamper-evidence is not durability: the chain
+proves nothing stored was *altered*, not that everything that happened was
+stored.
+
+That is why restarts are recorded separately in `audit_restarts`
+(`started_at`, `seeded_from`). Continuity that was *asserted* by seeding is
+distinguishable from continuity that was *observed*, so an auditor knows
+exactly where up to one drain interval of events could have gone missing. The
+exposure window is `AUDIT_DRAIN_INTERVAL_SECONDS`; shorten it to narrow the
+window, or forward events synchronously if a demo ever needs write-time
+durability.
+
+Set `SIPHON_AUDIT_SIGNING_KEY_HEX` (`wrangler secret put`) to make the chain
+tamper-evident; without it events are still drained and stored, just unsigned.
 
 **Sizing.** Siphon is CPU-bound and memory-light (Helm asks 256Mi, limits
 1Gi), but Cloudflare bills memory on *provisioned* capacity and custom

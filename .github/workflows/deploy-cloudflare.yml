@@ -20,12 +20,21 @@ name: deploy-cloudflare
 on:
   pull_request:
     paths: ['deploy/cloudflare/**', '.github/workflows/deploy-cloudflare.yml']
-  push:
-    branches: [main]
-    paths:
-      - 'deploy/cloudflare/**'
-      - 'deploy/Dockerfile.api'
-      - '.github/workflows/deploy-cloudflare.yml'
+  # Auto-deploy on push to main is disabled until the demo is ready to go
+  # live (pending UI + hardening work). The PR trigger above still validates
+  # every change, and workflow_dispatch below deploys on demand — so this is
+  # armed, not removed. Restore the block below to resume auto-deploy:
+  #
+  #   push:
+  #     branches: [main]
+  #     paths:
+  #       - 'deploy/cloudflare/**'
+  #       - 'deploy/Dockerfile.api'
+  #       - '.github/workflows/deploy-cloudflare.yml'
+  #
+  # Note: the first deploy must also clear the orphaned Cloudflare
+  # application `siphon-demo-siphoncontainer`, which is bound to a stale
+  # durable object namespace and fails the deploy step until it is removed.
   workflow_dispatch:
     inputs:
       deploy:

@@ -14,6 +14,62 @@ interface Env {
   DEMO_LIMITER: RateLimit;
   /** Set with: wrangler secret put SIPHON_API_KEY */
   SIPHON_API_KEY: string;
+  /**
+   * Hex HMAC-SHA256 key enabling the tamper-evident audit chain.
+   * Set with: wrangler secret put SIPHON_AUDIT_SIGNING_KEY_HEX
+   * Optional — without it the audit log is written but unsigned.
+   */
+  SIPHON_AUDIT_SIGNING_KEY_HEX?: string;
+}
+
+/**
+ * Durable audit storage.
+ *
+ * The container's filesystem does not survive a wake, so siphon-api's own
+ * chain-tail file is gone on every cold start and the HMAC chain would
+ * restart — losing the property that makes it worth having. The Durable
+ * Object's SQLite storage *is* durable and strongly consistent, so it owns
+ * the audit record: this DO periodically drains siphon-api's in-memory ring
+ * (GET /v1/audit) into SQLite, and hands the last tail signature back to the
+ * next container via SIPHON_AUDIT_CHAIN_SEED so the chain continues unbroken.
+ *
+ * Drain cadence vs. ring capacity is the correctness constraint. siphon-api's
+ * ring holds SIPHON_AUDIT_RING_CAP events; anything that overflows between
+ * two drains is lost before we see it, which leaves a real gap in the stored
+ * chain. Keep the interval well under (ring capacity / peak event rate) — the
+ * ring is raised to 2000 below for exactly this reason.
+ */
+const AUDIT_DRAIN_INTERVAL_SECONDS = 30;
+
+/**
+ * Per-drain page size. Set equal to SIPHON_AUDIT_RING_CAP so one drain can
+ * always take everything the ring currently holds — a smaller page would
+ * silently leave the oldest events to be evicted before the next tick.
+ */
+const AUDIT_DRAIN_LIMIT = 2000;
+
+/**
+ * Rows kept in DO SQLite. A demo does not need unbounded history, and DO
+ * storage is billed. Oldest rows are trimmed past this.
+ */
+const AUDIT_RETENTION_ROWS = 50_000;
+
+/** Shape of GET /v1/audit. Mirrors AuditResponse in siphon-api. */
+interface AuditEventJson {
+  event_type: string;
+  timestamp: string;
+  outcome?: string | null;
+  request_id?: string | null;
+  finding_count?: number;
+  categories_found?: string[];
+  signature?: string | null;
+  prev_signature?: string | null;
+}
+interface AuditResponseJson {
+  total: number;
+  returned: number;
+  capacity: number;
+  events: AuditEventJson[];
 }
 
 /**
@@ -50,6 +106,9 @@ const PUBLIC_PATHS = new Set([
 export class SiphonContainer extends Container<Env> {
   defaultPort = 8080;
 
+  /** Tail the container was seeded from, recorded in the restart ledger. */
+  private chainSeedAtStart: string | null = null;
+
   /**
    * Containers bill memory/disk on provisioned capacity while awake, and
    * charges stop on sleep — so idle time is the cost lever. 15m is long
@@ -63,6 +122,16 @@ export class SiphonContainer extends Container<Env> {
 
   constructor(ctx: DurableObject["ctx"], env: Env) {
     super(ctx, env);
+
+    // DO SQLite reads are synchronous, which is what makes this work at all:
+    // the chain seed has to be known before the container starts, and a
+    // constructor cannot await.
+    this.initAuditSchema();
+    const seed = this.readChainTail();
+    // Held for onStart, which is where an actual container start happens —
+    // this constructor also runs on plain DO activations that start nothing.
+    this.chainSeedAtStart = seed;
+
     // Set here rather than as a class-field initializer because the API key
     // comes from `this.env`, which is only populated once super() has run.
     this.envVars = {
@@ -71,16 +140,92 @@ export class SiphonContainer extends Container<Env> {
       SIPHON_BIND: "0.0.0.0",
       SIPHON_PORT: "8080",
       SIPHON_API_KEY: env.SIPHON_API_KEY,
+
+      // Audit. siphon-api refuses to start without SIPHON_AUDIT_LOG_PATH
+      // unless SIPHON_DEV_MODE is set (GAP-07: an in-memory ring alone is not
+      // a durable audit trail). Rather than declare a public demo "dev mode",
+      // the log is written to container-local disk and drained to DO SQLite,
+      // which is the actual durable store — see the comment on
+      // AUDIT_DRAIN_INTERVAL_SECONDS.
+      SIPHON_AUDIT_LOG_PATH: "/tmp/siphon/audit.jsonl",
+      SIPHON_AUDIT_TAIL_PATH: "/tmp/siphon/audit.tail",
+      // Ring sized so a drain interval cannot plausibly overflow it.
+      SIPHON_AUDIT_RING_CAP: "2000",
+      ...(env.SIPHON_AUDIT_SIGNING_KEY_HEX
+        ? { SIPHON_AUDIT_SIGNING_KEY_HEX: env.SIPHON_AUDIT_SIGNING_KEY_HEX }
+        : {}),
+      // Resume the chain across the wake. Omitted on first ever start, when
+      // there is no prior tail to link to.
+      ...(seed ? { SIPHON_AUDIT_CHAIN_SEED: seed } : {}),
+
       // Deliberately unset for the demo:
-      //   SIPHON_DATABASE_URL   - no Postgres; findings live in the in-memory
-      //                           ring only (db.rs handles this as Unconfigured).
-      //   SIPHON_AUDIT_LOG_PATH - container disk is ephemeral and reset on every
-      //                           wake, which would break the tamper-evident
-      //                           HMAC chain's continuity. Better absent than
-      //                           silently discontinuous.
+      //   SIPHON_DATABASE_URL - no Postgres; findings live in the in-memory
+      //                         ring only (db.rs handles this as Unconfigured).
+      //                         Findings rows carry matched sensitive values,
+      //                         so persisting them needs a deliberate decision
+      //                         about where that data lives; audit events
+      //                         carry counts and categories, not match text.
       SIPHON_RATE_LIMIT: "600",
       RUST_LOG: "info",
     };
+  }
+
+  /** Idempotent; runs on every DO activation. */
+  private initAuditSchema(): void {
+    const sql = this.ctx.storage.sql;
+    // Events are stored verbatim. Stripping or rewriting any field would
+    // invalidate the HMAC signature computed over the canonical JSON, which
+    // would defeat the point of persisting them — a record you cannot verify
+    // is not an audit trail.
+    sql.exec(`
+      CREATE TABLE IF NOT EXISTS audit_events (
+        id             TEXT PRIMARY KEY,
+        signature      TEXT,
+        prev_signature TEXT,
+        timestamp      TEXT NOT NULL,
+        event_type     TEXT NOT NULL,
+        outcome        TEXT,
+        finding_count  INTEGER,
+        body           TEXT NOT NULL,
+        drained_at     TEXT NOT NULL
+      )
+    `);
+    sql.exec(
+      `CREATE INDEX IF NOT EXISTS audit_events_timestamp ON audit_events(timestamp)`,
+    );
+    sql.exec(`
+      CREATE TABLE IF NOT EXISTS audit_chain (
+        id         INTEGER PRIMARY KEY CHECK (id = 1),
+        tail       TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+    // Restart ledger.
+    //
+    // Seeding makes the chain link across a container restart, which is the
+    // point — but it also means a restart looks identical to no restart. On
+    // an ungraceful exit, events written after the last drain die with the
+    // container, and the next container seeds from that same last-drained
+    // tail: the stored chain still verifies end to end, with the lost events
+    // simply absent. Nothing in the chain can reveal that.
+    //
+    // So record the restarts separately. The chain proves nothing was
+    // *altered*; this table shows where continuity was asserted by seeding
+    // rather than observed, which is where missing events could hide.
+    sql.exec(`
+      CREATE TABLE IF NOT EXISTS audit_restarts (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        started_at  TEXT NOT NULL,
+        seeded_from TEXT
+      )
+    `);
+  }
+
+  private readChainTail(): string | null {
+    const rows = this.ctx.storage.sql
+      .exec<{ tail: string }>(`SELECT tail FROM audit_chain WHERE id = 1`)
+      .toArray();
+    return rows.length > 0 ? rows[0].tail : null;
   }
 
   /**
@@ -90,6 +235,14 @@ export class SiphonContainer extends Container<Env> {
    * cold one. Warming here moves that cost off the first user request.
    */
   override async onStart(): Promise<void> {
+    // Record before warming, so a container that dies during startup still
+    // leaves evidence that it started.
+    this.ctx.storage.sql.exec(
+      `INSERT INTO audit_restarts (started_at, seeded_from) VALUES (?, ?)`,
+      new Date().toISOString(),
+      this.chainSeedAtStart,
+    );
+
     try {
       await this.containerFetch("http://localhost/scan", {
         method: "POST",
@@ -104,6 +257,144 @@ export class SiphonContainer extends Container<Env> {
     } catch (err) {
       // Best-effort only — a failed warmup must not block the container.
       console.log("warmup failed (non-fatal):", err);
+    }
+
+    // Start the drain loop. schedule() is the library's own alarm wrapper —
+    // overriding alarm() directly would fight its container-lifecycle timers.
+    await this.schedule(AUDIT_DRAIN_INTERVAL_SECONDS, "drainAudit");
+  }
+
+  /**
+   * Drain siphon-api's audit ring into DO SQLite, then re-arm.
+   *
+   * Public and named because `schedule()` dispatches by method name.
+   */
+  async drainAudit(): Promise<void> {
+    try {
+      await this.persistAuditPage();
+    } catch (err) {
+      // Never let a drain failure kill the loop — the next tick retries, and
+      // the ring still holds recent events.
+      console.error("audit drain failed (non-fatal):", err);
+    } finally {
+      await this.schedule(AUDIT_DRAIN_INTERVAL_SECONDS, "drainAudit");
+    }
+  }
+
+  /**
+   * Final drain before the container sleeps. Without this, up to one whole
+   * interval of events would be lost on every sleep — and sleeps are frequent
+   * by design (sleepAfter = 15m).
+   */
+  override async onStop(): Promise<void> {
+    try {
+      await this.persistAuditPage();
+    } catch (err) {
+      console.error("final audit drain failed (non-fatal):", err);
+    }
+  }
+
+  private async persistAuditPage(): Promise<void> {
+    // /v1/audit is admin-gated (RequireAdminAction); the container's own key
+    // resolves to Admin under the single-key model. This call goes straight
+    // to the container and never crosses the Worker's public allowlist, which
+    // deliberately does not expose /v1/audit to the internet.
+    const res = await this.containerFetch(
+      `http://localhost/v1/audit?limit=${AUDIT_DRAIN_LIMIT}`,
+      { headers: { authorization: `Bearer ${this.env.SIPHON_API_KEY}` } },
+    );
+    if (!res.ok) {
+      throw new Error(`GET /v1/audit returned ${res.status}`);
+    }
+    const page = (await res.json()) as AuditResponseJson;
+    if (!page.events?.length) return;
+
+    // Response is newest-first. Insert oldest-first so that if we are
+    // interrupted partway the stored prefix is still contiguous.
+    const oldestFirst = [...page.events].reverse();
+    const sql = this.ctx.storage.sql;
+
+    // Gap detection, using the chain itself.
+    //
+    // The oldest event in this page should link back to the tail we already
+    // stored. When it does not, events existed that we never saw — evicted
+    // from the ring between drains, or lost with the container in a crash.
+    // Note this is the ONLY reliable signal available: the endpoint's `total`
+    // is the ring's current length, which is bounded by its own capacity, so
+    // comparing the two can never detect overflow.
+    //
+    // A gap does not corrupt the stored chain — every stored event still
+    // verifies — but it means the record is incomplete, which is exactly the
+    // thing an audit trail must not hide.
+    const priorTail = this.readChainTail();
+    const firstPrev = oldestFirst[0].prev_signature ?? null;
+    if (priorTail && firstPrev !== priorTail) {
+      console.warn(
+        `audit gap: oldest drained event links to ${firstPrev ?? "(none)"} but ` +
+          `the stored tail is ${priorTail} — events were lost before this drain ` +
+          `(ring eviction or an ungraceful container exit). Stored events remain ` +
+          `individually verifiable; the record is not complete.`,
+      );
+    }
+    const drainedAt = new Date().toISOString();
+    let newestSignature: string | null = null;
+    let inserted = 0;
+
+    for (const ev of oldestFirst) {
+      // Signature is the natural identity for a signed event. Unsigned events
+      // (no signing key configured) fall back to a synthetic key so the drain
+      // still deduplicates across overlapping pages.
+      const id =
+        ev.signature ??
+        `unsigned:${ev.timestamp}:${ev.event_type}:${ev.request_id ?? ""}`;
+      const cursor = sql.exec(
+        `INSERT OR IGNORE INTO audit_events
+           (id, signature, prev_signature, timestamp, event_type, outcome,
+            finding_count, body, drained_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        id,
+        ev.signature ?? null,
+        ev.prev_signature ?? null,
+        ev.timestamp,
+        ev.event_type,
+        ev.outcome ?? null,
+        ev.finding_count ?? null,
+        JSON.stringify(ev),
+        drainedAt,
+      );
+      if (cursor.rowsWritten > 0) inserted++;
+      if (ev.signature) newestSignature = ev.signature;
+    }
+
+    // Advance the chain tail only to a signature we have actually stored, so
+    // a future container is never seeded past the end of the record.
+    if (newestSignature) {
+      sql.exec(
+        `INSERT INTO audit_chain (id, tail, updated_at) VALUES (1, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET tail = excluded.tail,
+                                         updated_at = excluded.updated_at`,
+        newestSignature,
+        drainedAt,
+      );
+    }
+
+    // A full page means the ring was at capacity when we read it, so it may
+    // have been discarding events before we got there. Distinct from the gap
+    // check above, which reports loss that already happened.
+    if (page.returned >= page.capacity) {
+      console.warn(
+        `audit ring returned ${page.returned} events at capacity ${page.capacity}; ` +
+          `shorten AUDIT_DRAIN_INTERVAL_SECONDS or raise SIPHON_AUDIT_RING_CAP`,
+      );
+    }
+
+    if (inserted > 0) {
+      sql.exec(
+        `DELETE FROM audit_events WHERE id NOT IN (
+           SELECT id FROM audit_events ORDER BY timestamp DESC LIMIT ?
+         )`,
+        AUDIT_RETENTION_ROWS,
+      );
     }
   }
 
