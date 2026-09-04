@@ -1,6 +1,6 @@
 [package]
 name = "siphon-icap"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Polygon Siphon ICAP — RFC 3507 network DLP server for proxy integration"
 license = "MIT"

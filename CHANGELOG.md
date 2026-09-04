@@ -14,6 +14,35 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — Security: OOM + connection-exhaustion fixes in siphon-icap; admin gate on EDM/LSH vault endpoints
+
+### siphon-icap 0.1.1
+
+- **fix(icap,security): cap individual chunk size before allocation.**
+  A malicious ICAP client could announce an enormous chunk size (e.g., `ffffffff`
+  in the hex size field), causing the drain path to allocate gigabytes on the heap
+  before any cap check fired. `read_chunked_buf` now rejects any chunk whose hex
+  size exceeds 64 MiB with an I/O error, closing the connection. Drain path
+  switched from `vec![0u8; size]` to a fixed 8 KiB scratch buffer to avoid any
+  large allocation regardless.
+
+- **fix(icap,security): bound concurrent connections via semaphore.**
+  `accept_loop` spawned an unbounded number of Tokio tasks — a single attacker
+  could exhaust memory/thread-pool by opening many connections simultaneously.
+  A `tokio::sync::Semaphore` now caps concurrent connections at
+  `SIPHON_ICAP_MAX_CONNECTIONS` (default 256). Connections beyond the limit are
+  dropped immediately with a warning log.
+
+### siphon-api 2.6.3
+
+- **fix(api,security): gate `GET /v1/edm` and `GET /v1/lsh` behind
+  `RequireAdminAction`.** Both vault-listing endpoints were callable by any
+  authenticated user. Even though the current responses are stubs, they expose
+  internal DLP configuration surface and establish a precedent for future vault
+  enumeration. Endpoints are now admin-only.
+
+---
+
 ## 2026-09-03 — RBAC hardening: admin gate on eight additional endpoints + streaming audit
 
 ### siphon-api 2.6.2

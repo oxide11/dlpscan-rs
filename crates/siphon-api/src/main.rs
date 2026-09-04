@@ -4269,7 +4269,7 @@ struct VaultStubResponse {
     note: &'static str,
 }
 
-async fn list_edm_vaults() -> Json<VaultStubResponse> {
+async fn list_edm_vaults(_: RequireAdminAction) -> Json<VaultStubResponse> {
     // ExactDataMatcher is constructed per ScanConfig. Surface that
     // honestly so the UI can show "not globally loaded" instead of
     // fabricating a list.
@@ -4280,7 +4280,7 @@ async fn list_edm_vaults() -> Json<VaultStubResponse> {
     })
 }
 
-async fn list_lsh_vaults() -> Json<VaultStubResponse> {
+async fn list_lsh_vaults(_: RequireAdminAction) -> Json<VaultStubResponse> {
     Json(VaultStubResponse {
         loaded: false,
         vaults: vec![],

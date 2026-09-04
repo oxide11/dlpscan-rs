@@ -231,7 +231,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.icap
-    image: siphon-icap:0.1.0
+    image: siphon-icap:0.1.1
     profiles: [auth]
     environment:
       # Set to the proxy subnet that will connect to this ICAP server.

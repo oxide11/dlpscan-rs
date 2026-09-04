@@ -23,6 +23,7 @@
 //! | `SIPHON_ICAP_MIN_CONFIDENCE` | 0.6 | Confidence threshold that triggers a block (block mode only) |
 //! | `SIPHON_ICAP_MAX_BODY_BYTES` | 10485760 | Bodies larger than this are passed through unscanned |
 //! | `SIPHON_ICAP_SERVICE_NAME` | dlp | ICAP URI path (`/dlp`) |
+//! | `SIPHON_ICAP_MAX_CONNECTIONS` | 256 | Max concurrent connections; extras are dropped immediately |
 
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::net::{IpAddr, SocketAddr};
@@ -121,6 +122,7 @@ struct AppState {
     min_confidence: f64,
     max_body_bytes: usize,
     service_name: String,
+    max_connections: usize,
 }
 
 // ── ICAP request ─────────────────────────────────────────────────
@@ -266,15 +268,28 @@ async fn read_chunked_buf<R: AsyncBufReadExt + Unpin>(
             reader.read_line(&mut crlf).await?;
             break;
         }
+        // Cap individual chunk size to prevent OOM from a malicious huge hex size.
+        const MAX_CHUNK: usize = 64 * 1024 * 1024; // 64 MiB hard cap per chunk
+        if size > MAX_CHUNK {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "icap: chunk size exceeds hard cap",
+            ));
+        }
         let start = buf.len();
         let fits = buf.len() + size <= max_bytes;
         if fits {
             buf.resize(start + size, 0u8);
             reader.read_exact(&mut buf[start..]).await?;
         } else {
-            // Drain without storing
-            let mut drain = vec![0u8; size];
-            reader.read_exact(&mut drain).await?;
+            // Drain without storing — use a fixed scratch buffer to avoid allocating `size` bytes.
+            let mut remaining = size;
+            let mut scratch = [0u8; 8192];
+            while remaining > 0 {
+                let n = remaining.min(scratch.len());
+                reader.read_exact(&mut scratch[..n]).await?;
+                remaining -= n;
+            }
         }
         // Consume CRLF after chunk data
         let mut crlf = String::new();
@@ -711,12 +726,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let service_name = std::env::var("SIPHON_ICAP_SERVICE_NAME")
         .unwrap_or_else(|_| "dlp".to_string());
 
+    let max_connections: usize = std::env::var("SIPHON_ICAP_MAX_CONNECTIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(256);
+
     let state = Arc::new(AppState {
         allowed_nets: Arc::new(allowed_nets),
         action,
         min_confidence,
         max_body_bytes,
         service_name: service_name.clone(),
+        max_connections,
     });
 
     let listener = match TcpListener::bind(&addr).await {
@@ -736,6 +757,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         action = match action { IcapAction::Flag => "flag", IcapAction::Block => "block" },
         min_confidence = min_confidence,
         max_body_mb = max_body_bytes / (1024 * 1024),
+        max_connections = max_connections,
         "siphon-icap starting"
     );
 
@@ -770,12 +792,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn accept_loop(listener: TcpListener, state: Arc<AppState>) {
+    let sem = Arc::new(tokio::sync::Semaphore::new(state.max_connections));
     loop {
         match listener.accept().await {
             Ok((stream, peer)) => {
+                let permit = match sem.clone().try_acquire_owned() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        tracing::warn!(peer = %peer, "icap: max_connections reached, dropping");
+                        drop(stream);
+                        continue;
+                    }
+                };
                 let state = state.clone();
                 tokio::spawn(async move {
                     handle_connection(stream, peer, state).await;
+                    drop(permit);
                 });
             }
             Err(e) => {

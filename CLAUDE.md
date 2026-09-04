@@ -276,6 +276,7 @@ Key env vars:
 | `SIPHON_ICAP_MIN_CONFIDENCE` | 0.6 | Confidence threshold for block action |
 | `SIPHON_ICAP_MAX_BODY_BYTES` | 10485760 | Bodies larger than this pass through unscanned |
 | `SIPHON_ICAP_SERVICE_NAME` | dlp | ICAP service path (`/dlp`) |
+| `SIPHON_ICAP_MAX_CONNECTIONS` | 256 | Max concurrent ICAP connections; extras are dropped |
 
 ### CLI subcommands (root `siphon` crate)
 

@@ -5022,7 +5022,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-api"
-version = "2.6.2"
+version = "2.6.3"
 dependencies = [
  "axum",
  "axum-server",
@@ -5106,7 +5106,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-icap"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "hex",
  "serde",
