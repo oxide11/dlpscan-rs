@@ -1140,11 +1140,13 @@ async fn scan(
     // matching policy by name and use its scan config as the floor.
     // Per-request options (min_confidence, categories, require_context)
     // override the policy baseline when explicitly set by the caller.
-    let tenant_policy = tenant_id.as_deref().and_then(|tid| {
-        state.policies.iter().find(|p| p.name == tid)
-    });
+    let tenant_policy = tenant_id
+        .as_deref()
+        .and_then(|tid| state.policies.iter().find(|p| p.name == tid));
     let policy_min_confidence = tenant_policy.map(|p| p.scan.min_confidence).unwrap_or(0.0);
-    let policy_require_context = tenant_policy.map(|p| p.scan.require_context).unwrap_or(false);
+    let policy_require_context = tenant_policy
+        .map(|p| p.scan.require_context)
+        .unwrap_or(false);
     let policy_categories: Option<HashSet<String>> = tenant_policy.and_then(|p| {
         if p.scan.categories.is_empty() {
             None
@@ -1161,7 +1163,10 @@ async fn scan(
             .categories
             .map(|c| c.into_iter().collect::<HashSet<_>>())
             .or(policy_categories),
-        require_context: req.options.require_context.unwrap_or(policy_require_context),
+        require_context: req
+            .options
+            .require_context
+            .unwrap_or(policy_require_context),
         baseline_only: req.options.baseline_only.unwrap_or(false),
         deduplicate: req.options.deduplicate.unwrap_or(true),
         trace: trace_sink.clone(),
@@ -1545,11 +1550,13 @@ async fn scan_batch(
     };
 
     // Tenant policy baseline (shared across all items in the batch).
-    let tenant_policy = tenant_id.as_deref().and_then(|tid| {
-        state.policies.iter().find(|p| p.name == tid)
-    });
+    let tenant_policy = tenant_id
+        .as_deref()
+        .and_then(|tid| state.policies.iter().find(|p| p.name == tid));
     let policy_min_confidence = tenant_policy.map(|p| p.scan.min_confidence).unwrap_or(0.0);
-    let policy_require_context = tenant_policy.map(|p| p.scan.require_context).unwrap_or(false);
+    let policy_require_context = tenant_policy
+        .map(|p| p.scan.require_context)
+        .unwrap_or(false);
     let policy_categories: Option<HashSet<String>> = tenant_policy.and_then(|p| {
         if p.scan.categories.is_empty() {
             None
@@ -1579,7 +1586,10 @@ async fn scan_batch(
                 .clone()
                 .map(|c| c.into_iter().collect::<HashSet<_>>())
                 .or_else(|| policy_categories.clone()),
-            require_context: item.options.require_context.unwrap_or(policy_require_context),
+            require_context: item
+                .options
+                .require_context
+                .unwrap_or(policy_require_context),
             baseline_only: item.options.baseline_only.unwrap_or(false),
             deduplicate: item.options.deduplicate.unwrap_or(true),
             disabled_patterns: Some(ov.disabled_patterns.clone()),
@@ -1878,11 +1888,7 @@ async fn scan_explain(
             .fetch_add(1, Ordering::Relaxed);
         tracing::warn!(error = %e, "scan_explain_failed");
         if let Ok(event) = AuditEvent::new("SCAN") {
-            emit_audit(
-                event
-                    .with_action("scan_explain")
-                    .with_outcome("error"),
-            );
+            emit_audit(event.with_action("scan_explain").with_outcome("error"));
         }
         (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1992,7 +1998,10 @@ struct PatternsResponse {
     patterns: Vec<PatternItem>,
 }
 
-async fn list_patterns(_: RequireAdminAction, Query(q): Query<PatternsQuery>) -> Json<PatternsResponse> {
+async fn list_patterns(
+    _: RequireAdminAction,
+    Query(q): Query<PatternsQuery>,
+) -> Json<PatternsResponse> {
     let all = siphon_core::patterns::PATTERNS;
     let filtered: Vec<&'static siphon_core::models::PatternDef> = match q.category.as_deref() {
         Some(c) if !c.is_empty() => all.iter().filter(|p| p.category == c).collect(),
@@ -2089,7 +2098,10 @@ struct PoliciesResponse {
     policies: Vec<Policy>,
 }
 
-async fn list_policies(_: RequireAdminAction, State(state): State<Arc<AppState>>) -> Json<PoliciesResponse> {
+async fn list_policies(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<PoliciesResponse> {
     let source = std::env::var("SIPHON_POLICIES_DIR").ok();
     Json(PoliciesResponse {
         loaded: source.is_some(),
@@ -2216,7 +2228,10 @@ struct MetricsResponse {
     policies_loaded: usize,
 }
 
-async fn metrics_snapshot(_: RequireAdminAction, State(state): State<Arc<AppState>>) -> Json<MetricsResponse> {
+async fn metrics_snapshot(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<MetricsResponse> {
     Json(MetricsResponse {
         uptime_secs: state.metrics.started_at.elapsed().as_secs(),
         scans_total: state.metrics.scans_total.load(Ordering::Relaxed),
@@ -2482,7 +2497,10 @@ struct OverridesStateResponse {
     overrides: siphon_core::overrides::PatternOverrides,
 }
 
-async fn overrides_current(_: RequireAdminAction, State(state): State<Arc<AppState>>) -> Json<OverridesStateResponse> {
+async fn overrides_current(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<OverridesStateResponse> {
     let loaded = state
         .live_overrides
         .read()
@@ -4156,7 +4174,10 @@ struct RateLimitResponse {
     total_recent_requests: usize,
 }
 
-async fn rate_limit_status(_: RequireAdminAction, State(state): State<Arc<AppState>>) -> Json<RateLimitResponse> {
+async fn rate_limit_status(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<RateLimitResponse> {
     let guard = state.rate_limiter.lock().unwrap_or_else(|e| e.into_inner());
     let (active, slots) = guard.snapshot();
     Json(RateLimitResponse {
@@ -4247,7 +4268,10 @@ struct AllowlistEntries {
     paths: Vec<String>,
 }
 
-async fn list_allowlist(_: RequireAdminAction, State(state): State<Arc<AppState>>) -> Json<AllowlistResponse> {
+async fn list_allowlist(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<AllowlistResponse> {
     let a = &state.allowlist;
     Json(AllowlistResponse {
         loaded_from: std::env::var("SIPHON_ALLOWLIST_PATH").ok(),

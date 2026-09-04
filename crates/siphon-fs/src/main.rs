@@ -99,9 +99,8 @@ impl RateLimiter {
         let window = Duration::from_secs(60);
 
         if now.duration_since(self.last_cleanup) > Duration::from_secs(300) {
-            self.windows.retain(|_, ts| {
-                ts.last().is_some_and(|t| now.duration_since(*t) < window)
-            });
+            self.windows
+                .retain(|_, ts| ts.last().is_some_and(|t| now.duration_since(*t) < window));
             self.last_cleanup = now;
         }
         if self.windows.len() > 100_000 {
@@ -1269,9 +1268,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     };
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
     Ok(())
 }
 

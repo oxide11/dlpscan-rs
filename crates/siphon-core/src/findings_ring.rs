@@ -143,9 +143,7 @@ pub fn filter_findings<'a>(
             })
         })
         .filter(|f| since.is_none_or(|s| f.ts.as_str() > s))
-        .filter(|f| {
-            tenant_id.is_none_or(|t| f.tenant_id.as_deref() == Some(t))
-        })
+        .filter(|f| tenant_id.is_none_or(|t| f.tenant_id.as_deref() == Some(t)))
         .collect()
 }
 

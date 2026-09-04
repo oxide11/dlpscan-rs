@@ -58,16 +58,30 @@ impl IpNet {
                     return None;
                 }
                 let addr = u32::from(ip);
-                let mask = if bits == 0 { 0u32 } else { !0u32 << (32 - bits) };
-                return Some(IpNet::V4Cidr { addr: addr & mask, mask });
+                let mask = if bits == 0 {
+                    0u32
+                } else {
+                    !0u32 << (32 - bits)
+                };
+                return Some(IpNet::V4Cidr {
+                    addr: addr & mask,
+                    mask,
+                });
             }
             if let Ok(ip) = ip_s.parse::<std::net::Ipv6Addr>() {
                 if bits > 128 {
                     return None;
                 }
                 let addr = u128::from(ip);
-                let mask = if bits == 0 { 0u128 } else { !0u128 << (128 - bits) };
-                return Some(IpNet::V6Cidr { addr: addr & mask, mask });
+                let mask = if bits == 0 {
+                    0u128
+                } else {
+                    !0u128 << (128 - bits)
+                };
+                return Some(IpNet::V6Cidr {
+                    addr: addr & mask,
+                    mask,
+                });
             }
             None
         } else {
@@ -329,7 +343,8 @@ fn icap_date() -> String {
     let mut y = 1970u32;
     let mut remaining = s;
     loop {
-        let leap = (y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400))) as u64;
+        let leap =
+            (y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400))) as u64;
         let year_secs = (365 + leap) * 86400;
         if remaining < year_secs {
             break;
@@ -338,20 +353,7 @@ fn icap_date() -> String {
         y += 1;
     }
     let leap = (y.is_multiple_of(4) && (!y.is_multiple_of(100) || y.is_multiple_of(400))) as u64;
-    let month_days: [u64; 12] = [
-        31,
-        28 + leap,
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
+    let month_days: [u64; 12] = [31, 28 + leap, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut m = 0usize;
     while m < 11 && remaining >= month_days[m] * 86400 {
         remaining -= month_days[m] * 86400;
@@ -365,13 +367,7 @@ fn icap_date() -> String {
     let sec = remaining % 60;
     format!(
         "{}, {:02} {} {} {:02}:{:02}:{:02} GMT",
-        days[day_of_week],
-        day,
-        months[m],
-        y,
-        hour,
-        min,
-        sec
+        days[day_of_week], day, months[m], y, hour, min, sec
     )
 }
 
@@ -427,11 +423,7 @@ fn response_options(service_name: &str) -> Vec<u8> {
 }
 
 /// Flag-mode response: allow but annotate findings in X-DLP-* headers.
-fn response_flagged(
-    req: &IcapRequest,
-    finding_count: usize,
-    categories: &str,
-) -> Vec<u8> {
+fn response_flagged(req: &IcapRequest, finding_count: usize, categories: &str) -> Vec<u8> {
     // Reflect the original HTTP headers back so the proxy can forward them.
     // If there were no HTTP headers, we return a null-body response.
     if req.http_headers_raw.is_empty() {
@@ -556,9 +548,7 @@ async fn handle_connection(stream: TcpStream, peer: SocketAddr, state: Arc<AppSt
 
         let resp_bytes = match req.method.as_str() {
             "OPTIONS" => response_options(&state.service_name),
-            "REQMOD" | "RESPMOD" => {
-                handle_scan(&req, &state, &client_ip.to_string()).await
-            }
+            "REQMOD" | "RESPMOD" => handle_scan(&req, &state, &client_ip.to_string()).await,
             other => {
                 tracing::warn!(ip = %client_ip, method = %other, "icap: unknown method");
                 response_400()
@@ -580,14 +570,26 @@ async fn handle_scan(req: &IcapRequest, state: &AppState, client_ip: &str) -> Ve
     let start = Instant::now();
 
     if req.body.is_empty() {
-        emit_audit(req.method.as_str(), client_ip, 0, "pass", start.elapsed().as_millis());
+        emit_audit(
+            req.method.as_str(),
+            client_ip,
+            0,
+            "pass",
+            start.elapsed().as_millis(),
+        );
         return response_204();
     }
 
     // Non-text bodies pass through unscanned
     let text = String::from_utf8_lossy(&req.body);
     if text.trim().is_empty() || looks_binary(&req.body) {
-        emit_audit(req.method.as_str(), client_ip, 0, "pass-binary", start.elapsed().as_millis());
+        emit_audit(
+            req.method.as_str(),
+            client_ip,
+            0,
+            "pass-binary",
+            start.elapsed().as_millis(),
+        );
         return response_204();
     }
 
@@ -598,7 +600,13 @@ async fn handle_scan(req: &IcapRequest, state: &AppState, client_ip: &str) -> Ve
             limit = state.max_body_bytes,
             "icap: body exceeds limit, passing through unscanned"
         );
-        emit_audit(req.method.as_str(), client_ip, 0, "pass-oversized", start.elapsed().as_millis());
+        emit_audit(
+            req.method.as_str(),
+            client_ip,
+            0,
+            "pass-oversized",
+            start.elapsed().as_millis(),
+        );
         return response_204();
     }
 
@@ -635,11 +643,23 @@ async fn handle_scan(req: &IcapRequest, state: &AppState, client_ip: &str) -> Ve
 
     match state.action {
         IcapAction::Flag => {
-            emit_audit(req.method.as_str(), client_ip, finding_count, "flagged", duration_ms);
+            emit_audit(
+                req.method.as_str(),
+                client_ip,
+                finding_count,
+                "flagged",
+                duration_ms,
+            );
             response_flagged(req, finding_count, &categories)
         }
         IcapAction::Block => {
-            emit_audit(req.method.as_str(), client_ip, finding_count, "blocked", duration_ms);
+            emit_audit(
+                req.method.as_str(),
+                client_ip,
+                finding_count,
+                "blocked",
+                duration_ms,
+            );
             response_blocked(finding_count, &categories)
         }
     }
@@ -649,7 +669,10 @@ async fn handle_scan(req: &IcapRequest, state: &AppState, client_ip: &str) -> Ve
 /// (bytes < 0x09 or in 0x0e–0x1f range excluding tab/lf/cr), treat as binary.
 fn looks_binary(bytes: &[u8]) -> bool {
     let sample = &bytes[..bytes.len().min(512)];
-    let control_count = sample.iter().filter(|&&b| b < 0x09 || (b > 0x0d && b < 0x20)).count();
+    let control_count = sample
+        .iter()
+        .filter(|&&b| b < 0x09 || (b > 0x0d && b < 0x20))
+        .count();
     control_count * 100 / sample.len().max(1) > 30
 }
 
@@ -702,7 +725,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter_map(|s| {
             let net = IpNet::parse(s.trim());
             if net.is_none() {
-                tracing::warn!(entry = s.trim(), "SIPHON_ICAP_ALLOWED_NETS: skipping unparseable entry");
+                tracing::warn!(
+                    entry = s.trim(),
+                    "SIPHON_ICAP_ALLOWED_NETS: skipping unparseable entry"
+                );
             }
             net
         })
@@ -731,8 +757,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(10 * 1024 * 1024);
 
-    let service_name = std::env::var("SIPHON_ICAP_SERVICE_NAME")
-        .unwrap_or_else(|_| "dlp".to_string());
+    let service_name =
+        std::env::var("SIPHON_ICAP_SERVICE_NAME").unwrap_or_else(|_| "dlp".to_string());
 
     let max_connections: usize = std::env::var("SIPHON_ICAP_MAX_CONNECTIONS")
         .ok()
