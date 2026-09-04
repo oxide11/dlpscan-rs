@@ -180,6 +180,11 @@ struct AppState {
     /// (None = admin/unscoped) so one tenant's cached aggregate is never
     /// returned to another. Entries expire after STATS_CACHE_SECS seconds.
     stats_cache: Arc<Mutex<HashMap<Option<String>, (Instant, serde_json::Value)>>>,
+    /// Aggregate counters for every scan, flushed to `scan_rollup` on an
+    /// interval. This is the denominator for detection rate: findings rows
+    /// count what was found, these count what was looked at. Recording is
+    /// in-memory and infallible, so it never fails or slows a scan.
+    rollup: Arc<db::RollupAccumulator>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -608,7 +613,10 @@ fn endpoint_rate_limit(path: &str) -> Option<u32> {
         "/v1/findings/export" => Some(5), // expensive — file download
         "/v1/findings/pg" => Some(30),    // DB query
         "/v1/findings/stats" => Some(60), // cached, lighter
-        "/v1/lsh/history" => Some(30),    // DB query, up to 1000 rows
+        // Uncached DB query whose scanned range grows with the requested
+        // window — a 90-day request is materially heavier than a 24-hour one.
+        "/v1/stats/throughput" => Some(30),
+        "/v1/lsh/history" => Some(30), // DB query, up to 1000 rows
         _ => None,
     }
 }
@@ -1243,6 +1251,25 @@ async fn scan(
             .metrics
             .scan_errors_total
             .fetch_add(1, Ordering::Relaxed);
+
+        // Neither branch increments scans_total: nothing was inspected, and
+        // content that was never looked at must not enlarge the denominator
+        // and flatter the detection rate. Oversize is tracked apart from
+        // other errors because it is the coverage gap — the measure of how
+        // much traffic passed without inspection.
+        let counts = if matches!(e, siphon_core::DlpError::InputTooLarge { .. }) {
+            db::RollupCounts {
+                oversize_skipped: 1,
+                ..Default::default()
+            }
+        } else {
+            db::RollupCounts {
+                scan_errors: 1,
+                ..Default::default()
+            }
+        };
+        state.rollup.record(tenant_id.as_deref(), "api", counts);
+
         tracing::error!(request_id = %request_id, error = %e, "scan_failed");
         if let Ok(event) = AuditEvent::new("SCAN") {
             emit_audit(
@@ -1308,6 +1335,23 @@ async fn scan(
 
         let input_len = req.text.len();
         let dur_ms = duration_ms as u64;
+
+        // Count the scan whether or not it found anything. Findings rows
+        // record what was found; this records what was looked at, which is
+        // the denominator detection rate needs. In-memory and infallible —
+        // it must never fail or slow the scan it is measuring.
+        state.rollup.record(
+            tenant_id.as_deref(),
+            "api",
+            db::RollupCounts {
+                scans_total: 1,
+                scans_with_findings: u64::from(!findings.is_empty()),
+                findings_total: findings.len() as u64,
+                bytes_scanned: input_len as u64,
+                duration_ms_sum: dur_ms,
+                ..Default::default()
+            },
+        );
 
         // Serialize findings to JSON values for persist_scan.
         let findings_json: Vec<serde_json::Value> = findings
@@ -1685,6 +1729,22 @@ async fn scan_batch(
             .metrics
             .findings_total
             .fetch_add(findings.len() as u64, Ordering::Relaxed);
+
+        // Counted per item, not per batch: a batch is a transport convenience,
+        // and treating it as one scan would understate the denominator by
+        // however many items a caller happened to bundle.
+        state.rollup.record(
+            tenant_id.as_deref(),
+            "api",
+            db::RollupCounts {
+                scans_total: 1,
+                scans_with_findings: u64::from(!findings.is_empty()),
+                findings_total: findings.len() as u64,
+                bytes_scanned: item.text.len() as u64,
+                duration_ms_sum: item_duration_ms,
+                ..Default::default()
+            },
+        );
 
         // Push each finding to the in-memory ring.
         let ts_now = iso8601_now();
@@ -4711,6 +4771,124 @@ struct LshHistoryResponse {
     total: i64,
 }
 
+#[derive(Deserialize)]
+struct ThroughputQuery {
+    /// Hours of history to include. Default 24, capped at 24*90.
+    hours: Option<i64>,
+    tenant: Option<String>,
+    channel: Option<String>,
+}
+
+/// Rates derived from a set of rollup buckets.
+///
+/// Computed here rather than stored, so they cannot drift from the counts
+/// they summarise. Every one is None when its denominator is zero — a rate
+/// over nothing is undefined, and reporting 0.0 would read as "nothing was
+/// detected" rather than "nothing was scanned".
+#[derive(Serialize)]
+struct ThroughputTotals {
+    scans_total: i64,
+    scans_with_findings: i64,
+    findings_total: i64,
+    bytes_scanned: i64,
+    oversize_skipped: i64,
+    scan_errors: i64,
+    /// Share of scans that produced at least one finding.
+    detection_rate: Option<f64>,
+    findings_per_scan: Option<f64>,
+    mean_duration_ms: Option<f64>,
+    /// Share of submitted content that was never inspected. The denominator
+    /// includes skipped content precisely because it is the thing being
+    /// measured; excluding it would hide the gap it exists to expose.
+    coverage_gap: Option<f64>,
+}
+
+#[derive(Serialize)]
+struct ThroughputResponse {
+    from: String,
+    to: String,
+    totals: ThroughputTotals,
+    buckets: Vec<db::RollupBucket>,
+}
+
+fn ratio(numerator: i64, denominator: i64) -> Option<f64> {
+    if denominator <= 0 {
+        return None;
+    }
+    Some(numerator as f64 / denominator as f64)
+}
+
+/// GET /v1/stats/throughput — scanned-traffic counters and derived rates.
+///
+/// This is the denominator side of detection metrics: `/v1/findings/stats`
+/// reports what was found, this reports what was looked at. Sourced from
+/// `scan_rollup`, so it covers all scanned traffic including clean scans that
+/// deliberately store no row of their own.
+async fn stats_throughput(
+    _: RequireAdminAction,
+    Query(q): Query<ThroughputQuery>,
+    State(state): State<Arc<AppState>>,
+) -> Json<ThroughputResponse> {
+    // 90 days is the default findings retention; asking for more history than
+    // the data can cover invites reading a truncated window as a real decline.
+    let hours = q.hours.unwrap_or(24).clamp(1, 24 * 90);
+    let to = chrono::Utc::now();
+    let from = to - chrono::Duration::hours(hours);
+
+    let buckets = match db::query_rollup(
+        &state.db_pool,
+        from,
+        to,
+        q.tenant.as_deref(),
+        q.channel.as_deref(),
+        // One row per (hour, tenant, channel); generous enough for the
+        // maximum window without an unbounded response.
+        50_000,
+    )
+    .await
+    {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::warn!(error = %e, "rollup_query_failed");
+            Vec::new()
+        }
+    };
+
+    let mut t = ThroughputTotals {
+        scans_total: 0,
+        scans_with_findings: 0,
+        findings_total: 0,
+        bytes_scanned: 0,
+        oversize_skipped: 0,
+        scan_errors: 0,
+        detection_rate: None,
+        findings_per_scan: None,
+        mean_duration_ms: None,
+        coverage_gap: None,
+    };
+    let mut duration_ms_sum: i64 = 0;
+    for b in &buckets {
+        t.scans_total += b.scans_total;
+        t.scans_with_findings += b.scans_with_findings;
+        t.findings_total += b.findings_total;
+        t.bytes_scanned += b.bytes_scanned;
+        t.oversize_skipped += b.oversize_skipped;
+        t.scan_errors += b.scan_errors;
+        duration_ms_sum += b.duration_ms_sum;
+    }
+    t.detection_rate = ratio(t.scans_with_findings, t.scans_total);
+    t.findings_per_scan = ratio(t.findings_total, t.scans_total);
+    t.mean_duration_ms = ratio(duration_ms_sum, t.scans_total);
+    t.coverage_gap = ratio(t.oversize_skipped, t.scans_total + t.oversize_skipped);
+
+    Json(ThroughputResponse {
+        from: from.to_rfc3339(),
+        to: to.to_rfc3339(),
+        totals: t,
+        buckets,
+    })
+}
+
 async fn lsh_history(
     _: RequireAdminAction,
     Query(q): Query<LshHistoryQuery>,
@@ -6164,7 +6342,43 @@ async fn main() {
         db_pool,
         db_state,
         stats_cache: Arc::new(Mutex::new(HashMap::new())),
+        rollup: Arc::new(db::RollupAccumulator::new()),
     });
+
+    // Scan-rollup flush task.
+    //
+    // Counters accumulate in memory and are written on an interval rather
+    // than per scan — the whole point of the rollup is that storage scales
+    // with time and cardinality instead of with traffic. The flush is
+    // additive, so pods flush independently and their counts sum.
+    //
+    // The interval is a durability/write-rate tradeoff: a pod killed between
+    // flushes loses at most that window of counts. These are metrics, not the
+    // findings themselves, so a bounded loss is acceptable where it would not
+    // be for an identified event.
+    {
+        let flush_secs = std::env::var("SIPHON_ROLLUP_FLUSH_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|&s| s > 0)
+            .unwrap_or(60);
+        let pool_clone = state.db_pool.clone();
+        let rollup_clone = state.rollup.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(flush_secs)).await;
+                match db::flush_rollup(&pool_clone, &rollup_clone).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::debug!(buckets = n, "scan_rollup_flushed"),
+                    // Buckets are restored on failure, so the next tick
+                    // retries them; log at warn rather than error because the
+                    // counts are not lost.
+                    Err(e) => tracing::warn!(error = %e, "scan_rollup_flush_failed"),
+                }
+            }
+        });
+        tracing::info!(flush_secs, "scan rollup enabled");
+    }
 
     // Retention pruning background task — runs once per day when
     // SIPHON_FINDINGS_RETENTION_DAYS is set to a value > 0.
@@ -6285,6 +6499,7 @@ async fn main() {
         )
         // /v1/findings/* routes MUST be registered before /v1/findings
         // so the more-specific paths are matched first.
+        .route("/v1/stats/throughput", get(stats_throughput))
         .route("/v1/findings/stats", get(findings_stats))
         .route("/v1/findings/pg", get(list_pg_findings))
         .route("/v1/findings/export", get(findings_export))
@@ -6441,6 +6656,55 @@ async fn shutdown_signal() {
 mod tests {
     use super::*;
     use siphon_core::audit::AuditEvent;
+
+    // ── scan rollup rate arithmetic ────────────────────────────────────
+    //
+    // These guard the two ways a detection-rate figure goes quietly wrong:
+    // dividing by a zero denominator, and letting content that was never
+    // inspected count as if it had been.
+
+    #[test]
+    fn ratio_is_none_when_nothing_was_scanned() {
+        assert_eq!(
+            ratio(0, 0),
+            None,
+            "a rate over zero scans is undefined; reporting 0.0 would read as \
+             'nothing was detected' rather than 'nothing was scanned'"
+        );
+        assert_eq!(ratio(5, 0), None);
+        assert_eq!(ratio(0, 0), None);
+    }
+
+    #[test]
+    fn ratio_computes_expected_rates() {
+        assert_eq!(ratio(1, 4), Some(0.25));
+        assert_eq!(ratio(0, 10), Some(0.0), "zero of ten is a real 0%");
+        assert_eq!(ratio(10, 10), Some(1.0));
+    }
+
+    #[test]
+    fn ratio_rejects_negative_denominator() {
+        // Counts are non-negative by construction, but a negative here would
+        // silently flip the sign of a reported rate rather than fail.
+        assert_eq!(ratio(1, -1), None);
+    }
+
+    #[test]
+    fn detection_rate_excludes_uninspected_content() {
+        // 100 scanned, 10 with findings, 50 rejected as oversize.
+        // Detection rate is 10/100 — the 50 were never looked at and must not
+        // enlarge the denominator, which would drag the rate from 10% to ~6.7%
+        // and make coverage loss look like a clean estate.
+        let scans_total = 100i64;
+        let with_findings = 10i64;
+        let oversize = 50i64;
+
+        assert_eq!(ratio(with_findings, scans_total), Some(0.1));
+
+        // The coverage gap is where those 50 are meant to show up, and there
+        // the denominator does include them.
+        assert_eq!(ratio(oversize, scans_total + oversize), Some(50.0 / 150.0));
+    }
 
     #[test]
     fn test_build_audit_logger_none_without_path() {

@@ -111,6 +111,24 @@ pub struct ScanConfig {
     pub min_confidence: f64,
     /// Only run baseline (always-run) patterns — skip context-gated patterns entirely.
     pub baseline_only: bool,
+    /// Context text from outside the scanned text.
+    ///
+    /// Context gating is proximity-based: a gated pattern only fires when a
+    /// keyword appears within `context_distance` bytes of the match, inside
+    /// the text being scanned. That breaks down when one logical document is
+    /// scanned as separate units — an email body reading "SSN and DOB
+    /// attached" is in a different part from the spreadsheet of bare 9-digit
+    /// numbers it describes, so the gate never opens and ~30% of the pattern
+    /// corpus is silently unavailable for attachments.
+    ///
+    /// Setting this supplies the surrounding material (message body, subject,
+    /// filenames) so a gated pattern can also be satisfied by a keyword found
+    /// there. Envelope context has no proximity to the match, so it is weaker
+    /// evidence and scored lower than a local keyword — see
+    /// [`crate::scoring::ContextSource`].
+    ///
+    /// `None` (default) preserves the previous behaviour exactly.
+    pub context_envelope: Option<String>,
     /// Entropy scan mode for detecting high-entropy secrets.
     pub entropy_scan: EntropyMode,
     /// Optional EDM (Exact Data Match) engine for known-value detection.
@@ -190,6 +208,7 @@ impl Default for ScanConfig {
             deduplicate: true,
             min_confidence: 0.0,
             baseline_only: false,
+            context_envelope: None,
             entropy_scan: EntropyMode::Off,
             edm: None,
             lsh: None,
@@ -652,6 +671,16 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     // Build Aho-Corasick hit index for context matching
     let hit_index = context::build_hit_index(&normalized);
 
+    // Envelope index, built once per scan rather than per candidate. The
+    // envelope is the surrounding material (message body, subject, filenames)
+    // for cases where one logical document is scanned as separate units; see
+    // ScanConfig::context_envelope.
+    let envelope_index = config
+        .context_envelope
+        .as_deref()
+        .and_then(context::build_hit_index);
+    let envelope_len = config.context_envelope.as_deref().map_or(0, |e| e.len());
+
     let compiled = &*COMPILED;
 
     // Build set of context-gated (category, sub_category) pairs whose keywords
@@ -667,7 +696,13 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     // key present in the hit index but not in a compiled pattern is
     // harmless because active_gated is only used as a membership
     // filter downstream.
-    let active_gated: HashSet<(&str, &str)> = if let Some(ref index) = hit_index {
+    //
+    // The envelope's keys are unioned in. This prefilter runs before any
+    // per-candidate context check, so a gated pattern excluded here is
+    // excluded for the whole scan — leaving the envelope out would mean the
+    // per-match envelope check downstream could never be reached, and the
+    // feature would silently do nothing.
+    let mut active_gated: HashSet<(&str, &str)> = if let Some(ref index) = hit_index {
         index
             .hit_keys()
             .filter(|(_cat, sub)| !is_always_run(sub))
@@ -675,8 +710,11 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     } else {
         HashSet::new()
     };
+    if let Some(ref index) = envelope_index {
+        active_gated.extend(index.hit_keys().filter(|(_cat, sub)| !is_always_run(sub)));
+    }
 
-    let prefilter_active = hit_index.is_some();
+    let prefilter_active = hit_index.is_some() || envelope_index.is_some();
 
     // Filter patterns: category filter + AC prefilter + baseline_only
     let active_patterns: Vec<&CompiledPattern> = compiled
@@ -776,8 +814,10 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     None,
                 );
 
-                // Context checking
-                let has_context = context::check_context(
+                // Context checking. Local proximity first; the envelope is
+                // only consulted when there is no local keyword, so a match
+                // beside its keyword is never downgraded to envelope scoring.
+                let local_context = context::check_context(
                     &normalized,
                     norm_start,
                     norm_end,
@@ -785,6 +825,20 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     pat.sub_category,
                     hit_index.as_ref(),
                 );
+                let context_source = if local_context {
+                    crate::scoring::ContextSource::Local
+                } else if context::envelope_has_context(
+                    envelope_index.as_ref(),
+                    envelope_len,
+                    pat.category,
+                    pat.sub_category,
+                ) {
+                    crate::scoring::ContextSource::Envelope
+                } else {
+                    crate::scoring::ContextSource::None
+                };
+                // The gate opens on either source; only the score differs.
+                let has_context = context_source != crate::scoring::ContextSource::None;
 
                 let ctx_required = effective_context_required(
                     pat.category,
@@ -845,8 +899,11 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     pat.sub_category,
                     config.pattern_field_overrides.as_ref(),
                 );
-                let confidence =
-                    crate::scoring::compute_confidence_with(spec, has_context, ctx_required);
+                let confidence = crate::scoring::compute_confidence_from_source(
+                    spec,
+                    context_source,
+                    ctx_required,
+                );
                 if confidence < config.min_confidence {
                     emit_trace(
                         &config.trace,
@@ -1708,6 +1765,131 @@ fn entropy_to_confidence(entropy: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    // ── context envelope ───────────────────────────────────────────────
+    //
+    // The failure these cover: context gating is proximity-based within one
+    // scanned text, so splitting a document into parts silently disables the
+    // 174 context-gated patterns for every part that does not itself carry a
+    // keyword. An email body describing the attachment is in a different
+    // part from the attachment.
+    //
+    // "US Bank Account Number" is the clearest case — the regex is bare
+    // digits (\b\d{8,17}\b) with specificity 0.20 and context_required,
+    // so behaviour is entirely determined by the gate.
+
+    fn cfg_with_envelope(envelope: Option<&str>) -> super::ScanConfig {
+        super::ScanConfig {
+            context_envelope: envelope.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    fn bank_hits(text: &str, cfg: &super::ScanConfig) -> Vec<crate::models::Match> {
+        super::scan_text_with_config(text, cfg)
+            .unwrap()
+            .into_iter()
+            .filter(|m| m.sub_category == "US Bank Account Number")
+            .collect()
+    }
+
+    /// Baseline: bare digits with no keyword anywhere stay gated shut.
+    #[test]
+    fn envelope_absent_leaves_gated_pattern_closed() {
+        let hits = bank_hits(
+            "Reference 493028461037 for the batch.",
+            &cfg_with_envelope(None),
+        );
+        assert!(
+            hits.is_empty(),
+            "a gated pattern must not fire with no context at all"
+        );
+    }
+
+    /// The design-doc scenario: the describing text lives in another part.
+    #[test]
+    fn envelope_opens_gate_for_keyword_in_separate_part() {
+        let attachment = "Reference 493028461037 for the batch.";
+        let body = "Payroll bank account details are in the attached sheet.";
+
+        assert!(
+            bank_hits(attachment, &cfg_with_envelope(None)).is_empty(),
+            "precondition: without the envelope this is a false negative"
+        );
+
+        let hits = bank_hits(attachment, &cfg_with_envelope(Some(body)));
+        assert_eq!(
+            hits.len(),
+            1,
+            "the covering body supplies the context the attachment lacks"
+        );
+    }
+
+    /// An envelope with no relevant keyword must not open the gate — the
+    /// envelope is evidence, not a bypass.
+    #[test]
+    fn irrelevant_envelope_does_not_open_gate() {
+        let hits = bank_hits(
+            "Reference 493028461037 for the batch.",
+            &cfg_with_envelope(Some("Lunch menu and parking arrangements for Friday.")),
+        );
+        assert!(
+            hits.is_empty(),
+            "an envelope without a matching keyword must leave the gate shut"
+        );
+    }
+
+    /// Envelope context is positionally unanchored, so it is weaker evidence
+    /// and must score below a keyword sitting beside the match. Without this
+    /// one mention of "bank account" in a body would promote every long digit
+    /// string in every attachment to full confidence.
+    #[test]
+    fn envelope_context_scores_below_local_context() {
+        let local = bank_hits(
+            "Bank account 493028461037 for payroll.",
+            &cfg_with_envelope(None),
+        );
+        assert_eq!(local.len(), 1, "keyword beside the match opens the gate");
+
+        let envelope = bank_hits(
+            "Reference 493028461037 for the batch.",
+            &cfg_with_envelope(Some("Payroll bank account details attached.")),
+        );
+        assert_eq!(envelope.len(), 1);
+
+        assert!(
+            envelope[0].confidence < local[0].confidence,
+            "envelope-only context ({}) must score below local context ({})",
+            envelope[0].confidence,
+            local[0].confidence
+        );
+    }
+
+    /// A local keyword must never be downgraded just because an envelope was
+    /// also supplied — local is checked first and wins.
+    #[test]
+    fn local_context_is_not_downgraded_by_presence_of_envelope() {
+        let text = "Bank account 493028461037 for payroll.";
+        let without = bank_hits(text, &cfg_with_envelope(None));
+        let with = bank_hits(
+            text,
+            &cfg_with_envelope(Some("Payroll bank account details.")),
+        );
+
+        assert_eq!(without.len(), 1);
+        assert_eq!(with.len(), 1);
+        assert_eq!(
+            with[0].confidence, without[0].confidence,
+            "supplying an envelope must not change the score of a locally \
+             contextualised match"
+        );
+    }
+
+    /// Default config must behave exactly as before this feature existed.
+    #[test]
+    fn envelope_defaults_to_none() {
+        assert!(super::ScanConfig::default().context_envelope.is_none());
+    }
+
     use super::*;
 
     #[test]

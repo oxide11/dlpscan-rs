@@ -129,7 +129,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
-    image: siphon-api:2.7.0
+    image: siphon-api:2.8.0
     profiles: [auth]
     environment:
       # siphon-api reads SIPHON_BIND + SIPHON_PORT separately, never
@@ -166,7 +166,7 @@ services:
       dockerfile: deploy/Dockerfile.fs
     # Pinned per the per-crate SemVer rules in CLAUDE.md. Bump
     # in lockstep with crates/siphon-fs/Cargo.toml.
-    image: siphon-fs:1.1.3
+    image: siphon-fs:1.1.4
     profiles: [auth]
     environment:
       - SIPHON_FS_BIND=0.0.0.0:8081
