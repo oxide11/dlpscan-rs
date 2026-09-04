@@ -60,15 +60,25 @@ fn body_limit_bytes() -> usize {
 }
 
 /// Per-file streaming size cap. Checked chunk-by-chunk during multipart
-/// intake; returns 413 before the full body is buffered. Separate from
-/// the axum body limit (SIPHON_FS_BODY_LIMIT_MB) which gates the raw
-/// HTTP body. Default 500 MB.
+/// intake so an oversized part gets a 413 before the whole body is
+/// buffered. Distinct from the axum body limit
+/// (`SIPHON_FS_BODY_LIMIT_MB`), which gates the raw HTTP body.
+///
+/// Defaults to the body limit rather than a fixed number. It previously
+/// defaulted to 500 MB against a 100 MB body limit, which meant the body
+/// layer always rejected first and this check could never bind — the
+/// early-413 behaviour it exists to provide was unreachable on the
+/// default configuration.
+///
+/// A value above the body limit is still permitted (the operator may
+/// have raised the body limit for a different reason) but is reported at
+/// startup, because it silently disables this check.
 fn max_file_size_bytes() -> usize {
     std::env::var("SIPHON_FS_MAX_FILE_SIZE_MB")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .map(|mb| mb * 1024 * 1024)
-        .unwrap_or(500 * 1024 * 1024)
+        .unwrap_or_else(body_limit_bytes)
 }
 
 /// Optional override for the temp directory used when streaming uploads
@@ -566,6 +576,54 @@ async fn scan(
             trace: None,
             error: None,
             error_code: None,
+        })
+        .into_response();
+    }
+
+    // Extraction succeeded but produced more text than the scanner accepts.
+    //
+    // This is a real cliff in the limit chain: the upload cap (100 MB) and the
+    // extractor cap (100 MB) both sit an order of magnitude above the
+    // scanner's MAX_INPUT_SIZE (10 MB), so a large document can be accepted,
+    // written to disk and fully extracted before anything rejects it.
+    //
+    // Passing it to the scanner would return InputTooLarge as a generic error,
+    // which reads like a malformed request. The distinction matters: the file
+    // was well-formed and we understood it — we just did not inspect it. Say
+    // so explicitly, with the numbers, so this shows up as a coverage gap
+    // rather than a failed upload. `findings: []` here must never be read as
+    // "clean".
+    if extract.text.len() > siphon_core::validation::MAX_INPUT_SIZE {
+        let mut warnings = extract.warnings.clone();
+        warnings.push(format!(
+            "extracted {} MB of text, above the {} MB scanner limit — file was NOT scanned",
+            extract.text.len() / (1024 * 1024),
+            siphon_core::validation::MAX_INPUT_SIZE / (1024 * 1024)
+        ));
+        warn!(
+            request_id = %request_id,
+            filename = %filename.clone().unwrap_or_else(|| "<none>".into()),
+            extracted_bytes = extract.text.len(),
+            scanner_cap = siphon_core::validation::MAX_INPUT_SIZE,
+            "extracted text exceeds scanner limit; file not scanned"
+        );
+        return JsonResponse(ScanResponse {
+            request_id,
+            filename,
+            content_type,
+            bytes: file_len,
+            duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+            parsed_as: extract.format.clone(),
+            warnings,
+            findings: vec![],
+            trace: None,
+            error: Some(format!(
+                "extracted text is {} bytes, above the scanner limit of {} bytes; \
+                 the file was not scanned",
+                extract.text.len(),
+                siphon_core::validation::MAX_INPUT_SIZE
+            )),
+            error_code: Some("TEXT_EXCEEDS_SCANNER_LIMIT".to_string()),
         })
         .into_response();
     }
@@ -1247,6 +1305,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    let body_limit = body_limit_bytes();
     let max_file_bytes = max_file_size_bytes();
     let temp_dir = temp_dir_path();
 
@@ -1273,6 +1332,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rate_limit,
     };
     let app = build_router(state);
+
+    // The limits form a chain, and only the smallest one on a given path
+    // actually binds. Log all of them together so an operator can see which
+    // is doing the work rather than reading four env vars separately.
+    if max_file_bytes > body_limit {
+        warn!(
+            body_limit_mb = body_limit / (1024 * 1024),
+            max_file_mb = max_file_bytes / (1024 * 1024),
+            scanner_cap_mb = siphon_core::validation::MAX_INPUT_SIZE / (1024 * 1024),
+            body_limit_mb = body_limit / (1024 * 1024),
+            "SIPHON_FS_MAX_FILE_SIZE_MB exceeds SIPHON_FS_BODY_LIMIT_MB — the \
+             body limit rejects first, so the per-file streaming check cannot \
+             bind and uploads will not get an early 413"
+        );
+    }
+    if body_limit > siphon_core::validation::MAX_INPUT_SIZE {
+        info!(
+            body_limit_mb = body_limit / (1024 * 1024),
+            scanner_cap_mb = siphon_core::validation::MAX_INPUT_SIZE / (1024 * 1024),
+            "uploads may exceed the scanner's text cap — a file can be accepted \
+             and extracted, then rejected at scan time; extraction work is spent \
+             and the file goes unscanned"
+        );
+    }
 
     info!(
         service = POD_NAME,
@@ -1336,5 +1419,96 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c   => tracing::info!(signal = "SIGINT",  "shutdown signal received, draining"),
         _ = terminate => tracing::info!(signal = "SIGTERM", "shutdown signal received, draining"),
+    }
+}
+
+#[cfg(test)]
+mod size_limit_tests {
+    use super::*;
+
+    // Serial-ish by construction: each test sets the vars it reads and clears
+    // them again, so ordering between them does not matter.
+    fn with_env<F: FnOnce()>(pairs: &[(&str, Option<&str>)], f: F) {
+        let saved: Vec<_> = pairs
+            .iter()
+            .map(|(k, _)| (*k, std::env::var(k).ok()))
+            .collect();
+        for (k, v) in pairs {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        f();
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+    }
+
+    /// The per-file streaming cap defaulted to 500 MB against a 100 MB body
+    /// limit, so the body layer always rejected first and the early-413 path
+    /// it exists to provide was unreachable on a default install.
+    #[test]
+    fn per_file_default_does_not_exceed_the_body_limit() {
+        with_env(
+            &[
+                ("SIPHON_FS_BODY_LIMIT_MB", None),
+                ("SIPHON_FS_MAX_FILE_SIZE_MB", None),
+            ],
+            || {
+                assert_eq!(
+                    max_file_size_bytes(),
+                    body_limit_bytes(),
+                    "with neither set, the per-file cap must track the body limit \
+                     or it can never bind"
+                );
+            },
+        );
+    }
+
+    /// Raising the body limit alone must carry the per-file cap with it,
+    /// rather than leaving a fixed default below it.
+    #[test]
+    fn per_file_default_follows_a_raised_body_limit() {
+        with_env(
+            &[
+                ("SIPHON_FS_BODY_LIMIT_MB", Some("250")),
+                ("SIPHON_FS_MAX_FILE_SIZE_MB", None),
+            ],
+            || {
+                assert_eq!(body_limit_bytes(), 250 * 1024 * 1024);
+                assert_eq!(max_file_size_bytes(), 250 * 1024 * 1024);
+            },
+        );
+    }
+
+    /// An explicit per-file value still wins — an operator may want a smaller
+    /// per-part cap than the whole body allows.
+    #[test]
+    fn explicit_per_file_value_overrides_the_default() {
+        with_env(
+            &[
+                ("SIPHON_FS_BODY_LIMIT_MB", Some("100")),
+                ("SIPHON_FS_MAX_FILE_SIZE_MB", Some("20")),
+            ],
+            || assert_eq!(max_file_size_bytes(), 20 * 1024 * 1024),
+        );
+    }
+
+    /// The chain that produced the cliff: uploads are permitted well above
+    /// what the scanner will read, so siphon-fs has to handle that case
+    /// itself rather than handing oversized text to the scanner.
+    #[test]
+    fn upload_limits_sit_above_the_scanner_cap() {
+        with_env(&[("SIPHON_FS_BODY_LIMIT_MB", None)], || {
+            assert!(
+                body_limit_bytes() > siphon_core::validation::MAX_INPUT_SIZE,
+                "documented as a known gap: a file can be accepted and extracted, \
+                 then found to exceed the scanner limit"
+            );
+        });
     }
 }

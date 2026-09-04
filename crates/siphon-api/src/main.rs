@@ -63,6 +63,14 @@ use siphon_core::overrides::{
     CompiledList, PatternOverride, PatternOverrides, Regex, RuntimePattern,
 };
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
+// The scanner's own cap, not a copy of it. Every request-size check in this
+// crate derives from this constant so that raising it in siphon-core cannot
+// leave a handler silently rejecting at the old value.
+use siphon_core::validation::MAX_INPUT_SIZE;
+
+/// Slack above MAX_INPUT_SIZE for the JSON envelope wrapping the scanned
+/// text (field names, options object, base64 expansion of escapes).
+const JSON_ENVELOPE_HEADROOM: usize = 1024 * 1024;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1151,7 +1159,7 @@ async fn scan(
         ));
     }
 
-    if req.text.len() > 10 * 1024 * 1024 {
+    if req.text.len() > MAX_INPUT_SIZE {
         return Err((
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(ErrorResponse {
@@ -1657,11 +1665,15 @@ async fn scan_batch(
     let mut total_findings: usize = 0;
 
     for item in &items {
-        if item.text.is_empty() || item.text.len() > 10 * 1024 * 1024 {
+        if item.text.is_empty() || item.text.len() > MAX_INPUT_SIZE {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse {
-                    error: format!("item {:?}: text must be non-empty and ≤ 10 MB", item.id),
+                    error: format!(
+                        "item {:?}: text must be non-empty and \u{2264} {} MB",
+                        item.id,
+                        MAX_INPUT_SIZE / (1024 * 1024)
+                    ),
                 }),
             ));
         }
@@ -1932,7 +1944,7 @@ async fn scan_explain(
             }),
         ));
     }
-    if req.text.len() > 10 * 1024 * 1024 {
+    if req.text.len() > MAX_INPUT_SIZE {
         return Err((
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(ErrorResponse {
@@ -5760,7 +5772,7 @@ async fn scan_stream(
         )
             .into_response();
     }
-    if req.text.len() > 10 * 1024 * 1024 {
+    if req.text.len() > MAX_INPUT_SIZE {
         return (
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(ErrorResponse {
@@ -6539,7 +6551,11 @@ async fn main() {
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
-            11 * 1024 * 1024, // 11 MB to allow for JSON envelope
+            // The scanner's cap plus room for the JSON envelope around the
+            // text. Derived so the transport limit cannot end up below what
+            // the scanner will accept, which would reject a valid payload
+            // before any handler saw it.
+            MAX_INPUT_SIZE + JSON_ENVELOPE_HEADROOM,
         ))
         .with_state(state);
 
@@ -6704,6 +6720,44 @@ mod tests {
         // The coverage gap is where those 50 are meant to show up, and there
         // the denominator does include them.
         assert_eq!(ratio(oversize, scans_total + oversize), Some(50.0 / 150.0));
+    }
+
+    // ── request size limits ───────────────────────────────────────────
+    //
+    // These guard against the limits drifting apart again. The scanner cap was
+    // previously copied as an inline `10 * 1024 * 1024` at four call sites, so
+    // raising MAX_INPUT_SIZE in siphon-core would have changed what the
+    // scanner accepts while every handler kept rejecting at the old value.
+
+    #[test]
+    fn request_body_limit_exceeds_the_scanner_cap() {
+        // The transport limit must sit above the text limit, or a payload the
+        // scanner would happily accept is rejected by the body layer before
+        // any handler sees it — and the caller gets a transport error for a
+        // valid request.
+        assert!(
+            MAX_INPUT_SIZE + JSON_ENVELOPE_HEADROOM > MAX_INPUT_SIZE,
+            "body limit must leave room for the JSON envelope around the text"
+        );
+    }
+
+    #[test]
+    fn json_envelope_headroom_is_a_sane_margin() {
+        // Big enough for field names, an options object and escape expansion;
+        // small enough that it cannot be mistaken for a second text budget.
+        assert!(JSON_ENVELOPE_HEADROOM >= 256 * 1024);
+        assert!(JSON_ENVELOPE_HEADROOM <= MAX_INPUT_SIZE / 4);
+    }
+
+    #[test]
+    fn scanner_cap_is_taken_from_core_not_redefined() {
+        // Reading the constant through siphon_core is the point: if this
+        // crate ever declares its own, this comparison starts failing.
+        assert_eq!(
+            MAX_INPUT_SIZE,
+            siphon_core::validation::MAX_INPUT_SIZE,
+            "siphon-api must use the scanner's own cap, never a local copy"
+        );
     }
 
     #[test]
