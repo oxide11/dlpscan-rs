@@ -69,4 +69,4 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=3s --retries=3 \
 
 LABEL org.opencontainers.image.title="siphon-icap" \
       org.opencontainers.image.description="Polygon Siphon ICAP network DLP server" \
-      org.opencontainers.image.version="0.1.0"
+      org.opencontainers.image.version="0.1.2"

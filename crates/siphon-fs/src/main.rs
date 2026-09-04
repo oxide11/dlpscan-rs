@@ -164,6 +164,10 @@ struct AppState {
     /// explicitly opted into running unauthenticated. Mirrors siphon-api:
     /// the key is never held in plaintext beyond startup.
     api_key_hash: Option<[u8; 32]>,
+    /// SHA-256 of the admin key for admin-only endpoints (e.g. overrides/reload).
+    /// Defaults to the API key hash so single-key deployments need no extra config.
+    /// Set SIPHON_ADMIN_KEY to a separate credential in multi-key deployments.
+    admin_key_hash: Option<[u8; 32]>,
     findings: Arc<FindingsRing>,
     /// Hot-reloadable overrides. See LiveOverrides above.
     live_overrides: Arc<std::sync::RwLock<LiveOverrides>>,
@@ -804,7 +808,7 @@ struct ReloadResponse {
     summary: siphon_core::overrides::OverridesSummary,
 }
 
-async fn overrides_reload(State(state): State<AppState>) -> Response {
+async fn overrides_reload(_: RequireAdminAction, State(state): State<AppState>) -> Response {
     let path = state.overrides_path.as_path();
     let fresh = LiveOverrides::from_path(path);
     let summary = fresh.loaded_overrides.summary();
@@ -968,6 +972,70 @@ fn resolve_api_key_hash() -> Option<[u8; 32]> {
          are served WITHOUT authentication. Never use this outside local development."
     );
     None
+}
+
+/// SHA-256 hash of the admin key for admin-only endpoints.
+/// Uses SIPHON_ADMIN_KEY if set; otherwise falls back to SIPHON_API_KEY so
+/// single-key deployments don't need a second credential.
+fn resolve_admin_key_hash() -> Option<[u8; 32]> {
+    let key = std::env::var("SIPHON_ADMIN_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty())
+        .or_else(|| {
+            std::env::var("SIPHON_API_KEY")
+                .ok()
+                .filter(|k| !k.trim().is_empty())
+        })?;
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    Some(hasher.finalize().into())
+}
+
+/// RBAC extractor for admin-only endpoints in siphon-fs.
+/// Checks the bearer token against the admin key hash from AppState.
+/// If no admin key is configured (open-dev mode), the check is skipped.
+#[derive(Clone, Copy)]
+struct RequireAdminAction;
+
+impl axum::extract::FromRequestParts<AppState> for RequireAdminAction {
+    type Rejection = (StatusCode, JsonResponse<serde_json::Value>);
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let Some(expected) = state.admin_key_hash else {
+            return Ok(Self);
+        };
+        let provided = parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .filter(|k| !k.is_empty());
+        let Some(key) = provided else {
+            warn!("admin_gate: missing bearer token for admin-only endpoint");
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                JsonResponse(serde_json::json!({"error": "admin key required"})),
+            ));
+        };
+        let mut hasher = Sha256::new();
+        hasher.update(key.as_bytes());
+        let got: [u8; 32] = hasher.finalize().into();
+        let mut diff = 0u8;
+        for (a, b) in expected.iter().zip(got.iter()) {
+            diff |= a ^ b;
+        }
+        if diff != 0 {
+            warn!("admin_gate: invalid admin key for admin-only endpoint");
+            return Err((
+                StatusCode::FORBIDDEN,
+                JsonResponse(serde_json::json!({"error": "admin access required"})),
+            ));
+        }
+        Ok(Self)
+    }
 }
 
 /// Bearer-token gate over every route except the kubelet probes.
@@ -1159,6 +1227,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Resolved before the listener binds, so a misconfigured deployment
         // fails at startup rather than serving an open upload endpoint.
         api_key_hash: resolve_api_key_hash(),
+        admin_key_hash: resolve_admin_key_hash(),
         findings: Arc::new(FindingsRing::new(FINDINGS_RING_CAP)),
         live_overrides: Arc::new(std::sync::RwLock::new(live_overrides)),
         overrides_path: Arc::new(std::path::PathBuf::from(&overrides_path)),

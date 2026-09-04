@@ -44,7 +44,7 @@ api:
 
   image:
     repository: oxide11/siphon-api
-    tag: "2.6.3"
+    tag: "2.6.4"
     pullPolicy: ""  # inherits global.imagePullPolicy
 
   service:
@@ -148,7 +148,7 @@ fs:
     repository: oxide11/siphon-fs
     # Pinned per the per-crate SemVer rules in CLAUDE.md. Bump
     # this in lockstep with crates/siphon-fs/Cargo.toml.
-    tag: "1.1.2"
+    tag: "1.1.3"
     pullPolicy: ""
 
   service:

@@ -1992,7 +1992,7 @@ struct PatternsResponse {
     patterns: Vec<PatternItem>,
 }
 
-async fn list_patterns(Query(q): Query<PatternsQuery>) -> Json<PatternsResponse> {
+async fn list_patterns(_: RequireAdminAction, Query(q): Query<PatternsQuery>) -> Json<PatternsResponse> {
     let all = siphon_core::patterns::PATTERNS;
     let filtered: Vec<&'static siphon_core::models::PatternDef> = match q.category.as_deref() {
         Some(c) if !c.is_empty() => all.iter().filter(|p| p.category == c).collect(),
@@ -2061,7 +2061,7 @@ struct CategoriesResponse {
     categories: Vec<CategoryItem>,
 }
 
-async fn list_categories() -> Json<CategoriesResponse> {
+async fn list_categories(_: RequireAdminAction) -> Json<CategoriesResponse> {
     let cats = siphon_core::patterns::categories();
     let categories: Vec<CategoryItem> = cats
         .into_iter()

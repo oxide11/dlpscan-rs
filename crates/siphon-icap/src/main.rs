@@ -218,7 +218,15 @@ async fn parse_icap_request<R: AsyncBufReadExt + Unpin>(
         };
 
         if i + 1 < sections.len() {
-            // Not the last section: read exactly bytes_to_read bytes
+            // Not the last section: read exactly bytes_to_read bytes.
+            // Reject attacker-supplied offsets that would force a giant allocation.
+            const MAX_SECTION_HDR_BYTES: usize = 1024 * 1024; // 1 MiB
+            if bytes_to_read > MAX_SECTION_HDR_BYTES {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "icap: encapsulated section size exceeds 1 MiB hard cap",
+                ));
+            }
             let mut buf = vec![0u8; bytes_to_read];
             reader.read_exact(&mut buf).await?;
             if section_name.ends_with("-hdr") {

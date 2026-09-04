@@ -14,6 +14,36 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — Security: section-hdr OOM fix in siphon-icap; admin gate on patterns/categories + siphon-fs overrides/reload
+
+### siphon-icap 0.1.2
+
+- **fix(icap,security): cap encapsulated section-header allocation.**
+  Non-body ICAP sections (`req-hdr`, `res-hdr`) were read with
+  `vec![0u8; bytes_to_read]` where `bytes_to_read` was derived from
+  attacker-supplied `Encapsulated` header offsets — no size limit existed.
+  Sending `Encapsulated: req-hdr=0, null-body=1073741824` caused a 1 GB
+  allocation before any I/O. The section-read path now rejects any declared
+  size above 1 MiB (generous for HTTP headers) with an `InvalidData` I/O
+  error that closes the connection.
+
+### siphon-api 2.6.4
+
+- **fix(api,security): gate `GET /v1/patterns` and `GET /v1/categories` behind
+  `RequireAdminAction`.** Both endpoints were callable by any valid bearer key.
+  They return the full regex surface — exact pattern strings, confidence
+  thresholds, context requirements — giving any authenticated caller a precise
+  map for engineering evasion inputs. Endpoints are now admin-only.
+
+### siphon-fs 1.1.3
+
+- **fix(fs,security): gate `POST /v1/overrides/reload` behind admin key.**
+  The endpoint was accessible to any authenticated caller. A `RequireAdminAction`
+  extractor now validates the bearer token against `SIPHON_ADMIN_KEY` (falls back
+  to `SIPHON_API_KEY` in single-key deployments). Unauthorized calls receive 403.
+
+---
+
 ## 2026-09-03 — Security: OOM + connection-exhaustion fixes in siphon-icap; admin gate on EDM/LSH vault endpoints
 
 ### siphon-icap 0.1.1
