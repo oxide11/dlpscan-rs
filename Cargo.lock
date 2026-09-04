@@ -5054,7 +5054,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-core"
-version = "2.3.2"
+version = "2.4.0"
 dependencies = [
  "aho-corasick",
  "base64 0.23.1",

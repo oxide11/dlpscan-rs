@@ -16,6 +16,43 @@ starting from this file.
 
 ## 2026-09-04 — Scan accounting: stop dropping distinct scans; count all scanned traffic
 
+### siphon-core 2.4.0
+
+- **feat(core): context envelope — keep context-gated patterns working when
+  one document is scanned as separate units.** Context gating is
+  proximity-based *within a single scanned text*: a gated pattern fires only
+  when a keyword sits within `context_distance` of the match. That silently
+  breaks when a logical document arrives as separate parts. An email body
+  reading "payroll bank account details attached" is in a different part from
+  the spreadsheet of bare digits it describes, so the gate never opens and
+  ~30% of the corpus (174 of 583 patterns) is unavailable for attachments —
+  a false negative created purely by how the work was split.
+
+  `ScanConfig::context_envelope` supplies the surrounding material (body,
+  subject, filenames) as a second context source. Two properties make it
+  evidence rather than a bypass:
+
+  - **Local context is checked first and always wins**, so a match beside its
+    keyword is never downgraded because an envelope was also supplied.
+  - **Envelope context scores below local** (+0.10 vs +0.20). It is
+    positionally unanchored: a keyword beside the match says *this number is
+    an account number*, while the same keyword in a covering email says only
+    that the message mentions account numbers. Crediting them equally would
+    let one mention promote every long digit string in every attachment to
+    full confidence.
+
+  The Aho-Corasick prefilter also unions the envelope's keys — it runs before
+  any per-match context check, so without that a gated pattern would be
+  dropped for the whole scan and the feature would silently do nothing.
+
+  `None` (default) preserves previous behaviour exactly; no existing score
+  changes.
+
+  *Semver note:* this adds a field to the public `ScanConfig`, which is
+  strictly breaking for an external caller constructing it exhaustively.
+  Released as MINOR because the crate is not published to any registry (path
+  deps only) and every in-tree caller uses `..Default::default()`.
+
 ### siphon-api 2.8.0
 
 - **fix(api,security): stop discarding distinct scans that share content.**

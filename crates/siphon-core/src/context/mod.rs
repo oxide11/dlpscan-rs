@@ -261,6 +261,31 @@ fn ceil_char_boundary(s: &str, index: usize) -> usize {
     i
 }
 
+/// Whether the envelope contains any context keyword for this pattern.
+///
+/// Deliberately position-blind, unlike [`check_context`]. The envelope is
+/// separate material — a covering email body, a subject line, a filename —
+/// so "distance from the match" has no meaning across that boundary. The
+/// question is only whether the surrounding document discusses this kind of
+/// data at all.
+///
+/// This is why an envelope hit is scored below a local one
+/// ([`crate::scoring::ContextSource`]): it opens the gate on weaker evidence,
+/// and treating it as equal would let a single mention of "SSN" in a body
+/// promote every 9-digit number in every attachment.
+pub fn envelope_has_context(
+    envelope_index: Option<&ContextHitIndex>,
+    envelope_len: usize,
+    category: &str,
+    sub_category: &str,
+) -> bool {
+    let Some(index) = envelope_index else {
+        return false;
+    };
+    // Whole-envelope range: any hit anywhere counts.
+    index.has_hit_in_range(category, sub_category, 0, envelope_len)
+}
+
 /// Check if context keywords appear near a match span.
 ///
 /// Three-pass matching:

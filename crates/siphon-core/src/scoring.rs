@@ -18,6 +18,60 @@ pub fn compute_confidence(sub_category: &str, has_context: bool, context_require
     )
 }
 
+/// Where a context keyword was found, relative to the match.
+///
+/// Proximity is the evidence. A keyword sitting beside the match says this
+/// number is described as an SSN; the same keyword somewhere in a covering
+/// email says only that the message mentions SSNs somewhere. Both open a
+/// context gate, but crediting them equally would let one mention of "SSN" in
+/// a body promote every 9-digit number in every attachment to full
+/// confidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextSource {
+    /// No context keyword found.
+    None,
+    /// Keyword found within `context_distance` of the match, in the scanned
+    /// text. The strong signal.
+    Local,
+    /// Keyword found only in the surrounding material supplied via
+    /// `ScanConfig::context_envelope` — a different MIME part, the subject, a
+    /// filename. Real evidence, but positionally unanchored.
+    Envelope,
+}
+
+/// Confidence boost for a keyword found beside the match.
+const LOCAL_CONTEXT_BOOST: f64 = 0.20;
+
+/// Boost for a keyword found only in the envelope.
+///
+/// Half of local. The gate opens either way; the difference is how much the
+/// finding is trusted, which is what a reviewer's min_confidence threshold
+/// filters on. Chosen so an envelope-only hit on a mid-specificity pattern
+/// lands below a typical 0.6 review threshold while a local hit clears it.
+const ENVELOPE_CONTEXT_BOOST: f64 = 0.10;
+
+/// Scoring that distinguishes where the context keyword was found.
+///
+/// `compute_confidence_with` is this with `Local`/`None`, preserved so the
+/// existing callers and their scores are untouched.
+pub fn compute_confidence_from_source(
+    specificity: f64,
+    source: ContextSource,
+    context_required: bool,
+) -> f64 {
+    let confidence = match source {
+        ContextSource::Local => (specificity + LOCAL_CONTEXT_BOOST).min(1.0),
+        ContextSource::Envelope => (specificity + ENVELOPE_CONTEXT_BOOST).min(1.0),
+        // Unchanged: a gated pattern with no context at all is heavily
+        // discounted rather than dropped, so it can still surface to a
+        // reviewer who lowers the threshold.
+        ContextSource::None if context_required => specificity * 0.3,
+        ContextSource::None => specificity,
+    };
+
+    (confidence * 100.0).round() / 100.0
+}
+
 /// Same scoring formula as `compute_confidence`, but the caller
 /// supplies the base specificity. Used by the scanner when
 /// PatternOverrides has bumped a pattern's specificity at runtime.
