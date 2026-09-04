@@ -106,6 +106,9 @@ const PUBLIC_PATHS = new Set([
 export class SiphonContainer extends Container<Env> {
   defaultPort = 8080;
 
+  /** Tail the container was seeded from, recorded in the restart ledger. */
+  private chainSeedAtStart: string | null = null;
+
   /**
    * Containers bill memory/disk on provisioned capacity while awake, and
    * charges stop on sleep — so idle time is the cost lever. 15m is long
@@ -125,6 +128,9 @@ export class SiphonContainer extends Container<Env> {
     // constructor cannot await.
     this.initAuditSchema();
     const seed = this.readChainTail();
+    // Held for onStart, which is where an actual container start happens —
+    // this constructor also runs on plain DO activations that start nothing.
+    this.chainSeedAtStart = seed;
 
     // Set here rather than as a class-field initializer because the API key
     // comes from `this.env`, which is only populated once super() has run.
@@ -194,6 +200,25 @@ export class SiphonContainer extends Container<Env> {
         updated_at TEXT NOT NULL
       )
     `);
+    // Restart ledger.
+    //
+    // Seeding makes the chain link across a container restart, which is the
+    // point — but it also means a restart looks identical to no restart. On
+    // an ungraceful exit, events written after the last drain die with the
+    // container, and the next container seeds from that same last-drained
+    // tail: the stored chain still verifies end to end, with the lost events
+    // simply absent. Nothing in the chain can reveal that.
+    //
+    // So record the restarts separately. The chain proves nothing was
+    // *altered*; this table shows where continuity was asserted by seeding
+    // rather than observed, which is where missing events could hide.
+    sql.exec(`
+      CREATE TABLE IF NOT EXISTS audit_restarts (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        started_at  TEXT NOT NULL,
+        seeded_from TEXT
+      )
+    `);
   }
 
   private readChainTail(): string | null {
@@ -210,6 +235,14 @@ export class SiphonContainer extends Container<Env> {
    * cold one. Warming here moves that cost off the first user request.
    */
   override async onStart(): Promise<void> {
+    // Record before warming, so a container that dies during startup still
+    // leaves evidence that it started.
+    this.ctx.storage.sql.exec(
+      `INSERT INTO audit_restarts (started_at, seeded_from) VALUES (?, ?)`,
+      new Date().toISOString(),
+      this.chainSeedAtStart,
+    );
+
     try {
       await this.containerFetch("http://localhost/scan", {
         method: "POST",
