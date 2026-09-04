@@ -28,6 +28,8 @@ pub const VALID_EVENT_TYPES: &[&str] = &[
     "EDM_SCAN",
     "LSH_REGISTER",
     "LSH_QUERY",
+    "ADMIN",
+    "CONFIG",
 ];
 
 // ---------------------------------------------------------------------------

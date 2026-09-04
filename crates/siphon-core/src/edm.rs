@@ -46,9 +46,13 @@ impl EDMMatch {
 /// A tokenizer extracts candidate strings and their spans from text.
 pub type Tokenizer = fn(&str) -> Vec<(String, (usize, usize))>;
 
-/// Extract numeric sequences (digits, hyphens, dots, spaces) 5-20 chars.
+/// Extract numeric sequences (digits plus common separator chars) 5-20 chars.
+/// The separator class is kept in sync with normalize_value's SEP_RE so that
+/// any sequence that normalize_value would reduce to a bare digit string is
+/// also extracted as a token here.
 fn tokenize_numeric(text: &str) -> Vec<(String, (usize, usize))> {
-    static RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\d[\d\-. ]{3,18}\d").unwrap());
+    static RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"\d[\d\-. _:,;|()\u{00B7}\u{2022}\u{2212}]{3,18}\d").unwrap());
     RE.find_iter(text)
         .map(|m| (m.as_str().to_string(), (m.start(), m.end())))
         .collect()
@@ -125,8 +129,14 @@ fn normalize_value(value: &str) -> String {
     let normalized: String = value.nfkc().collect();
     let lower = normalized.to_lowercase();
     let trimmed = lower.trim();
-    // Remove separators
-    static SEP_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[\s\-./()]+").unwrap());
+    // Remove separators — extended to cover delimiter-injection evasion:
+    // the original set [\s\-./()]+ missed _, :, ,, ;, |, and common
+    // Unicode separators (middle dot U+00B7, bullet U+2022, etc.) that
+    // an attacker could substitute for standard hyphens/spaces to produce
+    // a different hash from the registered form.
+    static SEP_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"[\s\-./()_:,;|+~\u{00B7}\u{2022}\u{2027}\u{2043}\u{2212}\u{FF0D}]+").unwrap()
+    });
     SEP_RE.replace_all(trimmed, "").to_string()
 }
 

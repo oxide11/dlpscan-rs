@@ -38,6 +38,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Auth + crypto — SHA-256 for file content hashing before persistence.
 sha2 = "0.11"
+hex = "0.4"
 
 # Persistence — same pool stack as siphon-api (tokio-postgres + deadpool).
 # Optional at runtime: pool is None when SIPHON_DATABASE_URL is unset.
@@ -50,3 +51,9 @@ tokio-postgres-rustls = { version = "0.14.0", features = ["ring"] }
 rustls = { version = "0.23.43", features = ["ring"] }
 webpki-roots = "1.0.9"
 rustls-pemfile = "2.2.0"
+
+[features]
+default = []
+# Allow SIPHON_ALLOW_UNAUTHENTICATED env var to disable bearer-token auth.
+# Local development only. Production binaries must NOT enable this feature.
+allow-unauthenticated = []

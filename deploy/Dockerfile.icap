@@ -1,0 +1,72 @@
+# Siphon-ICAP — RFC 3507 network DLP server for proxy integration.
+#
+# Two-pass build to maximise cargo's layer cache.
+
+FROM rust:1.98-bookworm AS builder
+
+ARG CARGO_BUILD_JOBS=4
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
+
+WORKDIR /app
+
+# ── Stage 1a: dep-tree cache via stub workspace.
+COPY Cargo.toml Cargo.lock ./
+COPY crates/siphon-core/Cargo.toml     crates/siphon-core/Cargo.toml
+COPY crates/siphon-api/Cargo.toml      crates/siphon-api/Cargo.toml
+COPY crates/siphon-fs/Cargo.toml       crates/siphon-fs/Cargo.toml
+COPY crates/siphon-launcher/Cargo.toml crates/siphon-launcher/Cargo.toml
+COPY crates/siphon-icap/Cargo.toml     crates/siphon-icap/Cargo.toml
+
+RUN mkdir -p src \
+             crates/siphon-core/src \
+             crates/siphon-api/src \
+             crates/siphon-fs/src \
+             crates/siphon-launcher/src \
+             crates/siphon-icap/src \
+             benches \
+ && echo 'fn main() {}'      > src/main.rs \
+ && echo 'pub fn _stub() {}' > src/lib.rs \
+ && echo 'pub fn _stub() {}' > crates/siphon-core/src/lib.rs \
+ && echo 'fn main() {}'      > crates/siphon-api/src/main.rs \
+ && echo 'fn main() {}'      > crates/siphon-fs/src/main.rs \
+ && echo 'fn main() {}'      > crates/siphon-launcher/src/main.rs \
+ && echo 'fn main() {}'      > crates/siphon-icap/src/main.rs \
+ && echo 'fn main() {}'      > benches/scanning.rs
+
+RUN cargo build --release -p siphon-icap --locked
+
+# ── Stage 1b: real source replaces stubs.
+COPY src/     src/
+COPY crates/  crates/
+COPY benches/ benches/
+COPY README.md ./
+COPY docs/    docs/
+
+RUN touch crates/siphon-core/src/lib.rs \
+          crates/siphon-icap/src/main.rs \
+          src/main.rs \
+          src/lib.rs \
+ && cargo build --release -p siphon-icap --locked
+
+# ── Stage 2: runtime image.
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r siphon && useradd -r -g siphon -s /bin/false siphon
+
+COPY --from=builder /app/target/release/siphon-icap /usr/local/bin/siphon-icap
+
+USER siphon
+EXPOSE 1344
+
+ENTRYPOINT ["siphon-icap"]
+
+HEALTHCHECK --interval=15s --timeout=3s --start-period=3s --retries=3 \
+    CMD bash -c 'echo -e "OPTIONS icap://localhost:1344/dlp ICAP/1.0\r\nHost: localhost\r\nEncapsulated: null-body=0\r\n\r\n" | nc -q1 localhost 1344 | grep -q "ICAP/1.0 200"' || exit 1
+
+LABEL org.opencontainers.image.title="siphon-icap" \
+      org.opencontainers.image.description="Polygon Siphon ICAP network DLP server" \
+      org.opencontainers.image.version="0.1.2"
