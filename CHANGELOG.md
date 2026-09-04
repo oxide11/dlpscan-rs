@@ -14,6 +14,44 @@ starting from this file.
 
 ---
 
+## 2026-09-04 — Halve the offset map
+
+### siphon-core 2.5.0
+
+- **perf(core): store normalization offsets as `u32` instead of `usize`.** The
+  offset map holds one entry per byte of normalized output, which makes it the
+  largest allocation in the scan path — larger than the text being scanned.
+  On 64-bit each entry cost 8 bytes, so a 10 MB input carried an ~80 MB map,
+  and stages hold an input and an output map simultaneously.
+
+  Halving the element width halves that. It is the change that makes raising
+  the input cap survivable: at a 30 MB cap the map would have been ~240 MB per
+  scan against a 1Gi pod limit, and is now ~120 MB.
+
+  `Offset` and `OffsetMap` are named types rather than a bare `u32`, so the
+  next change to this decision happens in one place. `to_offset` carries the
+  narrowing: it asserts in debug — an offset that large means the input cap was
+  bypassed, and that should surface in a test — and saturates in release, since
+  a wrapped offset would point a finding at an unrelated part of the document,
+  which is a silently wrong answer where a clamped one is merely imprecise at a
+  boundary no real input reaches.
+
+  Safe by construction: `MAX_INPUT_SIZE` is orders of magnitude below
+  `u32::MAX`, and a test asserts the cap keeps a 16× margin so stages that
+  expand text (NFKC can turn one character into several) cannot approach it.
+
+  *Semver note:* `normalize_text` and `strip_zero_width` change their return
+  type, which is breaking for a direct caller. Released as MINOR on the same
+  basis as 2.4.0 — the crate is not published to any registry, and the only
+  in-tree consumers outside the module are the scanner and two benchmarks that
+  discard the map.
+
+  No detection behaviour changes: spans still resolve to the caller's original
+  bytes, which the integration, evasion, detection-quality, fp-probe and
+  evadex-regression suites all exercise.
+
+---
+
 ## 2026-09-04 — Size limits: one source of truth, and the extraction cliff made visible
 
 ### siphon-api 2.8.1
