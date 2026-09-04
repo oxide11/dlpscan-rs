@@ -270,7 +270,7 @@ POST /scan    multipart/form-data file upload → extraction → findings
 GET  /v1/findings
 ```
 
-Max body: `SIPHON_FS_BODY_LIMIT_MB` (default 100 MB). Rate limit:
+Max body: `SIPHON_FS_BODY_LIMIT_MB` (default 100 MB). Per-file streaming cap: `SIPHON_FS_MAX_FILE_SIZE_MB`, which **defaults to the body limit** and tracks it when raised — a larger value is allowed but warned about at startup, since the body layer rejects first and the per-file check then cannot bind. Note both sit above siphon-core's 10 MB `MAX_INPUT_SIZE`: a file can be accepted and fully extracted, then found to exceed the scanner cap, which siphon-fs reports as `TEXT_EXCEEDS_SCANNER_LIMIT` with the file marked **not scanned** rather than clean. Rate limit:
 `SIPHON_FS_RATE_LIMIT` (default 30 req/min, per IP **and** per key; `/health`
 and `/ready` exempt). CORS origins: `SIPHON_FS_CORS_ORIGINS` (comma-separated
 allowlist; `*` reflects any origin). Unset denies cross-origin browser requests

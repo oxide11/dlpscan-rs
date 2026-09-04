@@ -14,6 +14,58 @@ starting from this file.
 
 ---
 
+## 2026-09-04 — Size limits: one source of truth, and the extraction cliff made visible
+
+### siphon-api 2.8.1
+
+- **fix(api): take the scanner's size cap from siphon-core instead of copying
+  it.** `req.text.len() > 10 * 1024 * 1024` appeared as an inline literal at
+  four separate call sites — `/scan`, `/scan/batch`, and two others — rather
+  than using `MAX_INPUT_SIZE`. Raising the constant in siphon-core would have
+  changed what the scanner accepts while every one of those handlers kept
+  rejecting at the old value, which is exactly the trap waiting for the
+  planned 30 MB work.
+
+  All four now read the constant. The `RequestBodyLimitLayer` was likewise a
+  bare `11 * 1024 * 1024`; it is now `MAX_INPUT_SIZE + JSON_ENVELOPE_HEADROOM`,
+  so the transport limit cannot end up below the text limit and reject a
+  payload the scanner would have accepted. The batch error message derives its
+  "MB" figure from the constant too, instead of saying 10 in prose.
+
+  A test asserts the constant is read from siphon-core rather than redeclared
+  locally, so this cannot silently drift apart again.
+
+### siphon-fs 1.2.0
+
+- **fix(fs): make the per-file cap default to the body limit.**
+  `SIPHON_FS_MAX_FILE_SIZE_MB` defaulted to 500 MB against a
+  `SIPHON_FS_BODY_LIMIT_MB` of 100 MB. Since the body layer rejects first, the
+  per-file streaming check could never bind on a default install — the
+  early-413-before-buffering behaviour it exists to provide was unreachable.
+  It now defaults to the body limit and tracks it when that is raised; an
+  explicit smaller value still wins, and an explicit larger one is permitted
+  but warned about at startup.
+
+- **feat(fs): report oversized extracted text as a coverage gap, not a
+  failure.** The limits form a chain ending in a cliff: uploads are capped at
+  100 MB and extraction at 100 MB, both an order of magnitude above the
+  scanner's 10 MB. A large document could be accepted, written to disk and
+  fully extracted before anything rejected it — and the rejection arrived as a
+  generic `InputTooLarge`, which reads like a malformed request.
+
+  siphon-fs now detects this itself and returns `TEXT_EXCEEDS_SCANNER_LIMIT`
+  with both figures, plus a warning stating the file was **not scanned**. The
+  distinction matters: the upload was well-formed and understood, it simply
+  was not inspected, and an empty `findings` array here must never be read as
+  clean.
+
+- **feat(fs): log the whole size chain at startup.** Body limit, per-file cap
+  and scanner cap are logged together, since only the smallest one on a given
+  path actually binds and reading four env vars separately does not tell you
+  which.
+
+---
+
 ## 2026-09-04 — Scan accounting: stop dropping distinct scans; count all scanned traffic
 
 ### siphon-core 2.4.0
