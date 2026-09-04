@@ -41,8 +41,12 @@ interface Env {
  */
 const AUDIT_DRAIN_INTERVAL_SECONDS = 30;
 
-/** Per-drain page size. Must stay <= SIPHON_AUDIT_RING_CAP. */
-const AUDIT_DRAIN_LIMIT = 1000;
+/**
+ * Per-drain page size. Set equal to SIPHON_AUDIT_RING_CAP so one drain can
+ * always take everything the ring currently holds — a smaller page would
+ * silently leave the oldest events to be evicted before the next tick.
+ */
+const AUDIT_DRAIN_LIMIT = 2000;
 
 /**
  * Rows kept in DO SQLite. A demo does not need unbounded history, and DO
@@ -276,6 +280,29 @@ export class SiphonContainer extends Container<Env> {
     // interrupted partway the stored prefix is still contiguous.
     const oldestFirst = [...page.events].reverse();
     const sql = this.ctx.storage.sql;
+
+    // Gap detection, using the chain itself.
+    //
+    // The oldest event in this page should link back to the tail we already
+    // stored. When it does not, events existed that we never saw — evicted
+    // from the ring between drains, or lost with the container in a crash.
+    // Note this is the ONLY reliable signal available: the endpoint's `total`
+    // is the ring's current length, which is bounded by its own capacity, so
+    // comparing the two can never detect overflow.
+    //
+    // A gap does not corrupt the stored chain — every stored event still
+    // verifies — but it means the record is incomplete, which is exactly the
+    // thing an audit trail must not hide.
+    const priorTail = this.readChainTail();
+    const firstPrev = oldestFirst[0].prev_signature ?? null;
+    if (priorTail && firstPrev !== priorTail) {
+      console.warn(
+        `audit gap: oldest drained event links to ${firstPrev ?? "(none)"} but ` +
+          `the stored tail is ${priorTail} — events were lost before this drain ` +
+          `(ring eviction or an ungraceful container exit). Stored events remain ` +
+          `individually verifiable; the record is not complete.`,
+      );
+    }
     const drainedAt = new Date().toISOString();
     let newestSignature: string | null = null;
     let inserted = 0;
@@ -318,14 +345,13 @@ export class SiphonContainer extends Container<Env> {
       );
     }
 
-    // The ring reports how many events it has seen in total; if that has
-    // outrun its own capacity between two drains, events existed that we
-    // never saw. Surface it rather than leaving a silent hole in the chain.
-    if (page.total > page.capacity) {
+    // A full page means the ring was at capacity when we read it, so it may
+    // have been discarding events before we got there. Distinct from the gap
+    // check above, which reports loss that already happened.
+    if (page.returned >= page.capacity) {
       console.warn(
-        `audit ring reported total=${page.total} > capacity=${page.capacity}; ` +
-          `events may have been evicted before this drain — consider a shorter ` +
-          `AUDIT_DRAIN_INTERVAL_SECONDS or a larger SIPHON_AUDIT_RING_CAP`,
+        `audit ring returned ${page.returned} events at capacity ${page.capacity}; ` +
+          `shorten AUDIT_DRAIN_INTERVAL_SECONDS or raise SIPHON_AUDIT_RING_CAP`,
       );
     }
 
