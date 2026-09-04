@@ -1,6 +1,6 @@
 [package]
 name = "siphon-fs"
-version = "1.1.1"
+version = "1.1.2"
 edition = "2021"
 description = "Polygon Siphon FS — file-scanner HTTP service (multipart in, findings out)"
 license = "MIT"
@@ -38,6 +38,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Auth + crypto — SHA-256 for file content hashing before persistence.
 sha2 = "0.11"
+hex = "0.4"
 
 # Persistence — same pool stack as siphon-api (tokio-postgres + deadpool).
 # Optional at runtime: pool is None when SIPHON_DATABASE_URL is unset.

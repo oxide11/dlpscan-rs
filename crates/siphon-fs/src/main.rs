@@ -20,7 +20,7 @@
 
 use axum::{
     body::Body,
-    extract::{DefaultBodyLimit, Multipart, Query, Request, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Multipart, Query, Request, State},
     http::{header, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Json as JsonResponse, Response},
@@ -37,8 +37,8 @@ use siphon_core::overrides::{
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
@@ -78,6 +78,45 @@ fn temp_dir_path() -> Option<std::path::PathBuf> {
     std::env::var("SIPHON_FS_TEMP_DIR")
         .ok()
         .map(std::path::PathBuf::from)
+}
+
+// ─── rate limiter (per-IP + per-key, sliding window) ────────────
+struct RateLimiter {
+    windows: HashMap<String, Vec<Instant>>,
+    last_cleanup: Instant,
+}
+
+impl RateLimiter {
+    fn new() -> Self {
+        Self {
+            windows: HashMap::new(),
+            last_cleanup: Instant::now(),
+        }
+    }
+
+    fn check(&mut self, key: &str, limit: u32) -> bool {
+        let now = Instant::now();
+        let window = Duration::from_secs(60);
+
+        if now.duration_since(self.last_cleanup) > Duration::from_secs(300) {
+            self.windows.retain(|_, ts| {
+                ts.last().is_some_and(|t| now.duration_since(*t) < window)
+            });
+            self.last_cleanup = now;
+        }
+        if self.windows.len() > 100_000 {
+            self.windows.clear();
+            self.last_cleanup = now;
+        }
+
+        let timestamps = self.windows.entry(key.to_string()).or_default();
+        timestamps.retain(|t| now.duration_since(*t) < window);
+        if timestamps.len() >= limit as usize {
+            return false;
+        }
+        timestamps.push(now);
+        true
+    }
 }
 
 // ─── shared app state ────────────────────────────────────────────
@@ -149,6 +188,11 @@ struct AppState {
     /// Optional temp directory for streamed uploads. None → OS default.
     /// Read once at startup from SIPHON_FS_TEMP_DIR.
     temp_dir: Option<std::path::PathBuf>,
+    /// Sliding-window rate limiter (per-IP and per-key buckets).
+    rate_limiter: Arc<Mutex<RateLimiter>>,
+    /// Max requests per minute per IP / per key. From SIPHON_FS_RATE_LIMIT
+    /// (default 30 — file uploads are heavier than text scans).
+    rate_limit: u32,
 }
 
 // ─── health + readiness ──────────────────────────────────────────
@@ -985,6 +1029,55 @@ fn unauthorized() -> Response {
         .into_response()
 }
 
+/// Rate-limit gate: global per-IP AND per-key sliding window (1-minute).
+/// `/health` and `/ready` are exempt — kubelet probes must never be blocked.
+/// Default cap: 30 req/min from SIPHON_FS_RATE_LIMIT.
+async fn rate_limit_middleware(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let path = request.uri().path().to_string();
+    if path == "/health" || path == "/ready" {
+        return next.run(request).await;
+    }
+
+    let ip = addr.ip().to_string();
+
+    let key_bucket: Option<String> = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .filter(|s| !s.trim().is_empty())
+        .map(|token| {
+            let mut h = Sha256::new();
+            h.update(token.as_bytes());
+            format!("key:{}", hex::encode(h.finalize()))
+        });
+
+    let allowed = {
+        let mut limiter = state.rate_limiter.lock().unwrap_or_else(|e| e.into_inner());
+        let ip_ok = limiter.check(&ip, state.rate_limit);
+        let key_ok = key_bucket
+            .as_deref()
+            .map_or(true, |kb| limiter.check(kb, state.rate_limit));
+        ip_ok && key_ok
+    };
+
+    if !allowed {
+        tracing::warn!(ip = %ip, path = %path, "rate_limited");
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            JsonResponse(serde_json::json!({ "error": "rate limit exceeded" })),
+        )
+            .into_response();
+    }
+
+    next.run(request).await
+}
+
 fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -996,6 +1089,10 @@ fn build_router(state: AppState) -> Router {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
         ))
         .with_state(state)
         // 100 MB upload cap. Matches siphon::extractors::extract_text's
@@ -1053,6 +1150,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let max_file_bytes = max_file_size_bytes();
     let temp_dir = temp_dir_path();
 
+    let rate_limit: u32 = std::env::var("SIPHON_FS_RATE_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30);
+
     let state = AppState {
         // Resolved before the listener binds, so a misconfigured deployment
         // fails at startup rather than serving an open upload endpoint.
@@ -1066,6 +1168,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db_pool,
         max_file_bytes,
         temp_dir: temp_dir.clone(),
+        rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
+        rate_limit,
     };
     let app = build_router(state);
 
@@ -1084,6 +1188,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         overrides_unique_thresholds = unique_threshold_count,
         max_file_mb = max_file_bytes / (1024 * 1024),
         temp_dir = ?temp_dir,
+        rate_limit_per_min = rate_limit,
         bind = %addr,
         "siphon-fs starting"
     );
@@ -1095,7 +1200,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     };
-    axum::serve(listener, app)
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())

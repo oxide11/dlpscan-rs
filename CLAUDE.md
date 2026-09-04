@@ -234,8 +234,9 @@ POST /scan    multipart/form-data file upload → extraction → findings
 GET  /v1/findings
 ```
 
-Max body: `SIPHON_FS_BODY_LIMIT_MB` (default 100 MB). CORS origins:
-`SIPHON_FS_CORS_ORIGINS` (comma-separated; unset **blocks all cross-origin
+Max body: `SIPHON_FS_BODY_LIMIT_MB` (default 100 MB). Rate limit:
+`SIPHON_FS_RATE_LIMIT` (default 30 req/min per IP and per key; `/health`
+and `/ready` exempt). CORS origins: `SIPHON_FS_CORS_ORIGINS` (comma-separated; unset **blocks all cross-origin
 requests** — browser clients including the C2 dashboard and evadex bridge will
 be CORS-blocked until this is set. Use `*` for local dev permissive mode.
 Set a specific origin list in production). File formats supported

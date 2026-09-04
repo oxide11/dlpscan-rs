@@ -14,7 +14,20 @@ starting from this file.
 
 ---
 
-## 2026-09-03 — Key rotation, tenant isolation, pg-first aggregation
+## 2026-09-03 — Key rotation, tenant isolation, pg-first aggregation, fs rate limiter
+
+### siphon-fs 1.1.2
+
+- **fix(fs): add per-IP and per-key rate limiting to `POST /scan` and all
+  authenticated endpoints.** siphon-fs previously had no rate limiter — file
+  uploads to `POST /scan` were unbounded, creating a DoS and log-flooding
+  vector. A sliding-window `RateLimiter` (matching siphon-api's implementation)
+  now gates every request except `/health` and `/ready`. The global cap defaults
+  to **30 req/min** per IP (lower than siphon-api's 120 because file uploads are
+  heavier than text scans). Configure with `SIPHON_FS_RATE_LIMIT`. Bearer-token
+  hash is used as a secondary bucket so a compromised key cannot exhaust quota
+  for other callers behind a shared IP. Exceeding either bucket returns `429 Too
+  Many Requests`.
 
 ### siphon-api 2.6.0
 
