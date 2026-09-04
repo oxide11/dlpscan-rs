@@ -14,6 +14,34 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — Key rotation, tenant isolation, pg-first aggregation
+
+### siphon-api 2.6.0
+
+- **feat(api): zero-downtime API key rotation via `SIPHON_API_KEY_SECONDARY`.**
+  Set the secondary key on all pods while clients migrate; both keys are accepted
+  in parallel via constant-time XOR-fold (no timing oracle). Promote the new key
+  to `SIPHON_API_KEY` and clear the secondary once all clients are updated. See
+  `SECURITY.md` for the rotation procedure.
+
+- **feat(api): tenant policy isolation on scan requests.** When
+  `X-Siphon-Tenant` is present, `POST /scan` and `POST /scan/batch` now look up
+  the matching policy by name and apply its `min_confidence`, `require_context`,
+  and `categories` as a per-request baseline. Caller options override the policy
+  baseline when set.
+
+- **feat(api): tenant-scoped DB queries on `GET /v1/findings/pg` and
+  `GET /v1/findings/export`.** Both endpoints now filter by `tenant_id` when
+  `X-Siphon-Tenant` is present, preventing cross-tenant data leakage. Admin
+  calls without the header retain full cross-tenant visibility.
+
+- **feat(api,c2): postgres-first findings aggregation in C2 dashboard.**
+  `useFindingsUnion` now tries `/v1/findings/pg` first (durable, cross-pod
+  authoritative view) and falls back to the per-pod in-memory ring only when
+  the postgres endpoint is unavailable.
+
+---
+
 ## 2026-09-03 — CSV formula injection
 
 Found while pen-testing the findings-export path. CWE-1236.

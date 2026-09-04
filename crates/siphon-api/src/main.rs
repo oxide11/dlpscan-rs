@@ -4953,6 +4953,7 @@ struct PgFindingsResponse {
 
 async fn list_pg_findings(
     _: RequireAdminAction,
+    headers: HeaderMap,
     Query(q): Query<PgFindingsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<PgFindingsResponse> {
@@ -4978,15 +4979,26 @@ async fn list_pg_findings(
     let offset = q.offset.unwrap_or(0).max(0);
     let category = q.category.as_deref();
 
+    // Tenant isolation: when X-Siphon-Tenant is present, restrict to rows
+    // whose tenant_id matches. A missing tenant header (e.g. admin calls)
+    // returns findings across all tenants.
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_owned());
+    let tenant_filter = tenant_id.as_deref();
+
     let rows = match client
         .query(
             "SELECT id, scan_id, created_at, category, sub_category, confidence, \
              span_start, span_end, matched_text, has_context, context_required, metadata \
              FROM findings \
              WHERE ($1::text IS NULL OR category = $1) \
+               AND ($2::text IS NULL OR tenant_id = $2) \
              ORDER BY created_at DESC \
-             LIMIT $2 OFFSET $3",
-            &[&category, &limit, &offset],
+             LIMIT $3 OFFSET $4",
+            &[&category, &tenant_filter, &limit, &offset],
         )
         .await
     {
@@ -5025,8 +5037,10 @@ async fn list_pg_findings(
 
     let total: i64 = match client
         .query_one(
-            "SELECT COUNT(*) FROM findings WHERE ($1::text IS NULL OR category = $1)",
-            &[&category],
+            "SELECT COUNT(*) FROM findings \
+             WHERE ($1::text IS NULL OR category = $1) \
+               AND ($2::text IS NULL OR tenant_id = $2)",
+            &[&category, &tenant_filter],
         )
         .await
     {
@@ -5094,6 +5108,7 @@ struct ExportQuery {
 }
 
 async fn findings_export(
+    headers: HeaderMap,
     Query(q): Query<ExportQuery>,
     State(state): State<Arc<AppState>>,
     _: RequireAdminAction,
@@ -5104,6 +5119,15 @@ async fn findings_export(
     let from_ts: Option<chrono::DateTime<chrono::Utc>> =
         q.from.as_deref().and_then(|s| s.parse().ok());
     let to_ts: Option<chrono::DateTime<chrono::Utc>> = q.to.as_deref().and_then(|s| s.parse().ok());
+
+    // Tenant isolation: restrict export to the caller's tenant when the header
+    // is present. An admin call without the header exports across all tenants.
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_owned());
+    let tenant_filter = tenant_id.as_deref();
 
     let Some(pool) = state.db_pool.as_ref() else {
         return (
@@ -5140,9 +5164,10 @@ async fn findings_export(
              WHERE ($1::text IS NULL OR f.category = $1) \
              AND ($2::timestamptz IS NULL OR f.created_at >= $2) \
              AND ($3::timestamptz IS NULL OR f.created_at <= $3) \
+             AND ($4::text IS NULL OR f.tenant_id = $4) \
              ORDER BY f.created_at DESC \
-             LIMIT $4",
-            &[&category, &from_ts, &to_ts, &limit],
+             LIMIT $5",
+            &[&category, &from_ts, &to_ts, &tenant_filter, &limit],
         )
         .await
     {
