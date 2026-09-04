@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
-use tracing::{info, warn};
+use tracing::info;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -142,56 +142,6 @@ fn hdr<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
         .iter()
         .find(|(k, _)| k.to_ascii_lowercase() == lower)
         .map(|(_k, v)| v.as_str())
-}
-
-// ── Chunked body reader ──────────────────────────────────────────
-
-async fn read_chunked<R: AsyncReadExt + Unpin>(
-    reader: &mut R,
-    max_bytes: usize,
-) -> std::io::Result<Vec<u8>> {
-    let mut buf = Vec::new();
-    let mut line_buf = Vec::with_capacity(32);
-    loop {
-        // Read chunk size line
-        line_buf.clear();
-        loop {
-            let b = reader.read_u8().await?;
-            if b == b'\n' {
-                break;
-            }
-            if b != b'\r' {
-                line_buf.push(b);
-            }
-        }
-        let size_str = std::str::from_utf8(&line_buf)
-            .unwrap_or("")
-            .split(';')
-            .next()
-            .unwrap_or("")
-            .trim();
-        let size = usize::from_str_radix(size_str, 16).unwrap_or(0);
-        if size == 0 {
-            // Trailing CRLF after 0 chunk
-            let _ = reader.read_u8().await; // \r
-            let _ = reader.read_u8().await; // \n
-            break;
-        }
-        if buf.len() + size > max_bytes {
-            // Drain remaining bytes but don't store them
-            let mut drain = vec![0u8; size];
-            reader.read_exact(&mut drain).await?;
-            reader.read_u8().await?; // \r
-            reader.read_u8().await?; // \n
-            continue;
-        }
-        let start = buf.len();
-        buf.resize(start + size, 0u8);
-        reader.read_exact(&mut buf[start..]).await?;
-        reader.read_u8().await?; // \r
-        reader.read_u8().await?; // \n
-    }
-    Ok(buf)
 }
 
 // ── ICAP request parser ──────────────────────────────────────────
