@@ -11,6 +11,7 @@ long-running services:
 - `siphon-core` — scanner engine (patterns, validators, detection pipeline)
 - `siphon-api` — sync HTTP scan service with RBAC, API-key auth, audit chain
 - `siphon-fs` — multipart file-scan service (PDF, Office, archives, etc.)
+- `siphon-icap` — RFC 3507 ICAP server for proxy-based network DLP (port 1344)
 - `siphon-launcher` — local-dev process manager (loopback-only, no auth)
 
 Deployment assets live under `deploy/` (Dockerfiles, docker-compose, Helm
@@ -252,6 +253,30 @@ Set a specific origin list in production). File formats supported
 - Outlook MSG (`msg`) — cfb OLE2
 - VCF, LDIF, ICS, MHTML, WARC, CAB, MBOX — no extra feature gate
 
+### siphon-icap
+
+RFC 3507 ICAP server at `crates/siphon-icap/`. Listens on port 1344.
+Wire any ICAP-capable proxy (Squid, nginx icap module, Blue Coat, Zscaler,
+McAfee Web Gateway) to `icap://<host>:1344/dlp` for REQMOD and/or RESPMOD.
+
+```
+OPTIONS icap://host:1344/dlp ICAP/1.0   — capability advertisement
+REQMOD  icap://host:1344/dlp ICAP/1.0   — outgoing request body DLP scan
+RESPMOD icap://host:1344/dlp ICAP/1.0   — incoming response body DLP scan
+```
+
+Key env vars:
+
+| Variable | Default | Notes |
+|---|---|---|
+| `SIPHON_ICAP_PORT` | 1344 | Standard ICAP port |
+| `SIPHON_ICAP_BIND` | 0.0.0.0 | Bind address |
+| `SIPHON_ICAP_ALLOWED_NETS` | **required** | Comma-separated IP/CIDR allowlist. Connections outside are dropped immediately. Use `0.0.0.0/0` for dev. |
+| `SIPHON_ICAP_ACTION` | flag | `flag` — annotate and allow; `block` — return HTTP 403 to proxy |
+| `SIPHON_ICAP_MIN_CONFIDENCE` | 0.6 | Confidence threshold for block action |
+| `SIPHON_ICAP_MAX_BODY_BYTES` | 10485760 | Bodies larger than this pass through unscanned |
+| `SIPHON_ICAP_SERVICE_NAME` | dlp | ICAP service path (`/dlp`) |
+
 ### CLI subcommands (root `siphon` crate)
 
 ```
@@ -344,6 +369,7 @@ and revs independently. A bug fixed only in `siphon-fs` produces a new
 | `siphon-core` | `crates/siphon-core/Cargo.toml` | every other crate (path dep) |
 | `siphon-api` | `crates/siphon-api/Cargo.toml` | `deploy/Dockerfile.api`, `siphon-api` Docker tag |
 | `siphon-fs` | `crates/siphon-fs/Cargo.toml` | `deploy/Dockerfile.fs`, `siphon-fs` Docker tag |
+| `siphon-icap` | `crates/siphon-icap/Cargo.toml` | `deploy/Dockerfile.icap`, `siphon-icap` Docker tag |
 | `siphon-launcher` | `crates/siphon-launcher/Cargo.toml` | local-dev tool only |
 | Helm chart structure | `deploy/helm/siphon/Chart.yaml` `version:` | upgrade-path semantics for the chart itself (PVC migrations, RBAC reshuffles) |
 | Stack release label | `deploy/helm/siphon/Chart.yaml` `appVersion:` | a meta-label for the bundled release; equals the highest component version moved in this wave |

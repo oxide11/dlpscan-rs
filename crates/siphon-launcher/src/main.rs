@@ -42,7 +42,7 @@ const DEFAULT_BIND: &str = "127.0.0.1:8090";
 /// admin-console Settings UI (Phase 8.5c) — any new kind must land
 /// here first so the launcher doesn't serve as a general-purpose
 /// exec server.
-const ALLOWED_KINDS: &[&str] = &["siphon-api", "siphon-fs"];
+const ALLOWED_KINDS: &[&str] = &["siphon-api", "siphon-fs", "siphon-icap"];
 /// How long to wait for a SIGTERM'd child to drain before sending
 /// SIGKILL. Matches the Deployment terminationGracePeriodSeconds in
 /// the lab (45s for api, 60s for fs); use the larger one.

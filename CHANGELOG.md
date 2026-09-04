@@ -58,6 +58,33 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — siphon-icap: network DLP via ICAP proxy integration
+
+### siphon-icap 0.1.0
+
+- **feat(icap): initial ICAP/1.0 server — network DLP via proxy integration.**
+  New crate (`crates/siphon-icap/`) that lets any ICAP-capable HTTP proxy
+  (Squid, nginx ICAP module, Blue Coat, Zscaler, McAfee Web Gateway) offload
+  DLP inspection to Siphon without changing application code. The proxy
+  connects to `icap://<host>:1344/dlp` and sends every HTTP request or
+  response; Siphon scans the body and either allows or blocks.
+
+  Supported methods: `OPTIONS`, `REQMOD` (outgoing request body), `RESPMOD`
+  (incoming response body). Two modes: `flag` (annotate findings in
+  `X-DLP-Findings` / `X-DLP-Categories` headers and allow) and `block`
+  (return a synthetic HTTP 403 block page to the proxy).
+
+  Security: `SIPHON_ICAP_ALLOWED_NETS` (comma-separated IP/CIDR) is required
+  at startup — the service refuses to start without it, since ICAP has no
+  built-in auth layer. Connections from IPs outside the list are dropped
+  immediately. JSON audit line emitted to stdout for every REQMOD/RESPMOD.
+
+  Binary bodies (> 30% non-printable bytes in first 512) and oversized bodies
+  (> `SIPHON_ICAP_MAX_BODY_BYTES`, default 10 MB) pass through unscanned with
+  a 204 No Content response. ICAP keep-alive is supported.
+
+---
+
 ## 2026-09-03 — RBAC hardening: admin gate on six unprotected endpoints
 
 ### siphon-api 2.6.1
