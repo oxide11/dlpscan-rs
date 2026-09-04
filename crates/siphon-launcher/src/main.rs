@@ -42,7 +42,7 @@ const DEFAULT_BIND: &str = "127.0.0.1:8090";
 /// admin-console Settings UI (Phase 8.5c) — any new kind must land
 /// here first so the launcher doesn't serve as a general-purpose
 /// exec server.
-const ALLOWED_KINDS: &[&str] = &["siphon-api", "siphon-fs"];
+const ALLOWED_KINDS: &[&str] = &["siphon-api", "siphon-fs", "siphon-icap"];
 /// How long to wait for a SIGTERM'd child to drain before sending
 /// SIGKILL. Matches the Deployment terminationGracePeriodSeconds in
 /// the lab (45s for api, 60s for fs); use the larger one.
@@ -343,6 +343,10 @@ async fn start_process(State(state): State<AppState>, Json(req): Json<StartReque
             // Disabling SSRF defences globally via an env injection must
             // not be possible through the launcher start API.
             "SIPHON_ALLOW_PRIVATE_DESTINATIONS",
+            // Removing authentication or audit-log enforcement via the
+            // launcher start API must not be possible.
+            "SIPHON_ALLOW_UNAUTHENTICATED",
+            "SIPHON_DEV_MODE",
         ];
         for key in extra.keys() {
             let allowed = ALLOWED_PREFIXES

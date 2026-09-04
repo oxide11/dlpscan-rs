@@ -1418,6 +1418,17 @@ const ENTROPY_CONTEXT_KEYWORDS: &[&str] = &[
     "aws_secret",
     "github_token",
     "slack_token",
+    "jwt",
+    "oauth",
+    "oauth_token",
+    "pat",
+    "personal_access_token",
+    "access_token",
+    "refresh_token",
+    "api_token",
+    "private",
+    "client_secret",
+    "hmac",
     // French
     "mot de passe",
     "clé privée",
@@ -1523,11 +1534,6 @@ fn scan_high_entropy_tokens(
             continue;
         }
 
-        // Skip tokens that are common words (all lowercase alpha, no mixed case/digits)
-        if token.chars().all(|c| c.is_ascii_lowercase()) {
-            continue;
-        }
-
         // Compute Shannon entropy per character
         let entropy = char_entropy(token);
         if entropy < ENTROPY_THRESHOLD {
@@ -1556,6 +1562,18 @@ fn scan_high_entropy_tokens(
                 (true, "Potential Secret (Context)")
             }
             EntropyMode::Assignment => {
+                // All-lowercase tokens (base36 IDs, URL slugs, content hashes)
+                // routinely exceed 4.5 bits/char but are not secrets. The
+                // assignment context gate has no keyword check to filter them,
+                // so restore the guard here where the false-positive risk is
+                // highest. Uppercase or digit presence is the distinguishing
+                // trait of real credential strings.
+                if token
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '-' || c == '_')
+                {
+                    continue;
+                }
                 // Check if preceded by an assignment pattern (key=, "key":,
                 // export KEY=). Snap the window start to a char boundary —
                 // `norm_start - 60` can land inside a multibyte sequence and

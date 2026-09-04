@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/siphon-core", "crates/siphon-api", "crates/siphon-fs", "crates/siphon-launcher"]
+members = [".", "crates/siphon-core", "crates/siphon-api", "crates/siphon-fs", "crates/siphon-launcher", "crates/siphon-icap"]
 # Resolver v2 — per-member feature isolation. Without this, the
 # workspace would unify features across every member, which means
 # siphon's default `data-formats` (and therefore rusqlite) would

@@ -1,0 +1,26 @@
+[package]
+name = "siphon-icap"
+version = "0.1.2"
+edition = "2021"
+description = "Polygon Siphon ICAP — RFC 3507 network DLP server for proxy integration"
+license = "MIT"
+rust-version = "1.98"
+
+[[bin]]
+name = "siphon-icap"
+path = "src/main.rs"
+
+[dependencies]
+siphon-core = { path = "../siphon-core" }
+# `sync` is required for tokio::sync::Semaphore, used to bound concurrent ICAP
+# connections. Without it this crate only compiles when some other workspace
+# member happens to enable the feature and unification leaks it in — the
+# workspace build succeeds while `cargo test -p siphon-icap` fails.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "signal", "sync"] }
+sha2 = "0.11"
+hex = "0.4"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

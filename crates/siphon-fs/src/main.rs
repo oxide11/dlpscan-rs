@@ -20,7 +20,7 @@
 
 use axum::{
     body::Body,
-    extract::{DefaultBodyLimit, Multipart, Query, Request, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Multipart, Query, Request, State},
     http::{header, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Json as JsonResponse, Response},
@@ -37,8 +37,8 @@ use siphon_core::overrides::{
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
@@ -78,6 +78,44 @@ fn temp_dir_path() -> Option<std::path::PathBuf> {
     std::env::var("SIPHON_FS_TEMP_DIR")
         .ok()
         .map(std::path::PathBuf::from)
+}
+
+// ─── rate limiter (per-IP + per-key, sliding window) ────────────
+struct RateLimiter {
+    windows: HashMap<String, Vec<Instant>>,
+    last_cleanup: Instant,
+}
+
+impl RateLimiter {
+    fn new() -> Self {
+        Self {
+            windows: HashMap::new(),
+            last_cleanup: Instant::now(),
+        }
+    }
+
+    fn check(&mut self, key: &str, limit: u32) -> bool {
+        let now = Instant::now();
+        let window = Duration::from_secs(60);
+
+        if now.duration_since(self.last_cleanup) > Duration::from_secs(300) {
+            self.windows
+                .retain(|_, ts| ts.last().is_some_and(|t| now.duration_since(*t) < window));
+            self.last_cleanup = now;
+        }
+        if self.windows.len() > 100_000 {
+            self.windows.clear();
+            self.last_cleanup = now;
+        }
+
+        let timestamps = self.windows.entry(key.to_string()).or_default();
+        timestamps.retain(|t| now.duration_since(*t) < window);
+        if timestamps.len() >= limit as usize {
+            return false;
+        }
+        timestamps.push(now);
+        true
+    }
 }
 
 // ─── shared app state ────────────────────────────────────────────
@@ -125,6 +163,10 @@ struct AppState {
     /// explicitly opted into running unauthenticated. Mirrors siphon-api:
     /// the key is never held in plaintext beyond startup.
     api_key_hash: Option<[u8; 32]>,
+    /// SHA-256 of the admin key for admin-only endpoints (e.g. overrides/reload).
+    /// Defaults to the API key hash so single-key deployments need no extra config.
+    /// Set SIPHON_ADMIN_KEY to a separate credential in multi-key deployments.
+    admin_key_hash: Option<[u8; 32]>,
     findings: Arc<FindingsRing>,
     /// Hot-reloadable overrides. See LiveOverrides above.
     live_overrides: Arc<std::sync::RwLock<LiveOverrides>>,
@@ -149,6 +191,11 @@ struct AppState {
     /// Optional temp directory for streamed uploads. None → OS default.
     /// Read once at startup from SIPHON_FS_TEMP_DIR.
     temp_dir: Option<std::path::PathBuf>,
+    /// Sliding-window rate limiter (per-IP and per-key buckets).
+    rate_limiter: Arc<Mutex<RateLimiter>>,
+    /// Max requests per minute per IP / per key. From SIPHON_FS_RATE_LIMIT
+    /// (default 30 — file uploads are heavier than text scans).
+    rate_limit: u32,
 }
 
 // ─── health + readiness ──────────────────────────────────────────
@@ -330,7 +377,15 @@ fn err(code: StatusCode, msg: impl Into<String>) -> Response {
 }
 
 // ─── /scan handler ───────────────────────────────────────────────
-async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Response {
+async fn scan(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    mut multipart: Multipart,
+) -> Response {
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned());
     let request_id = uuid::Uuid::new_v4().to_string();
     let start = Instant::now();
 
@@ -597,6 +652,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
             span: (m.span.0, m.span.1),
             metadata: HashMap::new(),
             severity: severity_for(&m.category, m.confidence),
+            tenant_id: tenant_id.clone(),
         });
     }
 
@@ -638,6 +694,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
             })
             .collect();
         let pool_clone = state.db_pool.clone();
+        let tenant_id_clone = tenant_id.clone();
         tokio::spawn(async move {
             if let Err(e) = db::persist_scan(
                 &pool_clone,
@@ -651,6 +708,7 @@ async fn scan(State(state): State<AppState>, mut multipart: Multipart) -> Respon
                 file_name_clone.as_deref(),
                 Some(&file_hash),
                 mime_type_clone.as_deref(),
+                tenant_id_clone.as_deref(),
             )
             .await
             {
@@ -711,8 +769,15 @@ struct FindingsResponse {
 
 async fn list_findings(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Query(q): Query<FindingsQuery>,
 ) -> JsonResponse<FindingsResponse> {
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_owned());
+
     let snapshot = state.findings.snapshot();
     let total = snapshot.len();
     let capacity = state.findings.capacity();
@@ -723,6 +788,7 @@ async fn list_findings(
         q.severity.as_deref(),
         q.contains.as_deref(),
         q.since.as_deref(),
+        tenant_id.as_deref(),
     );
 
     let cap = q.limit.unwrap_or(200).min(capacity);
@@ -748,7 +814,7 @@ struct ReloadResponse {
     summary: siphon_core::overrides::OverridesSummary,
 }
 
-async fn overrides_reload(State(state): State<AppState>) -> Response {
+async fn overrides_reload(_: RequireAdminAction, State(state): State<AppState>) -> Response {
     let path = state.overrides_path.as_path();
     let fresh = LiveOverrides::from_path(path);
     let summary = fresh.loaded_overrides.summary();
@@ -897,12 +963,24 @@ fn resolve_api_key_hash() -> Option<[u8; 32]> {
         return Some(hasher.finalize().into());
     }
 
-    let allow_open = std::env::var("SIPHON_ALLOW_UNAUTHENTICATED")
-        .map(|v| {
-            let v = v.trim();
-            v.eq_ignore_ascii_case("true") || v == "1"
-        })
-        .unwrap_or(false);
+    let allow_open = {
+        let env_val = std::env::var("SIPHON_ALLOW_UNAUTHENTICATED")
+            .map(|v| {
+                let v = v.trim().to_owned();
+                v.eq_ignore_ascii_case("true") || v == "1"
+            })
+            .unwrap_or(false);
+        if env_val && !cfg!(feature = "allow-unauthenticated") {
+            tracing::warn!(
+                "SIPHON_ALLOW_UNAUTHENTICATED is set but this binary was compiled \
+                 without the `allow-unauthenticated` feature — ignoring. \
+                 Rebuild with --features allow-unauthenticated for local dev."
+            );
+            false
+        } else {
+            env_val
+        }
+    };
 
     if !allow_open {
         eprintln!(
@@ -926,6 +1004,70 @@ fn resolve_api_key_hash() -> Option<[u8; 32]> {
          are served WITHOUT authentication. Never use this outside local development."
     );
     None
+}
+
+/// SHA-256 hash of the admin key for admin-only endpoints.
+/// Uses SIPHON_ADMIN_KEY if set; otherwise falls back to SIPHON_API_KEY so
+/// single-key deployments don't need a second credential.
+fn resolve_admin_key_hash() -> Option<[u8; 32]> {
+    let key = std::env::var("SIPHON_ADMIN_KEY")
+        .ok()
+        .filter(|k| !k.trim().is_empty())
+        .or_else(|| {
+            std::env::var("SIPHON_API_KEY")
+                .ok()
+                .filter(|k| !k.trim().is_empty())
+        })?;
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    Some(hasher.finalize().into())
+}
+
+/// RBAC extractor for admin-only endpoints in siphon-fs.
+/// Checks the bearer token against the admin key hash from AppState.
+/// If no admin key is configured (open-dev mode), the check is skipped.
+#[derive(Clone, Copy)]
+struct RequireAdminAction;
+
+impl axum::extract::FromRequestParts<AppState> for RequireAdminAction {
+    type Rejection = (StatusCode, JsonResponse<serde_json::Value>);
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let Some(expected) = state.admin_key_hash else {
+            return Ok(Self);
+        };
+        let provided = parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .filter(|k| !k.is_empty());
+        let Some(key) = provided else {
+            warn!("admin_gate: missing bearer token for admin-only endpoint");
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                JsonResponse(serde_json::json!({"error": "admin key required"})),
+            ));
+        };
+        let mut hasher = Sha256::new();
+        hasher.update(key.as_bytes());
+        let got: [u8; 32] = hasher.finalize().into();
+        let mut diff = 0u8;
+        for (a, b) in expected.iter().zip(got.iter()) {
+            diff |= a ^ b;
+        }
+        if diff != 0 {
+            warn!("admin_gate: invalid admin key for admin-only endpoint");
+            return Err((
+                StatusCode::FORBIDDEN,
+                JsonResponse(serde_json::json!({"error": "admin access required"})),
+            ));
+        }
+        Ok(Self)
+    }
 }
 
 /// Bearer-token gate over every route except the kubelet probes.
@@ -987,6 +1129,55 @@ fn unauthorized() -> Response {
         .into_response()
 }
 
+/// Rate-limit gate: global per-IP AND per-key sliding window (1-minute).
+/// `/health` and `/ready` are exempt — kubelet probes must never be blocked.
+/// Default cap: 30 req/min from SIPHON_FS_RATE_LIMIT.
+async fn rate_limit_middleware(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    let path = request.uri().path().to_string();
+    if path == "/health" || path == "/ready" {
+        return next.run(request).await;
+    }
+
+    let ip = addr.ip().to_string();
+
+    let key_bucket: Option<String> = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .filter(|s| !s.trim().is_empty())
+        .map(|token| {
+            let mut h = Sha256::new();
+            h.update(token.as_bytes());
+            format!("key:{}", hex::encode(h.finalize()))
+        });
+
+    let allowed = {
+        let mut limiter = state.rate_limiter.lock().unwrap_or_else(|e| e.into_inner());
+        let ip_ok = limiter.check(&ip, state.rate_limit);
+        let key_ok = key_bucket
+            .as_deref()
+            .map_or(true, |kb| limiter.check(kb, state.rate_limit));
+        ip_ok && key_ok
+    };
+
+    if !allowed {
+        tracing::warn!(ip = %ip, path = %path, "rate_limited");
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            JsonResponse(serde_json::json!({ "error": "rate limit exceeded" })),
+        )
+            .into_response();
+    }
+
+    next.run(request).await
+}
+
 fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -998,6 +1189,10 @@ fn build_router(state: AppState) -> Router {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
         ))
         .with_state(state)
         // 100 MB upload cap. Matches siphon::extractors::extract_text's
@@ -1055,10 +1250,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let max_file_bytes = max_file_size_bytes();
     let temp_dir = temp_dir_path();
 
+    let rate_limit: u32 = std::env::var("SIPHON_FS_RATE_LIMIT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30);
+
     let state = AppState {
         // Resolved before the listener binds, so a misconfigured deployment
         // fails at startup rather than serving an open upload endpoint.
         api_key_hash: resolve_api_key_hash(),
+        admin_key_hash: resolve_admin_key_hash(),
         findings: Arc::new(FindingsRing::new(FINDINGS_RING_CAP)),
         live_overrides: Arc::new(std::sync::RwLock::new(live_overrides)),
         overrides_path: Arc::new(std::path::PathBuf::from(&overrides_path)),
@@ -1068,6 +1269,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db_pool,
         max_file_bytes,
         temp_dir: temp_dir.clone(),
+        rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
+        rate_limit,
     };
     let app = build_router(state);
 
@@ -1086,6 +1289,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         overrides_unique_thresholds = unique_threshold_count,
         max_file_mb = max_file_bytes / (1024 * 1024),
         temp_dir = ?temp_dir,
+        rate_limit_per_min = rate_limit,
         bind = %addr,
         "siphon-fs starting"
     );
@@ -1097,9 +1301,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::exit(1);
         }
     };
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
     Ok(())
 }
 

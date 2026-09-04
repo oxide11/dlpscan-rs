@@ -35,6 +35,10 @@ pub struct FindingRecord {
     pub span: (usize, usize),
     pub metadata: HashMap<String, String>,
     pub severity: &'static str,
+    /// Tenant that submitted the scan, from X-Siphon-Tenant header.
+    /// None when the request carried no tenant header.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
 }
 
 /// Coarse severity bucket. Keeping derivation on the server means
@@ -122,6 +126,7 @@ pub fn filter_findings<'a>(
     severity: Option<&str>,
     contains: Option<&str>,
     since: Option<&str>,
+    tenant_id: Option<&str>,
 ) -> Vec<&'a FindingRecord> {
     let needle = contains.map(|s| s.to_ascii_lowercase());
     snapshot
@@ -138,6 +143,7 @@ pub fn filter_findings<'a>(
             })
         })
         .filter(|f| since.is_none_or(|s| f.ts.as_str() > s))
+        .filter(|f| tenant_id.is_none_or(|t| f.tenant_id.as_deref() == Some(t)))
         .collect()
 }
 
@@ -160,6 +166,7 @@ mod tests {
             span: (0, 0),
             metadata: HashMap::new(),
             severity: severity_for(cat, conf),
+            tenant_id: None,
         }
     }
 
@@ -190,15 +197,15 @@ mod tests {
             rec("a", "Email Address", 0.9),
             rec("b", "Credit Card Numbers", 0.95),
         ];
-        let only_email = filter_findings(&snap, Some("Email Address"), None, None, None);
+        let only_email = filter_findings(&snap, Some("Email Address"), None, None, None, None);
         assert_eq!(only_email.len(), 1);
         assert_eq!(only_email[0].id, "a");
 
         // contains now searches category/sub_category only, not raw text
-        let contains_hit = filter_findings(&snap, None, None, Some("email"), None);
+        let contains_hit = filter_findings(&snap, None, None, Some("email"), None, None);
         assert_eq!(contains_hit.len(), 1);
         assert_eq!(contains_hit[0].id, "a");
-        let no_hit = filter_findings(&snap, None, None, Some("hello"), None);
+        let no_hit = filter_findings(&snap, None, None, Some("hello"), None, None);
         assert_eq!(no_hit.len(), 0);
     }
 }

@@ -129,7 +129,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
-    image: siphon-api:2.5.3
+    image: siphon-api:2.6.4
     profiles: [auth]
     environment:
       # siphon-api reads SIPHON_BIND + SIPHON_PORT separately, never
@@ -223,6 +223,29 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  siphon-icap:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.icap
+    image: siphon-icap:0.1.2
+    profiles: [auth]
+    environment:
+      # Set to the proxy subnet that will connect to this ICAP server.
+      # Use 0.0.0.0/0 for local dev (accepts all); restrict in prod.
+      - SIPHON_ICAP_ALLOWED_NETS=${SIPHON_ICAP_ALLOWED_NETS:-0.0.0.0/0}
+      - SIPHON_ICAP_ACTION=${SIPHON_ICAP_ACTION:-flag}
+      - SIPHON_ICAP_MIN_CONFIDENCE=${SIPHON_ICAP_MIN_CONFIDENCE:-0.6}
+      - RUST_LOG=info
+    expose: ["1344"]
+    ports:
+      - "1344:1344"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo -e 'OPTIONS icap://localhost:1344/dlp ICAP/1.0\\r\\nHost: localhost\\r\\nEncapsulated: null-body=0\\r\\n\\r\\n' | nc -q1 localhost 1344 | grep -q 'ICAP/1.0 200'"]
       interval: 30s
       timeout: 5s
       retries: 3

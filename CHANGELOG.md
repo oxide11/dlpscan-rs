@@ -14,6 +14,204 @@ starting from this file.
 
 ---
 
+## 2026-09-03 — Security: section-hdr OOM fix in siphon-icap; admin gate on patterns/categories + siphon-fs overrides/reload
+
+### siphon-icap 0.1.2
+
+- **fix(icap,security): cap encapsulated section-header allocation.**
+  Non-body ICAP sections (`req-hdr`, `res-hdr`) were read with
+  `vec![0u8; bytes_to_read]` where `bytes_to_read` was derived from
+  attacker-supplied `Encapsulated` header offsets — no size limit existed.
+  Sending `Encapsulated: req-hdr=0, null-body=1073741824` caused a 1 GB
+  allocation before any I/O. The section-read path now rejects any declared
+  size above 1 MiB (generous for HTTP headers) with an `InvalidData` I/O
+  error that closes the connection.
+
+### siphon-api 2.6.4
+
+- **fix(api,security): gate `GET /v1/patterns` and `GET /v1/categories` behind
+  `RequireAdminAction`.** Both endpoints were callable by any valid bearer key.
+  They return the full regex surface — exact pattern strings, confidence
+  thresholds, context requirements — giving any authenticated caller a precise
+  map for engineering evasion inputs. Endpoints are now admin-only.
+
+### siphon-fs 1.1.3
+
+- **fix(fs,security): gate `POST /v1/overrides/reload` behind admin key.**
+  The endpoint was accessible to any authenticated caller. A `RequireAdminAction`
+  extractor now validates the bearer token against `SIPHON_ADMIN_KEY` (falls back
+  to `SIPHON_API_KEY` in single-key deployments). Unauthorized calls receive 403.
+
+---
+
+## 2026-09-03 — Security: OOM + connection-exhaustion fixes in siphon-icap; admin gate on EDM/LSH vault endpoints
+
+### siphon-icap 0.1.1
+
+- **fix(icap,security): cap individual chunk size before allocation.**
+  A malicious ICAP client could announce an enormous chunk size (e.g., `ffffffff`
+  in the hex size field), causing the drain path to allocate gigabytes on the heap
+  before any cap check fired. `read_chunked_buf` now rejects any chunk whose hex
+  size exceeds 64 MiB with an I/O error, closing the connection. Drain path
+  switched from `vec![0u8; size]` to a fixed 8 KiB scratch buffer to avoid any
+  large allocation regardless.
+
+- **fix(icap,security): bound concurrent connections via semaphore.**
+  `accept_loop` spawned an unbounded number of Tokio tasks — a single attacker
+  could exhaust memory/thread-pool by opening many connections simultaneously.
+  A `tokio::sync::Semaphore` now caps concurrent connections at
+  `SIPHON_ICAP_MAX_CONNECTIONS` (default 256). Connections beyond the limit are
+  dropped immediately with a warning log.
+
+### siphon-api 2.6.3
+
+- **fix(api,security): gate `GET /v1/edm` and `GET /v1/lsh` behind
+  `RequireAdminAction`.** Both vault-listing endpoints were callable by any
+  authenticated user. Even though the current responses are stubs, they expose
+  internal DLP configuration surface and establish a precedent for future vault
+  enumeration. Endpoints are now admin-only.
+
+---
+
+## 2026-09-03 — RBAC hardening: admin gate on eight additional endpoints + streaming audit
+
+### siphon-api 2.6.2
+
+- **fix(api,security): gate `GET /v1/audit` behind `RequireAdminAction`.** Audit
+  events contain source IPs, operation metadata, and timing of every scan — any
+  authenticated caller could enumerate the full audit ring. Endpoint is now
+  admin-only.
+
+- **fix(api,security): gate `GET /v1/allowlist` behind `RequireAdminAction`.**
+  The allowlist contains the exact text strings and regex patterns that cause the
+  scanner to suppress findings — exposing this to non-admins hands callers a
+  complete DLP bypass map. Endpoint is now admin-only.
+
+- **fix(api,security): gate `GET /v1/overrides/current` and `GET
+  /v1/overrides/disk` behind `RequireAdminAction`.** Both endpoints return the
+  live and on-disk pattern override configs (disabled patterns, field overrides,
+  runtime regex swaps). Previously readable by any authenticated caller. Now
+  admin-only.
+
+- **fix(api,security): gate `GET /v1/policies` behind `RequireAdminAction`.**
+  The response includes `source` — the `SIPHON_POLICIES_DIR` filesystem path —
+  and the full policy list (baseline configurations). Previously readable by any
+  authenticated caller. Now admin-only.
+
+- **fix(api,security): gate `GET /v1/metrics` behind `RequireAdminAction`.**
+  Metrics (uptime, scan totals, error counts, pattern counts) are operational
+  state useful for fingerprinting the scanner. Now admin-only.
+
+- **fix(api,security): gate `GET /v1/ratelimit` behind `RequireAdminAction`.**
+  Returns active bucket counts that could be used to time attacks. Now
+  admin-only.
+
+- **fix(api,security): gate `GET /v1/version` behind `RequireAdminAction`.**
+  Returns `target_triple`, `rust_version`, and `build_profile` — build
+  fingerprinting info. Now admin-only.
+
+- **fix(api,compliance): emit SCAN audit events from `POST /scan/stream`.**
+  Streaming scans were not recorded in the audit log, creating a PCI-DSS gap
+  where significant scan activity was invisible. `scan_stream` now emits a SCAN
+  audit event (with source IP, finding count, duration) on success and on error.
+
+---
+
+## 2026-09-03 — siphon-icap: network DLP via ICAP proxy integration
+
+### siphon-icap 0.1.0
+
+- **feat(icap): initial ICAP/1.0 server — network DLP via proxy integration.**
+  New crate (`crates/siphon-icap/`) that lets any ICAP-capable HTTP proxy
+  (Squid, nginx ICAP module, Blue Coat, Zscaler, McAfee Web Gateway) offload
+  DLP inspection to Siphon without changing application code. The proxy
+  connects to `icap://<host>:1344/dlp` and sends every HTTP request or
+  response; Siphon scans the body and either allows or blocks.
+
+  Supported methods: `OPTIONS`, `REQMOD` (outgoing request body), `RESPMOD`
+  (incoming response body). Two modes: `flag` (annotate findings in
+  `X-DLP-Findings` / `X-DLP-Categories` headers and allow) and `block`
+  (return a synthetic HTTP 403 block page to the proxy).
+
+  Security: `SIPHON_ICAP_ALLOWED_NETS` (comma-separated IP/CIDR) is required
+  at startup — the service refuses to start without it, since ICAP has no
+  built-in auth layer. Connections from IPs outside the list are dropped
+  immediately. JSON audit line emitted to stdout for every REQMOD/RESPMOD.
+
+  Binary bodies (> 30% non-printable bytes in first 512) and oversized bodies
+  (> `SIPHON_ICAP_MAX_BODY_BYTES`, default 10 MB) pass through unscanned with
+  a 204 No Content response. ICAP keep-alive is supported.
+
+---
+
+## 2026-09-03 — RBAC hardening: admin gate on six unprotected endpoints
+
+### siphon-api 2.6.1
+
+- **fix(api,security): gate `GET /v1/overrides/history` and `GET
+  /v1/overrides/content` behind `RequireAdminAction`.** Previously any
+  authenticated caller could enumerate backup file paths and read their contents.
+  Both endpoints now require the admin role.
+
+- **fix(api,security): gate `GET /v1/integrations` behind `RequireAdminAction`.**
+  The endpoint returns the active SIEM URL (which may embed credentials) and is
+  now restricted to admins.
+
+- **fix(api,security): gate `GET /v1/lsh/history` behind `RequireAdminAction`.**
+  Also added to `endpoint_rate_limit()` at 30 req/min — it runs an up-to-1000-row
+  DB query and was not previously covered by the per-endpoint throttle.
+
+- **fix(api,security): gate `GET /v1/k8s/pods` behind `RequireAdminAction` (both
+  feature variants).** Any authenticated caller could previously enumerate the
+  cluster pod inventory. Fix applied to both the k8s-roll and stub variants.
+
+- **fix(api,security): `POST /v1/scan/explain` — sanitise 500 error body and
+  emit audit events.** Internal scan engine errors were reflected verbatim in the
+  response body. The body now returns a static `"scan processing failed"` string;
+  the raw error is logged internally. AUDIT events are emitted on both success
+  and failure paths.
+
+---
+
+## 2026-09-03 — Key rotation, tenant isolation, pg-first aggregation, fs rate limiter
+
+### siphon-fs 1.1.2
+
+- **fix(fs): add per-IP and per-key rate limiting to `POST /scan` and all
+  authenticated endpoints.** siphon-fs previously had no rate limiter — file
+  uploads to `POST /scan` were unbounded, creating a DoS and log-flooding
+  vector. A sliding-window `RateLimiter` (matching siphon-api's implementation)
+  now gates every request except `/health` and `/ready`. The global cap defaults
+  to **30 req/min** per IP (lower than siphon-api's 120 because file uploads are
+  heavier than text scans). Configure with `SIPHON_FS_RATE_LIMIT`. Bearer-token
+  hash is used as a secondary bucket so a compromised key cannot exhaust quota
+  for other callers behind a shared IP. Exceeding either bucket returns `429 Too
+  Many Requests`.
+
+### siphon-api 2.6.0
+
+- **feat(api): zero-downtime API key rotation via `SIPHON_API_KEY_SECONDARY`.**
+  Set the secondary key on all pods while clients migrate; both keys are accepted
+  in parallel via constant-time XOR-fold (no timing oracle). Promote the new key
+  to `SIPHON_API_KEY` and clear the secondary once all clients are updated. See
+  `SECURITY.md` for the rotation procedure.
+
+- **feat(api): tenant policy isolation on scan requests.** When
+  `X-Siphon-Tenant` is present, `POST /scan` and `POST /scan/batch` now look up
+  the matching policy by name and apply its `min_confidence`, `require_context`,
+  and `categories` as a per-request baseline. Caller options override the policy
+  baseline when set.
+
+- **feat(api): tenant-scoped DB queries on `GET /v1/findings/pg` and
+  `GET /v1/findings/export`.** Both endpoints now filter by `tenant_id` when
+  `X-Siphon-Tenant` is present, preventing cross-tenant data leakage. Admin
+  calls without the header retain full cross-tenant visibility.
+
+- **feat(api,c2): postgres-first findings aggregation in C2 dashboard.**
+  `useFindingsUnion` now tries `/v1/findings/pg` first (durable, cross-pod
+  authoritative view) and falls back to the per-pod in-memory ring only when
+  the postgres endpoint is unavailable.
+
 ## 2026-09-03 — purple-team remediations (evasion + startup guards)
 
 A parallel purple-team exercise (separate session). Merged after the main wave.

@@ -8,6 +8,7 @@
 //!   SIPHON_PORT                      Listen port (default: 8080)
 //!   SIPHON_BIND                      Bind address (default: 127.0.0.1)
 //!   SIPHON_API_KEY                   Required API key (SHA-256 hashed at rest).
+//!   SIPHON_API_KEY_SECONDARY         Optional second key accepted during rotation.
 //!                                    Empty counts as unset. Absent means the
 //!                                    service refuses to start unless
 //!                                    SIPHON_ALLOW_UNAUTHENTICATED is set.
@@ -120,6 +121,10 @@ impl LiveOverrides {
 
 struct AppState {
     api_key_hash: Option<[u8; 32]>,
+    /// Secondary key accepted simultaneously with the primary during key rotation.
+    /// Set SIPHON_API_KEY_SECONDARY while clients migrate to a new key; once all
+    /// clients are updated, promote the new key to SIPHON_API_KEY and clear this.
+    api_key_hash_secondary: Option<[u8; 32]>,
     /// Networks whose `X-Forwarded-For` is believed. Empty means the TCP peer
     /// is used directly — correct for a direct deployment, and the safe
     /// default because an unconfigured proxy must never grant header trust.
@@ -164,11 +169,10 @@ struct AppState {
     /// the operator can tell "URL not configured" apart from
     /// "URL set but the pool failed to come up at startup".
     db_state: db::PoolState,
-    /// Short-lived cache for GET /v1/findings/stats. Avoids repeated
-    /// full-table scans on every poll from the C2. Holds the last
-    /// serialized response body and the time it was computed; the
-    /// handler replaces it after STATS_CACHE_SECS seconds.
-    stats_cache: Arc<Mutex<Option<(Instant, serde_json::Value)>>>,
+    /// Short-lived cache for GET /v1/findings/stats. Keyed by tenant_id
+    /// (None = admin/unscoped) so one tenant's cached aggregate is never
+    /// returned to another. Entries expire after STATS_CACHE_SECS seconds.
+    stats_cache: Arc<Mutex<HashMap<Option<String>, (Instant, serde_json::Value)>>>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -494,11 +498,22 @@ async fn auth_middleware(
             hasher.update(key.as_bytes());
             let provided_hash: [u8; 32] = hasher.finalize().into();
 
-            let mut diff = 0u8;
-            for (a, b) in expected_hash.iter().zip(provided_hash.iter()) {
-                diff |= a ^ b;
-            }
-            if diff != 0 {
+            let matches_primary = {
+                let mut diff = 0u8;
+                for (a, b) in expected_hash.iter().zip(provided_hash.iter()) {
+                    diff |= a ^ b;
+                }
+                diff == 0
+            };
+            let matches_secondary = state.api_key_hash_secondary.as_ref().map_or(false, |sec| {
+                let mut diff = 0u8;
+                for (a, b) in sec.iter().zip(provided_hash.iter()) {
+                    diff |= a ^ b;
+                }
+                diff == 0
+            });
+
+            if !matches_primary && !matches_secondary {
                 tracing::warn!("auth_failed: invalid API key");
                 if let Ok(event) = AuditEvent::new("REJECT") {
                     emit_audit(
@@ -561,6 +576,7 @@ fn endpoint_rate_limit(path: &str) -> Option<u32> {
         "/v1/findings/export" => Some(5), // expensive — file download
         "/v1/findings/pg" => Some(30),    // DB query
         "/v1/findings/stats" => Some(60), // cached, lighter
+        "/v1/lsh/history" => Some(30),    // DB query, up to 1000 rows
         _ => None,
     }
 }
@@ -687,6 +703,22 @@ async fn rate_limit_middleware(
     let ip = client_ip(&state.trusted_proxies, &addr, request.headers());
     let path = request.uri().path().to_string();
 
+    // Derive a stable per-key bucket key from the bearer token so that a
+    // compromised or abusive key cannot exhaust the IP-level quota for all
+    // other callers behind a shared egress (NAT, corporate proxy). We hash
+    // only the raw token value — the hash is never stored beyond this frame.
+    let key_bucket: Option<String> = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .filter(|s| !s.trim().is_empty())
+        .map(|token| {
+            let mut h = Sha256::new();
+            h.update(token.as_bytes());
+            format!("key:{}", hex::encode(h.finalize()))
+        });
+
     let allowed = {
         // Recover from a poisoned lock rather than panicking: a single panic
         // while the guard is held would otherwise turn every subsequent request
@@ -694,12 +726,17 @@ async fn rate_limit_middleware(
         let mut limiter = state.rate_limiter.lock().unwrap_or_else(|e| e.into_inner());
         // Global per-IP limit
         let global_ok = limiter.check(&ip, state.rate_limit);
-        // Per-endpoint tighter limit (uses "ep:<path>:<ip>" as bucket key)
+        // Global per-key limit (same cap as IP; both must pass)
+        let key_ok = key_bucket
+            .as_deref()
+            .map_or(true, |kb| limiter.check(kb, state.rate_limit));
+        // Per-endpoint tighter limit (uses "ep:<path>:<key|ip>" as bucket key)
+        let ep_key = key_bucket.as_deref().unwrap_or(&ip);
         let endpoint_ok = match endpoint_rate_limit(&path) {
-            Some(ep_limit) => limiter.check(&format!("ep:{path}:{ip}"), ep_limit),
+            Some(ep_limit) => limiter.check(&format!("ep:{path}:{ep_key}"), ep_limit),
             None => true,
         };
-        global_ok && endpoint_ok
+        global_ok && key_ok && endpoint_ok
     };
 
     if !allowed {
@@ -1056,9 +1093,14 @@ async fn health_detailed(State(state): State<Arc<AppState>>) -> Json<DetailedHea
 async fn scan(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<ScanRequest>,
 ) -> Result<Json<ScanResponse>, (StatusCode, Json<ErrorResponse>)> {
     let source_ip = addr.ip().to_string();
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned());
 
     if req.text.is_empty() {
         return Err((
@@ -1106,13 +1148,37 @@ async fn scan(
         g.clone()
     };
 
+    // Tenant policy baseline: when X-Siphon-Tenant is present, find the
+    // matching policy by name and use its scan config as the floor.
+    // Per-request options (min_confidence, categories, require_context)
+    // override the policy baseline when explicitly set by the caller.
+    let tenant_policy = tenant_id
+        .as_deref()
+        .and_then(|tid| state.policies.iter().find(|p| p.name == tid));
+    let policy_min_confidence = tenant_policy.map(|p| p.scan.min_confidence).unwrap_or(0.0);
+    let policy_require_context = tenant_policy
+        .map(|p| p.scan.require_context)
+        .unwrap_or(false);
+    let policy_categories: Option<HashSet<String>> = tenant_policy.and_then(|p| {
+        if p.scan.categories.is_empty() {
+            None
+        } else {
+            Some(p.scan.categories.iter().cloned().collect())
+        }
+    });
+
     let mut config = ScanConfig {
-        min_confidence: req.options.min_confidence.unwrap_or(0.0),
+        // Caller values win; policy baseline fills the gap.
+        min_confidence: req.options.min_confidence.unwrap_or(policy_min_confidence),
         categories: req
             .options
             .categories
-            .map(|c| c.into_iter().collect::<HashSet<_>>()),
-        require_context: req.options.require_context.unwrap_or(false),
+            .map(|c| c.into_iter().collect::<HashSet<_>>())
+            .or(policy_categories),
+        require_context: req
+            .options
+            .require_context
+            .unwrap_or(policy_require_context),
         baseline_only: req.options.baseline_only.unwrap_or(false),
         deduplicate: req.options.deduplicate.unwrap_or(true),
         trace: trace_sink.clone(),
@@ -1231,6 +1297,7 @@ async fn scan(
         let api_key_hash_bytes_for_edm = api_key_hash_bytes.clone();
         let api_key_hash_bytes_for_lsh = api_key_hash_bytes.clone();
         let input_hash_bytes_for_lsh = input_hash_bytes.clone();
+        let tenant_id_clone = tenant_id.clone();
         tokio::spawn(async move {
             if let Err(e) = db::persist_scan(
                 &pool_clone,
@@ -1246,6 +1313,7 @@ async fn scan(
                 None,
                 None,
                 None,
+                tenant_id_clone.as_deref(),
             )
             .await
             {
@@ -1350,6 +1418,7 @@ async fn scan(
             span: f.span,
             metadata: f.metadata.clone(),
             severity: severity_for(&f.category, f.confidence),
+            tenant_id: tenant_id.clone(),
         });
     }
 
@@ -1384,7 +1453,8 @@ async fn scan(
                 .with_duration_ms(duration_ms)
                 .with_request_id(&request_id)
                 .with_source_ip(&source_ip)
-                .with_metadata("text_len", serde_json::json!(req.text.len())),
+                .with_metadata("text_len", serde_json::json!(req.text.len()))
+                .with_metadata("tenant_id", serde_json::json!(tenant_id)),
         );
     }
 
@@ -1440,8 +1510,13 @@ struct BatchScanResponse {
 async fn scan_batch(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(items): Json<Vec<BatchItem>>,
 ) -> Result<Json<BatchScanResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_owned());
     const MAX_BATCH: usize = 500;
     if items.is_empty() {
         return Err((
@@ -1486,6 +1561,22 @@ async fn scan_batch(
         h.finalize().to_vec()
     };
 
+    // Tenant policy baseline (shared across all items in the batch).
+    let tenant_policy = tenant_id
+        .as_deref()
+        .and_then(|tid| state.policies.iter().find(|p| p.name == tid));
+    let policy_min_confidence = tenant_policy.map(|p| p.scan.min_confidence).unwrap_or(0.0);
+    let policy_require_context = tenant_policy
+        .map(|p| p.scan.require_context)
+        .unwrap_or(false);
+    let policy_categories: Option<HashSet<String>> = tenant_policy.and_then(|p| {
+        if p.scan.categories.is_empty() {
+            None
+        } else {
+            Some(p.scan.categories.iter().cloned().collect())
+        }
+    });
+
     let mut results: Vec<BatchItemResult> = Vec::with_capacity(items.len());
     let mut total_findings: usize = 0;
 
@@ -1500,13 +1591,17 @@ async fn scan_batch(
         }
 
         let mut config = ScanConfig {
-            min_confidence: item.options.min_confidence.unwrap_or(0.0),
+            min_confidence: item.options.min_confidence.unwrap_or(policy_min_confidence),
             categories: item
                 .options
                 .categories
                 .clone()
-                .map(|c| c.into_iter().collect::<HashSet<_>>()),
-            require_context: item.options.require_context.unwrap_or(false),
+                .map(|c| c.into_iter().collect::<HashSet<_>>())
+                .or_else(|| policy_categories.clone()),
+            require_context: item
+                .options
+                .require_context
+                .unwrap_or(policy_require_context),
             baseline_only: item.options.baseline_only.unwrap_or(false),
             deduplicate: item.options.deduplicate.unwrap_or(true),
             disabled_patterns: Some(ov.disabled_patterns.clone()),
@@ -1577,6 +1672,7 @@ async fn scan_batch(
                 span: f.span,
                 metadata: f.metadata.clone(),
                 severity: severity_for(&f.category, f.confidence),
+                tenant_id: tenant_id.clone(),
             });
         }
 
@@ -1605,6 +1701,7 @@ async fn scan_batch(
                 .collect();
             let pool_clone = state.db_pool.clone();
             let api_key_hash_clone = api_key_hash_bytes.clone();
+            let tenant_id_clone = tenant_id.clone();
             tokio::spawn(async move {
                 if let Err(e) = db::persist_scan(
                     &pool_clone,
@@ -1620,6 +1717,7 @@ async fn scan_batch(
                     None,
                     None,
                     None,
+                    tenant_id_clone.as_deref(),
                 )
                 .await
                 {
@@ -1661,7 +1759,8 @@ async fn scan_batch(
                 .with_duration_ms(total_duration_ms as f64)
                 .with_request_id(&batch_id)
                 .with_source_ip(&source_ip)
-                .with_metadata("batch_size", serde_json::json!(items.len())),
+                .with_metadata("batch_size", serde_json::json!(items.len()))
+                .with_metadata("tenant_id", serde_json::json!(tenant_id)),
         );
     }
 
@@ -1799,10 +1898,14 @@ async fn scan_explain(
             .metrics
             .scan_errors_total
             .fetch_add(1, Ordering::Relaxed);
+        tracing::warn!(error = %e, "scan_explain_failed");
+        if let Ok(event) = AuditEvent::new("SCAN") {
+            emit_audit(event.with_action("scan_explain").with_outcome("error"));
+        }
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
-                error: format!("scan processing failed: {e}"),
+                error: "scan processing failed".into(),
             }),
         )
     })?;
@@ -1855,6 +1958,15 @@ async fn scan_explain(
         .collect();
 
     let count = findings.len();
+    if let Ok(event) = AuditEvent::new("SCAN") {
+        emit_audit(
+            event
+                .with_action("scan_explain")
+                .with_outcome("success")
+                .with_metadata("finding_count", serde_json::json!(count))
+                .with_metadata("duration_ms", serde_json::json!(duration_ms)),
+        );
+    }
     Ok(Json(ExplainResponse {
         source_pod: "siphon-api",
         request_id,
@@ -1898,7 +2010,10 @@ struct PatternsResponse {
     patterns: Vec<PatternItem>,
 }
 
-async fn list_patterns(Query(q): Query<PatternsQuery>) -> Json<PatternsResponse> {
+async fn list_patterns(
+    _: RequireAdminAction,
+    Query(q): Query<PatternsQuery>,
+) -> Json<PatternsResponse> {
     let all = siphon_core::patterns::PATTERNS;
     let filtered: Vec<&'static siphon_core::models::PatternDef> = match q.category.as_deref() {
         Some(c) if !c.is_empty() => all.iter().filter(|p| p.category == c).collect(),
@@ -1967,7 +2082,7 @@ struct CategoriesResponse {
     categories: Vec<CategoryItem>,
 }
 
-async fn list_categories() -> Json<CategoriesResponse> {
+async fn list_categories(_: RequireAdminAction) -> Json<CategoriesResponse> {
     let cats = siphon_core::patterns::categories();
     let categories: Vec<CategoryItem> = cats
         .into_iter()
@@ -1995,7 +2110,10 @@ struct PoliciesResponse {
     policies: Vec<Policy>,
 }
 
-async fn list_policies(State(state): State<Arc<AppState>>) -> Json<PoliciesResponse> {
+async fn list_policies(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<PoliciesResponse> {
     let source = std::env::var("SIPHON_POLICIES_DIR").ok();
     Json(PoliciesResponse {
         loaded: source.is_some(),
@@ -2122,7 +2240,10 @@ struct MetricsResponse {
     policies_loaded: usize,
 }
 
-async fn metrics_snapshot(State(state): State<Arc<AppState>>) -> Json<MetricsResponse> {
+async fn metrics_snapshot(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<MetricsResponse> {
     Json(MetricsResponse {
         uptime_secs: state.metrics.started_at.elapsed().as_secs(),
         scans_total: state.metrics.scans_total.load(Ordering::Relaxed),
@@ -2145,7 +2266,7 @@ struct VersionResponse {
     categories_loaded: usize,
 }
 
-async fn version() -> Json<VersionResponse> {
+async fn version(_: RequireAdminAction) -> Json<VersionResponse> {
     Json(VersionResponse {
         api_version: env!("CARGO_PKG_VERSION"),
         core_version: siphon_core::VERSION,
@@ -2388,7 +2509,10 @@ struct OverridesStateResponse {
     overrides: siphon_core::overrides::PatternOverrides,
 }
 
-async fn overrides_current(State(state): State<Arc<AppState>>) -> Json<OverridesStateResponse> {
+async fn overrides_current(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<OverridesStateResponse> {
     let loaded = state
         .live_overrides
         .read()
@@ -2403,6 +2527,7 @@ async fn overrides_current(State(state): State<Arc<AppState>>) -> Json<Overrides
 }
 
 async fn overrides_disk(
+    _: RequireAdminAction,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<OverridesStateResponse>, (StatusCode, Json<ErrorResponse>)> {
     use siphon_core::overrides::{LoadError, PatternOverrides};
@@ -2991,6 +3116,7 @@ struct PodListResponse {
 
 #[cfg(not(feature = "k8s-roll"))]
 async fn k8s_pods(
+    _: RequireAdminAction,
     _state: State<Arc<AppState>>,
     _addr: ConnectInfo<SocketAddr>,
 ) -> (StatusCode, Json<ErrorResponse>) {
@@ -3007,6 +3133,7 @@ async fn k8s_pods(
 
 #[cfg(feature = "k8s-roll")]
 async fn k8s_pods(
+    _: RequireAdminAction,
     State(_state): State<Arc<AppState>>,
     ConnectInfo(_addr): ConnectInfo<SocketAddr>,
 ) -> Result<Json<PodListResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -3322,6 +3449,7 @@ fn format_iso8601(secs: i64, nanos: u32) -> String {
 }
 
 async fn overrides_history(
+    _: RequireAdminAction,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HistoryResponse>, (StatusCode, Json<ErrorResponse>)> {
     let path = state.overrides_path.as_path();
@@ -3399,6 +3527,7 @@ struct OverridesContentResponse {
 }
 
 async fn overrides_content(
+    _: RequireAdminAction,
     State(state): State<Arc<AppState>>,
     Query(q): Query<OverridesContentQuery>,
 ) -> Result<Json<OverridesContentResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -3992,6 +4121,7 @@ struct AuditResponse {
 }
 
 async fn list_audit_events(
+    _: RequireAdminAction,
     Query(q): Query<AuditQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<AuditResponse> {
@@ -4056,7 +4186,10 @@ struct RateLimitResponse {
     total_recent_requests: usize,
 }
 
-async fn rate_limit_status(State(state): State<Arc<AppState>>) -> Json<RateLimitResponse> {
+async fn rate_limit_status(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<RateLimitResponse> {
     let guard = state.rate_limiter.lock().unwrap_or_else(|e| e.into_inner());
     let (active, slots) = guard.snapshot();
     Json(RateLimitResponse {
@@ -4097,7 +4230,7 @@ struct IntegrationsResponse {
     integrations: Vec<IntegrationItem>,
 }
 
-async fn list_integrations() -> Json<IntegrationsResponse> {
+async fn list_integrations(_: RequireAdminAction) -> Json<IntegrationsResponse> {
     // Honest read of env vars that siem.rs inspects. We don't try to
     // instantiate the adapters here (that lives in create_siem_from_env).
     let siem_type = std::env::var("DLPSCAN_SIEM_TYPE").ok();
@@ -4147,7 +4280,10 @@ struct AllowlistEntries {
     paths: Vec<String>,
 }
 
-async fn list_allowlist(State(state): State<Arc<AppState>>) -> Json<AllowlistResponse> {
+async fn list_allowlist(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<AllowlistResponse> {
     let a = &state.allowlist;
     Json(AllowlistResponse {
         loaded_from: std::env::var("SIPHON_ALLOWLIST_PATH").ok(),
@@ -4169,7 +4305,7 @@ struct VaultStubResponse {
     note: &'static str,
 }
 
-async fn list_edm_vaults() -> Json<VaultStubResponse> {
+async fn list_edm_vaults(_: RequireAdminAction) -> Json<VaultStubResponse> {
     // ExactDataMatcher is constructed per ScanConfig. Surface that
     // honestly so the UI can show "not globally loaded" instead of
     // fabricating a list.
@@ -4180,7 +4316,7 @@ async fn list_edm_vaults() -> Json<VaultStubResponse> {
     })
 }
 
-async fn list_lsh_vaults() -> Json<VaultStubResponse> {
+async fn list_lsh_vaults(_: RequireAdminAction) -> Json<VaultStubResponse> {
     Json(VaultStubResponse {
         loaded: false,
         vaults: vec![],
@@ -4544,6 +4680,7 @@ struct LshHistoryResponse {
 }
 
 async fn lsh_history(
+    _: RequireAdminAction,
     Query(q): Query<LshHistoryQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<LshHistoryResponse> {
@@ -4664,11 +4801,22 @@ struct FindingsStatsResponse {
     lsh: Option<LshStats>,
 }
 
-async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>>) -> Response {
-    // Return cached response if fresh enough (avoids repeated DB COUNT scans).
+async fn findings_stats(
+    _: RequireAdminAction,
+    headers: HeaderMap,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_owned());
+
+    // Return cached response if fresh enough — keyed by tenant so one
+    // tenant's aggregate is never served to another.
     {
         let cache = state.stats_cache.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((cached_at, ref cached_body)) = *cache {
+        if let Some((cached_at, ref cached_body)) = cache.get(&tenant_id) {
             if cached_at.elapsed().as_secs() < STATS_CACHE_SECS {
                 let body = serde_json::to_vec(cached_body).unwrap_or_default();
                 return (
@@ -4682,6 +4830,8 @@ async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>
             }
         }
     }
+
+    let tenant_filter = tenant_id.as_deref();
 
     let Some(pool) = state.db_pool.as_ref() else {
         return Json(FindingsStatsResponse {
@@ -4714,10 +4864,11 @@ async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>
         .query(
             "SELECT category, COUNT(*) as cnt \
              FROM findings \
+             WHERE ($1::text IS NULL OR tenant_id = $1) \
              GROUP BY category \
              ORDER BY cnt DESC \
              LIMIT 20",
-            &[],
+            &[&tenant_filter],
         )
         .await
     {
@@ -4740,9 +4891,10 @@ async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>
             "SELECT DATE_TRUNC('day', created_at) as day, COUNT(*) as cnt \
              FROM scans \
              WHERE created_at >= NOW() - INTERVAL '30 days' \
+               AND ($1::text IS NULL OR tenant_id = $1) \
              GROUP BY day \
              ORDER BY day DESC",
-            &[],
+            &[&tenant_filter],
         )
         .await
     {
@@ -4764,7 +4916,13 @@ async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>
     };
 
     // Total findings count.
-    let total_findings: i64 = match client.query_one("SELECT COUNT(*) FROM findings", &[]).await {
+    let total_findings: i64 = match client
+        .query_one(
+            "SELECT COUNT(*) FROM findings WHERE ($1::text IS NULL OR tenant_id = $1)",
+            &[&tenant_filter],
+        )
+        .await
+    {
         Ok(row) => row.get::<_, i64>(0),
         Err(e) => {
             tracing::warn!("findings_stats: total_findings query failed: {e}");
@@ -4774,7 +4932,10 @@ async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>
 
     // Last scan timestamp.
     let last_scan_at: Option<String> = match client
-        .query_one("SELECT MAX(created_at) FROM scans", &[])
+        .query_one(
+            "SELECT MAX(created_at) FROM scans WHERE ($1::text IS NULL OR tenant_id = $1)",
+            &[&tenant_filter],
+        )
         .await
     {
         Ok(row) => {
@@ -4847,10 +5008,10 @@ async fn findings_stats(_: RequireAdminAction, State(state): State<Arc<AppState>
         lsh: Some(lsh_stats),
     };
 
-    // Populate cache.
+    // Populate cache, keyed by tenant_id.
     if let Ok(json_val) = serde_json::to_value(&response) {
         let mut cache = state.stats_cache.lock().unwrap_or_else(|e| e.into_inner());
-        *cache = Some((Instant::now(), json_val));
+        cache.insert(tenant_id, (Instant::now(), json_val));
     }
 
     Json(response).into_response()
@@ -4901,6 +5062,7 @@ struct PgFindingsResponse {
 
 async fn list_pg_findings(
     _: RequireAdminAction,
+    headers: HeaderMap,
     Query(q): Query<PgFindingsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<PgFindingsResponse> {
@@ -4926,15 +5088,26 @@ async fn list_pg_findings(
     let offset = q.offset.unwrap_or(0).max(0);
     let category = q.category.as_deref();
 
+    // Tenant isolation: when X-Siphon-Tenant is present, restrict to rows
+    // whose tenant_id matches. A missing tenant header (e.g. admin calls)
+    // returns findings across all tenants.
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_owned());
+    let tenant_filter = tenant_id.as_deref();
+
     let rows = match client
         .query(
             "SELECT id, scan_id, created_at, category, sub_category, confidence, \
              span_start, span_end, matched_text, has_context, context_required, metadata \
              FROM findings \
              WHERE ($1::text IS NULL OR category = $1) \
+               AND ($2::text IS NULL OR tenant_id = $2) \
              ORDER BY created_at DESC \
-             LIMIT $2 OFFSET $3",
-            &[&category, &limit, &offset],
+             LIMIT $3 OFFSET $4",
+            &[&category, &tenant_filter, &limit, &offset],
         )
         .await
     {
@@ -4973,8 +5146,10 @@ async fn list_pg_findings(
 
     let total: i64 = match client
         .query_one(
-            "SELECT COUNT(*) FROM findings WHERE ($1::text IS NULL OR category = $1)",
-            &[&category],
+            "SELECT COUNT(*) FROM findings \
+             WHERE ($1::text IS NULL OR category = $1) \
+               AND ($2::text IS NULL OR tenant_id = $2)",
+            &[&category, &tenant_filter],
         )
         .await
     {
@@ -5042,6 +5217,7 @@ struct ExportQuery {
 }
 
 async fn findings_export(
+    headers: HeaderMap,
     Query(q): Query<ExportQuery>,
     State(state): State<Arc<AppState>>,
     _: RequireAdminAction,
@@ -5052,6 +5228,15 @@ async fn findings_export(
     let from_ts: Option<chrono::DateTime<chrono::Utc>> =
         q.from.as_deref().and_then(|s| s.parse().ok());
     let to_ts: Option<chrono::DateTime<chrono::Utc>> = q.to.as_deref().and_then(|s| s.parse().ok());
+
+    // Tenant isolation: restrict export to the caller's tenant when the header
+    // is present. An admin call without the header exports across all tenants.
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_owned());
+    let tenant_filter = tenant_id.as_deref();
 
     let Some(pool) = state.db_pool.as_ref() else {
         return (
@@ -5088,9 +5273,10 @@ async fn findings_export(
              WHERE ($1::text IS NULL OR f.category = $1) \
              AND ($2::timestamptz IS NULL OR f.created_at >= $2) \
              AND ($3::timestamptz IS NULL OR f.created_at <= $3) \
+             AND ($4::text IS NULL OR f.tenant_id = $4) \
              ORDER BY f.created_at DESC \
-             LIMIT $4",
-            &[&category, &from_ts, &to_ts, &limit],
+             LIMIT $5",
+            &[&category, &from_ts, &to_ts, &tenant_filter, &limit],
         )
         .await
     {
@@ -5225,9 +5411,16 @@ struct FindingsResponse {
 
 async fn list_findings(
     _: RequireAdminAction,
+    headers: HeaderMap,
     Query(q): Query<FindingsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Json<FindingsResponse> {
+    let tenant_id: Option<String> = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_owned());
+
     let snapshot = state.findings.snapshot();
     let total = snapshot.len();
     let capacity = state.findings.capacity();
@@ -5238,6 +5431,7 @@ async fn list_findings(
         q.severity.as_deref(),
         q.contains.as_deref(),
         q.since.as_deref(),
+        tenant_id.as_deref(),
     );
 
     let cap = q.limit.unwrap_or(200).min(capacity);
@@ -5339,7 +5533,11 @@ async fn findings_prune(
 /// The endpoint accepts a POST body even though `EventSource` in browsers
 /// only supports GET.  Use `fetch()` + `ReadableStream` on the client side
 /// (or curl with `--no-buffer`).
-async fn scan_stream(State(state): State<Arc<AppState>>, Json(req): Json<ScanRequest>) -> Response {
+async fn scan_stream(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(req): Json<ScanRequest>,
+) -> Response {
     use axum::response::sse::{Event, KeepAlive, Sse};
     use tokio_stream::wrappers::ReceiverStream;
 
@@ -5402,6 +5600,7 @@ async fn scan_stream(State(state): State<Arc<AppState>>, Json(req): Json<ScanReq
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, std::convert::Infallible>>(128);
     let text = req.text;
     let metrics = state.metrics.clone();
+    let source_ip = addr.ip().to_string();
 
     tokio::spawn(async move {
         let start = Instant::now();
@@ -5428,6 +5627,16 @@ async fn scan_stream(State(state): State<Arc<AppState>>, Json(req): Json<ScanReq
                     .findings_total
                     .fetch_add(count as u64, Ordering::Relaxed);
                 let duration_ms = start.elapsed().as_millis() as u64;
+                if let Ok(event) = AuditEvent::new("SCAN") {
+                    emit_audit(
+                        event
+                            .with_action("scan_stream")
+                            .with_outcome("success")
+                            .with_source_ip(&source_ip)
+                            .with_metadata("findings", serde_json::json!(count))
+                            .with_metadata("duration_ms", serde_json::json!(duration_ms)),
+                    );
+                }
                 let done = serde_json::json!({
                     "done": true,
                     "total": count,
@@ -5438,6 +5647,14 @@ async fn scan_stream(State(state): State<Arc<AppState>>, Json(req): Json<ScanReq
             }
             Err(e) => {
                 metrics.scan_errors_total.fetch_add(1, Ordering::Relaxed);
+                if let Ok(event) = AuditEvent::new("SCAN") {
+                    emit_audit(
+                        event
+                            .with_action("scan_stream")
+                            .with_outcome("error")
+                            .with_source_ip(&source_ip),
+                    );
+                }
                 let err = serde_json::json!({ "error": e.to_string() }).to_string();
                 let _ = tx.send(Ok(Event::default().data(err))).await;
             }
@@ -5522,6 +5739,29 @@ async fn main() {
             hash
         });
 
+    // Secondary key: accepted concurrently with the primary during key rotation.
+    // Set SIPHON_API_KEY_SECONDARY on every pod while clients migrate, then
+    // promote it to SIPHON_API_KEY (and clear the secondary) once all clients
+    // are updated. Both keys are checked with the same constant-time XOR-fold
+    // so there is no timing oracle distinguishing primary from secondary.
+    let api_key_hash_secondary = std::env::var("SIPHON_API_KEY_SECONDARY")
+        .ok()
+        .filter(|key| !key.trim().is_empty())
+        .map(|key| {
+            if key.len() < MIN_API_KEY_LEN {
+                tracing::warn!(
+                    len = key.len(),
+                    minimum = MIN_API_KEY_LEN,
+                    "SIPHON_API_KEY_SECONDARY is shorter than the recommended minimum"
+                );
+            }
+            let mut hasher = Sha256::new();
+            hasher.update(key.as_bytes());
+            let hash: [u8; 32] = hasher.finalize().into();
+            tracing::info!("Secondary API key loaded — key rotation mode active");
+            hash
+        });
+
     if api_key_hash.is_none() {
         // Fail closed. Previously an absent key meant the service came up
         // serving an unauthenticated API, which is the wrong failure mode for
@@ -5531,12 +5771,28 @@ async fn main() {
         //
         // Running without authentication is still possible, but it now has to
         // be asked for.
-        let allow_open = std::env::var("SIPHON_ALLOW_UNAUTHENTICATED")
-            .map(|v| {
-                let v = v.trim();
-                v.eq_ignore_ascii_case("true") || v == "1"
-            })
-            .unwrap_or(false);
+        let allow_open = {
+            let env_val = std::env::var("SIPHON_ALLOW_UNAUTHENTICATED")
+                .map(|v| {
+                    let v = v.trim().to_owned();
+                    v.eq_ignore_ascii_case("true") || v == "1"
+                })
+                .unwrap_or(false);
+            // Gate: this binary must be compiled with --features allow-unauthenticated
+            // for the env var to take effect. Production binaries are compiled
+            // without it so the escape hatch is compile-time-absent, not just
+            // runtime-guarded.
+            if env_val && !cfg!(feature = "allow-unauthenticated") {
+                tracing::warn!(
+                    "SIPHON_ALLOW_UNAUTHENTICATED is set but this binary was compiled \
+                     without the `allow-unauthenticated` feature — ignoring. \
+                     Rebuild with --features allow-unauthenticated for local dev."
+                );
+                false
+            } else {
+                env_val
+            }
+        };
 
         if !allow_open {
             eprintln!(
@@ -5856,6 +6112,7 @@ async fn main() {
 
     let state = Arc::new(AppState {
         api_key_hash,
+        api_key_hash_secondary,
         trusted_proxies,
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
         rate_limit,
@@ -5873,7 +6130,7 @@ async fn main() {
         disabled_stages: Arc::new(RwLock::new(HashSet::new())),
         db_pool,
         db_state,
-        stats_cache: Arc::new(Mutex::new(None)),
+        stats_cache: Arc::new(Mutex::new(HashMap::new())),
     });
 
     // Retention pruning background task — runs once per day when
