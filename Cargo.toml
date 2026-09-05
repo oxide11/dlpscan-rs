@@ -71,8 +71,6 @@ base64 = "0.23"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
-# Metrics
-prometheus = { version = "0.14", default-features = false, features = ["process"], optional = true }
 
 # Config
 toml = "1.1"
@@ -130,7 +128,10 @@ default = [
     "data-formats",
     "forensics",
 ]
-metrics = ["dep:prometheus"]
+# Prometheus-shaped metrics, served by our own registry
+# (src/metrics_registry.rs). No longer pulls the `prometheus`
+# crate: 23 transitive deps for four counters and a gauge.
+metrics = []
 pdf = ["dep:pdf-extract"]
 office = ["dep:calamine", "dep:quick-xml"]
 archives = ["dep:sevenz-rust", "dep:unrar"]

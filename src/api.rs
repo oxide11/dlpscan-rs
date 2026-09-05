@@ -1301,11 +1301,16 @@ fn hyper_route_request(
         }
         #[cfg(feature = "metrics")]
         ("GET", "/metrics") => {
-            let encoder = prometheus::TextEncoder::new();
-            match encoder.encode_to_string(&prometheus::gather()) {
-                Ok(output) => (StatusCode::OK, output),
-                Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, String::new()),
-            }
+            // Rendering cannot fail: the registry is a fixed set of families
+            // built from atomics, so there is no gather step to error out.
+            //
+            // The process metrics that `prometheus` published via procfs
+            // (process_cpu_seconds and friends) are gone with it. Nothing
+            // here produced them; they came free with the crate, and the
+            // pod's own cAdvisor metrics already carry the same numbers —
+            // publishing them a second time from inside the process is how
+            // two sources of truth end up disagreeing.
+            (StatusCode::OK, crate::metrics_registry::render())
         }
         #[cfg(not(feature = "metrics"))]
         ("GET", "/metrics") => (

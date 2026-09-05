@@ -35,6 +35,8 @@ pub mod extractors;
 pub mod guard;
 pub mod http_util;
 pub mod metrics;
+#[cfg(feature = "metrics")]
+pub mod metrics_registry;
 pub mod pipeline;
 pub mod plugins;
 pub mod policy;
