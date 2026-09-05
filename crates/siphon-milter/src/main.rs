@@ -62,6 +62,15 @@ struct Config {
     /// loses without one is the retry guard and the investigation record,
     /// not the verdict.
     db: Option<deadpool_postgres::Pool>,
+    tenant_id: String,
+    /// Which way this instance's traffic flows.
+    ///
+    /// Configured rather than inferred, because Postfix already knows: a
+    /// milter wired to `smtpd_milters` sees inbound mail and one wired to
+    /// `non_smtpd_milters` sees locally-submitted outbound. Guessing from
+    /// the message would get it wrong on relayed and forwarded traffic, and
+    /// direction is a reporting dimension people filter on.
+    direction: Direction,
 }
 
 fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
@@ -196,6 +205,22 @@ impl Config {
             max_connections: env_parse("SIPHON_MILTER_MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS),
             min_confidence: env_parse("SIPHON_MILTER_MIN_CONFIDENCE", 0.6f64),
             db: build_pool()?,
+            tenant_id: std::env::var("SIPHON_MILTER_TENANT").unwrap_or_else(|_| "default".into()),
+            direction: match std::env::var("SIPHON_MILTER_DIRECTION")
+                .unwrap_or_else(|_| "inbound".into())
+                .trim()
+                .to_ascii_lowercase()
+                .as_str()
+            {
+                "inbound" => Direction::Inbound,
+                "outbound" => Direction::Outbound,
+                other => {
+                    return Err(format!(
+                        "SIPHON_MILTER_DIRECTION={other:?} is not inbound or outbound"
+                    )
+                    .into())
+                }
+            },
         })
     }
 }
@@ -206,6 +231,13 @@ struct Session {
     macros: HashMap<String, String>,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
+    /// Envelope sender, from `MAIL FROM`. The envelope, not the `From:`
+    /// header — the header is author-supplied and freely forged, while this
+    /// is what the MTA actually accepted the message from.
+    sender: Option<String>,
+    /// Envelope recipients, from `RCPT TO`. One message can have many, and
+    /// the header `To:` need not mention any of them (Bcc, list expansion).
+    recipients: Vec<String>,
     /// Set when the message outgrew `max_message_bytes`. The remaining body
     /// is still drained (the MTA keeps sending) but not retained, and the
     /// verdict is forced to indeterminate — never clean.
@@ -218,6 +250,8 @@ impl Session {
     fn reset_message(&mut self) {
         self.headers.clear();
         self.body.clear();
+        self.sender = None;
+        self.recipients.clear();
         self.oversize = false;
     }
 
@@ -225,6 +259,25 @@ impl Session {
     /// message's ingest key (§2.2a).
     fn ingest_key(&self) -> Option<&str> {
         self.macros.get("i").map(String::as_str)
+    }
+
+    /// SHA-256 of the Subject header, or `None` when there is no subject.
+    ///
+    /// Hashed rather than stored: a subject line is often the most sensitive
+    /// text in a message ("Q3 layoff list"), and the investigation use is
+    /// correlating identical subjects across messages, which a hash serves.
+    fn subject_hash(&self) -> Option<Vec<u8>> {
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("Subject"))
+            .map(|(_, v)| <sha2::Sha256 as sha2::Digest>::digest(v.as_bytes()).to_vec())
+    }
+
+    fn rfc_message_id(&self) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("Message-ID"))
+            .map(|(_, v)| v.as_str())
     }
 
     /// Reassemble the RFC 5322 message from the pieces the MTA sent.
@@ -236,6 +289,26 @@ impl Session {
         out.extend_from_slice(b"\r\n");
         out.extend_from_slice(&self.body);
         out
+    }
+}
+
+/// Strip the angle brackets SMTP wraps addresses in.
+///
+/// `MAIL FROM:<a@b.example>` arrives as `<a@b.example>`, and a null sender
+/// (bounces, DSNs) arrives as `<>` — which becomes `None` rather than an
+/// empty string, because "this message has no envelope sender" is a real and
+/// meaningful state, not a missing value.
+fn envelope_address(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    let inner = trimmed
+        .strip_prefix('<')
+        .and_then(|r| r.strip_suffix('>'))
+        .unwrap_or(trimmed)
+        .trim();
+    if inner.is_empty() {
+        None
+    } else {
+        Some(inner.to_string())
     }
 }
 
@@ -485,6 +558,21 @@ async fn handle_connection(
                         session.macros.insert(k, v);
                     }
                 }
+                Command::MailFrom { args } => {
+                    session.sender = args.first().and_then(|a| envelope_address(a));
+                    write_response(&mut stream, &Response::Continue).await?;
+                }
+                Command::RcptTo { args } => {
+                    if let Some(addr) = args.first().and_then(|a| envelope_address(a)) {
+                        // A recipient can legitimately repeat across an
+                        // expansion; store each once so part_count-style
+                        // arithmetic downstream is not skewed by duplicates.
+                        if !session.recipients.contains(&addr) {
+                            session.recipients.push(addr);
+                        }
+                    }
+                    write_response(&mut stream, &Response::Continue).await?;
+                }
                 Command::Header { name, value } => {
                     session.headers.push((name, value));
                     write_response(&mut stream, &Response::Continue).await?;
@@ -556,22 +644,18 @@ async fn persist(config: &Config, session: &Session, outcome: &ScanOutcome) {
     if config.db.is_none() {
         return;
     }
+    let subject_hash = session.subject_hash();
 
-    let recipients: Vec<String> = Vec::new();
     let record = MessageRecord {
-        tenant_id: "default",
+        tenant_id: &config.tenant_id,
         // The MTA's queue ID. Stable across delivery attempts, so a retry
         // resolves to the same row rather than minting a second message.
         ingest_key: session.ingest_key(),
-        direction: Direction::Inbound,
-        rfc_message_id: session
-            .headers
-            .iter()
-            .find(|(n, _)| n.eq_ignore_ascii_case("Message-ID"))
-            .map(|(_, v)| v.as_str()),
-        sender: session.macros.get("{mail_addr}").map(String::as_str),
-        recipients: &recipients,
-        subject_hash: None,
+        direction: config.direction,
+        rfc_message_id: session.rfc_message_id(),
+        sender: session.sender.as_deref(),
+        recipients: &session.recipients,
+        subject_hash: subject_hash.as_deref(),
         part_count: outcome.parts.len().min(i32::MAX as usize) as i32,
     };
 
@@ -773,6 +857,69 @@ mod tests {
 
         let clean = b"From: a@b.example\r\nSubject: Lunch\r\n\r\nSee you at one.\r\n";
         assert_eq!(scan_message(clean, 0.6).verdict, Verdict::Clean);
+    }
+
+    /// SMTP wraps addresses in angle brackets, and a bounce carries a null
+    /// sender. `<>` is a real state — "this message has no envelope sender" —
+    /// not a missing value, so it must not become an empty string in a
+    /// `sender` column.
+    #[test]
+    fn envelope_addresses_are_unwrapped_and_null_sender_is_none() {
+        assert_eq!(
+            envelope_address("<a@b.example>"),
+            Some("a@b.example".into())
+        );
+        assert_eq!(envelope_address("a@b.example"), Some("a@b.example".into()));
+        assert_eq!(
+            envelope_address("  <a@b.example>  "),
+            Some("a@b.example".into())
+        );
+        assert_eq!(envelope_address("<>"), None);
+        assert_eq!(envelope_address(""), None);
+        assert_eq!(envelope_address("< >"), None);
+    }
+
+    /// The envelope is not the headers. `From:` is author-supplied and freely
+    /// forged; `To:` need not mention the actual recipients at all once Bcc
+    /// or list expansion is involved. Persisting the headers instead of the
+    /// envelope would record what the sender claimed rather than what the MTA
+    /// accepted.
+    #[test]
+    fn the_subject_is_hashed_not_stored() {
+        let mut s = Session::default();
+        s.headers.push(("Subject".into(), "Q3 layoff list".into()));
+        let h = s.subject_hash().expect("subject present");
+        assert_eq!(h.len(), 32);
+        // The plaintext must not survive into the hash.
+        assert!(!String::from_utf8_lossy(&h).contains("layoff"));
+
+        // Same subject hashes the same, which is what makes correlating
+        // identical subjects across messages possible without storing them.
+        let mut t = Session::default();
+        t.headers.push(("subject".into(), "Q3 layoff list".into()));
+        assert_eq!(t.subject_hash(), Some(h));
+
+        assert_eq!(Session::default().subject_hash(), None);
+    }
+
+    #[test]
+    fn message_id_lookup_is_case_insensitive() {
+        let mut s = Session::default();
+        s.headers.push(("message-id".into(), "<x@y>".into()));
+        assert_eq!(s.rfc_message_id(), Some("<x@y>"));
+    }
+
+    /// Envelope state must not leak from one message to the next on a reused
+    /// connection — a second message would otherwise inherit the first's
+    /// sender and recipients.
+    #[test]
+    fn envelope_state_resets_between_messages() {
+        let mut s = Session::default();
+        s.sender = Some("a@b.example".into());
+        s.recipients.push("c@d.example".into());
+        s.reset_message();
+        assert_eq!(s.sender, None);
+        assert!(s.recipients.is_empty());
     }
 
     /// A structural warning from the MIME walk means something was not

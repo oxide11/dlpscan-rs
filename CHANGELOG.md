@@ -45,6 +45,38 @@ starting from this file.
   MIME structural warning, unopenable attachment — yields `indeterminate`,
   never `clean`.
 
+- **feat(milter): envelope, tenant and direction.** The sender and recipients
+  come from `MAIL FROM` and `RCPT TO`, not from the `From:` and `To:` headers:
+  headers are author-supplied and freely forged, and `To:` need not name the
+  actual recipients once Bcc or list expansion is involved. Persisting the
+  headers would record what the sender claimed rather than what the MTA
+  accepted. `<>` — a bounce's null sender — becomes `None` rather than an
+  empty string, because "no envelope sender" is a real state.
+
+  The subject is stored as a SHA-256 hash. It is often the most sensitive text
+  in a message ("Q3 layoff list"), and the investigation use is correlating
+  identical subjects, which a hash serves.
+
+  Direction is configured (`SIPHON_MILTER_DIRECTION`), not inferred: Postfix
+  already knows which chain the filter is wired into, and guessing from the
+  message gets relayed and forwarded traffic wrong.
+
+- **fix(deploy): adding workspace members broke two Dockerfiles.**
+  `Dockerfile.api` and `Dockerfile.icap` enumerate each member's `Cargo.toml`
+  for a dependency-cache stub layer. Cargo parses the whole workspace even for
+  `-p <one-crate>`, so a member whose manifest was not copied fails the build
+  with "failed to load manifest for workspace member" — verified by
+  reconstructing the stub layout, not assumed. Both now list the two new
+  crates. `Dockerfile.milter` copies `crates/` wholesale instead, like
+  `Dockerfile.fs`, so it cannot drift the same way.
+
+- **chore(deploy): compose service and version-sync coverage.** The milter is
+  covered by `check-version-sync.sh` from its first release rather than
+  retrofitted — siphon-icap shipped without coverage and its Dockerfile LABEL
+  and compose tag have had nothing keeping them honest since. Not added to the
+  Helm chart, matching siphon-icap: new protocol services ship in compose
+  first.
+
 ### siphon-mail 0.1.0 (new crate)
 
 - **refactor(api,milter): move the message/part model into a shared library.**

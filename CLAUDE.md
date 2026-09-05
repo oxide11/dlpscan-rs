@@ -347,6 +347,45 @@ Key env vars:
 | `SIPHON_ICAP_SERVICE_NAME` | dlp | ICAP service path (`/dlp`) |
 | `SIPHON_ICAP_MAX_CONNECTIONS` | 256 | Max concurrent ICAP connections; extras are dropped |
 
+### siphon-milter
+
+Sendmail/Postfix mail filter at `crates/siphon-milter/`. Listens on port 8894.
+Wire it in Postfix with `smtpd_milters = inet:host:8894` (inbound) or
+`non_smtpd_milters` (outbound).
+
+The MTA holds the message while the filter decides; the verdict is stamped
+into the headers and the MTA's own rules act on it (annotate, don't block).
+
+```
+X-Siphon-Result:     clean | flagged | quarantine | block | indeterminate
+X-Siphon-Categories: SSN,Credit Card
+X-Siphon-Findings:   3
+X-Siphon-Scan-Id:    <uuid>
+```
+
+| Variable | Default | Notes |
+|---|---|---|
+| `SIPHON_MILTER_PORT` | 8894 | |
+| `SIPHON_MILTER_BIND` | 0.0.0.0 | |
+| `SIPHON_MILTER_ALLOWED_NETS` | **required** | Comma-separated IP/CIDR allowlist for MTA connections. `0.0.0.0/0` for dev |
+| `SIPHON_MILTER_ON_INDETERMINATE` | defer | `defer` (451 tempfail, fail closed) or `deliver` (fail open, annotated). `quarantine` is **refused at startup** — there is nowhere to hold a message yet, and silently behaving as `defer` would replace the operator's chosen failure direction. An unknown value is an error, never a fallback |
+| `SIPHON_MILTER_TIMEOUT_SECS` | 10 | From the measurements in `docs/architecture/email-dlp.md` §4.5 |
+| `SIPHON_MILTER_MAX_MESSAGE_BYTES` | 31457280 | 30 MB ingest cap. Distinct from the scanner's per-part text cap |
+| `SIPHON_MILTER_MAX_CONNECTIONS` | 256 | |
+| `SIPHON_MILTER_MIN_CONFIDENCE` | 0.6 | |
+| `SIPHON_MILTER_DIRECTION` | inbound | `inbound` or `outbound`. Configured, not inferred — Postfix already knows which chain the filter is wired into, and guessing gets relayed mail wrong |
+| `SIPHON_MILTER_TENANT` | default | |
+| `SIPHON_DATABASE_URL` | — | Optional. Without it the milter still scans, decides and stamps; what it loses is the retry guard and the investigation record. **The milter never runs migrations** — siphon-api owns the runner and its ordering |
+
+**`milter_default_action` must agree with `SIPHON_MILTER_ON_INDETERMINATE`.**
+If Postfix is set to `accept` on milter failure it fails open on timeout
+regardless of anything configured here — the MTA gets the last word, and a
+disagreement is a silent bypass. Under the default policy Postfix needs
+`milter_default_action = tempfail`.
+
+Not in the Helm chart, matching siphon-icap: new protocol services ship in
+`docker-compose.yml` first.
+
 ### CLI subcommands (root `siphon` crate)
 
 ```
