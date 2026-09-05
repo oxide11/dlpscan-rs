@@ -94,8 +94,17 @@ pub const MAX_MATCHES: usize = 50_000;
 /// Maximum scan time in seconds.
 pub const MAX_SCAN_SECONDS: u64 = 120;
 
-/// Maximum input size (10 MB).
-pub const MAX_INPUT_SIZE: usize = 10 * 1024 * 1024;
+/// Largest text the scanner will accept.
+///
+/// Re-exported rather than defined here. This path used to carry its own
+/// `10 * 1024 * 1024`, which nothing read — the pipeline enforces the cap
+/// through [`crate::validation::validate_text_input`] — so when the real cap
+/// moved to 30 MB this constant silently stayed at 10 and disagreed with
+/// enforcement by 3x. A caller reaching for `scanner::MAX_INPUT_SIZE` to
+/// pre-check its input would have rejected text the scanner accepts.
+///
+/// A re-export cannot drift.
+pub use crate::validation::MAX_INPUT_SIZE;
 
 /// Scanner configuration.
 pub struct ScanConfig {

@@ -3317,6 +3317,20 @@ mod offset_width_tests {
     /// At the input cap the map must stay well inside what an Offset can
     /// address, with room for normalization stages that grow the text
     /// (NFKC can expand a character into several).
+    /// The cap and the pod memory limit are one decision, not two. A scan at
+    /// the cap was measured at ~336 MB RSS, and `values.yaml` sizes api/fs at
+    /// 2Gi from that number. Raising the cap without revisiting that limit
+    /// turns a large message into an OOM kill.
+    #[test]
+    fn input_cap_is_the_value_the_pod_limits_were_sized_for() {
+        assert_eq!(
+            crate::validation::MAX_INPUT_SIZE,
+            30 * 1024 * 1024,
+            "if this changes, re-measure peak RSS and re-size the memory \
+             limits in deploy/helm/siphon/values.yaml"
+        );
+    }
+
     #[test]
     fn input_cap_fits_the_offset_width_with_headroom() {
         let cap = crate::validation::MAX_INPUT_SIZE;

@@ -14,6 +14,60 @@ starting from this file.
 
 ---
 
+## 2026-09-04 — Raise the scanner input cap to 30 MB
+
+### siphon-core 2.7.0
+
+- **feat(core): raise `MAX_INPUT_SIZE` from 10 MB to 30 MB.** Now safe to do,
+  and now effective everywhere — the two prerequisites landed first. The offset
+  map moved to `u32` (2.5.0), halving the dominant allocation, and siphon-api
+  stopped copying the cap as an inline literal at four call sites (2.8.1), so
+  raising the constant actually changes what those handlers accept rather than
+  leaving them rejecting at the old value.
+
+  Sized from measurement rather than estimate. Peak RSS for a single scan:
+
+  | Input | Peak RSS | Wall time |
+  |---|---|---|
+  | 5 MB | 189 MB | 0.79 s |
+  | 9 MB | 211 MB | 1.18 s |
+  | 20 MB | 279 MB | 2.16 s |
+  | 30 MB | **336 MB** | **3.08 s** |
+
+  Roughly 5.5 MB of RSS per MB of input. That is the number the pod limits are
+  now sized from: at the previous 1Gi only two concurrent maximum-size scans
+  fit before an OOM kill.
+
+  A test pins the cap to the value the limits were sized for, so raising it
+  again fails until someone re-measures — the cap and the memory limit are one
+  decision, not two.
+
+  This is the *text* cap, not an upload or message cap. siphon-fs still accepts
+  larger uploads and extracts them; text beyond this is reported as
+  `TEXT_EXCEEDS_SCANNER_LIMIT` with the file marked not scanned, never clean.
+
+- **fix(core): `scanner::MAX_INPUT_SIZE` was a second, stale definition.**
+  It carried its own `10 * 1024 * 1024`. Nothing in the workspace read it —
+  the pipeline enforces the cap through `validation::validate_text_input` —
+  so behaviour was correct, but it is a `pub` constant, and once the real cap
+  moved it disagreed with enforcement by 3x. Any caller reaching for it to
+  pre-check input would have rejected text the scanner accepts, which is
+  exactly what the forthcoming mail path would have done.
+
+  It is now a re-export of `validation::MAX_INPUT_SIZE`. Same path, same
+  type, no breaking change — and a re-export cannot drift. New callers should
+  use `siphon_core::validation::MAX_INPUT_SIZE` and never a literal.
+
+### Helm chart 2.4.0
+
+- **chore(chart): raise api and fs memory to 512Mi request / 2Gi limit.**
+  Carries the cap change: 2Gi leaves room for roughly five concurrent
+  maximum-size scans, which is the headroom a burst of large attachments
+  needs. Other services are unchanged — icap has its own 10 MB body cap and
+  postgres/nginx do not scan.
+
+---
+
 ## 2026-09-04 — Shared MIME layer: .eml attachments were never scanned
 
 ### siphon-core 2.6.0
