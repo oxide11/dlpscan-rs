@@ -148,16 +148,43 @@ pattern was asked the same questions:
   share `\b\d{8}\b`; ask for Texas and the scanner reports Arkansas. The
   right answer is not a better test — it is that a pattern which cannot be
   told apart from its neighbour should not be advertised as separate.
-- **33 patterns require a separator that normalization removes.** Stage 6c
-  strips a consistent separator between digit groups, which is what turns
-  `219 09 9999` back into an SSN — and what turns `20500-0003` into
-  `205000003` before `\b\d{5}-\d{4}\b` ever sees it. `US ZIP+4 Code` cannot
-  fire. Any pattern whose regex *mandates* a separator is in the same
-  position; patterns that make it optional are unaffected.
+- **Patterns that require a separator normalization removes** could not fire
+  at all. Stage 6c strips a consistent separator between digit groups, which
+  is what turns `219 09 9999` back into an SSN — and what turned `20500-0003`
+  into `205000003` before `\b\d{5}-\d{4}\b` ever saw it. `US ZIP+4 Code`,
+  `Japan Postal Code`, `Brazil CEP`, `NDC Code` and the date patterns were all
+  dead. **Fixed** by the raw-text second pass below; patterns that make the
+  separator optional were never affected.
 - **`Date ISO` is gated on date-of-birth keywords.** Its context entry is
   `date of birth`, `dob`, `birthday` — so a generic ISO date in any other
   setting never fires. That may be deliberate, but the category name does not
   say so.
+
+### The raw-text second pass
+
+Normalization is applied once and every pattern matches against the result.
+That is what defeats separator evasion — and it is also why a pattern whose
+regex *mandates* a separator could never match, because the character it
+insists on is gone before the regex runs.
+
+Skipping normalization for those patterns would not have helped: they are
+blind to separator evasion either way, since they demand a literal character.
+So the scan runs them over **both** views. Strictly additive — the normalized
+pass is untouched, so nothing that matched before stops matching.
+
+Two things keep it off the hot path:
+
+- it only runs when normalization actually changed the text, and
+- only for a flagged pattern that found **nothing** on the normalized pass.
+
+That second condition is what makes `requires_stripped_separator` a *cost*
+heuristic rather than a correctness gate: it currently flags 53 patterns and
+some of those are false positives, but a false positive costs one regex run
+and a false negative leaves a pattern exactly as broken as it was.
+
+Measured on a 4.2 KB document that triggers normalization: **0.397 →
+0.428 ms/scan, +7.8%**, and `US ZIP+4 Code` goes from never firing to firing.
+Dedup runs across both views, so a value found twice is reported once.
 
 ### Format confusion
 
