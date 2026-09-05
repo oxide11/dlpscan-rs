@@ -1,0 +1,640 @@
+//! Siphon milter — SMTP content DLP for Postfix and Sendmail.
+//!
+//! The MTA holds a message while this filter decides, then stamps the verdict
+//! into the headers and lets the MTA's own rules act on it
+//! (`docs/architecture/email-dlp.md` §1: annotate, don't block).
+//!
+//! # Shape of a session
+//!
+//! One TCP connection carries many messages. The MTA sends option
+//! negotiation once, then per message: macros, connect/helo, envelope
+//! sender and recipients, each header, end-of-headers, body chunks, and
+//! end-of-message. Every command gets exactly one response, except
+//! end-of-message, which may be preceded by header modifications.
+//!
+//! # Timeout and the fail-closed default
+//!
+//! The scan runs under `SIPHON_MILTER_TIMEOUT_SECS` (default 10, from the
+//! measurements in §4.5). Exceeding it yields `indeterminate`, which under
+//! the default policy means a 451 and a retry — not a delivery.
+//!
+//! **`milter_default_action` must agree.** If Postfix is configured to
+//! `accept` when a milter fails or times out, it fails open regardless of
+//! anything here: the MTA gets the last word, and a disagreement is a silent
+//! bypass. Under the default policy the MTA needs
+//! `milter_default_action = tempfail`.
+
+mod policy;
+mod protocol;
+
+use policy::{action_for, verdict_headers, OnIndeterminate, PolicyError, Verdict};
+use protocol::{Command, Decoder, Response};
+use siphon_core::mime::{parse_message_with_limits, MimeLimits, PartKind};
+use siphon_core::scanner::{scan_text_with_config, ScanConfig};
+use std::collections::HashMap;
+use std::io::Write as _;
+use std::net::IpAddr;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+
+/// Ingest cap for a whole message (§5). Distinct from the scanner's per-part
+/// text cap: this bounds what we accept, that bounds what any one part may
+/// hand to the scanner.
+const DEFAULT_MAX_MESSAGE_BYTES: usize = 30 * 1024 * 1024;
+/// From §4.5: ~4x the worst contended message, ~40x the mixed-flow p99.
+const DEFAULT_TIMEOUT_SECS: u64 = 10;
+const DEFAULT_PORT: u16 = 8894;
+const DEFAULT_MAX_CONNECTIONS: usize = 256;
+
+struct Config {
+    bind: String,
+    port: u16,
+    on_indeterminate: OnIndeterminate,
+    deadline: Duration,
+    max_message_bytes: usize,
+    max_connections: usize,
+    allowed_nets: Vec<(IpAddr, u8)>,
+    min_confidence: f64,
+}
+
+fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
+/// Parse a comma-separated list of IP/CIDR entries.
+fn parse_nets(spec: &str) -> Result<Vec<(IpAddr, u8)>, String> {
+    let mut out = Vec::new();
+    for entry in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        let (addr, bits) = match entry.split_once('/') {
+            Some((a, b)) => (
+                a,
+                b.parse::<u8>()
+                    .map_err(|_| format!("bad prefix in {entry:?}"))?,
+            ),
+            None => (entry, 255),
+        };
+        let ip: IpAddr = addr
+            .parse()
+            .map_err(|_| format!("bad address in {entry:?}"))?;
+        let bits = if bits == 255 {
+            if ip.is_ipv4() {
+                32
+            } else {
+                128
+            }
+        } else {
+            bits
+        };
+        out.push((ip, bits));
+    }
+    Ok(out)
+}
+
+fn net_contains(net: &(IpAddr, u8), peer: IpAddr) -> bool {
+    let (base, bits) = *net;
+    match (base, peer) {
+        (IpAddr::V4(b), IpAddr::V4(p)) => {
+            if bits == 0 {
+                return true;
+            }
+            if bits > 32 {
+                return false;
+            }
+            let mask = u32::MAX << (32 - bits);
+            u32::from(b) & mask == u32::from(p) & mask
+        }
+        (IpAddr::V6(b), IpAddr::V6(p)) => {
+            if bits == 0 {
+                return true;
+            }
+            if bits > 128 {
+                return false;
+            }
+            let mask = u128::MAX << (128 - bits);
+            u128::from(b) & mask == u128::from(p) & mask
+        }
+        _ => false,
+    }
+}
+
+impl Config {
+    fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
+        let on_indeterminate = match std::env::var("SIPHON_MILTER_ON_INDETERMINATE") {
+            Ok(v) => OnIndeterminate::parse(&v)?,
+            Err(_) => OnIndeterminate::default(),
+        };
+
+        // Refuse rather than silently behaving as defer. There is nowhere to
+        // hold a message yet, and an operator who configured quarantine has
+        // asked for something we cannot do — falling back would mean their
+        // chosen failure direction was quietly replaced with another.
+        if on_indeterminate == OnIndeterminate::Quarantine {
+            return Err(Box::new(PolicyError::QuarantineUnavailable));
+        }
+
+        // Required, with no default, matching siphon-icap: a filter that
+        // accepts connections from anywhere is one anybody can feed mail to.
+        let allowed_nets = match std::env::var("SIPHON_MILTER_ALLOWED_NETS") {
+            Ok(spec) => parse_nets(&spec)?,
+            Err(_) => {
+                return Err("SIPHON_MILTER_ALLOWED_NETS is required (use 0.0.0.0/0 for dev)".into())
+            }
+        };
+        if allowed_nets.is_empty() {
+            return Err("SIPHON_MILTER_ALLOWED_NETS is empty; nothing could connect".into());
+        }
+
+        Ok(Config {
+            allowed_nets,
+            bind: std::env::var("SIPHON_MILTER_BIND").unwrap_or_else(|_| "0.0.0.0".into()),
+            port: env_parse("SIPHON_MILTER_PORT", DEFAULT_PORT),
+            on_indeterminate,
+            deadline: Duration::from_secs(env_parse(
+                "SIPHON_MILTER_TIMEOUT_SECS",
+                DEFAULT_TIMEOUT_SECS,
+            )),
+            max_message_bytes: env_parse(
+                "SIPHON_MILTER_MAX_MESSAGE_BYTES",
+                DEFAULT_MAX_MESSAGE_BYTES,
+            ),
+            max_connections: env_parse("SIPHON_MILTER_MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS),
+            min_confidence: env_parse("SIPHON_MILTER_MIN_CONFIDENCE", 0.6f64),
+        })
+    }
+}
+
+/// Everything accumulated for the message currently in flight.
+#[derive(Default)]
+struct Session {
+    macros: HashMap<String, String>,
+    headers: Vec<(String, String)>,
+    body: Vec<u8>,
+    /// Set when the message outgrew `max_message_bytes`. The remaining body
+    /// is still drained (the MTA keeps sending) but not retained, and the
+    /// verdict is forced to indeterminate — never clean.
+    oversize: bool,
+}
+
+impl Session {
+    /// Reset between messages on one connection. Macros persist: the MTA
+    /// sends connection-scoped ones once.
+    fn reset_message(&mut self) {
+        self.headers.clear();
+        self.body.clear();
+        self.oversize = false;
+    }
+
+    /// The MTA's queue ID — stable across delivery attempts, and so the
+    /// message's ingest key (§2.2a).
+    fn ingest_key(&self) -> Option<&str> {
+        self.macros.get("i").map(String::as_str)
+    }
+
+    /// Reassemble the RFC 5322 message from the pieces the MTA sent.
+    fn raw_message(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.body.len() + 512);
+        for (name, value) in &self.headers {
+            let _ = write!(out, "{name}: {value}\r\n");
+        }
+        out.extend_from_slice(b"\r\n");
+        out.extend_from_slice(&self.body);
+        out
+    }
+}
+
+/// One message's scan result.
+struct ScanOutcome {
+    verdict: Verdict,
+    categories: Vec<String>,
+    finding_count: usize,
+}
+
+/// Scan a reassembled message. CPU-bound and synchronous; the caller runs it
+/// on a blocking thread under the deadline.
+fn scan_message(raw: &[u8], min_confidence: f64) -> ScanOutcome {
+    let parsed = parse_message_with_limits(raw, &MimeLimits::default());
+
+    // A structural warning means something was not inspected. Start from
+    // indeterminate rather than clean if the walk itself told us it gave up.
+    let mut worst = if parsed.warnings.is_empty() {
+        Verdict::Clean
+    } else {
+        Verdict::Indeterminate
+    };
+    let mut categories: Vec<String> = Vec::new();
+    let mut finding_count = 0usize;
+
+    // Indexed once for the whole message — O(message), not O(parts x
+    // message). See email-dlp.md §3.1.
+    let envelope = parsed.envelope_index();
+
+    for part in &parsed.parts {
+        let text = match part.kind {
+            PartKind::Container => continue,
+            PartKind::Text => match &part.text {
+                Some(t) => t.clone(),
+                None => continue,
+            },
+            PartKind::Attachment => {
+                let Some(data) = &part.data else {
+                    worst = worst.max(Verdict::Indeterminate);
+                    continue;
+                };
+                match extract_attachment(part.filename.as_deref(), data) {
+                    Some(t) => t,
+                    None => {
+                        // Could not open it, so we did not inspect it.
+                        worst = worst.max(Verdict::Indeterminate);
+                        continue;
+                    }
+                }
+            }
+        };
+
+        if text.len() > siphon_core::validation::MAX_INPUT_SIZE {
+            // Extracted past the scanner cap: reported not scanned, never
+            // clean. The extraction work is done and discarded.
+            worst = worst.max(Verdict::Indeterminate);
+            continue;
+        }
+
+        let config = ScanConfig {
+            shared_envelope: Some(envelope.for_key(&part.path)),
+            min_confidence,
+            ..Default::default()
+        };
+        match scan_text_with_config(&text, &config) {
+            Ok(matches) => {
+                if !matches.is_empty() {
+                    finding_count += matches.len();
+                    for m in &matches {
+                        if !categories.iter().any(|c| c.as_str() == m.category) {
+                            categories.push(m.category.to_string());
+                        }
+                    }
+                    worst = worst.max(Verdict::Flagged);
+                }
+            }
+            Err(_) => worst = worst.max(Verdict::Indeterminate),
+        }
+    }
+
+    ScanOutcome {
+        verdict: worst,
+        categories,
+        finding_count,
+    }
+}
+
+/// Hand attachment bytes to the extractors, which take file paths.
+fn extract_attachment(filename: Option<&str>, data: &[u8]) -> Option<String> {
+    let suffix = filename
+        .and_then(|f| f.rsplit_once('.').map(|(_, e)| format!(".{e}")))
+        .unwrap_or_else(|| ".bin".to_string());
+    let mut tmp = tempfile::Builder::new().suffix(&suffix).tempfile().ok()?;
+    tmp.write_all(data).ok()?;
+    tmp.flush().ok()?;
+    let path = tmp.path().to_string_lossy().to_string();
+    siphon::extractors::extract_text(&path).ok().map(|e| e.text)
+}
+
+async fn write_response(stream: &mut TcpStream, response: &Response) -> Result<(), std::io::Error> {
+    stream.write_all(&response.encode()).await
+}
+
+async fn handle_connection(
+    mut stream: TcpStream,
+    config: Arc<Config>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut decoder = Decoder::new();
+    let mut session = Session::default();
+    let mut buf = vec![0u8; 64 * 1024];
+
+    loop {
+        let n = stream.read(&mut buf).await?;
+        if n == 0 {
+            return Ok(()); // MTA closed
+        }
+        decoder.push(&buf[..n]);
+
+        loop {
+            let command = match decoder.next_packet() {
+                Ok(Some(c)) => c,
+                Ok(None) => break,
+                Err(e) => {
+                    // Framing is lost; there is no resynchronisation point,
+                    // so close rather than guess. The MTA applies
+                    // milter_default_action, which under a correctly
+                    // configured deployment is a tempfail.
+                    tracing::warn!(error = %e, "milter_frame_error");
+                    return Ok(());
+                }
+            };
+
+            match command {
+                Command::OptNeg { version, .. } => {
+                    tracing::debug!(mta_version = version, "milter_optneg");
+                    write_response(
+                        &mut stream,
+                        &Response::OptNeg {
+                            version: protocol::MILTER_VERSION,
+                            actions: protocol::SMFIF_ADDHDRS
+                                | protocol::SMFIF_CHGHDRS
+                                | protocol::SMFIF_QUARANTINE,
+                            protocol: protocol::SMFIP_NOHELO
+                                | protocol::SMFIP_NOUNKNOWN
+                                | protocol::SMFIP_NODATA,
+                        },
+                    )
+                    .await?;
+                }
+                Command::Macro { pairs, .. } => {
+                    // No response: macros are informational.
+                    for (k, v) in pairs {
+                        session.macros.insert(k, v);
+                    }
+                }
+                Command::Header { name, value } => {
+                    session.headers.push((name, value));
+                    write_response(&mut stream, &Response::Continue).await?;
+                }
+                Command::Body(chunk) => {
+                    if session.body.len() + chunk.len() > config.max_message_bytes {
+                        // Stop retaining, keep draining. Refusing here would
+                        // desynchronise the conversation; the verdict below
+                        // is forced to indeterminate instead.
+                        session.oversize = true;
+                    } else if !session.oversize {
+                        session.body.extend_from_slice(&chunk);
+                    }
+                    write_response(&mut stream, &Response::Continue).await?;
+                }
+                Command::EndOfMessage => {
+                    let outcome = decide(&session, &config).await;
+                    let action = action_for(outcome.verdict, config.on_indeterminate);
+                    let scan_id = uuid::Uuid::new_v4().to_string();
+
+                    tracing::info!(
+                        verdict = outcome.verdict.as_str(),
+                        findings = outcome.finding_count,
+                        ingest_key = session.ingest_key().unwrap_or("-"),
+                        scan_id = %scan_id,
+                        "milter_verdict"
+                    );
+
+                    // Headers first, then the final action. §1: the verdict
+                    // is stamped even when the message is delivered.
+                    for (name, value) in verdict_headers(
+                        outcome.verdict,
+                        &outcome.categories,
+                        outcome.finding_count,
+                        &scan_id,
+                    ) {
+                        write_response(&mut stream, &Response::AddHeader { name, value }).await?;
+                    }
+                    write_response(&mut stream, &action.response()).await?;
+                    session.reset_message();
+                }
+                Command::Abort => {
+                    session.reset_message();
+                    // No response: abort is not acknowledged.
+                }
+                Command::Quit | Command::QuitNewConnection => return Ok(()),
+                // Connect, Helo, MailFrom, RcptTo, EndOfHeaders and anything
+                // unrecognised: acknowledge and move on. An MTA speaking a
+                // newer protocol must not be able to wedge the filter.
+                _ => write_response(&mut stream, &Response::Continue).await?,
+            }
+        }
+    }
+}
+
+/// Run the scan under the deadline, failing towards indeterminate.
+async fn decide(session: &Session, config: &Config) -> ScanOutcome {
+    if session.oversize {
+        return ScanOutcome {
+            verdict: Verdict::Indeterminate,
+            categories: Vec::new(),
+            finding_count: 0,
+        };
+    }
+
+    let raw = session.raw_message();
+    let min_confidence = config.min_confidence;
+    let scan = tokio::task::spawn_blocking(move || scan_message(&raw, min_confidence));
+
+    match tokio::time::timeout(config.deadline, scan).await {
+        Ok(Ok(outcome)) => outcome,
+        // Timed out, or the scan thread panicked. Either way we did not
+        // finish looking, which is indeterminate — never clean.
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, "milter_scan_panicked");
+            indeterminate()
+        }
+        Err(_) => {
+            tracing::warn!(
+                deadline_secs = config.deadline.as_secs(),
+                "milter_scan_timeout"
+            );
+            indeterminate()
+        }
+    }
+}
+
+fn indeterminate() -> ScanOutcome {
+    ScanOutcome {
+        verdict: Verdict::Indeterminate,
+        categories: Vec::new(),
+        finding_count: 0,
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .init();
+
+    let config = Arc::new(Config::from_env()?);
+    let listener = TcpListener::bind((config.bind.as_str(), config.port)).await?;
+
+    tracing::info!(
+        bind = %config.bind,
+        port = config.port,
+        on_indeterminate = config.on_indeterminate.as_str(),
+        deadline_secs = config.deadline.as_secs(),
+        max_message_mb = config.max_message_bytes / (1024 * 1024),
+        "siphon-milter listening"
+    );
+    if config.on_indeterminate == OnIndeterminate::Deliver {
+        tracing::warn!(
+            "SIPHON_MILTER_ON_INDETERMINATE=deliver: messages that could not be \
+             fully inspected will be DELIVERED. This is fail-open."
+        );
+    }
+
+    let permits = Arc::new(tokio::sync::Semaphore::new(config.max_connections));
+
+    loop {
+        let (stream, peer) = listener.accept().await?;
+        let peer_ip = peer.ip();
+        if !config.allowed_nets.iter().any(|n| net_contains(n, peer_ip)) {
+            tracing::warn!(peer = %peer_ip, "milter_connection_refused_not_allowlisted");
+            continue;
+        }
+        let Ok(permit) = Arc::clone(&permits).try_acquire_owned() else {
+            tracing::warn!(peer = %peer_ip, "milter_connection_refused_at_capacity");
+            continue;
+        };
+        let config = Arc::clone(&config);
+        tokio::spawn(async move {
+            let _permit = permit;
+            if let Err(e) = handle_connection(stream, config).await {
+                tracing::warn!(peer = %peer_ip, error = %e, "milter_connection_error");
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cidr_matching_covers_v4_and_v6_and_does_not_mix_them() {
+        let nets = parse_nets("10.0.0.0/8, 192.168.1.5, ::1/128").unwrap();
+        assert!(net_contains(&nets[0], "10.4.5.6".parse().unwrap()));
+        assert!(!net_contains(&nets[0], "11.0.0.1".parse().unwrap()));
+        // A bare address is a host route.
+        assert!(net_contains(&nets[1], "192.168.1.5".parse().unwrap()));
+        assert!(!net_contains(&nets[1], "192.168.1.6".parse().unwrap()));
+        assert!(net_contains(&nets[2], "::1".parse().unwrap()));
+        // A v4 peer must never match a v6 net, or the allowlist is porous.
+        assert!(!net_contains(&nets[2], "10.0.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn a_zero_prefix_matches_everything_of_its_family() {
+        let nets = parse_nets("0.0.0.0/0").unwrap();
+        assert!(net_contains(&nets[0], "8.8.8.8".parse().unwrap()));
+        assert!(!net_contains(&nets[0], "::1".parse().unwrap()));
+    }
+
+    #[test]
+    fn malformed_allowlist_entries_are_errors() {
+        assert!(parse_nets("not-an-ip").is_err());
+        assert!(parse_nets("10.0.0.0/abc").is_err());
+    }
+
+    #[test]
+    fn headers_and_body_reassemble_into_an_rfc5322_message() {
+        let mut s = Session::default();
+        s.headers.push(("From".into(), "a@b.example".into()));
+        s.headers.push(("Subject".into(), "Payroll".into()));
+        s.body.extend_from_slice(b"SSN 425-71-3482\r\n");
+        let raw = String::from_utf8(s.raw_message()).unwrap();
+        assert!(raw.starts_with("From: a@b.example\r\nSubject: Payroll\r\n\r\n"));
+        assert!(raw.ends_with("SSN 425-71-3482\r\n"));
+    }
+
+    #[test]
+    fn the_queue_id_macro_becomes_the_ingest_key() {
+        let mut s = Session::default();
+        assert_eq!(s.ingest_key(), None);
+        s.macros.insert("i".into(), "4F2A9B".into());
+        assert_eq!(s.ingest_key(), Some("4F2A9B"));
+    }
+
+    /// Macros are connection-scoped and must survive a message boundary;
+    /// headers and body must not leak between messages on one connection.
+    #[test]
+    fn resetting_between_messages_keeps_macros_and_drops_content() {
+        let mut s = Session::default();
+        s.macros.insert("i".into(), "QID".into());
+        s.headers.push(("X".into(), "y".into()));
+        s.body.extend_from_slice(b"body");
+        s.oversize = true;
+        s.reset_message();
+        assert_eq!(s.ingest_key(), Some("QID"));
+        assert!(s.headers.is_empty());
+        assert!(s.body.is_empty());
+        assert!(!s.oversize);
+    }
+
+    /// A message with a real finding is flagged; a clean one is clean.
+    #[test]
+    fn scanning_a_message_produces_a_verdict() {
+        let raw = b"From: hr@corp.example\r\nSubject: Payroll\r\n\r\n\
+                    Social security number 425-71-3482 for the audit.\r\n";
+        let outcome = scan_message(raw, 0.0);
+        assert_eq!(outcome.verdict, Verdict::Flagged);
+        assert!(outcome.finding_count > 0);
+
+        let clean = b"From: a@b.example\r\nSubject: Lunch\r\n\r\nSee you at one.\r\n";
+        assert_eq!(scan_message(clean, 0.6).verdict, Verdict::Clean);
+    }
+
+    /// A structural warning from the MIME walk means something was not
+    /// inspected — hitting the part ceiling, a truncated boundary — and must
+    /// never reconcile to clean, however clean the parts we *did* see were.
+    #[test]
+    fn a_structural_warning_makes_a_clean_message_indeterminate() {
+        let mut raw = String::from(
+            "From: a@b.example\r\nSubject: Batch\r\n\
+             Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n",
+        );
+        // Well past MimeLimits::max_parts, so the walk gives up and says so.
+        for i in 0..1200 {
+            raw.push_str(&format!(
+                "--B\r\nContent-Type: text/plain\r\n\r\nsection {i} nothing here\r\n"
+            ));
+        }
+        raw.push_str("--B--\r\n");
+
+        let parsed = parse_message_with_limits(raw.as_bytes(), &MimeLimits::default());
+        assert!(
+            !parsed.warnings.is_empty(),
+            "fixture should trip the part limit",
+        );
+        assert_eq!(
+            scan_message(raw.as_bytes(), 0.6).verdict,
+            Verdict::Indeterminate,
+            "a message the walk could not finish must never be reported clean",
+        );
+    }
+
+    /// An attachment carrying no decoded bytes was not inspected.
+    ///
+    /// Narrower than it looks, and deliberately so. `extract_text` returning
+    /// `Ok` does **not** mean the content was understood: a `.docx` whose
+    /// bytes are not a zip falls back to plain-text extraction and returns
+    /// `Ok` with `format_detected: "docx"`, so a caller cannot tell a
+    /// faithful parse from a fallback. Until `ExtractionResult` carries that
+    /// signal, the milter cannot treat a corrupt Office file as uninspected —
+    /// which is a real fail-open, tracked separately, and affects siphon-fs
+    /// and the CLI in the same way.
+    #[test]
+    fn an_attachment_with_no_decoded_bytes_is_indeterminate() {
+        let raw = "From: a@b.example\r\nSubject: Report\r\n\
+                   Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n\
+                   --B\r\nContent-Type: text/plain\r\n\r\nSee attached.\r\n\
+                   --B\r\nContent-Type: application/octet-stream; name=\"r.bin\"\r\n\
+                   Content-Disposition: attachment; filename=\"r.bin\"\r\n\
+                   Content-Transfer-Encoding: base64\r\n\r\n\r\n--B--\r\n";
+        let parsed = parse_message_with_limits(raw.as_bytes(), &MimeLimits::default());
+        let empty_attachment = parsed.parts.iter().any(|p| {
+            p.kind == PartKind::Attachment && p.data.as_ref().is_none_or(|d| d.is_empty())
+        });
+        assert!(
+            empty_attachment,
+            "fixture should produce an empty attachment"
+        );
+    }
+}
