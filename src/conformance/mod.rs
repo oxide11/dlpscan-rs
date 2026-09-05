@@ -134,6 +134,22 @@ pub enum Expect {
     /// to overwrite. Asserting on the decoded value there would be asserting
     /// the wrong behaviour.
     DetectsSubCategory(&'static str),
+    /// The filename contradicts the content, and both halves must hold: the
+    /// content won (the planted value is reported) *and* the contradiction
+    /// was recorded in `metadata["format_mismatch"]`.
+    ///
+    /// Recording it is not decoration. A container renamed into the text
+    /// family is the shape of deliberate exfiltration, so reading it
+    /// correctly and saying nothing would throw away the most interesting
+    /// fact about the file.
+    DisguisedButFound(&'static str),
+    /// The filename and content agree, so no contradiction may be recorded,
+    /// and the planted value is still reported.
+    ///
+    /// The guard against an over-eager sniffer: a weak signature that
+    /// hijacks dispatch turns every document starting with the wrong two
+    /// bytes into an unreadable file.
+    NoMismatchAndFound(&'static str),
     /// Nothing may be reported except these sub_categories.
     ///
     /// For formats whose envelope inherently carries a detectable value: an
@@ -282,6 +298,53 @@ pub fn run_case(c: &Case) -> Result<(), String> {
                 c.note,
                 found.len(),
                 found.join(", ")
+            ))
+        }
+        Expect::DisguisedButFound(needle) | Expect::NoMismatchAndFound(needle) => {
+            let want_mismatch = matches!(c.expect, Expect::DisguisedButFound(_));
+            let r = extracted.map_err(|e| format!("{}\n  extraction failed: {e}", c.note))?;
+            let recorded = r.metadata.get("format_mismatch");
+
+            match (want_mismatch, recorded) {
+                (true, None) => {
+                    return Err(format!(
+                        "{}\n  the name contradicts the content and nothing was \
+                         recorded — read as {}, metadata carries no \
+                         format_mismatch",
+                        c.note, r.format
+                    ))
+                }
+                (false, Some(m)) => {
+                    return Err(format!(
+                        "{}\n  a contradiction was recorded for a file whose name \
+                         and content agree: {m:?}\n  a signature weak enough to \
+                         fire here will fire on ordinary documents",
+                        c.note
+                    ))
+                }
+                _ => {}
+            }
+
+            let matches = scan(&r.text)?;
+            if matches.iter().any(|m| m.text.contains(needle)) {
+                return Ok(());
+            }
+            let found: Vec<String> = matches
+                .iter()
+                .map(|m| format!("{}={}", m.sub_category, m.redacted_text()))
+                .collect();
+            Err(format!(
+                "{}\n  planted value was not reported\n  extractor: {} ({} chars)\n  \
+                 mismatch: {:?}\n  findings: {}",
+                c.note,
+                r.format,
+                r.text.len(),
+                recorded,
+                if found.is_empty() {
+                    "none".to_string()
+                } else {
+                    found.join(", ")
+                },
             ))
         }
         Expect::NoFindingsExcept(allowed) => {

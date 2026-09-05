@@ -249,6 +249,18 @@ pub fn get_extractor(file_path: &str) -> Option<ExtractorFn> {
 
 /// Extract text from a file, auto-detecting format.
 pub fn extract_text(file_path: &str) -> Result<ExtractionResult, String> {
+    extract_text_with_policy(file_path, OnFormatMismatch::from_env())
+}
+
+/// Extract text with an explicit format-mismatch policy.
+///
+/// Separate from [`extract_text`] so a caller carrying its own configuration
+/// can pass it, and so the policy is testable without mutating
+/// process-global environment variables from tests that run in parallel.
+pub fn extract_text_with_policy(
+    file_path: &str,
+    on_mismatch: OnFormatMismatch,
+) -> Result<ExtractionResult, String> {
     // Check file size
     let metadata = std::fs::metadata(file_path).map_err(|e| e.to_string())?;
     if metadata.len() as usize > MAX_EXTRACT_SIZE {
@@ -257,6 +269,79 @@ pub fn extract_text(file_path: &str) -> Result<ExtractionResult, String> {
             metadata.len(),
             MAX_EXTRACT_SIZE
         ));
+    }
+
+    // ---------------------------------------------------------------------
+    // Arbitrate between what the name claims and what the bytes prove.
+    //
+    // The filename is the weakest signal there is and the only one an
+    // attacker changes for free. FUTURE.md's corroboration entry states the
+    // rule for exactly this shape of problem: an attacker-controlled signal
+    // may weight a decision, it must never gate detection. Dispatching on the
+    // extension alone gates it — `zip -q p.zip secrets.txt && mv p.zip
+    // notes.txt` sent a deflated archive to the plain-text reader, which read
+    // the compressed bytes as lossy UTF-8, found nothing, and returned a
+    // faithful clean result with no warning at all.
+    //
+    // So the bytes lead and the name corroborates:
+    //
+    //   agree      the extension refines the family (zip -> docx vs odt vs
+    //              a plain archive) and is used, because within a proven
+    //              family it is the only thing that can tell them apart
+    //   disagree   the content wins, and the disagreement is recorded — it is
+    //              a finding in its own right, not a mistake to correct in
+    //              silence
+    //   no proof   the extension is used, exactly as before. Text has no
+    //              signature, so this is the common path and it is unchanged
+    //
+    // Recorded in `metadata`, not `warnings`: a warning means "content we did
+    // not read", and the milter defers on it. A renamed file that we then
+    // read correctly *was* read. Conflating the two would defer every message
+    // carrying a misnamed attachment.
+    // ---------------------------------------------------------------------
+    let ext = Path::new(file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase());
+    let declared = ext.as_deref().and_then(declared_family);
+    let actual = sniff_family(file_path);
+
+    if let (Some(a), Some(e)) = (actual, ext.as_deref()) {
+        if declared != Some(a) {
+            let mismatch = format!("declared .{e}, content is {}", a.name());
+
+            // Surfaced at warn level with structured fields, because this is
+            // the shape of deliberate exfiltration rather than of an
+            // ordinary mislabelled file — it is the line an operator alerts
+            // on.
+            if on_mismatch != OnFormatMismatch::Ignore {
+                tracing::warn!(
+                    path = %file_path,
+                    declared_extension = %e,
+                    content_family = %a.name(),
+                    policy = ?on_mismatch,
+                    "file extension contradicts its content"
+                );
+            }
+
+            if on_mismatch == OnFormatMismatch::Reject {
+                // Deliberately an extraction error: every caller already
+                // fails closed on one, so the configured refusal reaches the
+                // CLI's exit code, siphon-fs's response and the milter's
+                // verdict without any of them having to learn a new signal.
+                return Err(format!("refusing file: {mismatch}"));
+            }
+
+            if let Some(extractor) = detect_and_extract(file_path) {
+                return extractor(file_path).map(|r| {
+                    if on_mismatch == OnFormatMismatch::Ignore {
+                        r
+                    } else {
+                        r.with_metadata("format_mismatch", &mismatch)
+                    }
+                });
+            }
+        }
     }
 
     if let Some(extractor) = get_extractor(file_path) {
@@ -341,67 +426,270 @@ pub fn supported_extensions() -> Vec<String> {
 // Format detection by magic bytes
 // ---------------------------------------------------------------------------
 
-fn detect_and_extract(file_path: &str) -> Option<ExtractorFn> {
-    let mut buf = [0u8; 8];
-    let file = std::fs::File::open(file_path).ok()?;
+/// What to do when a file's name contradicts its content.
+///
+/// A file lying about what it is carries information beyond the payload
+/// inside it. `report.csv` that is really a deflated ZIP is not a mislabelled
+/// file — nothing produces that by accident — and some deployments will want
+/// to stop it at the door regardless of whether the archive turns out to hold
+/// anything sensitive. Others will want it recorded and passed on, because a
+/// misnamed file is also what you get from a badly written export job.
+///
+/// Both are defensible, so it is a policy rather than a decision baked into
+/// the extractor. Set with `SIPHON_ON_FORMAT_MISMATCH`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum OnFormatMismatch {
+    /// Read by content, record the contradiction in
+    /// `metadata["format_mismatch"]`, log it at warn level, and carry on.
+    ///
+    /// The default, because it is the one that cannot cause an outage. The
+    /// file is still scanned — better than before the arbitration existed,
+    /// where it was read by name and came back clean.
+    #[default]
+    Flag,
+    /// Refuse the file: extraction returns `Err`.
+    ///
+    /// Every caller already fails closed on an extraction error, so this maps
+    /// onto each service's existing vocabulary without new plumbing — the CLI
+    /// exits non-zero, siphon-fs reports the file not scanned, and the milter
+    /// counts the part uninspected, which under its default policy defers the
+    /// message.
+    Reject,
+    /// Dispatch on content but record nothing.
+    ///
+    /// For a pipeline where misnamed files are routine and the noise is not
+    /// worth it. Note this still fixes the bypass — the content is what gets
+    /// read either way; only the reporting is suppressed.
+    Ignore,
+}
+
+impl OnFormatMismatch {
+    /// Parse from a configuration string.
+    pub fn parse(s: &str) -> Result<Self, String> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "flag" => Ok(OnFormatMismatch::Flag),
+            "reject" => Ok(OnFormatMismatch::Reject),
+            "ignore" => Ok(OnFormatMismatch::Ignore),
+            other => Err(format!(
+                "invalid SIPHON_ON_FORMAT_MISMATCH {other:?} (expected flag, reject or ignore)"
+            )),
+        }
+    }
+
+    /// The configured policy, from `SIPHON_ON_FORMAT_MISMATCH`.
+    ///
+    /// An unparseable value falls back to the default rather than failing:
+    /// this is read on the scan path, and a typo in an environment variable
+    /// must not take a scanner down. It is logged once per read.
+    pub fn from_env() -> Self {
+        match std::env::var("SIPHON_ON_FORMAT_MISMATCH") {
+            Ok(v) if !v.trim().is_empty() => Self::parse(&v).unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "falling back to the default format-mismatch policy");
+                Self::default()
+            }),
+            _ => Self::default(),
+        }
+    }
+}
+
+/// A container family identified from a file's own bytes.
+///
+/// Deliberately coarser than "format": the question this answers is *what
+/// kind of thing is this*, not *which reader gets it*. ZIP is one family
+/// covering docx, xlsx, pptx, odt and a plain archive, because at the byte
+/// level they are indistinguishable — the extension is the thing that tells
+/// them apart, and there it is corroborating evidence rather than a claim to
+/// be taken on trust.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ContentFamily {
+    Zip,
+    Ole2,
+    Pdf,
+    Rtf,
+    Rar,
+    SevenZ,
+    Parquet,
+    Sqlite,
+    Image,
+}
+
+impl ContentFamily {
+    fn name(self) -> &'static str {
+        match self {
+            ContentFamily::Zip => "zip",
+            ContentFamily::Ole2 => "ole2",
+            ContentFamily::Pdf => "pdf",
+            ContentFamily::Rtf => "rtf",
+            ContentFamily::Rar => "rar",
+            ContentFamily::SevenZ => "7z",
+            ContentFamily::Parquet => "parquet",
+            ContentFamily::Sqlite => "sqlite",
+            ContentFamily::Image => "image",
+        }
+    }
+}
+
+/// What the *filename* claims this file is, or `None` for the text family and
+/// for formats with no binary signature (eml, vcf, ics, mbox, warc, cab, dat).
+///
+/// `None` is not "unknown" — it is "claims to be something a text reader can
+/// handle", which is precisely the claim that must not be taken on trust.
+fn declared_family(ext: &str) -> Option<ContentFamily> {
+    match ext {
+        "zip" | "docx" | "xlsx" | "pptx" | "odt" | "ods" | "odp" | "jar" => {
+            Some(ContentFamily::Zip)
+        }
+        "msg" | "doc" | "xls" | "ppt" => Some(ContentFamily::Ole2),
+        "pdf" => Some(ContentFamily::Pdf),
+        "rtf" => Some(ContentFamily::Rtf),
+        "rar" => Some(ContentFamily::Rar),
+        "7z" => Some(ContentFamily::SevenZ),
+        "parquet" => Some(ContentFamily::Parquet),
+        "db" | "sqlite" | "sqlite3" => Some(ContentFamily::Sqlite),
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "tiff" | "tif" | "webp" => {
+            Some(ContentFamily::Image)
+        }
+        _ => None,
+    }
+}
+
+/// Identify the container family from the file's own bytes.
+///
+/// # Corroboration, at the byte level
+///
+/// Signatures are not equally good evidence, and acting on a weak one alone
+/// is how a sniffer becomes its own bug. BMP's signature is the two ASCII
+/// bytes `BM` — every CSV whose first column begins "BM" carries it — so it
+/// is accepted only when the 4-byte size field behind it also matches the
+/// real file length. Two independent facts agreeing is evidence; one weak
+/// fact is a guess.
+///
+/// SQLite is checked against its full 16-byte `SQLite format 3\0` string
+/// rather than the leading six characters, for the same reason: `SQLite` on
+/// its own is a word that appears at the start of plenty of documentation.
+///
+/// Returns `None` when nothing is proven, which is the honest answer for
+/// text — and `None` is what leaves the extension in charge, exactly as
+/// before.
+pub fn sniff_family(file_path: &str) -> Option<ContentFamily> {
     use std::io::Read;
+    let mut buf = [0u8; 16];
+    let file = std::fs::File::open(file_path).ok()?;
     let mut reader = std::io::BufReader::new(file);
     let n = reader.read(&mut buf).ok()?;
-    if n < 4 {
-        return None;
+    let b = &buf[..n];
+
+    if b.len() >= 4 && &b[..4] == b"%PDF" {
+        return Some(ContentFamily::Pdf);
+    }
+    if b.len() >= 5 && &b[..5] == b"{\\rtf" {
+        return Some(ContentFamily::Rtf);
+    }
+    // Local file header, or an empty/spanned archive. A ZIP with prefix data
+    // — a self-extracting archive, or a polyglot — is not caught here; see
+    // the FUTURE.md entry on multi-hypothesis extraction.
+    if b.len() >= 4 && (&b[..4] == b"PK\x03\x04" || &b[..4] == b"PK\x05\x06") {
+        return Some(ContentFamily::Zip);
+    }
+    if b.len() >= 8 && b[..8] == [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1] {
+        return Some(ContentFamily::Ole2);
+    }
+    if b.len() >= 6 && &b[..6] == b"Rar!\x1a\x07" {
+        return Some(ContentFamily::Rar);
+    }
+    if b.len() >= 6 && b[..6] == [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C] {
+        return Some(ContentFamily::SevenZ);
+    }
+    if b.len() >= 4 && &b[..4] == b"PAR1" {
+        return Some(ContentFamily::Parquet);
+    }
+    if b.len() >= 16 && &b[..16] == b"SQLite format 3\0" {
+        return Some(ContentFamily::Sqlite);
     }
 
-    // PDF: %PDF
-    if &buf[..4] == b"%PDF" {
-        #[cfg(feature = "pdf")]
-        return Some(extract_pdf);
-        // Without the feature there is no parser, so the bytes are read as
-        // text and the result says so. That finds text in an uncompressed
-        // content stream and nothing in a compressed one, which is to say
-        // nothing in a real PDF — the caller has to be told, not left to
-        // assume a clean result means clean.
-        #[cfg(not(feature = "pdf"))]
-        return Some(extract_unparsed_binary);
+    // Images. Each of these is a distinctive multi-byte signature except BMP,
+    // which is handled below.
+    if b.len() >= 8 && b[..8] == [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A] {
+        return Some(ContentFamily::Image);
+    }
+    if b.len() >= 3 && b[..3] == [0xFF, 0xD8, 0xFF] {
+        return Some(ContentFamily::Image);
+    }
+    if b.len() >= 6 && (&b[..6] == b"GIF87a" || &b[..6] == b"GIF89a") {
+        return Some(ContentFamily::Image);
+    }
+    if b.len() >= 4 && (&b[..4] == b"II*\0" || &b[..4] == b"MM\0*") {
+        return Some(ContentFamily::Image);
+    }
+    if b.len() >= 12 && &b[..4] == b"RIFF" && &b[8..12] == b"WEBP" {
+        return Some(ContentFamily::Image);
+    }
+    // BMP: two ASCII bytes, far too weak on its own. Corroborate with the
+    // little-endian file-size field at offset 2, which must equal the actual
+    // length. A CSV that happens to start "BM" will not also encode its own
+    // size there.
+    if b.len() >= 6 && &b[..2] == b"BM" {
+        let declared = u32::from_le_bytes([b[2], b[3], b[4], b[5]]) as u64;
+        if let Ok(meta) = std::fs::metadata(file_path) {
+            if declared == meta.len() {
+                return Some(ContentFamily::Image);
+            }
+        }
     }
 
-    // RTF: {\rtf
-    if n >= 5 && &buf[..5] == b"{\\rtf" {
-        return Some(extract_rtf);
-    }
+    None
+}
 
-    // ZIP-based (Office): PK\x03\x04
-    if &buf[..4] == b"PK\x03\x04" {
-        return Some(extract_zip_based);
-    }
+fn detect_and_extract(file_path: &str) -> Option<ExtractorFn> {
+    // Binary containers are identified by [`sniff_family`], which is also
+    // what `extract_text` arbitrates on. Sharing it is not tidiness: these
+    // two now both decide dispatch, and a second copy of the signature table
+    // would eventually disagree with the first about what a file is. The
+    // duplicate that used to live here had already drifted — it accepted the
+    // first six bytes of SQLite's signature where the real one is sixteen,
+    // and it knew nothing about images at all, so a PNG was reachable only
+    // through its own extension.
+    if let Some(family) = sniff_family(file_path) {
+        return Some(match family {
+            #[cfg(feature = "pdf")]
+            ContentFamily::Pdf => extract_pdf,
+            // Without the feature there is no parser, so the bytes are read
+            // as text and the result says so. That finds text in an
+            // uncompressed content stream and nothing in a compressed one,
+            // which is to say nothing in a real PDF — the caller has to be
+            // told, not left to assume a clean result means clean.
+            #[cfg(not(feature = "pdf"))]
+            ContentFamily::Pdf => extract_unparsed_binary,
 
-    // OLE2 (MSG): D0 CF 11 E0 A1 B1 1A E1
-    #[cfg(feature = "msg")]
-    if n >= 8 && buf[..8] == [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1] {
-        return Some(extract_msg);
-    }
+            ContentFamily::Rtf => extract_rtf,
+            ContentFamily::Zip => extract_zip_based,
 
-    // RAR: Rar!\x1a\x07
-    #[cfg(feature = "archives")]
-    if n >= 6 && &buf[..6] == b"Rar!\x1a\x07" {
-        return Some(extract_rar);
-    }
+            #[cfg(feature = "msg")]
+            ContentFamily::Ole2 => extract_msg,
+            #[cfg(feature = "archives")]
+            ContentFamily::Rar => extract_rar,
+            #[cfg(feature = "archives")]
+            ContentFamily::SevenZ => extract_7z,
+            #[cfg(feature = "data-formats")]
+            ContentFamily::Parquet => extract_parquet,
+            #[cfg(feature = "data-formats")]
+            ContentFamily::Sqlite => extract_sqlite,
+            #[cfg(feature = "barcode")]
+            ContentFamily::Image => extract_barcode,
 
-    // 7z: 7z\xBC\xAF\x27\x1C
-    #[cfg(feature = "archives")]
-    if n >= 6 && buf[..6] == [0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C] {
-        return Some(extract_7z);
-    }
-
-    // Parquet: PAR1
-    #[cfg(feature = "data-formats")]
-    if n >= 4 && &buf[..4] == b"PAR1" {
-        return Some(extract_parquet);
-    }
-
-    // SQLite: "SQLite format 3\0"
-    #[cfg(feature = "data-formats")]
-    if n >= 6 && &buf[..6] == b"SQLite" {
-        return Some(extract_sqlite);
+            // A container we recognised but were not built to read. Reporting
+            // it as unparsed is the whole point of identifying it: the caller
+            // learns that this file holds content nobody inspected, instead
+            // of getting a clean read of compressed bytes.
+            #[cfg(not(feature = "msg"))]
+            ContentFamily::Ole2 => extract_unparsed_binary,
+            #[cfg(not(feature = "archives"))]
+            ContentFamily::Rar | ContentFamily::SevenZ => extract_unparsed_binary,
+            #[cfg(not(feature = "data-formats"))]
+            ContentFamily::Parquet | ContentFamily::Sqlite => extract_unparsed_binary,
+            #[cfg(not(feature = "barcode"))]
+            ContentFamily::Image => extract_unparsed_binary,
+        });
     }
 
     // Text-based format detection (read only first 8192 bytes)
@@ -2702,7 +2990,18 @@ pub fn extract_barcode(file_path: &str) -> Result<ExtractionResult, String> {
     // carries no text. Collapsing both into an error made every photo look
     // like an unread attachment — enough, in the mail path, to defer every
     // message carrying one.
-    let results = match rxing::helpers::detect_multiple_in_file(file_path) {
+    // Decoded from bytes, not from the path. rxing's file helper hands the
+    // path to `image::open`, which picks a decoder from the *file extension*
+    // — so a PNG named `.txt` fails with "extension was not recognized as an
+    // image format" even once dispatch has correctly identified it as an
+    // image. That is the same misplaced trust in the filename that
+    // `extract_text` arbitrates away, one layer further down, and it has to
+    // be closed here too or closing it above buys nothing.
+    let bytes = std::fs::read(file_path).map_err(|e| e.to_string())?;
+    let image = image::load_from_memory(&bytes)
+        .map_err(|e| format!("Barcode decode failed: could not decode image: {e}"))?;
+
+    let results = match rxing::helpers::detect_multiple_in_image(image) {
         Ok(r) => r,
         Err(rxing::Exceptions::NotFoundException(_)) => Vec::new(),
         Err(e) => return Err(format!("Barcode decode failed: {e}")),
@@ -2919,6 +3218,95 @@ pub fn is_likely_encrypted(file_path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    /// A file whose name contradicts its content is refused under the
+    /// `Reject` policy, and read-by-content under `Flag`.
+    ///
+    /// Both directions are asserted here because the interesting mistake is
+    /// asymmetric: a policy that only ever rejects is a policy nobody can
+    /// switch on, and one that never rejects is not a policy at all.
+    #[test]
+    fn a_lying_extension_obeys_the_configured_policy() {
+        use std::io::Write;
+
+        // A deflated ZIP, so its payload is not incidentally readable as
+        // text — the whole point is that the plain-text reader finds nothing.
+        let zip_bytes = {
+            let mut buf = std::io::Cursor::new(Vec::new());
+            {
+                let mut z = zip::ZipWriter::new(&mut buf);
+                z.start_file::<_, ()>(
+                    "secrets.txt",
+                    zip::write::SimpleFileOptions::default()
+                        .compression_method(zip::CompressionMethod::Deflated),
+                )
+                .unwrap();
+                z.write_all(b"primary card 4111111111111111\n").unwrap();
+                z.finish().unwrap();
+            }
+            buf.into_inner()
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, &zip_bytes).unwrap();
+        let path = path.to_str().unwrap();
+
+        let flagged = super::extract_text_with_policy(path, super::OnFormatMismatch::Flag)
+            .expect("flag policy reads the file");
+        assert_eq!(flagged.format, "zip", "content decides the reader");
+        assert!(
+            flagged.text.contains("4111111111111111"),
+            "the payload must be read: reading it by name found nothing at all"
+        );
+        assert_eq!(
+            flagged.metadata.get("format_mismatch").map(String::as_str),
+            Some("declared .txt, content is zip"),
+            "the contradiction is the most interesting fact about this file"
+        );
+
+        let rejected = super::extract_text_with_policy(path, super::OnFormatMismatch::Reject);
+        assert!(
+            rejected.is_err(),
+            "the reject policy must refuse the file, not read it"
+        );
+
+        let ignored = super::extract_text_with_policy(path, super::OnFormatMismatch::Ignore)
+            .expect("ignore policy reads the file");
+        assert!(
+            ignored.text.contains("4111111111111111"),
+            "ignore suppresses the report, never the scan — the bypass stays closed"
+        );
+        assert!(
+            ignored.metadata.get("format_mismatch").is_none(),
+            "ignore records nothing"
+        );
+    }
+
+    /// An honestly named file must never be reported as contradicting itself.
+    #[test]
+    fn an_honest_extension_records_no_contradiction() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+
+        // A CSV whose first two bytes are "BM" — BMP's entire signature.
+        // Accepting that alone would send this to an image decoder.
+        let path = dir.path().join("rows.csv");
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"BMW,model,notes\nX5,2024,card 4111111111111111\n")
+            .unwrap();
+        drop(f);
+
+        let r =
+            super::extract_text_with_policy(path.to_str().unwrap(), super::OnFormatMismatch::Flag)
+                .unwrap();
+        assert!(
+            r.metadata.get("format_mismatch").is_none(),
+            "a signature weak enough to fire here fires on ordinary documents: {:?}",
+            r.metadata
+        );
+        assert!(r.text.contains("4111111111111111"));
+    }
 
     /// An image that decodes cleanly and carries no barcode is *inspected*,
     /// and must not be reported as content we failed to read.

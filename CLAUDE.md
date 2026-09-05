@@ -109,6 +109,46 @@ Two rules keep it honest:
   that is reported too, so the entry gets removed rather than outliving the
   bug it described.
 
+### Format confusion
+
+Dispatch arbitrates between what a file is *named* and what its bytes
+*prove*, because the filename is the weakest signal about a file and the only
+one an attacker changes for free. `zip -q p.zip secrets.txt && mv p.zip
+notes.txt` was a complete bypass until this landed: the deflated archive went
+to the plain-text reader, which read compressed bytes as lossy UTF-8, found
+nothing, and returned a faithful clean result with no warning.
+
+The rule follows FUTURE.md's corroboration entry — an attacker-controlled
+signal may weight a decision, never gate it:
+
+| Evidence | Outcome |
+|---|---|
+| Name and content agree | the extension refines the family (`zip` → docx vs odt vs a plain archive) and is used |
+| They disagree | the **content** decides the reader, and the disagreement is recorded |
+| Content proves nothing | the extension is used, unchanged — text has no signature, so this is the common path |
+
+Signatures are weighted by how much they prove. BMP's is the two ASCII bytes
+`BM`, which every CSV starting "BM…" carries, so it is accepted only when the
+size field behind it also matches the real file length. SQLite is matched
+against its full 16-byte signature, not the leading `SQLite`.
+
+`sniff_family()` is the single signature table; `detect_and_extract()`
+dispatches off it rather than keeping a second copy, because both decide
+dispatch and two copies drift — the one that used to live in
+`detect_and_extract` already had, accepting 6 of SQLite's 16 bytes and
+knowing nothing about images at all.
+
+A contradiction is recorded in `metadata["format_mismatch"]` and logged at
+warn level with structured fields — **not** in `warnings`, which means
+"content we did not read" and makes the milter defer. A renamed file that we
+then read correctly *was* read.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `SIPHON_ON_FORMAT_MISMATCH` | `flag` | `flag` — read by content, record it, carry on. `reject` — refuse the file; extraction returns `Err`, so the CLI exits non-zero, siphon-fs marks it not scanned and the milter defers. `ignore` — read by content, record nothing (the bypass stays closed either way; only reporting is suppressed) |
+
+Covered by the `disguise` capability in the conformance matrix.
+
 Other test harnesses (not run by default CI):
 ```bash
 cargo test --test detection_quality   # labeled-corpus regression suite

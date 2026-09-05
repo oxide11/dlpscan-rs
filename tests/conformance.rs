@@ -115,6 +115,11 @@ capability_test!(sqlite, "sqlite");
 #[cfg(feature = "barcode")]
 capability_test!(png, "png");
 
+// Not a format — the arbitration between formats. See
+// `siphon::conformance::formats::disguise`.
+#[cfg(feature = "archives")]
+capability_test!(disguise, "disguise");
+
 /// Every capability carries all five slots, exactly once.
 ///
 /// Without this, a capability could quietly shrink to its two easy questions

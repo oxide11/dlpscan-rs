@@ -42,6 +42,8 @@ pub fn cases() -> Vec<Case> {
     v.extend(sqlite());
     #[cfg(feature = "barcode")]
     v.extend(png());
+    #[cfg(feature = "archives")]
+    v.extend(disguise());
     v
 }
 
@@ -1483,4 +1485,89 @@ pub fn uncovered(cases: &[Case]) -> Vec<String> {
         out.push(ext);
     }
     out
+}
+
+// ---------------------------------------------------------------------------
+// Format confusion
+// ---------------------------------------------------------------------------
+
+/// Not a format — the *arbitration between* formats.
+///
+/// A filename is the weakest signal about a file's contents and the only one
+/// an attacker changes for free, so dispatching on it alone lets the name
+/// gate detection. `zip -q p.zip secrets.txt && mv p.zip notes.txt` used to
+/// be a complete bypass: the deflated archive went to the plain-text reader,
+/// which read compressed bytes as lossy UTF-8, found nothing, and returned a
+/// faithful clean result with no warning of any kind.
+///
+/// FUTURE.md's corroboration entry states the general rule — an
+/// attacker-controlled signal may weight a decision, never gate it — and
+/// these five cases are that rule made testable. The two directions are
+/// equally important: the content has to win when the name lies, and it has
+/// to stay out of the way when the name is telling the truth. A sniffer that
+/// only satisfies the first is one that turns every document beginning with
+/// the wrong two bytes into an unreadable file.
+#[cfg(feature = "archives")]
+fn disguise() -> Vec<Case> {
+    vec![
+        case(
+            "disguise",
+            Slot::Clean,
+            "notes.txt",
+            format!("Customer SSN on file: {SSN}"),
+            Expect::NoMismatchAndFound(SSN),
+            "an honestly named text file: the arbitration must be invisible \
+             on the common path, which is every file that is what it says",
+        ),
+        case(
+            "disguise",
+            Slot::Single,
+            "notes.txt",
+            build::zip_deflated(&[("secrets.txt", b"primary card 4111111111111111\n")]),
+            Expect::DisguisedButFound(CARD),
+            "a deflated ZIP wearing a .txt name — two shell commands, and \
+             before the bytes led the dispatch it returned clean with no \
+             warning at all",
+        ),
+        case(
+            "disguise",
+            Slot::Structural,
+            "report.csv",
+            build::docx(&[&format!("Card on file {CARD}")]),
+            Expect::DisguisedButFound(CARD),
+            "a DOCX named .csv. The content proves only the ZIP family, and \
+             within a proven family the extension is the only thing that can \
+             separate docx from odt from a plain archive — so it still has a \
+             job here, as corroboration rather than as a claim taken on trust",
+        ),
+        case(
+            "disguise",
+            Slot::Damaged,
+            "notes.txt",
+            {
+                // ZIP magic, then nothing that resolves.
+                let mut v =
+                    build::zip_deflated(&[("secrets.txt", b"primary card 4111111111111111\n")]);
+                v.truncate(24);
+                v
+            },
+            Expect::NotSilentlyClean,
+            "identifying a container we then cannot read must report content \
+             nobody inspected. Reading its compressed bytes as text would \
+             find nothing and look exactly like a clean file",
+        ),
+        case(
+            "disguise",
+            Slot::Evasive,
+            "rows.csv",
+            format!("BMW,model,notes\nX5,2024,card {CARD}\n"),
+            Expect::NoMismatchAndFound(CARD),
+            "BMP's signature is the two ASCII bytes \"BM\", so every CSV whose \
+             first column starts BM carries it. It is accepted only when the \
+             size field behind it also matches the real file length — two \
+             independent facts agreeing. Without that corroboration this row \
+             of car models would be dispatched to an image decoder and read \
+             as nothing",
+        ),
+    ]
 }
