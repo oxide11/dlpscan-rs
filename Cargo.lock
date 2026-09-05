@@ -5132,15 +5132,11 @@ dependencies = [
 name = "siphon-icap"
 version = "0.1.2"
 dependencies = [
- "hex",
- "serde",
  "serde_json",
- "sha2 0.11.0",
  "siphon-core",
  "tokio",
  "tracing",
  "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
@@ -5175,7 +5171,6 @@ name = "siphon-milter"
 version = "0.1.0"
 dependencies = [
  "deadpool-postgres",
- "hex",
  "sha2 0.11.0",
  "siphon",
  "siphon-core",
