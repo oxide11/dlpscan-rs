@@ -1,5 +1,19 @@
 name: evadex quality gate
 
+# Trigger paths cover every module that can move the detection or
+# false-positive rate this gate measures.
+#
+# Two of them were previously wrong. `validation/**` matched nothing —
+# validation is `validation.rs`, a file, so that entry silently covered
+# zero changes for the life of the workflow. And `context/**` was absent
+# entirely, though it holds the gating logic and the 5,000+ keyword table
+# that decide whether ~30% of the pattern corpus runs at all: the module
+# most able to change a detection rate without touching a pattern.
+#
+# `scoring.rs` is included for the same reason — the gate asserts on
+# confidence thresholds, and scoring is what produces the confidences.
+# (Duplicated rather than shared via a YAML anchor: GitHub Actions does not
+# resolve anchors in workflow files. Keep the two lists in step.)
 on:
   push:
     branches: [main]
@@ -7,20 +21,38 @@ on:
       - 'crates/siphon-core/src/normalize/**'
       - 'crates/siphon-core/src/patterns/**'
       - 'crates/siphon-core/src/scanner/**'
-      - 'crates/siphon-core/src/validation/**'
+      - 'crates/siphon-core/src/context/**'
+      - 'crates/siphon-core/src/validation.rs'
+      - 'crates/siphon-core/src/scoring.rs'
+      - '.github/workflows/evadex-quality-gate.yml'
   pull_request:
     branches: [main]
     paths:
       - 'crates/siphon-core/src/normalize/**'
       - 'crates/siphon-core/src/patterns/**'
       - 'crates/siphon-core/src/scanner/**'
-      - 'crates/siphon-core/src/validation/**'
+      - 'crates/siphon-core/src/context/**'
+      - 'crates/siphon-core/src/validation.rs'
+      - 'crates/siphon-core/src/scoring.rs'
+      - '.github/workflows/evadex-quality-gate.yml'
   workflow_dispatch:
+
+# One run per ref. Without this every push started another ~2.5 h run and
+# they accumulated: five were in flight at once during the 2026-09-04
+# release wave. A superseded commit's verdict is not interesting.
+concurrency:
+  group: evadex-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   evadex-gate:
     name: Run evadex quality gate
     runs-on: ubuntu-latest
+    # Observed runtime is 2h05m–2h34m, essentially all of it re-initialising
+    # the scanner once per test case (see the step below). This bounds a real
+    # hang without cutting off a healthy run; drop it to ~15 min once the
+    # adapter stops paying startup per case.
+    timeout-minutes: 180
 
     steps:
       - name: Checkout dlpscan-rs
@@ -64,6 +96,31 @@ jobs:
         working-directory: evadex
         run: python -m pytest tests/unit -q --tb=short
 
+      # This step is the entire runtime of the job: 2h05m-2h34m, against ~2
+      # minutes for everything above it.
+      #
+      # It is not scanning that costs. Measured on the release binary:
+      #
+      #   siphon --version                 0.005 s   (process spawn)
+      #   siphon scan-text, 28 bytes       0.395 s
+      #   siphon scan, 10 KB with hits     0.405 s
+      #
+      # Scanning 10 KB costs 10 ms more than scanning 28 bytes. The other
+      # ~390 ms is one-time initialisation — compiling 583 regexes and
+      # building the Aho-Corasick automaton over 5,000+ context keywords —
+      # paid on every process start and discarded on exit. The adapter
+      # spawns one `siphon` per test case, so ~97% of this job is rebuilding
+      # the same automaton some 20,000 times.
+      #
+      # The CLI already has the fix: one `scan-dir` over a directory of
+      # cases initialises once. Measured on 200 cases:
+      #
+      #   200 separate invocations   71.3 s
+      #   1 scan-dir invocation       0.4 s   (194x)
+      #
+      # That change belongs in the siphon-cli adapter in tbustenk/evadex,
+      # not here. Until it lands this gate cannot be a merge gate — nothing
+      # waits 2.5 hours — so treat it as a post-merge signal and check it.
       - name: Run evadex quality gate (siphon-cli adapter)
         working-directory: evadex
         env:
