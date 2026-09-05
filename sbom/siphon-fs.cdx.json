@@ -1,0 +1,7165 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "siphon-fs",
+      "version": "1.2.0",
+      "purl": "pkg:cargo/siphon-fs@1.2.0"
+    },
+    "properties": [
+      {
+        "name": "siphon:target",
+        "value": "x86_64-unknown-linux-gnu"
+      },
+      {
+        "name": "siphon:resolution",
+        "value": "per-package (cargo tree -p); workspace-wide resolution unifies features and over-reports components"
+      },
+      {
+        "name": "siphon:edges",
+        "value": "normal only; dev- and build-dependencies excluded"
+      }
+    ],
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "scripts/generate-sbom.sh"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "ab_glyph",
+      "version": "0.2.32",
+      "purl": "pkg:cargo/ab_glyph@0.2.32",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/alexheretic/ab-glyph"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ab_glyph_rasterizer",
+      "version": "0.1.10",
+      "purl": "pkg:cargo/ab_glyph_rasterizer@0.1.10",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/alexheretic/ab-glyph"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "adler2",
+      "version": "2.0.1",
+      "purl": "pkg:cargo/adler2@2.0.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "0BSD OR MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/oyvindln/adler2"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "adobe-cmap-parser",
+      "version": "0.4.1",
+      "purl": "pkg:cargo/adobe-cmap-parser@0.4.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/jrmuizel/adobe-cmap-parser"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "aes",
+      "version": "0.8.4",
+      "purl": "pkg:cargo/aes@0.8.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/block-ciphers"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "aes",
+      "version": "0.9.1",
+      "purl": "pkg:cargo/aes@0.9.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/block-ciphers"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ahash",
+      "version": "0.8.12",
+      "purl": "pkg:cargo/ahash@0.8.12",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tkaitchuck/ahash"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "aho-corasick",
+      "version": "1.1.5",
+      "purl": "pkg:cargo/aho-corasick@1.1.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Unlicense OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/BurntSushi/aho-corasick"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "aligned-vec",
+      "version": "0.6.4",
+      "purl": "pkg:cargo/aligned-vec@0.6.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sarah-ek/aligned-vec/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "anstream",
+      "version": "1.0.0",
+      "purl": "pkg:cargo/anstream@1.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-cli/anstyle.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "anstyle",
+      "version": "1.0.14",
+      "purl": "pkg:cargo/anstyle@1.0.14",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-cli/anstyle.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "anstyle-parse",
+      "version": "1.0.0",
+      "purl": "pkg:cargo/anstyle-parse@1.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-cli/anstyle.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "anstyle-query",
+      "version": "1.1.5",
+      "purl": "pkg:cargo/anstyle-query@1.1.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-cli/anstyle.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "anyhow",
+      "version": "1.0.104",
+      "purl": "pkg:cargo/anyhow@1.0.104",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/anyhow"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "approx",
+      "version": "0.5.1",
+      "purl": "pkg:cargo/approx@0.5.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/brendanzab/approx"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arg_enum_proc_macro",
+      "version": "0.3.4",
+      "purl": "pkg:cargo/arg_enum_proc_macro@0.3.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/lu-zero/arg_enum_proc_macro"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrayvec",
+      "version": "0.7.7",
+      "purl": "pkg:cargo/arrayvec@0.7.7",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/bluss/arrayvec"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow",
+      "version": "59.2.0",
+      "purl": "pkg:cargo/arrow@59.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow-arith",
+      "version": "59.3.0",
+      "purl": "pkg:cargo/arrow-arith@59.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow-array",
+      "version": "59.3.0",
+      "purl": "pkg:cargo/arrow-array@59.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 AND MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow-buffer",
+      "version": "59.3.0",
+      "purl": "pkg:cargo/arrow-buffer@59.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow-cast",
+      "version": "59.3.0",
+      "purl": "pkg:cargo/arrow-cast@59.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow-data",
+      "version": "59.3.0",
+      "purl": "pkg:cargo/arrow-data@59.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow-ipc",
+      "version": "59.3.0",
+      "purl": "pkg:cargo/arrow-ipc@59.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow-ord",
+      "version": "59.3.0",
+      "purl": "pkg:cargo/arrow-ord@59.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow-row",
+      "version": "59.3.0",
+      "purl": "pkg:cargo/arrow-row@59.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow-schema",
+      "version": "59.3.0",
+      "purl": "pkg:cargo/arrow-schema@59.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow-select",
+      "version": "59.3.0",
+      "purl": "pkg:cargo/arrow-select@59.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow-string",
+      "version": "59.3.0",
+      "purl": "pkg:cargo/arrow-string@59.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "async-trait",
+      "version": "0.1.89",
+      "purl": "pkg:cargo/async-trait@0.1.89",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/async-trait"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "atoi",
+      "version": "2.0.0",
+      "purl": "pkg:cargo/atoi@2.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/pacman82/atoi-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "atoi_simd",
+      "version": "0.18.1",
+      "purl": "pkg:cargo/atoi_simd@0.18.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RoDmitry/atoi_simd"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "atomic-waker",
+      "version": "1.1.2",
+      "purl": "pkg:cargo/atomic-waker@1.1.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/smol-rs/atomic-waker"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "av1-grain",
+      "version": "0.2.5",
+      "purl": "pkg:cargo/av1-grain@0.2.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-av/av1-grain"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "avif-serialize",
+      "version": "0.8.9",
+      "purl": "pkg:cargo/avif-serialize@0.8.9",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/kornelski/avif-serialize"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "aws-lc-rs",
+      "version": "1.17.0",
+      "purl": "pkg:cargo/aws-lc-rs@1.17.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "ISC AND (Apache-2.0 OR ISC)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/aws/aws-lc-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "aws-lc-sys",
+      "version": "0.41.0",
+      "purl": "pkg:cargo/aws-lc-sys@0.41.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/aws/aws-lc-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "axum",
+      "version": "0.8.9",
+      "purl": "pkg:cargo/axum@0.8.9",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/axum"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "axum-core",
+      "version": "0.5.6",
+      "purl": "pkg:cargo/axum-core@0.5.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/axum"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "base64",
+      "version": "0.22.1",
+      "purl": "pkg:cargo/base64@0.22.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/marshallpierce/rust-base64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "base64",
+      "version": "0.23.1",
+      "purl": "pkg:cargo/base64@0.23.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/marshallpierce/rust-base64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "bit-set",
+      "version": "0.6.0",
+      "purl": "pkg:cargo/bit-set@0.6.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/contain-rs/bit-set"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "bit-set",
+      "version": "0.8.0",
+      "purl": "pkg:cargo/bit-set@0.8.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/contain-rs/bit-set"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "bit-vec",
+      "version": "0.7.0",
+      "purl": "pkg:cargo/bit-vec@0.7.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/contain-rs/bit-vec"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "bit-vec",
+      "version": "0.8.0",
+      "purl": "pkg:cargo/bit-vec@0.8.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/contain-rs/bit-vec"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "bit_field",
+      "version": "0.10.3",
+      "purl": "pkg:cargo/bit_field@0.10.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/phil-opp/rust-bit-field"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "bitflags",
+      "version": "2.13.0",
+      "purl": "pkg:cargo/bitflags@2.13.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/bitflags/bitflags"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "bitstream-io",
+      "version": "2.6.0",
+      "purl": "pkg:cargo/bitstream-io@2.6.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tuffy/bitstream-io"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "block-buffer",
+      "version": "0.10.4",
+      "purl": "pkg:cargo/block-buffer@0.10.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "block-buffer",
+      "version": "0.12.1",
+      "purl": "pkg:cargo/block-buffer@0.12.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "block-padding",
+      "version": "0.3.3",
+      "purl": "pkg:cargo/block-padding@0.3.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "block-padding",
+      "version": "0.4.2",
+      "purl": "pkg:cargo/block-padding@0.4.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "bumpalo",
+      "version": "3.20.3",
+      "purl": "pkg:cargo/bumpalo@3.20.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/fitzgen/bumpalo"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "bytemuck",
+      "version": "1.25.0",
+      "purl": "pkg:cargo/bytemuck@1.25.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Zlib OR Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Lokathor/bytemuck"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "byteorder",
+      "version": "1.5.0",
+      "purl": "pkg:cargo/byteorder@1.5.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Unlicense OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/BurntSushi/byteorder"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "byteorder-lite",
+      "version": "0.1.0",
+      "purl": "pkg:cargo/byteorder-lite@0.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Unlicense OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/image-rs/byteorder-lite"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "bytes",
+      "version": "1.12.1",
+      "purl": "pkg:cargo/bytes@1.12.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/bytes"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "calamine",
+      "version": "0.36.1",
+      "purl": "pkg:cargo/calamine@0.36.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tafia/calamine"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cbc",
+      "version": "0.1.2",
+      "purl": "pkg:cargo/cbc@0.1.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/block-modes"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cbc",
+      "version": "0.2.1",
+      "purl": "pkg:cargo/cbc@0.2.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/block-modes"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cfb",
+      "version": "0.14.0",
+      "purl": "pkg:cargo/cfb@0.14.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mdsteele/rust-cfb"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cff-parser",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/cff-parser@0.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/jrmuizel/cff-parser"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cfg-if",
+      "version": "1.0.4",
+      "purl": "pkg:cargo/cfg-if@1.0.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/cfg-if"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "chacha20",
+      "version": "0.10.2",
+      "purl": "pkg:cargo/chacha20@0.10.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/stream-ciphers"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "chrono",
+      "version": "0.4.45",
+      "purl": "pkg:cargo/chrono@0.4.45",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/chronotope/chrono"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "chrono-tz",
+      "version": "0.10.4",
+      "purl": "pkg:cargo/chrono-tz@0.10.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/chronotope/chrono-tz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cipher",
+      "version": "0.4.4",
+      "purl": "pkg:cargo/cipher@0.4.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/traits"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cipher",
+      "version": "0.5.2",
+      "purl": "pkg:cargo/cipher@0.5.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/traits"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "clap",
+      "version": "4.6.6",
+      "purl": "pkg:cargo/clap@4.6.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/clap-rs/clap"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "clap_builder",
+      "version": "4.6.6",
+      "purl": "pkg:cargo/clap_builder@4.6.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/clap-rs/clap"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "clap_derive",
+      "version": "4.6.4",
+      "purl": "pkg:cargo/clap_derive@4.6.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/clap-rs/clap"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "clap_lex",
+      "version": "1.1.0",
+      "purl": "pkg:cargo/clap_lex@1.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/clap-rs/clap"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cmov",
+      "version": "0.5.4",
+      "purl": "pkg:cargo/cmov@0.5.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "codepage",
+      "version": "0.1.2",
+      "purl": "pkg:cargo/codepage@0.1.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/hsivonen/codepage"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "codepage-437",
+      "version": "0.1.0",
+      "purl": "pkg:cargo/codepage-437@0.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/nabijaczleweli/codepage-437"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "color_quant",
+      "version": "1.1.0",
+      "purl": "pkg:cargo/color_quant@1.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/image-rs/color_quant.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "colorchoice",
+      "version": "1.0.5",
+      "purl": "pkg:cargo/colorchoice@1.0.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-cli/anstyle.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "comfy-table",
+      "version": "7.2.2",
+      "purl": "pkg:cargo/comfy-table@7.2.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/nukesor/comfy-table"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "const-oid",
+      "version": "0.10.2",
+      "purl": "pkg:cargo/const-oid@0.10.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/formats"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "const-oid",
+      "version": "0.9.6",
+      "purl": "pkg:cargo/const-oid@0.9.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/formats/tree/master/const-oid"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cpubits",
+      "version": "0.1.1",
+      "purl": "pkg:cargo/cpubits@0.1.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cpufeatures",
+      "version": "0.2.17",
+      "purl": "pkg:cargo/cpufeatures@0.2.17",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "cpufeatures",
+      "version": "0.3.0",
+      "purl": "pkg:cargo/cpufeatures@0.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "crc",
+      "version": "3.4.0",
+      "purl": "pkg:cargo/crc@3.4.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mrhooray/crc-rs.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "crc-catalog",
+      "version": "2.5.0",
+      "purl": "pkg:cargo/crc-catalog@2.5.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/akhilles/crc-catalog.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "crc32fast",
+      "version": "1.5.0",
+      "purl": "pkg:cargo/crc32fast@1.5.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/srijs/rust-crc32fast"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "crossbeam-deque",
+      "version": "0.8.6",
+      "purl": "pkg:cargo/crossbeam-deque@0.8.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/crossbeam-rs/crossbeam"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "crossbeam-epoch",
+      "version": "0.9.20",
+      "purl": "pkg:cargo/crossbeam-epoch@0.9.20",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/crossbeam-rs/crossbeam"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "crossbeam-utils",
+      "version": "0.8.21",
+      "purl": "pkg:cargo/crossbeam-utils@0.8.21",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/crossbeam-rs/crossbeam"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "crypto-common",
+      "version": "0.1.7",
+      "purl": "pkg:cargo/crypto-common@0.1.7",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/traits"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "crypto-common",
+      "version": "0.2.2",
+      "purl": "pkg:cargo/crypto-common@0.2.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/traits"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ctutils",
+      "version": "0.4.2",
+      "purl": "pkg:cargo/ctutils@0.4.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "deadpool",
+      "version": "0.13.1",
+      "purl": "pkg:cargo/deadpool@0.13.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/deadpool-rs/deadpool"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "deadpool-postgres",
+      "version": "0.14.2",
+      "purl": "pkg:cargo/deadpool-postgres@0.14.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/deadpool-rs/deadpool"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "deadpool-runtime",
+      "version": "0.3.1",
+      "purl": "pkg:cargo/deadpool-runtime@0.3.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/deadpool-rs/deadpool"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "debug_unsafe",
+      "version": "0.1.4",
+      "purl": "pkg:cargo/debug_unsafe@0.1.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RoDmitry/debug_unsafe"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "der",
+      "version": "0.7.10",
+      "purl": "pkg:cargo/der@0.7.10",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/formats/tree/master/der"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "der_derive",
+      "version": "0.7.3",
+      "purl": "pkg:cargo/der_derive@0.7.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/formats/tree/master/der/derive"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "deranged",
+      "version": "0.5.8",
+      "purl": "pkg:cargo/deranged@0.5.8",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/jhpratt/deranged"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "digest",
+      "version": "0.10.7",
+      "purl": "pkg:cargo/digest@0.10.7",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/traits"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "digest",
+      "version": "0.11.3",
+      "purl": "pkg:cargo/digest@0.11.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/traits"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ecb",
+      "version": "0.1.2",
+      "purl": "pkg:cargo/ecb@0.1.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/magic-akari/ecb"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ecb",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/ecb@0.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/magic-akari/ecb"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "either",
+      "version": "1.16.0",
+      "purl": "pkg:cargo/either@1.16.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rayon-rs/either"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "encoding_rs",
+      "version": "0.8.35",
+      "purl": "pkg:cargo/encoding_rs@0.8.35",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "(Apache-2.0 OR MIT) AND BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/hsivonen/encoding_rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "equator",
+      "version": "0.4.2",
+      "purl": "pkg:cargo/equator@0.4.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sarah-ek/equator/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "equator-macro",
+      "version": "0.4.2",
+      "purl": "pkg:cargo/equator-macro@0.4.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sarah-ek/equator/"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "equivalent",
+      "version": "1.0.2",
+      "purl": "pkg:cargo/equivalent@1.0.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/indexmap-rs/equivalent"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "errno",
+      "version": "0.3.14",
+      "purl": "pkg:cargo/errno@0.3.14",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/lambda-fairy/rust-errno"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "euclid",
+      "version": "0.20.14",
+      "purl": "pkg:cargo/euclid@0.20.14",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/servo/euclid"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "exr",
+      "version": "1.74.0",
+      "purl": "pkg:cargo/exr@1.74.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/johannesvollmer/exrs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fallible-iterator",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/fallible-iterator@0.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sfackler/rust-fallible-iterator"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fallible-iterator",
+      "version": "0.3.0",
+      "purl": "pkg:cargo/fallible-iterator@0.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sfackler/rust-fallible-iterator"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fallible-streaming-iterator",
+      "version": "0.1.9",
+      "purl": "pkg:cargo/fallible-streaming-iterator@0.1.9",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sfackler/fallible-streaming-iterator"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fancy-regex",
+      "version": "0.18.0",
+      "purl": "pkg:cargo/fancy-regex@0.18.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/fancy-regex/fancy-regex"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:backtracking-regex",
+          "value": "backtracking engine; the main scan path uses `regex` to rule out catastrophic backtracking"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fast-float2",
+      "version": "0.2.3",
+      "purl": "pkg:cargo/fast-float2@0.2.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Alexhuszagh/fast-float-rust"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fastrand",
+      "version": "2.4.1",
+      "purl": "pkg:cargo/fastrand@2.4.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/smol-rs/fastrand"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fax",
+      "version": "0.2.7",
+      "purl": "pkg:cargo/fax@0.2.7",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/pdf-rs/fax"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fdeflate",
+      "version": "0.3.7",
+      "purl": "pkg:cargo/fdeflate@0.3.7",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/image-rs/fdeflate"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "filetime",
+      "version": "0.2.29",
+      "purl": "pkg:cargo/filetime@0.2.29",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/alexcrichton/filetime"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "filetime_creation",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/filetime_creation@0.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/czy-29/filetime_creation"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "flagset",
+      "version": "0.4.7",
+      "purl": "pkg:cargo/flagset@0.4.7",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/enarx/flagset"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "flatbuffers",
+      "version": "25.12.19",
+      "purl": "pkg:cargo/flatbuffers@25.12.19",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/google/flatbuffers"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "flate2",
+      "version": "1.1.9",
+      "purl": "pkg:cargo/flate2@1.1.9",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/flate2-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "fnv",
+      "version": "1.0.7",
+      "purl": "pkg:cargo/fnv@1.0.7",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/servo/rust-fnv"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "foldhash",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/foldhash@0.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Zlib"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/orlp/foldhash"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "form_urlencoded",
+      "version": "1.2.2",
+      "purl": "pkg:cargo/form_urlencoded@1.2.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/servo/rust-url"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "futures-channel",
+      "version": "0.3.32",
+      "purl": "pkg:cargo/futures-channel@0.3.32",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/futures-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "futures-core",
+      "version": "0.3.32",
+      "purl": "pkg:cargo/futures-core@0.3.32",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/futures-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "futures-sink",
+      "version": "0.3.32",
+      "purl": "pkg:cargo/futures-sink@0.3.32",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/futures-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "futures-task",
+      "version": "0.3.32",
+      "purl": "pkg:cargo/futures-task@0.3.32",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/futures-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "futures-util",
+      "version": "0.3.32",
+      "purl": "pkg:cargo/futures-util@0.3.32",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/futures-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "generic-array",
+      "version": "0.14.7",
+      "purl": "pkg:cargo/generic-array@0.14.7",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/fizyk20/generic-array.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "getrandom",
+      "version": "0.2.17",
+      "purl": "pkg:cargo/getrandom@0.2.17",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-random/getrandom"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "getrandom",
+      "version": "0.3.4",
+      "purl": "pkg:cargo/getrandom@0.3.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-random/getrandom"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "getrandom",
+      "version": "0.4.3",
+      "purl": "pkg:cargo/getrandom@0.4.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-random/getrandom"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "gif",
+      "version": "0.13.3",
+      "purl": "pkg:cargo/gif@0.13.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/image-rs/image-gif"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "half",
+      "version": "2.7.1",
+      "purl": "pkg:cargo/half@2.7.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/VoidStarKat/half-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hashbrown",
+      "version": "0.17.1",
+      "purl": "pkg:cargo/hashbrown@0.17.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/hashbrown"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hashify",
+      "version": "0.2.9",
+      "purl": "pkg:cargo/hashify@0.2.9",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/stalwartlabs/hashify"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hashlink",
+      "version": "0.12.0",
+      "purl": "pkg:cargo/hashlink@0.12.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/djc/hashlink"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "heck",
+      "version": "0.5.0",
+      "purl": "pkg:cargo/heck@0.5.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/withoutboats/heck"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hex",
+      "version": "0.4.3",
+      "purl": "pkg:cargo/hex@0.4.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/KokaKiwi/rust-hex"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hmac",
+      "version": "0.13.0",
+      "purl": "pkg:cargo/hmac@0.13.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/MACs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "http",
+      "version": "1.4.2",
+      "purl": "pkg:cargo/http@1.4.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/hyperium/http"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "http-body",
+      "version": "1.0.1",
+      "purl": "pkg:cargo/http-body@1.0.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/hyperium/http-body"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "http-body-util",
+      "version": "0.1.5",
+      "purl": "pkg:cargo/http-body-util@0.1.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/hyperium/http-body"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "httparse",
+      "version": "1.10.1",
+      "purl": "pkg:cargo/httparse@1.10.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/seanmonstar/httparse"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "httpdate",
+      "version": "1.0.3",
+      "purl": "pkg:cargo/httpdate@1.0.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/pyfisch/httpdate"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hybrid-array",
+      "version": "0.4.12",
+      "purl": "pkg:cargo/hybrid-array@0.4.12",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/hybrid-array"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hyper",
+      "version": "1.11.1",
+      "purl": "pkg:cargo/hyper@1.11.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/hyperium/hyper"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "hyper-util",
+      "version": "0.1.20",
+      "purl": "pkg:cargo/hyper-util@0.1.20",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/hyperium/hyper-util"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "iana-time-zone",
+      "version": "0.1.65",
+      "purl": "pkg:cargo/iana-time-zone@0.1.65",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/strawlab/iana-time-zone"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "image",
+      "version": "0.25.8",
+      "purl": "pkg:cargo/image@0.25.8",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/image-rs/image"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "image-webp",
+      "version": "0.2.4",
+      "purl": "pkg:cargo/image-webp@0.2.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/image-rs/image-webp"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "imageproc",
+      "version": "0.25.1",
+      "purl": "pkg:cargo/imageproc@0.25.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/image-rs/imageproc.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "imgref",
+      "version": "1.12.2",
+      "purl": "pkg:cargo/imgref@1.12.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "CC0-1.0 OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/kornelski/imgref"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "indexmap",
+      "version": "2.14.0",
+      "purl": "pkg:cargo/indexmap@2.14.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/indexmap-rs/indexmap"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "inout",
+      "version": "0.1.4",
+      "purl": "pkg:cargo/inout@0.1.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "inout",
+      "version": "0.2.2",
+      "purl": "pkg:cargo/inout@0.2.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "is_terminal_polyfill",
+      "version": "1.70.2",
+      "purl": "pkg:cargo/is_terminal_polyfill@1.70.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/polyfill-rs/is_terminal_polyfill"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "itertools",
+      "version": "0.12.1",
+      "purl": "pkg:cargo/itertools@0.12.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-itertools/itertools"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "itoa",
+      "version": "1.0.18",
+      "purl": "pkg:cargo/itoa@1.0.18",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/itoa"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lazy_static",
+      "version": "1.5.0",
+      "purl": "pkg:cargo/lazy_static@1.5.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang-nursery/lazy-static.rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lebe",
+      "version": "0.5.3",
+      "purl": "pkg:cargo/lebe@0.5.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/johannesvollmer/lebe"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lexical-core",
+      "version": "1.0.6",
+      "purl": "pkg:cargo/lexical-core@1.0.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Alexhuszagh/rust-lexical"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lexical-parse-float",
+      "version": "1.0.6",
+      "purl": "pkg:cargo/lexical-parse-float@1.0.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Alexhuszagh/rust-lexical"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lexical-parse-integer",
+      "version": "1.0.6",
+      "purl": "pkg:cargo/lexical-parse-integer@1.0.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Alexhuszagh/rust-lexical"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lexical-util",
+      "version": "1.0.7",
+      "purl": "pkg:cargo/lexical-util@1.0.7",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Alexhuszagh/rust-lexical"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lexical-write-float",
+      "version": "1.0.6",
+      "purl": "pkg:cargo/lexical-write-float@1.0.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Alexhuszagh/rust-lexical"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lexical-write-integer",
+      "version": "1.0.6",
+      "purl": "pkg:cargo/lexical-write-integer@1.0.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Alexhuszagh/rust-lexical"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "libc",
+      "version": "0.2.189",
+      "purl": "pkg:cargo/libc@0.2.189",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/libc"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "libm",
+      "version": "0.2.16",
+      "purl": "pkg:cargo/libm@0.2.16",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/compiler-builtins"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "libsqlite3-sys",
+      "version": "0.38.2",
+      "purl": "pkg:cargo/libsqlite3-sys@0.38.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rusqlite/rusqlite"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:native-code",
+          "value": "bundled SQLite (C), reached via rusqlite for .sqlite extraction"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "linux-raw-sys",
+      "version": "0.12.1",
+      "purl": "pkg:cargo/linux-raw-sys@0.12.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sunfishcode/linux-raw-sys"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "linux-raw-sys",
+      "version": "0.4.15",
+      "purl": "pkg:cargo/linux-raw-sys@0.4.15",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sunfishcode/linux-raw-sys"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lock_api",
+      "version": "0.4.14",
+      "purl": "pkg:cargo/lock_api@0.4.14",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Amanieu/parking_lot"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "log",
+      "version": "0.4.33",
+      "purl": "pkg:cargo/log@0.4.33",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/log"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "loop9",
+      "version": "0.1.5",
+      "purl": "pkg:cargo/loop9@0.1.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://gitlab.com/kornelski/loop9.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lopdf",
+      "version": "0.42.0",
+      "purl": "pkg:cargo/lopdf@0.42.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/J-F-Liu/lopdf.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lopdf",
+      "version": "0.44.0",
+      "purl": "pkg:cargo/lopdf@0.44.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/J-F-Liu/lopdf.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "lzma-rust",
+      "version": "0.1.7",
+      "purl": "pkg:cargo/lzma-rust@0.1.7",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dyz1990/sevenz-rust/tree/main/lzma-rust"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "mail-parser",
+      "version": "0.11.8",
+      "purl": "pkg:cargo/mail-parser@0.11.8",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/stalwartlabs/mail-parser"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "matchers",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/matchers@0.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/hawkw/matchers"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "matchit",
+      "version": "0.8.4",
+      "purl": "pkg:cargo/matchit@0.8.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT AND BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/ibraheemdev/matchit"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "matrixmultiply",
+      "version": "0.3.10",
+      "purl": "pkg:cargo/matrixmultiply@0.3.10",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/bluss/matrixmultiply/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "maybe-rayon",
+      "version": "0.1.1",
+      "purl": "pkg:cargo/maybe-rayon@0.1.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/shssoichiro/maybe-rayon"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "md-5",
+      "version": "0.10.6",
+      "purl": "pkg:cargo/md-5@0.10.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/hashes"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "md-5",
+      "version": "0.11.0",
+      "purl": "pkg:cargo/md-5@0.11.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/hashes"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "memchr",
+      "version": "2.8.2",
+      "purl": "pkg:cargo/memchr@2.8.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Unlicense OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/BurntSushi/memchr"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "mime",
+      "version": "0.3.17",
+      "purl": "pkg:cargo/mime@0.3.17",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/hyperium/mime"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "miniz_oxide",
+      "version": "0.8.9",
+      "purl": "pkg:cargo/miniz_oxide@0.8.9",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Zlib OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "mio",
+      "version": "1.2.1",
+      "purl": "pkg:cargo/mio@1.2.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/mio"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "moxcms",
+      "version": "0.7.11",
+      "purl": "pkg:cargo/moxcms@0.7.11",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/awxkee/moxcms.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "multer",
+      "version": "3.1.0",
+      "purl": "pkg:cargo/multer@3.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rwf2/multer"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "nalgebra",
+      "version": "0.32.6",
+      "purl": "pkg:cargo/nalgebra@0.32.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dimforge/nalgebra"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "new_debug_unreachable",
+      "version": "1.0.6",
+      "purl": "pkg:cargo/new_debug_unreachable@1.0.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mbrubeck/rust-debug-unreachable"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "nom",
+      "version": "8.0.0",
+      "purl": "pkg:cargo/nom@8.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-bakery/nom"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "noop_proc_macro",
+      "version": "0.3.0",
+      "purl": "pkg:cargo/noop_proc_macro@0.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/lu-zero/noop_proc_macro"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "nt-time",
+      "version": "0.8.1",
+      "purl": "pkg:cargo/nt-time@0.8.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sorairolake/nt-time"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "nu-ansi-term",
+      "version": "0.50.3",
+      "purl": "pkg:cargo/nu-ansi-term@0.50.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/nushell/nu-ansi-term"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "num",
+      "version": "0.4.3",
+      "purl": "pkg:cargo/num@0.4.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "num-bigint",
+      "version": "0.4.6",
+      "purl": "pkg:cargo/num-bigint@0.4.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num-bigint"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "num-bigint",
+      "version": "0.5.1",
+      "purl": "pkg:cargo/num-bigint@0.5.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num-bigint"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "num-complex",
+      "version": "0.4.6",
+      "purl": "pkg:cargo/num-complex@0.4.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num-complex"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "num-conv",
+      "version": "0.2.2",
+      "purl": "pkg:cargo/num-conv@0.2.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/jhpratt/num-conv"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "num-derive",
+      "version": "0.4.2",
+      "purl": "pkg:cargo/num-derive@0.4.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num-derive"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "num-integer",
+      "version": "0.1.46",
+      "purl": "pkg:cargo/num-integer@0.1.46",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num-integer"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "num-iter",
+      "version": "0.1.45",
+      "purl": "pkg:cargo/num-iter@0.1.45",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num-iter"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "num-rational",
+      "version": "0.4.2",
+      "purl": "pkg:cargo/num-rational@0.4.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num-rational"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "num-traits",
+      "version": "0.2.19",
+      "purl": "pkg:cargo/num-traits@0.2.19",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-num/num-traits"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "once_cell",
+      "version": "1.21.4",
+      "purl": "pkg:cargo/once_cell@1.21.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/matklad/once_cell"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "owned_ttf_parser",
+      "version": "0.25.1",
+      "purl": "pkg:cargo/owned_ttf_parser@0.25.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/alexheretic/owned-ttf-parser"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "parking_lot",
+      "version": "0.12.5",
+      "purl": "pkg:cargo/parking_lot@0.12.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Amanieu/parking_lot"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "parking_lot_core",
+      "version": "0.9.12",
+      "purl": "pkg:cargo/parking_lot_core@0.9.12",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Amanieu/parking_lot"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "parquet",
+      "version": "59.2.0",
+      "purl": "pkg:cargo/parquet@59.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "paste",
+      "version": "1.0.15",
+      "purl": "pkg:cargo/paste@1.0.15",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/paste"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pdf-extract",
+      "version": "0.12.0",
+      "purl": "pkg:cargo/pdf-extract@0.12.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/jrmuizel/pdf-extract"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "percent-encoding",
+      "version": "2.3.2",
+      "purl": "pkg:cargo/percent-encoding@2.3.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/servo/rust-url/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "phf",
+      "version": "0.12.1",
+      "purl": "pkg:cargo/phf@0.12.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-phf/rust-phf"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "phf",
+      "version": "0.13.1",
+      "purl": "pkg:cargo/phf@0.13.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-phf/rust-phf"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "phf_shared",
+      "version": "0.12.1",
+      "purl": "pkg:cargo/phf_shared@0.12.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-phf/rust-phf"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "phf_shared",
+      "version": "0.13.1",
+      "purl": "pkg:cargo/phf_shared@0.13.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-phf/rust-phf"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pin-project-lite",
+      "version": "0.2.17",
+      "purl": "pkg:cargo/pin-project-lite@0.2.17",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/taiki-e/pin-project-lite"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "png",
+      "version": "0.18.1",
+      "purl": "pkg:cargo/png@0.18.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/image-rs/image-png"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pom",
+      "version": "1.1.0",
+      "purl": "pkg:cargo/pom@1.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/J-F-Liu/pom.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "postgres-protocol",
+      "version": "0.6.12",
+      "purl": "pkg:cargo/postgres-protocol@0.6.12",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-postgres/rust-postgres"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "postgres-types",
+      "version": "0.2.14",
+      "purl": "pkg:cargo/postgres-types@0.2.14",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-postgres/rust-postgres"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "postscript",
+      "version": "0.14.1",
+      "purl": "pkg:cargo/postscript@0.14.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/bodoni/postscript"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "powerfmt",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/powerfmt@0.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/jhpratt/powerfmt"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ppv-lite86",
+      "version": "0.2.21",
+      "purl": "pkg:cargo/ppv-lite86@0.2.21",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/cryptocorrosion/cryptocorrosion"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "proc-macro2",
+      "version": "1.0.106",
+      "purl": "pkg:cargo/proc-macro2@1.0.106",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/proc-macro2"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "procfs",
+      "version": "0.17.0",
+      "purl": "pkg:cargo/procfs@0.17.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/eminence/procfs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "procfs-core",
+      "version": "0.17.0",
+      "purl": "pkg:cargo/procfs-core@0.17.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/eminence/procfs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "profiling",
+      "version": "1.0.18",
+      "purl": "pkg:cargo/profiling@1.0.18",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/aclysma/profiling"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "profiling-procmacros",
+      "version": "1.0.18",
+      "purl": "pkg:cargo/profiling-procmacros@1.0.18",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/aclysma/profiling"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "prometheus",
+      "version": "0.14.0",
+      "purl": "pkg:cargo/prometheus@0.14.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tikv/rust-prometheus"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pxfm",
+      "version": "0.1.29",
+      "purl": "pkg:cargo/pxfm@0.1.29",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/awxkee/pxfm"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "qoi",
+      "version": "0.4.1",
+      "purl": "pkg:cargo/qoi@0.4.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/aldanor/qoi-rust"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "quick-error",
+      "version": "2.0.1",
+      "purl": "pkg:cargo/quick-error@2.0.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "http://github.com/tailhook/quick-error"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "quick-xml",
+      "version": "0.41.0",
+      "purl": "pkg:cargo/quick-xml@0.41.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tafia/quick-xml"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "quick-xml",
+      "version": "0.42.0",
+      "purl": "pkg:cargo/quick-xml@0.42.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tafia/quick-xml"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "quote",
+      "version": "1.0.46",
+      "purl": "pkg:cargo/quote@1.0.46",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/quote"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rand",
+      "version": "0.10.2",
+      "purl": "pkg:cargo/rand@0.10.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-random/rand"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rand",
+      "version": "0.8.6",
+      "purl": "pkg:cargo/rand@0.8.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-random/rand"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rand_chacha",
+      "version": "0.3.1",
+      "purl": "pkg:cargo/rand_chacha@0.3.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-random/rand"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rand_core",
+      "version": "0.10.1",
+      "purl": "pkg:cargo/rand_core@0.10.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-random/rand_core"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rand_core",
+      "version": "0.6.4",
+      "purl": "pkg:cargo/rand_core@0.6.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-random/rand"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rand_distr",
+      "version": "0.4.3",
+      "purl": "pkg:cargo/rand_distr@0.4.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-random/rand"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rangemap",
+      "version": "1.7.1",
+      "purl": "pkg:cargo/rangemap@1.7.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/jeffparsons/rangemap"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rav1e",
+      "version": "0.7.1",
+      "purl": "pkg:cargo/rav1e@0.7.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/xiph/rav1e/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ravif",
+      "version": "0.11.20",
+      "purl": "pkg:cargo/ravif@0.11.20",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/kornelski/cavif-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rawpointer",
+      "version": "0.2.1",
+      "purl": "pkg:cargo/rawpointer@0.2.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/bluss/rawpointer/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rayon",
+      "version": "1.12.0",
+      "purl": "pkg:cargo/rayon@1.12.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rayon-rs/rayon"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rayon-core",
+      "version": "1.13.0",
+      "purl": "pkg:cargo/rayon-core@1.13.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rayon-rs/rayon"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "regex",
+      "version": "1.13.1",
+      "purl": "pkg:cargo/regex@1.13.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/regex"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "regex-automata",
+      "version": "0.4.18",
+      "purl": "pkg:cargo/regex-automata@0.4.18",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/regex"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "regex-syntax",
+      "version": "0.8.11",
+      "purl": "pkg:cargo/regex-syntax@0.8.11",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/regex"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rgb",
+      "version": "0.8.53",
+      "purl": "pkg:cargo/rgb@0.8.53",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/kornelski/rust-rgb"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ring",
+      "version": "0.17.14",
+      "purl": "pkg:cargo/ring@0.17.14",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 AND ISC"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/briansmith/ring"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:native-code",
+          "value": "assembly + C crypto primitives, reached via rustls"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rusqlite",
+      "version": "0.40.2",
+      "purl": "pkg:cargo/rusqlite@0.40.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rusqlite/rusqlite"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:native-code",
+          "value": "safe wrapper over libsqlite3-sys"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rustix",
+      "version": "0.38.44",
+      "purl": "pkg:cargo/rustix@0.38.44",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/bytecodealliance/rustix"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rustix",
+      "version": "1.1.4",
+      "purl": "pkg:cargo/rustix@1.1.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/bytecodealliance/rustix"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rustls",
+      "version": "0.23.43",
+      "purl": "pkg:cargo/rustls@0.23.43",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR ISC OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rustls/rustls"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rustls-pemfile",
+      "version": "2.2.0",
+      "purl": "pkg:cargo/rustls-pemfile@2.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR ISC OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rustls/pemfile"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rustls-pki-types",
+      "version": "1.14.1",
+      "purl": "pkg:cargo/rustls-pki-types@1.14.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rustls/pki-types"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rustls-webpki",
+      "version": "0.103.13",
+      "purl": "pkg:cargo/rustls-webpki@0.103.13",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rustls/webpki"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rustversion",
+      "version": "1.0.22",
+      "purl": "pkg:cargo/rustversion@1.0.22",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/rustversion"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rxing",
+      "version": "0.9.2",
+      "purl": "pkg:cargo/rxing@0.9.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rxing-core/rxing"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "rxing-one-d-proc-derive",
+      "version": "0.9.0",
+      "purl": "pkg:cargo/rxing-one-d-proc-derive@0.9.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rxing-core/rxing/tree/main/crates/one-d-proc-derive"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ryu",
+      "version": "1.0.23",
+      "purl": "pkg:cargo/ryu@1.0.23",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR BSL-1.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/ryu"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "safe_arch",
+      "version": "0.7.4",
+      "purl": "pkg:cargo/safe_arch@0.7.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Zlib OR Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Lokathor/safe_arch"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "scopeguard",
+      "version": "1.2.0",
+      "purl": "pkg:cargo/scopeguard@1.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/bluss/scopeguard"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "seq-macro",
+      "version": "0.3.6",
+      "purl": "pkg:cargo/seq-macro@0.3.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/seq-macro"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "serde",
+      "version": "1.0.229",
+      "purl": "pkg:cargo/serde@1.0.229",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/serde-rs/serde"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "serde_core",
+      "version": "1.0.229",
+      "purl": "pkg:cargo/serde_core@1.0.229",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/serde-rs/serde"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "serde_derive",
+      "version": "1.0.229",
+      "purl": "pkg:cargo/serde_derive@1.0.229",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/serde-rs/serde"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "serde_json",
+      "version": "1.0.151",
+      "purl": "pkg:cargo/serde_json@1.0.151",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/serde-rs/json"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "serde_path_to_error",
+      "version": "0.1.20",
+      "purl": "pkg:cargo/serde_path_to_error@0.1.20",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/path-to-error"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "serde_spanned",
+      "version": "1.1.1",
+      "purl": "pkg:cargo/serde_spanned@1.1.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/toml-rs/toml"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "serde_urlencoded",
+      "version": "0.7.1",
+      "purl": "pkg:cargo/serde_urlencoded@0.7.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/nox/serde_urlencoded"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sevenz-rust",
+      "version": "0.6.1",
+      "purl": "pkg:cargo/sevenz-rust@0.6.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dyz1990/sevenz-rust"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sha2",
+      "version": "0.10.9",
+      "purl": "pkg:cargo/sha2@0.10.9",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/hashes"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sha2",
+      "version": "0.11.0",
+      "purl": "pkg:cargo/sha2@0.11.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/hashes"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharded-slab",
+      "version": "0.1.7",
+      "purl": "pkg:cargo/sharded-slab@0.1.7",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/hawkw/sharded-slab"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "signal-hook-registry",
+      "version": "1.4.8",
+      "purl": "pkg:cargo/signal-hook-registry@1.4.8",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/vorner/signal-hook"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "simba",
+      "version": "0.8.1",
+      "purl": "pkg:cargo/simba@0.8.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dimforge/simba"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "simd-adler32",
+      "version": "0.3.9",
+      "purl": "pkg:cargo/simd-adler32@0.3.9",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mcountryman/simd-adler32"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "simd_helpers",
+      "version": "0.1.0",
+      "purl": "pkg:cargo/simd_helpers@0.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/lu-zero/simd_helpers"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "siphasher",
+      "version": "1.0.3",
+      "purl": "pkg:cargo/siphasher@1.0.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/jedisct1/rust-siphash"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "siphon",
+      "version": "2.3.0",
+      "purl": "pkg:cargo/siphon@2.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/oxide11/dlpscan-rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:first-party",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "siphon-core",
+      "version": "2.8.0",
+      "purl": "pkg:cargo/siphon-core@2.8.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:first-party",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "slab",
+      "version": "0.4.12",
+      "purl": "pkg:cargo/slab@0.4.12",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/slab"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "smallvec",
+      "version": "1.15.2",
+      "purl": "pkg:cargo/smallvec@1.15.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/servo/rust-smallvec"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "socket2",
+      "version": "0.6.4",
+      "purl": "pkg:cargo/socket2@0.6.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-lang/socket2"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "spin",
+      "version": "0.9.8",
+      "purl": "pkg:cargo/spin@0.9.8",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/mvdnes/spin-rs.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "spki",
+      "version": "0.7.3",
+      "purl": "pkg:cargo/spki@0.7.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/formats/tree/master/spki"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "stringprep",
+      "version": "0.1.5",
+      "purl": "pkg:cargo/stringprep@0.1.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sfackler/rust-stringprep"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "strsim",
+      "version": "0.11.1",
+      "purl": "pkg:cargo/strsim@0.11.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rapidfuzz/strsim-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "subtle",
+      "version": "2.6.1",
+      "purl": "pkg:cargo/subtle@2.6.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dalek-cryptography/subtle"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "syn",
+      "version": "2.0.118",
+      "purl": "pkg:cargo/syn@2.0.118",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/syn"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "syn",
+      "version": "3.0.4",
+      "purl": "pkg:cargo/syn@3.0.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/syn"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sync_wrapper",
+      "version": "1.0.2",
+      "purl": "pkg:cargo/sync_wrapper@1.0.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Actyx/sync_wrapper"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tempfile",
+      "version": "3.27.0",
+      "purl": "pkg:cargo/tempfile@3.27.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Stebalien/tempfile"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "thiserror",
+      "version": "1.0.69",
+      "purl": "pkg:cargo/thiserror@1.0.69",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/thiserror"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "thiserror",
+      "version": "2.0.18",
+      "purl": "pkg:cargo/thiserror@2.0.18",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/thiserror"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "thiserror-impl",
+      "version": "1.0.69",
+      "purl": "pkg:cargo/thiserror-impl@1.0.69",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/thiserror"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "thiserror-impl",
+      "version": "2.0.18",
+      "purl": "pkg:cargo/thiserror-impl@2.0.18",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/thiserror"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "thread_local",
+      "version": "1.1.9",
+      "purl": "pkg:cargo/thread_local@1.1.9",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Amanieu/thread_local-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tiff",
+      "version": "0.10.3",
+      "purl": "pkg:cargo/tiff@0.10.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/image-rs/image-tiff"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "time",
+      "version": "0.3.51",
+      "purl": "pkg:cargo/time@0.3.51",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/time-rs/time"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "time-core",
+      "version": "0.1.9",
+      "purl": "pkg:cargo/time-core@0.1.9",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/time-rs/time"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "time-macros",
+      "version": "0.2.30",
+      "purl": "pkg:cargo/time-macros@0.2.30",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/time-rs/time"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tinyvec",
+      "version": "1.11.0",
+      "purl": "pkg:cargo/tinyvec@1.11.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Zlib OR Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Lokathor/tinyvec"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tinyvec_macros",
+      "version": "0.1.1",
+      "purl": "pkg:cargo/tinyvec_macros@0.1.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0 OR Zlib"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Soveu/tinyvec_macros"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tokio",
+      "version": "1.53.1",
+      "purl": "pkg:cargo/tokio@1.53.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/tokio"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tokio-macros",
+      "version": "2.7.0",
+      "purl": "pkg:cargo/tokio-macros@2.7.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/tokio"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tokio-postgres",
+      "version": "0.7.18",
+      "purl": "pkg:cargo/tokio-postgres@0.7.18",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-postgres/rust-postgres"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tokio-postgres-rustls",
+      "version": "0.14.0",
+      "purl": "pkg:cargo/tokio-postgres-rustls@0.14.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/jbg/tokio-postgres-rustls"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tokio-rustls",
+      "version": "0.26.4",
+      "purl": "pkg:cargo/tokio-rustls@0.26.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rustls/tokio-rustls"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tokio-util",
+      "version": "0.7.18",
+      "purl": "pkg:cargo/tokio-util@0.7.18",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/tokio"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "toml",
+      "version": "1.1.4+spec-1.1.0",
+      "purl": "pkg:cargo/toml@1.1.4+spec-1.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/toml-rs/toml"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "toml_datetime",
+      "version": "1.1.1+spec-1.1.0",
+      "purl": "pkg:cargo/toml_datetime@1.1.1+spec-1.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/toml-rs/toml"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "toml_parser",
+      "version": "1.1.3+spec-1.1.0",
+      "purl": "pkg:cargo/toml_parser@1.1.3+spec-1.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/toml-rs/toml"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "toml_writer",
+      "version": "1.1.2+spec-1.1.0",
+      "purl": "pkg:cargo/toml_writer@1.1.2+spec-1.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/toml-rs/toml"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tower",
+      "version": "0.5.3",
+      "purl": "pkg:cargo/tower@0.5.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tower-rs/tower"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tower-http",
+      "version": "0.7.0",
+      "purl": "pkg:cargo/tower-http@0.7.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tower-rs/tower-http"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tower-layer",
+      "version": "0.3.3",
+      "purl": "pkg:cargo/tower-layer@0.3.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tower-rs/tower"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tower-service",
+      "version": "0.3.3",
+      "purl": "pkg:cargo/tower-service@0.3.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tower-rs/tower"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tracing",
+      "version": "0.1.44",
+      "purl": "pkg:cargo/tracing@0.1.44",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/tracing"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tracing-attributes",
+      "version": "0.1.31",
+      "purl": "pkg:cargo/tracing-attributes@0.1.31",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/tracing"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tracing-core",
+      "version": "0.1.36",
+      "purl": "pkg:cargo/tracing-core@0.1.36",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/tracing"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tracing-log",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/tracing-log@0.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/tracing"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tracing-serde",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/tracing-serde@0.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/tracing"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tracing-subscriber",
+      "version": "0.3.23",
+      "purl": "pkg:cargo/tracing-subscriber@0.3.23",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/tokio-rs/tracing"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "ttf-parser",
+      "version": "0.25.1",
+      "purl": "pkg:cargo/ttf-parser@0.25.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/harfbuzz/ttf-parser"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "twox-hash",
+      "version": "2.1.2",
+      "purl": "pkg:cargo/twox-hash@2.1.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/shepmaster/twox-hash"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "type1-encoding-parser",
+      "version": "0.1.1",
+      "purl": "pkg:cargo/type1-encoding-parser@0.1.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/jrmuizel/type1-encoding-parser"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "typed-path",
+      "version": "0.12.3",
+      "purl": "pkg:cargo/typed-path@0.12.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/chipsenkbeil/typed-path"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "typenum",
+      "version": "1.20.1",
+      "purl": "pkg:cargo/typenum@1.20.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/paholg/typenum"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "unicode-bidi",
+      "version": "0.3.18",
+      "purl": "pkg:cargo/unicode-bidi@0.3.18",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/servo/unicode-bidi"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "unicode-ident",
+      "version": "1.0.24",
+      "purl": "pkg:cargo/unicode-ident@1.0.24",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "(MIT OR Apache-2.0) AND Unicode-3.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/unicode-ident"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "unicode-normalization",
+      "version": "0.1.25",
+      "purl": "pkg:cargo/unicode-normalization@0.1.25",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/unicode-rs/unicode-normalization"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "unicode-properties",
+      "version": "0.1.4",
+      "purl": "pkg:cargo/unicode-properties@0.1.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/unicode-rs/unicode-properties"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "unicode-segmentation",
+      "version": "1.13.3",
+      "purl": "pkg:cargo/unicode-segmentation@1.13.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/unicode-rs/unicode-segmentation"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "unicode-width",
+      "version": "0.2.2",
+      "purl": "pkg:cargo/unicode-width@0.2.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/unicode-rs/unicode-width"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "unrar",
+      "version": "0.5.8",
+      "purl": "pkg:cargo/unrar@0.5.8",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/muja/unrar.rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:native-code",
+          "value": "safe wrapper over unrar_sys"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "unrar_sys",
+      "version": "0.5.8",
+      "purl": "pkg:cargo/unrar_sys@0.5.8",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/muja/unrar.rs"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:native-code",
+          "value": "UnRAR (C++), reached via unrar for .rar extraction"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "untrusted",
+      "version": "0.9.0",
+      "purl": "pkg:cargo/untrusted@0.9.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/briansmith/untrusted"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "uriparse",
+      "version": "0.6.4",
+      "purl": "pkg:cargo/uriparse@0.6.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sgodwincs/uriparse-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "urlencoding",
+      "version": "2.1.3",
+      "purl": "pkg:cargo/urlencoding@2.1.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/kornelski/rust_urlencoding"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "utf8parse",
+      "version": "0.2.2",
+      "purl": "pkg:cargo/utf8parse@0.2.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/alacritty/vte"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "uuid",
+      "version": "1.26.0",
+      "purl": "pkg:cargo/uuid@1.26.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/uuid-rs/uuid"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "v_frame",
+      "version": "0.3.9",
+      "purl": "pkg:cargo/v_frame@0.3.9",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-2-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-av/v_frame"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "web-time",
+      "version": "1.1.0",
+      "purl": "pkg:cargo/web-time@1.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/daxpedda/web-time"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "webpki-roots",
+      "version": "1.0.9",
+      "purl": "pkg:cargo/webpki-roots@1.0.9",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "CDLA-Permissive-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rustls/webpki-roots"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "weezl",
+      "version": "0.1.12",
+      "purl": "pkg:cargo/weezl@0.1.12",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/image-rs/weezl"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "weezl",
+      "version": "0.2.1",
+      "purl": "pkg:cargo/weezl@0.2.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/image-rs/weezl"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "whoami",
+      "version": "2.1.2",
+      "purl": "pkg:cargo/whoami@2.1.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR BSL-1.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/ardaku/whoami"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "wide",
+      "version": "0.7.33",
+      "purl": "pkg:cargo/wide@0.7.33",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Zlib OR Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Lokathor/wide"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "widestring",
+      "version": "1.2.1",
+      "purl": "pkg:cargo/widestring@1.2.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/VoidStarKat/widestring-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "winnow",
+      "version": "1.0.3",
+      "purl": "pkg:cargo/winnow@1.0.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/winnow-rs/winnow"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "x509-cert",
+      "version": "0.2.5",
+      "purl": "pkg:cargo/x509-cert@0.2.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/formats/tree/master/x509-cert"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "zerocopy",
+      "version": "0.8.52",
+      "purl": "pkg:cargo/zerocopy@0.8.52",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause OR Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/google/zerocopy"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "zerocopy-derive",
+      "version": "0.8.52",
+      "purl": "pkg:cargo/zerocopy-derive@0.8.52",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause OR Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/google/zerocopy"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "zeroize",
+      "version": "1.9.0",
+      "purl": "pkg:cargo/zeroize@1.9.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "zeroize_derive",
+      "version": "1.5.0",
+      "purl": "pkg:cargo/zeroize_derive@1.5.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/utils"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "zip",
+      "version": "8.6.0",
+      "purl": "pkg:cargo/zip@8.6.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/zip-rs/zip2"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "zlib-rs",
+      "version": "0.6.4",
+      "purl": "pkg:cargo/zlib-rs@0.6.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Zlib"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/trifectatechfoundation/zlib-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "zmij",
+      "version": "1.0.21",
+      "purl": "pkg:cargo/zmij@1.0.21",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dtolnay/zmij"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "zopfli",
+      "version": "0.8.3",
+      "purl": "pkg:cargo/zopfli@0.8.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/zopfli-rs/zopfli"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "zune-core",
+      "version": "0.4.12",
+      "purl": "pkg:cargo/zune-core@0.4.12",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0 OR Zlib"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "zune-inflate",
+      "version": "0.2.54",
+      "purl": "pkg:cargo/zune-inflate@0.2.54",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0 OR Zlib"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "zune-jpeg",
+      "version": "0.4.21",
+      "purl": "pkg:cargo/zune-jpeg@0.4.21",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0 OR Zlib"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg"
+        }
+      ]
+    }
+  ]
+}

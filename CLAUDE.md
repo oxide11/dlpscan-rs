@@ -566,6 +566,35 @@ cargo test --test evasion_test
 
 CI mirrors these in `.github/workflows/ci.yml`.
 
+## Bill of materials
+
+`sbom/` holds a CycloneDX 1.6 document per shipped artifact, plus
+`INVENTORY.md` as the reviewable summary. Regenerate with
+`scripts/generate-sbom.sh`; `--check` verifies they match `Cargo.lock` and
+runs in CI (`.github/workflows/audit.yml`).
+
+**One document per artifact, never one for the workspace.** Each binary links
+a different closure and the differences are security-relevant: `siphon-api`
+links none of rusqlite, unrar, rxing or the image codecs, while `siphon-fs`
+and `siphon-milter` link all of them. A workspace-wide document would claim
+siphon-api ships a bundled SQLite and a C RAR decoder it has never contained.
+
+For the same reason the resolution is per-package. `cargo metadata` and
+`cargo tree --workspace` unify features across members and report exactly
+that false picture; `cargo tree -p` does not. Anything auditing this
+workspace has to resolve per package or it is describing a build that never
+happens.
+
+Output is deterministic — components sorted, no timestamp unless
+`--timestamp` is passed for a release artifact. That is what lets `--check`
+exist: an SBOM that changes on every run cannot be diffed, so nobody reads
+the diff, so it stops being a review artifact.
+
+Documents are filtered to `x86_64-unknown-linux-gnu` and normal edges only.
+Dev- and build-dependencies are not components of a shipped binary, and the
+Windows crates in `Cargo.lock` reach it through those paths alone — none
+appear in any artifact.
+
 ## Security
 
 - Dependabot watches `cargo`, `github-actions`, and `docker` ecosystems weekly.
