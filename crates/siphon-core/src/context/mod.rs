@@ -6,6 +6,7 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, MatchKind};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 mod keywords;
 pub use keywords::CONTEXT_KEYWORDS;
@@ -35,6 +36,19 @@ pub struct ContextHitIndex {
     /// Pattern ID is the index into CONTEXT_KEYWORDS, which is stable and
     /// allows zero-allocation lookups via direct indexing.
     hits: Vec<Vec<u32>>,
+    /// Byte length of the text this was built from, so the index can answer
+    /// "outside this range" without the caller passing a length it might get
+    /// wrong.
+    text_len: u32,
+}
+
+/// Is any position outside `[excl.0, excl.1)`?
+///
+/// `positions` is sorted, so this is two comparisons rather than a scan: if
+/// anything precedes the range the first element does, and if anything
+/// follows it the last does.
+fn any_position_outside(positions: &[u32], excl: (u32, u32)) -> bool {
+    positions.first().is_some_and(|&p| p < excl.0) || positions.last().is_some_and(|&p| p >= excl.1)
 }
 
 impl ContextHitIndex {
@@ -48,6 +62,38 @@ impl ContextHitIndex {
             .enumerate()
             .filter(|(_, positions)| !positions.is_empty())
             .filter_map(|(pid, _)| CONTEXT_KEYWORDS.get(pid).map(|&(cat, sub, _)| (cat, sub)))
+    }
+
+    /// Byte length of the indexed text.
+    pub fn text_len(&self) -> usize {
+        self.text_len as usize
+    }
+
+    /// Like [`Self::hit_keys`], but ignoring hits inside `excl`.
+    ///
+    /// Used when one index serves several scanned units — the excluded range
+    /// is the unit being scanned, whose own keywords must not reach it as
+    /// envelope evidence.
+    pub fn hit_keys_outside(
+        &self,
+        excl: (u32, u32),
+    ) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+        self.hits
+            .iter()
+            .enumerate()
+            .filter(move |(_, positions)| any_position_outside(positions, excl))
+            .filter_map(|(pid, _)| CONTEXT_KEYWORDS.get(pid).map(|&(cat, sub, _)| (cat, sub)))
+    }
+
+    /// Is there a hit for (category, sub_category) anywhere outside `excl`?
+    pub fn has_hit_outside(&self, category: &str, sub_category: &str, excl: (u32, u32)) -> bool {
+        let Some(pattern_id) = lookup_pattern_id(category, sub_category) else {
+            return false;
+        };
+        let Some(positions) = self.hits.get(pattern_id) else {
+            return false;
+        };
+        any_position_outside(positions, excl)
     }
 
     /// Check if any keyword for (category, sub_category) was found in the given byte range.
@@ -172,7 +218,10 @@ pub fn build_hit_index(text: &str) -> Option<ContextHitIndex> {
         }
     }
 
-    Some(ContextHitIndex { hits })
+    Some(ContextHitIndex {
+        hits,
+        text_len: text.len().min(u32::MAX as usize) as u32,
+    })
 }
 
 /// Is the match at `start..end` a whole word rather than part of a longer one?
@@ -284,6 +333,159 @@ pub fn envelope_has_context(
     };
     // Whole-envelope range: any hit anywhere counts.
     index.has_hit_in_range(category, sub_category, 0, envelope_len)
+}
+
+/// An envelope indexed **once** and shared by every unit scanned against it.
+///
+/// # Why this exists
+///
+/// Scanning a message part in isolation hides the rest of the message from
+/// context gating, so each part is scanned with an envelope built from the
+/// others. Correctness requires "the others": a part supplying its own
+/// context would promote a local keyword to envelope evidence and score it as
+/// though it came from elsewhere.
+///
+/// Implementing that by rebuilding the envelope per part made a message cost
+/// `O(parts × message bytes)` — the string was rebuilt and re-indexed once per
+/// part. Measured, a `multipart/mixed` of 400 inline text parts took 41
+/// seconds, and the parser's own 1000-part ceiling projected past four
+/// minutes. That is ordinary, legal MIME, and under a fail-closed mail policy
+/// a message that occupies a worker for minutes is an availability problem,
+/// not a latency one.
+///
+/// So the envelope is built and indexed once for the whole message, recording
+/// each unit's byte range, and "exclude this unit" becomes a range filter at
+/// query time — the same shape of question proximity gating already asks.
+/// One `O(message)` pass, then `O(1)` per part.
+pub struct EnvelopeIndex {
+    text: String,
+    index: Option<ContextHitIndex>,
+    /// Byte range each keyed unit occupies in `text`.
+    ranges: HashMap<String, (u32, u32)>,
+}
+
+impl EnvelopeIndex {
+    /// The concatenated envelope text.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    /// A view of this envelope for scanning the unit `key`, with that unit's
+    /// own bytes excluded.
+    ///
+    /// An unknown key excludes nothing, which is the honest answer: a unit
+    /// that contributed no text has none to withhold.
+    pub fn for_key(self: &Arc<Self>, key: &str) -> SharedEnvelope {
+        SharedEnvelope {
+            index: Arc::clone(self),
+            exclude: self.ranges.get(key).copied().unwrap_or(EXCLUDE_NOTHING),
+        }
+    }
+
+    /// A view excluding nothing — for scanning something that is not itself
+    /// part of the envelope.
+    pub fn whole(self: &Arc<Self>) -> SharedEnvelope {
+        SharedEnvelope {
+            index: Arc::clone(self),
+            exclude: EXCLUDE_NOTHING,
+        }
+    }
+}
+
+/// An empty range past the end of any text: nothing falls inside it, so every
+/// hit is "outside".
+const EXCLUDE_NOTHING: (u32, u32) = (u32::MAX, u32::MAX);
+
+/// One part's view of a shared [`EnvelopeIndex`]. Cheap to clone — an `Arc`
+/// bump and a range.
+#[derive(Clone)]
+pub struct SharedEnvelope {
+    index: Arc<EnvelopeIndex>,
+    exclude: (u32, u32),
+}
+
+impl SharedEnvelope {
+    pub(crate) fn hit_index(&self) -> Option<&ContextHitIndex> {
+        self.index.index.as_ref()
+    }
+
+    pub(crate) fn exclude(&self) -> (u32, u32) {
+        self.exclude
+    }
+
+    /// The envelope text visible to this view, for diagnostics. Not used on
+    /// the scan path — the whole point is that the text is never re-walked
+    /// per part.
+    pub fn envelope_text(&self) -> &str {
+        self.index.text()
+    }
+}
+
+/// Accumulates envelope sections, then indexes the result once.
+#[derive(Default)]
+pub struct EnvelopeBuilder {
+    text: String,
+    ranges: HashMap<String, (u32, u32)>,
+}
+
+impl EnvelopeBuilder {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Text belonging to no scanned unit — a subject line, say. Never excluded.
+    pub fn push_shared(&mut self, text: &str) {
+        self.push_section(None, text);
+    }
+
+    /// Text belonging to unit `key`, excluded when that unit is scanned.
+    ///
+    /// Calling this twice for one key extends its range to cover both, so a
+    /// part contributing a filename and a body still excludes both — but only
+    /// if the two are pushed consecutively, which is why callers append a
+    /// unit's material in one place.
+    pub fn push_keyed(&mut self, key: &str, text: &str) {
+        self.push_section(Some(key), text);
+    }
+
+    fn push_section(&mut self, key: Option<&str>, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let start = self.text.len().min(u32::MAX as usize) as u32;
+        self.text.push_str(text);
+        // Section separator. Not cosmetic: Aho-Corasick would otherwise match
+        // a keyword straddling two sections, and that hit's position would be
+        // attributed to whichever section it started in — letting a unit
+        // contribute context to itself through its neighbour's range.
+        // A newline cannot appear inside a keyword, so it cannot be straddled.
+        self.text.push('\n');
+        let end = self.text.len().min(u32::MAX as usize) as u32;
+
+        if let Some(key) = key {
+            self.ranges
+                .entry(key.to_string())
+                .and_modify(|r| {
+                    r.0 = r.0.min(start);
+                    r.1 = r.1.max(end);
+                })
+                .or_insert((start, end));
+        }
+    }
+
+    /// Index the accumulated text once.
+    pub fn build(self) -> Arc<EnvelopeIndex> {
+        let index = build_hit_index(&self.text);
+        Arc::new(EnvelopeIndex {
+            text: self.text,
+            index,
+            ranges: self.ranges,
+        })
+    }
 }
 
 /// Check if context keywords appear near a match span.

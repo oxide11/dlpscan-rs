@@ -14,6 +14,68 @@ starting from this file.
 
 ---
 
+## 2026-09-05 — Index the context envelope once per message
+
+### siphon-core 2.8.0
+
+- **perf(core): `ScanConfig::shared_envelope` — build the envelope index once
+  per message instead of once per part.**
+
+  Scanning a message part in isolation hides the rest of the message from
+  context gating, so each part is scanned with an envelope built from the
+  others. Correctness requires "the others": a part supplying its own context
+  would promote a local keyword to envelope evidence and score it as though it
+  came from elsewhere.
+
+  That was implemented by rebuilding the envelope string per part, and the
+  scanner then built an Aho-Corasick index over it per part. Both are linear
+  in message size and ran once per part, so a message cost
+  **O(parts × message bytes)**.
+
+  Attachments hid it — a part with a filename contributes only that filename
+  to the envelope. Inline text parts do not, and a `multipart/mixed` of a
+  thousand `text/plain` parts is ordinary, legal MIME.
+
+  `ParsedMessage::envelope_index()` now builds the envelope and its hit index
+  once, recording each part's byte range; excluding a part is a range filter at
+  query time, reusing the machinery proximity gating already has. Measured by
+  `cargo run --release --bin mail_bench`, which runs both paths back to back on
+  the same messages:
+
+  | Inline parts | Message | Rebuilt | Shared | Shared per part |
+  |---|---|---|---|---|
+  | 50 | 1.5 MB | 0.51 s | 0.10 s | 2.08 ms |
+  | 100 | 3 MB | 1.89 s | 0.20 s | 2.00 ms |
+  | 200 | 6 MB | 7.26 s | 0.40 s | 1.98 ms |
+  | 400 | 12 MB | 28.10 s | 0.81 s | 2.03 ms |
+
+  Rebuilt per-part cost doubles as part count doubles; shared per-part cost is
+  flat. At the MIME parser's 1000-part ceiling, extrapolated: ~176 s → ~2 s.
+
+  This mattered beyond latency. Under the fail-closed mail policy recorded in
+  `docs/architecture/email-dlp.md` §4.4, a cheap message that occupies a worker
+  for minutes is not slow — it tempfails the mail flow.
+
+  Every multi-part shape got faster, since all of them rebuilt at least once
+  per part: a 2 MB CSV attachment 225 ms → 152 ms, a 1 MB PDF 71 ms → 50 ms, a
+  200-part message 91 ms → 49 ms, single-worker mixed throughput 82 → 113
+  msg/s.
+
+  Additive. `context_envelope` keeps working unchanged and remains correct for
+  scanning a single unit in isolation, where there is no message-wide pass to
+  amortise against. Setting both is documented as caller error; `shared_envelope`
+  wins rather than the two being merged, because merging would double-count
+  evidence.
+
+- **fix(core): exclusion applies to the pattern prefilter too.** The gated-
+  pattern prefilter unions the envelope's keyword keys before any per-match
+  check runs. With one index serving every part, the scanned part's own
+  keywords are in that index, so the prefilter filters by range as well —
+  without it a pattern activated on the part's own keyword would then be
+  scored against the envelope downstream, defeating the exclusion entirely.
+
+---
+
 ## 2026-09-04 — Raise the scanner input cap to 30 MB
 
 ### siphon-core 2.7.0

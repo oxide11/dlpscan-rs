@@ -137,7 +137,24 @@ pub struct ScanConfig {
     /// [`crate::scoring::ContextSource`].
     ///
     /// `None` (default) preserves the previous behaviour exactly.
+    ///
+    /// Indexed once per scan. For one scanned unit that is fine; for the
+    /// parts of a single message it is not — see [`Self::shared_envelope`].
     pub context_envelope: Option<String>,
+    /// An envelope indexed once and shared across the parts of one message,
+    /// with this part's own bytes excluded by range.
+    ///
+    /// Same evidence as [`Self::context_envelope`], amortised. Build it with
+    /// [`crate::mime::ParsedMessage::envelope_index`] and take a per-part view
+    /// with `for_key(&part.path)`; the index is built once for the message
+    /// rather than once per part, which is the difference between `O(message)`
+    /// and `O(parts × message)`.
+    ///
+    /// Set this **or** `context_envelope`, not both. If both are set this one
+    /// wins and `context_envelope` is ignored: a message-level envelope is
+    /// strictly better information, and silently merging two envelopes would
+    /// double-count evidence.
+    pub shared_envelope: Option<crate::context::SharedEnvelope>,
     /// Entropy scan mode for detecting high-entropy secrets.
     pub entropy_scan: EntropyMode,
     /// Optional EDM (Exact Data Match) engine for known-value detection.
@@ -218,6 +235,7 @@ impl Default for ScanConfig {
             min_confidence: 0.0,
             baseline_only: false,
             context_envelope: None,
+            shared_envelope: None,
             entropy_scan: EntropyMode::Off,
             edm: None,
             lsh: None,
@@ -684,11 +702,28 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     // envelope is the surrounding material (message body, subject, filenames)
     // for cases where one logical document is scanned as separate units; see
     // ScanConfig::context_envelope.
-    let envelope_index = config
-        .context_envelope
-        .as_deref()
-        .and_then(context::build_hit_index);
-    let envelope_len = config.context_envelope.as_deref().map_or(0, |e| e.len());
+    // A shared envelope arrives already indexed — that is its whole purpose —
+    // so the per-scan build is skipped entirely on that path.
+    let owned_envelope_index = if config.shared_envelope.is_some() {
+        None
+    } else {
+        config
+            .context_envelope
+            .as_deref()
+            .and_then(context::build_hit_index)
+    };
+    let (envelope_index, envelope_len, envelope_exclude) = match &config.shared_envelope {
+        Some(shared) => (
+            shared.hit_index(),
+            shared.hit_index().map_or(0, |i| i.text_len()),
+            Some(shared.exclude()),
+        ),
+        None => (
+            owned_envelope_index.as_ref(),
+            config.context_envelope.as_deref().map_or(0, |e| e.len()),
+            None,
+        ),
+    };
 
     let compiled = &*COMPILED;
 
@@ -719,8 +754,20 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     } else {
         HashSet::new()
     };
-    if let Some(ref index) = envelope_index {
-        active_gated.extend(index.hit_keys().filter(|(_cat, sub)| !is_always_run(sub)));
+    if let Some(index) = envelope_index {
+        // With a shared envelope the scanned part's own keywords are in the
+        // index too, so they are filtered out by range here as well. Missing
+        // this would defeat the exclusion entirely: the prefilter runs before
+        // any per-match check, so a pattern activated here on the part's own
+        // keyword would then be scored against the envelope downstream.
+        match envelope_exclude {
+            Some(excl) => active_gated.extend(
+                index
+                    .hit_keys_outside(excl)
+                    .filter(|(_cat, sub)| !is_always_run(sub)),
+            ),
+            None => active_gated.extend(index.hit_keys().filter(|(_cat, sub)| !is_always_run(sub))),
+        }
     }
 
     let prefilter_active = hit_index.is_some() || envelope_index.is_some();
@@ -836,12 +883,16 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                 );
                 let context_source = if local_context {
                     crate::scoring::ContextSource::Local
-                } else if context::envelope_has_context(
-                    envelope_index.as_ref(),
-                    envelope_len,
-                    pat.category,
-                    pat.sub_category,
-                ) {
+                } else if match envelope_exclude {
+                    Some(excl) => envelope_index
+                        .is_some_and(|i| i.has_hit_outside(pat.category, pat.sub_category, excl)),
+                    None => context::envelope_has_context(
+                        envelope_index,
+                        envelope_len,
+                        pat.category,
+                        pat.sub_category,
+                    ),
+                } {
                     crate::scoring::ContextSource::Envelope
                 } else {
                     crate::scoring::ContextSource::None

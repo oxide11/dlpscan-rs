@@ -24,6 +24,7 @@
 //! limits, and the decisions about what is worth scanning.
 
 use mail_parser::{MessageParser, MimeHeaders, PartType};
+use std::sync::Arc;
 
 /// Bounds applied while walking. Message structure is attacker-controlled, so
 /// every recursion and accumulation here needs a ceiling.
@@ -166,6 +167,18 @@ impl ParsedMessage {
     /// Excludes `exclude_path` so a part never supplies its own context: that
     /// would promote a local keyword to envelope evidence and score it as
     /// though it came from elsewhere.
+    ///
+    /// # Prefer [`Self::envelope_index`] for whole messages
+    ///
+    /// This rebuilds the envelope for one part. Calling it per part makes a
+    /// message `O(parts × message bytes)` — measured at 41 s for 400 inline
+    /// text parts — because both this string and the Aho-Corasick index built
+    /// over it are discarded and remade for the next part.
+    ///
+    /// [`Self::envelope_index`] does the same work once for the whole message
+    /// and makes exclusion a range filter. This method remains for scanning a
+    /// single part in isolation, where there is no message-wide pass to amortise
+    /// against.
     pub fn context_envelope(&self, exclude_path: &str) -> String {
         let mut out = String::new();
         if let Some(s) = &self.headers.subject {
@@ -190,6 +203,50 @@ impl ParsedMessage {
             }
         }
         out
+    }
+
+    /// Index the context envelope **once** for the whole message.
+    ///
+    /// Then scan each part with `index.for_key(&part.path)`, which excludes
+    /// that part's own contribution by byte range rather than by rebuilding
+    /// the envelope without it. Same result as calling
+    /// [`Self::context_envelope`] per part; `O(message)` once instead of
+    /// `O(parts × message)`.
+    ///
+    /// ```no_run
+    /// # use siphon_core::mime::parse_message;
+    /// # use siphon_core::scanner::{scan_text_with_config, ScanConfig};
+    /// # let raw: &[u8] = b"";
+    /// let msg = parse_message(raw);
+    /// let envelope = msg.envelope_index();
+    /// for part in msg.text_parts() {
+    ///     let config = ScanConfig {
+    ///         shared_envelope: Some(envelope.for_key(&part.path)),
+    ///         ..Default::default()
+    ///     };
+    ///     let _ = scan_text_with_config(part.text.as_deref().unwrap_or(""), &config);
+    /// }
+    /// ```
+    pub fn envelope_index(&self) -> Arc<crate::context::EnvelopeIndex> {
+        let mut builder = crate::context::EnvelopeBuilder::new();
+        // The subject belongs to no part, so it is never excluded — every
+        // part is scanned with it.
+        if let Some(s) = &self.headers.subject {
+            builder.push_shared(s);
+        }
+        for p in &self.parts {
+            // A part's filename and text are pushed consecutively so its
+            // range covers both; see EnvelopeBuilder::push_keyed.
+            if let Some(f) = &p.filename {
+                builder.push_keyed(&p.path, f);
+            }
+            if p.kind == PartKind::Text {
+                if let Some(t) = &p.text {
+                    builder.push_keyed(&p.path, t);
+                }
+            }
+        }
+        builder.build()
     }
 }
 
@@ -581,6 +638,254 @@ mod tests {
             p.warnings.iter().any(|w| w.contains("part limit")),
             "hitting the part limit must be visible: {:?}",
             p.warnings
+        );
+    }
+
+    // --- shared envelope ---------------------------------------------------
+
+    use crate::scanner::{scan_text_with_config, ScanConfig};
+
+    fn findings_with_rebuilt_envelope(msg: &ParsedMessage, path: &str, text: &str) -> Vec<String> {
+        let config = ScanConfig {
+            context_envelope: Some(msg.context_envelope(path)),
+            ..Default::default()
+        };
+        let mut out: Vec<String> = scan_text_with_config(text, &config)
+            .unwrap()
+            .into_iter()
+            .map(|m| format!("{}/{}/{}", m.category, m.sub_category, m.text))
+            .collect();
+        out.sort();
+        out
+    }
+
+    fn findings_with_shared_envelope(msg: &ParsedMessage, path: &str, text: &str) -> Vec<String> {
+        let envelope = msg.envelope_index();
+        let config = ScanConfig {
+            shared_envelope: Some(envelope.for_key(path)),
+            ..Default::default()
+        };
+        let mut out: Vec<String> = scan_text_with_config(text, &config)
+            .unwrap()
+            .into_iter()
+            .map(|m| format!("{}/{}/{}", m.category, m.sub_category, m.text))
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// A multi-part message where the body describes what the attachment
+    /// contains — the case the envelope exists for.
+    fn envelope_test_message() -> ParsedMessage {
+        let raw = "From: hr@corp.example\r\nTo: b@corp.example\r\n\
+                   Subject: Payroll export\r\n\
+                   Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n\
+                   --B\r\nContent-Type: text/plain\r\n\r\n\
+                   Attached is the payroll file. It has the social security number \
+                   and date of birth columns the audit asked for.\r\n\
+                   --B\r\nContent-Type: text/plain; name=\"payroll.csv\"\r\n\
+                   Content-Disposition: attachment; filename=\"payroll.csv\"\r\n\r\n\
+                   name,id\r\nAlice,425713482\r\nBob,318427156\r\n\
+                   --B\r\nContent-Type: text/plain\r\n\r\n\
+                   Regards, the finance team. Invoice 88213 is still open.\r\n--B--\r\n";
+        parse_message(raw.as_bytes())
+    }
+
+    /// The whole point of the shared index: it must decide exactly what the
+    /// per-part rebuild decided. Same evidence, amortised — not less evidence.
+    #[test]
+    fn shared_envelope_matches_the_rebuilt_one_for_every_part() {
+        let msg = envelope_test_message();
+        assert!(msg.parts.len() >= 3, "fixture should have several parts");
+
+        for part in &msg.parts {
+            let Some(text) = part.text.as_deref() else {
+                continue;
+            };
+            assert_eq!(
+                findings_with_rebuilt_envelope(&msg, &part.path, text),
+                findings_with_shared_envelope(&msg, &part.path, text),
+                "part {} disagreed between rebuilt and shared envelope",
+                part.path
+            );
+        }
+    }
+
+    /// Exclusion is the correctness requirement, and range filtering is a
+    /// different mechanism from omission — so test the property directly
+    /// rather than trusting the equivalence test above to have covered it.
+    ///
+    /// A part's own keywords sit inside the shared index. If the range filter
+    /// leaked, they would come back as *envelope* evidence for that same
+    /// part, which is exactly the mis-scoring the exclusion exists to stop.
+    #[test]
+    fn a_part_does_not_supply_its_own_envelope_context() {
+        // One part, holding both the keyword and the bare number. Nothing
+        // else in the message mentions either.
+        let raw = "Subject: files\r\n\
+                   Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n\
+                   --B\r\nContent-Type: text/plain\r\n\r\n\
+                   social security number listed below\r\n425713482\r\n\
+                   --B\r\nContent-Type: text/plain\r\n\r\n\
+                   unrelated closing line\r\n--B--\r\n";
+        let msg = parse_message(raw.as_bytes());
+        let envelope = msg.envelope_index();
+        let self_part = msg
+            .parts
+            .iter()
+            .find(|p| {
+                p.text
+                    .as_deref()
+                    .is_some_and(|t| t.contains("social security number"))
+            })
+            .expect("fixture part");
+
+        let excluded = envelope.for_key(&self_part.path);
+        let not_excluded = envelope.whole();
+
+        // The keyword is in the index — `whole()` sees it.
+        assert!(
+            not_excluded
+                .hit_index()
+                .expect("index built")
+                .has_hit_outside(
+                    "North America - United States",
+                    "USA SSN",
+                    not_excluded.exclude()
+                ),
+            "fixture must put an SSN context keyword in the envelope at all",
+        );
+        // ...and excluding that part's range removes it.
+        assert!(
+            !excluded.hit_index().expect("index built").has_hit_outside(
+                "North America - United States",
+                "USA SSN",
+                excluded.exclude()
+            ),
+            "a part's own keyword leaked back as envelope evidence for itself",
+        );
+    }
+
+    /// The cross-part case the envelope was introduced for: keyword in the
+    /// body, bare digits in the attachment.
+    #[test]
+    fn context_still_crosses_from_one_part_to_another() {
+        let msg = envelope_test_message();
+        let attachment = msg
+            .parts
+            .iter()
+            .find(|p| p.filename.as_deref() == Some("payroll.csv"))
+            .expect("fixture attachment");
+        let envelope = msg.envelope_index();
+        let view = envelope.for_key(&attachment.path);
+
+        assert!(
+            view.hit_index().expect("index built").has_hit_outside(
+                "North America - United States",
+                "USA SSN",
+                view.exclude()
+            ),
+            "the body's keyword must still reach the attachment's scan",
+        );
+    }
+
+    /// Sections are newline-separated so Aho-Corasick cannot match across the
+    /// join. Without that, a keyword formed from one part's tail and the
+    /// next part's head would be attributed to whichever part it started in —
+    /// letting a part contribute context to itself via its neighbour's range.
+    #[test]
+    fn keywords_do_not_form_across_the_section_join() {
+        let mut builder = crate::context::EnvelopeBuilder::new();
+        builder.push_keyed("1", "social security nu");
+        builder.push_keyed("2", "mber");
+        let index = builder.build();
+
+        // Excluding neither part, the spliced keyword must still not exist.
+        let whole = index.whole();
+        assert!(
+            !whole.hit_index().expect("index built").has_hit_outside(
+                "North America - United States",
+                "USA SSN",
+                whole.exclude()
+            ),
+            "a keyword was matched across the section boundary",
+        );
+    }
+
+    /// A part contributing both a filename and a body must exclude both, or
+    /// half of its own material leaks back as envelope evidence.
+    #[test]
+    fn a_parts_filename_and_body_are_excluded_together() {
+        let mut builder = crate::context::EnvelopeBuilder::new();
+        builder.push_keyed("1", "social-security-numbers.csv");
+        builder.push_keyed("1", "425713482");
+        builder.push_keyed("2", "unrelated");
+        let index = builder.build();
+
+        let view = index.for_key("1");
+        assert!(
+            !view.hit_index().expect("index built").has_hit_outside(
+                "North America - United States",
+                "USA SSN",
+                view.exclude()
+            ),
+            "the filename half of a part's contribution was not excluded",
+        );
+    }
+
+    /// An envelope built once and used across parts must not be slower per
+    /// part as the message grows — that regression is the whole reason this
+    /// type exists, and it is invisible in a correctness test.
+    #[test]
+    fn envelope_index_is_built_once_not_once_per_part() {
+        fn message_with(parts: usize) -> ParsedMessage {
+            let mut raw = String::from(
+                "Subject: report\r\nContent-Type: multipart/mixed; boundary=\"B\"\r\n\r\n",
+            );
+            for i in 0..parts {
+                raw.push_str(&format!(
+                    "--B\r\nContent-Type: text/plain\r\n\r\n\
+                     Section {i}: account number and routing number for the wire \
+                     transfer, plus the social security number column.\r\n"
+                ));
+            }
+            raw.push_str("--B--\r\n");
+            parse_message(raw.as_bytes())
+        }
+
+        // Building the index is O(message) regardless of part count, so the
+        // per-part cost of *obtaining a view* must be constant.
+        let small = message_with(8);
+        let large = message_with(64);
+        let small_index = small.envelope_index();
+        let large_index = large.envelope_index();
+
+        // Same envelope text length per part in both, so the large message's
+        // envelope is ~8x the small one's.
+        assert!(
+            large_index.text().len() > small_index.text().len() * 4,
+            "fixture should scale the envelope with part count",
+        );
+
+        // A view is an Arc clone and a range lookup: no text is copied, so
+        // both envelopes hand out views referring to the same single text.
+        let paths: Vec<&str> = large
+            .parts
+            .iter()
+            .filter(|p| p.kind == PartKind::Text)
+            .map(|p| p.path.as_str())
+            .collect();
+        assert!(paths.len() >= 2, "fixture should have several text parts");
+        let view_a = large_index.for_key(paths[0]);
+        let view_b = large_index.for_key(paths[1]);
+        assert!(std::ptr::eq(
+            view_a.envelope_text().as_ptr(),
+            view_b.envelope_text().as_ptr()
+        ));
+        assert_ne!(
+            view_a.exclude(),
+            view_b.exclude(),
+            "different parts must exclude different ranges"
         );
     }
 }
