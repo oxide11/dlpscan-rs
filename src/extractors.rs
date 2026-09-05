@@ -1048,42 +1048,115 @@ fn extract_zip_archive(
     Ok(result)
 }
 
+/// Elements whose boundary is a boundary in the *document*, not just in the
+/// markup: a new paragraph, row, cell, list item or line break.
+///
+/// This distinction is the whole point of the list. Inside a paragraph, XML
+/// element boundaries are meaningless — Word splits a single word across
+/// `<w:r>` runs whenever it feels like it, on nothing more than an edit or a
+/// spell-check, so `<w:t>4111</w:t><w:t>111111111111</w:t>` is one card
+/// number and joining the runs is the only way to see it. Between cells, the
+/// opposite holds: two adjacent numeric cells are two numbers, and joining
+/// them invents a card number that appears nowhere in the sheet.
+///
+/// Getting this wrong is not a cosmetic problem. With no separator at all —
+/// which is what this stripper did — both failure modes land at once: a
+/// spreadsheet's `SSN` header glued to the value below it reads as
+/// `SSN219-09-9999` and matches nothing, while two unrelated 8-digit columns
+/// read as a valid Luhn card and match something that is not there.
+///
+/// Covers OOXML (`w:`/`a:`), OpenDocument (`text:`/`table:`) and HTML, since
+/// every caller of [`strip_xml_tags`] hands it one of those three.
+const XML_BREAK_TAGS: &[&str] = &[
+    // WordprocessingML: paragraph, table row/cell, explicit break, tab
+    "w:p",
+    "w:tr",
+    "w:tc",
+    "w:br",
+    "w:tab", // SpreadsheetML: cell, row
+    "c",
+    "row", // DrawingML (pptx): paragraph, break
+    "a:p",
+    "a:br", // OpenDocument: paragraph, heading, line break, row, cell
+    "text:p",
+    "text:h",
+    "text:line-break",
+    "table:table-row",
+    "table:table-cell",
+    // HTML block-level elements
+    "p",
+    "br",
+    "div",
+    "tr",
+    "td",
+    "th",
+    "li",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+];
+
+/// True when `raw` — the text between `<` and `>` — names an element from
+/// [`XML_BREAK_TAGS`].
+fn xml_tag_breaks(raw: &str) -> bool {
+    let name = raw
+        .trim_start_matches(['/', '?', '!'])
+        .split([' ', '\t', '\r', '\n', '/', '>'])
+        .next()
+        .unwrap_or("");
+    if name.is_empty() {
+        return false;
+    }
+    XML_BREAK_TAGS
+        .iter()
+        .any(|t| t.eq_ignore_ascii_case(name.trim()))
+}
+
 /// Simple XML tag stripper that preserves text content.
+///
+/// Text inside one document block is concatenated verbatim; a block boundary
+/// (see [`XML_BREAK_TAGS`]) becomes a newline. Newlines survive the
+/// whitespace collapse below deliberately — a space would not be enough,
+/// because most value patterns tolerate an internal space, so two adjacent
+/// numeric cells joined by one would still read as a single card number.
 fn strip_xml_tags(xml: &str) -> String {
     let mut output = String::new();
+    let mut tag = String::new();
     let mut in_tag = false;
-    let mut last_was_close = false;
 
     for ch in xml.chars() {
         match ch {
             '<' => {
                 in_tag = true;
-                last_was_close = false;
+                tag.clear();
             }
-            '>' => {
+            '>' if in_tag => {
                 in_tag = false;
-                last_was_close = true;
-            }
-            _ if !in_tag => {
-                if last_was_close
-                    && !output.is_empty()
-                    && !output.ends_with(' ')
-                    && !output.ends_with('\n')
-                {
-                    // Add space between text from different tags
+                if xml_tag_breaks(&tag) {
+                    output.push('\n');
                 }
-                output.push(ch);
-                last_was_close = false;
             }
-            _ => {}
+            _ if in_tag => tag.push(ch),
+            _ => output.push(ch),
         }
     }
 
-    // Clean up: collapse whitespace
+    // Collapse runs of whitespace, but keep line structure: a run of spaces
+    // becomes one space, a run of newlines becomes one newline.
     let mut result = String::new();
     let mut prev_space = false;
+    let mut prev_newline = false;
     for ch in output.chars() {
-        if ch.is_whitespace() {
+        if ch == '\n' || ch == '\r' {
+            if !prev_newline {
+                result.push('\n');
+            }
+            prev_newline = true;
+            prev_space = true;
+        } else if ch.is_whitespace() {
             if !prev_space {
                 result.push(' ');
             }
@@ -1091,6 +1164,7 @@ fn strip_xml_tags(xml: &str) -> String {
         } else {
             result.push(ch);
             prev_space = false;
+            prev_newline = false;
         }
     }
 
