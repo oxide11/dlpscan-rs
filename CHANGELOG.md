@@ -46,6 +46,18 @@ starting from this file.
   larger uploads and extracts them; text beyond this is reported as
   `TEXT_EXCEEDS_SCANNER_LIMIT` with the file marked not scanned, never clean.
 
+- **fix(core): `scanner::MAX_INPUT_SIZE` was a second, stale definition.**
+  It carried its own `10 * 1024 * 1024`. Nothing in the workspace read it —
+  the pipeline enforces the cap through `validation::validate_text_input` —
+  so behaviour was correct, but it is a `pub` constant, and once the real cap
+  moved it disagreed with enforcement by 3x. Any caller reaching for it to
+  pre-check input would have rejected text the scanner accepts, which is
+  exactly what the forthcoming mail path would have done.
+
+  It is now a re-export of `validation::MAX_INPUT_SIZE`. Same path, same
+  type, no breaking change — and a re-export cannot drift. New callers should
+  use `siphon_core::validation::MAX_INPUT_SIZE` and never a literal.
+
 ### Helm chart 2.4.0
 
 - **chore(chart): raise api and fs memory to 512Mi request / 2Gi limit.**

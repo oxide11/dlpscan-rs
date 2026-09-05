@@ -46,7 +46,7 @@ straight to stage B.
 
 Two guards:
 - Empty input → `DlpError::EmptyInput`
-- Size > `MAX_INPUT_SIZE` (10 MB) → `DlpError::InputTooLarge`
+- Size > `MAX_INPUT_SIZE` (30 MB) → `DlpError::InputTooLarge`
 
 The size ceiling is the only defense against an attacker feeding a
 multi-GB payload and forcing the normalizer to walk every byte 10
