@@ -710,4 +710,10 @@ appear in any artifact.
 - SIEM / webhooks: gated by the `siem` / `webhooks` features in the root crate
 - Integration tests: `tests/`
 - Architecture / patterns docs: `docs/`
+- **Start here for the whole path:** `docs/architecture/file-lifecycle.md`
+  follows one file end to end — the four ingress doors and how each fails,
+  admission control, format identification, extraction and what `warnings`
+  means, all ten scan stages, verdict reconciliation, persistence and audit.
+  Its §7 is the one to reread: the four ways a file can come back "clean",
+  and how to tell them apart
 - Per-crate version source of truth: `Cargo.toml` (root) and `crates/*/Cargo.toml`

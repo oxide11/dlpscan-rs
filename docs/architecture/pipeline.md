@@ -5,6 +5,12 @@
 > Every public API surface — `scan_text`, `InputGuard::scan`, the CLI,
 > the HTTP server — funnels into this single function. Understanding it
 > is understanding the scanner.
+>
+> **Companion document:** [`file-lifecycle.md`](file-lifecycle.md) follows a
+> single file end to end — ingress, admission control, identification,
+> extraction, all ten scan stages, and what becomes of the findings. This
+> file is the stage-by-stage reference; that one is the narrative, and it
+> covers the ingress and post-scan halves that this file does not.
 
 ## Pre-scanner: file extraction
 
@@ -26,9 +32,25 @@ maps file extensions to extractor functions:
 | `.vcf` / `.ics` / `.warc` / `.mhtml` / `.ldif` | format-specific | always |
 | unknown | magic-byte detection fallback | always |
 
+> **The table above is the *disambiguation* step, not the dispatch
+> decision.** It used to be both, and that was a bypass: the extension
+> decided which reader ran, and magic bytes were consulted only for
+> extensions not in the table, so a deflated archive named `.txt` went to
+> the plain-text reader and came back clean with no warning. Content is now
+> sniffed first (`sniff_family`), and the extension refines the result
+> within a proven family — `zip` → docx vs odt vs a plain archive — rather
+> than being taken on trust. A contradiction is recorded and acted on per
+> `SIPHON_ON_FORMAT_MISMATCH`. See
+> [`file-lifecycle.md` §3](file-lifecycle.md#3-identification--what-is-this-file-actually).
+
 Each extractor returns an `ExtractionResult { text, source, warnings,
 metadata }`. The `text` field is the UTF-8 blob that enters the
 scanner. Everything after this point is format-agnostic.
+
+`warnings` is load-bearing rather than informational: it means *content
+exists here that this pass did not read*, and it is what lets a caller fail
+closed. An extractor returning `Ok("")` for a file it could not parse makes
+every caller downstream report clean for content nobody opened.
 
 **Key implication:** a credit card number inside a QR code on a PNG
 image goes through the full Luhn + BIN check path like any other PAN.
