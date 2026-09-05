@@ -89,6 +89,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "0009_scan_rollup",
         include_str!("../migrations/0009_scan_rollup.sql"),
     ),
+    (
+        10,
+        "0010_messages",
+        include_str!("../migrations/0010_messages.sql"),
+    ),
 ];
 
 /// Initialise an optional database pool from the environment.

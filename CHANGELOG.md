@@ -14,6 +14,75 @@ starting from this file.
 
 ---
 
+## 2026-09-05 — Message / message-parts model for the mail path
+
+### siphon-api 2.9.0
+
+- **feat(api): `messages` + `message_parts` schema and reconciliation
+  (migration `0010_messages.sql`, `src/messages.rs`).**
+
+  A message is not one scan — it is a tree of parts, each independently
+  scannable, whose results reconcile into one verdict
+  (`docs/architecture/email-dlp.md` §2). Nothing writes these tables yet;
+  `siphon-milter` does. They land first because §2 is explicit that the model
+  is painful to retrofit, and because the fail-closed default of §4.4 makes
+  MTA retries the normal operating mode rather than an edge case: every
+  tempfail comes back as a redelivery, so the idempotency guarantees have to
+  exist before the milter can lean on them.
+
+  **Implementing it closed a gap in the design.** §2 said
+  `UNIQUE (message_uuid, mime_path)` is the idempotency guard — true only if
+  `message_uuid` is the *same* on the retry, which §2 never specified. Mint a
+  fresh UUID per delivery attempt and the constraint protects nothing.
+
+  `messages` therefore carries an `ingest_key` — an MTA-supplied identifier
+  stable across delivery attempts (Postfix's queue ID) — with a partial unique
+  index on `(tenant_id, ingest_key)`, so a redelivery resolves to the existing
+  UUID. Three details that are easy to get wrong and are commented in place:
+  `DO UPDATE` rather than `DO NOTHING` (the latter returns no row on conflict,
+  so a retry would mint a second message anyway); `tenant_id NOT NULL DEFAULT
+  'default'`, unlike the nullable column on scans/findings, because NULL never
+  equals NULL in a unique index; and no ingest key meaning no retry
+  protection, which is honest rather than a false match.
+
+  `parts_completed` is recomputed from a `count(*) FILTER (WHERE status =
+  'scanned')` rather than incremented — an increment double-counts a re-scanned
+  part and reports a message complete while one is still pending.
+
+  Verdict reconciliation is a pure function over part outcomes, taking the
+  maximum severity on a ladder where `indeterminate` sits above `clean` and
+  below `flagged`. Above clean because nineteen clean attachments and one that
+  timed out is not a clean message; below flagged because a confirmed finding
+  is the more actionable statement, and the incompleteness is still recorded
+  in `parts_completed` and the part rows. So `indeterminate` surfaces exactly
+  when it is the most severe thing true of a message: nothing found, not
+  everything examined. An empty part list reconciles to `indeterminate`, never
+  `clean`.
+
+  Content is recorded but never used as a cross-message key: collapsing two
+  parts with identical bytes is the §6 bypass, since a repeated corporate
+  disclaimer would let an attacker suppress a scan by sending the same
+  attachment twice.
+
+  Retention is wired at the same time — `prune_messages()` runs on the
+  existing daily schedule and window, with parts removed by `ON DELETE
+  CASCADE`. A no-op until the milter writes, so the tables cannot quietly grow
+  unbounded the moment they start being written.
+
+  **Verified against a real Postgres 16**, not only by reading DDL. All ten
+  migrations apply in order, and fifteen behavioural checks pass: retry
+  resolves to the same UUID and creates no second row; the same queue ID under
+  a different tenant stays a separate message; a null ingest key inserts
+  separately; both CHECK constraints reject invalid values; a part retry
+  updates in place; two parts with identical `content_hash` both survive;
+  `parts_completed` counts only scanned parts and is stable across repeated
+  reconciliation; delete cascades; and `prune_messages()` reports both counts
+  while leaving recent messages alone. Fifteen Rust unit tests cover the
+  verdict ladder and assert the enum strings match the SQL CHECK constraints,
+  which is otherwise nothing but two lists of the same strings in two files.
+
+---
+
 ## 2026-09-05 — Index the context envelope once per message
 
 ### siphon-core 2.8.0

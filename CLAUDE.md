@@ -212,6 +212,16 @@ nothing):
 - `0007_evadex.sql` — evadex run + finding tables
 - `0008_tenant_id.sql` — tenant_id on scans + findings
 - `0009_scan_rollup.sql` — aggregate scan counters per (hour, tenant, channel)
+- `0010_messages.sql` — `messages` + `message_parts` for the mail path, plus
+  `prune_messages()`. Nothing writes them until `siphon-milter` lands; the
+  schema is here first because it is painful to retrofit (see
+  `docs/architecture/email-dlp.md` §2). Two properties are load-bearing:
+  `UNIQUE (message_uuid, mime_path)` makes an MTA retry upsert instead of
+  duplicating, and a partial unique index on `(tenant_id, ingest_key)` is what
+  lets a redelivery resolve to the *same* `message_uuid` in the first place.
+  `messages.tenant_id` is `NOT NULL DEFAULT 'default'` — unlike the nullable
+  `tenant_id` on scans/findings — because here it participates in that index,
+  and NULL never equals NULL
 
 Note the GIN trigram index in `0002` is built on `category`, though
 `0001_init.sql` states the extension was installed for `matched_text` /

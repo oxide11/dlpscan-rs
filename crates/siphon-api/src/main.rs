@@ -80,6 +80,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 mod db;
+mod messages;
 
 // ---------------------------------------------------------------------------
 // State
@@ -6411,6 +6412,23 @@ async fn main() {
                         "scheduled_retention_prune_complete"
                     ),
                     Err(e) => tracing::warn!(error = %e, "scheduled_retention_prune_failed"),
+                }
+                // Messages prune on the same schedule and the same window.
+                // Separate call rather than folded into prune_findings():
+                // the two have independent lifetimes, and a failure to prune
+                // one should not stop the other. Nothing writes these tables
+                // until siphon-milter lands, so this is a no-op until then —
+                // wired now so the tables cannot quietly grow without bound
+                // the moment they start being written.
+                match messages::prune_old_messages(&pool_clone, retention_days).await {
+                    Ok((0, 0)) => {}
+                    Ok((msgs, parts)) => tracing::info!(
+                        messages_deleted = msgs,
+                        message_parts_deleted = parts,
+                        retention_days = retention_days,
+                        "scheduled_message_prune_complete"
+                    ),
+                    Err(e) => tracing::warn!(error = %e, "scheduled_message_prune_failed"),
                 }
             }
         });

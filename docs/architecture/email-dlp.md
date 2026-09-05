@@ -108,6 +108,56 @@ an indexed attribute for investigator lookup.
 `UNIQUE (message_uuid, mime_path)` is the idempotency guard: an MTA retry
 re-derives the same paths and upserts rather than duplicating.
 
+### 2.2a What makes `message_uuid` the same on a retry
+
+**Built in siphon-api 2.9.0** (`migrations/0010_messages.sql`,
+`src/messages.rs`). Implementing it surfaced a gap in the paragraph above.
+
+`UNIQUE (message_uuid, mime_path)` only guards a retry if `message_uuid` is
+*the same* on that retry, and §2.2 does not say how it becomes so. Mint a
+fresh UUID per delivery attempt and the constraint protects nothing: the retry
+writes a whole new message with a whole new set of parts, and both survive.
+
+That matters more than it first appears. Under the fail-closed default of
+§4.4, **retries are the normal operating mode, not an edge case** — every
+tempfail, which is every timeout, extraction failure and oversize part, comes
+back as a redelivery.
+
+So `messages` carries an **`ingest_key`**: an identifier supplied by the MTA
+that is stable across delivery attempts of one queued message — Postfix's
+queue ID, the `{i}` macro. A partial unique index on
+`(tenant_id, ingest_key)` lets `resolve_message` upsert and return the
+existing UUID. The internal UUID is still the identity; the ingest key is only
+how a redelivery finds it again.
+
+Three details that are easy to get wrong:
+
+- **`DO UPDATE`, not `DO NOTHING`.** `ON CONFLICT DO NOTHING ... RETURNING`
+  returns *no row* on conflict, so a retry would come back empty and mint a
+  second message anyway. `DO UPDATE` always returns the row.
+- **`tenant_id` is `NOT NULL DEFAULT 'default'`** here, unlike the nullable
+  `tenant_id` on `scans` and `findings`. In a unique index NULL never equals
+  NULL, so two retries on the default tenant would each insert. Tenant is part
+  of identity (§6) and identity columns cannot be nullable.
+- **No ingest key means no retry protection.** A caller that cannot supply one
+  gets a plain insert. That is the honest outcome — a false match would attach
+  one message's parts to another — but it is worth knowing before wiring an
+  MTA that cannot provide a stable id.
+
+Known limit: Postfix reuses queue IDs over long periods (they derive from
+inode and time). With `enable_long_queue_ids=yes` a collision is remote, and
+retention prunes rows long before reuse becomes plausible — but this is a
+practical guarantee, not a mathematical one.
+
+Verified against a real Postgres 16, not just by reading the DDL: retry
+resolves to the same UUID and creates no second row; the same queue ID under a
+different tenant stays a separate message; a null ingest key inserts
+separately; both CHECK constraints reject invalid values; a part retry updates
+in place; two parts with identical `content_hash` both survive;
+`parts_completed` counts only scanned parts and is stable across repeated
+reconciliation; deleting a message cascades to its parts; and
+`prune_messages()` reports both counts and leaves recent messages alone.
+
 ### 2.3 Why this exists beyond email
 
 Sender, recipient, and message become first-class dimensions, which is exactly
@@ -439,9 +489,17 @@ attachment twice within a minute.
 | Across messages | **No content-based dedup.** Idempotency comes from `UNIQUE (message_uuid, mime_path)`, which suppresses retries without suppressing distinct messages. |
 | Across tenants | Never. Tenant is part of identity. |
 
-Fixing the existing 60-second window is a prerequisite for the mail path and
-is worth doing independently — it is losing data on the current channels
-today.
+**The 60-second window is gone.** `persist_scan` is idempotent on `scan_id`
+(`ON CONFLICT (id) DO NOTHING`) and never on content, with tests asserting the
+statement is not keyed on `input_hash` — there is no Postgres in the test
+environment, so the statement text is the only available regression guard.
+This section previously listed the fix as a prerequisite; it landed in
+siphon-api 2.8.0.
+
+`message_parts` follows the same rule: `UNIQUE (message_uuid, mime_path)`, and
+`content_hash` is recorded but never used as a cross-message key. Two parts
+carrying identical bytes both persist — verified — because collapsing them is
+precisely the bypass described above.
 
 ---
 
@@ -469,14 +527,18 @@ fail-open path raise.
 
 ## 8. Build order
 
-1. **Dedup fix** (§6) — small, independent, and losing data on live channels
-   today. Prerequisite for anything mail-shaped.
-2. **Context envelope API** (§3) — decide and land before the milter, since it
-   changes the scan entry point.
-3. **Message/parts model** (§2) — migration plus reconciliation logic.
+1. ~~**Dedup fix** (§6)~~ — done, siphon-api 2.8.0.
+2. ~~**Context envelope API** (§3)~~ — done, siphon-core 2.4.0; made linear in
+   2.8.0 (§3.1).
+3. ~~**Message/parts model** (§2)~~ — done, siphon-api 2.9.0. Schema,
+   reconciliation and retention; nothing writes it yet.
 4. **`siphon-milter`** (§1) — transport, header injection, verdict policy.
-5. **Size limits** (§5) — 30 MB message cap; `u32` offsets; then revisit the
-   scanner text cap.
+   The only step left, and now unblocked: the deadline is measured (§4.5), the
+   `indeterminate` policy is decided (§4.4), the MIME layer and context
+   envelope are on `main`, and the storage its retries depend on exists
+   (§2.2a).
+5. ~~**Size limits** (§5)~~ — done: `u32` offsets in siphon-core 2.5.0, pod
+   memory in chart 2.4.0, scanner cap raised in 2.7.0.
 
 ---
 
