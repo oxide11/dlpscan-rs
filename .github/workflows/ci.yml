@@ -64,6 +64,14 @@ jobs:
         run: cargo test --test integration_test
       - name: Evasion tests
         run: cargo test --test evasion_test
+      # Five cases for every format Siphon advertises: clean, single,
+      # structural, damaged, evasive. The `damaged` slot is the one that
+      # matters most — it fails when a reader returns Ok("") for a file it
+      # could not parse, which is how a scanner reports "clean" for content
+      # nobody read. Documented gaps do not fail this; unaccounted-for
+      # formats do.
+      - name: Conformance matrix
+        run: cargo test --features conformance --test conformance
       - name: Forensics tests
         run: cargo test --test forensics_test
       # Archive-extraction security. sevenz-rust 0.6 does not sanitise entry

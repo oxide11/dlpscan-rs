@@ -132,6 +132,12 @@ default = [
 # (src/metrics_registry.rs). No longer pulls the `prometheus`
 # crate: 23 transitive deps for four counters and a gauge.
 metrics = []
+# The conformance matrix (src/conformance/) and the `siphon-conformance`
+# binary that runs it. Off by default: it carries fixture builders — a PDF
+# writer, a PNG encoder — that exist to be run in development and CI, not
+# shipped in a scanner. No extra dependencies; everything it needs (zip,
+# base64, tempfile) is already a normal dep.
+conformance = []
 pdf = ["dep:pdf-extract"]
 office = ["dep:calamine", "dep:quick-xml"]
 archives = ["dep:sevenz-rust", "dep:unrar"]
@@ -167,6 +173,13 @@ tempfile = "3"
 # optional runtime dep (behind `msg`); adding it here unconditionally
 # keeps the test green on minimal builds too.
 cfb = "0.14"
+
+# Developer tool, not a shipped artifact: `required-features` keeps it out of
+# a default `cargo build` entirely, so the release binary set is unchanged.
+[[bin]]
+name = "siphon-conformance"
+path = "src/bin/conformance.rs"
+required-features = ["conformance"]
 
 [[bench]]
 name = "scanning"

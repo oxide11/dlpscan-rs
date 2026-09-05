@@ -66,6 +66,49 @@ cargo build --release --no-default-features --features metrics  # minimal
 cargo run --release --bin benchmark
 ```
 
+## Conformance matrix
+
+`scripts/conformance.sh` asks the same five questions of every capability
+Siphon advertises, and is the thing to run after touching an extractor, the
+normalizer, or a pattern:
+
+```bash
+scripts/conformance.sh                    # full run, human-readable
+scripts/conformance.sh --capability xlsx  # one format
+scripts/conformance.sh --list             # what would run
+scripts/conformance.sh --json             # machine-readable
+scripts/conformance.sh --test             # same cases via cargo test
+```
+
+| Slot | Question |
+|---|---|
+| `clean` | Well-formed, nothing sensitive: does it read, and stay quiet? |
+| `single` | One planted value in the obvious place: is it found? |
+| `structural` | One planted value where the format lets you hide it — a second sheet, a later archive entry, an attachment |
+| `damaged` | Truncated or corrupt: does the reader **say so** rather than report a faithful clean read? |
+| `evasive` | A format-specific bypass — encoded body, nested container, split value |
+
+`damaged` is the slot that earns its keep. A reader that returns `Ok("")` for
+a file it could not parse makes the scanner report "clean" for content nobody
+read, and the CLI's exit code, siphon-fs's response and the milter's verdict
+all inherit that.
+
+The cases live in `src/conformance/` (behind the `conformance` feature, so
+the fixture builders stay out of the shipped binary), not in `tests/`, because
+the binary, the CI gate and the script all run the same matrix. Fixtures are
+built in-process — no binary blobs are committed.
+
+Two rules keep it honest:
+
+- **Coverage is enforced.** Anything in `supported_extensions()` that is
+  neither covered nor listed in `formats::KNOWN_GAPS` with a reason fails the
+  run.
+- **Gaps are declared, not hidden.** A case wrapped in `gap(...)` keeps its
+  expectation as written — what it says should happen still should — but does
+  not fail the build; the reason prints on every run. If a gap starts passing,
+  that is reported too, so the entry gets removed rather than outliving the
+  bug it described.
+
 Other test harnesses (not run by default CI):
 ```bash
 cargo test --test detection_quality   # labeled-corpus regression suite
