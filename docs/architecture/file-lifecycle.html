@@ -1,0 +1,808 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{color-scheme:light dark}
+  body{margin:0}
+  img{max-width:100%}
+  [hidden]{display:none!important}
+</style>
+<title>The Life of a File</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+/* Palette, type and component vocabulary are the project's own, carried over
+   from docs/architecture/data-path.html so the two documents read as a set. */
+:root{
+  --ground:#f2f6f6; --surface:#ffffff; --surface-2:#e9eff0;
+  --ink:#0f1416; --ink-2:#3b494d; --muted:#5f7075;
+  --line:#d3dedf; --line-strong:#aebfc1;
+  --accent:#1a6a70; --accent-soft:#dcecec;
+  --pass:#2f7a4f; --drop:#a3392f; --emit:#a76a1e;
+  --pass-bg:#e4f0e9; --drop-bg:#f6e4e2; --emit-bg:#f7ecdc;
+  --idle:#9fb2b4;
+  --sans:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0d1213; --surface:#141b1d; --surface-2:#1b2426;
+    --ink:#e8eff0; --ink-2:#c0cdcf; --muted:#8ea0a3;
+    --line:#263134; --line-strong:#3d4d50;
+    --accent:#5cc0c4; --accent-soft:#122c2e;
+    --pass:#6cc48c; --drop:#e08b7f; --emit:#e0ac6a;
+    --pass-bg:#12251a; --drop-bg:#2a1614; --emit-bg:#2a2013;
+    --idle:#4a5b5e;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0d1213; --surface:#141b1d; --surface-2:#1b2426;
+  --ink:#e8eff0; --ink-2:#c0cdcf; --muted:#8ea0a3;
+  --line:#263134; --line-strong:#3d4d50;
+  --accent:#5cc0c4; --accent-soft:#122c2e;
+  --pass:#6cc48c; --drop:#e08b7f; --emit:#e0ac6a;
+  --pass-bg:#12251a; --drop-bg:#2a1614; --emit-bg:#2a2013;
+  --idle:#4a5b5e;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding:38px 22px 90px}
+code,.mono{font-family:var(--mono);font-variant-ligatures:none}
+
+.masthead{display:flex;flex-wrap:wrap;gap:26px;align-items:flex-end;justify-content:space-between;border-bottom:2px solid var(--ink);padding-bottom:18px}
+.masthead h1{margin:0;font-size:clamp(30px,4.4vw,46px);font-weight:700;letter-spacing:-.026em;line-height:1.02;text-wrap:balance}
+.masthead .sub{margin:10px 0 0;color:var(--muted);max-width:56ch;font-size:15.5px}
+.eyebrow{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin:0 0 9px}
+.stamp{font-family:var(--mono);font-size:11.5px;color:var(--muted);display:grid;gap:3px;text-align:right}
+.stamp b{color:var(--ink-2);font-weight:500}
+
+section{margin-top:44px}
+h2{font-size:12px;font-family:var(--mono);font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 6px;display:flex;align-items:center;gap:10px}
+h2::after{content:"";flex:1;height:1px;background:var(--line)}
+.lede{margin:0 0 18px;max-width:74ch;color:var(--ink-2)}
+
+/* ---- specimen tray ------------------------------------------------------ */
+.tray{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:9px}
+.spec{appearance:none;text-align:left;cursor:pointer;font:inherit;color:var(--ink);background:var(--surface);
+  border:1px solid var(--line);border-radius:3px;padding:11px 13px;display:grid;gap:3px;
+  transition:border-color .12s,background .12s,box-shadow .12s}
+.spec:hover{border-color:var(--line-strong)}
+.spec:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.spec[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft);box-shadow:inset 3px 0 0 var(--accent)}
+.spec .fname{font-family:var(--mono);font-size:12.5px;font-weight:600;word-break:break-all}
+.spec .fwhy{font-size:12px;color:var(--muted);line-height:1.4}
+.spec .fsize{font-family:var(--mono);font-size:10.5px;color:var(--accent);letter-spacing:.03em}
+
+/* ---- transport ---------------------------------------------------------- */
+.transport{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:14px 0 12px}
+.tbtn{appearance:none;cursor:pointer;font:inherit;font-size:13.5px;font-weight:500;color:var(--ink);
+  background:var(--surface);border:1px solid var(--line);border-radius:3px;padding:8px 14px;
+  display:inline-flex;align-items:center;gap:7px;transition:border-color .12s,background .12s}
+.tbtn:hover:not(:disabled){border-color:var(--line-strong)}
+.tbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tbtn:disabled{opacity:.42;cursor:default}
+.tbtn.primary{background:var(--accent);border-color:var(--accent);color:var(--surface);font-weight:600}
+:root[data-theme="dark"] .tbtn.primary,
+:root:not([data-theme="light"]) .tbtn.primary{color:var(--ground)}
+.tbtn .gl{font-family:var(--mono);font-size:11px}
+.progress{flex:1;min-width:130px;height:3px;background:var(--surface-2);border-radius:2px;overflow:hidden;border:1px solid var(--line)}
+.progress i{display:block;height:100%;background:var(--accent);width:0;transition:width .42s cubic-bezier(.4,0,.2,1)}
+.counter{font-family:var(--mono);font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* ---- the run ------------------------------------------------------------ */
+.run{display:grid;grid-template-columns:minmax(250px,300px) 1fr;gap:16px;align-items:start}
+@media (max-width:860px){.run{grid-template-columns:1fr}}
+
+.rail{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:6px;position:relative}
+.stage{display:grid;grid-template-columns:26px 1fr;gap:9px;align-items:center;padding:7px 8px;border-radius:3px;
+  cursor:pointer;border:0;background:none;font:inherit;color:var(--ink);text-align:left;width:100%;
+  transition:background .18s}
+.stage:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.stage:hover{background:var(--surface-2)}
+.stage .dot{width:22px;height:22px;border-radius:50%;border:1.5px solid var(--line-strong);display:grid;place-items:center;
+  font-family:var(--mono);font-size:10px;font-weight:600;color:var(--muted);background:var(--surface);
+  transition:background .25s,border-color .25s,color .25s,transform .25s}
+.stage .snm{font-size:13.5px;font-weight:500;line-height:1.25}
+.stage .ssub{font-family:var(--mono);font-size:10px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.stage[data-state="done"] .dot{background:var(--pass-bg);border-color:var(--pass);color:var(--pass)}
+.stage[data-state="active"]{background:var(--accent-soft)}
+.stage[data-state="active"] .dot{background:var(--accent);border-color:var(--accent);color:var(--surface);transform:scale(1.14)}
+:root[data-theme="dark"] .stage[data-state="active"] .dot,
+:root:not([data-theme="light"]) .stage[data-state="active"] .dot{color:var(--ground)}
+.stage[data-state="active"] .snm{font-weight:600}
+.stage[data-state="halt"] .dot{background:var(--drop-bg);border-color:var(--drop);color:var(--drop)}
+.stage[data-state="pending"] .snm{color:var(--muted)}
+
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:4px;overflow:hidden;min-height:430px;display:flex;flex-direction:column}
+.phead{padding:15px 18px 13px;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;justify-content:space-between}
+.phead h3{margin:0;font-size:19px;font-weight:600;letter-spacing:-.012em}
+.phead .loc{font-family:var(--mono);font-size:11px;color:var(--accent)}
+.pbody{padding:16px 18px;flex:1}
+.pbody > p{margin:0 0 14px;max-width:68ch;color:var(--ink-2);font-size:14px}
+.pbody h4{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+.fade{animation:fade .32s cubic-bezier(.4,0,.2,1)}
+@keyframes fade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+
+/* evidence rows — used by identification, admission, validation */
+.ev{display:grid;gap:6px;margin-bottom:14px}
+.erow{display:grid;grid-template-columns:104px 1fr auto;gap:10px;align-items:center;font-size:13px;
+  padding:8px 11px;border-radius:3px;background:var(--surface-2);border-left:3px solid var(--idle)}
+.erow .ek{font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+.erow .evv{font-family:var(--mono);font-size:12.5px;color:var(--ink-2);word-break:break-word}
+.erow .ej{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;
+  padding:2px 7px;border-radius:2px;white-space:nowrap}
+.erow.ok{border-left-color:var(--pass)} .erow.ok .ej{background:var(--pass-bg);color:var(--pass)}
+.erow.bad{border-left-color:var(--drop)} .erow.bad .ej{background:var(--drop-bg);color:var(--drop)}
+.erow.warn{border-left-color:var(--emit)} .erow.warn .ej{background:var(--emit-bg);color:var(--emit)}
+.erow.none .ej{background:var(--surface);color:var(--muted);border:1px solid var(--line)}
+
+/* payload view */
+.payload{border:1px solid var(--line);border-radius:3px;background:var(--surface-2);padding:11px 13px;
+  font-family:var(--mono);font-size:12.5px;line-height:1.7;color:var(--ink-2);white-space:pre-wrap;
+  word-break:break-word;overflow-x:auto;margin-bottom:14px}
+.payload.empty{color:var(--muted);font-style:italic}
+mark{background:var(--emit-bg);color:var(--emit);padding:1px 3px;border-radius:2px;font-weight:600}
+mark.hit{background:var(--pass-bg);color:var(--pass)}
+.xform{display:grid;grid-template-columns:1fr auto 1fr;gap:11px;align-items:center;margin-bottom:14px}
+@media (max-width:640px){.xform{grid-template-columns:1fr;gap:7px}.xform .arrow{transform:rotate(90deg)}}
+.xform .arrow{font-family:var(--mono);color:var(--accent);font-size:15px}
+.xcell{border:1px solid var(--line);border-radius:3px;background:var(--surface-2);padding:9px 11px;
+  font-family:var(--mono);font-size:12px;line-height:1.65;color:var(--ink-2);word-break:break-word}
+.xcell .xlab{display:block;font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+
+.note-strip{border-left:3px solid var(--accent);background:var(--accent-soft);padding:10px 13px;border-radius:0 3px 3px 0;margin-top:4px}
+.note-strip b{font-size:12.5px;color:var(--accent);display:block;margin-bottom:2px}
+.note-strip p{margin:0;font-size:13px;color:var(--ink-2);max-width:64ch}
+.note-strip.alarm{border-left-color:var(--drop);background:var(--drop-bg)}
+.note-strip.alarm b{color:var(--drop)}
+
+/* verdict footer of the panel */
+.pfoot{border-top:1px solid var(--line);background:var(--surface-2);padding:12px 18px;display:flex;
+  flex-wrap:wrap;gap:11px;align-items:center;min-height:52px}
+.vpill{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;padding:4px 10px;border-radius:2px}
+.v-pass{background:var(--pass-bg);color:var(--pass)}
+.v-drop{background:var(--drop-bg);color:var(--drop)}
+.v-emit{background:var(--emit-bg);color:var(--emit)}
+.v-idle{background:var(--surface);color:var(--muted);border:1px solid var(--line)}
+.pfoot .vtext{font-size:13.5px;color:var(--ink-2);flex:1;min-width:180px}
+
+/* ---- outcomes ----------------------------------------------------------- */
+.outcomes{display:grid;grid-template-columns:repeat(auto-fit,minmax(232px,1fr));gap:10px}
+.oc{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:14px 16px;display:grid;gap:7px;align-content:start}
+.oc.danger{border-color:var(--drop);background:var(--drop-bg)}
+.oc .onum{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.1em;color:var(--muted)}
+.oc.danger .onum{color:var(--drop)}
+.oc h3{margin:0;font-size:15px;font-weight:600;letter-spacing:-.01em;line-height:1.3}
+.oc p{margin:0;font-size:13px;color:var(--ink-2);line-height:1.5}
+.oc .otell{font-family:var(--mono);font-size:11px;color:var(--muted);border-top:1px dashed var(--line);padding-top:7px;margin-top:2px;line-height:1.5}
+.oc.danger .otell{border-top-color:var(--drop);color:var(--drop)}
+
+/* ---- matrix ------------------------------------------------------------- */
+.mx{background:var(--surface);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.mxscroll{overflow-x:auto}
+table.grid{width:100%;border-collapse:collapse;font-size:13px;min-width:520px}
+table.grid th{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);white-space:nowrap}
+table.grid td{padding:7px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+table.grid tr:last-child td{border-bottom:0}
+table.grid td.fmt{font-family:var(--mono);font-size:12px;font-weight:500}
+.cell{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:3px;font-family:var(--mono);
+  font-size:11px;font-weight:600}
+.c-pass{background:var(--pass-bg);color:var(--pass)}
+.c-gap{background:var(--emit-bg);color:var(--emit)}
+.mxfoot{padding:12px 14px;background:var(--surface-2);border-top:1px solid var(--line);
+  display:flex;flex-wrap:wrap;gap:16px;font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.mxfoot b{color:var(--ink-2);font-weight:600}
+
+.gaps{display:grid;gap:8px;margin-top:12px}
+.gap{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;font-size:13.5px;color:var(--ink-2);
+  background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--emit);border-radius:0 3px 3px 0;padding:10px 13px}
+.gap .gk{font-family:var(--mono);font-size:11px;color:var(--emit);font-weight:600;white-space:nowrap;margin-top:2px}
+.gap p{margin:0;max-width:70ch}
+
+footer{margin-top:52px;padding-top:16px;border-top:1px solid var(--line);font-family:var(--mono);font-size:11.5px;color:var(--muted);display:flex;flex-wrap:wrap;gap:8px 22px}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <div>
+    <p class="eyebrow">Siphon · Architecture</p>
+    <h1>The Life of a File</h1>
+    <p class="sub">Every gate one file passes on its way through the scanner — what each one tests,
+      and what it means when the answer is “nothing found”.</p>
+  </div>
+  <div class="stamp">
+    <span><b>583</b> patterns · <b>128</b> categories</span>
+    <span><b>110</b> conformance cases · <b>3</b> declared gaps</span>
+    <span>traces captured from the running scanner</span>
+  </div>
+</header>
+
+<section>
+  <h2>Send a file through</h2>
+  <p class="lede">Six specimens, each taking a genuinely different route. Every number, verdict and
+    scrap of extracted text below was captured from the real pipeline — nothing here is illustrative.</p>
+
+  <div class="tray" id="tray" role="group" aria-label="Choose a specimen"></div>
+
+  <div class="transport">
+    <button class="tbtn" id="back" type="button"><span class="gl">◀</span> Back</button>
+    <button class="tbtn primary" id="play" type="button"><span class="gl">▶</span> Run</button>
+    <button class="tbtn" id="fwd" type="button">Step <span class="gl">▶</span></button>
+    <div class="progress" role="presentation"><i id="bar"></i></div>
+    <span class="counter" id="counter">stage 1 / 11</span>
+  </div>
+
+  <div class="run">
+    <div class="rail" id="rail" role="tablist" aria-label="Pipeline stages"></div>
+    <div class="panel">
+      <div class="phead">
+        <h3 id="p-title">Arrival</h3>
+        <span class="loc mono" id="p-loc"></span>
+      </div>
+      <div class="pbody" id="p-body"></div>
+      <div class="pfoot">
+        <span class="vpill v-idle" id="p-pill">waiting</span>
+        <span class="vtext" id="p-verdict">Pick a specimen and press Run.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>The four ways a file comes back clean</h2>
+  <p class="lede">All four print the same word to whoever asked. Three are fine. The fourth is the
+    bug class this codebase keeps rediscovering, and every “a warning means <em>this</em>” rule
+    elsewhere exists to keep that column empty.</p>
+  <div class="outcomes">
+    <div class="oc">
+      <span class="onum">Outcome 1</span>
+      <h3>Read in full, nothing in it</h3>
+      <p>The ordinary case. A reader opened it, produced text, and no pattern matched.</p>
+      <div class="otell">warnings empty · real reader · text present<br><b>Q3-forecast.xlsx</b> sheets 1–2</div>
+    </div>
+    <div class="oc">
+      <span class="onum">Outcome 2</span>
+      <h3>Read in full, and there was no text</h3>
+      <p>An image carrying no barcode; an empty part. Genuinely inspected — there was simply nothing
+        in it to scan.</p>
+      <div class="otell">warnings empty · text empty<br><b>photo.png</b> → 0 chars</div>
+    </div>
+    <div class="oc">
+      <span class="onum">Outcome 3</span>
+      <h3>Not read — and it said so</h3>
+      <p>A corrupt archive, an unparseable PDF, a file past the scanner cap. The caller is told, and
+        can fail closed.</p>
+      <div class="otell">warnings present, or format “unparsed”, or Err<br><b>invoice.pdf</b> → 2 warnings</div>
+    </div>
+    <div class="oc danger">
+      <span class="onum">Outcome 4</span>
+      <h3>Not read, and it did not say so</h3>
+      <p>No signal exists. Every caller downstream reports clean about a file none of them opened.
+        This is the one to design against.</p>
+      <div class="otell">Until recently reachable: a ZIP named .txt landed here.</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>What keeps this true</h2>
+  <p class="lede"><code>scripts/conformance.sh</code> asks the same five questions of every capability
+    Siphon advertises. The <code>damaged</code> column is the one that earns its keep — it fails when a
+    reader returns <code>Ok("")</code> for a file it could not parse, which is exactly how outcome 4
+    happens.</p>
+  <div class="mx">
+    <div class="mxscroll"><table class="grid" id="mxtable"></table></div>
+    <div class="mxfoot">
+      <span><b>110</b> cases</span><span><b>107</b> pass</span><span><b>0</b> fail</span>
+      <span><b>3</b> declared gaps</span><span><b>5</b> formats uncovered, each with a recorded reason</span>
+    </div>
+  </div>
+
+  <div class="gaps">
+    <div class="gap"><span class="gk">json / evasive</span>
+      <p>The normalizer decodes HTML entities, percent-encoding, base64, base32 and hex — but not JSON
+        <code>\uXXXX</code> escapes. JSON is a first-class input format, so a value spelled that way
+        passes through unread.</p></div>
+    <div class="gap"><span class="gk">mbox / damaged</span>
+      <p>A malformed <code>From&nbsp;</code> line yields zero characters with no warning. That is outcome 4,
+        and the one place it is currently reachable.</p></div>
+    <div class="gap"><span class="gk">xlsx / evasive</span>
+      <p>Whitespace normalization collapses the cell separator, so two adjacent 8-digit cells still read
+        as one Luhn-valid card. Recorded rather than fixed, because the fix is not local: that
+        normalization is what defeats a whole class of evasion.</p></div>
+  </div>
+</section>
+
+<footer>
+  <span>docs/architecture/file-lifecycle.md</span>
+  <span>companion to data-path.html</span>
+  <span>traces: siphon-conformance</span>
+</footer>
+
+</div>
+
+<script>
+"use strict";
+
+/* Every field below was captured by running the real extractor and scanner
+   over these six files. Where a number is absent it is because the pipeline
+   does not expose one, not because it was rounded off. */
+const SPECIMENS = [
+  {
+    id:"honest", name:"Q3-forecast.xlsx", size:"2,325 B",
+    why:"Honestly named. Three sheets; the third is a pasted export.",
+    sniff:"Zip", declared:"Zip", agree:true, reader:"xlsx", mismatch:null,
+    text:"Region\nEMEA\nnothing here\ncard\n4111111111111111",
+    norm:null, chars:46, warnings:[],
+    candidates:1, valid:1, validNote:"Luhn passes",
+    ctx:"“card” sits 1 line away — inside the ±50-character window",
+    ctxKind:"local", sub:"Visa", conf:"0.95",
+    verdict:"emit", verdictText:"1 finding · Visa · confidence 0.95"
+  },
+  {
+    id:"disguised", name:"notes.txt", size:"139 B",
+    why:"A deflated ZIP wearing a text name. Two shell commands.",
+    sniff:"Zip", declared:"— (text family)", agree:false, reader:"zip",
+    mismatch:"declared .txt, content is zip",
+    text:"primary card 4111111111111111",
+    norm:null, chars:29, warnings:[],
+    candidates:1, valid:1, validNote:"Luhn passes",
+    ctx:"“card” immediately precedes the value",
+    ctxKind:"local", sub:"Visa", conf:"0.95",
+    verdict:"emit", verdictText:"1 finding · Visa · confidence 0.95 · mismatch recorded"
+  },
+  {
+    id:"corrupt", name:"invoice.pdf", size:"64 B",
+    why:"Keeps the %PDF magic, then fails to parse. The fail-open case.",
+    sniff:"Pdf", declared:"Pdf", agree:true, reader:"unparsed", mismatch:null,
+    text:"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Page\nstartxref\n999999\n%%EOF\n",
+    norm:"%PDF1410 obj\n<</Type /Catalog /Page\nstartxref\n999999%%EOF\n",
+    chars:64,
+    warnings:[
+      "PDF parse failed (invalid start value in the cross-reference table); read as raw bytes instead",
+      "content did not match any known format; declared .pdf was read as raw bytes, so structured content in it was not inspected"
+    ],
+    candidates:0, valid:0, validNote:"nothing reached validation",
+    ctx:null, ctxKind:null, sub:null, conf:null,
+    verdict:"halt", verdictText:"Not scanned — 0 findings, but the file was never read"
+  },
+  {
+    id:"evasive", name:"record.txt", size:"26 B",
+    why:"An SSN with its separators swapped for spaces.",
+    sniff:"— (no signature)", declared:"— (text family)", agree:true, reader:"txt", mismatch:null,
+    text:"Employee SSN: 219 09 9999\n",
+    norm:"Employee SSN:219099999\n", chars:26, warnings:[],
+    candidates:1, valid:1, validNote:"area, group and serial are all in issued ranges",
+    ctx:"“SSN” sits directly before the value",
+    ctxKind:"local", sub:"USA SSN", conf:"0.90",
+    verdict:"emit", verdictText:"1 finding · USA SSN · confidence 0.90"
+  },
+  {
+    id:"innocent", name:"rows.csv", size:"46 B",
+    why:"Starts with “BM” — which is BMP’s entire signature.",
+    sniff:"— (BM unproven)", declared:"— (text family)", agree:true, reader:"csv", mismatch:null,
+    text:"BMW,model,notes\nX5,2024,card 4111111111111111\n",
+    norm:null, chars:46, warnings:[],
+    candidates:1, valid:1, validNote:"Luhn passes",
+    ctx:"“card” immediately precedes the value",
+    ctxKind:"local", sub:"Visa", conf:"0.95",
+    verdict:"emit", verdictText:"1 finding · Visa · confidence 0.95 · dispatch unaffected"
+  },
+  {
+    id:"quiet", name:"photo.png", size:"1,124 B",
+    why:"A real image that decodes and carries no barcode.",
+    sniff:"Image", declared:"Image", agree:true, reader:"barcode", mismatch:null,
+    text:"", norm:null, chars:0, warnings:[],
+    candidates:0, valid:0, validNote:"no text to scan",
+    ctx:null, ctxKind:null, sub:null, conf:null,
+    verdict:"pass", verdictText:"Clean — inspected in full, and there was nothing in it"
+  }
+];
+
+const STAGES = [
+  {nm:"Arrival",        sub:"ingress",     loc:"crates/siphon-milter · siphon-fs · CLI"},
+  {nm:"Admission",      sub:"size caps",   loc:"extractors.rs · validation.rs"},
+  {nm:"Identification", sub:"name vs bytes",loc:"extractors.rs :: sniff_family"},
+  {nm:"Extraction",     sub:"reader",      loc:"extractors.rs :: extract_text"},
+  {nm:"Normalization",  sub:"15 sub-stages",loc:"siphon-core/src/normalize/"},
+  {nm:"Narrowing",      sub:"prefilter",   loc:"scanner/mod.rs · context/"},
+  {nm:"Matching",       sub:"regex, rayon",loc:"scanner/mod.rs"},
+  {nm:"Validation",     sub:"checksums",   loc:"validation.rs :: validate_match"},
+  {nm:"Context",        sub:"aho-corasick",loc:"context/mod.rs"},
+  {nm:"Scoring",        sub:"confidence",  loc:"scoring.rs"},
+  {nm:"Verdict",        sub:"emission",    loc:"siphon-mail :: reconcile"}
+];
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* Highlight a substring inside monospace payload text. */
+function hit(text, needle){
+  const i = needle ? text.indexOf(needle) : -1;
+  if(i < 0) return esc(text);
+  return esc(text.slice(0,i)) + '<mark class="hit">' + esc(needle) + '</mark>' + esc(text.slice(i+needle.length));
+}
+
+function row(k, v, judgement, kind){
+  return '<div class="erow ' + kind + '"><span class="ek">' + esc(k) + '</span>' +
+         '<span class="evv">' + v + '</span>' +
+         '<span class="ej">' + esc(judgement) + '</span></div>';
+}
+
+/* The value each finding is about. Raw and normalized forms differ wherever
+   normalization did any work, so the caller says which text it is marking. */
+function needleOf(s, form){
+  if(s.sub === "Visa") return "4111111111111111";
+  if(s.sub === "USA SSN") return form === "norm" ? "219099999" : "219 09 9999";
+  return null;
+}
+
+function render(s, i){
+  const st = STAGES[i];
+  let h = "";
+  let pill = ["v-idle","working"], vtext = "";
+
+  switch(i){
+    case 0:
+      h += "<p>The file arrives through one of four doors. They differ in one respect that matters "
+         + "more than any other: what each does when the scanner <em>cannot answer</em>.</p>";
+      h += '<div class="ev">'
+         + row("CLI","siphon scan","non-zero exit","none")
+         + row("siphon-fs","POST /scan","not scanned","none")
+         + row("milter","SMTP, port 8894","451, MTA retries","none")
+         + row("ICAP","port 1344","passes through","warn")
+         + "</div>";
+      h += '<div class="note-strip"><b>The MTA gets the last word</b><p>If Postfix is set to '
+         + '<code>milter_default_action = accept</code> it fails open when the filter times out, '
+         + 'whatever Siphon decides. The default policy needs <code>tempfail</code>.</p></div>';
+      vtext = esc(s.name) + " · " + s.size + " accepted";
+      pill = ["v-idle","received"];
+      break;
+
+    case 1:
+      h += "<p>Three caps apply, and they are deliberately different numbers. The scanner’s is the "
+         + "smallest, and the gap between them is a real state: a file can be accepted, fully "
+         + "extracted, and <em>then</em> found to exceed it.</p>";
+      h += '<div class="ev">'
+         + row("body limit", "100 MB <span style='color:var(--muted)'>siphon-fs</span>", "pass", "ok")
+         + row("extractor", "100 MB <span style='color:var(--muted)'>MAX_EXTRACT_SIZE</span>", "pass", "ok")
+         + row("scanner", "30 MB <span style='color:var(--muted)'>MAX_INPUT_SIZE</span>", "pass", "ok")
+         + "</div>";
+      h += '<div class="note-strip"><b>Between the caps</b><p>A 40 MB archive of text is inspected right '
+         + 'up to the moment it is not. That is reported as <code>TEXT_EXCEEDS_SCANNER_LIMIT</code> with '
+         + 'the file marked <em>not scanned</em> — never clean.</p></div>';
+      vtext = s.size + " — comfortably inside every cap";
+      pill = ["v-pass","admitted"];
+      break;
+
+    case 2:
+      h += "<p>The filename is the weakest signal about a file and the only one an attacker changes "
+         + "for free. So the bytes lead and the name corroborates.</p>";
+      h += '<div class="ev">'
+         + row("bytes prove", "<b>" + esc(s.sniff) + "</b>", s.sniff.startsWith("—") ? "no proof" : "strong", s.sniff.startsWith("—") ? "none" : "ok")
+         + row("name claims", esc(s.declared), "weakest", "none")
+         + row("resolution", s.agree
+              ? (s.sniff.startsWith("—") ? "nothing proven — the extension decides" : "agree — extension refines the family")
+              : "<b>disagree — content decides</b>",
+              s.agree ? "corroborated" : "conflict", s.agree ? "ok" : "bad")
+         + "</div>";
+      if(s.mismatch){
+        h += '<div class="note-strip alarm"><b>Recorded, and actionable</b><p><code>metadata["format_mismatch"] = "'
+           + esc(s.mismatch) + '"</code>, plus a structured warn-level log line. '
+           + '<code>SIPHON_ON_FORMAT_MISMATCH</code> decides what happens next: <b>flag</b> (default), '
+           + '<b>reject</b> (extraction returns Err, so every caller fails closed) or <b>ignore</b>.</p></div>';
+      } else if(s.id === "innocent"){
+        h += '<div class="note-strip"><b>Why “BM” proves nothing</b><p>BMP’s entire signature is those two '
+           + 'ASCII bytes, which every CSV starting “BM…” carries. It is accepted only when the size field '
+           + 'behind it <em>also</em> equals the real file length — two independent facts agreeing. Without '
+           + 'that, this row of car models goes to an image decoder and reads as nothing.</p></div>';
+      }
+      vtext = s.agree ? "Routed to the " + s.reader + " reader" : "Name overruled — routed to the " + s.reader + " reader";
+      pill = s.agree ? ["v-pass","corroborated"] : ["v-emit","contradiction"];
+      break;
+
+    case 3:
+      h += "<p>The reader turns a container into text. What it does when it <em>fails</em> is the part "
+         + "that matters: <code>warnings</code> means <b>content exists here that this pass did not read</b>, "
+         + "and it is what lets a caller fail closed.</p>";
+      h += '<div class="ev">'
+         + row("reader", "<b>" + esc(s.reader) + "</b>", s.reader === "unparsed" ? "fallback" : "parsed",
+               s.reader === "unparsed" ? "bad" : "ok")
+         + row("text out", s.chars + " characters", s.chars ? "ok" : "empty", s.chars ? "ok" : "none")
+         + row("warnings", s.warnings.length ? "<b>" + s.warnings.length + "</b>" : "none",
+               s.warnings.length ? "not read" : "faithful", s.warnings.length ? "bad" : "ok")
+         + "</div>";
+      if(s.warnings.length){
+        h += "<h4>What it said</h4>";
+        s.warnings.forEach(w => { h += '<div class="payload">' + esc(w) + "</div>"; });
+        h += '<div class="note-strip alarm"><b>This is the whole point</b><p>An extractor returning '
+           + '<code>Ok("")</code> here would make the scanner report “no findings” for content nobody '
+           + 'read — and the CLI’s exit code, siphon-fs’s response and the milter’s verdict would all '
+           + 'inherit it.</p></div>';
+      } else {
+        h += "<h4>Extracted text</h4>";
+        h += '<div class="payload' + (s.chars ? '' : ' empty') + '">'
+           + (s.chars ? hit(s.text, needleOf(s, "raw")) : "(no text — the image decoded and carried no barcode)")
+           + "</div>";
+        if(s.id === "honest"){
+          h += '<div class="note-strip"><b>One value per line</b><p>Cell and row boundaries emit a newline; '
+             + 'runs inside a paragraph do not. Get that wrong and it fails both ways at once — a header '
+             + 'glued to its value matches nothing, and two unrelated numeric columns read as a card that '
+             + 'appears nowhere in the sheet.</p></div>';
+        }
+      }
+      vtext = s.warnings.length
+        ? "Uninspected content — cannot reconcile to clean"
+        : (s.chars ? s.chars + " characters recovered" : "Inspected in full; nothing to scan");
+      pill = s.warnings.length ? ["v-drop","not read"] : ["v-pass","extracted"];
+      break;
+
+    case 4:
+      h += "<p>Fifteen sub-stages rewrite the text before any pattern sees it, keeping an offset map so "
+         + "reported spans still point at the original bytes. Pure ASCII with no evasion markers takes a "
+         + "fast path and is returned untouched.</p>";
+      if(s.norm){
+        h += '<div class="xform">'
+           + '<div class="xcell"><span class="xlab">as extracted</span>' + esc(s.text.trim()) + '</div>'
+           + '<div class="arrow">→</div>'
+           + '<div class="xcell"><span class="xlab">as matched</span>'
+           + hit(s.norm.trim(), needleOf(s, "norm")) + '</div>'
+           + "</div>";
+        if(s.id === "evasive"){
+          h += '<div class="note-strip"><b>Stage 6c — consistent digit separators</b><p>A separator injected '
+             + 'uniformly between digit groups is stripped, which is what turns <code>219 09 9999</code> back '
+             + 'into a social security number. The span reported later still points at the spaced original.</p></div>';
+        }
+      } else if(s.chars){
+        h += '<div class="payload">' + hit(s.text, needleOf(s, "raw")) + "</div>";
+        h += '<div class="note-strip"><b>Fast path</b><p>Pure ASCII, no evasion markers — returned unchanged, '
+           + 'and no offset map is allocated. That matters: the map is one <code>usize</code> per input byte, '
+           + 'so a stage that cloned it just to report no change cost ~9 MB of memcpy per megabyte scanned.</p></div>';
+      } else {
+        h += '<div class="payload empty">(nothing to normalize)</div>';
+      }
+      vtext = s.norm ? "Rewritten — evasion undone" : "Unchanged";
+      pill = ["v-pass", s.norm ? "normalized" : "untouched"];
+      break;
+
+    case 5:
+      h += "<p>583 patterns across 128 categories. Three filters run <em>before</em> any regex does: the "
+         + "category filter, the ruleset’s baseline subsets, and the Aho-Corasick keyword prefilter — which "
+         + "drops a context-gated pattern whose keywords appear nowhere in the text or the envelope.</p>";
+      h += '<div class="ev">'
+         + row("category filter", "not set — all categories live", "skip", "none")
+         + row("baseline", "not set", "skip", "none")
+         + row("keyword prefilter", "5,000+ keywords · 6 languages", s.chars ? "narrowed" : "nothing to narrow",
+               s.chars ? "ok" : "none")
+         + "</div>";
+      h += '<div class="note-strip"><b>The prefilter is stage 9’s index, used at stage 3</b><p>It is the '
+         + 'pipeline’s largest throughput win, and it works by asking the context question early enough to '
+         + 'avoid compiling the pattern into the run at all.</p></div>';
+      vtext = s.chars ? "Survivors handed to the matcher" : "No text — nothing to narrow";
+      pill = ["v-pass","narrowed"];
+      break;
+
+    case 6:
+      h += "<p>Every surviving pattern runs as its own <code>Regex</code> in parallel under rayon. There is "
+         + "no <code>RegexSet</code> and no two-phase match — two documents claimed there was, and neither "
+         + "was ever true.</p>";
+      h += '<div class="ev">'
+         + row("candidates", "<b>" + s.candidates + "</b> span" + (s.candidates === 1 ? "" : "s"),
+               s.candidates ? "found" : "none", s.candidates ? "ok" : "none")
+         + "</div>";
+      if(s.candidates){
+        h += '<div class="payload">' + hit(s.norm || s.text, needleOf(s, s.norm ? "norm" : "raw")) + "</div>";
+      }
+      h += '<div class="note-strip"><b>No backtracking, by construction</b><p>The <code>regex</code> crate has '
+         + 'no backreferences, so there is no catastrophic backtracking. That is a security property, not a '
+         + 'preference: attacker-controlled input reaching a backtracking engine is a denial-of-service '
+         + 'primitive — which is why <code>fancy-regex</code> is flagged as a component wherever the SBOM '
+         + 'finds it.</p></div>';
+      vtext = s.candidates + " candidate" + (s.candidates === 1 ? "" : "s") + " to test";
+      pill = s.candidates ? ["v-emit","candidates"] : ["v-pass","no match"];
+      break;
+
+    case 7:
+      h += "<p>About seventy dispatch arms: Luhn, mod-97 IBAN, Verhoeff, Base58Check, Bech32, ISO 3779 VIN, "
+         + "SWIFT country codes, CUSIP, SEDOL. This is the difference between “sixteen digits” and “a card "
+         + "number”.</p>";
+      h += '<div class="ev">'
+         + row("in", s.candidates + "", "candidates", "none")
+         + row("check", esc(s.validNote), s.valid ? "pass" : "n/a", s.valid ? "ok" : "none")
+         + row("out", "<b>" + s.valid + "</b>", s.valid ? "survives" : "nothing", s.valid ? "ok" : "none")
+         + "</div>";
+      if(s.sub === "Visa"){
+        h += '<div class="note-strip"><b>Validation rejects, it does not gatekeep</b><p>With the '
+           + '<code>bin-data</code> feature the BIN is looked up against 374k issuer prefixes — but an '
+           + '<em>unknown</em> BIN is still accepted, because issuers appear faster than any bundled table '
+           + 'refreshes. A known one gets issuer and country metadata attached instead.</p></div>';
+      }
+      vtext = s.valid ? s.valid + " survived the checksum" : "Nothing reached validation";
+      pill = s.valid ? ["v-emit","validated"] : ["v-pass","empty"];
+      break;
+
+    case 8:
+      h += "<p>An Aho-Corasick automaton over 5,000+ keywords in six languages. Each candidate gets a window "
+         + "of ±50 characters by default; patterns marked <code>context_required</code> are the loose ones, "
+         + "and are dropped entirely when no keyword is near.</p>";
+      if(s.ctx){
+        h += '<div class="ev">'
+           + row("window", "±50 characters", "searched", "none")
+           + row("found", esc(s.ctx), s.ctxKind, "ok")
+           + "</div>";
+      } else {
+        h += '<div class="ev">' + row("window", "±50 characters", "nothing to check", "none") + "</div>";
+      }
+      h += '<div class="note-strip"><b>Indexed once per message, not once per part</b><p>Context may also come '
+         + 'from the envelope — a subject line is evidence about an attachment. Done naively that is '
+         + 'O(parts × message): 400 parts took 28.1 s. Indexed once and range-filtered, the same message takes '
+         + '813 ms, and per-part cost goes flat at about 2 ms.</p></div>';
+      vtext = s.ctx ? "Corroborated by nearby text" : "No candidates to corroborate";
+      pill = s.ctx ? ["v-pass","context"] : ["v-idle","n/a"];
+      break;
+
+    case 9:
+      h += "<p>Base specificity per pattern, adjusted by where the corroboration came from.</p>";
+      h += '<div class="ev">'
+         + row("local context", "specificity + 0.20", s.ctxKind === "local" ? "applied" : "—",
+               s.ctxKind === "local" ? "ok" : "none")
+         + row("envelope only", "specificity + 0.10", "—", "none")
+         + row("required, absent", "specificity × 0.3", "—", "none")
+         + "</div>";
+      if(s.conf){
+        h += '<div class="ev">' + row("result", "<b>" + esc(s.sub) + "</b>", s.conf, "ok") + "</div>";
+      }
+      h += '<div class="note-strip"><b>The envelope boost is half the local one, deliberately</b><p>A subject '
+         + 'line is evidence, but weaker evidence than the words immediately around the value — and confidence '
+         + 'is what a reviewer’s threshold filters on, so the difference has to be expressible. Overlapping '
+         + 'spans then collapse, and a context-gated match with its context satisfied beats an ungated one at '
+         + 'equal confidence.</p></div>';
+      vtext = s.conf ? s.sub + " at " + s.conf : "Nothing to score";
+      pill = s.conf ? ["v-emit","scored"] : ["v-pass","none"];
+      break;
+
+    case 10:
+      if(s.verdict === "halt"){
+        h += "<p>Zero findings — and that is <em>not</em> a clean result. The reader said it could not read "
+           + "this file, so the parts that were never inspected cannot reconcile to clean.</p>";
+        h += '<div class="note-strip alarm"><b>Outcome 3 — not read, and it said so</b><p>On the mail path this '
+           + 'reconciles to <code>Indeterminate</code>, which sits <em>above</em> <code>Clean</code> on the '
+           + 'ladder. That ordering is the fail-closed property in one line: a message with one unreadable '
+           + 'part and nine clean ones is not clean.</p></div>';
+      } else if(s.verdict === "pass"){
+        h += "<p>Zero findings, and this time it is the honest answer: the image decoded, it carried no "
+           + "barcode, and there was no text to scan.</p>";
+        h += '<div class="note-strip"><b>Outcome 2 — read in full, and there was no text</b><p>Told apart from '
+           + 'outcome 3 by the empty <code>warnings</code>. Collapsing the two would defer every message '
+           + 'carrying a photo.</p></div>';
+      } else {
+        h += "<p>Findings are sorted by confidence and emitted. Each carries its category, sub-category, "
+           + "confidence, and span offsets <em>into the original text</em>.</p>";
+        h += '<div class="ev">'
+           + row("finding", "<b>" + esc(s.sub) + "</b>", s.conf, "ok")
+           + row("redacted", "411···111", "analyst view", "none")
+           + row("masked", "················", "reviewer view", "none")
+           + "</div>";
+        h += '<div class="note-strip"><b>Why the span is the pre-normalization one</b><p>When a value arrived '
+           + 'encoded, <code>Match::text</code> is the encoded form, not the decoded card. That looks wrong '
+           + 'until you remember what the span is for — a redactor has to overwrite the bytes actually in the '
+           + 'document.</p></div>';
+      }
+      vtext = s.verdictText;
+      pill = s.verdict === "halt" ? ["v-drop","indeterminate"]
+           : s.verdict === "pass" ? ["v-pass","clean"] : ["v-emit","flagged"];
+      break;
+  }
+
+  document.getElementById("p-title").textContent = st.nm;
+  document.getElementById("p-loc").textContent = st.loc;
+  const body = document.getElementById("p-body");
+  body.innerHTML = h;
+  body.classList.remove("fade"); void body.offsetWidth; body.classList.add("fade");
+
+  const pillEl = document.getElementById("p-pill");
+  pillEl.className = "vpill " + pill[0];
+  pillEl.textContent = pill[1];
+  document.getElementById("p-verdict").textContent = vtext;
+}
+
+/* ---- state -------------------------------------------------------------- */
+let cur = 0, step = 0, timer = null;
+
+function paintRail(){
+  document.querySelectorAll("#rail .stage").forEach((el, i) => {
+    const halted = SPECIMENS[cur].verdict === "halt" && i === 3;
+    el.dataset.state = i === step ? "active"
+                     : i < step ? (halted && i === 3 ? "halt" : "done")
+                     : "pending";
+    el.setAttribute("aria-selected", i === step ? "true" : "false");
+  });
+  document.getElementById("bar").style.width = ((step + 1) / STAGES.length * 100) + "%";
+  document.getElementById("counter").textContent = "stage " + (step + 1) + " / " + STAGES.length;
+  document.getElementById("back").disabled = step === 0;
+  document.getElementById("fwd").disabled = step === STAGES.length - 1;
+}
+
+function go(n){
+  step = Math.max(0, Math.min(STAGES.length - 1, n));
+  paintRail();
+  render(SPECIMENS[cur], step);
+}
+
+function stop(){
+  if(timer){ clearInterval(timer); timer = null; }
+  const b = document.getElementById("play");
+  b.innerHTML = '<span class="gl">▶</span> Run';
+}
+
+function play(){
+  if(timer){ stop(); return; }
+  if(step === STAGES.length - 1) go(0);
+  const b = document.getElementById("play");
+  b.innerHTML = '<span class="gl">❚❚</span> Pause';
+  timer = setInterval(() => {
+    if(step >= STAGES.length - 1){ stop(); return; }
+    go(step + 1);
+  }, 1500);
+}
+
+function pick(i){
+  stop();
+  cur = i;
+  document.querySelectorAll("#tray .spec").forEach((el, n) =>
+    el.setAttribute("aria-pressed", n === i ? "true" : "false"));
+  go(0);
+}
+
+/* ---- build ------------------------------------------------------------- */
+document.getElementById("tray").innerHTML = SPECIMENS.map((s, i) =>
+  '<button class="spec" type="button" aria-pressed="' + (i === 0) + '" data-i="' + i + '">' +
+  '<span class="fname">' + esc(s.name) + '</span>' +
+  '<span class="fsize">' + esc(s.size) + '</span>' +
+  '<span class="fwhy">' + esc(s.why) + '</span></button>').join("");
+
+document.getElementById("rail").innerHTML = STAGES.map((st, i) =>
+  '<button class="stage" type="button" role="tab" data-state="pending" data-i="' + i + '">' +
+  '<span class="dot">' + (i + 1) + '</span>' +
+  '<span><span class="snm">' + esc(st.nm) + '</span><br>' +
+  '<span class="ssub">' + esc(st.sub) + '</span></span></button>').join("");
+
+document.getElementById("tray").addEventListener("click", e => {
+  const b = e.target.closest(".spec"); if(b) pick(+b.dataset.i);
+});
+document.getElementById("rail").addEventListener("click", e => {
+  const b = e.target.closest(".stage"); if(b){ stop(); go(+b.dataset.i); }
+});
+document.getElementById("play").addEventListener("click", play);
+document.getElementById("fwd").addEventListener("click", () => { stop(); go(step + 1); });
+document.getElementById("back").addEventListener("click", () => { stop(); go(step - 1); });
+
+/* Conformance grid — the real run, 110 cases. */
+const SLOTS = ["clean","single","structural","damaged","evasive"];
+const FORMATS = [
+  ["txt",0],["csv",0],["json",4],["rtf",0],["eml",0],["mbox",3],["mhtml",0],["vcf",0],
+  ["ldif",0],["ics",0],["warc",0],["docx",0],["xlsx",4],["pptx",0],["odt",0],["ods",0],
+  ["pdf",0],["zip",0],["7z",0],["sqlite",0],["png",0],["disguise",0]
+];
+document.getElementById("mxtable").innerHTML =
+  "<thead><tr><th>capability</th>" + SLOTS.map(s => "<th>" + s + "</th>").join("") + "</tr></thead>" +
+  "<tbody>" + FORMATS.map(([f, gapAt]) =>
+    '<tr><td class="fmt">' + f + "</td>" + SLOTS.map((_, i) =>
+      "<td>" + (gapAt && i === gapAt - 1
+        ? '<span class="cell c-gap" title="declared gap">~</span>'
+        : '<span class="cell c-pass" title="pass">✓</span>') + "</td>").join("") + "</tr>").join("") +
+  "</tbody>";
+
+go(0);
+</script>
+</body>
+</html>
