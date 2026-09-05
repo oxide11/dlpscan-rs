@@ -16,7 +16,7 @@
 //! Exit status is 0 only when every case passed *and* nothing advertised is
 //! unaccounted for, so it drops straight into a pre-push hook or a CI step.
 
-use siphon::conformance::{self, Slot};
+use siphon::conformance::{self, Axis, Slot};
 
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -110,7 +110,7 @@ fn print_text(report: &conformance::Report) {
     println!("{}", "=".repeat(70));
     println!();
 
-    for (capability, passed, total) in report.by_capability() {
+    for (capability, passed, total) in report.by_axis(Some(Axis::Format)) {
         let broken = report
             .results
             .iter()
@@ -132,6 +132,50 @@ fn print_text(report: &conformance::Report) {
             }
         }
         println!();
+    }
+
+    // 511 patterns will not fit on a screen and would bury the format table
+    // if they tried. What is worth seeing at a glance is the total, the
+    // per-slot breakdown, and anything that broke — the rest is available
+    // through --capability.
+    let det: Vec<_> = report
+        .results
+        .iter()
+        .filter(|r| r.axis == Axis::Detection)
+        .collect();
+    if !det.is_empty() {
+        let (covered, total_patterns) = report.pattern_coverage;
+        println!();
+        println!("  detections");
+        println!(
+            "        {covered} of {total_patterns} patterns · {} cases",
+            det.len()
+        );
+        for slot in Slot::ALL {
+            let in_slot: Vec<_> = det.iter().filter(|r| r.slot == slot).collect();
+            let pass = in_slot.iter().filter(|r| r.passed()).count();
+            let gaps = in_slot.iter().filter(|r| r.expected_failure()).count();
+            println!(
+                "        {:<11} {pass}/{}{}",
+                slot.name(),
+                in_slot.len(),
+                if gaps > 0 {
+                    format!(
+                        "  ({gaps} declared gap{})",
+                        if gaps == 1 { "" } else { "s" }
+                    )
+                } else {
+                    String::new()
+                }
+            );
+        }
+        if !report.unseeded.is_empty() {
+            println!(
+                "        {:<11} {} pattern(s) with no observable example",
+                "unseeded",
+                report.unseeded.len()
+            );
+        }
     }
 
     println!();
@@ -191,6 +235,40 @@ fn print_text(report: &conformance::Report) {
             println!("  {u}");
         }
         println!();
+    }
+
+    if !report.unseeded.is_empty() {
+        println!("{}", "-".repeat(70));
+        println!(
+            "Patterns with no observable example ({}) — not a gap in the matrix \n\
+             so much as a finding about the pattern set:",
+            report.unseeded.len()
+        );
+        println!();
+        // Group by diagnosis: the interesting number is how many share one.
+        let mut by_reason: Vec<(&str, Vec<&str>)> = Vec::new();
+        for (sub, why) in &report.unseeded {
+            match by_reason.iter_mut().find(|(w, _)| w == why) {
+                Some((_, v)) => v.push(sub),
+                None => by_reason.push((why, vec![sub])),
+            }
+        }
+        by_reason.sort_by_key(|(_, v)| std::cmp::Reverse(v.len()));
+        for (why, subs) in by_reason {
+            println!("  {} pattern(s):", subs.len());
+            println!("      {}", wrap(why, 6));
+            let shown: Vec<&str> = subs.iter().take(10).copied().collect();
+            println!(
+                "      {}{}",
+                shown.join(", "),
+                if subs.len() > shown.len() {
+                    format!(", and {} more", subs.len() - shown.len())
+                } else {
+                    String::new()
+                }
+            );
+            println!();
+        }
     }
 
     if !report.gaps.is_empty() {

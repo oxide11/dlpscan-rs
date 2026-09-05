@@ -120,13 +120,87 @@ capability_test!(png, "png");
 #[cfg(feature = "archives")]
 capability_test!(disguise, "disguise");
 
+/// The detection half: 511 patterns, five cases each.
+///
+/// One test rather than 511, because a per-pattern test list would be
+/// generated code nobody reads and a 511-line failure report nobody finishes.
+/// The assertion message names every pattern that broke, which is the part
+/// that actually gets read.
+#[test]
+fn detections() {
+    let report = conformance::run_all(None);
+    let failures: Vec<String> = report
+        .results
+        .iter()
+        .filter(|r| r.is_failure() && r.axis == conformance::Axis::Detection)
+        .map(|r| {
+            format!(
+                "  {} [{}] {}",
+                r.capability,
+                r.slot.name(),
+                r.failure
+                    .as_deref()
+                    .unwrap_or("")
+                    .lines()
+                    .nth(1)
+                    .unwrap_or("")
+                    .trim()
+            )
+        })
+        .collect();
+    assert!(
+        failures.is_empty(),
+        "\n\n{} detection case(s) failed:\n{}\n",
+        failures.len(),
+        failures.join("\n")
+    );
+
+    let fixed: Vec<String> = report
+        .results
+        .iter()
+        .filter(|r| r.fixed_gap() && r.axis == conformance::Axis::Detection)
+        .map(|r| format!("  {} [{}]", r.capability, r.slot.name()))
+        .collect();
+    assert!(
+        fixed.is_empty(),
+        "\n\nthese detection cases are marked as declared gaps but now pass:\n{}\n\
+         Regenerate the matrix so the gap entries go away.\n",
+        fixed.join("\n")
+    );
+}
+
+/// The matrix must keep covering the patterns it covered.
+///
+/// Not a fixed number — patterns get added — but a ratio, so a change that
+/// makes a swathe of patterns unobservable cannot land quietly. The floor is
+/// set just under the coverage at the time of writing.
+#[test]
+fn pattern_coverage_does_not_regress() {
+    let report = conformance::run_all(Some("__none__"));
+    let (covered, total) = report.pattern_coverage;
+    assert!(
+        total > 0,
+        "the detection matrix is empty — was detections_data.rs generated?"
+    );
+    let ratio = covered as f64 / total as f64;
+    assert!(
+        ratio >= 0.85,
+        "\n\npattern coverage fell to {covered}/{total} ({:.1}%).\n\
+         Patterns with no observable example are usually not a generator \n\
+         problem: the largest group carries a regex identical to a sibling's, \n\
+         so deduplication means only one of them can ever be reported.\n",
+        ratio * 100.0
+    );
+}
+
 /// Every capability carries all five slots, exactly once.
 ///
 /// Without this, a capability could quietly shrink to its two easy questions
 /// and still look green.
 #[test]
 fn every_capability_asks_all_five_questions() {
-    let cases = conformance::formats::cases();
+    let mut cases = conformance::formats::cases();
+    cases.extend(conformance::detections::cases());
     let mut capabilities: Vec<&str> = cases.iter().map(|c| c.capability).collect();
     capabilities.dedup();
 

@@ -109,6 +109,56 @@ Two rules keep it honest:
   that is reported too, so the entry gets removed rather than outliving the
   bug it described.
 
+### The detection half
+
+The same five questions, asked of every pattern rather than every reader:
+
+| Slot | Question |
+|---|---|
+| `clean` | Ordinary prose holding none of its values: does it stay quiet? |
+| `single` | The value, labelled: is it found? |
+| `structural` | The same value inside a document rather than alone: still found? |
+| `damaged` | A near miss — the value mutated until it should no longer qualify: does it stay quiet? |
+| `evasive` | The value wearing an encoding the normalizer exists to undo: still found? |
+
+Cases live in `src/conformance/detections_data.rs`, **generated, not written**.
+Each is built by sampling the pattern's own regex (or taking a value from the
+hand-labelled corpus in `tests/corpus/`) and keeping only what the real
+scanner confirms. Regenerate with `scripts/dev/generate-detection-matrix.rs`, which carries
+its own instructions — `rand_regex` and `regex-syntax` are dependencies for
+*producing* the table, not for using it, so they are added and removed around
+the run rather than living in the lockfile.
+
+Be clear about what each half proves. The **positive** slots are seeded from
+the scanner's own behaviour, so they are a regression suite: they pin today's
+answers and fail when those change, but cannot catch a pattern that is wrong
+today, because the pattern was the oracle. The **negative** slots are not
+circular — a near miss is derived by mutating a known-good value, and
+asserting the pattern goes quiet tests whether it checks substance or only
+shape.
+
+#### What building it found
+
+Three properties of the pattern set, none of which were visible before every
+pattern was asked the same questions:
+
+- **72 patterns have no observable example.** Most are not a generator
+  failure: they carry a regex *identical* to a sibling's, and deduplication
+  keeps only one match per span. Seven US state driver's licence patterns
+  share `\b\d{8}\b`; ask for Texas and the scanner reports Arkansas. The
+  right answer is not a better test — it is that a pattern which cannot be
+  told apart from its neighbour should not be advertised as separate.
+- **33 patterns require a separator that normalization removes.** Stage 6c
+  strips a consistent separator between digit groups, which is what turns
+  `219 09 9999` back into an SSN — and what turns `20500-0003` into
+  `205000003` before `\b\d{5}-\d{4}\b` ever sees it. `US ZIP+4 Code` cannot
+  fire. Any pattern whose regex *mandates* a separator is in the same
+  position; patterns that make it optional are unaffected.
+- **`Date ISO` is gated on date-of-birth keywords.** Its context entry is
+  `date of birth`, `dob`, `birthday` — so a generic ISO date in any other
+  setting never fires. That may be deliberate, but the category name does not
+  say so.
+
 ### Format confusion
 
 Dispatch arbitrates between what a file is *named* and what its bytes

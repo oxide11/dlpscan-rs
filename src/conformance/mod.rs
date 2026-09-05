@@ -48,6 +48,9 @@
 //! nobody has five questions about.
 
 pub mod build;
+pub mod detections;
+#[rustfmt::skip]
+pub mod detections_data;
 pub mod formats;
 
 use crate::scanner::{scan_text_with_config, ScanConfig};
@@ -80,6 +83,19 @@ pub const INNOCUOUS: &str = "Quarterly planning notes. The team agreed to move t
 // ---------------------------------------------------------------------------
 // Case model
 // ---------------------------------------------------------------------------
+
+/// Which half of the matrix a case belongs to.
+///
+/// The two axes are reported differently for the same reason they are built
+/// differently: twenty-two readers fit on a screen and want naming, while
+/// 511 patterns want a total and a list of what broke.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Axis {
+    /// A file format — the journey from bytes to text.
+    Format,
+    /// A detection pattern — the journey from text to a finding.
+    Detection,
+}
 
 /// The five questions asked of every capability. See the module docs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -150,6 +166,18 @@ pub enum Expect {
     /// hijacks dispatch turns every document starting with the wrong two
     /// bytes into an unreadable file.
     NoMismatchAndFound(&'static str),
+    /// This sub_category must **not** be reported.
+    ///
+    /// The precision half of the detection matrix, and the half a corpus
+    /// grown only from positives never gets. Two slots use it: prose with no
+    /// instance of the value at all, and a near-miss — a value mutated until
+    /// it should no longer qualify, which is what catches a pattern that
+    /// matches shape without checking substance.
+    ///
+    /// Deliberately scoped to one sub_category rather than to "no findings":
+    /// a near-miss card number may legitimately still be some other pattern,
+    /// and failing the case for that would be testing the wrong thing.
+    SubCategoryAbsent(&'static str),
     /// Nothing may be reported except these sub_categories.
     ///
     /// For formats whose envelope inherently carries a detectable value: an
@@ -158,15 +186,34 @@ pub enum Expect {
     NoFindingsExcept(&'static [&'static str]),
 }
 
+/// What a case feeds to the scanner.
+///
+/// The two axes of the matrix need different entry points. A *format* case is
+/// about the journey from bytes on disk to text, so it has to go through
+/// dispatch and extraction — the filename is load-bearing evidence there. A
+/// *detection* case is about a pattern, and routing 2,915 of them through a
+/// temp file each would spend the entire run on filesystem round-trips
+/// testing a reader nobody is asking about.
+pub enum Input {
+    /// Written to a tempdir and handed to `extract_text`. The extension
+    /// drives dispatch, so it is part of the fixture.
+    File {
+        filename: &'static str,
+        bytes: Vec<u8>,
+    },
+    /// Scanned directly. Extraction is skipped, not stubbed: there is no
+    /// file, so there is nothing for a reader to be right or wrong about.
+    Text(String),
+}
+
 /// One question about one capability.
 pub struct Case {
     /// The capability under test — an extension for formats (`"docx"`), a
-    /// sub_category for detections.
+    /// sub_category for detections (`"USA SSN"`).
     pub capability: &'static str,
+    pub axis: Axis,
     pub slot: Slot,
-    /// Filename the fixture is written under; the extension drives dispatch.
-    pub filename: &'static str,
-    pub bytes: Vec<u8>,
+    pub input: Input,
     pub expect: Expect,
     /// What this case is actually about, printed on failure. Written as the
     /// sentence you would want to read at 2am when it goes red.
@@ -197,9 +244,31 @@ pub fn case(
 ) -> Case {
     Case {
         capability,
+        axis: Axis::Format,
         slot,
-        filename,
-        bytes: bytes.into(),
+        input: Input::File {
+            filename,
+            bytes: bytes.into(),
+        },
+        expect,
+        note,
+        known_gap: None,
+    }
+}
+
+/// A case that scans text directly, skipping dispatch and extraction.
+pub fn text_case(
+    capability: &'static str,
+    slot: Slot,
+    text: impl Into<String>,
+    expect: Expect,
+    note: &'static str,
+) -> Case {
+    Case {
+        capability,
+        axis: Axis::Detection,
+        slot,
+        input: Input::Text(text.into()),
         expect,
         note,
         known_gap: None,
@@ -220,6 +289,7 @@ pub fn gap(mut c: Case, why: &'static str) -> Case {
 /// The outcome of a single case.
 pub struct CaseResult {
     pub capability: &'static str,
+    pub axis: Axis,
     pub slot: Slot,
     /// `None` on pass; the failure explanation otherwise.
     pub failure: Option<String>,
@@ -256,12 +326,22 @@ impl CaseResult {
 /// capability's five slots all report together instead of stopping at the
 /// first.
 pub fn run_case(c: &Case) -> Result<(), String> {
-    let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
-    let path = dir.path().join(c.filename);
-    std::fs::write(&path, &c.bytes).map_err(|e| e.to_string())?;
-    let path = path.to_string_lossy().to_string();
-
-    let extracted = crate::extractors::extract_text(&path);
+    // Held for the lifetime of the call so the tempdir is not swept out from
+    // under the extractor.
+    let _dir;
+    let extracted = match &c.input {
+        Input::File { filename, bytes } => {
+            let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+            let path = dir.path().join(filename);
+            std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+            let path = path.to_string_lossy().to_string();
+            _dir = dir;
+            crate::extractors::extract_text(&path)
+        }
+        // No file, so nothing was extracted and nothing can have gone
+        // unread: a text case starts where a format case ends.
+        Input::Text(t) => Ok(crate::extractors::ExtractionResult::new(t.clone(), "text")),
+    };
 
     match &c.expect {
         Expect::NotSilentlyClean => match &extracted {
@@ -371,6 +451,24 @@ pub fn run_case(c: &Case) -> Result<(), String> {
                 unexpected.join(", ")
             ))
         }
+        Expect::SubCategoryAbsent(sub) => {
+            let r = extracted.map_err(|e| format!("{}\n  extraction failed: {e}", c.note))?;
+            let matches = scan(&r.text)?;
+            let offenders: Vec<String> = matches
+                .iter()
+                .filter(|m| m.sub_category == *sub)
+                .map(|m| format!("{} @ {}..{}", m.redacted_text(), m.span.0, m.span.1))
+                .collect();
+            if offenders.is_empty() {
+                return Ok(());
+            }
+            Err(format!(
+                "{}\n  {sub} fired when it should not have: {}\n  text: {:?}",
+                c.note,
+                offenders.join(", "),
+                r.text.chars().take(160).collect::<String>()
+            ))
+        }
         Expect::DetectsSubCategory(sub) => {
             let r = extracted.map_err(|e| format!("{}\n  extraction failed: {e}", c.note))?;
             let matches = scan(&r.text)?;
@@ -443,6 +541,10 @@ pub struct Report {
     /// Capabilities advertised, covered by neither a case nor a gap entry.
     /// Any entry here is a coverage failure, not a note.
     pub uncovered: Vec<String>,
+    /// Patterns with no observable example, each with its diagnosis.
+    pub unseeded: Vec<(&'static str, &'static str)>,
+    /// (patterns covered, patterns that exist).
+    pub pattern_coverage: (usize, usize),
 }
 
 impl Report {
@@ -477,8 +579,17 @@ impl Report {
 
     /// Capabilities in run order, each with its pass/total counts.
     pub fn by_capability(&self) -> Vec<(&'static str, usize, usize)> {
+        self.by_axis(None)
+    }
+
+    /// Per-capability pass counts, optionally restricted to one axis.
+    pub fn by_axis(&self, axis: Option<Axis>) -> Vec<(&'static str, usize, usize)> {
         let mut out: Vec<(&'static str, usize, usize)> = Vec::new();
-        for r in &self.results {
+        for r in self
+            .results
+            .iter()
+            .filter(|r| axis.is_none_or(|a| r.axis == a))
+        {
             match out.iter_mut().find(|(c, _, _)| *c == r.capability) {
                 Some(entry) => {
                     entry.2 += 1;
@@ -559,7 +670,8 @@ impl Report {
 
 /// Run every case in the matrix, optionally filtered to one capability.
 pub fn run_all(only: Option<&str>) -> Report {
-    let cases = formats::cases();
+    let mut cases = formats::cases();
+    cases.extend(detections::cases());
     let mut results = Vec::new();
 
     for c in &cases {
@@ -570,6 +682,7 @@ pub fn run_all(only: Option<&str>) -> Report {
         }
         results.push(CaseResult {
             capability: c.capability,
+            axis: c.axis,
             slot: c.slot,
             failure: run_case(c).err(),
             known_gap: c.known_gap,
@@ -581,5 +694,7 @@ pub fn run_all(only: Option<&str>) -> Report {
         results,
         gaps: formats::KNOWN_GAPS.to_vec(),
         uncovered: formats::uncovered(&cases),
+        unseeded: detections::unseeded(),
+        pattern_coverage: detections::coverage(),
     }
 }
