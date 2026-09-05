@@ -16,6 +16,8 @@ COPY crates/siphon-api/Cargo.toml      crates/siphon-api/Cargo.toml
 COPY crates/siphon-fs/Cargo.toml       crates/siphon-fs/Cargo.toml
 COPY crates/siphon-launcher/Cargo.toml crates/siphon-launcher/Cargo.toml
 COPY crates/siphon-icap/Cargo.toml     crates/siphon-icap/Cargo.toml
+COPY crates/siphon-mail/Cargo.toml     crates/siphon-mail/Cargo.toml
+COPY crates/siphon-milter/Cargo.toml   crates/siphon-milter/Cargo.toml
 
 RUN mkdir -p src \
              crates/siphon-core/src \
@@ -23,6 +25,8 @@ RUN mkdir -p src \
              crates/siphon-fs/src \
              crates/siphon-launcher/src \
              crates/siphon-icap/src \
+             crates/siphon-mail/src \
+             crates/siphon-milter/src \
              benches \
  && echo 'fn main() {}'      > src/main.rs \
  && echo 'pub fn _stub() {}' > src/lib.rs \
@@ -31,6 +35,8 @@ RUN mkdir -p src \
  && echo 'fn main() {}'      > crates/siphon-fs/src/main.rs \
  && echo 'fn main() {}'      > crates/siphon-launcher/src/main.rs \
  && echo 'fn main() {}'      > crates/siphon-icap/src/main.rs \
+ && echo 'pub fn _stub() {}' > crates/siphon-mail/src/lib.rs \
+ && echo 'fn main() {}'      > crates/siphon-milter/src/main.rs \
  && echo 'fn main() {}'      > benches/scanning.rs
 
 RUN cargo build --release -p siphon-icap --locked

@@ -112,6 +112,25 @@ fs_compose_ver="$(awk -F: '/image:[[:space:]]+siphon-fs:/{gsub(/[[:space:]]/,"",
 check "  deploy/docker-compose.yml siphon-fs"      "${fs_ver}" "${fs_compose_ver}"
 
 # ---------------------------------------------------------------------------
+# siphon-milter lockstep
+# ---------------------------------------------------------------------------
+# Covered from the crate's first release rather than retrofitted. siphon-icap
+# shipped without coverage here and its Dockerfile LABEL and compose tag have
+# had nothing keeping them honest since; adding a service to this script is
+# cheap on day one and archaeology later.
+#
+# No values.yaml entry: the Helm chart does not deploy the milter, matching
+# siphon-icap. New protocol services ship in compose first.
+milter_ver="$(cargo_version crates/siphon-milter/Cargo.toml)"
+echo "siphon-milter ${milter_ver}"
+
+milter_dockerfile_ver="$(awk -F\" '/opencontainers\.image\.version/{print $2; exit}' deploy/Dockerfile.milter)"
+check "  deploy/Dockerfile.milter LABEL"           "${milter_ver}" "${milter_dockerfile_ver}"
+
+milter_compose_ver="$(awk -F: '/image:[[:space:]]+siphon-milter:/{gsub(/[[:space:]]/,"",$3); print $3; exit}' deploy/docker-compose.yml)"
+check "  deploy/docker-compose.yml siphon-milter"  "${milter_ver}" "${milter_compose_ver}"
+
+# ---------------------------------------------------------------------------
 # root siphon CLI + UI + Helm appVersion lockstep
 # ---------------------------------------------------------------------------
 # The root crate's version is the "headline" release label. Chart.yaml's
