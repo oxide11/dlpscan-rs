@@ -262,9 +262,57 @@ pub fn extract_text(file_path: &str) -> Result<ExtractionResult, String> {
     if let Some(extractor) = get_extractor(file_path) {
         extractor(file_path)
     } else {
-        // Default to plain text
-        extract_plain_text(file_path)
+        // Nothing claimed this file. Whether reading it as text is faithful
+        // depends on the content, not the extension: a `.weirdext` holding
+        // prose is read correctly as prose, while a truncated Office file is
+        // binary we failed to parse and must not be reported as merely clean.
+        //
+        // Deciding on the extension instead would defer every message
+        // carrying an unfamiliar but perfectly textual attachment, which
+        // under the fail-closed mail policy is a self-inflicted outage.
+        if looks_like_text(file_path) {
+            extract_plain_text(file_path)
+        } else {
+            extract_unparsed_binary(file_path)
+        }
     }
+}
+
+/// Is this file plausibly text?
+///
+/// Sampled from the head rather than the whole file: the question is what
+/// kind of thing this is, and a 30 MB read to answer it would be on the
+/// milter's critical path for every unrecognised attachment.
+fn looks_like_text(file_path: &str) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(file_path) else {
+        return false;
+    };
+    let mut buf = [0u8; 8192];
+    let Ok(n) = f.read(&mut buf) else {
+        return false;
+    };
+    if n == 0 {
+        // An empty file is not binary, and calling it unparsed would warn
+        // about nothing.
+        return true;
+    }
+    let sample = &buf[..n];
+    // A NUL byte is the strongest single signal of binary content; no text
+    // encoding this scanner handles produces one.
+    if sample.contains(&0) {
+        return false;
+    }
+    // Otherwise judge by how much of it is printable. Compressed or encoded
+    // payloads are close to uniformly distributed over all 256 values, so
+    // they fail this comfortably, while UTF-8 prose passes it.
+    let printable = sample
+        .iter()
+        .filter(|&&b| {
+            b == b'\n' || b == b'\r' || b == b'\t' || (0x20..0x7f).contains(&b) || b >= 0x80
+        })
+        .count();
+    printable * 100 / n >= 85
 }
 
 /// List all supported extensions (built-in + custom).
@@ -305,7 +353,15 @@ fn detect_and_extract(file_path: &str) -> Option<ExtractorFn> {
 
     // PDF: %PDF
     if &buf[..4] == b"%PDF" {
-        return Some(extract_plain_text); // Fallback; use pdf feature for real extraction
+        #[cfg(feature = "pdf")]
+        return Some(extract_pdf);
+        // Without the feature there is no parser, so the bytes are read as
+        // text and the result says so. That finds text in an uncompressed
+        // content stream and nothing in a compressed one, which is to say
+        // nothing in a real PDF — the caller has to be told, not left to
+        // assume a clean result means clean.
+        #[cfg(not(feature = "pdf"))]
+        return Some(extract_unparsed_binary);
     }
 
     // RTF: {\rtf
@@ -723,6 +779,59 @@ fn extract_attachment_bytes(bytes: &[u8], name: &str) -> Result<Option<Extractio
         Ok(r) => Ok(Some(r)),
         Err(e) => Err(e),
     }
+}
+
+/// Extract text from a PDF.
+///
+/// This was missing for the life of the extractor: the magic-byte sniffer
+/// matched `%PDF` and then returned the plain-text reader, with a comment
+/// saying to use the `pdf` feature for real extraction. The feature was on by
+/// default and `pdf_extract` was compiled into every build, but nothing ever
+/// called it.
+///
+/// The consequence was not cosmetic. PDF content streams are FlateDecode
+/// compressed in essentially every real-world file, so reading the bytes as
+/// text finds nothing that matters. Measured on a two-line PDF carrying an
+/// SSN and a card number: uncompressed, three findings; compressed, one — and
+/// that one was a false positive matched against the xref table, not content.
+#[cfg(feature = "pdf")]
+fn extract_pdf(file_path: &str) -> Result<ExtractionResult, String> {
+    match pdf_extract::extract_text(file_path) {
+        Ok(text) => Ok(ExtractionResult::new(text, "pdf")),
+        // A PDF we could not parse is not a PDF we can call clean. Fall back
+        // to the bytes so an uncompressed stream still yields something, but
+        // mark the result unfaithful so a caller under a fail-closed policy
+        // treats the part as uninspected rather than empty.
+        Err(e) => {
+            let mut r = extract_unparsed_binary(file_path)?;
+            r.warnings
+                .push(format!("PDF parse failed ({e}); read as raw bytes instead"));
+            Ok(r)
+        }
+    }
+}
+
+/// Read a file whose declared format we could not parse.
+///
+/// The honest form of the plain-text fallback. `extract_plain_text` labels its
+/// result with the file's extension, so a `.docx` that is not a zip comes back
+/// as `format: "docx"` with no warning and a caller cannot tell a real parse
+/// from raw bytes. This says `unparsed` and carries a warning, which is what
+/// lets the mail path treat the part as uninspected instead of clean.
+fn extract_unparsed_binary(file_path: &str) -> Result<ExtractionResult, String> {
+    let bytes = std::fs::read(file_path).map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&bytes).to_string();
+    let declared = Path::new(file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("unknown")
+        .to_lowercase();
+    Ok(
+        ExtractionResult::new(text, "unparsed").with_warning(&format!(
+            "content did not match any known format; declared .{declared} was read as raw bytes, \
+         so structured content in it was not inspected"
+        )),
+    )
 }
 
 /// Extract text from ZIP-based formats (docx, xlsx, pptx).

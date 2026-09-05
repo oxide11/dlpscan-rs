@@ -322,7 +322,22 @@ fn scan_message(raw: &[u8], min_confidence: f64) -> ScanOutcome {
                     continue;
                 };
                 match extract_attachment(part.filename.as_deref(), data) {
-                    Some(t) => t,
+                    Some(e) if e.faithful => e.text,
+                    // Extracted, but not as the format it claims to be — a
+                    // PDF that would not parse, a truncated Office file read
+                    // as raw bytes. There is text here, and scanning it may
+                    // even find something, but a clean result would mean
+                    // "nothing in the bytes we could read", not "nothing in
+                    // this document". Under fail-closed those are different
+                    // answers, so this part counts as uninspected.
+                    Some(e) => {
+                        record.status = PartStatus::Error;
+                        record.detail = Some(e.why.unwrap_or_else(|| {
+                            "content did not parse as its declared format".into()
+                        }));
+                        finish_part(&mut parts, &mut outcomes, record, None);
+                        continue;
+                    }
                     None => {
                         record.status = PartStatus::Error;
                         record.detail = Some("extraction failed".into());
@@ -417,8 +432,19 @@ fn finish_part(
     parts.push(record);
 }
 
+/// What extraction produced, and whether it can be trusted as the format it
+/// claimed to be.
+struct Extracted {
+    text: String,
+    /// False when the extractor fell back to reading raw bytes. The scanner
+    /// will happily scan those bytes and may report nothing — which is a
+    /// statement about the bytes, not about the document.
+    faithful: bool,
+    why: Option<String>,
+}
+
 /// Hand attachment bytes to the extractors, which take file paths.
-fn extract_attachment(filename: Option<&str>, data: &[u8]) -> Option<String> {
+fn extract_attachment(filename: Option<&str>, data: &[u8]) -> Option<Extracted> {
     let suffix = filename
         .and_then(|f| f.rsplit_once('.').map(|(_, e)| format!(".{e}")))
         .unwrap_or_else(|| ".bin".to_string());
@@ -426,7 +452,17 @@ fn extract_attachment(filename: Option<&str>, data: &[u8]) -> Option<String> {
     tmp.write_all(data).ok()?;
     tmp.flush().ok()?;
     let path = tmp.path().to_string_lossy().to_string();
-    siphon::extractors::extract_text(&path).ok().map(|e| e.text)
+    let r = siphon::extractors::extract_text(&path).ok()?;
+    // The extractors already say when a parse was not faithful; the mail path
+    // simply has to stop discarding that. `format: "unparsed"` and any
+    // warning both mean the same thing here: what was scanned is not what the
+    // file claims to contain.
+    let faithful = r.warnings.is_empty() && r.format != "unparsed";
+    Some(Extracted {
+        text: r.text,
+        faithful,
+        why: r.warnings.first().cloned(),
+    })
 }
 
 async fn write_response(stream: &mut TcpStream, response: &Response) -> Result<(), std::io::Error> {
@@ -773,6 +809,37 @@ mod tests {
 
         let clean = b"From: a@b.example\r\nSubject: Lunch\r\n\r\nSee you at one.\r\n";
         assert_eq!(scan_message(clean, 0.6).verdict, Verdict::Clean);
+    }
+
+    /// The gap this closes: an attachment that extraction could not parse as
+    /// its declared format must not come back clean.
+    ///
+    /// This test failed when the milter first shipped. `extract_text` returned
+    /// `Ok` for a PDF it could not parse, having fallen back to reading raw
+    /// bytes, and the milter had no way to tell that from a real parse. The
+    /// extractors always carried the signal in `warnings`; the mail path was
+    /// discarding it.
+    #[test]
+    fn an_attachment_that_did_not_parse_is_not_clean() {
+        // Carries the %PDF magic, so the real parser is invoked, and then
+        // fails to parse. We tried and could not read it — which is
+        // different from an ASCII file merely misnamed .pdf, where reading
+        // the text IS a faithful reading and clean is the honest answer.
+        let payload = "JVBERi0xLjQKPDxicm9rZW4geHJlZiBhbmQgbm8gb2JqZWN0cyBhdCBhbGw+Pgo=";
+        let raw = format!(
+            "From: a@b.example\r\nSubject: Invoice\r\n\
+             Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n\
+             --B\r\nContent-Type: text/plain\r\n\r\nSee attached.\r\n\
+             --B\r\nContent-Type: application/pdf; name=\"inv.pdf\"\r\n\
+             Content-Disposition: attachment; filename=\"inv.pdf\"\r\n\
+             Content-Transfer-Encoding: base64\r\n\r\n{payload}\r\n--B--\r\n"
+        );
+        assert_eq!(
+            scan_message(raw.as_bytes(), 0.6).verdict,
+            Verdict::Indeterminate,
+            "an attachment that did not parse as its declared format must never \
+             be reported clean",
+        );
     }
 
     /// A structural warning from the MIME walk means something was not
