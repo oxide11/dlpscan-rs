@@ -34,6 +34,15 @@
 
 use uuid::Uuid;
 
+/// This crate's schema, exported so `siphon-api`'s migration runner can
+/// register it without a cross-crate `include_str!` path.
+///
+/// The DDL and the statements that depend on it live in one crate on
+/// purpose: a CHECK constraint here and a status string in Rust are two
+/// lists of the same values, and splitting them across crates is how they
+/// drift.
+pub const MIGRATION_SQL: &str = include_str!("../migrations/0010_messages.sql");
+
 /// Direction of travel. Stored as text so a `messages` row reads without a
 /// lookup table; constrained in SQL by `messages_direction_ck`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +98,7 @@ impl PartStatus {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_sql_text(s: &str) -> Option<Self> {
         Some(match s {
             "pending" => PartStatus::Pending,
             "scanned" => PartStatus::Scanned,
@@ -151,7 +160,7 @@ impl Verdict {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_sql_text(s: &str) -> Option<Self> {
         Some(match s {
             "clean" => Verdict::Clean,
             "indeterminate" => Verdict::Indeterminate,
@@ -443,7 +452,7 @@ where
             // happens anyway, failing towards "we did not look at this" is
             // the direction that cannot turn an unscanned part into a clean
             // delivery.
-            let status = PartStatus::from_str(status_text).unwrap_or(PartStatus::Error);
+            let status = PartStatus::from_sql_text(status_text).unwrap_or(PartStatus::Error);
             if status.is_inspected() {
                 let finding_count: i32 = r.get(1);
                 let max_confidence: Option<f32> = r.get(2);
@@ -596,7 +605,7 @@ mod tests {
             PartStatus::SkippedUnsupported,
             PartStatus::Error,
         ] {
-            assert_eq!(PartStatus::from_str(status.as_str()), Some(status));
+            assert_eq!(PartStatus::from_sql_text(status.as_str()), Some(status));
         }
     }
 
@@ -609,7 +618,7 @@ mod tests {
             Verdict::Quarantine,
             Verdict::Block,
         ] {
-            assert_eq!(Verdict::from_str(verdict.as_str()), Some(verdict));
+            assert_eq!(Verdict::from_sql_text(verdict.as_str()), Some(verdict));
         }
     }
 
@@ -619,7 +628,7 @@ mod tests {
     /// mismatch.
     #[test]
     fn enum_strings_appear_in_the_migration_check_constraints() {
-        let migration = include_str!("../migrations/0010_messages.sql");
+        let migration = MIGRATION_SQL;
         for status in [
             PartStatus::Pending,
             PartStatus::Scanned,

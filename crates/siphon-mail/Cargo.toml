@@ -1,0 +1,32 @@
+[package]
+name = "siphon-mail"
+version = "0.1.0"
+edition = "2021"
+description = "Polygon Siphon mail model — message/part schema, persistence and verdict reconciliation"
+license = "MIT"
+rust-version = "1.98"
+
+# A library, unlike every other crate in crates/. It exists because two
+# binaries need the same model: siphon-milter writes messages and parts,
+# siphon-api reads them back. siphon-api has no lib target to depend on, and
+# giving it one would link its entire axum/tower HTTP stack into a milter
+# that never serves HTTP.
+#
+# So the mail model lives here, owning both its DDL (migrations/, exported as
+# MIGRATION_SQL) and its DML. siphon-api still runs the migration — it owns
+# the migration runner and the ordering — but the schema and the statements
+# that depend on it stay in one crate rather than drifting apart.
+[lib]
+name = "siphon_mail"
+path = "src/lib.rs"
+
+[dependencies]
+# Postgres only. Deliberately no siphon-core and no HTTP stack: this crate is
+# the message model, not a scanner and not a service.
+tokio-postgres = { version = "0.7", features = [
+    "with-uuid-1",
+    "with-chrono-0_4",
+] }
+deadpool-postgres = "0.14"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }

@@ -89,11 +89,9 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "0009_scan_rollup",
         include_str!("../migrations/0009_scan_rollup.sql"),
     ),
-    (
-        10,
-        "0010_messages",
-        include_str!("../migrations/0010_messages.sql"),
-    ),
+    // Owned by siphon-mail, which also owns the statements that depend on
+    // it. Registered here because this service runs the migration runner.
+    (10, "0010_messages", siphon_mail::MIGRATION_SQL),
 ];
 
 /// Initialise an optional database pool from the environment.

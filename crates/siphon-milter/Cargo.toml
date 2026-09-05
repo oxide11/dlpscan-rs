@@ -1,0 +1,48 @@
+[package]
+name = "siphon-milter"
+version = "0.1.0"
+edition = "2021"
+description = "Polygon Siphon milter — Sendmail/Postfix mail filter for SMTP DLP"
+license = "MIT"
+rust-version = "1.98"
+
+[[bin]]
+name = "siphon-milter"
+path = "src/main.rs"
+
+[dependencies]
+siphon-core = { path = "../siphon-core" }
+# The mail model — message/part schema, persistence and the verdict ladder.
+# Shared with siphon-api, which reads back what this writes. Postgres only:
+# it deliberately carries no HTTP stack, so linking it here does not drag a
+# web server into a milter.
+siphon-mail = { path = "../siphon-mail" }
+deadpool-postgres = "0.14"
+tokio-postgres = { version = "0.7", features = ["with-uuid-1", "with-chrono-0_4"] }
+# The root crate, for its extractors — an attachment is the whole point of
+# scanning mail, and extraction lives there rather than in siphon-core.
+# Default features already cover PDF, Office, archives and data-formats, so
+# the mail path has the same ingest coverage as siphon-fs and the CLI.
+siphon = { path = "../.." }
+# Extractors take file paths, so attachment bytes go to a temp file first.
+# That round trip is on the milter's critical path and is measured by
+# `cargo run --release --bin mail_bench`.
+tempfile = "3"
+# `sync` is required for tokio::sync::Semaphore, used to bound concurrent
+# connections; `time` for the milter deadline. Listed explicitly rather than
+# relying on another workspace member enabling them — feature unification
+# makes the workspace build succeed while `cargo test -p siphon-milter` fails.
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "net",
+    "io-util",
+    "time",
+    "signal",
+    "sync",
+] }
+sha2 = "0.11"
+hex = "0.4"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
