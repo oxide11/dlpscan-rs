@@ -152,53 +152,62 @@ Option 3 is defensible for high-specificity patterns that self-validate
 (card numbers via Luhn), and is the acceptable fallback if the API change
 slips. It should be a recorded decision, not a default.
 
-### 3.1 The envelope is quadratic in part count — fix before shipping
+### 3.1 The envelope was quadratic in part count — fixed in siphon-core 2.8.0
 
-Option 1 shipped, and carries a cost the table above did not anticipate.
+Option 1 shipped, and carried a cost the table above did not anticipate.
 
 Correctness requires a part never supply its own context: an envelope
 including the scanned part would promote a local keyword to envelope evidence
 and score it as though it came from elsewhere. `context_envelope(exclude_path)`
-implements that by rebuilding the envelope per part, and
-`scan_text_with_config` then builds an Aho-Corasick index over it per part.
-Both are linear in message size and run once per part, so a message costs
+implemented that by rebuilding the envelope per part, and
+`scan_text_with_config` then built an Aho-Corasick index over it per part.
+Both are linear in message size and ran once per part, so a message cost
 **O(parts × message bytes)**.
 
-Measured with `cargo run --release --bin mail_bench`, inline text parts of
-30 KB each:
+Attachments hid it. A part with a filename contributes only that filename to
+the envelope, so a 1000-attachment message has an ~11 KB envelope. It is
+*inline* text parts that put the whole message in every envelope — and a
+`multipart/mixed` of a thousand `text/plain` parts is ordinary, legal MIME
+that any client can send.
 
-| Inline parts | Message | Verdict latency | Per part |
-|---|---|---|---|
-| 50 | 1.5 MB | 0.72 s | 14.3 ms |
-| 100 | 3 MB | 2.65 s | 26.5 ms |
-| 200 | 6 MB | 10.35 s | 51.7 ms |
-| 400 | 12 MB | 40.92 s | 102.3 ms |
+That was never only a latency problem. Combined with the fail-closed default
+(§4.4), a handful of such messages occupies every worker, and a scanner that
+is merely busy tempfails the entire mail flow: a cheap message becomes a mail
+outage.
 
-Per-part cost doubles as part count doubles — clean quadratic growth.
-Extrapolated to what the system already accepts (`MimeLimits::max_parts` =
-1000, ingest cap 30 MB): **~256 s, more than four minutes, for one message.**
-Extrapolated rather than measured; measuring it costs four minutes per
-iteration, which is itself the finding.
+**The fix:** `ParsedMessage::envelope_index()` builds the envelope and its hit
+index **once per message**, recording each part's byte range. Excluding a part
+is then a range filter at query time — the same shape of question proximity
+gating already asks — so a message costs `O(message)` once plus `O(1)` per
+part. Scan with `ScanConfig::shared_envelope`, taking a per-part view with
+`for_key(&part.path)`.
 
-Attachments hide this. A part with a filename contributes only that filename
-to the envelope, so a 1000-attachment message has an ~11 KB envelope and
-finishes in under 3 s. It is *inline* text parts that put the whole message in
-every envelope — and a `multipart/mixed` of a thousand `text/plain` parts is
-ordinary, legal MIME that any client can send.
+Measured in one process by `cargo run --release --bin mail_bench`, which runs
+both paths back to back on the same messages (inline text parts, 30 KB each):
 
-**This blocks the milter.** Not for latency: for availability. Combined with
-the fail-closed default (§4.4), a handful of such messages occupies every
-worker, and a scanner that is merely busy tempfails the entire mail flow. A
-cheap message becomes a mail outage.
+| Inline parts | Message | Rebuilt | Shared | Shared per part | Speedup |
+|---|---|---|---|---|---|
+| 50 | 1.5 MB | 0.51 s | 0.10 s | 2.08 ms | 4.9× |
+| 100 | 3 MB | 1.89 s | 0.20 s | 2.00 ms | 9.5× |
+| 200 | 6 MB | 7.26 s | 0.40 s | 1.98 ms | 18.3× |
+| 400 | 12 MB | 28.10 s | 0.81 s | 2.03 ms | 34.6× |
 
-The fix is to stop rebuilding per part. The envelope index should be built
-**once per message** over the concatenation of all parts, recording each
-part's byte range; "exclude this part" then becomes a range filter at gate
-time rather than a rebuild — which is the same range machinery
-`has_hit_in_range` already uses for proximity. That makes a message
-O(message bytes) once plus O(1) per part.
+Rebuilt per-part cost doubles as part count doubles; shared per-part cost is
+flat, which is what "the quadratic is gone" looks like. Extrapolated to the
+accepted ceiling (1000 inline parts, 30 MB): **~176 s → ~2 s.**
 
-Capping envelope size would also bound the cost, but it silently drops
+The benchmark keeps both paths rather than deleting the old one, and asserts
+they produce the same finding count at every size — a faster envelope that
+decides something different is not a fix. `context_envelope` remains for
+scanning a single part in isolation, where there is no message-wide pass to
+amortise against.
+
+The gain is not confined to pathological input, because every multi-part shape
+was rebuilding the envelope once per part: a 2 MB CSV attachment went
+225 ms → 152 ms, a 1 MB PDF 71 ms → 50 ms, a 200-part message 91 ms → 49 ms,
+and single-worker mixed throughput 82 → 113 msg/s.
+
+Capping envelope size would also have bounded the cost, but it silently drops
 context, which is the exact failure §3 exists to prevent.
 
 ---
@@ -275,9 +284,11 @@ by whatever the code happened to do, which is the ICAP situation above.
 
 Two consequences follow and are not optional:
 
-1. **The quadratic in §3.1 must be fixed before this default ships.** Under
-   fail-closed, a cheap message that occupies a worker for minutes is no
-   longer a performance problem; it is a remote mail outage.
+1. **Anything that lets a cheap message occupy a worker for minutes is a
+   remote mail outage under this default, not a performance problem.** The
+   quadratic envelope of §3.1 was exactly that and is fixed; the same test
+   applies to whatever is added next. Per-message work must stay bounded by
+   the ingest cap rather than by message structure.
 2. **`milter_default_action` must agree with this setting.** If the MTA is
    configured to `accept` on milter failure, it fails open on timeout no
    matter what this says — the MTA gets the last word, and a disagreement
@@ -292,17 +303,20 @@ Not: a part that scanned and found nothing.
 ### 4.5 The deadline, measured
 
 §4.2 assumed 30 s. Measured (`src/bin/mail_bench.rs`, release build, 4 cores,
-mail-shaped corpus — parse, extract, scan, aggregate):
+mail-shaped corpus — parse, extract, scan, aggregate), with the shared
+envelope of §3.1:
 
 | Shape | p50 | p95 | max |
 |---|---|---|---|
-| 2 KB notification | 0.4 ms | 0.7 ms | 1.8 ms |
-| 60 KB reply thread | 3.4 ms | 3.8 ms | 4.4 ms |
-| 400 KB HTML newsletter | 19.0 ms | 22.0 ms | 26.8 ms |
-| Real XLSX attachment | 22.7 ms | 26.4 ms | 28.6 ms |
-| 1 MB PDF invoice | 70.9 ms | 78.3 ms | 81.0 ms |
-| 2 MB payroll CSV | 225 ms | 231 ms | 237 ms |
-| 30 MB plain text (at cap) | 2.58 s | 2.64 s | 2.64 s |
+| 2 KB notification | 0.2 ms | 0.5 ms | 1.0 ms |
+| 60 KB reply thread | 2.5 ms | 3.0 ms | 3.4 ms |
+| Real XLSX attachment | 13.0 ms | 15.2 ms | 16.3 ms |
+| 400 KB HTML newsletter | 15.4 ms | 18.2 ms | 19.6 ms |
+| 1 MB PDF invoice | 50.3 ms | 56.5 ms | 57.4 ms |
+| 2 MB payroll CSV | 152 ms | 155 ms | 155 ms |
+| 200-part message | 49 ms | 51 ms | 51 ms |
+| 1000 parts, 30 MB total | 1.96 s | — | — |
+| 30 MB plain text (at cap) | 1.98 s | 2.05 s | 2.05 s |
 
 Attachment cost is dominated by extraction, not scanning, and extraction is
 path-based — there is no bytes-in entry point — so every attachment pays a
@@ -313,27 +327,29 @@ Under concurrency, on the assumed mix:
 
 | Workers | p50 | p95 | p99 | msg/s |
 |---|---|---|---|---|
-| 1 | 3.1 ms | 72 ms | 222 ms | 82 |
-| 2 | 4.1 ms | 110 ms | 326 ms | 107 |
-| 4 | 5.1 ms | 182 ms | 336 ms | 123 |
-| 8 | 6.9 ms | 358 ms | 908 ms | 131 |
+| 1 | 2.4 ms | 48 ms | 153 ms | 113 |
+| 2 | 3.3 ms | 75 ms | 241 ms | 145 |
+| 4 | 4.1 ms | 126 ms | 272 ms | 167 |
+| 8 | 5.0 ms | 215 ms | 602 ms | 172 |
 
 Throughput flattens past the core count while p95/p99 keep climbing — the
 familiar shape of a saturated queue. Concurrency should be bounded near the
 pod's CPU limit rather than left open; admitting work past that point buys no
 throughput and spends the latency budget on queueing. (Measured on a 4-core
-box, so the 4- and 8-worker p99s are noisy across runs — 336 ms here, 468 ms
-on a previous run. The trend is solid, the individual figures are not.)
+box; the 4- and 8-worker p99s move a few hundred ms between runs. The trend is
+solid, the individual figures are not.)
 
-**Recommendation: 10 s, once §3.1 is fixed.** Roughly 3× the worst contended
-message once the quadratic is gone — 30 MB of plain text, measured at 3.4 s
-under load — and ~30× the mixed-flow p99, so ordinary mail cannot reach it.
+**Recommendation: 10 s.**
 
-That "once" is load-bearing. Today the worst contended message is the
-1000-part structural case at 14.6 s, and the worst *accepted* one is the
-projected ~256 s; 10 s would tempfail both forever. Fixing the envelope makes
-part count roughly free, which puts 30 MB of plain text back at the top —
-that is the message the 10 s is sized for.
+The bound is a single large text — 30 MB of plain text, 2.0 s idle and 2.7 s
+under load — not message structure. That is what §3.1 changed: before the
+shared envelope the worst contended message was a 1000-part structural case at
+14.6 s and the worst *accepted* one projected to ~256 s, so no timeout worked;
+now part count is roughly free and the worst case is bounded by
+`MAX_INPUT_SIZE`, which does not grow with how a message is assembled.
+
+10 s is ~4× that contended worst case, leaving room for a slower pod than the
+one measured, and ~40× the mixed-flow p99, so ordinary mail cannot reach it.
 
 Sizing note: a timeout is set by the worst message the system *accepts*, not
 the typical one — the MTA waits for whatever we agree to look at. Timing out
@@ -466,15 +482,14 @@ fail-open path raise.
 
 ## 9. Open questions
 
-- ~~**Milter deadline**~~ — resolved in §4.5: **10 s**, blocked on the §3.1
-  fix. Still needs the mail team's confirmation that 10 s fits their
-  `smtpd_milters` budget alongside any other milters in the chain.
+- ~~**Milter deadline**~~ — resolved in §4.5: **10 s**. Still needs the mail
+  team's confirmation that 10 s fits their `smtpd_milters` budget alongside
+  any other milters in the chain.
 - ~~**`indeterminate` policy**~~ — resolved in §4.4: configurable, default
   `defer`. Open sub-question: `quarantine` needs somewhere to hold messages,
   which does not exist yet — until it does, that value should be rejected at
   startup rather than silently behaving as `defer`.
-- **Envelope index sharing** (§3.1) — blocks the milter. Build the index once
-  per message and make part exclusion a range filter.
+- ~~**Envelope index sharing**~~ — resolved in §3.1, siphon-core 2.8.0.
 - **Per-item coverage** — if audit requires proving every message was
   inspected, that is ~1.5×10⁹ ledger entries/year. Feasible as a compact
   append-only table (hash, timestamp, verdict) at roughly 75 GB/year

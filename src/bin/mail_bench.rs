@@ -494,19 +494,44 @@ struct Verdict {
     parts_uninspected: usize,
 }
 
-fn scan_config(envelope: String) -> ScanConfig {
-    ScanConfig {
-        context_envelope: Some(envelope),
-        ..Default::default()
-    }
+/// How the per-part context envelope is obtained.
+///
+/// Kept as a switch rather than replaced outright so the regression stays
+/// measurable: `Rebuilt` is the original per-part construction and is the
+/// reason this benchmark exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Envelope {
+    /// Indexed once for the message; each part takes a range-excluded view.
+    Shared,
+    /// Rebuilt and re-indexed for every part. O(parts x message bytes).
+    Rebuilt,
 }
 
 /// Parse, extract, scan, decide. The measured unit.
 fn verdict(raw: &[u8]) -> Verdict {
+    verdict_with(raw, Envelope::Shared)
+}
+
+fn verdict_with(raw: &[u8], mode: Envelope) -> Verdict {
     let parsed = parse_message(raw);
     let mut v = Verdict {
         parts_uninspected: parsed.warnings.len(),
         ..Default::default()
+    };
+
+    // The whole point: one index for the message, not one per part.
+    let shared = (mode == Envelope::Shared).then(|| parsed.envelope_index());
+    let scan_config = |path: &str| -> ScanConfig {
+        match &shared {
+            Some(index) => ScanConfig {
+                shared_envelope: Some(index.for_key(path)),
+                ..Default::default()
+            },
+            None => ScanConfig {
+                context_envelope: Some(parsed.context_envelope(path)),
+                ..Default::default()
+            },
+        }
     };
 
     for part in &parsed.parts {
@@ -518,8 +543,7 @@ fn verdict(raw: &[u8]) -> Verdict {
                     v.parts_uninspected += 1;
                     continue;
                 }
-                match scan_text_with_config(text, &scan_config(parsed.context_envelope(&part.path)))
-                {
+                match scan_text_with_config(text, &scan_config(&part.path)) {
                     Ok(m) => {
                         v.findings += m.len();
                         v.parts_scanned += 1;
@@ -556,10 +580,7 @@ fn verdict(raw: &[u8]) -> Verdict {
                     v.parts_uninspected += 1;
                     continue;
                 }
-                match scan_text_with_config(
-                    &extracted.text,
-                    &scan_config(parsed.context_envelope(&part.path)),
-                ) {
+                match scan_text_with_config(&extracted.text, &scan_config(&part.path)) {
                     Ok(m) => {
                         v.findings += m.len();
                         v.parts_scanned += 1;
@@ -753,11 +774,12 @@ fn main() {
     // times.
     println!("--- context-envelope cost vs inline text part count (30 KB per part) ---");
     println!(
-        "{:>8} {:>10} {:>10} {:>12} {:>10}",
-        "parts", "total KB", "ms", "ms/part", "vs linear"
+        "{:>8} {:>10} {:>12} {:>12} {:>12} {:>10}",
+        "parts", "total KB", "rebuilt ms", "shared ms", "shared/part", "speedup"
     );
-    let mut first_per_part = 0.0f64;
-    let mut last: (usize, f64) = (0, 0.0);
+    let mut first_shared_per_part = 0.0f64;
+    let mut last_rebuilt: (usize, f64) = (0, 0.0);
+    let mut last_shared: (usize, f64) = (0, 0.0);
     for (i, &n) in [50usize, 100, 200, 400].iter().enumerate() {
         let msg = build_message(
             "Report sections",
@@ -765,36 +787,51 @@ fn main() {
                 .map(|_| text_part("text/plain", business_prose(30 * 1024)))
                 .collect(),
         );
+
         let t = Instant::now();
-        let _ = verdict(&msg);
-        let elapsed = t.elapsed();
-        let per_part = ms(elapsed) / n as f64;
+        let rebuilt_verdict = verdict_with(&msg, Envelope::Rebuilt);
+        let rebuilt = ms(t.elapsed());
+
+        let t = Instant::now();
+        let shared_verdict = verdict_with(&msg, Envelope::Shared);
+        let shared = ms(t.elapsed());
+
+        // Faster is only interesting if it decides the same thing.
+        assert_eq!(
+            rebuilt_verdict.findings, shared_verdict.findings,
+            "shared and rebuilt envelopes disagreed at {n} parts"
+        );
+
+        let shared_per_part = shared / n as f64;
         if i == 0 {
-            first_per_part = per_part;
+            first_shared_per_part = shared_per_part;
         }
-        last = (n, ms(elapsed));
+        last_rebuilt = (n, rebuilt);
+        last_shared = (n, shared);
         println!(
-            "{:>8} {:>10} {:>10.1} {:>12.2} {:>9.1}x",
+            "{:>8} {:>10} {:>12.1} {:>12.1} {:>12.2} {:>9.1}x",
             n,
             n * 30,
-            ms(elapsed),
-            per_part,
-            per_part / first_per_part,
+            rebuilt,
+            shared,
+            shared_per_part,
+            rebuilt / shared,
         );
     }
-    println!("  Per-part cost rising with part count is the quadratic term. A flat");
-    println!("  column would mean the envelope is not being rebuilt per part.");
+    println!(
+        "  shared/part flat = the quadratic is gone (first {:.2} ms, last {:.2} ms).",
+        first_shared_per_part,
+        last_shared.1 / last_shared.0 as f64
+    );
 
     // The parser's own ceiling is 1000 parts (MimeLimits::max_parts), and the
-    // ingest cap allows 30 MB, so 1000 x 30 KB is an accepted message. Quoted
-    // as an extrapolation, not a measurement: measuring it costs minutes,
-    // which is itself the finding.
-    let ceiling_parts = 1000.0;
-    let projected_s =
-        last.1 / 1000.0 * (ceiling_parts / last.0 as f64) * (ceiling_parts / last.0 as f64);
-    println!(
-        "  Extrapolated to the accepted ceiling (1000 inline parts, 30 MB): ~{projected_s:.0} s\n"
-    );
+    // ingest cap allows 30 MB, so 1000 x 30 KB is an accepted message.
+    let ceiling = 1000.0;
+    let projected_rebuilt_s = last_rebuilt.1 / 1000.0 * (ceiling / last_rebuilt.0 as f64).powi(2);
+    let projected_s = last_shared.1 / 1000.0 * (ceiling / last_shared.0 as f64);
+    println!("  At the accepted ceiling (1000 inline parts, 30 MB):");
+    println!("    rebuilt, quadratic: ~{projected_rebuilt_s:.0} s (extrapolated)");
+    println!("    shared,  linear:    ~{projected_s:.1} s (extrapolated)\n");
 
     // --- pass 3: worst legitimate message, contended -----------------------
     //
@@ -877,21 +914,20 @@ fn main() {
         "  timeout covering that (2x):           {:.1} s",
         headroom.as_secs_f64()
     );
-    println!(
-        "  worst *accepted* message (projected): ~{projected_s:.0} s  <-- sets the real bound"
-    );
+    println!("  worst structural message (projected): ~{projected_s:.1} s");
     println!();
     println!("  A timeout is sized by the worst message the system accepts, not by");
     println!("  the typical one: timing out on typical mail is a misconfiguration,");
     println!("  whereas the worst accepted case is what the MTA actually waits on.");
     println!();
-    println!("  So the number above is not yet settable. While one ordinary, legal");
-    println!("  message can occupy a worker for minutes, any timeout is either");
-    println!("  shorter than that message (it never delivers) or long enough that a");
-    println!("  few of them hold every worker. Fail-closed sharpens this rather than");
-    println!("  softening it: a scanner that is merely busy tempfails the whole mail");
-    println!("  flow, so the quadratic is an availability bug, not a latency one.");
+    println!("  With the shared envelope, part count is no longer the worst case —");
+    println!("  the rebuilt column above is what it used to cost, and the ceiling");
+    println!("  projection with it was minutes. The bound is now a single large");
+    println!("  text, which is bounded by MAX_INPUT_SIZE and does not grow with");
+    println!("  message structure.");
     println!();
-    println!("  Fix the per-part envelope cost first; then the timeout follows from");
-    println!("  the contended worst case and lands near 10 s.");
+    println!("  Suggested: 10 s. Above the 2x figure with room for a slower pod,");
+    println!("  and roughly 40x the mixed-flow p99, so ordinary mail cannot reach");
+    println!("  it. Affordable because timeout is fail-closed — being wrong costs a");
+    println!("  retry and some delivery latency, not an uninspected delivery.");
 }
