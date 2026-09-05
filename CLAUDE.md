@@ -78,8 +78,15 @@ The scan path in `crates/siphon-core/src/scanner/mod.rs` is a 10-stage pipeline:
    zero-width stripping → HTML entity decode → percent-decode → homoglyph
    substitution (Cyrillic/Greek/mathematical → ASCII) → leet-speak → NFKC →
    nested base64/base64url/base32/hex decode (up to 3 layers) → whitespace normalize
-3. **RegexSet phase-1** — single O(n) pass identifies which patterns fire
-4. **Per-pattern regex phase-2** — extracts spans only for matched patterns
+3. **Pattern narrowing** — category filter, `baseline_only`, and the
+   Aho-Corasick context prefilter (stage 6's keyword index, consulted early):
+   a context-gated pattern whose keywords appear nowhere in the text or the
+   envelope is dropped before any regex runs
+4. **Parallel per-pattern match** — every surviving pattern runs as its own
+   `Regex` under rayon (`active_patterns.par_iter()`). There is no `RegexSet`
+   and no two-phase match; stages 3 and 4 said so for a long time and the
+   scanner module doc agreed, but neither was ever true. A `RegexSet` phase-1
+   was measured and rejected — see the module doc for why
 5. **Checksum validation** (`validation.rs`) — 72 validators (Luhn, mod-97
    IBAN, Verhoeff, Base58Check, Bech32, ISO 3779, …)
 6. **Context checking** (`context/`) — Aho-Corasick prefilter on 5,000+

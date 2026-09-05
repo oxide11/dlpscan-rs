@@ -1,7 +1,28 @@
-//! Core scanning engine using RegexSet for two-phase matching.
+//! Core scanning engine.
 //!
-//! Phase 1: RegexSet identifies WHICH patterns match (single O(n) pass).
-//! Phase 2: Individual Regex extracts spans for only the matched patterns.
+//! This file previously claimed "RegexSet for two-phase matching — phase 1
+//! identifies which patterns match, phase 2 extracts spans." No `RegexSet`
+//! exists in the crate and there are no two phases. `CLAUDE.md` repeated the
+//! claim as pipeline stages 3 and 4.
+//!
+//! What actually happens: the pattern list is narrowed, then every survivor
+//! runs as its own `Regex` in parallel (`active_patterns.par_iter()`).
+//! Narrowing is by category filter, `baseline_only`, and the Aho-Corasick
+//! context prefilter, which drops a context-gated pattern when none of its
+//! keywords appear in the text or the envelope.
+//!
+//! A `RegexSet` phase 1 was measured before correcting this, in case the doc
+//! described something worth building. It is not:
+//!
+//! - The 583 patterns exceed the regex crate's default 10 MB compile limit
+//!   outright (`CompiledTooBig`); a set needs `size_limit` raised to 64 MB
+//!   before it will build.
+//! - It would cut cold start from ~310 ms to ~223 ms — but add ~3.5 ms per
+//!   document for the phase-1 pass, which is seven times the entire current
+//!   scan (~0.47 ms steady state).
+//!
+//! That is the wrong trade for a long-lived service, which pays startup once
+//! and per-document cost forever.
 
 use once_cell::sync::Lazy;
 use rayon::prelude::*;
@@ -461,7 +482,18 @@ impl ScanConfig {
     }
 }
 
-/// Compiled regex cache: one Regex per pattern, compiled once at startup.
+/// Compiled regex cache: one Regex per pattern, compiled once per process.
+///
+/// Building this is essentially all of cold start — ~297 ms for 583 patterns
+/// at ~0.51 ms each, against ~13.5 ms for the Aho-Corasick keyword automaton
+/// and ~0.47 ms for a steady-state scan. So the first scan in a process costs
+/// roughly 660x the ones after it.
+///
+/// That is the right shape for every way Siphon is actually deployed — the
+/// services are long-lived and pay it once — but it makes a *process per
+/// document* pathological. Scanning 200 files as 200 CLI invocations takes
+/// 71.3 s; one `scan-dir` over the same files takes 0.4 s. Anything driving
+/// the CLI in bulk wants a single process, not a loop over `siphon scan`.
 struct CompiledPattern {
     regex: Regex,
     def: &'static PatternDef,
