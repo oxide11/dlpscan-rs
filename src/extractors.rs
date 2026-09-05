@@ -2620,12 +2620,25 @@ pub fn extract_barcode(file_path: &str) -> Result<ExtractionResult, String> {
         ));
     }
 
-    let results = rxing::helpers::detect_multiple_in_file(file_path)
-        .map_err(|e| format!("Barcode decode failed: {e}"))?;
+    // rxing reports "this image decoded fine and carries no barcode" as
+    // `Err(NotFoundException)`, not as an empty result vector. Those two
+    // outcomes have to be told apart here, because they mean opposite things
+    // to a caller that fails closed: an image we could not read is content
+    // nobody inspected, while an image with no barcode is fully inspected and
+    // carries no text. Collapsing both into an error made every photo look
+    // like an unread attachment — enough, in the mail path, to defer every
+    // message carrying one.
+    let results = match rxing::helpers::detect_multiple_in_file(file_path) {
+        Ok(r) => r,
+        Err(rxing::Exceptions::NotFoundException(_)) => Vec::new(),
+        Err(e) => return Err(format!("Barcode decode failed: {e}")),
+    };
 
     if results.is_empty() {
-        return Ok(ExtractionResult::new(String::new(), "barcode")
-            .with_warning("No barcodes or QR codes detected in image"));
+        // Read in full; there was simply nothing encoded in it. Not a
+        // warning — a warning here would be indistinguishable from the
+        // unreadable-image case above, which is the one worth reporting.
+        return Ok(ExtractionResult::new(String::new(), "barcode"));
     }
 
     let mut text_parts = Vec::new();
@@ -2832,6 +2845,50 @@ pub fn is_likely_encrypted(file_path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    /// An image that decodes cleanly and carries no barcode is *inspected*,
+    /// and must not be reported as content we failed to read.
+    ///
+    /// rxing signals "decoded fine, nothing encoded in it" as
+    /// `Err(NotFoundException)` rather than as an empty result vector, so the
+    /// obvious `?` collapsed it into the same outcome as a corrupt image. Any
+    /// caller that fails closed on unread content then treats every photo as
+    /// an unread attachment: in the mail path that deferred every message
+    /// carrying one. The two outcomes are told apart in `extract_barcode`,
+    /// and this is the test that says so.
+    #[cfg(feature = "barcode")]
+    #[test]
+    fn an_image_with_no_barcode_reads_clean_not_unreadable() {
+        use base64::Engine as _;
+        use std::io::Write;
+
+        // A real 32x32 greyscale PNG. It has to actually decode: a plausible
+        // header plus filler fails inside the image decoder, which is the
+        // unreadable case and would pass this test for the wrong reason.
+        const PNG_B64: &str =
+            "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAAAAABWESUoAAAAxUlEQVR42oXMkQLCAABF0\
+                               QuDIBgMgsEgCAaDQTAIgkEQBINBEAwGg0EQBEEQBEEQBEEQBEEQBEEQBEEQBEEQBEEQ9\
+                               AnvfMCBgllyKl61FjajdpJ1+8PxdL5cb/fH8/X+fH8xipZddv2g3mjFnTTvDUaT2WK12\
+                               R1Ol9vj9fnJABEYiKCACIqIwEQEFiIoIQIbETiIoIwIKojARQQeIvARQRURBIighgjqi\
+                               CBEBA1E0EQELUQQIYIYEbQRQQcRJIggRQQZIsj/vPL4ECN9bh0AAAAASUVORK5CYII=";
+
+        let png = base64::engine::general_purpose::STANDARD
+            .decode(PNG_B64)
+            .expect("fixture is valid base64");
+        let mut tmp = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
+        tmp.write_all(&png).unwrap();
+        tmp.flush().unwrap();
+
+        let r = super::extract_barcode(tmp.path().to_str().unwrap())
+            .expect("a decodable image with no barcode is not an extraction failure");
+        assert!(r.text.is_empty(), "nothing was encoded in it");
+        assert!(
+            r.warnings.is_empty(),
+            "a warning here is indistinguishable from an unreadable image, \
+             which is the case actually worth reporting: {:?}",
+            r.warnings
+        );
+    }
 
     /// A `.eml` whose attachment is base64 was a live bypass: the payload
     /// reached the scanner still encoded, matched nothing, and the file came

@@ -361,6 +361,17 @@ fn scan_message(raw: &[u8], min_confidence: f64) -> ScanOutcome {
             continue;
         }
 
+        // Faithfully read, and there was nothing in it to scan: an image
+        // carrying no barcode, an empty part. The scanner rejects empty
+        // input, so handing it on would come back as a scan error and count
+        // the part uninspected — deferring every message with a photo in it.
+        // Nothing was missed here, so this is clean.
+        if text.is_empty() {
+            record.status = PartStatus::Scanned;
+            finish_part(&mut parts, &mut outcomes, record, Some(Verdict::Clean));
+            continue;
+        }
+
         let config = ScanConfig {
             shared_envelope: Some(envelope.for_key(&part.path)),
             min_confidence,
@@ -809,6 +820,48 @@ mod tests {
 
         let clean = b"From: a@b.example\r\nSubject: Lunch\r\n\r\nSee you at one.\r\n";
         assert_eq!(scan_message(clean, 0.6).verdict, Verdict::Clean);
+    }
+
+    /// An image attachment must not defer the message.
+    ///
+    /// This is the constraint that decided the crate's feature set. Dropping
+    /// the `barcode` feature would have cut 92 transitive dependencies, but
+    /// it also removes the image arm from the extractor dispatch — so a JPEG
+    /// falls through to the unparsed-binary reader, which warns, which this
+    /// milter now treats as an uninspected part. Under the fail-closed
+    /// default that defers every message carrying an image.
+    ///
+    /// So `barcode` stays, and this test fails if someone trims it out
+    /// looking at the dependency count alone.
+    #[test]
+    fn an_image_attachment_does_not_defer_the_message() {
+        // A real 32x32 greyscale PNG — one the image decoder actually
+        // decodes, carrying no barcode. The fixture has to be a genuine
+        // image: a plausible header followed by filler decodes to
+        // "Premature End of image", which is an unreadable attachment and
+        // *should* defer, so it would pass this test for the wrong reason
+        // and never notice the feature being trimmed.
+        let payload =
+            "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAAAAABWESUoAAAAxUlEQVR42oXMkQLCAABF0QuDIBgMgs\
+                       EgCAaDQTAIgkEQBINBEAwGg0EQBEEQBEEQBEEQBEEQBEEQBEEQBEEQBEEQ9AnvfMCBgllyKl61Fj\
+                       ajdpJ1+8PxdL5cb/fH8/X+fH8xipZddv2g3mjFnTTvDUaT2WK12R1Ol9vj9fnJABEYiKCACIqIwE\
+                       QEFiIoIQIbETiIoIwIKojARQQeIvARQRURBIighgjqiCBEBA1E0EQELUQQIYIYEbQRQQcRJIggRQ\
+                       QZIsj/vPL4ECN9bh0AAAAASUVORK5CYII=";
+        let raw = format!(
+            "From: a@b.example\r\nSubject: Photo\r\n\
+             Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n\
+             --B\r\nContent-Type: text/plain\r\n\r\nSee the photo.\r\n\
+             --B\r\nContent-Type: image/png; name=\"p.png\"\r\n\
+             Content-Disposition: attachment; filename=\"p.png\"\r\n\
+             Content-Transfer-Encoding: base64\r\n\r\n{payload}\r\n--B--\r\n"
+        );
+        let verdict = scan_message(raw.as_bytes(), 0.6).verdict;
+        assert_ne!(
+            verdict,
+            Verdict::Indeterminate,
+            "an image with no barcode is inspected and clean, not deferred — \
+             check the `barcode` feature is still enabled",
+        );
     }
 
     /// The gap this closes: an attachment that extraction could not parse as

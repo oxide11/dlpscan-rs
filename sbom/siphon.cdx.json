@@ -2779,42 +2779,6 @@
     },
     {
       "type": "library",
-      "name": "linux-raw-sys",
-      "version": "0.4.15",
-      "purl": "pkg:cargo/linux-raw-sys@0.4.15",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/sunfishcode/linux-raw-sys"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "lock_api",
-      "version": "0.4.14",
-      "purl": "pkg:cargo/lock_api@0.4.14",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/Amanieu/parking_lot"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "log",
       "version": "0.4.33",
       "purl": "pkg:cargo/log@0.4.33",
@@ -3427,42 +3391,6 @@
     },
     {
       "type": "library",
-      "name": "parking_lot",
-      "version": "0.12.5",
-      "purl": "pkg:cargo/parking_lot@0.12.5",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/Amanieu/parking_lot"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "parking_lot_core",
-      "version": "0.9.12",
-      "purl": "pkg:cargo/parking_lot_core@0.9.12",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/Amanieu/parking_lot"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "parquet",
       "version": "59.2.0",
       "purl": "pkg:cargo/parquet@59.2.0",
@@ -3695,42 +3623,6 @@
     },
     {
       "type": "library",
-      "name": "procfs",
-      "version": "0.17.0",
-      "purl": "pkg:cargo/procfs@0.17.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/eminence/procfs"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "procfs-core",
-      "version": "0.17.0",
-      "purl": "pkg:cargo/procfs-core@0.17.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/eminence/procfs"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "profiling",
       "version": "1.0.18",
       "purl": "pkg:cargo/profiling@1.0.18",
@@ -3768,26 +3660,6 @@
         {
           "name": "siphon:proc-macro",
           "value": "true"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "prometheus",
-      "version": "0.14.0",
-      "purl": "pkg:cargo/prometheus@0.14.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/tikv/rust-prometheus"
         }
       ]
     },
@@ -4226,24 +4098,6 @@
     {
       "type": "library",
       "name": "rustix",
-      "version": "0.38.44",
-      "purl": "pkg:cargo/rustix@0.38.44",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/bytecodealliance/rustix"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rustix",
       "version": "1.1.4",
       "purl": "pkg:cargo/rustix@1.1.4",
       "scope": "required",
@@ -4362,24 +4216,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/Lokathor/safe_arch"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "scopeguard",
-      "version": "1.2.0",
-      "purl": "pkg:cargo/scopeguard@1.2.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/bluss/scopeguard"
         }
       ]
     },

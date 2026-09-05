@@ -131,24 +131,6 @@
     },
     {
       "type": "library",
-      "name": "aes",
-      "version": "0.9.1",
-      "purl": "pkg:cargo/aes@0.9.1",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/block-ciphers"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "ahash",
       "version": "0.8.12",
       "purl": "pkg:cargo/ahash@0.8.12",
@@ -915,24 +897,6 @@
     },
     {
       "type": "library",
-      "name": "block-padding",
-      "version": "0.4.2",
-      "purl": "pkg:cargo/block-padding@0.4.2",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/utils"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "bumpalo",
       "version": "3.20.3",
       "purl": "pkg:cargo/bumpalo@3.20.3",
@@ -1063,24 +1027,6 @@
     },
     {
       "type": "library",
-      "name": "cbc",
-      "version": "0.2.1",
-      "purl": "pkg:cargo/cbc@0.2.1",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/block-modes"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "cfb",
       "version": "0.14.0",
       "purl": "pkg:cargo/cfb@0.14.0",
@@ -1194,24 +1140,6 @@
       "name": "cipher",
       "version": "0.4.4",
       "purl": "pkg:cargo/cipher@0.4.4",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/traits"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "cipher",
-      "version": "0.5.2",
-      "purl": "pkg:cargo/cipher@0.5.2",
       "scope": "required",
       "licenses": [
         {
@@ -1432,24 +1360,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/RustCrypto/formats"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "cpubits",
-      "version": "0.1.1",
-      "purl": "pkg:cargo/cpubits@0.1.1",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/utils"
         }
       ]
     },
@@ -1782,26 +1692,6 @@
       "name": "ecb",
       "version": "0.1.2",
       "purl": "pkg:cargo/ecb@0.1.2",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/magic-akari/ecb"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "ecb",
-      "version": "0.2.0",
-      "purl": "pkg:cargo/ecb@0.2.0",
       "scope": "required",
       "licenses": [
         {
@@ -2701,24 +2591,6 @@
     },
     {
       "type": "library",
-      "name": "inout",
-      "version": "0.2.2",
-      "purl": "pkg:cargo/inout@0.2.2",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/utils"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "is_terminal_polyfill",
       "version": "1.70.2",
       "purl": "pkg:cargo/is_terminal_polyfill@1.70.2",
@@ -3001,24 +2873,6 @@
     },
     {
       "type": "library",
-      "name": "linux-raw-sys",
-      "version": "0.4.15",
-      "purl": "pkg:cargo/linux-raw-sys@0.4.15",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/sunfishcode/linux-raw-sys"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "lock_api",
       "version": "0.4.14",
       "purl": "pkg:cargo/lock_api@0.4.14",
@@ -3078,26 +2932,6 @@
       "name": "lopdf",
       "version": "0.42.0",
       "purl": "pkg:cargo/lopdf@0.42.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/J-F-Liu/lopdf.git"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "lopdf",
-      "version": "0.44.0",
-      "purl": "pkg:cargo/lopdf@0.44.0",
       "scope": "required",
       "licenses": [
         {
@@ -4031,42 +3865,6 @@
     },
     {
       "type": "library",
-      "name": "procfs",
-      "version": "0.17.0",
-      "purl": "pkg:cargo/procfs@0.17.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/eminence/procfs"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "procfs-core",
-      "version": "0.17.0",
-      "purl": "pkg:cargo/procfs-core@0.17.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/eminence/procfs"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "profiling",
       "version": "1.0.18",
       "purl": "pkg:cargo/profiling@1.0.18",
@@ -4104,26 +3902,6 @@
         {
           "name": "siphon:proc-macro",
           "value": "true"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "prometheus",
-      "version": "0.14.0",
-      "purl": "pkg:cargo/prometheus@0.14.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/tikv/rust-prometheus"
         }
       ]
     },
@@ -4556,24 +4334,6 @@
         {
           "name": "siphon:native-code",
           "value": "safe wrapper over libsqlite3-sys"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rustix",
-      "version": "0.38.44",
-      "purl": "pkg:cargo/rustix@0.38.44",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/bytecodealliance/rustix"
         }
       ]
     },
@@ -6080,24 +5840,6 @@
       "name": "weezl",
       "version": "0.1.12",
       "purl": "pkg:cargo/weezl@0.1.12",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/image-rs/weezl"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "weezl",
-      "version": "0.2.1",
-      "purl": "pkg:cargo/weezl@0.2.1",
       "scope": "required",
       "licenses": [
         {

@@ -23,7 +23,28 @@ tokio-postgres = { version = "0.7", features = ["with-uuid-1", "with-chrono-0_4"
 # scanning mail, and extraction lives there rather than in siphon-core.
 # Default features already cover PDF, Office, archives and data-formats, so
 # the mail path has the same ingest coverage as siphon-fs and the CLI.
-siphon = { path = "../.." }
+# Formats a mail attachment can plausibly be, and nothing else.
+#
+# `forensics` is dropped: it extracts Office and PDF authorship metadata for
+# `siphon forensics`, which the mail path never calls.
+#
+# `barcode` is deliberately KEPT. Dropping it looked like the big win — 92
+# crates — until the extraction-faithfulness work made the consequence
+# visible: with no image arm in the dispatch, a JPEG falls through to
+# `extract_unparsed_binary`, which warns, which the milter now treats as an
+# uninspected part. Under the fail-closed default that defers every message
+# carrying an image. Trading a 27% smaller dependency graph for deferring
+# ordinary mail is not a trade worth making, and QR codes carry exfiltrated
+# data often enough to want scanned on their own merits.
+siphon = { path = "../..", default-features = false, features = [
+    "pdf",
+    "office",
+    "archives",
+    "msg",
+    "data-formats",
+    "barcode",
+    "bin-data",
+] }
 # Extractors take file paths, so attachment bytes go to a temp file first.
 # That round trip is on the milter's critical path and is measured by
 # `cargo run --release --bin mail_bench`.

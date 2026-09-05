@@ -19,10 +19,10 @@ members and report that false picture; `cargo tree -p` does not.
 
 | Artifact | Components | Third-party |
 |---|---|---|
-| `siphon-fs` | 375 | 372 |
-| `siphon-milter` | 335 | 331 |
-| `siphon` | 308 | 306 |
-| `siphon-api` | 204 | 200 |
+| `siphon-fs` | 370 | 367 |
+| `siphon-milter` | 321 | 317 |
+| `siphon` | 299 | 297 |
+| `siphon-api` | 197 | 193 |
 | `siphon-launcher` | 109 | 107 |
 | `siphon-icap` | 80 | 78 |
 | `siphon-mail` | 70 | 69 |
@@ -57,17 +57,17 @@ Across all third-party components in all artifacts, counted per artifact.
 
 | Licence | Occurrences |
 |---|---|
-| `MIT OR Apache-2.0` | 868 |
-| `MIT` | 283 |
+| `MIT OR Apache-2.0` | 847 |
+| `MIT` | 281 |
 | `Apache-2.0 OR MIT` | 117 |
-| `Apache-2.0` | 79 |
+| `Apache-2.0` | 75 |
 | `Unlicense OR MIT` | 25 |
 | `BSD-3-Clause` | 17 |
 | `MIT OR Apache-2.0 OR Zlib` | 17 |
 | `Zlib OR Apache-2.0 OR MIT` | 17 |
-| `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | 16 |
 | `BSD-2-Clause` | 9 |
 | `(MIT OR Apache-2.0) AND Unicode-3.0` | 8 |
+| `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | 8 |
 | `(Apache-2.0 OR MIT) AND BSD-3-Clause` | 7 |
 | `Zlib` | 7 |
 | `BSD-2-Clause OR Apache-2.0 OR MIT` | 6 |
