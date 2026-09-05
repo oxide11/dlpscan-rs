@@ -12,6 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 siphon-core = { path = "../siphon-core" }
+# The mail model: message/part schema, persistence and verdict
+# reconciliation. Shared with siphon-milter, which writes what this reads.
+siphon-mail = { path = "../siphon-mail" }
 # Drop the root crate's default features here — siphon-api doesn't
 # need any of the file-format extractors (PDF, Office, archives,
 # data-formats, forensics, barcode, bin-data) or the embedded msg

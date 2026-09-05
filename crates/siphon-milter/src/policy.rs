@@ -83,33 +83,15 @@ impl fmt::Display for PolicyError {
 
 impl std::error::Error for PolicyError {}
 
-/// The message-level verdict, mirroring `siphon-api`'s ladder.
+/// The message-level verdict.
 ///
-/// Duplicated rather than shared because siphon-api is a binary crate with no
-/// library target, so there is nothing to depend on. The
-/// `verdict_strings_match_the_api_ladder` test pins the two together by the
-/// only thing that actually has to agree — the strings that reach the
-/// database and the headers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Verdict {
-    Clean,
-    Indeterminate,
-    Flagged,
-    Quarantine,
-    Block,
-}
-
-impl Verdict {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Verdict::Clean => "clean",
-            Verdict::Indeterminate => "indeterminate",
-            Verdict::Flagged => "flagged",
-            Verdict::Quarantine => "quarantine",
-            Verdict::Block => "block",
-        }
-    }
-}
+/// Re-exported from `siphon-mail` rather than redefined. It was briefly
+/// duplicated here, when the model lived inside siphon-api's binary crate and
+/// there was nothing to depend on — two enums and two `as_str` tables writing
+/// the same strings into the same column, with only a test holding them
+/// together. Sharing the crate removes the possibility of drift instead of
+/// testing for it.
+pub use siphon_mail::Verdict;
 
 /// What the milter should do about a message, once the verdict is known.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -285,10 +267,12 @@ mod tests {
         assert!(Verdict::Quarantine < Verdict::Block);
     }
 
+    /// The strings, not the enum, are the contract: they reach the
+    /// `messages.verdict` column, the `messages_verdict_ck` CHECK constraint
+    /// and the `X-Siphon-Result` header. Pinned here so a rename in
+    /// siphon-mail cannot silently change what an MTA sees.
     #[test]
-    fn verdict_strings_match_the_api_ladder() {
-        // The strings, not the enum, are the contract: they reach the
-        // messages.verdict column and the X-Siphon-Result header.
+    fn verdict_strings_are_the_wire_contract() {
         assert_eq!(Verdict::Clean.as_str(), "clean");
         assert_eq!(Verdict::Indeterminate.as_str(), "indeterminate");
         assert_eq!(Verdict::Flagged.as_str(), "flagged");

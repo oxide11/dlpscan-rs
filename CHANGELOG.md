@@ -14,6 +14,81 @@ starting from this file.
 
 ---
 
+## 2026-09-05 — siphon-milter: SMTP DLP
+
+### siphon-milter 0.1.0 (new crate)
+
+- **feat(milter): Sendmail/Postfix mail filter.** Step 4 of the email-dlp
+  build order, and the last one. The MTA holds a message while the filter
+  decides, then the verdict is stamped into the headers (§1: annotate, don't
+  block).
+
+  `protocol.rs` is the wire format, kept pure and tested directly. Every byte
+  comes from the MTA relaying attacker-chosen content, and the framing is
+  length-prefixed — the classic shape for allocate-what-they-told-you bugs.
+  The declared length is checked against a 1 MB ceiling *before* anything is
+  reserved; a header claiming 4 GB is refused with five bytes buffered.
+  Unknown commands are carried rather than fatal, and strings decode lossily
+  because mail is full of headers that are not valid UTF-8 — failing the parse
+  would turn a mildly malformed message into an undeliverable one under the
+  fail-closed default.
+
+  `policy.rs` implements §4.4: `SIPHON_MILTER_ON_INDETERMINATE =
+  defer|quarantine|deliver`, defaulting to `defer`. An unknown value is an
+  error, never a silent fallback — a typo must not flip a deployment from
+  fail-closed to fail-open. Startup refuses `quarantine` outright rather than
+  behaving as `defer`, because there is nowhere to hold a message yet and
+  silently substituting a different failure direction is the thing §4.4
+  exists to prevent.
+
+  Every path that did not finish looking — timeout, scan panic, oversize,
+  MIME structural warning, unopenable attachment — yields `indeterminate`,
+  never `clean`.
+
+### siphon-mail 0.1.0 (new crate)
+
+- **refactor(api,milter): move the message/part model into a shared library.**
+  It shipped inside siphon-api one release ago; the milter then needed the
+  same model to write what siphon-api reads. siphon-api is a binary crate with
+  no lib target, and giving it one would link its entire axum/tower stack into
+  a milter that serves no HTTP.
+
+  So the model gets its own crate — the only library under `crates/` — owning
+  both its DDL (exported as `MIGRATION_SQL`, still registered and run by
+  siphon-api, which owns migration ordering) and its DML. Keeping the CHECK
+  constraint and the Rust enum that feeds it in one crate is the point: they
+  are two lists of the same strings, and separate crates is how they drift.
+
+  This also deletes a real duplication rather than testing around it. The
+  milter briefly carried its own copy of the `Verdict` ladder, with a test
+  asserting the two `as_str` tables agreed. Sharing the crate removes the
+  possibility of drift instead of checking for it.
+
+  `PartStatus::from_str` and `Verdict::from_str` are renamed to
+  `from_sql_text` — clippy's `should_implement_trait` fires now that these are
+  public library API, and the new name is more honest anyway: these parse the
+  SQL/wire representation, not general user input, and return `Option` rather
+  than `Result`.
+
+- **feat(milter): persist messages, parts and verdicts.** Written *after* the
+  MTA has been answered: it is holding the message on our reply, and a slow
+  database must not extend the deadline that reply was computed under. Storage
+  failures are logged and swallowed for the same reason — a message that has
+  already been answered cannot be un-answered, and turning a storage outage
+  into a mail outage should be a deliberate policy choice, not an accident.
+
+  The queue ID (`{i}` macro) becomes the `ingest_key`, so an MTA retry
+  resolves to the same message row (§2.2a). Verdict reconciliation is
+  siphon-mail's `reconcile`, not reimplemented — the ladder that puts
+  `indeterminate` above `clean` and below `flagged` has one definition, shared
+  with the service that reads the rows back.
+
+  No database is a supported deployment, not a degraded one: the milter still
+  scans, decides and stamps. What it loses is the retry guard and the
+  investigation record.
+
+---
+
 ## 2026-09-05 — Message / message-parts model for the mail path
 
 ### siphon-api 2.9.0

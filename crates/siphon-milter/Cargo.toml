@@ -12,6 +12,13 @@ path = "src/main.rs"
 
 [dependencies]
 siphon-core = { path = "../siphon-core" }
+# The mail model — message/part schema, persistence and the verdict ladder.
+# Shared with siphon-api, which reads back what this writes. Postgres only:
+# it deliberately carries no HTTP stack, so linking it here does not drag a
+# web server into a milter.
+siphon-mail = { path = "../siphon-mail" }
+deadpool-postgres = "0.14"
+tokio-postgres = { version = "0.7", features = ["with-uuid-1", "with-chrono-0_4"] }
 # The root crate, for its extractors — an attachment is the whole point of
 # scanning mail, and extraction lives there rather than in siphon-core.
 # Default features already cover PDF, Office, archives and data-formats, so

@@ -31,6 +31,7 @@ use policy::{action_for, verdict_headers, OnIndeterminate, PolicyError, Verdict}
 use protocol::{Command, Decoder, Response};
 use siphon_core::mime::{parse_message_with_limits, MimeLimits, PartKind};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
+use siphon_mail::{Direction, MessageRecord, PartOutcome, PartRecord, PartStatus};
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::net::IpAddr;
@@ -57,6 +58,10 @@ struct Config {
     max_connections: usize,
     allowed_nets: Vec<(IpAddr, u8)>,
     min_confidence: f64,
+    /// Optional. The milter decides and stamps without a database; what it
+    /// loses without one is the retry guard and the investigation record,
+    /// not the verdict.
+    db: Option<deadpool_postgres::Pool>,
 }
 
 fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
@@ -122,6 +127,32 @@ fn net_contains(net: &(IpAddr, u8), peer: IpAddr) -> bool {
     }
 }
 
+/// Optional Postgres pool, from `SIPHON_DATABASE_URL`.
+///
+/// Absent is a supported deployment, not a degraded one: the milter still
+/// scans, decides and stamps. What it loses is the retry guard of §2.2a and
+/// the investigation record — a malformed URL is still an error, because that
+/// is a misconfiguration rather than a choice.
+///
+/// Migrations are not run here. siphon-api owns the migration runner and its
+/// ordering; a milter racing it to create tables is how two pods end up
+/// half-applying a schema.
+fn build_pool() -> Result<Option<deadpool_postgres::Pool>, Box<dyn std::error::Error>> {
+    let Ok(url) = std::env::var("SIPHON_DATABASE_URL") else {
+        return Ok(None);
+    };
+    let mut cfg = deadpool_postgres::Config::new();
+    cfg.url = Some(url);
+    if let Ok(password) = std::env::var("SIPHON_DATABASE_PASSWORD") {
+        cfg.password = Some(password);
+    }
+    let pool = cfg.create_pool(
+        Some(deadpool_postgres::Runtime::Tokio1),
+        tokio_postgres::NoTls,
+    )?;
+    Ok(Some(pool))
+}
+
 impl Config {
     fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
         let on_indeterminate = match std::env::var("SIPHON_MILTER_ON_INDETERMINATE") {
@@ -164,6 +195,7 @@ impl Config {
             ),
             max_connections: env_parse("SIPHON_MILTER_MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS),
             min_confidence: env_parse("SIPHON_MILTER_MIN_CONFIDENCE", 0.6f64),
+            db: build_pool()?,
         })
     }
 }
@@ -207,11 +239,27 @@ impl Session {
     }
 }
 
+/// One part, as scanned — owned so it can outlive the parsed message and be
+/// written to Postgres after the blocking scan thread has finished.
+struct PartResult {
+    parent_path: Option<String>,
+    mime_path: String,
+    content_type: String,
+    filename: Option<String>,
+    content_hash: Vec<u8>,
+    content_length: i32,
+    status: PartStatus,
+    detail: Option<String>,
+    finding_count: i32,
+    max_confidence: Option<f32>,
+}
+
 /// One message's scan result.
 struct ScanOutcome {
     verdict: Verdict,
     categories: Vec<String>,
     finding_count: usize,
+    parts: Vec<PartResult>,
 }
 
 /// Scan a reassembled message. CPU-bound and synchronous; the caller runs it
@@ -219,37 +267,66 @@ struct ScanOutcome {
 fn scan_message(raw: &[u8], min_confidence: f64) -> ScanOutcome {
     let parsed = parse_message_with_limits(raw, &MimeLimits::default());
 
-    // A structural warning means something was not inspected. Start from
-    // indeterminate rather than clean if the walk itself told us it gave up.
-    let mut worst = if parsed.warnings.is_empty() {
-        Verdict::Clean
-    } else {
-        Verdict::Indeterminate
-    };
     let mut categories: Vec<String> = Vec::new();
     let mut finding_count = 0usize;
+    let mut parts: Vec<PartResult> = Vec::new();
+    let mut outcomes: Vec<PartOutcome> = Vec::new();
 
     // Indexed once for the whole message — O(message), not O(parts x
     // message). See email-dlp.md §3.1.
     let envelope = parsed.envelope_index();
 
     for part in &parsed.parts {
+        if part.kind == PartKind::Container {
+            continue;
+        }
+
+        // Recorded, never used as a cross-message key: content dedup between
+        // messages is the §6 bypass.
+        let raw_bytes: &[u8] = match (&part.text, &part.data) {
+            (_, Some(d)) => d,
+            (Some(t), None) => t.as_bytes(),
+            _ => &[],
+        };
+        let content_hash = <sha2::Sha256 as sha2::Digest>::digest(raw_bytes).to_vec();
+
+        let mut record = PartResult {
+            parent_path: None,
+            mime_path: part.path.clone(),
+            content_type: part.content_type.clone(),
+            filename: part.filename.clone(),
+            content_hash,
+            content_length: part.size.min(i32::MAX as usize) as i32,
+            status: PartStatus::Pending,
+            detail: None,
+            finding_count: 0,
+            max_confidence: None,
+        };
+
         let text = match part.kind {
-            PartKind::Container => continue,
+            PartKind::Container => unreachable!("skipped above"),
             PartKind::Text => match &part.text {
                 Some(t) => t.clone(),
-                None => continue,
+                None => {
+                    record.status = PartStatus::SkippedUnsupported;
+                    record.detail = Some("text part carried no decoded text".into());
+                    finish_part(&mut parts, &mut outcomes, record, None);
+                    continue;
+                }
             },
             PartKind::Attachment => {
                 let Some(data) = &part.data else {
-                    worst = worst.max(Verdict::Indeterminate);
+                    record.status = PartStatus::SkippedUnsupported;
+                    record.detail = Some("attachment carried no decoded bytes".into());
+                    finish_part(&mut parts, &mut outcomes, record, None);
                     continue;
                 };
                 match extract_attachment(part.filename.as_deref(), data) {
                     Some(t) => t,
                     None => {
-                        // Could not open it, so we did not inspect it.
-                        worst = worst.max(Verdict::Indeterminate);
+                        record.status = PartStatus::Error;
+                        record.detail = Some("extraction failed".into());
+                        finish_part(&mut parts, &mut outcomes, record, None);
                         continue;
                     }
                 }
@@ -259,7 +336,13 @@ fn scan_message(raw: &[u8], min_confidence: f64) -> ScanOutcome {
         if text.len() > siphon_core::validation::MAX_INPUT_SIZE {
             // Extracted past the scanner cap: reported not scanned, never
             // clean. The extraction work is done and discarded.
-            worst = worst.max(Verdict::Indeterminate);
+            record.status = PartStatus::SkippedOversize;
+            record.detail = Some(format!(
+                "extracted text {} bytes exceeds the {} byte scanner cap",
+                text.len(),
+                siphon_core::validation::MAX_INPUT_SIZE
+            ));
+            finish_part(&mut parts, &mut outcomes, record, None);
             continue;
         }
 
@@ -270,25 +353,68 @@ fn scan_message(raw: &[u8], min_confidence: f64) -> ScanOutcome {
         };
         match scan_text_with_config(&text, &config) {
             Ok(matches) => {
-                if !matches.is_empty() {
-                    finding_count += matches.len();
-                    for m in &matches {
-                        if !categories.iter().any(|c| c.as_str() == m.category) {
-                            categories.push(m.category.to_string());
-                        }
+                record.status = PartStatus::Scanned;
+                record.finding_count = matches.len().min(i32::MAX as usize) as i32;
+                record.max_confidence = matches
+                    .iter()
+                    .map(|m| m.confidence as f32)
+                    .fold(None, |acc: Option<f32>, c| {
+                        Some(acc.map_or(c, |a| a.max(c)))
+                    });
+                finding_count += matches.len();
+                for m in &matches {
+                    if !categories.iter().any(|c| c.as_str() == m.category) {
+                        categories.push(m.category.to_string());
                     }
-                    worst = worst.max(Verdict::Flagged);
                 }
+                let part_verdict = if matches.is_empty() {
+                    Verdict::Clean
+                } else {
+                    Verdict::Flagged
+                };
+                finish_part(&mut parts, &mut outcomes, record, Some(part_verdict));
             }
-            Err(_) => worst = worst.max(Verdict::Indeterminate),
+            Err(e) => {
+                record.status = PartStatus::Error;
+                record.detail = Some(format!("scan failed: {e}"));
+                finish_part(&mut parts, &mut outcomes, record, None);
+            }
         }
     }
 
+    // Reconciliation is siphon-mail's, not reimplemented here — the ladder
+    // that puts indeterminate above clean and below flagged has one
+    // definition, shared with the service that reads these rows back.
+    let mut verdict = siphon_mail::reconcile(&outcomes);
+
+    // A structural warning is not attached to any part: the walk itself gave
+    // up, so there is content we never even enumerated. That cannot leave a
+    // message clean.
+    if !parsed.warnings.is_empty() {
+        verdict = verdict.max(Verdict::Indeterminate);
+    }
+
     ScanOutcome {
-        verdict: worst,
+        verdict,
         categories,
         finding_count,
+        parts,
     }
+}
+
+/// Record a finished part in both the row list and the reconciliation list,
+/// so the two cannot disagree about what happened to it.
+fn finish_part(
+    parts: &mut Vec<PartResult>,
+    outcomes: &mut Vec<PartOutcome>,
+    record: PartResult,
+    scanned_verdict: Option<Verdict>,
+) {
+    outcomes.push(match scanned_verdict {
+        Some(v) => PartOutcome::scanned(v),
+        None => PartOutcome::uninspected(record.status),
+    });
+    parts.push(record);
 }
 
 /// Hand attachment bytes to the extractors, which take file paths.
@@ -398,6 +524,12 @@ async fn handle_connection(
                         write_response(&mut stream, &Response::AddHeader { name, value }).await?;
                     }
                     write_response(&mut stream, &action.response()).await?;
+
+                    // Persist after replying. The MTA is holding the message
+                    // on our answer, and a slow database must not extend the
+                    // deadline that answer was computed under — the record is
+                    // for investigation, not for the delivery decision.
+                    persist(&config, &session, &outcome).await;
                     session.reset_message();
                 }
                 Command::Abort => {
@@ -414,14 +546,72 @@ async fn handle_connection(
     }
 }
 
+/// Record the message, its parts and the reconciled verdict.
+///
+/// Failures are logged and swallowed. A message that has already been
+/// answered cannot be un-answered by a database problem, and turning a
+/// storage outage into a mail outage is precisely the trade the fail-closed
+/// policy is meant to make deliberately rather than by accident.
+async fn persist(config: &Config, session: &Session, outcome: &ScanOutcome) {
+    if config.db.is_none() {
+        return;
+    }
+
+    let recipients: Vec<String> = Vec::new();
+    let record = MessageRecord {
+        tenant_id: "default",
+        // The MTA's queue ID. Stable across delivery attempts, so a retry
+        // resolves to the same row rather than minting a second message.
+        ingest_key: session.ingest_key(),
+        direction: Direction::Inbound,
+        rfc_message_id: session
+            .headers
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("Message-ID"))
+            .map(|(_, v)| v.as_str()),
+        sender: session.macros.get("{mail_addr}").map(String::as_str),
+        recipients: &recipients,
+        subject_hash: None,
+        part_count: outcome.parts.len().min(i32::MAX as usize) as i32,
+    };
+
+    let message_uuid = match siphon_mail::resolve_message(&config.db, &record).await {
+        Ok(Some(id)) => id,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::warn!(error = %e, "milter_persist_message_failed");
+            return;
+        }
+    };
+
+    for part in &outcome.parts {
+        let row = PartRecord {
+            parent_path: part.parent_path.as_deref(),
+            mime_path: &part.mime_path,
+            content_type: Some(&part.content_type),
+            filename: part.filename.as_deref(),
+            content_hash: Some(&part.content_hash),
+            content_length: Some(part.content_length),
+            scan_id: None,
+            status: part.status,
+            detail: part.detail.as_deref(),
+            finding_count: part.finding_count,
+            max_confidence: part.max_confidence,
+        };
+        if let Err(e) = siphon_mail::upsert_part(&config.db, message_uuid, &row).await {
+            tracing::warn!(error = %e, mime_path = %part.mime_path, "milter_persist_part_failed");
+        }
+    }
+
+    if let Err(e) = siphon_mail::store_verdict(&config.db, message_uuid, outcome.verdict).await {
+        tracing::warn!(error = %e, "milter_persist_verdict_failed");
+    }
+}
+
 /// Run the scan under the deadline, failing towards indeterminate.
 async fn decide(session: &Session, config: &Config) -> ScanOutcome {
     if session.oversize {
-        return ScanOutcome {
-            verdict: Verdict::Indeterminate,
-            categories: Vec::new(),
-            finding_count: 0,
-        };
+        return indeterminate();
     }
 
     let raw = session.raw_message();
@@ -451,6 +641,10 @@ fn indeterminate() -> ScanOutcome {
         verdict: Verdict::Indeterminate,
         categories: Vec::new(),
         finding_count: 0,
+        // No part rows: we never got far enough to enumerate them. An empty
+        // list reconciles to indeterminate in siphon-mail too, so the stored
+        // verdict and the wire verdict agree.
+        parts: Vec::new(),
     }
 }
 

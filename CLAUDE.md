@@ -13,6 +13,14 @@ long-running services:
 - `siphon-fs` — multipart file-scan service (PDF, Office, archives, etc.)
 - `siphon-icap` — RFC 3507 ICAP server for proxy-based network DLP (port 1344)
 - `siphon-launcher` — local-dev process manager (loopback-only, no auth)
+- `siphon-milter` — Sendmail/Postfix mail filter for SMTP DLP (port 8894)
+- `siphon-mail` — **the one library in `crates/`**: message/part schema,
+  persistence and verdict reconciliation. It exists because two binaries need
+  the same model — siphon-milter writes what siphon-api reads — and siphon-api
+  has no lib target to depend on; giving it one would link its whole axum
+  stack into a milter that serves no HTTP. Owns both its DDL (exported as
+  `MIGRATION_SQL`) and its DML, so a CHECK constraint and the Rust enum that
+  feeds it cannot drift apart in separate crates
 
 Deployment assets live under `deploy/` (Dockerfiles, docker-compose, Helm
 chart, k8s manifests). Rulesets live in `rulesets/` as **YAML** files.
@@ -212,7 +220,9 @@ nothing):
 - `0007_evadex.sql` — evadex run + finding tables
 - `0008_tenant_id.sql` — tenant_id on scans + findings
 - `0009_scan_rollup.sql` — aggregate scan counters per (hour, tenant, channel)
-- `0010_messages.sql` — `messages` + `message_parts` for the mail path, plus
+- `0010_messages.sql` — lives in `crates/siphon-mail/migrations/` and is
+  registered here via `siphon_mail::MIGRATION_SQL`. `messages` +
+  `message_parts` for the mail path, plus
   `prune_messages()`. Nothing writes them until `siphon-milter` lands; the
   schema is here first because it is painful to retrofit (see
   `docs/architecture/email-dlp.md` §2). Two properties are load-bearing:

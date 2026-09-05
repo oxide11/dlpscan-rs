@@ -5061,6 +5061,7 @@ dependencies = [
  "sha2 0.11.0",
  "siphon",
  "siphon-core",
+ "siphon-mail",
  "tempfile",
  "tokio",
  "tokio-postgres",
@@ -5160,15 +5161,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "siphon-mail"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "deadpool-postgres",
+ "tokio-postgres",
+ "uuid",
+]
+
+[[package]]
 name = "siphon-milter"
 version = "0.1.0"
 dependencies = [
+ "deadpool-postgres",
  "hex",
  "sha2 0.11.0",
  "siphon",
  "siphon-core",
+ "siphon-mail",
  "tempfile",
  "tokio",
+ "tokio-postgres",
  "tracing",
  "tracing-subscriber",
  "uuid",

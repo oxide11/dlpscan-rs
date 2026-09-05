@@ -80,7 +80,9 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 mod db;
-mod messages;
+// The mail model lives in its own crate: siphon-milter writes what this
+// service reads, and siphon-api has no lib target for it to depend on.
+use siphon_mail as messages;
 
 // ---------------------------------------------------------------------------
 // State
