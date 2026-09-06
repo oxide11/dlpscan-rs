@@ -111,6 +111,20 @@ if [ "${MODE}" = "check" ]; then
         echo "  STALE  ${OUT_DIR}/INVENTORY.md"
         fail=1
     fi
+    # A document for an artifact that no longer exists is as wrong as a
+    # missing one, and only this check will ever notice it.
+    for existing in "${OUT_DIR}"/*.cdx.json; do
+        [ -e "${existing}" ] || continue
+        name="$(basename "${existing}" .cdx.json)"
+        found=0
+        for pkg in "${ARTIFACTS[@]}"; do
+            [ "${pkg}" = "${name}" ] && found=1 && break
+        done
+        if [ "${found}" = "0" ]; then
+            echo "  ORPHAN ${existing} (no such artifact in the workspace)"
+            fail=1
+        fi
+    done
     if [ "${fail}" = "1" ]; then
         echo
         echo "SBOM is out of date with Cargo.lock. Run: scripts/generate-sbom.sh"
@@ -119,6 +133,25 @@ if [ "${MODE}" = "check" ]; then
     echo "SBOM is current for ${#ARTIFACTS[@]} artifacts ✓"
     exit 0
 fi
+
+# Remove documents for artifacts that no longer exist before writing the
+# current set. Without this a renamed crate leaves its old document behind
+# forever, and an SBOM that lists an artifact the build cannot produce is
+# worse than a missing one — it sends an auditor after a binary nobody
+# ships. The siphon -> siphon-cli and siphon-milter -> siphon-smtp rename
+# left exactly that pair behind.
+for existing in "${OUT_DIR}"/*.cdx.json; do
+    [ -e "${existing}" ] || continue
+    name="$(basename "${existing}" .cdx.json)"
+    keep=0
+    for pkg in "${ARTIFACTS[@]}"; do
+        [ "${pkg}" = "${name}" ] && keep=1 && break
+    done
+    if [ "${keep}" = "0" ]; then
+        echo "  removing stale ${existing} (no such artifact)"
+        rm -f "${existing}"
+    fi
+done
 
 for pkg in "${ARTIFACTS[@]}"; do
     cp "${TMP_DIR}/${pkg}.cdx.json" "${OUT_DIR}/${pkg}.cdx.json"
