@@ -6,7 +6,7 @@
 # There is no single bill of materials for this workspace. Each binary links
 # a different closure, and the differences are large and security-relevant:
 # siphon-api links none of rusqlite, unrar, rxing or the image codecs, while
-# siphon-fs and siphon-milter link all of them. A workspace-wide SBOM would
+# siphon-fs and siphon-smtp link all of them. A workspace-wide SBOM would
 # claim siphon-api ships a bundled SQLite and a C RAR decoder that it does
 # not, which is worse than no SBOM — it would send an auditor chasing a
 # vulnerability in a component that image never contained.
@@ -44,17 +44,17 @@ cd "${REPO_ROOT}"
 TARGET="${SBOM_TARGET:-x86_64-unknown-linux-gnu}"
 
 # Every artifact that leaves the build. siphon-mail is a library rather than
-# a binary, but siphon-api and siphon-milter both link it and it owns the
+# a binary, but siphon-api and siphon-smtp both link it and it owns the
 # database schema, so it gets its own document.
 ARTIFACTS=(
-    siphon
+    siphon-cli
     siphon-core
     siphon-api
     siphon-fs
     siphon-icap
     siphon-launcher
     siphon-mail
-    siphon-milter
+    siphon-smtp
 )
 
 MODE="write"

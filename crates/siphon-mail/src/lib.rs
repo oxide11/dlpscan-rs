@@ -4,7 +4,7 @@
 //! scannable, whose results reconcile into one verdict — see
 //! `docs/architecture/email-dlp.md` §2 and §4.3.
 //!
-//! Nothing writes these tables yet; `siphon-milter` does. The schema and this
+//! Nothing writes these tables yet; `siphon-smtp` does. The schema and this
 //! layer land first for two reasons. §2 is explicit that the model is painful
 //! to retrofit. And the fail-closed default of §4.4 makes an MTA retry the
 //! normal operating mode rather than an edge case: every tempfail — every

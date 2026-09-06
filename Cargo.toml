@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/siphon-core", "crates/siphon-api", "crates/siphon-fs", "crates/siphon-launcher", "crates/siphon-icap", "crates/siphon-mail", "crates/siphon-milter"]
+members = [".", "crates/siphon-core", "crates/siphon-api", "crates/siphon-fs", "crates/siphon-launcher", "crates/siphon-icap", "crates/siphon-mail", "crates/siphon-smtp"]
 # Resolver v2 — per-member feature isolation. Without this, the
 # workspace would unify features across every member, which means
 # siphon's default `data-formats` (and therefore rusqlite) would
@@ -10,7 +10,7 @@ members = [".", "crates/siphon-core", "crates/siphon-api", "crates/siphon-fs", "
 resolver = "2"
 
 [package]
-name = "siphon"
+name = "siphon-cli"
 version = "2.3.0"
 edition = "2021"
 description = "Polygon Siphon — high-performance DLP scanner to detect, redact, and protect sensitive data"
@@ -173,6 +173,19 @@ tempfile = "3"
 # optional runtime dep (behind `msg`); adding it here unconditionally
 # keeps the test green on minimal builds too.
 cfb = "0.14"
+
+# The package is named for the component; the library and the command are
+# deliberately not renamed with it. `use siphon::...` is what every other
+# crate in the workspace writes, and `siphon scan` is what users type — there
+# is no reason for a component rename to break either, so both targets keep
+# their names and only the package moves.
+[lib]
+name = "siphon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "siphon"
+path = "src/main.rs"
 
 # Developer tool, not a shipped artifact: `required-features` keeps it out of
 # a default `cargo build` entirely, so the release binary set is unchanged.

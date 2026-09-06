@@ -6,7 +6,7 @@ beside this file, one per shipped artifact.
 **There is no single BOM for this repository.** Each artifact links a
 different closure, and the differences matter: `siphon-api` links none of
 rusqlite, unrar, rxing or the image codecs, while `siphon-fs` and
-`siphon-milter` link all of them. A workspace-wide document would claim
+`siphon-smtp` link all of them. A workspace-wide document would claim
 siphon-api ships a bundled SQLite and a C RAR decoder it has never
 contained.
 
@@ -20,8 +20,8 @@ members and report that false picture; `cargo tree -p` does not.
 | Artifact | Components | Third-party |
 |---|---|---|
 | `siphon-fs` | 370 | 367 |
-| `siphon-milter` | 321 | 317 |
-| `siphon` | 299 | 297 |
+| `siphon-smtp` | 321 | 317 |
+| `siphon-cli` | 299 | 297 |
 | `siphon-api` | 197 | 193 |
 | `siphon-launcher` | 109 | 107 |
 | `siphon-icap` | 80 | 78 |
@@ -35,11 +35,11 @@ path that parses attacker-supplied files.
 
 | Component | Why it is here | Shipped in |
 |---|---|---|
-| `libsqlite3-sys` | bundled SQLite (C), reached via rusqlite for .sqlite extraction | `siphon`, `siphon-fs`, `siphon-milter` |
+| `libsqlite3-sys` | bundled SQLite (C), reached via rusqlite for .sqlite extraction | `siphon-cli`, `siphon-fs`, `siphon-smtp` |
 | `ring` | assembly + C crypto primitives, reached via rustls | `siphon-api`, `siphon-fs` |
-| `rusqlite` | safe wrapper over libsqlite3-sys | `siphon`, `siphon-fs`, `siphon-milter` |
-| `unrar` | safe wrapper over unrar_sys | `siphon`, `siphon-fs`, `siphon-milter` |
-| `unrar_sys` | UnRAR (C++), reached via unrar for .rar extraction | `siphon`, `siphon-fs`, `siphon-milter` |
+| `rusqlite` | safe wrapper over libsqlite3-sys | `siphon-cli`, `siphon-fs`, `siphon-smtp` |
+| `unrar` | safe wrapper over unrar_sys | `siphon-cli`, `siphon-fs`, `siphon-smtp` |
+| `unrar_sys` | UnRAR (C++), reached via unrar for .rar extraction | `siphon-cli`, `siphon-fs`, `siphon-smtp` |
 
 ## Backtracking regex engines
 
@@ -49,7 +49,7 @@ from attacker-controlled input reintroduces that risk.
 
 | Component | Shipped in |
 |---|---|
-| `fancy-regex` | `siphon`, `siphon-fs`, `siphon-milter` |
+| `fancy-regex` | `siphon-cli`, `siphon-fs`, `siphon-smtp` |
 
 ## Licences
 

@@ -44,7 +44,7 @@ a lookup instead of a re-scan.
 
 ### Transport
 
-A **milter** (`siphon-milter`, new crate). Postfix and Sendmail both speak it,
+A **milter** (`siphon-smtp`, new crate). Postfix and Sendmail both speak it,
 header add/replace is first-class in the protocol, and it avoids Siphon having
 to be a queueing MTA.
 
@@ -309,7 +309,7 @@ inherited.
 **Decision: configurable, defaulting to fail closed.**
 
 ```
-SIPHON_MILTER_ON_INDETERMINATE = defer | quarantine | deliver
+SIPHON_SMTP_ON_INDETERMINATE = defer | quarantine | deliver
                                  ^ default
 ```
 
@@ -532,7 +532,7 @@ fail-open path raise.
    2.8.0 (§3.1).
 3. ~~**Message/parts model** (§2)~~ — done, siphon-api 2.9.0. Schema,
    reconciliation and retention; nothing writes it yet.
-4. **`siphon-milter`** (§1) — transport, header injection, verdict policy.
+4. **`siphon-smtp`** (§1) — transport, header injection, verdict policy.
    The only step left, and now unblocked: the deadline is measured (§4.5), the
    `indeterminate` policy is decided (§4.4), the MIME layer and context
    envelope are on `main`, and the storage its retries depend on exists

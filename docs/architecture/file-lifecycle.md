@@ -35,7 +35,7 @@ more than any other: **what happens when the scanner cannot answer.**
 |---|---|---|
 | CLI | `siphon scan` | non-zero exit |
 | HTTP file upload | `siphon-fs` | file reported **not scanned**, never clean |
-| SMTP | `siphon-milter` | verdict `indeterminate` → 451, MTA retries |
+| SMTP | `siphon-smtp` | verdict `indeterminate` → 451, MTA retries |
 | Proxy (ICAP) | `siphon-icap` | pass through or block, per `SIPHON_ICAP_ACTION` |
 
 Our file arrives at the milter. Postfix holds the message open on a socket
@@ -43,15 +43,15 @@ and asks a question it will not proceed without an answer to.
 
 ### 1.1 The milter session
 
-`crates/siphon-milter/src/main.rs`. One TCP connection carries many messages.
+`crates/siphon-smtp/src/main.rs`. One TCP connection carries many messages.
 Before any content arrives:
 
 1. **Peer check.** The connecting address is matched against
-   `SIPHON_MILTER_ALLOWED_NETS`. This is required with no default — a filter
+   `SIPHON_SMTP_ALLOWED_NETS`. This is required with no default — a filter
    that accepts connections from anywhere is one anybody can feed mail to.
    Outside the allowlist, the connection is dropped immediately, before a
    byte of protocol is read.
-2. **Connection cap.** `SIPHON_MILTER_MAX_CONNECTIONS` (256) bounds
+2. **Connection cap.** `SIPHON_SMTP_MAX_CONNECTIONS` (256) bounds
    concurrency; extras are dropped rather than queued.
 3. **Option negotiation.** The MTA and the filter agree on which protocol
    stages are exchanged and which modifications the filter may make.
@@ -63,9 +63,9 @@ required.
 
 Two limits apply while the body streams in:
 
-- **`SIPHON_MILTER_MAX_MESSAGE_BYTES`** (30 MB) bounds what is accepted at
+- **`SIPHON_SMTP_MAX_MESSAGE_BYTES`** (30 MB) bounds what is accepted at
   all.
-- **`SIPHON_MILTER_TIMEOUT_SECS`** (10) bounds how long the scan may take.
+- **`SIPHON_SMTP_TIMEOUT_SECS`** (10) bounds how long the scan may take.
   The number is not arbitrary: it is roughly 4× the worst contended message
   and 40× the mixed-flow p99 measured in `docs/architecture/email-dlp.md`
   §4.5.
@@ -531,7 +531,7 @@ entire reason that crate exists as a library.
 `Indeterminate` sitting *above* `Clean` is the fail-closed property in one
 line: a message with one unreadable part and nine clean ones is not clean.
 
-Our message reconciles to `Flagged`. Under `SIPHON_MILTER_ON_INDETERMINATE`
+Our message reconciles to `Flagged`. Under `SIPHON_SMTP_ON_INDETERMINATE`
 the milter stamps verdict headers and lets the MTA's own rules act — annotate,
 don't block (`docs/architecture/email-dlp.md` §1). The scanner's job is to be
 right about what is in the message; the MTA's job is to decide what that

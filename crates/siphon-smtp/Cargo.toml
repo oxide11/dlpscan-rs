@@ -1,5 +1,5 @@
 [package]
-name = "siphon-milter"
+name = "siphon-smtp"
 version = "0.1.0"
 edition = "2021"
 description = "Polygon Siphon milter — Sendmail/Postfix mail filter for SMTP DLP"
@@ -7,7 +7,7 @@ license = "MIT"
 rust-version = "1.98"
 
 [[bin]]
-name = "siphon-milter"
+name = "siphon-smtp"
 path = "src/main.rs"
 
 [dependencies]
@@ -36,7 +36,7 @@ tokio-postgres = { version = "0.7", features = ["with-uuid-1", "with-chrono-0_4"
 # carrying an image. Trading a 27% smaller dependency graph for deferring
 # ordinary mail is not a trade worth making, and QR codes carry exfiltrated
 # data often enough to want scanned on their own merits.
-siphon = { path = "../..", default-features = false, features = [
+siphon-cli = { path = "../..", default-features = false, features = [
     "pdf",
     "office",
     "archives",
@@ -52,7 +52,7 @@ tempfile = "3"
 # `sync` is required for tokio::sync::Semaphore, used to bound concurrent
 # connections; `time` for the milter deadline. Listed explicitly rather than
 # relying on another workspace member enabling them — feature unification
-# makes the workspace build succeed while `cargo test -p siphon-milter` fails.
+# makes the workspace build succeed while `cargo test -p siphon-smtp` fails.
 tokio = { version = "1", features = [
     "rt-multi-thread",
     "macros",

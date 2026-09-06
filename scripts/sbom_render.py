@@ -209,7 +209,7 @@ def render_summary(input_dir: Path, target: str) -> str:
         "**There is no single BOM for this repository.** Each artifact links a\n"
         "different closure, and the differences matter: `siphon-api` links none of\n"
         "rusqlite, unrar, rxing or the image codecs, while `siphon-fs` and\n"
-        "`siphon-milter` link all of them. A workspace-wide document would claim\n"
+        "`siphon-smtp` link all of them. A workspace-wide document would claim\n"
         "siphon-api ships a bundled SQLite and a C RAR decoder it has never\n"
         "contained.\n"
     )

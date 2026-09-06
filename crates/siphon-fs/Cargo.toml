@@ -16,7 +16,7 @@ siphon-core = { path = "../siphon-core" }
 # archives, etc.). Default features already enable PDF + Office +
 # archives + data-formats so siphon-fs has the same ingest coverage
 # as the CLI.
-siphon = { path = "../.." }
+siphon-cli = { path = "../.." }
 # Temp files for extractor calls — extractors take file paths; the
 # handler drops bytes into a NamedTempFile then passes the path in.
 tempfile = "3"

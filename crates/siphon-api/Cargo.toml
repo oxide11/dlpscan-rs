@@ -13,7 +13,7 @@ path = "src/main.rs"
 [dependencies]
 siphon-core = { path = "../siphon-core" }
 # The mail model: message/part schema, persistence and verdict
-# reconciliation. Shared with siphon-milter, which writes what this reads.
+# reconciliation. Shared with siphon-smtp, which writes what this reads.
 siphon-mail = { path = "../siphon-mail" }
 # Drop the root crate's default features here — siphon-api doesn't
 # need any of the file-format extractors (PDF, Office, archives,
@@ -24,7 +24,7 @@ siphon-mail = { path = "../siphon-mail" }
 #
 # `metrics` stays on because main.rs's ApiMetrics surface uses it.
 # Add back any other feature here if the binary refuses to compile.
-siphon = { path = "../..", default-features = false, features = ["metrics"] }
+siphon-cli = { path = "../..", default-features = false, features = ["metrics"] }
 
 # HTTP server
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "time"] }

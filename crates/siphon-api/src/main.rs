@@ -80,7 +80,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 mod db;
-// The mail model lives in its own crate: siphon-milter writes what this
+// The mail model lives in its own crate: siphon-smtp writes what this
 // service reads, and siphon-api has no lib target for it to depend on.
 use siphon_mail as messages;
 
@@ -6419,7 +6419,7 @@ async fn main() {
                 // Separate call rather than folded into prune_findings():
                 // the two have independent lifetimes, and a failure to prune
                 // one should not stop the other. Nothing writes these tables
-                // until siphon-milter lands, so this is a no-op until then —
+                // until siphon-smtp lands, so this is a no-op until then —
                 // wired now so the tables cannot quietly grow without bound
                 // the moment they start being written.
                 match messages::prune_old_messages(&pool_clone, retention_days).await {

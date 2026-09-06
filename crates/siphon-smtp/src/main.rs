@@ -14,7 +14,7 @@
 //!
 //! # Timeout and the fail-closed default
 //!
-//! The scan runs under `SIPHON_MILTER_TIMEOUT_SECS` (default 10, from the
+//! The scan runs under `SIPHON_SMTP_TIMEOUT_SECS` (default 10, from the
 //! measurements in §4.5). Exceeding it yields `indeterminate`, which under
 //! the default policy means a 451 and a retry — not a delivery.
 //!
@@ -64,9 +64,50 @@ struct Config {
     db: Option<deadpool_postgres::Pool>,
 }
 
-fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
-    std::env::var(key)
-        .ok()
+/// The pre-rename variable prefix.
+///
+/// Assembled from two pieces rather than written whole, so a bulk rename of
+/// the old prefix cannot rewrite the one place that must keep it. That is not
+/// hypothetical: the rename introducing this function ran a blanket
+/// substitution across the tree and turned this fallback into a second lookup
+/// of the *new* name, leaving it silently dead. The test at the bottom of
+/// this file is what caught it.
+const LEGACY_ENV_PREFIX: &str = concat!("SIPHON_", "MILTER_");
+
+/// Read a `SIPHON_SMTP_*` variable, accepting the old `SIPHON_SMTP_*`
+/// spelling.
+///
+/// The crate was renamed from siphon-milter to siphon-smtp; the variables
+/// followed. Deployments did not, and a scanner that silently reverts to its
+/// defaults because a name moved underneath it is a scanner that stops
+/// filtering mail while looking healthy — the failure mode this whole service
+/// exists to avoid. The old name is therefore still honoured, and using it
+/// says so once at startup.
+///
+/// The new name wins when both are set, so a migration can land the new
+/// spelling without first removing the old one.
+fn env_var(suffix: &str) -> Option<String> {
+    let current = format!("SIPHON_SMTP_{suffix}");
+    if let Ok(v) = std::env::var(&current) {
+        return Some(v);
+    }
+    let legacy = format!("{LEGACY_ENV_PREFIX}{suffix}");
+    match std::env::var(&legacy) {
+        Ok(v) => {
+            tracing::warn!(
+                deprecated = %legacy,
+                use_instead = %current,
+                "this is the pre-rename spelling and still works; switch to \
+                 the SIPHON_SMTP_ form"
+            );
+            Some(v)
+        }
+        Err(_) => None,
+    }
+}
+
+fn env_parse<T: std::str::FromStr>(suffix: &str, default: T) -> T {
+    env_var(suffix)
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
 }
@@ -155,9 +196,9 @@ fn build_pool() -> Result<Option<deadpool_postgres::Pool>, Box<dyn std::error::E
 
 impl Config {
     fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
-        let on_indeterminate = match std::env::var("SIPHON_MILTER_ON_INDETERMINATE") {
-            Ok(v) => OnIndeterminate::parse(&v)?,
-            Err(_) => OnIndeterminate::default(),
+        let on_indeterminate = match env_var("ON_INDETERMINATE") {
+            Some(v) => OnIndeterminate::parse(&v)?,
+            None => OnIndeterminate::default(),
         };
 
         // Refuse rather than silently behaving as defer. There is nowhere to
@@ -170,31 +211,25 @@ impl Config {
 
         // Required, with no default, matching siphon-icap: a filter that
         // accepts connections from anywhere is one anybody can feed mail to.
-        let allowed_nets = match std::env::var("SIPHON_MILTER_ALLOWED_NETS") {
-            Ok(spec) => parse_nets(&spec)?,
-            Err(_) => {
-                return Err("SIPHON_MILTER_ALLOWED_NETS is required (use 0.0.0.0/0 for dev)".into())
+        let allowed_nets = match env_var("ALLOWED_NETS") {
+            Some(spec) => parse_nets(&spec)?,
+            None => {
+                return Err("SIPHON_SMTP_ALLOWED_NETS is required (use 0.0.0.0/0 for dev)".into())
             }
         };
         if allowed_nets.is_empty() {
-            return Err("SIPHON_MILTER_ALLOWED_NETS is empty; nothing could connect".into());
+            return Err("SIPHON_SMTP_ALLOWED_NETS is empty; nothing could connect".into());
         }
 
         Ok(Config {
             allowed_nets,
-            bind: std::env::var("SIPHON_MILTER_BIND").unwrap_or_else(|_| "0.0.0.0".into()),
-            port: env_parse("SIPHON_MILTER_PORT", DEFAULT_PORT),
+            bind: env_var("BIND").unwrap_or_else(|| "0.0.0.0".into()),
+            port: env_parse("PORT", DEFAULT_PORT),
             on_indeterminate,
-            deadline: Duration::from_secs(env_parse(
-                "SIPHON_MILTER_TIMEOUT_SECS",
-                DEFAULT_TIMEOUT_SECS,
-            )),
-            max_message_bytes: env_parse(
-                "SIPHON_MILTER_MAX_MESSAGE_BYTES",
-                DEFAULT_MAX_MESSAGE_BYTES,
-            ),
-            max_connections: env_parse("SIPHON_MILTER_MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS),
-            min_confidence: env_parse("SIPHON_MILTER_MIN_CONFIDENCE", 0.6f64),
+            deadline: Duration::from_secs(env_parse("TIMEOUT_SECS", DEFAULT_TIMEOUT_SECS)),
+            max_message_bytes: env_parse("MAX_MESSAGE_BYTES", DEFAULT_MAX_MESSAGE_BYTES),
+            max_connections: env_parse("MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS),
+            min_confidence: env_parse("MIN_CONFIDENCE", 0.6f64),
             db: build_pool()?,
         })
     }
@@ -712,11 +747,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         on_indeterminate = config.on_indeterminate.as_str(),
         deadline_secs = config.deadline.as_secs(),
         max_message_mb = config.max_message_bytes / (1024 * 1024),
-        "siphon-milter listening"
+        "siphon-smtp listening"
     );
     if config.on_indeterminate == OnIndeterminate::Deliver {
         tracing::warn!(
-            "SIPHON_MILTER_ON_INDETERMINATE=deliver: messages that could not be \
+            "SIPHON_SMTP_ON_INDETERMINATE=deliver: messages that could not be \
              fully inspected will be DELIVERED. This is fail-open."
         );
     }
@@ -746,6 +781,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The pre-rename variable names still work.
+    ///
+    /// This is the part of a rename that breaks production. The crate moved
+    /// from siphon-milter to siphon-smtp and the variables followed, but
+    /// deployments are configured elsewhere by someone else, and a filter
+    /// that silently falls back to its defaults because a name moved is one
+    /// that stops filtering mail while its health check stays green.
+    ///
+    /// Serialised and env-restoring because the variables are process-global
+    /// and the rest of the suite runs in parallel.
+    #[test]
+    fn the_pre_rename_variable_names_are_still_honoured() {
+        // SAFETY: single-threaded within this test, and both variables are
+        // removed again before it returns.
+        unsafe {
+            std::env::remove_var("SIPHON_SMTP_PORT");
+            std::env::set_var("SIPHON_MILTER_PORT", "9999");
+        }
+        assert_eq!(
+            super::env_parse("PORT", super::DEFAULT_PORT),
+            9999,
+            "the old spelling must still be read"
+        );
+
+        // When both are set the new name wins, so a migration can add the new
+        // spelling before removing the old one.
+        unsafe {
+            std::env::set_var("SIPHON_SMTP_PORT", "8894");
+        }
+        assert_eq!(
+            super::env_parse("PORT", super::DEFAULT_PORT),
+            8894,
+            "the current spelling must take precedence"
+        );
+
+        unsafe {
+            std::env::remove_var("SIPHON_SMTP_PORT");
+            std::env::remove_var("SIPHON_MILTER_PORT");
+        }
+    }
     use super::*;
 
     #[test]

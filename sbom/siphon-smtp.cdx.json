@@ -5,9 +5,9 @@
   "metadata": {
     "component": {
       "type": "application",
-      "name": "siphon-fs",
-      "version": "1.2.0",
-      "purl": "pkg:cargo/siphon-fs@1.2.0"
+      "name": "siphon-smtp",
+      "version": "0.1.0",
+      "purl": "pkg:cargo/siphon-smtp@0.1.0"
     },
     "properties": [
       {
@@ -116,24 +116,6 @@
       "name": "aes",
       "version": "0.8.4",
       "purl": "pkg:cargo/aes@0.8.4",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/block-ciphers"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "aes",
-      "version": "0.9.1",
-      "purl": "pkg:cargo/aes@0.9.1",
       "scope": "required",
       "licenses": [
         {
@@ -659,24 +641,6 @@
     },
     {
       "type": "library",
-      "name": "atomic-waker",
-      "version": "1.1.2",
-      "purl": "pkg:cargo/atomic-waker@1.1.2",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/smol-rs/atomic-waker"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "av1-grain",
       "version": "0.2.5",
       "purl": "pkg:cargo/av1-grain@0.2.5",
@@ -712,82 +676,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/kornelski/avif-serialize"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "aws-lc-rs",
-      "version": "1.17.0",
-      "purl": "pkg:cargo/aws-lc-rs@1.17.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "ISC AND (Apache-2.0 OR ISC)"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/aws/aws-lc-rs"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "aws-lc-sys",
-      "version": "0.41.0",
-      "purl": "pkg:cargo/aws-lc-sys@0.41.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/aws/aws-lc-rs"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "axum",
-      "version": "0.8.9",
-      "purl": "pkg:cargo/axum@0.8.9",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/tokio-rs/axum"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "axum-core",
-      "version": "0.5.6",
-      "purl": "pkg:cargo/axum-core@0.5.6",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/tokio-rs/axum"
         }
       ]
     },
@@ -1009,24 +897,6 @@
     },
     {
       "type": "library",
-      "name": "block-padding",
-      "version": "0.4.2",
-      "purl": "pkg:cargo/block-padding@0.4.2",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/utils"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "bumpalo",
       "version": "3.20.3",
       "purl": "pkg:cargo/bumpalo@3.20.3",
@@ -1157,24 +1027,6 @@
     },
     {
       "type": "library",
-      "name": "cbc",
-      "version": "0.2.1",
-      "purl": "pkg:cargo/cbc@0.2.1",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/block-modes"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "cfb",
       "version": "0.14.0",
       "purl": "pkg:cargo/cfb@0.14.0",
@@ -1288,24 +1140,6 @@
       "name": "cipher",
       "version": "0.4.4",
       "purl": "pkg:cargo/cipher@0.4.4",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/traits"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "cipher",
-      "version": "0.5.2",
-      "purl": "pkg:cargo/cipher@0.5.2",
       "scope": "required",
       "licenses": [
         {
@@ -1526,42 +1360,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/RustCrypto/formats"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "const-oid",
-      "version": "0.9.6",
-      "purl": "pkg:cargo/const-oid@0.9.6",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/formats/tree/master/const-oid"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "cpubits",
-      "version": "0.1.1",
-      "purl": "pkg:cargo/cpubits@0.1.1",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/utils"
         }
       ]
     },
@@ -1837,48 +1635,6 @@
     },
     {
       "type": "library",
-      "name": "der",
-      "version": "0.7.10",
-      "purl": "pkg:cargo/der@0.7.10",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/formats/tree/master/der"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "der_derive",
-      "version": "0.7.3",
-      "purl": "pkg:cargo/der_derive@0.7.3",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/formats/tree/master/der/derive"
-        }
-      ],
-      "properties": [
-        {
-          "name": "siphon:proc-macro",
-          "value": "true"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "deranged",
       "version": "0.5.8",
       "purl": "pkg:cargo/deranged@0.5.8",
@@ -1936,26 +1692,6 @@
       "name": "ecb",
       "version": "0.1.2",
       "purl": "pkg:cargo/ecb@0.1.2",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/magic-akari/ecb"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "ecb",
-      "version": "0.2.0",
-      "purl": "pkg:cargo/ecb@0.2.0",
       "scope": "required",
       "licenses": [
         {
@@ -2319,26 +2055,6 @@
     },
     {
       "type": "library",
-      "name": "flagset",
-      "version": "0.4.7",
-      "purl": "pkg:cargo/flagset@0.4.7",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/enarx/flagset"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "flatbuffers",
       "version": "25.12.19",
       "purl": "pkg:cargo/flatbuffers@25.12.19",
@@ -2410,24 +2126,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/orlp/foldhash"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "form_urlencoded",
-      "version": "1.2.2",
-      "purl": "pkg:cargo/form_urlencoded@1.2.2",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/servo/rust-url"
         }
       ]
     },
@@ -2747,100 +2445,6 @@
     },
     {
       "type": "library",
-      "name": "http",
-      "version": "1.4.2",
-      "purl": "pkg:cargo/http@1.4.2",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/hyperium/http"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "http-body",
-      "version": "1.0.1",
-      "purl": "pkg:cargo/http-body@1.0.1",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/hyperium/http-body"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "http-body-util",
-      "version": "0.1.5",
-      "purl": "pkg:cargo/http-body-util@0.1.5",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/hyperium/http-body"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "httparse",
-      "version": "1.10.1",
-      "purl": "pkg:cargo/httparse@1.10.1",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/seanmonstar/httparse"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "httpdate",
-      "version": "1.0.3",
-      "purl": "pkg:cargo/httpdate@1.0.3",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/pyfisch/httpdate"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "hybrid-array",
       "version": "0.4.12",
       "purl": "pkg:cargo/hybrid-array@0.4.12",
@@ -2854,46 +2458,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/RustCrypto/hybrid-array"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "hyper",
-      "version": "1.11.1",
-      "purl": "pkg:cargo/hyper@1.11.1",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/hyperium/hyper"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "hyper-util",
-      "version": "0.1.20",
-      "purl": "pkg:cargo/hyper-util@0.1.20",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/hyperium/hyper-util"
         }
       ]
     },
@@ -3012,24 +2576,6 @@
       "name": "inout",
       "version": "0.1.4",
       "purl": "pkg:cargo/inout@0.1.4",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/utils"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "inout",
-      "version": "0.2.2",
-      "purl": "pkg:cargo/inout@0.2.2",
       "scope": "required",
       "licenses": [
         {
@@ -3403,26 +2949,6 @@
     },
     {
       "type": "library",
-      "name": "lopdf",
-      "version": "0.44.0",
-      "purl": "pkg:cargo/lopdf@0.44.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/J-F-Liu/lopdf.git"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "lzma-rust",
       "version": "0.1.7",
       "purl": "pkg:cargo/lzma-rust@0.1.7",
@@ -3476,24 +3002,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/hawkw/matchers"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "matchit",
-      "version": "0.8.4",
-      "purl": "pkg:cargo/matchit@0.8.4",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT AND BSD-3-Clause"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/ibraheemdev/matchit"
         }
       ]
     },
@@ -3591,24 +3099,6 @@
     },
     {
       "type": "library",
-      "name": "mime",
-      "version": "0.3.17",
-      "purl": "pkg:cargo/mime@0.3.17",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/hyperium/mime"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "miniz_oxide",
       "version": "0.8.9",
       "purl": "pkg:cargo/miniz_oxide@0.8.9",
@@ -3660,26 +3150,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/awxkee/moxcms.git"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "multer",
-      "version": "3.1.0",
-      "purl": "pkg:cargo/multer@3.1.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/rwf2/multer"
         }
       ]
     },
@@ -4843,30 +4313,6 @@
     },
     {
       "type": "library",
-      "name": "ring",
-      "version": "0.17.14",
-      "purl": "pkg:cargo/ring@0.17.14",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 AND ISC"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/briansmith/ring"
-        }
-      ],
-      "properties": [
-        {
-          "name": "siphon:native-code",
-          "value": "assembly + C crypto primitives, reached via rustls"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "rusqlite",
       "version": "0.40.2",
       "purl": "pkg:cargo/rusqlite@0.40.2",
@@ -4906,80 +4352,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/bytecodealliance/rustix"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rustls",
-      "version": "0.23.43",
-      "purl": "pkg:cargo/rustls@0.23.43",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 OR ISC OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/rustls/rustls"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rustls-pemfile",
-      "version": "2.2.0",
-      "purl": "pkg:cargo/rustls-pemfile@2.2.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 OR ISC OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/rustls/pemfile"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rustls-pki-types",
-      "version": "1.14.1",
-      "purl": "pkg:cargo/rustls-pki-types@1.14.1",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/rustls/pki-types"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "rustls-webpki",
-      "version": "0.103.13",
-      "purl": "pkg:cargo/rustls-webpki@0.103.13",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "ISC"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/rustls/webpki"
         }
       ]
     },
@@ -5211,24 +4583,6 @@
     },
     {
       "type": "library",
-      "name": "serde_path_to_error",
-      "version": "0.1.20",
-      "purl": "pkg:cargo/serde_path_to_error@0.1.20",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/dtolnay/path-to-error"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "serde_spanned",
       "version": "1.1.1",
       "purl": "pkg:cargo/serde_spanned@1.1.1",
@@ -5242,24 +4596,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/toml-rs/toml"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "serde_urlencoded",
-      "version": "0.7.1",
-      "purl": "pkg:cargo/serde_urlencoded@0.7.1",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/nox/serde_urlencoded"
         }
       ]
     },
@@ -5489,9 +4825,9 @@
     },
     {
       "type": "library",
-      "name": "slab",
-      "version": "0.4.12",
-      "purl": "pkg:cargo/slab@0.4.12",
+      "name": "siphon-mail",
+      "version": "0.1.0",
+      "purl": "pkg:cargo/siphon-mail@0.1.0",
       "scope": "required",
       "licenses": [
         {
@@ -5500,10 +4836,10 @@
           }
         }
       ],
-      "externalReferences": [
+      "properties": [
         {
-          "type": "vcs",
-          "url": "https://github.com/tokio-rs/slab"
+          "name": "siphon:first-party",
+          "value": "true"
         }
       ]
     },
@@ -5540,44 +4876,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/rust-lang/socket2"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "spin",
-      "version": "0.9.8",
-      "purl": "pkg:cargo/spin@0.9.8",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/mvdnes/spin-rs.git"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "spki",
-      "version": "0.7.3",
-      "purl": "pkg:cargo/spki@0.7.3",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/formats/tree/master/spki"
         }
       ]
     },
@@ -5621,26 +4919,6 @@
     },
     {
       "type": "library",
-      "name": "subtle",
-      "version": "2.6.1",
-      "purl": "pkg:cargo/subtle@2.6.1",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "BSD-3-Clause"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/dalek-cryptography/subtle"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "syn",
       "version": "2.0.118",
       "purl": "pkg:cargo/syn@2.0.118",
@@ -5672,26 +4950,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/dtolnay/syn"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "sync_wrapper",
-      "version": "1.0.2",
-      "purl": "pkg:cargo/sync_wrapper@1.0.2",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/Actyx/sync_wrapper"
         }
       ]
     },
@@ -5997,44 +5255,6 @@
     },
     {
       "type": "library",
-      "name": "tokio-postgres-rustls",
-      "version": "0.14.0",
-      "purl": "pkg:cargo/tokio-postgres-rustls@0.14.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/jbg/tokio-postgres-rustls"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tokio-rustls",
-      "version": "0.26.4",
-      "purl": "pkg:cargo/tokio-rustls@0.26.4",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/rustls/tokio-rustls"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "tokio-util",
       "version": "0.7.18",
       "purl": "pkg:cargo/tokio-util@0.7.18",
@@ -6122,86 +5342,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/toml-rs/toml"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tower",
-      "version": "0.5.3",
-      "purl": "pkg:cargo/tower@0.5.3",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/tower-rs/tower"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tower-http",
-      "version": "0.7.0",
-      "purl": "pkg:cargo/tower-http@0.7.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/tower-rs/tower-http"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tower-layer",
-      "version": "0.3.3",
-      "purl": "pkg:cargo/tower-layer@0.3.3",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/tower-rs/tower"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "tower-service",
-      "version": "0.3.3",
-      "purl": "pkg:cargo/tower-service@0.3.3",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "MIT"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/tower-rs/tower"
         }
       ]
     },
@@ -6583,26 +5723,6 @@
     },
     {
       "type": "library",
-      "name": "untrusted",
-      "version": "0.9.0",
-      "purl": "pkg:cargo/untrusted@0.9.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "ISC"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/briansmith/untrusted"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "uriparse",
       "version": "0.6.4",
       "purl": "pkg:cargo/uriparse@0.6.4",
@@ -6717,47 +5837,9 @@
     },
     {
       "type": "library",
-      "name": "webpki-roots",
-      "version": "1.0.9",
-      "purl": "pkg:cargo/webpki-roots@1.0.9",
-      "scope": "required",
-      "licenses": [
-        {
-          "license": {
-            "id": "CDLA-Permissive-2.0"
-          }
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/rustls/webpki-roots"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "weezl",
       "version": "0.1.12",
       "purl": "pkg:cargo/weezl@0.1.12",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/image-rs/weezl"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "weezl",
-      "version": "0.2.1",
-      "purl": "pkg:cargo/weezl@0.2.1",
       "scope": "required",
       "licenses": [
         {
@@ -6842,24 +5924,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/winnow-rs/winnow"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "x509-cert",
-      "version": "0.2.5",
-      "purl": "pkg:cargo/x509-cert@0.2.5",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/RustCrypto/formats/tree/master/x509-cert"
         }
       ]
     },

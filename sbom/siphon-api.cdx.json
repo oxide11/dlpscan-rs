@@ -2603,9 +2603,9 @@
     },
     {
       "type": "library",
-      "name": "siphon",
+      "name": "siphon-cli",
       "version": "2.3.0",
-      "purl": "pkg:cargo/siphon@2.3.0",
+      "purl": "pkg:cargo/siphon-cli@2.3.0",
       "scope": "required",
       "licenses": [
         {

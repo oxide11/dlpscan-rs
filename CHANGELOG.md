@@ -14,9 +14,9 @@ starting from this file.
 
 ---
 
-## 2026-09-05 — siphon-milter: SMTP DLP
+## 2026-09-05 — siphon-smtp: SMTP DLP
 
-### siphon-milter 0.1.0 (new crate)
+### siphon-smtp 0.1.0 (new crate)
 
 - **feat(milter): Sendmail/Postfix mail filter.** Step 4 of the email-dlp
   build order, and the last one. The MTA holds a message while the filter
@@ -33,7 +33,7 @@ starting from this file.
   would turn a mildly malformed message into an undeliverable one under the
   fail-closed default.
 
-  `policy.rs` implements §4.4: `SIPHON_MILTER_ON_INDETERMINATE =
+  `policy.rs` implements §4.4: `SIPHON_SMTP_ON_INDETERMINATE =
   defer|quarantine|deliver`, defaulting to `defer`. An unknown value is an
   error, never a silent fallback — a typo must not flip a deployment from
   fail-closed to fail-open. Startup refuses `quarantine` outright rather than
@@ -99,7 +99,7 @@ starting from this file.
   A message is not one scan — it is a tree of parts, each independently
   scannable, whose results reconcile into one verdict
   (`docs/architecture/email-dlp.md` §2). Nothing writes these tables yet;
-  `siphon-milter` does. They land first because §2 is explicit that the model
+  `siphon-smtp` does. They land first because §2 is explicit that the model
   is painful to retrofit, and because the fail-closed default of §4.4 makes
   MTA retries the normal operating mode rather than an edge case: every
   tempfail comes back as a redelivery, so the idempotency guarantees have to

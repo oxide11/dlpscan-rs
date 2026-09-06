@@ -5,18 +5,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project overview
 
 Siphon is a high-performance DLP scanner built as a Rust Cargo workspace. The
-top-level crate (`siphon`) is the CLI; the workspace members in `crates/` are
-long-running services:
+top-level crate (`siphon-cli`) is the CLI; the workspace members in `crates/`
+are long-running services:
+
+Note the top-level crate's *package* is `siphon-cli`, while its library target
+and its binary are both still `siphon` — every other crate writes
+`use siphon::...` and users type `siphon scan`, and a component rename is no
+reason to break either.
 
 - `siphon-core` — scanner engine (patterns, validators, detection pipeline)
 - `siphon-api` — sync HTTP scan service with RBAC, API-key auth, audit chain
 - `siphon-fs` — multipart file-scan service (PDF, Office, archives, etc.)
 - `siphon-icap` — RFC 3507 ICAP server for proxy-based network DLP (port 1344)
 - `siphon-launcher` — local-dev process manager (loopback-only, no auth)
-- `siphon-milter` — Sendmail/Postfix mail filter for SMTP DLP (port 8894)
+- `siphon-smtp` — Sendmail/Postfix mail filter for SMTP DLP (port 8894).
+  Named for the protocol it protects, matching `siphon-icap`; it was
+  `siphon-milter` until the rename, and its variables moved
+  `SIPHON_MILTER_*` → `SIPHON_SMTP_*`. **The old names still work** and log a
+  warning once at startup — a filter that quietly reverts to its defaults
+  because a variable name moved is one that stops filtering mail while
+  looking healthy
 - `siphon-mail` — **the one library in `crates/`**: message/part schema,
   persistence and verdict reconciliation. It exists because two binaries need
-  the same model — siphon-milter writes what siphon-api reads — and siphon-api
+  the same model — siphon-smtp writes what siphon-api reads — and siphon-api
   has no lib target to depend on; giving it one would link its whole axum
   stack into a milter that serves no HTTP. Owns both its DDL (exported as
   `MIGRATION_SQL`) and its DML, so a CHECK constraint and the Rust enum that
@@ -383,7 +394,7 @@ nothing):
 - `0010_messages.sql` — lives in `crates/siphon-mail/migrations/` and is
   registered here via `siphon_mail::MIGRATION_SQL`. `messages` +
   `message_parts` for the mail path, plus
-  `prune_messages()`. Nothing writes them until `siphon-milter` lands; the
+  `prune_messages()`. Nothing writes them until `siphon-smtp` lands; the
   schema is here first because it is painful to retrofit (see
   `docs/architecture/email-dlp.md` §2). Two properties are load-bearing:
   `UNIQUE (message_uuid, mime_path)` makes an MTA retry upsert instead of
@@ -736,7 +747,7 @@ runs in CI (`.github/workflows/audit.yml`).
 **One document per artifact, never one for the workspace.** Each binary links
 a different closure and the differences are security-relevant: `siphon-api`
 links none of rusqlite, unrar, rxing or the image codecs, while `siphon-fs`
-and `siphon-milter` link all of them. A workspace-wide document would claim
+and `siphon-smtp` link all of them. A workspace-wide document would claim
 siphon-api ships a bundled SQLite and a C RAR decoder it has never contained.
 
 For the same reason the resolution is per-package. `cargo metadata` and

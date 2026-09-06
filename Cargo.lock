@@ -4932,7 +4932,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
-name = "siphon"
+name = "siphon-api"
+version = "2.9.0"
+dependencies = [
+ "axum",
+ "axum-server",
+ "chrono",
+ "deadpool-postgres",
+ "hex",
+ "k8s-openapi",
+ "kube",
+ "notify",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "siphon-cli",
+ "siphon-core",
+ "siphon-mail",
+ "tempfile",
+ "tokio",
+ "tokio-postgres",
+ "tokio-postgres-rustls",
+ "tokio-stream",
+ "tower",
+ "tower-http 0.7.0",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "webpki-roots",
+]
+
+[[package]]
+name = "siphon-cli"
 version = "2.3.0"
 dependencies = [
  "aho-corasick",
@@ -4985,39 +5018,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "siphon-api"
-version = "2.9.0"
-dependencies = [
- "axum",
- "axum-server",
- "chrono",
- "deadpool-postgres",
- "hex",
- "k8s-openapi",
- "kube",
- "notify",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "siphon",
- "siphon-core",
- "siphon-mail",
- "tempfile",
- "tokio",
- "tokio-postgres",
- "tokio-postgres-rustls",
- "tokio-stream",
- "tower",
- "tower-http 0.7.0",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "webpki-roots",
-]
-
-[[package]]
 name = "siphon-core"
 version = "2.8.0"
 dependencies = [
@@ -5056,7 +5056,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "siphon",
+ "siphon-cli",
  "siphon-core",
  "tempfile",
  "tokio",
@@ -5109,12 +5109,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "siphon-milter"
+name = "siphon-smtp"
 version = "0.1.0"
 dependencies = [
  "deadpool-postgres",
  "sha2 0.11.0",
- "siphon",
+ "siphon-cli",
  "siphon-core",
  "siphon-mail",
  "tempfile",
