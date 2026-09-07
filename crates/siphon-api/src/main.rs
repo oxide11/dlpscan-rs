@@ -2747,6 +2747,26 @@ async fn overrides_apply(
         ));
     }
 
+    // Refuse a request that would disable every built-in pattern — that
+    // would completely blind the scanner.  An operator who genuinely needs
+    // that can first clear any existing disabled_patterns before adding
+    // new ones, but submitting a payload whose disabled_patterns list
+    // covers the entire static pattern set in one shot is almost certainly
+    // a mistake or an attack.
+    let total_builtin = siphon_core::patterns::PATTERNS.len();
+    if new_overrides.disabled_patterns.len() >= total_builtin {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ErrorResponse {
+                error: format!(
+                    "disabled_patterns ({}) equals or exceeds the total built-in pattern count \
+                     ({total_builtin}); this would fully blind the scanner and is rejected",
+                    new_overrides.disabled_patterns.len()
+                ),
+            }),
+        ));
+    }
+
     let payload = serde_json::to_vec_pretty(&new_overrides).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -2854,6 +2874,16 @@ async fn overrides_apply(
     );
 
     if let Ok(event) = AuditEvent::new("CONFIG") {
+        // Cap the per-key list at 100 entries so the audit record stays
+        // bounded even when many patterns are toggled at once. The count
+        // field already captures the total; these keys let forensics
+        // answer "which patterns were disabled?" without reading the file.
+        let disabled_keys: Vec<String> = new_overrides
+            .disabled_patterns
+            .iter()
+            .take(100)
+            .map(|k| format!("{}/{}", k.category, k.sub_category))
+            .collect();
         emit_audit(
             event
                 .with_action("overrides_apply")
@@ -2862,6 +2892,10 @@ async fn overrides_apply(
                 .with_metadata(
                     "disabled_patterns",
                     serde_json::json!(summary.disabled_patterns),
+                )
+                .with_metadata(
+                    "disabled_pattern_keys",
+                    serde_json::json!(disabled_keys),
                 )
                 .with_metadata(
                     "pattern_overrides",
@@ -2954,7 +2988,19 @@ async fn overrides_reload(
             event
                 .with_action("overrides_reload")
                 .with_outcome("reloaded")
-                .with_source_ip(&addr.ip().to_string()),
+                .with_source_ip(&addr.ip().to_string())
+                .with_metadata(
+                    "disabled_patterns",
+                    serde_json::json!(summary.disabled_patterns),
+                )
+                .with_metadata(
+                    "pattern_overrides",
+                    serde_json::json!(summary.pattern_overrides),
+                )
+                .with_metadata(
+                    "custom_categories",
+                    serde_json::json!(summary.custom_categories),
+                ),
         );
     }
     Ok(Json(ReloadResponse {
@@ -5115,11 +5161,22 @@ async fn create_baseline_snapshot(
     let label = body.as_ref().and_then(|b| b.label.as_deref());
     let version = siphon_core::VERSION;
     match db::compute_baseline_snapshot(&state.db_pool, label, version).await {
-        Ok(id) => (
-            StatusCode::CREATED,
-            Json(serde_json::json!({"snapshot_id": id.to_string()})),
-        )
-            .into_response(),
+        Ok(id) => {
+            if let Ok(event) = AuditEvent::new("CONFIG") {
+                emit_audit(
+                    event
+                        .with_action("baseline_create")
+                        .with_outcome("created")
+                        .with_metadata("snapshot_id", serde_json::json!(id.to_string()))
+                        .with_metadata("label", serde_json::json!(label)),
+                );
+            }
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({"snapshot_id": id.to_string()})),
+            )
+                .into_response()
+        }
         Err(e) => {
             tracing::warn!("create_baseline_snapshot: {e}");
             (
