@@ -16,68 +16,48 @@ pub fn set_obfuscation_seed(seed: u64) {
 }
 
 /// Generate realistic fake data for a match based on its category.
+///
+/// The `OBFUSCATION_RNG` lock is acquired exactly once, here, and every
+/// generator borrows it. That is deliberate: the generators used to be split
+/// between ones that took an rng and ones that locked internally, so an arm
+/// calling the latter first had to `drop` the guard. `std::sync::Mutex` is
+/// not reentrant, so forgetting that deadlocked — at runtime, with no
+/// compile error, in whichever arm was newest. Passing the rng makes the
+/// mistake unrepresentable.
 pub fn obfuscate_match(m: &Match) -> String {
-    let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
+    let rng = &mut *guard;
     // Try sub_category first (most specific), then category
     match m.sub_category.as_str() {
         "Visa" | "MasterCard" | "Amex" | "Discover" | "JCB" | "Diners Club" | "UnionPay" => {
-            drop(rng);
-            obfuscate_credit_card(m)
+            obfuscate_credit_card(rng, m)
         }
-        "Email Address" => {
-            drop(rng);
-            obfuscate_email()
-        }
+        "Email Address" => obfuscate_email(rng),
         "E.164 Phone Number" | "US Phone Number" | "UK Phone Number" => {
-            drop(rng);
-            obfuscate_phone(&m.text)
+            obfuscate_phone(rng, &m.text)
         }
-        "USA SSN" | "USA ITIN" => {
-            drop(rng);
-            obfuscate_ssn(&m.text)
-        }
-        "Canada SIN" => {
-            drop(rng);
-            generate_luhn_sin(&m.text)
-        }
-        "IBAN Generic" => generate_valid_iban(&m.text, &mut *rng),
-        "IPv4 Address" => {
-            drop(rng);
-            obfuscate_ipv4()
-        }
-        "MAC Address" => {
-            drop(rng);
-            obfuscate_mac(&m.text)
-        }
-        "Australia TFN" => generate_australia_tfn(&mut *rng),
-        "Australia Medicare" => generate_australia_medicare(&mut *rng),
-        "ICCID" => generate_iccid(&mut *rng),
-        "DEA Number" => generate_dea_number(&mut *rng),
-        "India PAN" => generate_india_pan(&mut *rng),
+        "USA SSN" | "USA ITIN" => obfuscate_ssn(rng, &m.text),
+        "Canada SIN" => generate_luhn_sin(rng, &m.text),
+        "IBAN Generic" => generate_valid_iban(rng, &m.text),
+        "IPv4 Address" => obfuscate_ipv4(rng),
+        "MAC Address" => obfuscate_mac(rng, &m.text),
+        "Australia TFN" => generate_australia_tfn(rng),
+        "Australia Medicare" => generate_australia_medicare(rng),
+        "ICCID" => generate_iccid(rng),
+        "DEA Number" => generate_dea_number(rng),
+        "India PAN" => generate_india_pan(rng),
         // "South Africa ID", not "South Africa ID Number": the arm has to
         // spell the sub_category the pattern set actually emits, or it never
         // matches and the value falls through to obfuscate_generic.
-        "South Africa ID" => {
-            drop(rng);
-            generate_south_africa_id()
-        }
+        "South Africa ID" => generate_south_africa_id(rng),
         _ => match m.category.as_str() {
-            "Credit Card Numbers" | "Primary Account Numbers" => {
-                drop(rng);
-                obfuscate_credit_card(m)
-            }
+            "Credit Card Numbers" | "Primary Account Numbers" => obfuscate_credit_card(rng, m),
             "Generic Secrets"
             | "Cloud Provider Secrets"
             | "Code Platform Secrets"
             | "Payment Service Secrets"
-            | "Messaging Service Secrets" => {
-                drop(rng);
-                obfuscate_secret(&m.text)
-            }
-            _ => {
-                drop(rng);
-                obfuscate_generic(&m.text)
-            }
+            | "Messaging Service Secrets" => obfuscate_secret(rng, &m.text),
+            _ => obfuscate_generic(rng, &m.text),
         },
     }
 }
@@ -102,8 +82,7 @@ pub fn obfuscate_matches(text: &str, matches: &[Match]) -> String {
 
 // ---- Generators ----
 
-fn obfuscate_credit_card(m: &Match) -> String {
-    let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
+fn obfuscate_credit_card(rng: &mut impl RngExt, m: &Match) -> String {
     let clean: String = m.text.chars().filter(|c| c.is_ascii_digit()).collect();
     let length = clean.len().clamp(13, 19);
 
@@ -118,7 +97,7 @@ fn obfuscate_credit_card(m: &Match) -> String {
         _ => format!("{}", rng.random_range(3..=6)),
     };
 
-    generate_luhn_number(&mut *rng, length, &prefix, &m.text)
+    generate_luhn_number(rng, length, &prefix, &m.text)
 }
 
 fn generate_luhn_number(
@@ -167,12 +146,11 @@ fn generate_luhn_number(
 }
 
 /// Generate a Luhn-valid Canada SIN (9 digits, first not 0 or 8).
-fn generate_luhn_sin(original: &str) -> String {
-    let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
+fn generate_luhn_sin(rng: &mut impl RngExt, original: &str) -> String {
     // Valid first digits: 1-9 excluding 8
     let valid_first = [1u8, 2, 3, 4, 5, 6, 7, 9];
     let first = valid_first[rng.random_range(0..valid_first.len())];
-    generate_luhn_number(&mut *rng, 9, &first.to_string(), original)
+    generate_luhn_number(rng, 9, &first.to_string(), original)
 }
 
 /// Compute mod-97 of a string where each char is either a digit (0-9)
@@ -198,7 +176,7 @@ fn mod97_str(s: &str) -> u64 {
 
 /// Generate a mod-97 valid IBAN. Preserves the country code and formatting
 /// of the original; generates a random BBAN and computes the correct check.
-fn generate_valid_iban(original: &str, rng: &mut impl RngExt) -> String {
+fn generate_valid_iban(rng: &mut impl RngExt, original: &str) -> String {
     // Strip non-alphanumeric to get the canonical form
     let clean: String = original
         .chars()
@@ -286,7 +264,9 @@ fn generate_australia_tfn(rng: &mut impl RngExt) -> String {
 }
 
 /// Generate a valid Australia Medicare number (10 digits).
-/// Weights [1,3,7,9,1,3,7,9] over first 8 digits; digit 9 = check; digit 10 = IRN (1).
+/// Weights [1,3,7,9,1,3,7,9] over first 8 digits; digit 9 = check digit;
+/// digit 10 = the individual reference number, 1-9 — one per person on the
+/// card, so it is chosen at random rather than fixed at 1.
 fn generate_australia_medicare(rng: &mut impl RngExt) -> String {
     let weights = [1u32, 3, 7, 9, 1, 3, 7, 9];
     let mut digits = [0u32; 10];
@@ -354,8 +334,7 @@ fn generate_india_pan(rng: &mut impl RngExt) -> String {
 
 /// Generate a Luhn-valid South Africa ID number (13 digits).
 /// Embeds a plausible DOB (YYMMDD), random sequence, citizenship 0/1, field 8.
-fn generate_south_africa_id() -> String {
-    let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
+fn generate_south_africa_id(rng: &mut impl RngExt) -> String {
     let yy = rng.random_range(0..100u8);
     let mm = rng.random_range(1..13u8);
     let dd = rng.random_range(1..29u8); // 1-28 is always a valid day
@@ -364,11 +343,10 @@ fn generate_south_africa_id() -> String {
     // Build first 12 digits as the prefix
     let prefix = format!("{:02}{:02}{:02}{:04}{}8", yy, mm, dd, seq, citizenship);
     let placeholder: String = "0".repeat(13);
-    generate_luhn_number(&mut *rng, 13, &prefix, &placeholder)
+    generate_luhn_number(rng, 13, &prefix, &placeholder)
 }
 
-fn obfuscate_email() -> String {
-    let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
+fn obfuscate_email(rng: &mut impl RngExt) -> String {
     let user: String = (0..8)
         .map(|_| (b'a' + rng.random_range(0..26)) as char)
         .collect();
@@ -377,8 +355,7 @@ fn obfuscate_email() -> String {
     format!("{user}@{domain}")
 }
 
-fn obfuscate_phone(original: &str) -> String {
-    let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
+fn obfuscate_phone(rng: &mut impl RngExt, original: &str) -> String {
     original
         .chars()
         .map(|c| {
@@ -391,12 +368,11 @@ fn obfuscate_phone(original: &str) -> String {
         .collect()
 }
 
-fn obfuscate_ssn(original: &str) -> String {
-    obfuscate_phone(original) // Same algorithm: replace digits, keep format
+fn obfuscate_ssn(rng: &mut impl RngExt, original: &str) -> String {
+    obfuscate_phone(rng, original) // Same algorithm: replace digits, keep format
 }
 
-fn obfuscate_ipv4() -> String {
-    let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
+fn obfuscate_ipv4(rng: &mut impl RngExt) -> String {
     format!(
         "{}.{}.{}.{}",
         rng.random_range(10..224),
@@ -406,8 +382,7 @@ fn obfuscate_ipv4() -> String {
     )
 }
 
-fn obfuscate_mac(original: &str) -> String {
-    let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
+fn obfuscate_mac(rng: &mut impl RngExt, original: &str) -> String {
     let delim = if original.contains(':') { ':' } else { '-' };
     let octets: Vec<String> = (0..6)
         .map(|_| format!("{:02x}", rng.random_range(0..256u16)))
@@ -415,8 +390,7 @@ fn obfuscate_mac(original: &str) -> String {
     octets.join(&delim.to_string())
 }
 
-fn obfuscate_secret(original: &str) -> String {
-    let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
+fn obfuscate_secret(rng: &mut impl RngExt, original: &str) -> String {
     let charset: Vec<char> = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
         .chars()
         .collect();
@@ -432,8 +406,7 @@ fn obfuscate_secret(original: &str) -> String {
         .collect()
 }
 
-fn obfuscate_generic(original: &str) -> String {
-    let mut rng = OBFUSCATION_RNG.lock().unwrap_or_else(|e| e.into_inner());
+fn obfuscate_generic(rng: &mut impl RngExt, original: &str) -> String {
     original
         .chars()
         .map(|c| {
@@ -459,17 +432,25 @@ mod tests {
         is_valid_south_africa_id,
     };
 
+    /// A local, seeded generator.
+    ///
+    /// The helpers all take their rng now, so a test does not have to touch
+    /// the process-wide `OBFUSCATION_RNG` — which also means these tests no
+    /// longer perturb each other when cargo runs them in parallel.
+    fn seeded(seed: u64) -> StdRng {
+        StdRng::seed_from_u64(seed) // DevSkim: ignore DS148264
+    }
+
     #[test]
     fn test_obfuscate_email() {
-        set_obfuscation_seed(42);
-        let email = obfuscate_email();
+        let email = obfuscate_email(&mut seeded(42));
         assert!(email.contains('@'));
         assert!(email.len() > 5);
     }
 
     #[test]
     fn test_obfuscate_ssn_preserves_format() {
-        let fake = obfuscate_phone("123-45-6789");
+        let fake = obfuscate_phone(&mut seeded(42), "123-45-6789");
         assert_eq!(fake.len(), 11);
         assert_eq!(fake.chars().nth(3), Some('-'));
         assert_eq!(fake.chars().nth(6), Some('-'));
@@ -477,14 +458,12 @@ mod tests {
 
     #[test]
     fn test_obfuscate_ipv4() {
-        set_obfuscation_seed(42);
-        let ip = obfuscate_ipv4();
+        let ip = obfuscate_ipv4(&mut seeded(42));
         assert_eq!(ip.split('.').count(), 4);
     }
 
     #[test]
     fn test_obfuscate_credit_card_luhn() {
-        set_obfuscation_seed(42);
         let m = Match {
             text: "4111-1111-1111-1111".to_string(),
             category: "Credit Card Numbers".to_string(),
@@ -495,7 +474,7 @@ mod tests {
             context_required: false,
             metadata: std::collections::HashMap::new(),
         };
-        let fake = obfuscate_credit_card(&m);
+        let fake = obfuscate_credit_card(&mut seeded(42), &m);
         assert!(fake.starts_with('4')); // Visa prefix
                                         // Verify Luhn on digits only
         let digits: String = fake.chars().filter(|c| c.is_ascii_digit()).collect();
@@ -515,9 +494,9 @@ mod tests {
 
     #[test]
     fn test_generate_luhn_sin_valid() {
-        set_obfuscation_seed(1);
+        let mut rng = seeded(1);
         for _ in 0..20 {
-            let sin = generate_luhn_sin("000-000-000");
+            let sin = generate_luhn_sin(&mut rng, "000-000-000");
             let digits: String = sin.chars().filter(|c| c.is_ascii_digit()).collect();
             assert!(
                 is_valid_canada_sin(&digits),
@@ -531,10 +510,8 @@ mod tests {
 
     #[test]
     fn test_generate_valid_iban() {
-        set_obfuscation_seed(2);
-        let mut rng = StdRng::seed_from_u64(2); // DevSkim: ignore DS148264
-                                                // DE IBAN: 22 chars
-        let fake = generate_valid_iban("DE89370400440532013000", &mut rng);
+        // DE IBAN: 22 chars
+        let fake = generate_valid_iban(&mut seeded(2), "DE89370400440532013000");
         let clean: String = fake.chars().filter(|c| c.is_alphanumeric()).collect();
         // Omit the generated value from the panic message — CodeQL would flag it as
         // cleartext logging of sensitive data (the function handles real IBANs in prod).
@@ -543,8 +520,7 @@ mod tests {
 
     #[test]
     fn test_generate_australia_tfn_valid() {
-        set_obfuscation_seed(3);
-        let mut rng = StdRng::seed_from_u64(3); // DevSkim: ignore DS148264
+        let mut rng = seeded(3);
         for _ in 0..20 {
             let tfn = generate_australia_tfn(&mut rng);
             assert!(is_valid_australia_tfn(&tfn), "generated TFN is not valid");
@@ -553,8 +529,7 @@ mod tests {
 
     #[test]
     fn test_generate_australia_medicare_valid() {
-        set_obfuscation_seed(4);
-        let mut rng = StdRng::seed_from_u64(4); // DevSkim: ignore DS148264
+        let mut rng = seeded(4);
         for _ in 0..20 {
             let mc = generate_australia_medicare(&mut rng);
             assert!(
@@ -566,8 +541,7 @@ mod tests {
 
     #[test]
     fn test_generate_iccid_valid() {
-        set_obfuscation_seed(5);
-        let mut rng = StdRng::seed_from_u64(5); // DevSkim: ignore DS148264
+        let mut rng = seeded(5);
         for _ in 0..20 {
             let iccid = generate_iccid(&mut rng);
             assert!(is_valid_iccid(&iccid), "generated ICCID is not valid");
@@ -577,8 +551,7 @@ mod tests {
 
     #[test]
     fn test_generate_dea_number_valid() {
-        set_obfuscation_seed(6);
-        let mut rng = StdRng::seed_from_u64(6); // DevSkim: ignore DS148264
+        let mut rng = seeded(6);
         for _ in 0..20 {
             let dea = generate_dea_number(&mut rng);
             assert!(
@@ -590,8 +563,7 @@ mod tests {
 
     #[test]
     fn test_generate_india_pan_valid() {
-        set_obfuscation_seed(7);
-        let mut rng = StdRng::seed_from_u64(7); // DevSkim: ignore DS148264
+        let mut rng = seeded(7);
         for _ in 0..20 {
             let pan = generate_india_pan(&mut rng);
             assert!(is_valid_india_pan(&pan), "generated India PAN is not valid");
@@ -709,9 +681,9 @@ mod tests {
 
     #[test]
     fn test_generate_south_africa_id_valid() {
-        set_obfuscation_seed(8);
+        let mut rng = seeded(8);
         for _ in 0..20 {
-            let id = generate_south_africa_id();
+            let id = generate_south_africa_id(&mut rng);
             assert!(
                 is_valid_south_africa_id(&id),
                 "generated SA ID {id:?} is not valid"
