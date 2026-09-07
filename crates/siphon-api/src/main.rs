@@ -368,9 +368,16 @@ fn build_audit_logger(
                 );
             }
             Ok(_) => {
-                tracing::warn!(
-                    "SIPHON_AUDIT_SIGNING_KEY_HEX is too short (<16 bytes); audit chain disabled"
+                // A key that is present but too short silently disables
+                // the tamper-evident chain — operator intent is ambiguous
+                // and a misconfigured chain is worse than no chain at all.
+                // Refuse to start rather than degrade silently.
+                eprintln!(
+                    "FATAL: SIPHON_AUDIT_SIGNING_KEY_HEX is too short (<16 bytes). \
+                     Use at least 32 hex-encoded bytes (64 hex chars), or unset the \
+                     variable to run without a signing chain."
                 );
+                std::process::exit(1);
             }
             Err(e) => {
                 tracing::warn!(
@@ -1510,7 +1517,7 @@ async fn scan(
             id: format!("f-{short_req}-{idx:02x}"),
             ts: ts_now.clone(),
             request_id: request_id.clone(),
-            source_ip: source_ip.clone(),
+            source_label: source_ip.clone(),
             source_pod: "siphon-api".to_string(),
             category: f.category.clone(),
             sub_category: f.sub_category.clone(),
@@ -1784,7 +1791,7 @@ async fn scan_batch(
                 id: format!("f-{short_batch}-{}-{idx:02x}", item.id),
                 ts: ts_now.clone(),
                 request_id: batch_id.clone(),
-                source_ip: source_ip.clone(),
+                source_label: source_ip.clone(),
                 source_pod: "siphon-api".to_string(),
                 category: f.category.clone(),
                 sub_category: f.sub_category.clone(),
@@ -2523,7 +2530,10 @@ struct StagesResponse {
     stages: Vec<StageState>,
 }
 
-async fn pipeline_stages_get(State(state): State<Arc<AppState>>) -> Json<StagesResponse> {
+async fn pipeline_stages_get(
+    State(state): State<Arc<AppState>>,
+    _: RequireAdminAction,
+) -> Json<StagesResponse> {
     let disabled: HashSet<String> = state
         .disabled_stages
         .read()

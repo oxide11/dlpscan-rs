@@ -192,7 +192,8 @@ async fn parse_icap_request<R: AsyncBufReadExt + Unpin>(
         uri
     };
 
-    // Read ICAP headers
+    // Read ICAP headers, capped to reject header-flood attacks.
+    const MAX_REQUEST_HEADERS: usize = 256;
     let mut headers = Vec::new();
     loop {
         let mut line = String::new();
@@ -200,6 +201,12 @@ async fn parse_icap_request<R: AsyncBufReadExt + Unpin>(
         let trimmed = line.trim_end_matches(['\r', '\n']);
         if trimmed.is_empty() {
             break; // blank line = end of headers
+        }
+        if headers.len() >= MAX_REQUEST_HEADERS {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("ICAP request header count exceeds limit of {MAX_REQUEST_HEADERS}"),
+            ));
         }
         if let Some((k, v)) = trimmed.split_once(':') {
             headers.push((k.trim().to_string(), v.trim().to_string()));

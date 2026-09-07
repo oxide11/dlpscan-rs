@@ -327,6 +327,8 @@ GET  /v1/stats/throughput       scanned-traffic counters + derived rates from sc
                                 (?hours=&tenant=&channel=); the denominator side of detection
                                 metrics — covers clean scans, which store no row of their own (admin)
 GET  /v1/findings/export        bulk CSV/JSON export (?format=csv|json&category=&from=&to=&limit=, max 100k rows; 5/min rate limit) (admin)
+GET  /v1/pipeline/stages        list scanner stage enable/disable state (admin)
+PATCH /v1/pipeline/stages       toggle a pipeline stage (admin)
 POST /v1/findings/prune         manual retention trigger — admin only
 POST /v1/overrides/apply        hot-reload PatternOverrides (no restart) (admin)
 GET  /v1/overrides/current      current PatternOverrides snapshot

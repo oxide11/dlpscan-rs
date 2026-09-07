@@ -2,6 +2,52 @@
 
 All notable changes to dlpscan will be documented in this file.
 
+## siphon-core 2.9.0 — 2026-09-07
+
+### Security
+
+- **LOW-1** Rename `FindingRecord.source_ip` → `source_label` (siphon-core,
+  siphon-api, siphon-fs). The file-scan pod has no TCP-peer IP at the handler
+  level and was populating the field with the uploaded filename; the old name
+  misled incident responders into treating a filename as a network address.
+
+## siphon-api 2.11.0 — 2026-09-07
+
+### Security
+
+- **LOW-2** Fail-hard (`eprintln` + `process::exit(1)`) when
+  `SIPHON_AUDIT_SIGNING_KEY_HEX` is present but too short (<16 bytes).
+  Previously this silently disabled the tamper-evident audit chain with only a
+  warning, giving operators false confidence the chain was active.
+- **NEW-1** Gate `GET /v1/pipeline/stages` behind `RequireAdminAction`. The
+  endpoint previously leaked which scanner stages were disabled to any
+  authenticated caller; stage-disable state is operationally sensitive
+  information that aids evasion planning.
+
+## siphon-fs 1.3.0 — 2026-09-07
+
+### Security
+
+- Field rename cascade from siphon-core 2.9.0 (`source_ip` → `source_label`).
+
+## siphon-icap 0.1.3 — 2026-09-07
+
+### Security
+
+- **LOW-3** Cap ICAP request header count at 256. An uncapped loop allowed a
+  proxy to exhaust server memory by sending an unbounded header section before
+  the blank-line terminator.
+
+## siphon-smtp 0.1.2 — 2026-09-07
+
+### Security
+
+- **NEW-2** Postgres pool now defaults to TLS (`SIPHON_DATABASE_TLS=require`,
+  matching siphon-api and siphon-fs). The previous `tokio_postgres::NoTls`
+  sent matched mail content — the data this scanner protects — in plaintext
+  over the Postgres hop. Set `SIPHON_DATABASE_TLS=disable` only when a
+  service mesh secures the link or Postgres is on loopback.
+
 ## [2.1.0] - 2026-04-07
 
 ### New Features

@@ -196,11 +196,76 @@ fn build_pool() -> Result<Option<deadpool_postgres::Pool>, Box<dyn std::error::E
     if let Ok(password) = std::env::var("SIPHON_DATABASE_PASSWORD") {
         cfg.password = Some(password);
     }
-    let pool = cfg.create_pool(
-        Some(deadpool_postgres::Runtime::Tokio1),
-        tokio_postgres::NoTls,
-    )?;
+    let pool = match build_tls()? {
+        MaybeTls::Plain => cfg.create_pool(
+            Some(deadpool_postgres::Runtime::Tokio1),
+            tokio_postgres::NoTls,
+        )?,
+        MaybeTls::Tls(c) => {
+            // SslMode::Prefer silently downgrades to plaintext when the server
+            // declines TLS — require closes that downgrade path.
+            cfg.ssl_mode = Some(deadpool_postgres::SslMode::Require);
+            cfg.create_pool(Some(deadpool_postgres::Runtime::Tokio1), *c)?
+        }
+    };
     Ok(Some(pool))
+}
+
+/// TLS connector selection, mirroring siphon-api and siphon-fs.
+///
+/// Defaults to `require` — mail messages carry matched sensitive data and
+/// the Postgres hop should be encrypted in the same way as the scan APIs.
+fn build_tls() -> Result<MaybeTls, Box<dyn std::error::Error>> {
+    let mode = std::env::var("SIPHON_DATABASE_TLS").unwrap_or_else(|_| "require".into());
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "disable" | "off" | "false" => {
+            tracing::warn!(
+                "SIPHON_DATABASE_TLS=disable — Postgres link is unencrypted. \
+                 Mail messages contain the sensitive data this scanner detects; \
+                 only do this when a service mesh secures the hop or Postgres is on loopback."
+            );
+            Ok(MaybeTls::Plain)
+        }
+        "require" | "on" | "true" => {
+            let mut roots = rustls::RootCertStore::empty();
+            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            if let Ok(path) = std::env::var("SIPHON_DATABASE_CA_FILE") {
+                let pem = std::fs::read(&path)
+                    .map_err(|e| format!("reading SIPHON_DATABASE_CA_FILE {path}: {e}"))?;
+                let mut added = 0usize;
+                for cert in rustls_pemfile::certs(&mut pem.as_slice()).flatten() {
+                    roots
+                        .add(cert)
+                        .map_err(|e| format!("adding CA from {path}: {e}"))?;
+                    added += 1;
+                }
+                if added == 0 {
+                    return Err(format!("no certificates found in {path}").into());
+                }
+                tracing::info!(path, added, "loaded extra Postgres CA certificates");
+            }
+            let config = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+                rustls::crypto::ring::default_provider(),
+            ))
+            .with_safe_default_protocol_versions()
+            .map_err(|e| format!("configuring Postgres TLS: {e}"))?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+            tracing::info!("Postgres TLS enabled");
+            Ok(MaybeTls::Tls(Box::new(
+                tokio_postgres_rustls::MakeRustlsConnect::new(config),
+            )))
+        }
+        other => Err(format!(
+            "SIPHON_DATABASE_TLS={other:?} is not recognised (expected 'require' or 'disable')"
+        )
+        .into()),
+    }
+}
+
+enum MaybeTls {
+    Plain,
+    Tls(Box<tokio_postgres_rustls::MakeRustlsConnect>),
 }
 
 impl Config {

@@ -24,7 +24,11 @@ pub struct FindingRecord {
     pub id: String,
     pub ts: String,
     pub request_id: String,
-    pub source_ip: String,
+    /// Caller identity label. For text-scan requests this is the client's IP
+    /// address; for file-scan requests it is the uploaded filename. Named
+    /// `source_label` rather than `source_ip` because the fs pod has no
+    /// TCP-peer IP available at the handler level.
+    pub source_label: String,
     /// Which pod recorded this finding — "siphon-api" or "siphon-fs".
     pub source_pod: String,
     pub category: String,
@@ -156,7 +160,7 @@ mod tests {
             id: id.into(),
             ts: "2026-04-19T00:00:00Z".into(),
             request_id: "req".into(),
-            source_ip: "127.0.0.1".into(),
+            source_label: "127.0.0.1".into(),
             source_pod: "siphon-test".into(),
             category: cat.into(),
             sub_category: "x".into(),

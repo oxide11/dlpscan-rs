@@ -712,10 +712,6 @@ async fn scan(
     // the findings are queryable via /v1/findings.
     let ts_now = iso8601_now();
     let short_req = request_id.split('-').next().unwrap_or(&request_id);
-    // Use the uploaded filename as the 'source_ip' field. It's not
-    // actually an IP, but it's the most useful provenance signal for
-    // a file scan (which client sent which file). The admin console
-    // already renders source_ip as a provenance label.
     let source_label = filename
         .clone()
         .unwrap_or_else(|| "<anon-upload>".to_string());
@@ -724,7 +720,7 @@ async fn scan(
             id: format!("f-{short_req}-{idx:02x}"),
             ts: ts_now.clone(),
             request_id: request_id.clone(),
-            source_ip: source_label.clone(),
+            source_label: source_label.clone(),
             source_pod: POD_NAME.to_string(),
             category: m.category.to_string(),
             sub_category: m.sub_category.to_string(),

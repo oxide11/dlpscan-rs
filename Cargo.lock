@@ -4996,7 +4996,7 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "siphon-api"
-version = "2.10.0"
+version = "2.11.0"
 dependencies = [
  "axum",
  "axum-server",
@@ -5082,7 +5082,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-core"
-version = "2.8.1"
+version = "2.9.0"
 dependencies = [
  "aho-corasick",
  "base64 0.23.1",
@@ -5109,7 +5109,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-fs"
-version = "1.2.0"
+version = "1.3.0"
 dependencies = [
  "axum",
  "deadpool-postgres",
@@ -5135,7 +5135,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-icap"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "serde_json",
  "siphon-core",
@@ -5173,9 +5173,11 @@ dependencies = [
 
 [[package]]
 name = "siphon-smtp"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "deadpool-postgres",
+ "rustls",
+ "rustls-pemfile",
  "sha2 0.11.0",
  "siphon-cli",
  "siphon-core",
@@ -5183,9 +5185,11 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-postgres",
+ "tokio-postgres-rustls",
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "webpki-roots",
 ]
 
 [[package]]
