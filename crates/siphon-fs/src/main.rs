@@ -114,6 +114,7 @@ impl RateLimiter {
             self.last_cleanup = now;
         }
         if self.windows.len() > 100_000 {
+            warn!("rate-limiter map exceeded 100 000 entries and was reset — all per-IP windows cleared");
             self.windows.clear();
             self.last_cleanup = now;
         }
@@ -346,6 +347,9 @@ struct ScanResponse {
     parsed_as: String,
     warnings: Vec<String>,
     findings: Vec<ScanFinding>,
+    /// False when extraction failed or extracted text exceeded MAX_INPUT_SIZE;
+    /// in those cases `findings: []` is a coverage gap, not a clean result.
+    scanned: bool,
     /// Per-stage trace events — present only when the caller sent
     /// `options={"trace":true}` as a multipart field. Mirrors the shape
     /// siphon-api's /scan returns so the admin console's trace
@@ -386,6 +390,20 @@ fn err(code: StatusCode, msg: impl Into<String>) -> Response {
     (code, JsonResponse(ErrorBody { error: msg.into() })).into_response()
 }
 
+fn sanitize_tenant_id(s: &str) -> Option<String> {
+    let s = s.trim();
+    if s.is_empty() || s.len() > 64 {
+        return None;
+    }
+    if s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
+    {
+        Some(s.to_owned())
+    } else {
+        None
+    }
+}
+
 // ─── /scan handler ───────────────────────────────────────────────
 async fn scan(
     State(state): State<AppState>,
@@ -395,7 +413,7 @@ async fn scan(
     let tenant_id: Option<String> = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_owned());
+        .and_then(sanitize_tenant_id);
     let request_id = uuid::Uuid::new_v4().to_string();
     let start = Instant::now();
 
@@ -537,6 +555,7 @@ async fn scan(
                 parsed_as: "unknown".to_string(),
                 warnings: vec![],
                 findings: vec![],
+                scanned: false,
                 trace: None,
                 error: Some(format!("extraction failed: {e}")),
                 error_code: if is_password {
@@ -573,6 +592,7 @@ async fn scan(
             parsed_as: extract.format.clone(),
             warnings,
             findings: vec![],
+            scanned: true,
             trace: None,
             error: None,
             error_code: None,
@@ -607,25 +627,29 @@ async fn scan(
             scanner_cap = siphon_core::validation::MAX_INPUT_SIZE,
             "extracted text exceeds scanner limit; file not scanned"
         );
-        return JsonResponse(ScanResponse {
-            request_id,
-            filename,
-            content_type,
-            bytes: file_len,
-            duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-            parsed_as: extract.format.clone(),
-            warnings,
-            findings: vec![],
-            trace: None,
-            error: Some(format!(
-                "extracted text is {} bytes, above the scanner limit of {} bytes; \
-                 the file was not scanned",
-                extract.text.len(),
-                siphon_core::validation::MAX_INPUT_SIZE
-            )),
-            error_code: Some("TEXT_EXCEEDS_SCANNER_LIMIT".to_string()),
-        })
-        .into_response();
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            JsonResponse(ScanResponse {
+                request_id,
+                filename,
+                content_type,
+                bytes: file_len,
+                duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+                parsed_as: extract.format.clone(),
+                warnings,
+                findings: vec![],
+                scanned: false,
+                trace: None,
+                error: Some(format!(
+                    "extracted text is {} bytes, above the scanner limit of {} bytes; \
+                     the file was not scanned",
+                    extract.text.len(),
+                    siphon_core::validation::MAX_INPUT_SIZE
+                )),
+                error_code: Some("TEXT_EXCEEDS_SCANNER_LIMIT".to_string()),
+            }),
+        )
+            .into_response();
     }
 
     // Caller opted into tracing — allocate a sink the scanner drains
@@ -798,6 +822,7 @@ async fn scan(
         parsed_as: extract.format,
         warnings: extract.warnings,
         findings,
+        scanned: true,
         trace,
         error: None,
         error_code: None,
@@ -826,6 +851,7 @@ struct FindingsResponse {
 }
 
 async fn list_findings(
+    _: RequireAdminAction,
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
     Query(q): Query<FindingsQuery>,
@@ -833,8 +859,7 @@ async fn list_findings(
     let tenant_id: Option<String> = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_owned());
+        .and_then(sanitize_tenant_id);
 
     let snapshot = state.findings.snapshot();
     let total = snapshot.len();

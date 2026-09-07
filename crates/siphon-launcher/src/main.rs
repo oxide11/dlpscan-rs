@@ -33,7 +33,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tower_http::{
+    cors::{AllowOrigin, CorsLayer},
+    trace::TraceLayer,
+};
 use tracing::{info, warn};
 
 const LAUNCHER_NAME: &str = "siphon-launcher";
@@ -551,13 +554,53 @@ async fn stop_process(State(state): State<AppState>, Json(req): Json<StopRequest
 
 // ─── Router ──────────────────────────────────────────────────────
 fn build_router(state: AppState) -> Router {
+    // SIPHON_LAUNCHER_CORS_ORIGINS: comma-separated list of allowed origins.
+    // Set to "*" only for local dev; omit in any environment where a browser
+    // page could reach the launcher, since permissive CORS lets any webpage
+    // send authenticated-looking requests to the process-management endpoints.
+    // SIPHON_ALLOW_PERMISSIVE_CORS=true is the fallback dev opt-in (shared
+    // with siphon-api/siphon-fs); without either, cross-origin is denied.
+    let cors = match std::env::var("SIPHON_LAUNCHER_CORS_ORIGINS") {
+        Ok(origins) if !origins.trim().is_empty() => {
+            let base = CorsLayer::new()
+                .allow_methods([axum::http::Method::POST, axum::http::Method::GET])
+                .allow_headers([axum::http::header::CONTENT_TYPE]);
+            if origins.trim() == "*" {
+                CorsLayer::permissive()
+            } else {
+                let allowed: Vec<axum::http::HeaderValue> = origins
+                    .split(',')
+                    .filter_map(|s| axum::http::HeaderValue::from_str(s.trim()).ok())
+                    .collect();
+                base.allow_origin(AllowOrigin::list(allowed))
+            }
+        }
+        _ => {
+            let permissive = std::env::var("SIPHON_ALLOW_PERMISSIVE_CORS")
+                .map(|v| {
+                    let v = v.trim().to_ascii_lowercase();
+                    v == "true" || v == "1"
+                })
+                .unwrap_or(false);
+            if permissive {
+                warn!(
+                    "SIPHON_ALLOW_PERMISSIVE_CORS is set — reflecting any Origin. \
+                     Local dev only; set SIPHON_LAUNCHER_CORS_ORIGINS in production."
+                );
+                CorsLayer::permissive()
+            } else {
+                CorsLayer::new()
+            }
+        }
+    };
+
     Router::new()
         .route("/health", get(health))
         .route("/v1/manage/list", get(list_processes))
         .route("/v1/manage/start", post(start_process))
         .route("/v1/manage/stop", post(stop_process))
         .with_state(state)
-        .layer(CorsLayer::permissive())
+        .layer(cors)
         .layer(TraceLayer::new_for_http())
 }
 

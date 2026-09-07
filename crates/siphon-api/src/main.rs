@@ -280,6 +280,7 @@ impl RateLimiter {
         }
 
         if self.windows.len() > 100_000 {
+            tracing::warn!("rate-limiter map exceeded 100 000 entries and was reset — all per-IP windows cleared");
             self.windows.clear();
             self.last_cleanup = now;
         }
@@ -1141,6 +1142,20 @@ async fn health_detailed(State(state): State<Arc<AppState>>) -> Json<DetailedHea
     })
 }
 
+fn sanitize_tenant_id(s: &str) -> Option<String> {
+    let s = s.trim();
+    if s.is_empty() || s.len() > 64 {
+        return None;
+    }
+    if s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
+    {
+        Some(s.to_owned())
+    } else {
+        None
+    }
+}
+
 async fn scan(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -1151,7 +1166,7 @@ async fn scan(
     let tenant_id: Option<String> = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_owned());
+        .and_then(sanitize_tenant_id);
 
     if req.text.is_empty() {
         return Err((
@@ -1603,7 +1618,7 @@ async fn scan_batch(
     let tenant_id: Option<String> = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_owned());
+        .and_then(sanitize_tenant_id);
     const MAX_BATCH: usize = 500;
     if items.is_empty() {
         return Err((
@@ -5543,8 +5558,7 @@ async fn findings_stats(
     let tenant_id: Option<String> = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_owned());
+        .and_then(sanitize_tenant_id);
 
     // Return cached response if fresh enough — keyed by tenant so one
     // tenant's aggregate is never served to another.
@@ -5835,8 +5849,7 @@ async fn list_pg_findings(
     let tenant_id: Option<String> = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_owned());
+        .and_then(sanitize_tenant_id);
     let tenant_filter = tenant_id.as_deref();
 
     let rows = match client
@@ -6093,8 +6106,7 @@ async fn findings_export(
     let tenant_id: Option<String> = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_owned());
+        .and_then(sanitize_tenant_id);
     let tenant_filter = tenant_id.as_deref();
 
     let Some(pool) = state.db_pool.as_ref() else {
@@ -6277,8 +6289,7 @@ async fn list_findings(
     let tenant_id: Option<String> = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_owned());
+        .and_then(sanitize_tenant_id);
 
     let snapshot = state.findings.snapshot();
     let total = snapshot.len();
