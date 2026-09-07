@@ -6661,10 +6661,7 @@ async fn main() {
         .route("/v1/findings/pg", get(list_pg_findings))
         .route("/v1/findings/export", get(findings_export))
         .route("/v1/findings/prune", post(findings_prune))
-        .route(
-            "/v1/findings/{id}/feedback",
-            post(post_finding_feedback),
-        )
+        .route("/v1/findings/{id}/feedback", post(post_finding_feedback))
         .route("/v1/findings", get(list_findings))
         .route("/v1/version", get(version))
         .route("/v1/capabilities", get(capabilities))
