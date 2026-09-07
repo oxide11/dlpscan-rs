@@ -92,6 +92,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
     // Owned by siphon-mail, which also owns the statements that depend on
     // it. Registered here because this service runs the migration runner.
     (10, "0010_messages", siphon_mail::MIGRATION_SQL),
+    (
+        11,
+        "0011_feedback",
+        include_str!("../migrations/0011_feedback.sql"),
+    ),
 ];
 
 /// Initialise an optional database pool from the environment.
@@ -1293,4 +1298,38 @@ pub async fn query_rollup(
             scan_errors: r.get("scan_errors"),
         })
         .collect())
+}
+
+/// Record an analyst verdict on a finding.
+///
+/// Updates `analyst_verdict`, `reviewed_by_hash`, `reviewed_at`, and
+/// `review_note` in place. Idempotent — calling again with a different
+/// verdict overwrites the previous one, so a corrected review is one call.
+///
+/// Returns `Ok(true)` when the row was found and updated, `Ok(false)` when
+/// no row matched `finding_id` (caller should return 404), and `Err` for
+/// pool / query failures.
+pub async fn record_finding_feedback(
+    pool: &Option<Pool>,
+    finding_id: uuid::Uuid,
+    verdict: &str,
+    reviewer_hash: &[u8],
+    note: Option<&str>,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    let Some(pool) = pool else {
+        return Ok(false);
+    };
+    let client = pool.get().await?;
+    let rows_updated = client
+        .execute(
+            "UPDATE findings \
+             SET analyst_verdict  = $1, \
+                 reviewed_by_hash = $2, \
+                 reviewed_at      = now(), \
+                 review_note      = $3 \
+             WHERE id = $4",
+            &[&verdict, &reviewer_hash, &note, &finding_id],
+        )
+        .await?;
+    Ok(rows_updated > 0)
 }
