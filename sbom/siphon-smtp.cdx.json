@@ -4995,31 +4995,19 @@
           "type": "vcs",
           "url": "https://github.com/oxide11/dlpscan-rs"
         }
-      ],
-      "properties": [
-        {
-          "name": "siphon:first-party",
-          "value": "true"
-        }
       ]
     },
     {
       "type": "library",
       "name": "siphon-core",
-      "version": "2.8.1",
-      "purl": "pkg:cargo/siphon-core@2.8.1",
+      "version": "2.9.0",
+      "purl": "pkg:cargo/siphon-core@2.9.0",
       "scope": "required",
       "licenses": [
         {
           "license": {
             "id": "MIT"
           }
-        }
-      ],
-      "properties": [
-        {
-          "name": "siphon:first-party",
-          "value": "true"
         }
       ]
     },
@@ -5034,12 +5022,6 @@
           "license": {
             "id": "MIT"
           }
-        }
-      ],
-      "properties": [
-        {
-          "name": "siphon:first-party",
-          "value": "true"
         }
       ]
     },
