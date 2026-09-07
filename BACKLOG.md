@@ -33,6 +33,28 @@ are registered without a stable salt. Align with the CLI's existing
 
 **Files:** `crates/siphon-api/src/main.rs` (AppState init), `crates/siphon-core/src/edm.rs`
 
+### JSON deserialization depth limit
+
+`serde_json` uses recursive descent with no configurable stack-depth cap. A
+request body with deeply nested JSON (e.g. `{"a":{"a":{"a":...}}}` 15k+ levels)
+can overflow the thread stack before the body-size limit rejects it, since nesting
+depth is not proportional to byte count.
+
+**Affected endpoints:** all `Json<T>` extractor sites in siphon-api (POST /scan,
+POST /scan/batch, POST /v1/overrides/apply, POST /v1/evadex/runs, …).
+
+**Fix options (prefer either):**
+1. Add a Tower middleware layer that reads the raw body, checks nesting depth
+   (character-count heuristic on `{`/`[` depth), and returns 400 before handing
+   to serde_json.
+2. Switch the affected handlers to `Bytes` extraction, pre-scan depth with a
+   fast counter loop, then deserialize — avoids any additional dep.
+
+**Severity:** DoS-only (no data exposure); the body-size limit provides partial
+mitigation by capping bytes, but a ~1 MB body can hold ~100k depth levels.
+
+**Files:** `crates/siphon-api/src/main.rs` (all JSON handler sites)
+
 ---
 
 ## Ready to build

@@ -6251,8 +6251,8 @@ async fn findings_export(
             has_context
                 .map(|b| if b { "true" } else { "false" })
                 .unwrap_or(""),
-            source_pod.as_deref().unwrap_or(""),
-            scanner_version.as_deref().unwrap_or(""),
+            source_pod.as_deref().map(csv_field).unwrap_or_default(),
+            scanner_version.as_deref().map(csv_field).unwrap_or_default(),
             file_name.as_deref().map(csv_field).unwrap_or_default(),
             duration_ms.map(|n| n.to_string()).unwrap_or_default(),
         ));
