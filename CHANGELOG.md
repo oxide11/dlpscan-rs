@@ -6,6 +6,27 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-09-07 — locale-signal survey
+
+### siphon-core 2.9.0
+
+- **feat(core): `FileMetadata.language` — BCP-47 document language.**
+  Promoted from the raw bag where it was filed under the incorrect `cp:language`
+  key. Source: `dc:language` in OOXML `docProps/core.xml` and PDF XMP.
+  Survey-only: not yet used to gate or weight detection.
+
+- **feat(core): `FileMetadata.locale` — primary editing locale.**
+  Parsed from `w:themeFontLang/@w:val` in OOXML `word/settings.xml` (e.g.
+  `"en-US"`, `"fr-CA"`). This is the language the author's Word install was
+  configured for — a strong attribution signal independent of the document
+  content. Survey-only: not yet used to gate or weight detection.
+
+- **fix(core): `dc:language` raw prefix corrected.** Unknown `core.xml` tags
+  were filed under `cp:*` (the custom-properties namespace) but that file
+  contains Dublin Core properties — they are now filed as `dc:*`.
+
+---
+
 ## 2026-09-07 — per-category baselines
 
 ### siphon-api 2.10.0

@@ -171,6 +171,8 @@ fn assign_xmp(meta: &mut FileMetadata, tag: &str, value: String) {
         // across every edit. Strongest PDF attribution signal after
         // the /ID first token — investigators correlate it when the
         // Info dict has been stripped.
+        // dc:language — BCP-47 document language from XMP
+        "language" if meta.language.is_none() => meta.language = Some(value),
         "DocumentID" => {
             meta.raw.insert("xmp:DocumentID".to_string(), value);
         }
