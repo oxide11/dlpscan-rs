@@ -54,7 +54,10 @@ pub fn obfuscate_match(m: &Match) -> String {
         "ICCID" => generate_iccid(&mut *rng),
         "DEA Number" => generate_dea_number(&mut *rng),
         "India PAN" => generate_india_pan(&mut *rng),
-        "South Africa ID Number" => {
+        // "South Africa ID", not "South Africa ID Number": the arm has to
+        // spell the sub_category the pattern set actually emits, or it never
+        // matches and the value falls through to obfuscate_generic.
+        "South Africa ID" => {
             drop(rng);
             generate_south_africa_id()
         }
@@ -592,6 +595,115 @@ mod tests {
         for _ in 0..20 {
             let pan = generate_india_pan(&mut rng);
             assert!(is_valid_india_pan(&pan), "generated India PAN is not valid");
+        }
+    }
+
+    /// Every string `obfuscate_match` dispatches on must be a name the
+    /// pattern set actually emits.
+    ///
+    /// The generators are selected by string equality on
+    /// `Match::sub_category` (falling back to `category`), so an arm naming
+    /// something no pattern produces is dead code that looks alive: the value
+    /// falls through to `obfuscate_generic` and the check-digit-correct
+    /// generator never runs. That is what happened to South Africa ID, whose
+    /// arm read "South Africa ID Number" while the pattern emits "South
+    /// Africa ID".
+    ///
+    /// The per-generator tests below cannot catch this — they call the
+    /// generators directly, which proves the arithmetic and nothing about
+    /// whether anything reaches it. Neither can a hand-maintained list of the
+    /// arms, which is just the same typo written twice. So the arms are read
+    /// out of this file's own source: no duplication to drift, and a new arm
+    /// is covered the moment it is written.
+    #[test]
+    fn every_dispatch_arm_names_something_the_scanner_emits() {
+        use siphon_core::patterns::PATTERNS;
+
+        let known: std::collections::HashSet<&str> = PATTERNS
+            .iter()
+            .flat_map(|p| [p.sub_category, p.category])
+            .collect();
+
+        let source = include_str!("obfuscate.rs");
+        let body_start = source
+            .find("pub fn obfuscate_match")
+            .expect("obfuscate_match must exist");
+        // Ends at the next item at column 0 after the function.
+        let body = &source[body_start..];
+        let body_end = body[1..].find("\n}\n").map(|i| i + 2).unwrap_or(body.len());
+        let body = &body[..body_end];
+
+        // Every string literal in that function is an arm pattern — a
+        // sub_category or a category. There are no other literals in it.
+        // Comments are dropped first, or a comment that quotes a name (such
+        // as the one above the South Africa arm, which cites the old spelling
+        // to explain the fix) would read as an arm.
+        let mut unknown: Vec<String> = Vec::new();
+        for line in body.lines() {
+            let mut in_string = false;
+            let mut code_end = line.len();
+            let bytes = line.as_bytes();
+            let mut i = 0;
+            while i + 1 <= bytes.len() {
+                match bytes[i] {
+                    b'"' => in_string = !in_string,
+                    b'/' if !in_string && bytes.get(i + 1) == Some(&b'/') => {
+                        code_end = i;
+                        break;
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            let code = &line[..code_end];
+
+            let mut rest = code;
+            while let Some(open) = rest.find('"') {
+                rest = &rest[open + 1..];
+                let Some(close) = rest.find('"') else { break };
+                let lit = &rest[..close];
+                rest = &rest[close + 1..];
+                if !lit.is_empty() && !known.contains(lit) {
+                    unknown.push(lit.to_string());
+                }
+            }
+        }
+
+        assert!(
+            unknown.is_empty(),
+            "these obfuscate_match arms name nothing the scanner emits, so they \
+             never run and the value falls through to obfuscate_generic: {unknown:?}"
+        );
+    }
+
+    /// The generator is reached through `obfuscate_match`, not just callable.
+    ///
+    /// Round-trips the value the scanner itself produces: scan a real SA ID,
+    /// hand the resulting Match to the obfuscator, and require the output to
+    /// still be a valid SA ID. Before the arm was corrected this produced
+    /// random digits from `obfuscate_generic`, which the validator rejects.
+    #[test]
+    fn south_africa_id_is_reached_through_dispatch() {
+        use siphon_core::scanner::{scan_text_with_config, ScanConfig};
+
+        let cfg = ScanConfig {
+            min_confidence: 0.0,
+            ..Default::default()
+        };
+        let found = scan_text_with_config("id number: 8001015009087", &cfg)
+            .expect("scan")
+            .into_iter()
+            .find(|m| m.sub_category == "South Africa ID")
+            .expect("the scanner should report a South Africa ID here");
+
+        set_obfuscation_seed(11);
+        for _ in 0..20 {
+            let fake = obfuscate_match(&found);
+            assert!(
+                is_valid_south_africa_id(&fake),
+                "dispatch produced {fake:?}, which is not a valid South Africa ID \
+                 — the arm is not reaching the generator"
+            );
         }
     }
 
