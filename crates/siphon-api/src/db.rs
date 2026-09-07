@@ -97,6 +97,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "0011_feedback",
         include_str!("../migrations/0011_feedback.sql"),
     ),
+    (
+        12,
+        "0012_baselines",
+        include_str!("../migrations/0012_baselines.sql"),
+    ),
 ];
 
 /// Initialise an optional database pool from the environment.
@@ -1332,4 +1337,225 @@ pub async fn record_finding_feedback(
         )
         .await?;
     Ok(rows_updated > 0)
+}
+
+// ---------------------------------------------------------------------------
+// Baseline computation
+// ---------------------------------------------------------------------------
+
+/// One category's contribution to a baseline snapshot.
+pub struct CategoryMetrics {
+    pub category: String,
+    /// From evadex_findings.
+    pub recall_tp: Option<i64>,
+    pub recall_n: Option<i64>,
+    pub recall_val: Option<f64>,
+    pub recall_ci_low: Option<f64>,
+    pub recall_ci_high: Option<f64>,
+    /// From findings.analyst_verdict.
+    pub precision_tp: Option<i64>,
+    pub precision_n: Option<i64>,
+    pub precision_val: Option<f64>,
+    pub precision_ci_low: Option<f64>,
+    pub precision_ci_high: Option<f64>,
+    pub f1_val: Option<f64>,
+}
+
+/// Wilson 95% confidence interval for a proportion.
+///
+/// Returns (low, high) clamped to [0, 1]. When n == 0 returns (0, 1).
+fn wilson_ci(p: f64, n: i64) -> (f64, f64) {
+    if n == 0 {
+        return (0.0, 1.0);
+    }
+    let z = 1.96_f64;
+    let nf = n as f64;
+    let center = (p + z * z / (2.0 * nf)) / (1.0 + z * z / nf);
+    let margin = z * ((p * (1.0 - p) / nf) + (z * z / (4.0 * nf * nf))).sqrt()
+        / (1.0 + z * z / nf);
+    (f64::max(0.0, center - margin), f64::min(1.0, center + margin))
+}
+
+/// Compute and persist a baseline snapshot.
+///
+/// Queries evadex_findings for recall per category and findings.analyst_verdict
+/// for precision per category, merges by category, computes F1 and Wilson 95%
+/// confidence intervals, and stores everything under a new baseline_snapshots
+/// row. Returns the new snapshot UUID.
+///
+/// The precision query references `findings.analyst_verdict` which is added
+/// by migration 0011 (analyst feedback). If that migration has not yet run,
+/// the query will fail and precision data will be absent for all categories —
+/// the recall data is still stored.
+pub async fn compute_baseline_snapshot(
+    pool: &Option<Pool>,
+    label: Option<&str>,
+    scanner_version: &str,
+) -> Result<uuid::Uuid, Box<dyn std::error::Error + Send + Sync>> {
+    let Some(pool) = pool else {
+        return Err("database not configured".into());
+    };
+    let client = pool.get().await?;
+
+    // --- Recall: from evadex_findings ---------------------------------------
+    let recall_rows = client
+        .query(
+            "SELECT category, \
+                    COUNT(*) FILTER (WHERE detected) AS recall_tp, \
+                    COUNT(*) AS recall_n \
+             FROM evadex_findings \
+             GROUP BY category \
+             ORDER BY category",
+            &[],
+        )
+        .await?;
+
+    use std::collections::HashMap;
+    let mut metrics: HashMap<String, CategoryMetrics> = HashMap::new();
+
+    for row in &recall_rows {
+        let category: String = row.get("category");
+        let recall_tp: i64 = row.get("recall_tp");
+        let recall_n: i64 = row.get("recall_n");
+        let recall_val = if recall_n > 0 {
+            recall_tp as f64 / recall_n as f64
+        } else {
+            0.0
+        };
+        let (recall_ci_low, recall_ci_high) = wilson_ci(recall_val, recall_n);
+        metrics.entry(category.clone()).or_insert_with(|| CategoryMetrics {
+            category: category.clone(),
+            recall_tp: None,
+            recall_n: None,
+            recall_val: None,
+            recall_ci_low: None,
+            recall_ci_high: None,
+            precision_tp: None,
+            precision_n: None,
+            precision_val: None,
+            precision_ci_low: None,
+            precision_ci_high: None,
+            f1_val: None,
+        });
+        let m = metrics.get_mut(&category).unwrap();
+        m.recall_tp = Some(recall_tp);
+        m.recall_n = Some(recall_n);
+        m.recall_val = Some(recall_val);
+        m.recall_ci_low = Some(recall_ci_low);
+        m.recall_ci_high = Some(recall_ci_high);
+    }
+
+    // --- Precision: from findings.analyst_verdict ---------------------------
+    // This query requires migration 0011. On failure (column not yet present),
+    // we continue with recall-only data.
+    let precision_rows = client
+        .query(
+            "SELECT category, \
+                    COUNT(*) FILTER (WHERE analyst_verdict = 'tp') AS precision_tp, \
+                    COUNT(*) FILTER (WHERE analyst_verdict IN ('tp', 'fp')) AS precision_n \
+             FROM findings \
+             WHERE analyst_verdict IS NOT NULL \
+             GROUP BY category \
+             ORDER BY category",
+            &[],
+        )
+        .await
+        .unwrap_or_default();
+
+    for row in &precision_rows {
+        let category: String = row.get("category");
+        let precision_tp: i64 = row.get("precision_tp");
+        let precision_n: i64 = row.get("precision_n");
+        let precision_val = if precision_n > 0 {
+            precision_tp as f64 / precision_n as f64
+        } else {
+            0.0
+        };
+        let (precision_ci_low, precision_ci_high) = wilson_ci(precision_val, precision_n);
+        let m = metrics.entry(category.clone()).or_insert_with(|| CategoryMetrics {
+            category: category.clone(),
+            recall_tp: None,
+            recall_n: None,
+            recall_val: None,
+            recall_ci_low: None,
+            recall_ci_high: None,
+            precision_tp: None,
+            precision_n: None,
+            precision_val: None,
+            precision_ci_low: None,
+            precision_ci_high: None,
+            f1_val: None,
+        });
+        m.precision_tp = Some(precision_tp);
+        m.precision_n = Some(precision_n);
+        m.precision_val = Some(precision_val);
+        m.precision_ci_low = Some(precision_ci_low);
+        m.precision_ci_high = Some(precision_ci_high);
+    }
+
+    // F1 = 2*P*R / (P+R) when both are present.
+    for m in metrics.values_mut() {
+        if let (Some(p), Some(r)) = (m.precision_val, m.recall_val) {
+            let denom = p + r;
+            m.f1_val = if denom > 0.0 {
+                Some(2.0 * p * r / denom)
+            } else {
+                Some(0.0)
+            };
+        }
+    }
+
+    // --- Persist ------------------------------------------------------------
+    let category_count = metrics.len() as i32;
+    let snapshot_id: uuid::Uuid = client
+        .query_one(
+            "INSERT INTO baseline_snapshots (label, scanner_version, category_count) \
+             VALUES ($1, $2, $3) \
+             RETURNING id",
+            &[&label, &scanner_version, &category_count],
+        )
+        .await?
+        .get("id");
+
+    for m in metrics.values() {
+        let recall_tp = m.recall_tp.map(|v| v as i32);
+        let recall_n = m.recall_n.map(|v| v as i32);
+        let recall_val = m.recall_val.map(|v| v as f32);
+        let recall_ci_low = m.recall_ci_low.map(|v| v as f32);
+        let recall_ci_high = m.recall_ci_high.map(|v| v as f32);
+        let precision_tp = m.precision_tp.map(|v| v as i32);
+        let precision_n = m.precision_n.map(|v| v as i32);
+        let precision_val = m.precision_val.map(|v| v as f32);
+        let precision_ci_low = m.precision_ci_low.map(|v| v as f32);
+        let precision_ci_high = m.precision_ci_high.map(|v| v as f32);
+        let f1_val = m.f1_val.map(|v| v as f32);
+
+        client
+            .execute(
+                "INSERT INTO category_baselines \
+                 (snapshot_id, category, \
+                  recall_val, recall_tp, recall_n, recall_ci_low, recall_ci_high, \
+                  precision_val, precision_tp, precision_n, precision_ci_low, precision_ci_high, \
+                  f1_val) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+                &[
+                    &snapshot_id,
+                    &m.category,
+                    &recall_val,
+                    &recall_tp,
+                    &recall_n,
+                    &recall_ci_low,
+                    &recall_ci_high,
+                    &precision_val,
+                    &precision_tp,
+                    &precision_n,
+                    &precision_ci_low,
+                    &precision_ci_high,
+                    &f1_val,
+                ],
+            )
+            .await?;
+    }
+
+    Ok(snapshot_id)
 }

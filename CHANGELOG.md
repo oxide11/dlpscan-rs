@@ -3,6 +3,45 @@
 All notable, user-visible changes to the Siphon stack are recorded here. Each
 release block is dated and contains per-crate sub-sections — bumps are
 independent, so a release block typically moves only the crates that actually
+
+---
+
+## 2026-09-07 — per-category baselines
+
+### siphon-api 2.10.0
+
+- **feat(api): `POST /v1/baselines/snapshot` — compute and store a baseline.**
+  Queries `evadex_findings` for per-category recall (detected / planted) and
+  `findings.analyst_verdict` for per-category precision (tp / (tp+fp)), merges
+  by category, computes F1 and Wilson 95% confidence intervals, and persists
+  everything under a new `baseline_snapshots` row. The label field lets teams
+  name a snapshot ("pre-refactor", "after-zip-fix"). Admin-only.
+
+- **feat(api): `GET /v1/baselines` — list snapshots.** Returns all snapshots
+  newest-first with id, created_at, label, scanner_version, and category_count.
+
+- **feat(api): `GET /v1/baselines/current` — most recent snapshot.**
+  Full per-category breakdown including recall_val, precision_val, f1_val,
+  and both Wilson 95% CI bounds for each metric. Fields are absent (not null)
+  when a source has no data for a category.
+
+- **feat(api): `GET /v1/baselines/{id}` — any snapshot by id.** Same shape
+  as /current but addressed by UUID.
+
+- **feat(api): `GET /v1/baselines/delta?from=&to=` — compare two snapshots.**
+  Returns a per-category row with `recall_delta`, `precision_delta`, and
+  `f1_delta` (to − from), sorted by abs(recall_delta) descending so the
+  biggest regressions surface first. This is the "Card Expiry recall -4%"
+  display FUTURE.md asks for rather than a binary red/green.
+
+- **feat(api): migration 0012 — `baseline_snapshots` + `category_baselines`.**
+  `baseline_snapshots` groups a computation event; `category_baselines` holds
+  one row per (snapshot, category) with point estimates and confidence
+  intervals. A partial index on (snapshot_id, category) keeps the delta join
+  efficient. Deleting a snapshot cascades to its category rows.
+
+Bumps siphon-api 2.9.0 → 2.10.0; all four lockstep files updated.
+Version-sync script: 24/24 ✓.
 changed in a given wave.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/), adapted for
