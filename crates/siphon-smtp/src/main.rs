@@ -413,7 +413,17 @@ fn envelope_address(raw: &str) -> Option<String> {
     if inner.is_empty() {
         None
     } else {
-        Some(inner.to_string())
+        // Strip characters that would corrupt RFC 5322 header reassembly or
+        // Postgres storage if an MTA passes malformed envelope data.
+        let sanitized: String = inner
+            .chars()
+            .filter(|&c| c != '\r' && c != '\n' && c != '\0')
+            .collect();
+        if sanitized.is_empty() {
+            None
+        } else {
+            Some(sanitized)
+        }
     }
 }
 

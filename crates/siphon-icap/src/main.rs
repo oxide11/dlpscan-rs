@@ -150,6 +150,9 @@ struct IcapRequest {
     http_headers_raw: Vec<u8>,
     /// Extracted HTTP body bytes (from req-body or res-body), if any
     body: Vec<u8>,
+    /// True when the body exceeded `max_body_bytes` and was partially drained
+    /// without storing. Scanning would be incomplete; `handle_scan` returns 204.
+    body_truncated: bool,
 }
 
 fn hdr<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
@@ -228,6 +231,7 @@ async fn parse_icap_request<R: AsyncBufReadExt + Unpin>(
 
     let mut http_headers_raw = Vec::new();
     let mut body = Vec::new();
+    let mut truncated = false;
 
     for (i, (section_name, _offset)) in sections.iter().enumerate() {
         let bytes_to_read = if i + 1 < sections.len() {
@@ -261,7 +265,9 @@ async fn parse_icap_request<R: AsyncBufReadExt + Unpin>(
                 // Chunked
                 // We need a plain AsyncReadExt here; reader is BufReader
                 // We read chunked from the BufReader directly
-                body = read_chunked_buf(reader, max_body).await?;
+                let (b, trunc) = read_chunked_buf(reader, max_body).await?;
+                body = b;
+                truncated = trunc;
             }
         }
     }
@@ -272,15 +278,23 @@ async fn parse_icap_request<R: AsyncBufReadExt + Unpin>(
         headers,
         http_headers_raw,
         body,
+        body_truncated: truncated,
     }))
 }
 
 /// Read chunked transfer encoding from a BufReader.
+///
+/// Returns `(bytes, truncated)`. `truncated` is true when one or more chunks
+/// were drained without storing because the cumulative body would have exceeded
+/// `max_bytes`. Callers must check this flag — `bytes.len() <= max_bytes` is
+/// always true regardless of truncation, so the flag is the only way to tell
+/// a legitimately small body from one that was silently clipped.
 async fn read_chunked_buf<R: AsyncBufReadExt + Unpin>(
     reader: &mut R,
     max_bytes: usize,
-) -> std::io::Result<Vec<u8>> {
+) -> std::io::Result<(Vec<u8>, bool)> {
     let mut buf = Vec::new();
+    let mut truncated = false;
     loop {
         let mut line = String::new();
         reader.read_line(&mut line).await?;
@@ -311,7 +325,8 @@ async fn read_chunked_buf<R: AsyncBufReadExt + Unpin>(
             buf.resize(start + size, 0u8);
             reader.read_exact(&mut buf[start..]).await?;
         } else {
-            // Drain without storing — use a fixed scratch buffer to avoid allocating `size` bytes.
+            // Body would exceed cap — drain without storing.
+            truncated = true;
             let mut remaining = size;
             let mut scratch = [0u8; 8192];
             while remaining > 0 {
@@ -324,7 +339,7 @@ async fn read_chunked_buf<R: AsyncBufReadExt + Unpin>(
         let mut crlf = String::new();
         reader.read_line(&mut crlf).await?;
     }
-    Ok(buf)
+    Ok((buf, truncated))
 }
 
 // ── Response builders ────────────────────────────────────────────
@@ -600,12 +615,12 @@ async fn handle_scan(req: &IcapRequest, state: &AppState, client_ip: &str) -> Ve
         return response_204();
     }
 
-    if req.body.len() > state.max_body_bytes {
+    if req.body_truncated {
         tracing::warn!(
             client_ip = %client_ip,
-            bytes = req.body.len(),
+            stored = req.body.len(),
             limit = state.max_body_bytes,
-            "icap: body exceeds limit, passing through unscanned"
+            "icap: body exceeded limit; passing through unscanned"
         );
         emit_audit(
             req.method.as_str(),
