@@ -2557,7 +2557,7 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
             .unwrap_or("")
             .to_lowercase();
 
-        if text_extensions.contains(&ext.as_str()) && entry.unpacked_size < 1_048_576 {
+        if text_extensions.contains(&ext.as_str()) {
             // Validate path BEFORE extraction to prevent TOCTOU
             if sanitize_archive_path(tmp_dir.path(), &name).is_none() {
                 match header.skip() {
@@ -2568,13 +2568,23 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
                     Err(_) => break,
                 }
             }
-            total_extracted_size += entry.unpacked_size;
             extracted_count += 1;
             match header.extract_to(tmp_dir.path()) {
                 Ok(next) => {
                     cursor = next;
-                    // Re-validate after extraction (defense in depth)
+                    // Re-validate after extraction (defense in depth).
+                    // Use OS metadata for the size check — entry.unpacked_size
+                    // comes from the RAR header and is attacker-controlled, so
+                    // a crafted archive could set it to 0 and bypass the cap.
                     if let Some(dest) = sanitize_archive_path(tmp_dir.path(), &name) {
+                        let on_disk = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(u64::MAX);
+                        if on_disk >= 1_048_576 {
+                            continue;
+                        }
+                        total_extracted_size += on_disk;
+                        if total_extracted_size > MAX_EXTRACT_TOTAL_SIZE {
+                            break;
+                        }
                         if let Ok(content) = std::fs::read_to_string(&dest) {
                             text.push_str(&format!("\n--- {name} ---\n"));
                             let content: String = content.chars().take(100_000).collect();

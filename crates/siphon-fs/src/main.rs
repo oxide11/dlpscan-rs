@@ -724,7 +724,7 @@ async fn scan(
             source_pod: POD_NAME.to_string(),
             category: m.category.to_string(),
             sub_category: m.sub_category.to_string(),
-            text: m.text.clone(),
+            text: m.redacted_text(),
             confidence: m.confidence,
             has_context: m.has_context,
             span: (m.span.0, m.span.1),
@@ -739,7 +739,7 @@ async fn scan(
         .map(|m| ScanFinding {
             category: m.category.to_string(),
             sub_category: m.sub_category.to_string(),
-            text: m.text,
+            text: m.redacted_text(),
             confidence: m.confidence,
             has_context: m.has_context,
             span: (m.span.0, m.span.1),

@@ -374,6 +374,11 @@ pub fn load_policies_from_dir(dir_path: &str) -> crate::Result<HashMap<String, P
     let mut policies = HashMap::new();
     for entry in fs::read_dir(path)? {
         let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            tracing::warn!(path = %entry.path().display(), "skipping symlink in policies dir");
+            continue;
+        }
         let file_path = entry.path();
         if file_path.extension().map(|e| e == "toml").unwrap_or(false) {
             match fs::read_to_string(&file_path).and_then(|s| {

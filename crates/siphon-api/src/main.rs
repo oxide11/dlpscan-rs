@@ -516,21 +516,10 @@ async fn auth_middleware(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    // Kubelet probe paths are always unauthenticated — the kubelet
-    // can't carry a bearer token, and gating them behind auth just
-    // crashloops the pod on every rollout. This matches the chart's
-    // documented contract ("/health and /ready are unauthenticated
-    // by design — Authelia sits in front").
-    let path = request.uri().path();
-    if path == "/health" || path == "/ready" {
-        // Probe paths bypass the AuthContext insertion intentionally —
-        // they have no RBAC gate, and skipping the insert means a
-        // misconfigured RBAC extractor on a probe route fails closed
-        // (UNAUTHORIZED) instead of silently inheriting the no-auth
-        // operator role.
-        return next.run(request).await;
-    }
-
+    // /health and /ready are served by the unauthenticated sub-router that
+    // is merged AFTER the auth+rate-limit layers — they never reach this
+    // middleware. The explicit bypass that existed here was dead code after
+    // the probe sub-router split; removed to avoid misleading future readers.
     let Some(expected_hash) = &state.api_key_hash else {
         // No API-key auth configured (open dev mode). Stamp an
         // `Operator` role into the context so role-aware handlers
@@ -1072,7 +1061,10 @@ struct DetailedHealthResponse {
     ring_evictions_total: u64,
 }
 
-async fn health_detailed(State(state): State<Arc<AppState>>) -> Json<DetailedHealthResponse> {
+async fn health_detailed(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<DetailedHealthResponse> {
     let uptime_secs = state.started_at.elapsed().as_secs();
 
     let db = match state.db_pool.as_ref() {
@@ -1327,14 +1319,17 @@ async fn scan(
 
     let findings: Vec<Finding> = matches
         .into_iter()
-        .map(|m| Finding {
-            category: m.category,
-            sub_category: m.sub_category,
-            text: m.text,
-            confidence: m.confidence,
-            has_context: m.has_context,
-            span: m.span,
-            metadata: m.metadata,
+        .map(|m| {
+            let text = m.redacted_text();
+            Finding {
+                category: m.category,
+                sub_category: m.sub_category,
+                text,
+                confidence: m.confidence,
+                has_context: m.has_context,
+                span: m.span,
+                metadata: m.metadata,
+            }
         })
         .collect();
 
@@ -1753,7 +1748,7 @@ async fn scan_batch(
             .map(|m| Finding {
                 category: m.category.clone(),
                 sub_category: m.sub_category.clone(),
-                text: m.text.clone(),
+                text: m.redacted_text(),
                 confidence: m.confidence,
                 has_context: m.has_context,
                 span: m.span,
@@ -1958,6 +1953,7 @@ struct ExplainResponse {
 }
 
 async fn scan_explain(
+    _: RequireAdminAction,
     State(state): State<Arc<AppState>>,
     Json(req): Json<ScanRequest>,
 ) -> Result<Json<ExplainResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -2067,10 +2063,11 @@ async fn scan_explain(
                 .find(|e| e.stage == "validation")
                 .map(|e| e.outcome == "pass");
 
+            let text = m.redacted_text();
             ExplainFinding {
                 category: m.category,
                 sub_category: m.sub_category,
-                text: m.text,
+                text,
                 confidence: m.confidence,
                 has_context: m.has_context,
                 span: m.span,
@@ -2258,7 +2255,7 @@ struct ProfilesResponse {
     profiles: Vec<siphon::profiles::MaskingProfile>,
 }
 
-async fn list_profiles_handler() -> Json<ProfilesResponse> {
+async fn list_profiles_handler(_: RequireAdminAction) -> Json<ProfilesResponse> {
     let names = list_profiles();
     let profiles: Vec<siphon::profiles::MaskingProfile> =
         names.into_iter().filter_map(|n| get_profile(&n)).collect();
@@ -2281,7 +2278,7 @@ struct RolesResponse {
     roles: Vec<RoleItem>,
 }
 
-async fn list_roles() -> Json<RolesResponse> {
+async fn list_roles(_: RequireAdminAction) -> Json<RolesResponse> {
     const ROLES: [(Role, &str, &str); 4] = [
         (Role::Admin, "admin", "Full control. All permissions."),
         (Role::Analyst, "analyst", "Scan + detokenize + read status."),
@@ -2327,7 +2324,7 @@ struct FrameworksResponse {
     frameworks: Vec<FrameworkItem>,
 }
 
-async fn list_frameworks() -> Json<FrameworksResponse> {
+async fn list_frameworks(_: RequireAdminAction) -> Json<FrameworksResponse> {
     // Mirrors siphon::compliance::framework_failing_categories (private fn).
     // Kept here to avoid widening that module's visibility just for the API.
     let frameworks = vec![
@@ -4280,7 +4277,7 @@ struct CacheStatsResponse {
     hit_rate: f64,
 }
 
-async fn cache_stats() -> Json<CacheStatsResponse> {
+async fn cache_stats(_: RequireAdminAction) -> Json<CacheStatsResponse> {
     let cell = siphon::cache::get_default_cache();
     let guard = cell.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(cache) = guard.as_ref() {
@@ -4339,7 +4336,7 @@ struct TokenizeStatusResponse {
     note: &'static str,
 }
 
-async fn tokenize_status() -> Json<TokenizeStatusResponse> {
+async fn tokenize_status(_: RequireAdminAction) -> Json<TokenizeStatusResponse> {
     // TokenVault is constructed per-scanner, not held globally in
     // siphon-api. We surface that honestly rather than faking a vault.
     Json(TokenizeStatusResponse {
@@ -6488,10 +6485,11 @@ async fn scan_stream(
             Ok(matches) => {
                 let count = matches.len();
                 for m in matches {
+                    let text = m.redacted_text();
                     let finding = Finding {
                         category: m.category,
                         sub_category: m.sub_category,
-                        text: m.text,
+                        text,
                         confidence: m.confidence,
                         has_context: m.has_context,
                         span: m.span,
