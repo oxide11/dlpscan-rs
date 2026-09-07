@@ -13,10 +13,16 @@ serialisation it saves is a hundred lines.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import sys
 from pathlib import Path
+
+# Ensure UTF-8 output with LF line endings regardless of platform. On Windows,
+# Python's default text mode writes cp1252 with CRLF, which breaks the CI diff.
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", newline="\n")
 
 # Components with a C or C++ implementation underneath. Rust's memory-safety
 # guarantees stop at these, and they all sit on the path that parses
@@ -65,10 +71,11 @@ def parse(path: Path) -> list[dict]:
         seen[key] = {
             "name": name,
             "version": version,
-            # cargo prints "(/path)" for workspace members. Recording this
-            # separates first-party code from third-party in the document,
-            # which is the first question anyone asks of an SBOM.
-            "first_party": rest.strip().startswith("(/"),
+            # cargo prints "(/path)" (Unix) or "(C:\path)" (Windows) for
+            # workspace members. Either prefix identifies first-party code.
+            "first_party": rest.strip().startswith("(/") or bool(
+                __import__("re").match(r"\([A-Za-z]:\\", rest.strip())
+            ),
             "proc_macro": "(proc-macro)" in rest,
             "license": license_field.strip(),
             "repository": repo_field.strip(),

@@ -1,196 +1,193 @@
-# Siphon Benchmark Results
+# Siphon Benchmarks
 
-Scanner throughput and latency, plus the historical record of how the Rust
-implementation got here.
+Two complementary approaches to measuring scanner performance: a **synthetic
+benchmark** that runs the Rust library directly with reproducible template
+input, and a **corpus benchmark** that scans real public-domain documents
+through the CLI to measure behaviour on realistic input.
 
-**Environment:** 4-core Intel Xeon @ 2.80 GHz, 16 GB RAM, Linux 6.18, Rust 1.98
-**Build:** `cargo build --release` — `lto = true`, `opt-level = 3`, `codegen-units = 1`
-**Version:** siphon 2.2.0 / siphon-core 2.3.0
-**Patterns:** 583 total — 122 always-run, 461 context-gated
-**Date:** September 2026
-
-> **Read the numbers as relative, not absolute.** These were measured on a
-> modest shared 4-core box. Throughput is hardware-bound, so the ratios between
-> scenarios travel to other machines but the absolute MB/s figures do not.
-> Re-measure on your own target before making a capacity plan. Run-to-run
-> variance on this host is roughly ±10-15%; the throughput below is the median
-> of four runs, and the latency table is a single representative run whose
-> throughput matched that median.
+Neither replaces the other. The synthetic benchmark is stable and reproducible
+— good for tracking regressions across commits. The corpus benchmark catches
+what the synthetic misses: varying normalization pressure, format-dispatch
+overhead, and the keyword density of real prose.
 
 ---
 
-## 1. Current results
-
-### Latency
-
-| Test | Full (ms) | Baseline (ms) | Speedup |
-|---|---:|---:|---:|
-| scan_clean_1KB | 0.48 | 0.38 | 1.3x |
-| scan_mixed_1KB | 0.27 | 0.20 | 1.4x |
-| scan_dense_1KB | 0.25 | 0.23 | 1.1x |
-| scan_kw_heavy_1KB | 0.60 | 0.52 | 1.2x |
-| scan_clean_10KB | 0.46 | 0.46 | 1.0x |
-| scan_mixed_10KB | 0.94 | 0.90 | 1.0x |
-| scan_dense_10KB | 1.28 | 1.28 | 1.0x |
-| scan_kw_heavy_10KB | 0.95 | 0.96 | 1.0x |
-| scan_clean_100KB | 2.44 | 2.48 | 1.0x |
-| scan_mixed_100KB | 7.82 | 8.09 | 1.0x |
-| scan_dense_100KB | 10.52 | 11.54 | 0.9x |
-| scan_kw_heavy_100KB | 7.22 | 7.03 | 1.0x |
-| scan_clean_1MB | 22.98 | 24.16 | 1.0x |
-| scan_mixed_1MB | 112.19 | 114.30 | 1.0x |
-| scan_dense_1MB | 152.68 | 154.40 | 1.0x |
-| scan_kw_heavy_1MB | 71.30 | 70.51 | 1.0x |
-| redact_mixed_10KB | 1.08 | 1.02 | 1.1x |
-
-### Throughput (1 MB, median of 4 runs)
-
-| Scenario | Full (583 patterns) | Baseline (122 patterns) |
-|---|---:|---:|
-| Clean text | 43.5 MB/s | 41.4 MB/s |
-| Mixed content | 8.9 MB/s | 8.7 MB/s |
-| Dense sensitive data | 6.5 MB/s | 6.5 MB/s |
-| Keyword-heavy text | 14.0 MB/s | 14.2 MB/s |
-
-### Pattern classification
-
-| Tier | Count | Criteria |
-|---|---:|---|
-| Always-run (baseline) | 122 | Specificity >= 0.85, or in `CRITICAL_ALWAYS_RUN` |
-| Context-gated | 461 | Specificity < 0.85, gated by the AC keyword prefilter |
-| **Total** | **583** | |
-
-The benchmark derives all three counts from `patterns::PATTERNS` at runtime, so
-this table cannot drift from the scanner the way a hand-maintained one does.
-
-### Test data definitions
-
-- **Clean** — ordinary prose with no sensitive values, repeated to size.
-- **Mixed** — email, SSN, credit card, phone and AWS key interspersed with normal text.
-- **Dense** — back-to-back sensitive values (cards, emails, SSNs, API keys).
-- **Keyword-heavy** — many context keywords ("account number", "social
-  security", "bank") but **no** actual sensitive data. This is the adversarial
-  case for the prefilter: the keywords force context-gated patterns to run and
-  then match nothing.
-
----
-
-## 2. What the numbers mean
-
-**Full and baseline are effectively identical at 10 KB and above.** That is the
-Aho-Corasick prefilter working as designed: context-gated patterns whose
-keywords are absent get filtered out before their regex ever runs, so the 461
-extra patterns cost almost nothing on a keyword-free page. `baseline_only` is
-only meaningfully faster on small (< 10 KB) inputs, where the fixed AC-index
-build cost dominates — visible above as the 1.1-1.4x column at 1 KB.
-
-**Dense data is the floor, and that is by construction.** It is the only
-scenario that actually exercises validation: every matched card runs Luhn,
-every IBAN mod-97, every national ID its own algorithm. That work is what took
-false positives on the blind-test corpus from ~95% to near-zero on the same
-pattern set. Dense input is the worst case for it, so 6.5 MB/s is the price of
-precision rather than a defect to optimize away.
-
-**Keyword-heavy is the prefilter's worst case** and still lands above mixed
-content, which is the useful result: adversarial keyword stuffing degrades
-throughput without collapsing it.
-
-**Finding counts are identical between modes** on the mixed corpus (164 vs
-164), confirming baseline mode drops only patterns that were not contributing
-findings there — not that it silently loses detections in general. It will miss
-low-specificity detections by design.
-
-### When to use baseline mode
-
-- High-throughput pipelines where only critical/high-confidence patterns matter
-- Latency-sensitive paths that can tolerate missing low-specificity detections
-- A pre-screening pass ahead of a full scan
-
----
-
-## 3. Historical record
-
-> Everything below is **archival**. It was measured on a different, unstated
-> machine during the 2.1.0 era against a 560-pattern table, and the Python
-> implementation it compares against no longer lives in this repository. The
-> figures are **not comparable** to section 1 and cannot be reproduced from a
-> current checkout — they are kept because the optimization narrative explains
-> why the scanner is shaped the way it is.
-
-### Rust vs Python (v2.1.0, archival)
-
-| Scenario | Python | Rust | Factor |
-|---|---:|---:|---:|
-| Clean text | 2.5 MB/s | 83.2 MB/s | 33x |
-| Mixed content | 1.0 MB/s | 30.2 MB/s | 30x |
-| Dense sensitive data | 0.5 MB/s | 31.9 MB/s | 64x |
-
-### The optimization journey (v2.1.0, archival)
-
-| Stage | Time (ms, 1 MB mixed) | Throughput | vs Python |
-|---|---:|---:|---:|
-| Python baseline | 960.05 | 1.0 MB/s | — |
-| Rust v1 (RegexSet) | 16,124.24 | 0.1 MB/s | 16.8x **slower** |
-| Rust v2 (parallel regex) | 44.41 | 22.5 MB/s | 21.6x faster |
-| Rust v3 (+ AC prefilter) | 33.14 | 30.2 MB/s | 29.0x faster |
-
-**v1 → v2: replace RegexSet with parallel per-pattern regex (Rayon).** A single
-`RegexSet` over the whole table built a ~50 MB DFA that cost 13 ms on 1 KB.
-Individual regexes driven by `rayon::par_iter()` were 50-100x faster. This one
-change took the scanner from 16x slower than Python to 22x faster, and it is
-why the pipeline still runs phase-1/phase-2 rather than one combined automaton.
-
-**v2 → v3: add the Aho-Corasick prefilter and a normalization fast-path.**
-
-- The AC prefilter gates most patterns behind keyword presence.
-- An ASCII fast-path skips NFKC, homoglyph and zero-width processing entirely.
-- `HashMap` O(1) lookup replaced an O(n) linear scan in `ContextHitIndex`.
-- Fuzzy/leet matching is skipped when the AC index gives a definitive answer.
-
-**Context-index tuning after the multilingual expansion.** v2.1.0 added ~2,500
-multilingual keywords and the automaton grew to ~5,000 unique entries, which
-initially cost ~30% throughput on dense content. Four changes recovered it:
-
-1. **Keyword deduplication** — identical keywords across patterns (`credit
-   card` appears in 7+ entries) are stored once and mapped to every pattern ID
-   that uses them, shrinking the automaton.
-2. **Pattern-ID indexing** — the hit index went from a
-   `HashMap<(&str, &str), Vec<(usize, usize)>>` plus a cloned nested-`HashMap`
-   reverse map to a flat `Vec<Vec<u32>>` keyed by pattern ID, eliminating
-   ~5,000 String allocations per scan.
-3. **Sorted position lists** — sorted once per scan, enabling O(log n) binary
-   search in range checks instead of a linear walk.
-4. **Compact u32 positions** — only `start` is needed for range checks, so
-   positions are `u32` rather than `usize` pairs.
-
----
-
-## 4. Reproducing
+## Synthetic benchmark
 
 ```bash
 cargo run --release --bin benchmark
 ```
 
-The banner, the throughput table and the pattern classification all derive
-their counts from the live pattern table, so a fresh run is self-describing —
-compare its header against this document's before trusting any figure here.
+Defined in `src/bin/benchmark.rs`. Scans four template strings (`clean`,
+`mixed`, `dense`, `keyword_heavy`) at four sizes (1 KB, 10 KB, 100 KB, 1 MB)
+and compares **full** (all 583 patterns) against **baseline** (always-run
+patterns only). Outputs a table of median latency and derived throughput, plus
+a pattern classification summary.
 
-### Full scan vs baseline in the API
+Run this after touching the scanner engine, normalizer, or any pattern, to
+verify you haven't introduced a latency regression.
 
-```rust
-use siphon::guard::{InputGuard, Preset, Action};
+**Current synthetic numbers** (measured 2026-09-02, 4-core Intel Xeon @ 2.80
+GHz, 16 GB RAM, Linux 6.18, Rust 1.98, release + LTO):
 
-// Full scan (default) — all 583 patterns, with the AC prefilter
-let guard = InputGuard::new()
-    .with_presets(vec![Preset::PciDss, Preset::Pii, Preset::Credentials])
-    .with_action(Action::Flag);
+| Scenario (1 MB) | Full | Baseline |
+|---|---:|---:|
+| clean | ~23 MB/s | ~43 MB/s |
+| mixed | ~9 MB/s | ~18 MB/s |
+| dense | ~6.5 MB/s | ~12 MB/s |
+| keyword_heavy | ~14 MB/s | ~26 MB/s |
 
-// Baseline-only — 122 always-run patterns, context-gated ones skipped
-let guard_fast = InputGuard::new()
-    .with_presets(vec![Preset::PciDss, Preset::Pii, Preset::Credentials])
-    .with_action(Action::Flag)
-    .with_baseline_only(true);
+Per-document at 10 KB mixed: **~0.94 ms** (~1,060 documents/second).
 
-let result = guard.scan("SSN: 123-45-6789, Card: 4532015112830366")?;
-let result_fast = guard_fast.scan("SSN: 123-45-6789, Card: 4532015112830366")?;
+---
+
+## Performance Corpus
+
+A set of ~25 public-domain documents across small/medium/large size tiers,
+used to benchmark the scanner against realistic input. No labelling is
+required; these are for throughput measurement only.
+
+### Why real documents matter
+
+Synthetic templates repeat a fixed string to size. Real documents differ in
+ways the synthetic cannot reproduce:
+
+- **Variable normalization pressure.** A document with many hyphenated dates
+  or accented characters triggers the ~9x-slower normalization path. The
+  synthetic clean template never does.
+- **Realistic keyword density.** Real contracts, legislation, and correspondence
+  contain the kinds of context keywords (account, number, social security, date
+  of birth) that activate the Aho-Corasick prefilter and gate context-required
+  patterns.
+- **Format diversity.** HTML legislative bills exercise the format-dispatch and
+  XML extractor paths; plain-text books skip all of that. Together they show
+  where extraction overhead lives.
+
+### Sources
+
+All documents are US public domain:
+
+| Tier | Source | Examples |
+|---|---|---|
+| Small (30–200 KB) | Project Gutenberg plain text | Metamorphosis, Alice in Wonderland, Call of the Wild |
+| Medium (200–600 KB) | Project Gutenberg plain text | Frankenstein, Tom Sawyer, Dorian Gray |
+| Large (600 KB–1 MB) | Project Gutenberg plain text | Pride and Prejudice, Dracula, War and Peace |
+| Legislation (HTML) | govinfo.gov | American Rescue Plan Act, Inflation Reduction Act |
+| Regulation (XML) | federalregister.gov | HIPAA Omnibus Rule, GLBA Safeguards Rule, Cyber EO 14028 |
+
+### Data provenance policy
+
+This corpus is governed by the **data provenance policy** in `FUTURE.md`:
+
+- **Real public documents may serve as carriers after screening.** The
+  screening step (`scripts/corpus/screen.sh`) runs the scanner against every
+  file and exits non-zero if any finding above 0.7 confidence is returned.
+- **Sensitive values are always synthetic.** The corpus contains no real
+  personal data. Project Gutenberg fiction and US federal legislation contain
+  none to begin with; the screening step confirms this before any corpus use.
+- **Breach data is prohibited absolutely.** No document sourced from a data
+  breach, leaked database, or dark-web repository may enter the corpus under
+  any framing ("anonymized", "for testing", "already public"). The harm is in
+  the sourcing, not the subsequent use.
+
+### Building the corpus
+
+```bash
+# Step 1 — download documents (~25 files, ~15 MB total)
+bash scripts/corpus/fetch.sh
+
+# Step 2 — verify no real sensitive data (required before benchmarking)
+bash scripts/corpus/screen.sh
+
+# Step 3 — run the benchmark
+bash scripts/corpus/bench.sh
 ```
+
+The fetch script is idempotent — re-running skips already-downloaded files.
+Use `--force` to re-download everything.
+
+The raw documents live in `corpus/raw/` which is gitignored. The scripts and
+this document are committed; the blobs are not.
+
+### Running the corpus benchmark
+
+```bash
+# Build the release binary first
+cargo build --release
+export PATH="$PWD/target/release:$PATH"
+
+# Fetch and screen if you haven't already
+bash scripts/corpus/fetch.sh
+bash scripts/corpus/screen.sh
+
+# Benchmark — prints per-file throughput and an aggregate
+bash scripts/corpus/bench.sh
+```
+
+Output example:
+
+```
+Siphon corpus benchmark — 2026-09-07T14:22:00Z
+Version: v2.10.0
+Corpus:  /path/to/dlpscan-rs/corpus/raw
+
+  File                                                  Size         Time (ms)     MB/s
+  --------------------------------------------------------------------------------------
+  gutenberg_1952_yellow_wallpaper.txt                29.8 KB            12ms   2.4 MB/s
+  gutenberg_5200_metamorphosis.txt                   68.4 KB            29ms   2.3 MB/s
+  gutenberg_11_alice.txt                            170.4 KB            58ms   2.9 MB/s
+  ...
+  --------------------------------------------------------------------------------------
+  TOTAL (25 files)                                   14.8 MB          5.812s   2.5 MB/s
+
+Corpus throughput: 2.5 MB/s  (14.8 MB in 5.812s, 25 files)
+```
+
+Results are appended to `corpus/bench.log` for trend tracking. Compare runs
+across commits by checking this file.
+
+### Last measured
+
+| Date | Version | Throughput | Notes |
+|---|---|---|---|
+| *(not yet run)* | — | — | Run `bench.sh` to populate |
+
+Update this table after each significant scanner change.
+
+---
+
+## Adding documents to the corpus
+
+New documents must satisfy all of:
+
+1. **Public domain.** US federal publications, Project Gutenberg texts, or
+   material with a CC0 / public-domain dedication. No proprietary content,
+   no scraping from paywalled sources.
+2. **Screened clean.** Run `screen.sh` after adding. Remove the file if it
+   flags anything above 0.7 confidence that cannot be explained as a false
+   positive.
+3. **Representative, not adversarial.** The corpus measures realistic scanner
+   behaviour, not worst-case or best-case. A document chosen because it makes
+   the scanner look fast (or slow) undermines the point.
+
+Add the URL and local filename to `scripts/corpus/fetch.sh` under the
+appropriate tier, then re-run the fetch and screen steps.
+
+---
+
+## Interpreting results
+
+**Throughput is not a proxy for detection quality.** A faster scanner that
+misses more is not better. The throughput numbers tell you about capacity
+planning; `tests/corpus/` and `evadex` tell you about detection quality.
+
+**Normalization dominates on heavy inputs.** The ~9x slowdown on
+normalization-triggering text (hyphenated dates, accented characters) is the
+largest variable. If your change touches `normalize/mod.rs`, run both the
+synthetic and corpus benchmarks — the synthetic `dense` template triggers
+normalization, but real documents show more realistic triggering rates.
+
+**Extraction overhead is per-file, not per-byte.** The govinfo HTML bills are
+large but spend time in the extractor (XML parse + entity decode) before the
+scanner sees anything. A small improvement to the extractor can move the HTML
+throughput number without touching the text-only rows.

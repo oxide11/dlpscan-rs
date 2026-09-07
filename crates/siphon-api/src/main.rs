@@ -5026,6 +5026,515 @@ struct FindingsStatsResponse {
     lsh: Option<LshStats>,
 }
 
+// ---------------------------------------------------------------------------
+// Baseline endpoints — POST /v1/baselines/snapshot  (compute + store)
+//                      GET  /v1/baselines            (list snapshots)
+//                      GET  /v1/baselines/current    (most recent)
+//                      GET  /v1/baselines/{id}       (per-category data)
+//                      GET  /v1/baselines/delta      (?from=&to=)
+//
+// All admin-only: baselines are derived from analyst verdicts which carry
+// unredacted matched values; the same access gate applies.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SnapshotBody {
+    label: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SnapshotStub {
+    id: String,
+    created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+    scanner_version: String,
+    category_count: i32,
+}
+
+#[derive(Serialize)]
+struct CategoryBaselineRow {
+    category: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recall_val: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recall_tp: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recall_n: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recall_ci_low: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recall_ci_high: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision_val: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision_tp: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision_n: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision_ci_low: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision_ci_high: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    f1_val: Option<f32>,
+}
+
+async fn create_baseline_snapshot(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+    body: Option<Json<SnapshotBody>>,
+) -> Response {
+    let label = body.as_ref().and_then(|b| b.label.as_deref());
+    let version = siphon_core::VERSION;
+    match db::compute_baseline_snapshot(&state.db_pool, label, version).await {
+        Ok(id) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({"snapshot_id": id.to_string()})),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::warn!("create_baseline_snapshot: {e}");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn list_baseline_snapshots(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    let Some(pool) = state.db_pool.as_ref() else {
+        return Json(serde_json::json!({"snapshots": []})).into_response();
+    };
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("list_baseline_snapshots: pool get failed: {e}");
+            return Json(serde_json::json!({"snapshots": []})).into_response();
+        }
+    };
+    let rows = match client
+        .query(
+            "SELECT id, created_at, label, scanner_version, category_count \
+             FROM baseline_snapshots \
+             ORDER BY created_at DESC \
+             LIMIT 200",
+            &[],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("list_baseline_snapshots: query failed: {e}");
+            return Json(serde_json::json!({"snapshots": []})).into_response();
+        }
+    };
+    let snapshots: Vec<SnapshotStub> = rows
+        .iter()
+        .map(|r| {
+            let id: uuid::Uuid = r.get("id");
+            let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+            SnapshotStub {
+                id: id.to_string(),
+                created_at: created_at.to_rfc3339(),
+                label: r.get("label"),
+                scanner_version: r.get("scanner_version"),
+                category_count: r.get("category_count"),
+            }
+        })
+        .collect();
+    Json(serde_json::json!({"snapshots": snapshots})).into_response()
+}
+
+async fn get_baseline_current(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Response {
+    let Some(pool) = state.db_pool.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "no snapshots"})),
+        )
+            .into_response();
+    };
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("get_baseline_current: pool get: {e}");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    let snap_row = match client
+        .query_opt(
+            "SELECT id, created_at, label, scanner_version, category_count \
+             FROM baseline_snapshots \
+             ORDER BY created_at DESC \
+             LIMIT 1",
+            &[],
+        )
+        .await
+    {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "no snapshots"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::warn!("get_baseline_current: query failed: {e}");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    let snap_id: uuid::Uuid = snap_row.get("id");
+    fetch_and_return_snapshot(&client, snap_id, snap_row).await
+}
+
+async fn get_baseline_by_id(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let snapshot_id = match uuid::Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "invalid snapshot id"})),
+            )
+                .into_response();
+        }
+    };
+    let Some(pool) = state.db_pool.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "not found"})),
+        )
+            .into_response();
+    };
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("get_baseline_by_id: pool get: {e}");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    let snap_row = match client
+        .query_opt(
+            "SELECT id, created_at, label, scanner_version, category_count \
+             FROM baseline_snapshots WHERE id = $1",
+            &[&snapshot_id],
+        )
+        .await
+    {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::warn!("get_baseline_by_id: query: {e}");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    fetch_and_return_snapshot(&client, snapshot_id, snap_row).await
+}
+
+async fn fetch_and_return_snapshot(
+    client: &deadpool_postgres::Client,
+    snapshot_id: uuid::Uuid,
+    snap_row: tokio_postgres::Row,
+) -> Response {
+    let created_at: chrono::DateTime<chrono::Utc> = snap_row.get("created_at");
+    let snap = SnapshotStub {
+        id: snapshot_id.to_string(),
+        created_at: created_at.to_rfc3339(),
+        label: snap_row.get("label"),
+        scanner_version: snap_row.get("scanner_version"),
+        category_count: snap_row.get("category_count"),
+    };
+    let cat_rows = match client
+        .query(
+            "SELECT category, \
+                    recall_val, recall_tp, recall_n, recall_ci_low, recall_ci_high, \
+                    precision_val, precision_tp, precision_n, \
+                    precision_ci_low, precision_ci_high, f1_val \
+             FROM category_baselines \
+             WHERE snapshot_id = $1 \
+             ORDER BY category",
+            &[&snapshot_id],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("fetch_and_return_snapshot: categories query: {e}");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    let categories: Vec<CategoryBaselineRow> = cat_rows
+        .iter()
+        .map(|r| CategoryBaselineRow {
+            category: r.get("category"),
+            recall_val: r.get("recall_val"),
+            recall_tp: r.get("recall_tp"),
+            recall_n: r.get("recall_n"),
+            recall_ci_low: r.get("recall_ci_low"),
+            recall_ci_high: r.get("recall_ci_high"),
+            precision_val: r.get("precision_val"),
+            precision_tp: r.get("precision_tp"),
+            precision_n: r.get("precision_n"),
+            precision_ci_low: r.get("precision_ci_low"),
+            precision_ci_high: r.get("precision_ci_high"),
+            f1_val: r.get("f1_val"),
+        })
+        .collect();
+    Json(serde_json::json!({"snapshot": snap, "categories": categories})).into_response()
+}
+
+#[derive(Deserialize)]
+struct DeltaQuery {
+    from: String,
+    to: String,
+}
+
+#[derive(Serialize)]
+struct DeltaCategory {
+    category: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recall_from: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recall_to: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    recall_delta: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision_from: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision_to: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    precision_delta: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    f1_from: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    f1_to: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    f1_delta: Option<f32>,
+}
+
+async fn get_baseline_delta(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<DeltaQuery>,
+) -> Response {
+    let from_id = match uuid::Uuid::parse_str(&q.from) {
+        Ok(u) => u,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "invalid 'from' id"})),
+            )
+                .into_response();
+        }
+    };
+    let to_id = match uuid::Uuid::parse_str(&q.to) {
+        Ok(u) => u,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "invalid 'to' id"})),
+            )
+                .into_response();
+        }
+    };
+    let Some(pool) = state.db_pool.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "no data"})),
+        )
+            .into_response();
+    };
+    let client = match pool.get().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("get_baseline_delta: pool get: {e}");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    // Fetch both snapshots' stub rows.
+    let from_snap = match client
+        .query_opt(
+            "SELECT id, created_at, label, scanner_version, category_count \
+             FROM baseline_snapshots WHERE id = $1",
+            &[&from_id],
+        )
+        .await
+    {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "'from' snapshot not found"})),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
+    };
+    let to_snap = match client
+        .query_opt(
+            "SELECT id, created_at, label, scanner_version, category_count \
+             FROM baseline_snapshots WHERE id = $1",
+            &[&to_id],
+        )
+        .await
+    {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "'to' snapshot not found"})),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
+    };
+
+    // Join both snapshots' category rows to compute deltas in one query.
+    let delta_rows = match client
+        .query(
+            "SELECT COALESCE(f.category, t.category) AS category, \
+                    f.recall_val    AS recall_from, \
+                    t.recall_val    AS recall_to, \
+                    f.precision_val AS precision_from, \
+                    t.precision_val AS precision_to, \
+                    f.f1_val        AS f1_from, \
+                    t.f1_val        AS f1_to \
+             FROM category_baselines f \
+             FULL OUTER JOIN category_baselines t \
+               ON t.snapshot_id = $2 AND t.category = f.category \
+             WHERE f.snapshot_id = $1 OR (f.snapshot_id IS NULL AND t.snapshot_id = $2) \
+             ORDER BY ABS(COALESCE(t.recall_val,0) - COALESCE(f.recall_val,0)) DESC, \
+                      category",
+            &[&from_id, &to_id],
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("get_baseline_delta: join query: {e}");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
+        }
+    };
+
+    let categories: Vec<DeltaCategory> = delta_rows
+        .iter()
+        .map(|r| {
+            let recall_from: Option<f32> = r.get("recall_from");
+            let recall_to: Option<f32> = r.get("recall_to");
+            let recall_delta = match (recall_from, recall_to) {
+                (Some(f), Some(t)) => Some(t - f),
+                _ => None,
+            };
+            let precision_from: Option<f32> = r.get("precision_from");
+            let precision_to: Option<f32> = r.get("precision_to");
+            let precision_delta = match (precision_from, precision_to) {
+                (Some(f), Some(t)) => Some(t - f),
+                _ => None,
+            };
+            let f1_from: Option<f32> = r.get("f1_from");
+            let f1_to: Option<f32> = r.get("f1_to");
+            let f1_delta = match (f1_from, f1_to) {
+                (Some(f), Some(t)) => Some(t - f),
+                _ => None,
+            };
+            DeltaCategory {
+                category: r.get("category"),
+                recall_from,
+                recall_to,
+                recall_delta,
+                precision_from,
+                precision_to,
+                precision_delta,
+                f1_from,
+                f1_to,
+                f1_delta,
+            }
+        })
+        .collect();
+
+    let from_created_at: chrono::DateTime<chrono::Utc> = from_snap.get("created_at");
+    let to_created_at: chrono::DateTime<chrono::Utc> = to_snap.get("created_at");
+    let from_id_val: uuid::Uuid = from_snap.get("id");
+    let to_id_val: uuid::Uuid = to_snap.get("id");
+
+    Json(serde_json::json!({
+        "from": {
+            "id": from_id_val.to_string(),
+            "created_at": from_created_at.to_rfc3339(),
+            "label": from_snap.get::<_, Option<String>>("label"),
+            "scanner_version": from_snap.get::<_, String>("scanner_version"),
+            "category_count": from_snap.get::<_, i32>("category_count"),
+        },
+        "to": {
+            "id": to_id_val.to_string(),
+            "created_at": to_created_at.to_rfc3339(),
+            "label": to_snap.get::<_, Option<String>>("label"),
+            "scanner_version": to_snap.get::<_, String>("scanner_version"),
+            "category_count": to_snap.get::<_, i32>("category_count"),
+        },
+        "categories": categories,
+    }))
+    .into_response()
+}
+
 async fn findings_stats(
     _: RequireAdminAction,
     headers: HeaderMap,
@@ -6654,6 +7163,12 @@ async fn main() {
             "/v1/evadex/runs",
             get(list_evadex_runs).post(ingest_evadex_run),
         )
+        // /v1/baselines/* — literal paths before {id} param path.
+        .route("/v1/baselines/snapshot", post(create_baseline_snapshot))
+        .route("/v1/baselines/delta", get(get_baseline_delta))
+        .route("/v1/baselines/current", get(get_baseline_current))
+        .route("/v1/baselines/{id}", get(get_baseline_by_id))
+        .route("/v1/baselines", get(list_baseline_snapshots))
         // /v1/findings/* routes MUST be registered before /v1/findings
         // so the more-specific paths are matched first.
         .route("/v1/stats/throughput", get(stats_throughput))

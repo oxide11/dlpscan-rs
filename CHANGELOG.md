@@ -3,6 +3,45 @@
 All notable, user-visible changes to the Siphon stack are recorded here. Each
 release block is dated and contains per-crate sub-sections — bumps are
 independent, so a release block typically moves only the crates that actually
+
+---
+
+## 2026-09-07 — per-category baselines
+
+### siphon-api 2.10.0
+
+- **feat(api): `POST /v1/baselines/snapshot` — compute and store a baseline.**
+  Queries `evadex_findings` for per-category recall (detected / planted) and
+  `findings.analyst_verdict` for per-category precision (tp / (tp+fp)), merges
+  by category, computes F1 and Wilson 95% confidence intervals, and persists
+  everything under a new `baseline_snapshots` row. The label field lets teams
+  name a snapshot ("pre-refactor", "after-zip-fix"). Admin-only.
+
+- **feat(api): `GET /v1/baselines` — list snapshots.** Returns all snapshots
+  newest-first with id, created_at, label, scanner_version, and category_count.
+
+- **feat(api): `GET /v1/baselines/current` — most recent snapshot.**
+  Full per-category breakdown including recall_val, precision_val, f1_val,
+  and both Wilson 95% CI bounds for each metric. Fields are absent (not null)
+  when a source has no data for a category.
+
+- **feat(api): `GET /v1/baselines/{id}` — any snapshot by id.** Same shape
+  as /current but addressed by UUID.
+
+- **feat(api): `GET /v1/baselines/delta?from=&to=` — compare two snapshots.**
+  Returns a per-category row with `recall_delta`, `precision_delta`, and
+  `f1_delta` (to − from), sorted by abs(recall_delta) descending so the
+  biggest regressions surface first. This is the "Card Expiry recall -4%"
+  display FUTURE.md asks for rather than a binary red/green.
+
+- **feat(api): migration 0012 — `baseline_snapshots` + `category_baselines`.**
+  `baseline_snapshots` groups a computation event; `category_baselines` holds
+  one row per (snapshot, category) with point estimates and confidence
+  intervals. A partial index on (snapshot_id, category) keeps the delta join
+  efficient. Deleting a snapshot cascades to its category rows.
+
+Bumps siphon-api 2.9.0 → 2.10.0; all four lockstep files updated.
+Version-sync script: 24/24 ✓.
 changed in a given wave.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/), adapted for
@@ -42,6 +81,28 @@ starting from this file.
   metrics, the self-updating specificity table, and the lightweight reranker
   described in FUTURE.md — all three need at least one labelled verdict before
   they have anything to compute against.
+
+---
+
+## 2026-09-07 — performance corpus tooling
+
+### Documentation
+
+- **docs: performance corpus scripts and benchmark harness** (`FUTURE.md`
+  item 3). `scripts/corpus/fetch.sh` downloads ~25 public-domain documents
+  from Project Gutenberg, govinfo.gov, and federalregister.gov across small
+  (30–200 KB), medium (200–600 KB), and large (600 KB–1 MB) size tiers.
+  `scripts/corpus/screen.sh` enforces the data provenance policy by running
+  the scanner against every file and exiting non-zero if any finding above 0.7
+  confidence is returned — no real sensitive data may enter the corpus.
+  `scripts/corpus/bench.sh` scans each file individually, measures wall-clock
+  time per file, prints a throughput table, and appends a timestamped record to
+  `corpus/bench.log` for trend tracking. `docs/BENCHMARKS.md` documents the
+  full process, contrasts the corpus benchmark with the synthetic benchmark
+  (`src/bin/benchmark.rs`), explains what real documents reveal that synthetics
+  cannot, and records the last-measured numbers (currently a placeholder — run
+  `bench.sh` to populate). Raw documents live in `corpus/raw/`, which is
+  gitignored.
 
 ---
 

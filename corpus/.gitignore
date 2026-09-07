@@ -1,0 +1,10 @@
+# Raw documents are not committed — they are large third-party blobs that
+# change independently of the scanner source and are fetched on demand by
+# scripts/corpus/fetch.sh.
+raw/
+
+# Benchmark and screening logs contain machine-specific timing data and are
+# generated locally; they are not source artifacts.
+*.log
+bench.log
+screen.log
