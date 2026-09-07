@@ -14,6 +14,37 @@ starting from this file.
 
 ---
 
+## 2026-09-07 — analyst feedback
+
+### siphon-api 2.10.0
+
+- **feat(api): analyst verdict endpoint `POST /v1/findings/{id}/feedback`.**
+  Analysts can now mark any persisted finding as a true positive (`tp`), false
+  positive (`fp`), or `unsure`. Each verdict records a timestamp and a SHA-256
+  hash of the submitting key so the history is attributable. An optional
+  free-text `note` (≤ 2 000 chars) can accompany the verdict.
+
+  The endpoint is admin-only — it touches rows that carry unredacted matched
+  values, so it inherits the same access gate as `GET /v1/findings/pg`.
+  Idempotent: a second POST overwrites the first, supporting corrections
+  without a DELETE step.
+
+- **feat(api): feedback fields on `GET /v1/findings/pg` response.** The
+  `analyst_verdict`, `reviewed_at`, and `review_note` columns are now included
+  in paginated findings results. Fields are omitted (not null) when a finding
+  has not been reviewed, keeping the existing response shape backward-compatible.
+
+- **feat(api): migration 0011 — `analyst_verdict` columns on `findings`.**
+  `ALTER TABLE findings ADD COLUMN analyst_verdict TEXT CHECK(…)` plus
+  `reviewed_by_hash BYTEA`, `reviewed_at TIMESTAMPTZ`, `review_note TEXT`, and
+  a partial GIN index on `(analyst_verdict, category) WHERE analyst_verdict IS
+  NOT NULL`. This is the prerequisite for the per-category precision/recall
+  metrics, the self-updating specificity table, and the lightweight reranker
+  described in FUTURE.md — all three need at least one labelled verdict before
+  they have anything to compute against.
+
+---
+
 ## 2026-09-07 — detection correctness wave
 
 ### siphon-core 2.8.1

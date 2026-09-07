@@ -5277,6 +5277,13 @@ struct PgFinding {
     context_required: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     metadata: Option<serde_json::Value>,
+    // Analyst feedback — present only on reviewed findings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    analyst_verdict: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reviewed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    review_note: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -5326,7 +5333,8 @@ async fn list_pg_findings(
     let rows = match client
         .query(
             "SELECT id, scan_id, created_at, category, sub_category, confidence, \
-             span_start, span_end, matched_text, has_context, context_required, metadata \
+             span_start, span_end, matched_text, has_context, context_required, metadata, \
+             analyst_verdict, reviewed_at, review_note \
              FROM findings \
              WHERE ($1::text IS NULL OR category = $1) \
                AND ($2::text IS NULL OR tenant_id = $2) \
@@ -5352,6 +5360,7 @@ async fn list_pg_findings(
             let id: uuid::Uuid = r.get("id");
             let scan_id: uuid::Uuid = r.get("scan_id");
             let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+            let reviewed_at: Option<chrono::DateTime<chrono::Utc>> = r.get("reviewed_at");
             PgFinding {
                 id: id.to_string(),
                 scan_id: scan_id.to_string(),
@@ -5365,6 +5374,9 @@ async fn list_pg_findings(
                 has_context: r.get("has_context"),
                 context_required: r.get("context_required"),
                 metadata: r.get("metadata"),
+                analyst_verdict: r.get("analyst_verdict"),
+                reviewed_at: reviewed_at.map(|dt| dt.to_rfc3339()),
+                review_note: r.get("review_note"),
             }
         })
         .collect();
@@ -5383,6 +5395,119 @@ async fn list_pg_findings(
     };
 
     Json(PgFindingsResponse { findings, total })
+}
+
+// ---------------------------------------------------------------------------
+// POST /v1/findings/{id}/feedback — analyst verdict on one finding.
+//
+// Marks a persisted finding as a true positive, false positive, or 'unsure'.
+// Admin-only: the findings table stores unredacted matched values, so the
+// same access level that can read them can annotate them.
+//
+// Idempotent: submitting a second verdict overwrites the first, so a
+// corrected review is just another POST. Each submission also records the
+// SHA-256 of the submitting key and the timestamp.
+//
+// Body:  { "verdict": "tp" | "fp" | "unsure", "note": "optional text" }
+// 200:   { "id", "analyst_verdict", "reviewed_at", "review_note"? }
+// 400:   invalid UUID in path
+// 404:   finding not found (or Postgres not configured)
+// 422:   unknown verdict value
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct FeedbackBody {
+    verdict: String,
+    note: Option<String>,
+}
+
+#[derive(Serialize)]
+struct FeedbackResponse {
+    id: String,
+    analyst_verdict: String,
+    reviewed_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    review_note: Option<String>,
+}
+
+async fn post_finding_feedback(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<FeedbackBody>,
+) -> Response {
+    let verdict = body.verdict.trim();
+    if !matches!(verdict, "tp" | "fp" | "unsure") {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({"error": "verdict must be 'tp', 'fp', or 'unsure'"})),
+        )
+            .into_response();
+    }
+
+    let finding_id = match uuid::Uuid::parse_str(&id) {
+        Ok(u) => u,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "invalid finding id"})),
+            )
+                .into_response();
+        }
+    };
+
+    // Same derivation as persist_scan: SHA-256 of the stored key hash.
+    let reviewer_hash: Vec<u8> = {
+        let mut h = Sha256::new();
+        if let Some(hash) = &state.api_key_hash {
+            h.update(hash.as_ref());
+        }
+        h.finalize().to_vec()
+    };
+
+    let note_trimmed: Option<&str> = body
+        .note
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| if s.len() > 2000 { &s[..2000] } else { s });
+
+    match db::record_finding_feedback(
+        &state.db_pool,
+        finding_id,
+        verdict,
+        &reviewer_hash,
+        note_trimmed,
+    )
+    .await
+    {
+        Ok(true) => {
+            let reviewed_at = chrono::Utc::now().to_rfc3339();
+            (
+                StatusCode::OK,
+                Json(FeedbackResponse {
+                    id,
+                    analyst_verdict: verdict.to_string(),
+                    reviewed_at,
+                    review_note: note_trimmed.map(|s| s.to_string()),
+                }),
+            )
+                .into_response()
+        }
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "finding not found"})),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::warn!("post_finding_feedback: db error: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "database error"})),
+            )
+                .into_response()
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6536,6 +6661,7 @@ async fn main() {
         .route("/v1/findings/pg", get(list_pg_findings))
         .route("/v1/findings/export", get(findings_export))
         .route("/v1/findings/prune", post(findings_prune))
+        .route("/v1/findings/{id}/feedback", post(post_finding_feedback))
         .route("/v1/findings", get(list_findings))
         .route("/v1/version", get(version))
         .route("/v1/capabilities", get(capabilities))
