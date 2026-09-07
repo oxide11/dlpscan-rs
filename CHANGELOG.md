@@ -45,6 +45,28 @@ starting from this file.
 
 ---
 
+## 2026-09-07 — performance corpus tooling
+
+### Documentation
+
+- **docs: performance corpus scripts and benchmark harness** (`FUTURE.md`
+  item 3). `scripts/corpus/fetch.sh` downloads ~25 public-domain documents
+  from Project Gutenberg, govinfo.gov, and federalregister.gov across small
+  (30–200 KB), medium (200–600 KB), and large (600 KB–1 MB) size tiers.
+  `scripts/corpus/screen.sh` enforces the data provenance policy by running
+  the scanner against every file and exiting non-zero if any finding above 0.7
+  confidence is returned — no real sensitive data may enter the corpus.
+  `scripts/corpus/bench.sh` scans each file individually, measures wall-clock
+  time per file, prints a throughput table, and appends a timestamped record to
+  `corpus/bench.log` for trend tracking. `docs/BENCHMARKS.md` documents the
+  full process, contrasts the corpus benchmark with the synthetic benchmark
+  (`src/bin/benchmark.rs`), explains what real documents reveal that synthetics
+  cannot, and records the last-measured numbers (currently a placeholder — run
+  `bench.sh` to populate). Raw documents live in `corpus/raw/`, which is
+  gitignored.
+
+---
+
 ## 2026-09-07 — detection correctness wave
 
 ### siphon-core 2.8.1
