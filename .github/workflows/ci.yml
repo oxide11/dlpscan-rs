@@ -102,7 +102,7 @@ jobs:
       # US one), so it is fetched and checksum-verified. Cached on the
       # committed SHA256SUMS.txt, which changes only when the corpus does.
       - name: Cache corpora
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             tests/corpus/canada_contact_v1/*.csv
