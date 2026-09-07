@@ -54,7 +54,7 @@ check() {
         printf "  ok   %-55s %s\n" "${label}" "${actual}"
     else
         printf "  MISS %-55s %s (expected %s)\n" "${label}" "${actual}" "${expected}"
-        fail=1
+        fail=$((fail + 1))
     fi
 }
 
@@ -112,7 +112,7 @@ fs_compose_ver="$(awk -F: '/image:[[:space:]]+siphon-fs:/{gsub(/[[:space:]]/,"",
 check "  deploy/docker-compose.yml siphon-fs"      "${fs_ver}" "${fs_compose_ver}"
 
 # ---------------------------------------------------------------------------
-# siphon-milter lockstep
+# siphon-smtp lockstep
 # ---------------------------------------------------------------------------
 # Covered from the crate's first release rather than retrofitted. siphon-icap
 # shipped without coverage here and its Dockerfile LABEL and compose tag have
@@ -121,14 +121,14 @@ check "  deploy/docker-compose.yml siphon-fs"      "${fs_ver}" "${fs_compose_ver
 #
 # No values.yaml entry: the Helm chart does not deploy the milter, matching
 # siphon-icap. New protocol services ship in compose first.
-milter_ver="$(cargo_version crates/siphon-milter/Cargo.toml)"
-echo "siphon-milter ${milter_ver}"
+smtp_ver="$(cargo_version crates/siphon-smtp/Cargo.toml)"
+echo "siphon-smtp ${smtp_ver}"
 
-milter_dockerfile_ver="$(awk -F\" '/opencontainers\.image\.version/{print $2; exit}' deploy/Dockerfile.milter)"
-check "  deploy/Dockerfile.milter LABEL"           "${milter_ver}" "${milter_dockerfile_ver}"
+smtp_dockerfile_ver="$(awk -F\" '/opencontainers\.image\.version/{print $2; exit}' deploy/Dockerfile.smtp)"
+check "  deploy/Dockerfile.smtp LABEL"           "${smtp_ver}" "${smtp_dockerfile_ver}"
 
-milter_compose_ver="$(awk -F: '/image:[[:space:]]+siphon-milter:/{gsub(/[[:space:]]/,"",$3); print $3; exit}' deploy/docker-compose.yml)"
-check "  deploy/docker-compose.yml siphon-milter"  "${milter_ver}" "${milter_compose_ver}"
+smtp_compose_ver="$(awk -F: '/image:[[:space:]]+siphon-smtp:/{gsub(/[[:space:]]/,"",$3); print $3; exit}' deploy/docker-compose.yml)"
+check "  deploy/docker-compose.yml siphon-smtp"  "${smtp_ver}" "${smtp_compose_ver}"
 
 # ---------------------------------------------------------------------------
 # root siphon CLI + UI + Helm appVersion lockstep
@@ -194,7 +194,14 @@ echo "siphon-launcher ${launcher_ver} (standalone)"
 echo
 if [[ $fail -ne 0 ]]; then
     echo "Versions drift — run scripts/bump-version.sh <target> <new> to re-sync" >&2
-    echo "the affected crate's downstream artifacts. ${checks} checks, ${fail} miss." >&2
+    # Counted, not flagged. This line used to print a boolean, so two drifted
+    # files reported "1 miss" — enough to have someone fix one, re-run, and
+    # be surprised.
+    if [[ "${fail}" -eq 1 ]]; then
+        echo "the affected crate's downstream artifacts. ${checks} checks, 1 miss." >&2
+    else
+        echo "the affected crate's downstream artifacts. ${checks} checks, ${fail} misses." >&2
+    fi
     exit 1
 fi
 echo "all ${checks} lockstep checks in sync ✓"

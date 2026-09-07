@@ -250,17 +250,17 @@ services:
       timeout: 5s
       retries: 3
 
-  siphon-milter:
+  siphon-smtp:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile.milter
-    image: siphon-milter:0.1.0
+      dockerfile: deploy/Dockerfile.smtp
+    image: siphon-smtp:0.1.1
     profiles: [auth]
     environment:
       # The MTA subnet allowed to connect. 0.0.0.0/0 for local dev only —
       # a mail filter reachable from anywhere is one anybody can feed mail
       # to. Required, with no default in the binary.
-      - SIPHON_MILTER_ALLOWED_NETS=${SIPHON_MILTER_ALLOWED_NETS:-0.0.0.0/0}
+      - SIPHON_SMTP_ALLOWED_NETS=${SIPHON_SMTP_ALLOWED_NETS:-0.0.0.0/0}
       # defer (fail closed, the default) | deliver (fail open).
       # `quarantine` is refused at startup: there is nowhere to hold a
       # message yet, and silently behaving as defer would replace the
@@ -269,12 +269,12 @@ services:
       # Whatever is set here, Postfix needs milter_default_action=tempfail
       # to match: the MTA gets the last word on a timeout, and a
       # disagreement between the two is a silent bypass.
-      - SIPHON_MILTER_ON_INDETERMINATE=${SIPHON_MILTER_ON_INDETERMINATE:-defer}
+      - SIPHON_SMTP_ON_INDETERMINATE=${SIPHON_SMTP_ON_INDETERMINATE:-defer}
       # 10 s, from the measurements in docs/architecture/email-dlp.md §4.5:
       # ~4x the worst contended message, ~40x the mixed-flow p99.
-      - SIPHON_MILTER_TIMEOUT_SECS=${SIPHON_MILTER_TIMEOUT_SECS:-10}
-      - SIPHON_MILTER_DIRECTION=${SIPHON_MILTER_DIRECTION:-inbound}
-      - SIPHON_MILTER_MIN_CONFIDENCE=${SIPHON_MILTER_MIN_CONFIDENCE:-0.6}
+      - SIPHON_SMTP_TIMEOUT_SECS=${SIPHON_SMTP_TIMEOUT_SECS:-10}
+      - SIPHON_SMTP_DIRECTION=${SIPHON_SMTP_DIRECTION:-inbound}
+      - SIPHON_SMTP_MIN_CONFIDENCE=${SIPHON_SMTP_MIN_CONFIDENCE:-0.6}
       # Optional. Without it the milter still scans, decides and stamps;
       # what it loses is the retry guard and the investigation record.
       # siphon-api owns the migration runner, so bring that up first.

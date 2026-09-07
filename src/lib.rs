@@ -30,11 +30,21 @@ pub use siphon_core::bin_lookup;
 pub mod cache;
 pub mod compliance;
 pub mod config;
+/// Conformance matrix: five cases for every capability Siphon claims.
+///
+/// Feature-gated because it exists to be *run*, not shipped — it carries
+/// fixture builders (a PDF writer, a PNG encoder) that nothing in production
+/// needs. Enable with `--features conformance`; `scripts/conformance.sh`
+/// does that for you.
+#[cfg(feature = "conformance")]
+pub mod conformance;
 pub mod entropy;
 pub mod extractors;
 pub mod guard;
 pub mod http_util;
 pub mod metrics;
+#[cfg(feature = "metrics")]
+pub mod metrics_registry;
 pub mod pipeline;
 pub mod plugins;
 pub mod policy;

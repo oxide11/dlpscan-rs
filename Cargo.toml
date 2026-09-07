@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/siphon-core", "crates/siphon-api", "crates/siphon-fs", "crates/siphon-launcher", "crates/siphon-icap", "crates/siphon-mail", "crates/siphon-milter"]
+members = [".", "crates/siphon-core", "crates/siphon-api", "crates/siphon-fs", "crates/siphon-launcher", "crates/siphon-icap", "crates/siphon-mail", "crates/siphon-smtp"]
 # Resolver v2 — per-member feature isolation. Without this, the
 # workspace would unify features across every member, which means
 # siphon's default `data-formats` (and therefore rusqlite) would
@@ -10,8 +10,8 @@ members = [".", "crates/siphon-core", "crates/siphon-api", "crates/siphon-fs", "
 resolver = "2"
 
 [package]
-name = "siphon"
-version = "2.3.0"
+name = "siphon-cli"
+version = "2.3.1"
 edition = "2021"
 description = "Polygon Siphon — high-performance DLP scanner to detect, redact, and protect sensitive data"
 license = "MIT"
@@ -71,8 +71,6 @@ base64 = "0.23"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
-# Metrics
-prometheus = { version = "0.14", default-features = false, features = ["process"], optional = true }
 
 # Config
 toml = "1.1"
@@ -130,7 +128,16 @@ default = [
     "data-formats",
     "forensics",
 ]
-metrics = ["dep:prometheus"]
+# Prometheus-shaped metrics, served by our own registry
+# (src/metrics_registry.rs). No longer pulls the `prometheus`
+# crate: 23 transitive deps for four counters and a gauge.
+metrics = []
+# The conformance matrix (src/conformance/) and the `siphon-conformance`
+# binary that runs it. Off by default: it carries fixture builders — a PDF
+# writer, a PNG encoder — that exist to be run in development and CI, not
+# shipped in a scanner. No extra dependencies; everything it needs (zip,
+# base64, tempfile) is already a normal dep.
+conformance = []
 pdf = ["dep:pdf-extract"]
 office = ["dep:calamine", "dep:quick-xml"]
 archives = ["dep:sevenz-rust", "dep:unrar"]
@@ -166,6 +173,26 @@ tempfile = "3"
 # optional runtime dep (behind `msg`); adding it here unconditionally
 # keeps the test green on minimal builds too.
 cfb = "0.14"
+
+# The package is named for the component; the library and the command are
+# deliberately not renamed with it. `use siphon::...` is what every other
+# crate in the workspace writes, and `siphon scan` is what users type — there
+# is no reason for a component rename to break either, so both targets keep
+# their names and only the package moves.
+[lib]
+name = "siphon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "siphon"
+path = "src/main.rs"
+
+# Developer tool, not a shipped artifact: `required-features` keeps it out of
+# a default `cargo build` entirely, so the release binary set is unchanged.
+[[bin]]
+name = "siphon-conformance"
+path = "src/bin/conformance.rs"
+required-features = ["conformance"]
 
 [[bench]]
 name = "scanning"

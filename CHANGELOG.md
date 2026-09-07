@@ -14,9 +14,79 @@ starting from this file.
 
 ---
 
-## 2026-09-05 — siphon-milter: SMTP DLP
+## 2026-09-07 — detection correctness wave
 
-### siphon-milter 0.1.0 (new crate)
+### siphon-core 2.8.1
+
+- **fix(core): separator-dependent patterns now match.** 53 patterns whose
+  regexes mandate a literal separator (US ZIP+4 Code, Japan Postal Code,
+  Brazil CEP, NDC Code, date patterns) could never fire: normalization strips
+  those separators before the pattern runs, and "205000003" is all the scanner
+  ever saw. Fix: patterns that find nothing on normalized text and require a
+  separator are re-run over the pre-normalization text. Only fires when
+  normalization actually changed the text; overhead is +7.8% on a document
+  that triggers normalization.
+
+- **fix(core): PDFs were never parsed; wire pdf-extract and signal unfaithful
+  reads.** `pdf-extract` was compiled into every build and never called. The
+  magic-byte sniffer matched `%PDF` and fell through to the plain-text reader.
+  Real-world PDF content streams are FlateDecode-compressed, so the bytes read
+  as text find nothing. Measured on a two-line PDF carrying an SSN and a card
+  number: both missed. After wiring pdf-extract both are found. Extraction now
+  signals unfaithful reads (`format: "unparsed"`, `warnings` non-empty) so
+  callers can distinguish "nothing in this document" from "nothing in the bytes
+  we could read" — the milter uses this to defer rather than return clean.
+
+### siphon-cli 2.3.1
+
+- **fix(cli): XML text nodes were concatenated with no separator.** The
+  separator logic in `strip_xml_tags` was a comment above an empty `if` block.
+  Every XML-based format (DOCX, XLSX, PPTX, OpenDocument, MHTML) glued
+  adjacent text nodes together, causing both missed detections (header + SSN →
+  "SSN219-09-9999", no match) and fabricated ones (two unrelated 8-digit
+  columns → one Luhn-valid card). Fix uses `XML_BREAK_TAGS` to emit newlines
+  at document boundaries only — not at run-level `<w:r>` elements where Word
+  splits a word across runs.
+
+- **fix(cli): let the bytes decide the format, not the filename.**
+  Extension-based dispatch was a complete bypass: a zip renamed to `.txt` went
+  to the plain-text reader and returned a faithful clean result. Bytes now lead;
+  extension corroborates within a confirmed family. Disagreements are recorded
+  in `metadata["format_mismatch"]`. Policy controlled by
+  `SIPHON_ON_FORMAT_MISMATCH` (`flag` / `reject` / `ignore`; default `flag`).
+
+- **fix(cli): an image with no barcode is inspected, not unreadable.** rxing
+  reports an image with no barcode as `Err(NotFoundException)`, not as an
+  empty result. The extractor used `?`, collapsing that outcome into the error
+  path — every photo in a mail message caused a tempfail under the fail-closed
+  milter policy.
+
+- **refactor(cli): replace prometheus crate with in-house registry.** The
+  prometheus crate brought procfs and protobuf machinery for four counters and
+  a histogram. Replaced with ~530 lines over atomics producing the same text
+  exposition format. 9–18 fewer transitive deps per artifact; `/v1/metrics`
+  output is unchanged.
+
+### siphon-smtp 0.1.1
+
+- **fix: unfaithful extraction now defers the message.** The milter was
+  discarding the `faithful` signal from `extract_text` and treating any
+  `Ok` result as fully inspected. A PDF the parser could not read came back
+  as `Ok` with bytes-as-text and a clean scan — "nothing in the bytes we
+  could read", not "nothing in this document". The milter now routes
+  unfaithful parts to `PartStatus::Error` so the message reconciles to
+  `indeterminate` and defers under the fail-closed default.
+
+- **fix: an image with no barcode no longer defers the message.** rxing's
+  `NotFoundException` was collapsed into the error path, so every photo caused
+  a tempfail. A successfully decoded image with no encoded text is now
+  `scanned-clean`, not uninspected.
+
+---
+
+## 2026-09-05 — siphon-smtp: SMTP DLP
+
+### siphon-smtp 0.1.0 (new crate)
 
 - **feat(milter): Sendmail/Postfix mail filter.** Step 4 of the email-dlp
   build order, and the last one. The MTA holds a message while the filter
@@ -33,7 +103,7 @@ starting from this file.
   would turn a mildly malformed message into an undeliverable one under the
   fail-closed default.
 
-  `policy.rs` implements §4.4: `SIPHON_MILTER_ON_INDETERMINATE =
+  `policy.rs` implements §4.4: `SIPHON_SMTP_ON_INDETERMINATE =
   defer|quarantine|deliver`, defaulting to `defer`. An unknown value is an
   error, never a silent fallback — a typo must not flip a deployment from
   fail-closed to fail-open. Startup refuses `quarantine` outright rather than
@@ -57,7 +127,7 @@ starting from this file.
   in a message ("Q3 layoff list"), and the investigation use is correlating
   identical subjects, which a hash serves.
 
-  Direction is configured (`SIPHON_MILTER_DIRECTION`), not inferred: Postfix
+  Direction is configured (`SIPHON_SMTP_DIRECTION`), not inferred: Postfix
   already knows which chain the filter is wired into, and guessing from the
   message gets relayed and forwarded traffic wrong.
 
@@ -67,7 +137,7 @@ starting from this file.
   `-p <one-crate>`, so a member whose manifest was not copied fails the build
   with "failed to load manifest for workspace member" — verified by
   reconstructing the stub layout, not assumed. Both now list the two new
-  crates. `Dockerfile.milter` copies `crates/` wholesale instead, like
+  crates. `Dockerfile.smtp` copies `crates/` wholesale instead, like
   `Dockerfile.fs`, so it cannot drift the same way.
 
 - **chore(deploy): compose service and version-sync coverage.** The milter is
@@ -131,7 +201,7 @@ starting from this file.
   A message is not one scan — it is a tree of parts, each independently
   scannable, whose results reconcile into one verdict
   (`docs/architecture/email-dlp.md` §2). Nothing writes these tables yet;
-  `siphon-milter` does. They land first because §2 is explicit that the model
+  `siphon-smtp` does. They land first because §2 is explicit that the model
   is painful to retrofit, and because the fail-closed default of §4.4 makes
   MTA retries the normal operating mode rather than an edge case: every
   tempfail comes back as a redelivery, so the idempotency guarantees have to

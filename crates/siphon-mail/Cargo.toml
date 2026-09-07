@@ -7,7 +7,7 @@ license = "MIT"
 rust-version = "1.98"
 
 # A library, unlike every other crate in crates/. It exists because two
-# binaries need the same model: siphon-milter writes messages and parts,
+# binaries need the same model: siphon-smtp writes messages and parts,
 # siphon-api reads them back. siphon-api has no lib target to depend on, and
 # giving it one would link its entire axum/tower HTTP stack into a milter
 # that never serves HTTP.

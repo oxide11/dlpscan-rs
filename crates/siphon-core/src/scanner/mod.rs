@@ -497,6 +497,136 @@ impl ScanConfig {
 struct CompiledPattern {
     regex: Regex,
     def: &'static PatternDef,
+    /// This pattern needs a second pass over the *un-normalized* text.
+    ///
+    /// See [`requires_stripped_separator`].
+    needs_raw_pass: bool,
+}
+
+/// Separator characters normalization removes from between character groups.
+///
+/// Stages 6/6b/6c of `normalize` collapse and then strip these when they sit
+/// consistently between alphanumeric groups. That is what turns
+/// `219 09 9999` back into a social security number — and the same machinery
+/// turns `20500-0003` into `205000003`.
+const STRIPPABLE_SEPARATORS: &[char] = &['-', '.', ' ', '/', '_'];
+
+/// Does this regex *require* a separator that normalization removes?
+///
+/// If it does, the pattern can never match normalized text, because the
+/// character it insists on is gone before the regex runs. `US ZIP+4 Code` is
+/// the clearest case: `\b\d{5}-\d{4}\b` cannot fire on `205000003`, and
+/// `205000003` is all the scanner ever sees.
+///
+/// A pattern that makes the separator *optional* — `[-. ]?`, which most of
+/// them do — is unaffected, matching the joined form happily. So the test is
+/// specifically for a separator element with no quantifier that permits zero.
+///
+/// This is a source-level analysis rather than a semantic one, which makes it
+/// conservative in the safe direction: a false positive costs one extra regex
+/// over the raw text, while a false negative leaves a pattern exactly as
+/// broken as it is today.
+fn requires_stripped_separator(regex: &str) -> bool {
+    let b: Vec<char> = regex.chars().collect();
+    let n = b.len();
+    let mut i = 0;
+
+    // True when the element starting at `i` is made optional by what follows.
+    let optional_at = |j: usize| -> bool {
+        match b.get(j) {
+            Some('?') | Some('*') => true,
+            // {0,n} and {0} permit zero; {1,2} and {2} do not.
+            Some('{') => {
+                let rest: String = b[j..].iter().take(6).collect();
+                rest.starts_with("{0")
+            }
+            _ => false,
+        }
+    };
+
+    while i < n {
+        match b[i] {
+            // Escapes: skip the escaped character, and treat an escaped
+            // separator as a literal one.
+            '\\' => {
+                if i + 1 < n && STRIPPABLE_SEPARATORS.contains(&b[i + 1]) && !optional_at(i + 2) {
+                    return true;
+                }
+                i += 2;
+            }
+            // A character class counts only when every member is itself a
+            // separator: `[-.\s/\x{2013}]` is a separator slot, while
+            // `[1-5]` and `[0-9A-F]` are not. Ranges disqualify a class
+            // outright — a range is by definition a span of ordinary
+            // characters.
+            '[' => {
+                let start = i;
+                let mut j = i + 1;
+                let negated = b.get(j) == Some(&'^');
+                if negated {
+                    j += 1;
+                }
+                if j < n && b[j] == ']' {
+                    j += 1;
+                }
+                let mut members: Vec<char> = Vec::new();
+                let mut has_range = false;
+                while j < n && b[j] != ']' {
+                    if b[j] == '\\' && j + 1 < n {
+                        match b[j + 1] {
+                            's' => members.push(' '),
+                            // \x{HHHH}: the typographic dashes and no-break
+                            // spaces these classes list beside "-".
+                            'x' if b.get(j + 2) == Some(&'{') => {
+                                let close = (j + 3..n).find(|&k| b[k] == '}').unwrap_or(n - 1);
+                                let hex: String = b[j + 3..close].iter().collect();
+                                let ch = u32::from_str_radix(&hex, 16)
+                                    .ok()
+                                    .and_then(char::from_u32)
+                                    .unwrap_or('\u{0}');
+                                members.push(ch);
+                                j = close + 1;
+                                continue;
+                            }
+                            other => members.push(other),
+                        }
+                        j += 2;
+                        continue;
+                    }
+                    // A '-' between two members is a range, not a literal.
+                    if b[j] == '-' && !members.is_empty() && j + 1 < n && b[j + 1] != ']' {
+                        has_range = true;
+                    }
+                    members.push(b[j]);
+                    j += 1;
+                }
+
+                let is_separator_class = !negated
+                    && !has_range
+                    && !members.is_empty()
+                    && members.iter().all(|c| {
+                        STRIPPABLE_SEPARATORS.contains(c)
+                            || c.is_whitespace()
+                            // Typographic dashes and the no-break space, which
+                            // normalization folds onto their ASCII forms.
+                            || matches!(*c, '\u{2013}' | '\u{2014}' | '\u{00a0}' | '\\')
+                    });
+                let _ = start;
+                if is_separator_class && !optional_at(j + 1) {
+                    return true;
+                }
+                i = j + 1;
+            }
+            c if STRIPPABLE_SEPARATORS.contains(&c) => {
+                if !optional_at(i + 1) {
+                    return true;
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+    false
 }
 
 static COMPILED: Lazy<Vec<CompiledPattern>> = Lazy::new(|| {
@@ -514,6 +644,7 @@ static COMPILED: Lazy<Vec<CompiledPattern>> = Lazy::new(|| {
                 compiled.push(CompiledPattern {
                     regex: re,
                     def: pat,
+                    needs_raw_pass: requires_stripped_separator(pat.regex),
                 });
             }
             Err(e) => {
@@ -830,273 +961,311 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
         .collect();
 
     // Run each pattern in parallel, collect per-pattern match vecs
-    let per_pattern_matches: Vec<Vec<Match>> = active_patterns
-        .par_iter()
-        .map(|cp| {
-            let pat = cp.def;
-            let mut local_matches = Vec::new();
-            const MAX_MATCHES_PER_PATTERN: usize = 10_000;
+    // One pattern against one view of the text. Named rather than inlined
+    // because it is run over two views: the normalized text, and — for the
+    // patterns that need it — the raw text as the author typed it. See
+    // `requires_stripped_separator`.
+    let run_pattern = |cp: &CompiledPattern,
+                       haystack: &str,
+                       omap: &[crate::normalize::Offset],
+                       hidx: Option<&context::ContextHitIndex>|
+     -> Vec<Match> {
+        let pat = cp.def;
+        let mut local_matches = Vec::new();
+        const MAX_MATCHES_PER_PATTERN: usize = 10_000;
 
-            // Phase 3d.2: pattern_regex_overrides — swap the static
-            // compiled regex for the analyst-supplied one when present.
-            // Cheap reference-only path (no clone of Regex) when no
-            // override exists. The compile-time AC prefilter membership
-            // and category/sub_category metadata stay the same; only
-            // the bytes the regex matches change.
-            let active_regex: &Regex = config
-                .pattern_regex_overrides
-                .as_ref()
-                .and_then(|map| map.get(&(pat.category.to_string(), pat.sub_category.to_string())))
-                .unwrap_or(&cp.regex);
+        // Phase 3d.2: pattern_regex_overrides — swap the static
+        // compiled regex for the analyst-supplied one when present.
+        // Cheap reference-only path (no clone of Regex) when no
+        // override exists. The compile-time AC prefilter membership
+        // and category/sub_category metadata stay the same; only
+        // the bytes the regex matches change.
+        let active_regex: &Regex = config
+            .pattern_regex_overrides
+            .as_ref()
+            .and_then(|map| map.get(&(pat.category.to_string(), pat.sub_category.to_string())))
+            .unwrap_or(&cp.regex);
 
-            for mat in active_regex.find_iter(&normalized) {
-                if local_matches.len() >= MAX_MATCHES_PER_PATTERN {
-                    break;
-                }
-                let norm_start = mat.start();
-                let norm_end = mat.end();
-                let matched_text = mat.as_str();
-                let cand_span = (norm_start, norm_end);
+        for mat in active_regex.find_iter(haystack) {
+            if local_matches.len() >= MAX_MATCHES_PER_PATTERN {
+                break;
+            }
+            let norm_start = mat.start();
+            let norm_end = mat.end();
+            let matched_text = mat.as_str();
+            let cand_span = (norm_start, norm_end);
 
-                // Stage 1 — regex hit.
-                emit_trace(
-                    &config.trace,
-                    "primary",
-                    "regex",
-                    "pass",
-                    pat.category,
-                    pat.sub_category,
-                    cand_span,
-                    matched_text,
-                    None,
-                    None,
-                );
+            // Stage 1 — regex hit.
+            emit_trace(
+                &config.trace,
+                "primary",
+                "regex",
+                "pass",
+                pat.category,
+                pat.sub_category,
+                cand_span,
+                matched_text,
+                None,
+                None,
+            );
 
-                // Structural validation (Luhn, SWIFT, CUSIP, SEDOL, TFN, SSN)
-                if !crate::validation::validate_match(pat.category, pat.sub_category, matched_text)
-                {
-                    emit_trace(
-                        &config.trace,
-                        "primary",
-                        "validation",
-                        "drop",
-                        pat.category,
-                        pat.sub_category,
-                        cand_span,
-                        matched_text,
-                        None,
-                        Some("structural validation failed (Luhn / checksum / format)"),
-                    );
-                    continue;
-                }
+            // Structural validation (Luhn, SWIFT, CUSIP, SEDOL, TFN, SSN)
+            if !crate::validation::validate_match(pat.category, pat.sub_category, matched_text) {
                 emit_trace(
                     &config.trace,
                     "primary",
                     "validation",
-                    "pass",
+                    "drop",
                     pat.category,
                     pat.sub_category,
                     cand_span,
                     matched_text,
                     None,
-                    None,
+                    Some("structural validation failed (Luhn / checksum / format)"),
                 );
+                continue;
+            }
+            emit_trace(
+                &config.trace,
+                "primary",
+                "validation",
+                "pass",
+                pat.category,
+                pat.sub_category,
+                cand_span,
+                matched_text,
+                None,
+                None,
+            );
 
-                // Context checking. Local proximity first; the envelope is
-                // only consulted when there is no local keyword, so a match
-                // beside its keyword is never downgraded to envelope scoring.
-                let local_context = context::check_context(
-                    &normalized,
-                    norm_start,
-                    norm_end,
+            // Context checking. Local proximity first; the envelope is
+            // only consulted when there is no local keyword, so a match
+            // beside its keyword is never downgraded to envelope scoring.
+            let local_context = context::check_context(
+                haystack,
+                norm_start,
+                norm_end,
+                pat.category,
+                pat.sub_category,
+                hidx,
+            );
+            let context_source = if local_context {
+                crate::scoring::ContextSource::Local
+            } else if match envelope_exclude {
+                Some(excl) => envelope_index
+                    .is_some_and(|i| i.has_hit_outside(pat.category, pat.sub_category, excl)),
+                None => context::envelope_has_context(
+                    envelope_index,
+                    envelope_len,
                     pat.category,
                     pat.sub_category,
-                    hit_index.as_ref(),
-                );
-                let context_source = if local_context {
-                    crate::scoring::ContextSource::Local
-                } else if match envelope_exclude {
-                    Some(excl) => envelope_index
-                        .is_some_and(|i| i.has_hit_outside(pat.category, pat.sub_category, excl)),
-                    None => context::envelope_has_context(
-                        envelope_index,
-                        envelope_len,
-                        pat.category,
-                        pat.sub_category,
-                    ),
-                } {
-                    crate::scoring::ContextSource::Envelope
-                } else {
-                    crate::scoring::ContextSource::None
-                };
-                // The gate opens on either source; only the score differs.
-                let has_context = context_source != crate::scoring::ContextSource::None;
+                ),
+            } {
+                crate::scoring::ContextSource::Envelope
+            } else {
+                crate::scoring::ContextSource::None
+            };
+            // The gate opens on either source; only the score differs.
+            let has_context = context_source != crate::scoring::ContextSource::None;
 
-                let ctx_required = effective_context_required(
-                    pat.category,
-                    pat.sub_category,
-                    pat.context_required,
-                    config.pattern_field_overrides.as_ref(),
-                );
+            let ctx_required = effective_context_required(
+                pat.category,
+                pat.sub_category,
+                pat.context_required,
+                config.pattern_field_overrides.as_ref(),
+            );
 
-                if ctx_required && !has_context {
-                    emit_trace(
-                        &config.trace,
-                        "primary",
-                        "ctx_required",
-                        "drop",
-                        pat.category,
-                        pat.sub_category,
-                        cand_span,
-                        matched_text,
-                        None,
-                        Some("pattern requires a context keyword nearby; none found"),
-                    );
-                    continue;
-                }
-                if config.require_context && !has_context {
-                    emit_trace(
-                        &config.trace,
-                        "primary",
-                        "require_context",
-                        "drop",
-                        pat.category,
-                        pat.sub_category,
-                        cand_span,
-                        matched_text,
-                        None,
-                        Some("caller set require_context=true and no context keyword was found"),
-                    );
-                    continue;
-                }
+            if ctx_required && !has_context {
                 emit_trace(
                     &config.trace,
                     "primary",
-                    "context",
-                    "pass",
+                    "ctx_required",
+                    "drop",
                     pat.category,
                     pat.sub_category,
                     cand_span,
                     matched_text,
                     None,
-                    Some(if has_context {
-                        "context keyword matched"
-                    } else {
-                        "no context required"
-                    }),
+                    Some("pattern requires a context keyword nearby; none found"),
                 );
-
-                let spec = effective_specificity(
-                    pat.category,
-                    pat.sub_category,
-                    config.pattern_field_overrides.as_ref(),
-                );
-                let confidence = crate::scoring::compute_confidence_from_source(
-                    spec,
-                    context_source,
-                    ctx_required,
-                );
-                if confidence < config.min_confidence {
-                    emit_trace(
-                        &config.trace,
-                        "primary",
-                        "min_confidence",
-                        "drop",
-                        pat.category,
-                        pat.sub_category,
-                        cand_span,
-                        matched_text,
-                        Some(confidence),
-                        Some("below caller min_confidence threshold"),
-                    );
-                    continue;
-                }
-
-                // Map normalized byte positions back to original byte
-                // positions. offset_map is indexed by normalized byte and
-                // stores the corresponding original byte offset.
-                //
-                // For the end offset we want the byte AFTER the last byte
-                // of the match in the original. The previous implementation
-                // used `offset_map[norm_end - 1] + 1`, which silently
-                // corrupted spans whenever a byte in the original was part
-                // of a multi-byte UTF-8 sequence (the +1 would land in the
-                // middle of that sequence). Use `offset_map[norm_end]`
-                // instead — it is the start of the next character in the
-                // original, which is exactly the end of the match. Fall
-                // back to `text.len()` when the match runs to the end of
-                // the normalized buffer (no successor byte to read).
-                let (orig_start, orig_end) = if !offset_map.is_empty() {
-                    let os = if norm_start < offset_map.len() {
-                        offset_map[norm_start] as usize
-                    } else {
-                        text.len()
-                    };
-                    let oe = if norm_end < offset_map.len() {
-                        offset_map[norm_end] as usize
-                    } else {
-                        text.len()
-                    };
-                    (os, oe)
-                } else {
-                    (norm_start, norm_end)
-                };
-
-                // Safety: ensure slice boundaries are valid UTF-8 char boundaries
-                let original_text = if orig_end <= text.len()
-                    && orig_start <= orig_end
-                    && text.is_char_boundary(orig_start)
-                    && text.is_char_boundary(orig_end)
-                {
-                    &text[orig_start..orig_end]
-                } else {
-                    matched_text
-                };
-
-                let mut m = Match::new(
-                    original_text.to_string(),
-                    pat.category.to_string(),
-                    pat.sub_category.to_string(),
-                    has_context,
-                    confidence,
-                    (orig_start, orig_end),
-                    ctx_required,
-                );
-
-                // BIN enrichment for credit card matches
-                if pat.category == "Credit Card Numbers" {
-                    if let Some((brand, card_type, country, issuer)) =
-                        crate::validation::get_bin_info(matched_text)
-                    {
-                        m.metadata.insert("bin_brand".into(), brand);
-                        m.metadata.insert("bin_card_type".into(), card_type);
-                        m.metadata.insert("bin_country".into(), country);
-                        if !issuer.is_empty() {
-                            m.metadata.insert("bin_issuer".into(), issuer);
-                        }
-                        // Known BIN: small confidence boost
-                        m.confidence = (m.confidence + 0.05).min(1.0);
-                    }
-                }
-
+                continue;
+            }
+            if config.require_context && !has_context {
                 emit_trace(
                     &config.trace,
                     "primary",
-                    "emit",
-                    "emit",
+                    "require_context",
+                    "drop",
                     pat.category,
                     pat.sub_category,
                     cand_span,
                     matched_text,
-                    Some(m.confidence),
-                    Some("match emitted to primary result set"),
+                    None,
+                    Some("caller set require_context=true and no context keyword was found"),
                 );
-                local_matches.push(m);
+                continue;
+            }
+            emit_trace(
+                &config.trace,
+                "primary",
+                "context",
+                "pass",
+                pat.category,
+                pat.sub_category,
+                cand_span,
+                matched_text,
+                None,
+                Some(if has_context {
+                    "context keyword matched"
+                } else {
+                    "no context required"
+                }),
+            );
+
+            let spec = effective_specificity(
+                pat.category,
+                pat.sub_category,
+                config.pattern_field_overrides.as_ref(),
+            );
+            let confidence =
+                crate::scoring::compute_confidence_from_source(spec, context_source, ctx_required);
+            if confidence < config.min_confidence {
+                emit_trace(
+                    &config.trace,
+                    "primary",
+                    "min_confidence",
+                    "drop",
+                    pat.category,
+                    pat.sub_category,
+                    cand_span,
+                    matched_text,
+                    Some(confidence),
+                    Some("below caller min_confidence threshold"),
+                );
+                continue;
             }
 
-            local_matches
-        })
+            // Map normalized byte positions back to original byte
+            // positions. omap is indexed by normalized byte and
+            // stores the corresponding original byte offset.
+            //
+            // For the end offset we want the byte AFTER the last byte
+            // of the match in the original. The previous implementation
+            // used `omap[norm_end - 1] + 1`, which silently
+            // corrupted spans whenever a byte in the original was part
+            // of a multi-byte UTF-8 sequence (the +1 would land in the
+            // middle of that sequence). Use `omap[norm_end]`
+            // instead — it is the start of the next character in the
+            // original, which is exactly the end of the match. Fall
+            // back to `text.len()` when the match runs to the end of
+            // the normalized buffer (no successor byte to read).
+            let (orig_start, orig_end) = if !omap.is_empty() {
+                let os = if norm_start < omap.len() {
+                    omap[norm_start] as usize
+                } else {
+                    text.len()
+                };
+                let oe = if norm_end < omap.len() {
+                    omap[norm_end] as usize
+                } else {
+                    text.len()
+                };
+                (os, oe)
+            } else {
+                (norm_start, norm_end)
+            };
+
+            // Safety: ensure slice boundaries are valid UTF-8 char boundaries
+            let original_text = if orig_end <= text.len()
+                && orig_start <= orig_end
+                && text.is_char_boundary(orig_start)
+                && text.is_char_boundary(orig_end)
+            {
+                &text[orig_start..orig_end]
+            } else {
+                matched_text
+            };
+
+            let mut m = Match::new(
+                original_text.to_string(),
+                pat.category.to_string(),
+                pat.sub_category.to_string(),
+                has_context,
+                confidence,
+                (orig_start, orig_end),
+                ctx_required,
+            );
+
+            // BIN enrichment for credit card matches
+            if pat.category == "Credit Card Numbers" {
+                if let Some((brand, card_type, country, issuer)) =
+                    crate::validation::get_bin_info(matched_text)
+                {
+                    m.metadata.insert("bin_brand".into(), brand);
+                    m.metadata.insert("bin_card_type".into(), card_type);
+                    m.metadata.insert("bin_country".into(), country);
+                    if !issuer.is_empty() {
+                        m.metadata.insert("bin_issuer".into(), issuer);
+                    }
+                    // Known BIN: small confidence boost
+                    m.confidence = (m.confidence + 0.05).min(1.0);
+                }
+            }
+
+            emit_trace(
+                &config.trace,
+                "primary",
+                "emit",
+                "emit",
+                pat.category,
+                pat.sub_category,
+                cand_span,
+                matched_text,
+                Some(m.confidence),
+                Some("match emitted to primary result set"),
+            );
+            local_matches.push(m);
+        }
+
+        local_matches
+    };
+
+    let per_pattern_matches: Vec<Vec<Match>> = active_patterns
+        .par_iter()
+        .map(|cp| run_pattern(cp, &normalized, &offset_map, hit_index.as_ref()))
         .collect();
+
+    // Second pass, over the text as written.
+    //
+    // Normalization strips separators between character groups — which is
+    // what turns `219 09 9999` back into a social security number, and also
+    // what turns `20500-0003` into `205000003` before `\b\d{5}-\d{4}\b`
+    // ever sees it. A pattern that *requires* its separator can therefore
+    // never match, and `US ZIP+4 Code` never did.
+    //
+    // Skipping normalization for those patterns would not help: they are
+    // blind to separator evasion either way, because they insist on a literal
+    // character. Running them over both views is strictly additive — the
+    // normalized pass is untouched, so nothing that matches today stops
+    // matching.
+    //
+    // Two things keep the cost off the common path. The pass only runs when
+    // normalization actually changed something, and only for a flagged
+    // pattern that found *nothing* on the normalized text — so
+    // `requires_stripped_separator` being imprecise costs a regex run at
+    // worst, never a wrong answer. Context is checked against the raw
+    // haystack directly (`None` hit index), since the prebuilt index is keyed
+    // to normalized positions.
+    let raw_pass_matches: Vec<Vec<Match>> = if normalized == text {
+        Vec::new()
+    } else {
+        active_patterns
+            .par_iter()
+            .enumerate()
+            .filter(|(idx, cp)| cp.needs_raw_pass && per_pattern_matches[*idx].is_empty())
+            .map(|(_, cp)| run_pattern(cp, text, &[], None))
+            .collect()
+    };
 
     // Check if scan exceeded timeout
     if start.elapsed().as_secs() > MAX_SCAN_SECONDS {
@@ -1106,10 +1275,12 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
         );
     }
 
-    // Flatten primary matches
+    // Flatten primary matches, then the raw-text pass. Dedup runs over both
+    // together further down, so a value found in both views collapses to one.
     let mut matches: Vec<Match> = per_pattern_matches
         .into_iter()
         .flatten()
+        .chain(raw_pass_matches.into_iter().flatten())
         .take(config.max_matches)
         .collect();
 
@@ -1857,6 +2028,96 @@ fn entropy_to_confidence(entropy: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    /// Cost of the raw-text second pass, measured rather than assumed.
+    #[test]
+    #[ignore]
+    fn measure_raw_pass_cost() {
+        use std::time::Instant;
+        let cfg = super::ScanConfig::default();
+
+        // A document shaped like the ones that actually arrive: prose with a
+        // few identifiers in it, long enough that normalization does work.
+        let doc = format!(
+            "{}\n\nAccount review for Q3.\nCustomer SSN 219-09-9999\n\
+             Card on file 4111 1111 1111 1111\nContact: dana@example.com\n\
+             Mailing zip code 20500-0003\n{}",
+            "Quarterly planning notes and regional summary. ".repeat(40),
+            "Further notes follow, with nothing sensitive in them. ".repeat(40)
+        );
+
+        // Warm the lazily-compiled pattern set so cold start is not measured.
+        let _ = super::scan_text_with_config(&doc, &cfg).unwrap();
+
+        const N: u32 = 300;
+        let t = Instant::now();
+        for _ in 0..N {
+            let _ = super::scan_text_with_config(&doc, &cfg).unwrap();
+        }
+        let per = t.elapsed().as_secs_f64() * 1000.0 / f64::from(N);
+
+        // How many patterns the second pass actually runs.
+        let flagged = super::COMPILED.iter().filter(|c| c.needs_raw_pass).count();
+        let (normalized, _) = crate::normalize::normalize_text(&doc);
+        println!(
+            "BENCH doc={} bytes  normalized_changed={}  flagged={}  {per:.3} ms/scan",
+            doc.len(),
+            normalized != doc,
+            flagged
+        );
+
+        let ms = super::scan_text_with_config(&doc, &cfg).unwrap();
+        println!(
+            "BENCH findings={} [{}]",
+            ms.len(),
+            ms.iter()
+                .map(|m| m.sub_category.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    /// The separator patterns the second pass exists for.
+    ///
+    /// Each of these mandates a character that normalization removes, so
+    /// before the raw-text pass none of them could fire at all.
+    #[test]
+    fn patterns_requiring_a_separator_now_fire() {
+        let cfg = super::ScanConfig {
+            min_confidence: 0.0,
+            ..Default::default()
+        };
+        for (text, want) in [
+            ("mailing zip code 20500-0003", "US ZIP+4 Code"),
+            ("postal code 150-0001 tokyo", "Japan Postal Code"),
+            // ISO, so this is Date ISO — Date of Birth is MM-DD-YYYY.
+            ("date of birth: 1985-04-12", "Date ISO"),
+            // Not "Date of Birth": that pattern has the same shape as Date
+            // US, so deduplication keeps one of the two and it is never the
+            // one you asked for. A separate finding, tracked in the
+            // conformance matrix's unseeded list.
+            ("date of birth: 04/12/1985", "Date US"),
+            ("CEP 01310-100 Sao Paulo", "Brazil CEP"),
+            ("NDC code 0002-7597-01 on the label", "NDC Code"),
+        ] {
+            let ms = super::scan_text_with_config(text, &cfg).unwrap();
+            assert!(
+                ms.iter().any(|m| m.sub_category == want),
+                "{want} did not fire on {text:?} — got {:?}",
+                ms.iter()
+                    .map(|m| m.sub_category.as_str())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// The second pass must not report a value twice.
+    #[test]
+    fn a_value_found_in_both_views_is_reported_once() {
+        let cfg = super::ScanConfig::default();
+        let ms = super::scan_text_with_config("primary card 4111-1111-1111-1111", &cfg).unwrap();
+        let visas = ms.iter().filter(|m| m.sub_category == "Visa").count();
+        assert_eq!(visas, 1, "expected one Visa, got {visas}: {ms:?}");
+    }
+
     // ── context envelope ───────────────────────────────────────────────
     //
     // The failure these cover: context gating is proximity-based within one

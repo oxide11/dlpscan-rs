@@ -56,3 +56,23 @@ jobs:
       # rationale comment) or remediate the dep.
       - name: cargo deny check
         run: cargo deny check
+
+  sbom:
+    name: SBOM is current
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # An SBOM is only worth having if it describes the artifact that shipped.
+    # Regenerating it by hand at release time guarantees it is stale exactly
+    # when it matters, so this fails the build the moment Cargo.lock and
+    # sbom/ disagree. The generator is deterministic — no timestamp unless
+    # asked — which is what makes that comparison possible at all.
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.98"
+
+      - name: Verify sbom/ matches Cargo.lock
+        run: scripts/generate-sbom.sh --check

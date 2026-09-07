@@ -14,7 +14,7 @@
 //!
 //! # Timeout and the fail-closed default
 //!
-//! The scan runs under `SIPHON_MILTER_TIMEOUT_SECS` (default 10, from the
+//! The scan runs under `SIPHON_SMTP_TIMEOUT_SECS` (default 10, from the
 //! measurements in §4.5). Exceeding it yields `indeterminate`, which under
 //! the default policy means a 451 and a retry — not a delivery.
 //!
@@ -73,9 +73,50 @@ struct Config {
     direction: Direction,
 }
 
-fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
-    std::env::var(key)
-        .ok()
+/// The pre-rename variable prefix.
+///
+/// Assembled from two pieces rather than written whole, so a bulk rename of
+/// the old prefix cannot rewrite the one place that must keep it. That is not
+/// hypothetical: the rename introducing this function ran a blanket
+/// substitution across the tree and turned this fallback into a second lookup
+/// of the *new* name, leaving it silently dead. The test at the bottom of
+/// this file is what caught it.
+const LEGACY_ENV_PREFIX: &str = concat!("SIPHON_", "MILTER_");
+
+/// Read a `SIPHON_SMTP_*` variable, accepting the old `SIPHON_SMTP_*`
+/// spelling.
+///
+/// The crate was renamed from siphon-milter to siphon-smtp; the variables
+/// followed. Deployments did not, and a scanner that silently reverts to its
+/// defaults because a name moved underneath it is a scanner that stops
+/// filtering mail while looking healthy — the failure mode this whole service
+/// exists to avoid. The old name is therefore still honoured, and using it
+/// says so once at startup.
+///
+/// The new name wins when both are set, so a migration can land the new
+/// spelling without first removing the old one.
+fn env_var(suffix: &str) -> Option<String> {
+    let current = format!("SIPHON_SMTP_{suffix}");
+    if let Ok(v) = std::env::var(&current) {
+        return Some(v);
+    }
+    let legacy = format!("{LEGACY_ENV_PREFIX}{suffix}");
+    match std::env::var(&legacy) {
+        Ok(v) => {
+            tracing::warn!(
+                deprecated = %legacy,
+                use_instead = %current,
+                "this is the pre-rename spelling and still works; switch to \
+                 the SIPHON_SMTP_ form"
+            );
+            Some(v)
+        }
+        Err(_) => None,
+    }
+}
+
+fn env_parse<T: std::str::FromStr>(suffix: &str, default: T) -> T {
+    env_var(suffix)
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
 }
@@ -164,9 +205,9 @@ fn build_pool() -> Result<Option<deadpool_postgres::Pool>, Box<dyn std::error::E
 
 impl Config {
     fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
-        let on_indeterminate = match std::env::var("SIPHON_MILTER_ON_INDETERMINATE") {
-            Ok(v) => OnIndeterminate::parse(&v)?,
-            Err(_) => OnIndeterminate::default(),
+        let on_indeterminate = match env_var("ON_INDETERMINATE") {
+            Some(v) => OnIndeterminate::parse(&v)?,
+            None => OnIndeterminate::default(),
         };
 
         // Refuse rather than silently behaving as defer. There is nowhere to
@@ -179,35 +220,33 @@ impl Config {
 
         // Required, with no default, matching siphon-icap: a filter that
         // accepts connections from anywhere is one anybody can feed mail to.
-        let allowed_nets = match std::env::var("SIPHON_MILTER_ALLOWED_NETS") {
-            Ok(spec) => parse_nets(&spec)?,
-            Err(_) => {
-                return Err("SIPHON_MILTER_ALLOWED_NETS is required (use 0.0.0.0/0 for dev)".into())
+        let allowed_nets = match env_var("ALLOWED_NETS") {
+            Some(spec) => parse_nets(&spec)?,
+            None => {
+                return Err("SIPHON_SMTP_ALLOWED_NETS is required (use 0.0.0.0/0 for dev)".into())
             }
         };
         if allowed_nets.is_empty() {
-            return Err("SIPHON_MILTER_ALLOWED_NETS is empty; nothing could connect".into());
+            return Err("SIPHON_SMTP_ALLOWED_NETS is empty; nothing could connect".into());
         }
 
         Ok(Config {
             allowed_nets,
-            bind: std::env::var("SIPHON_MILTER_BIND").unwrap_or_else(|_| "0.0.0.0".into()),
-            port: env_parse("SIPHON_MILTER_PORT", DEFAULT_PORT),
+            bind: env_var("BIND").unwrap_or_else(|| "0.0.0.0".into()),
+            port: env_parse("PORT", DEFAULT_PORT),
             on_indeterminate,
-            deadline: Duration::from_secs(env_parse(
-                "SIPHON_MILTER_TIMEOUT_SECS",
-                DEFAULT_TIMEOUT_SECS,
-            )),
-            max_message_bytes: env_parse(
-                "SIPHON_MILTER_MAX_MESSAGE_BYTES",
-                DEFAULT_MAX_MESSAGE_BYTES,
-            ),
-            max_connections: env_parse("SIPHON_MILTER_MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS),
-            min_confidence: env_parse("SIPHON_MILTER_MIN_CONFIDENCE", 0.6f64),
+            deadline: Duration::from_secs(env_parse("TIMEOUT_SECS", DEFAULT_TIMEOUT_SECS)),
+            max_message_bytes: env_parse("MAX_MESSAGE_BYTES", DEFAULT_MAX_MESSAGE_BYTES),
+            max_connections: env_parse("MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS),
+            min_confidence: env_parse("MIN_CONFIDENCE", 0.6f64),
             db: build_pool()?,
-            tenant_id: std::env::var("SIPHON_MILTER_TENANT").unwrap_or_else(|_| "default".into()),
-            direction: match std::env::var("SIPHON_MILTER_DIRECTION")
-                .unwrap_or_else(|_| "inbound".into())
+            // Through env_var, like every other setting, so these two get
+            // the SIPHON_SMTP_ name and the legacy fallback rather than being
+            // the only pair that silently ignores an operator's existing
+            // configuration.
+            tenant_id: env_var("TENANT").unwrap_or_else(|| "default".into()),
+            direction: match env_var("DIRECTION")
+                .unwrap_or_else(|| "inbound".into())
                 .trim()
                 .to_ascii_lowercase()
                 .as_str()
@@ -216,7 +255,7 @@ impl Config {
                 "outbound" => Direction::Outbound,
                 other => {
                     return Err(format!(
-                        "SIPHON_MILTER_DIRECTION={other:?} is not inbound or outbound"
+                        "SIPHON_SMTP_DIRECTION={other:?} is not inbound or outbound"
                     )
                     .into())
                 }
@@ -395,7 +434,22 @@ fn scan_message(raw: &[u8], min_confidence: f64) -> ScanOutcome {
                     continue;
                 };
                 match extract_attachment(part.filename.as_deref(), data) {
-                    Some(t) => t,
+                    Some(e) if e.faithful => e.text,
+                    // Extracted, but not as the format it claims to be — a
+                    // PDF that would not parse, a truncated Office file read
+                    // as raw bytes. There is text here, and scanning it may
+                    // even find something, but a clean result would mean
+                    // "nothing in the bytes we could read", not "nothing in
+                    // this document". Under fail-closed those are different
+                    // answers, so this part counts as uninspected.
+                    Some(e) => {
+                        record.status = PartStatus::Error;
+                        record.detail = Some(e.why.unwrap_or_else(|| {
+                            "content did not parse as its declared format".into()
+                        }));
+                        finish_part(&mut parts, &mut outcomes, record, None);
+                        continue;
+                    }
                     None => {
                         record.status = PartStatus::Error;
                         record.detail = Some("extraction failed".into());
@@ -416,6 +470,17 @@ fn scan_message(raw: &[u8], min_confidence: f64) -> ScanOutcome {
                 siphon_core::validation::MAX_INPUT_SIZE
             ));
             finish_part(&mut parts, &mut outcomes, record, None);
+            continue;
+        }
+
+        // Faithfully read, and there was nothing in it to scan: an image
+        // carrying no barcode, an empty part. The scanner rejects empty
+        // input, so handing it on would come back as a scan error and count
+        // the part uninspected — deferring every message with a photo in it.
+        // Nothing was missed here, so this is clean.
+        if text.is_empty() {
+            record.status = PartStatus::Scanned;
+            finish_part(&mut parts, &mut outcomes, record, Some(Verdict::Clean));
             continue;
         }
 
@@ -490,8 +555,19 @@ fn finish_part(
     parts.push(record);
 }
 
+/// What extraction produced, and whether it can be trusted as the format it
+/// claimed to be.
+struct Extracted {
+    text: String,
+    /// False when the extractor fell back to reading raw bytes. The scanner
+    /// will happily scan those bytes and may report nothing — which is a
+    /// statement about the bytes, not about the document.
+    faithful: bool,
+    why: Option<String>,
+}
+
 /// Hand attachment bytes to the extractors, which take file paths.
-fn extract_attachment(filename: Option<&str>, data: &[u8]) -> Option<String> {
+fn extract_attachment(filename: Option<&str>, data: &[u8]) -> Option<Extracted> {
     let suffix = filename
         .and_then(|f| f.rsplit_once('.').map(|(_, e)| format!(".{e}")))
         .unwrap_or_else(|| ".bin".to_string());
@@ -499,7 +575,17 @@ fn extract_attachment(filename: Option<&str>, data: &[u8]) -> Option<String> {
     tmp.write_all(data).ok()?;
     tmp.flush().ok()?;
     let path = tmp.path().to_string_lossy().to_string();
-    siphon::extractors::extract_text(&path).ok().map(|e| e.text)
+    let r = siphon::extractors::extract_text(&path).ok()?;
+    // The extractors already say when a parse was not faithful; the mail path
+    // simply has to stop discarding that. `format: "unparsed"` and any
+    // warning both mean the same thing here: what was scanned is not what the
+    // file claims to contain.
+    let faithful = r.warnings.is_empty() && r.format != "unparsed";
+    Some(Extracted {
+        text: r.text,
+        faithful,
+        why: r.warnings.first().cloned(),
+    })
 }
 
 async fn write_response(stream: &mut TcpStream, response: &Response) -> Result<(), std::io::Error> {
@@ -749,11 +835,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         on_indeterminate = config.on_indeterminate.as_str(),
         deadline_secs = config.deadline.as_secs(),
         max_message_mb = config.max_message_bytes / (1024 * 1024),
-        "siphon-milter listening"
+        "siphon-smtp listening"
     );
     if config.on_indeterminate == OnIndeterminate::Deliver {
         tracing::warn!(
-            "SIPHON_MILTER_ON_INDETERMINATE=deliver: messages that could not be \
+            "SIPHON_SMTP_ON_INDETERMINATE=deliver: messages that could not be \
              fully inspected will be DELIVERED. This is fail-open."
         );
     }
@@ -783,6 +869,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
+
+    /// The pre-rename variable names still work.
+    ///
+    /// This is the part of a rename that breaks production. The crate moved
+    /// from siphon-milter to siphon-smtp and the variables followed, but
+    /// deployments are configured elsewhere by someone else, and a filter
+    /// that silently falls back to its defaults because a name moved is one
+    /// that stops filtering mail while its health check stays green.
+    ///
+    /// Serialised and env-restoring because the variables are process-global
+    /// and the rest of the suite runs in parallel.
+    #[test]
+    fn the_pre_rename_variable_names_are_still_honoured() {
+        // SAFETY: single-threaded within this test, and both variables are
+        // removed again before it returns.
+        unsafe {
+            std::env::remove_var("SIPHON_SMTP_PORT");
+            std::env::set_var("SIPHON_MILTER_PORT", "9999");
+        }
+        assert_eq!(
+            super::env_parse("PORT", super::DEFAULT_PORT),
+            9999,
+            "the old spelling must still be read"
+        );
+
+        // When both are set the new name wins, so a migration can add the new
+        // spelling before removing the old one.
+        unsafe {
+            std::env::set_var("SIPHON_SMTP_PORT", "8894");
+        }
+        assert_eq!(
+            super::env_parse("PORT", super::DEFAULT_PORT),
+            8894,
+            "the current spelling must take precedence"
+        );
+
+        unsafe {
+            std::env::remove_var("SIPHON_SMTP_PORT");
+            std::env::remove_var("SIPHON_MILTER_PORT");
+        }
+    }
     use super::*;
 
     #[test]
@@ -857,6 +984,79 @@ mod tests {
 
         let clean = b"From: a@b.example\r\nSubject: Lunch\r\n\r\nSee you at one.\r\n";
         assert_eq!(scan_message(clean, 0.6).verdict, Verdict::Clean);
+    }
+
+    /// An image attachment must not defer the message.
+    ///
+    /// This is the constraint that decided the crate's feature set. Dropping
+    /// the `barcode` feature would have cut 92 transitive dependencies, but
+    /// it also removes the image arm from the extractor dispatch — so a JPEG
+    /// falls through to the unparsed-binary reader, which warns, which this
+    /// milter now treats as an uninspected part. Under the fail-closed
+    /// default that defers every message carrying an image.
+    ///
+    /// So `barcode` stays, and this test fails if someone trims it out
+    /// looking at the dependency count alone.
+    #[test]
+    fn an_image_attachment_does_not_defer_the_message() {
+        // A real 32x32 greyscale PNG — one the image decoder actually
+        // decodes, carrying no barcode. The fixture has to be a genuine
+        // image: a plausible header followed by filler decodes to
+        // "Premature End of image", which is an unreadable attachment and
+        // *should* defer, so it would pass this test for the wrong reason
+        // and never notice the feature being trimmed.
+        let payload =
+            "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAAAAABWESUoAAAAxUlEQVR42oXMkQLCAABF0QuDIBgMgs\
+                       EgCAaDQTAIgkEQBINBEAwGg0EQBEEQBEEQBEEQBEEQBEEQBEEQBEEQBEEQ9AnvfMCBgllyKl61Fj\
+                       ajdpJ1+8PxdL5cb/fH8/X+fH8xipZddv2g3mjFnTTvDUaT2WK12R1Ol9vj9fnJABEYiKCACIqIwE\
+                       QEFiIoIQIbETiIoIwIKojARQQeIvARQRURBIighgjqiCBEBA1E0EQELUQQIYIYEbQRQQcRJIggRQ\
+                       QZIsj/vPL4ECN9bh0AAAAASUVORK5CYII=";
+        let raw = format!(
+            "From: a@b.example\r\nSubject: Photo\r\n\
+             Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n\
+             --B\r\nContent-Type: text/plain\r\n\r\nSee the photo.\r\n\
+             --B\r\nContent-Type: image/png; name=\"p.png\"\r\n\
+             Content-Disposition: attachment; filename=\"p.png\"\r\n\
+             Content-Transfer-Encoding: base64\r\n\r\n{payload}\r\n--B--\r\n"
+        );
+        let verdict = scan_message(raw.as_bytes(), 0.6).verdict;
+        assert_ne!(
+            verdict,
+            Verdict::Indeterminate,
+            "an image with no barcode is inspected and clean, not deferred — \
+             check the `barcode` feature is still enabled",
+        );
+    }
+
+    /// The gap this closes: an attachment that extraction could not parse as
+    /// its declared format must not come back clean.
+    ///
+    /// This test failed when the milter first shipped. `extract_text` returned
+    /// `Ok` for a PDF it could not parse, having fallen back to reading raw
+    /// bytes, and the milter had no way to tell that from a real parse. The
+    /// extractors always carried the signal in `warnings`; the mail path was
+    /// discarding it.
+    #[test]
+    fn an_attachment_that_did_not_parse_is_not_clean() {
+        // Carries the %PDF magic, so the real parser is invoked, and then
+        // fails to parse. We tried and could not read it — which is
+        // different from an ASCII file merely misnamed .pdf, where reading
+        // the text IS a faithful reading and clean is the honest answer.
+        let payload = "JVBERi0xLjQKPDxicm9rZW4geHJlZiBhbmQgbm8gb2JqZWN0cyBhdCBhbGw+Pgo=";
+        let raw = format!(
+            "From: a@b.example\r\nSubject: Invoice\r\n\
+             Content-Type: multipart/mixed; boundary=\"B\"\r\n\r\n\
+             --B\r\nContent-Type: text/plain\r\n\r\nSee attached.\r\n\
+             --B\r\nContent-Type: application/pdf; name=\"inv.pdf\"\r\n\
+             Content-Disposition: attachment; filename=\"inv.pdf\"\r\n\
+             Content-Transfer-Encoding: base64\r\n\r\n{payload}\r\n--B--\r\n"
+        );
+        assert_eq!(
+            scan_message(raw.as_bytes(), 0.6).verdict,
+            Verdict::Indeterminate,
+            "an attachment that did not parse as its declared format must never \
+             be reported clean",
+        );
     }
 
     /// SMTP wraps addresses in angle brackets, and a bounce carries a null

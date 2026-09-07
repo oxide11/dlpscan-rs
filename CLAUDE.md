@@ -5,18 +5,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project overview
 
 Siphon is a high-performance DLP scanner built as a Rust Cargo workspace. The
-top-level crate (`siphon`) is the CLI; the workspace members in `crates/` are
-long-running services:
+top-level crate (`siphon-cli`) is the CLI; the workspace members in `crates/`
+are long-running services:
+
+Note the top-level crate's *package* is `siphon-cli`, while its library target
+and its binary are both still `siphon` — every other crate writes
+`use siphon::...` and users type `siphon scan`, and a component rename is no
+reason to break either.
 
 - `siphon-core` — scanner engine (patterns, validators, detection pipeline)
 - `siphon-api` — sync HTTP scan service with RBAC, API-key auth, audit chain
 - `siphon-fs` — multipart file-scan service (PDF, Office, archives, etc.)
 - `siphon-icap` — RFC 3507 ICAP server for proxy-based network DLP (port 1344)
 - `siphon-launcher` — local-dev process manager (loopback-only, no auth)
-- `siphon-milter` — Sendmail/Postfix mail filter for SMTP DLP (port 8894)
+- `siphon-smtp` — Sendmail/Postfix mail filter for SMTP DLP (port 8894).
+  Named for the protocol it protects, matching `siphon-icap`; it was
+  `siphon-milter` until the rename, and its variables moved
+  `SIPHON_MILTER_*` → `SIPHON_SMTP_*`. **The old names still work** and log a
+  warning once at startup — a filter that quietly reverts to its defaults
+  because a variable name moved is one that stops filtering mail while
+  looking healthy
 - `siphon-mail` — **the one library in `crates/`**: message/part schema,
   persistence and verdict reconciliation. It exists because two binaries need
-  the same model — siphon-milter writes what siphon-api reads — and siphon-api
+  the same model — siphon-smtp writes what siphon-api reads — and siphon-api
   has no lib target to depend on; giving it one would link its whole axum
   stack into a milter that serves no HTTP. Owns both its DDL (exported as
   `MIGRATION_SQL`) and its DML, so a CHECK constraint and the Rust enum that
@@ -65,6 +76,166 @@ cargo build --release --no-default-features --features metrics  # minimal
 # Benchmark
 cargo run --release --bin benchmark
 ```
+
+## Conformance matrix
+
+`scripts/conformance.sh` asks the same five questions of every capability
+Siphon advertises, and is the thing to run after touching an extractor, the
+normalizer, or a pattern:
+
+```bash
+scripts/conformance.sh                    # full run, human-readable
+scripts/conformance.sh --capability xlsx  # one format
+scripts/conformance.sh --list             # what would run
+scripts/conformance.sh --json             # machine-readable
+scripts/conformance.sh --test             # same cases via cargo test
+```
+
+| Slot | Question |
+|---|---|
+| `clean` | Well-formed, nothing sensitive: does it read, and stay quiet? |
+| `single` | One planted value in the obvious place: is it found? |
+| `structural` | One planted value where the format lets you hide it — a second sheet, a later archive entry, an attachment |
+| `damaged` | Truncated or corrupt: does the reader **say so** rather than report a faithful clean read? |
+| `evasive` | A format-specific bypass — encoded body, nested container, split value |
+
+`damaged` is the slot that earns its keep. A reader that returns `Ok("")` for
+a file it could not parse makes the scanner report "clean" for content nobody
+read, and the CLI's exit code, siphon-fs's response and the milter's verdict
+all inherit that.
+
+The cases live in `src/conformance/` (behind the `conformance` feature, so
+the fixture builders stay out of the shipped binary), not in `tests/`, because
+the binary, the CI gate and the script all run the same matrix. Fixtures are
+built in-process — no binary blobs are committed.
+
+Two rules keep it honest:
+
+- **Coverage is enforced.** Anything in `supported_extensions()` that is
+  neither covered nor listed in `formats::KNOWN_GAPS` with a reason fails the
+  run.
+- **Gaps are declared, not hidden.** A case wrapped in `gap(...)` keeps its
+  expectation as written — what it says should happen still should — but does
+  not fail the build; the reason prints on every run. If a gap starts passing,
+  that is reported too, so the entry gets removed rather than outliving the
+  bug it described.
+
+### The detection half
+
+The same five questions, asked of every pattern rather than every reader:
+
+| Slot | Question |
+|---|---|
+| `clean` | Ordinary prose holding none of its values: does it stay quiet? |
+| `single` | The value, labelled: is it found? |
+| `structural` | The same value inside a document rather than alone: still found? |
+| `damaged` | A near miss — the value mutated until it should no longer qualify: does it stay quiet? |
+| `evasive` | The value wearing an encoding the normalizer exists to undo: still found? |
+
+Cases live in `src/conformance/detections_data.rs`, **generated, not written**.
+Each is built by sampling the pattern's own regex (or taking a value from the
+hand-labelled corpus in `tests/corpus/`) and keeping only what the real
+scanner confirms. Regenerate with `scripts/dev/generate-detection-matrix.rs`, which carries
+its own instructions — `rand_regex` and `regex-syntax` are dependencies for
+*producing* the table, not for using it, so they are added and removed around
+the run rather than living in the lockfile.
+
+Be clear about what each half proves. The **positive** slots are seeded from
+the scanner's own behaviour, so they are a regression suite: they pin today's
+answers and fail when those change, but cannot catch a pattern that is wrong
+today, because the pattern was the oracle. The **negative** slots are not
+circular — a near miss is derived by mutating a known-good value, and
+asserting the pattern goes quiet tests whether it checks substance or only
+shape.
+
+#### What building it found
+
+Three properties of the pattern set, none of which were visible before every
+pattern was asked the same questions:
+
+- **57 patterns have no observable example** (72 before the raw-text pass). Most are not a generator
+  failure: they carry a regex *identical* to a sibling's, and deduplication
+  keeps only one match per span. Seven US state driver's licence patterns
+  share `\b\d{8}\b`; ask for Texas and the scanner reports Arkansas. The
+  right answer is not a better test — it is that a pattern which cannot be
+  told apart from its neighbour should not be advertised as separate.
+- **Patterns that require a separator normalization removes** could not fire
+  at all. Stage 6c strips a consistent separator between digit groups, which
+  is what turns `219 09 9999` back into an SSN — and what turned `20500-0003`
+  into `205000003` before `\b\d{5}-\d{4}\b` ever saw it. `US ZIP+4 Code`,
+  `Japan Postal Code`, `Brazil CEP`, `NDC Code` and the date patterns were all
+  dead. **Fixed** by the raw-text second pass below; patterns that make the
+  separator optional were never affected.
+- **`Date ISO` is gated on date-of-birth keywords.** Its context entry is
+  `date of birth`, `dob`, `birthday` — so a generic ISO date in any other
+  setting never fires. That may be deliberate, but the category name does not
+  say so.
+
+### The raw-text second pass
+
+Normalization is applied once and every pattern matches against the result.
+That is what defeats separator evasion — and it is also why a pattern whose
+regex *mandates* a separator could never match, because the character it
+insists on is gone before the regex runs.
+
+Skipping normalization for those patterns would not have helped: they are
+blind to separator evasion either way, since they demand a literal character.
+So the scan runs them over **both** views. Strictly additive — the normalized
+pass is untouched, so nothing that matched before stops matching.
+
+Two things keep it off the hot path:
+
+- it only runs when normalization actually changed the text, and
+- only for a flagged pattern that found **nothing** on the normalized pass.
+
+That second condition is what makes `requires_stripped_separator` a *cost*
+heuristic rather than a correctness gate: it currently flags 53 patterns and
+some of those are false positives, but a false positive costs one regex run
+and a false negative leaves a pattern exactly as broken as it was.
+
+Measured on a 4.2 KB document that triggers normalization: **0.397 →
+0.428 ms/scan, +7.8%**, and `US ZIP+4 Code` goes from never firing to firing.
+Dedup runs across both views, so a value found twice is reported once.
+
+### Format confusion
+
+Dispatch arbitrates between what a file is *named* and what its bytes
+*prove*, because the filename is the weakest signal about a file and the only
+one an attacker changes for free. `zip -q p.zip secrets.txt && mv p.zip
+notes.txt` was a complete bypass until this landed: the deflated archive went
+to the plain-text reader, which read compressed bytes as lossy UTF-8, found
+nothing, and returned a faithful clean result with no warning.
+
+The rule follows FUTURE.md's corroboration entry — an attacker-controlled
+signal may weight a decision, never gate it:
+
+| Evidence | Outcome |
+|---|---|
+| Name and content agree | the extension refines the family (`zip` → docx vs odt vs a plain archive) and is used |
+| They disagree | the **content** decides the reader, and the disagreement is recorded |
+| Content proves nothing | the extension is used, unchanged — text has no signature, so this is the common path |
+
+Signatures are weighted by how much they prove. BMP's is the two ASCII bytes
+`BM`, which every CSV starting "BM…" carries, so it is accepted only when the
+size field behind it also matches the real file length. SQLite is matched
+against its full 16-byte signature, not the leading `SQLite`.
+
+`sniff_family()` is the single signature table; `detect_and_extract()`
+dispatches off it rather than keeping a second copy, because both decide
+dispatch and two copies drift — the one that used to live in
+`detect_and_extract` already had, accepting 6 of SQLite's 16 bytes and
+knowing nothing about images at all.
+
+A contradiction is recorded in `metadata["format_mismatch"]` and logged at
+warn level with structured fields — **not** in `warnings`, which means
+"content we did not read" and makes the milter defer. A renamed file that we
+then read correctly *was* read.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `SIPHON_ON_FORMAT_MISMATCH` | `flag` | `flag` — read by content, record it, carry on. `reject` — refuse the file; extraction returns `Err`, so the CLI exits non-zero, siphon-fs marks it not scanned and the milter defers. `ignore` — read by content, record nothing (the bypass stays closed either way; only reporting is suppressed) |
+
+Covered by the `disguise` capability in the conformance matrix.
 
 Other test harnesses (not run by default CI):
 ```bash
@@ -223,7 +394,7 @@ nothing):
 - `0010_messages.sql` — lives in `crates/siphon-mail/migrations/` and is
   registered here via `siphon_mail::MIGRATION_SQL`. `messages` +
   `message_parts` for the mail path, plus
-  `prune_messages()`. Nothing writes them until `siphon-milter` lands; the
+  `prune_messages()`. Nothing writes them until `siphon-smtp` lands; the
   schema is here first because it is painful to retrofit (see
   `docs/architecture/email-dlp.md` §2). Two properties are load-bearing:
   `UNIQUE (message_uuid, mime_path)` makes an MTA retry upsert instead of
@@ -347,9 +518,9 @@ Key env vars:
 | `SIPHON_ICAP_SERVICE_NAME` | dlp | ICAP service path (`/dlp`) |
 | `SIPHON_ICAP_MAX_CONNECTIONS` | 256 | Max concurrent ICAP connections; extras are dropped |
 
-### siphon-milter
+### siphon-smtp
 
-Sendmail/Postfix mail filter at `crates/siphon-milter/`. Listens on port 8894.
+Sendmail/Postfix mail filter at `crates/siphon-smtp/`. Listens on port 8894.
 Wire it in Postfix with `smtpd_milters = inet:host:8894` (inbound) or
 `non_smtpd_milters` (outbound).
 
@@ -365,19 +536,19 @@ X-Siphon-Scan-Id:    <uuid>
 
 | Variable | Default | Notes |
 |---|---|---|
-| `SIPHON_MILTER_PORT` | 8894 | |
-| `SIPHON_MILTER_BIND` | 0.0.0.0 | |
-| `SIPHON_MILTER_ALLOWED_NETS` | **required** | Comma-separated IP/CIDR allowlist for MTA connections. `0.0.0.0/0` for dev |
-| `SIPHON_MILTER_ON_INDETERMINATE` | defer | `defer` (451 tempfail, fail closed) or `deliver` (fail open, annotated). `quarantine` is **refused at startup** — there is nowhere to hold a message yet, and silently behaving as `defer` would replace the operator's chosen failure direction. An unknown value is an error, never a fallback |
-| `SIPHON_MILTER_TIMEOUT_SECS` | 10 | From the measurements in `docs/architecture/email-dlp.md` §4.5 |
-| `SIPHON_MILTER_MAX_MESSAGE_BYTES` | 31457280 | 30 MB ingest cap. Distinct from the scanner's per-part text cap |
-| `SIPHON_MILTER_MAX_CONNECTIONS` | 256 | |
-| `SIPHON_MILTER_MIN_CONFIDENCE` | 0.6 | |
-| `SIPHON_MILTER_DIRECTION` | inbound | `inbound` or `outbound`. Configured, not inferred — Postfix already knows which chain the filter is wired into, and guessing gets relayed mail wrong |
-| `SIPHON_MILTER_TENANT` | default | |
+| `SIPHON_SMTP_PORT` | 8894 | |
+| `SIPHON_SMTP_BIND` | 0.0.0.0 | |
+| `SIPHON_SMTP_ALLOWED_NETS` | **required** | Comma-separated IP/CIDR allowlist for MTA connections. `0.0.0.0/0` for dev |
+| `SIPHON_SMTP_ON_INDETERMINATE` | defer | `defer` (451 tempfail, fail closed) or `deliver` (fail open, annotated). `quarantine` is **refused at startup** — there is nowhere to hold a message yet, and silently behaving as `defer` would replace the operator's chosen failure direction. An unknown value is an error, never a fallback |
+| `SIPHON_SMTP_TIMEOUT_SECS` | 10 | From the measurements in `docs/architecture/email-dlp.md` §4.5 |
+| `SIPHON_SMTP_MAX_MESSAGE_BYTES` | 31457280 | 30 MB ingest cap. Distinct from the scanner's per-part text cap |
+| `SIPHON_SMTP_MAX_CONNECTIONS` | 256 | |
+| `SIPHON_SMTP_MIN_CONFIDENCE` | 0.6 | |
+| `SIPHON_SMTP_DIRECTION` | inbound | `inbound` or `outbound`. Configured, not inferred — Postfix already knows which chain the filter is wired into, and guessing gets relayed mail wrong |
+| `SIPHON_SMTP_TENANT` | default | |
 | `SIPHON_DATABASE_URL` | — | Optional. Without it the milter still scans, decides and stamps; what it loses is the retry guard and the investigation record. **The milter never runs migrations** — siphon-api owns the runner and its ordering |
 
-**`milter_default_action` must agree with `SIPHON_MILTER_ON_INDETERMINATE`.**
+**`milter_default_action` must agree with `SIPHON_SMTP_ON_INDETERMINATE`.**
 If Postfix is set to `accept` on milter failure it fails open on timeout
 regardless of anything configured here — the MTA gets the last word, and a
 disagreement is a silent bypass. Under the default policy Postfix needs
@@ -605,6 +776,35 @@ cargo test --test evasion_test
 
 CI mirrors these in `.github/workflows/ci.yml`.
 
+## Bill of materials
+
+`sbom/` holds a CycloneDX 1.6 document per shipped artifact, plus
+`INVENTORY.md` as the reviewable summary. Regenerate with
+`scripts/generate-sbom.sh`; `--check` verifies they match `Cargo.lock` and
+runs in CI (`.github/workflows/audit.yml`).
+
+**One document per artifact, never one for the workspace.** Each binary links
+a different closure and the differences are security-relevant: `siphon-api`
+links none of rusqlite, unrar, rxing or the image codecs, while `siphon-fs`
+and `siphon-smtp` link all of them. A workspace-wide document would claim
+siphon-api ships a bundled SQLite and a C RAR decoder it has never contained.
+
+For the same reason the resolution is per-package. `cargo metadata` and
+`cargo tree --workspace` unify features across members and report exactly
+that false picture; `cargo tree -p` does not. Anything auditing this
+workspace has to resolve per package or it is describing a build that never
+happens.
+
+Output is deterministic — components sorted, no timestamp unless
+`--timestamp` is passed for a release artifact. That is what lets `--check`
+exist: an SBOM that changes on every run cannot be diffed, so nobody reads
+the diff, so it stops being a review artifact.
+
+Documents are filtered to `x86_64-unknown-linux-gnu` and normal edges only.
+Dev- and build-dependencies are not components of a shipped binary, and the
+Windows crates in `Cargo.lock` reach it through those paths alone — none
+appear in any artifact.
+
 ## Security
 
 - Dependabot watches `cargo`, `github-actions`, and `docker` ecosystems weekly.
@@ -637,4 +837,10 @@ CI mirrors these in `.github/workflows/ci.yml`.
 - SIEM / webhooks: gated by the `siem` / `webhooks` features in the root crate
 - Integration tests: `tests/`
 - Architecture / patterns docs: `docs/`
+- **Start here for the whole path:** `docs/architecture/file-lifecycle.md`
+  follows one file end to end — the four ingress doors and how each fails,
+  admission control, format identification, extraction and what `warnings`
+  means, all ten scan stages, verdict reconciliation, persistence and audit.
+  Its §7 is the one to reread: the four ways a file can come back "clean",
+  and how to tell them apart
 - Per-crate version source of truth: `Cargo.toml` (root) and `crates/*/Cargo.toml`

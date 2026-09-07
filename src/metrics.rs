@@ -89,109 +89,20 @@ fn get_metrics_callback() -> Option<MetricsCallback> {
 
 #[cfg(feature = "metrics")]
 pub mod prom {
-    use once_cell::sync::Lazy;
-    use prometheus::{
-        register_counter_vec, register_gauge, register_histogram, CounterVec, Gauge, Histogram,
+    //! Prometheus-shaped metrics.
+    //!
+    //! Re-exported from [`crate::metrics_registry`], which replaced the
+    //! `prometheus` crate. That crate brought 23 transitive dependencies —
+    //! `procfs`, `parking_lot`, `rustix`, `syn` and the rest — for four
+    //! counters, two histograms, a gauge and one labelled counter.
+    //!
+    //! Kept as a module path rather than deleted so callers do not have to
+    //! care which implementation is underneath.
+    pub use crate::metrics_registry::{
+        record_matches, record_rate_limit_rejection, record_request, record_scan,
+        record_scan_error, render, ACTIVE_CONNECTIONS, HTTP_REQUESTS_TOTAL, HTTP_REQUEST_DURATION,
+        RATE_LIMIT_REJECTIONS, SCANS_TOTAL, SCAN_DURATION, SCAN_ERRORS_TOTAL, SCAN_MATCHES_TOTAL,
     };
-
-    /// Total HTTP requests by method, path, and status.
-    pub static HTTP_REQUESTS_TOTAL: Lazy<CounterVec> = Lazy::new(|| {
-        register_counter_vec!(
-            "dlpscan_requests_total",
-            "Total HTTP requests",
-            &["method", "path", "status"]
-        )
-        .expect("failed to register dlpscan_requests_total")
-    });
-
-    /// HTTP request duration in seconds.
-    pub static HTTP_REQUEST_DURATION: Lazy<Histogram> = Lazy::new(|| {
-        register_histogram!(
-            "dlpscan_request_duration_seconds",
-            "HTTP request duration in seconds",
-            vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0]
-        )
-        .expect("failed to register dlpscan_request_duration_seconds")
-    });
-
-    /// Total scan matches found.
-    pub static SCAN_MATCHES_TOTAL: Lazy<prometheus::Counter> = Lazy::new(|| {
-        prometheus::register_counter!(
-            "dlpscan_scan_matches_total",
-            "Total sensitive data matches found"
-        )
-        .expect("failed to register dlpscan_scan_matches_total")
-    });
-
-    /// Currently active connections.
-    pub static ACTIVE_CONNECTIONS: Lazy<Gauge> = Lazy::new(|| {
-        register_gauge!(
-            "dlpscan_active_connections",
-            "Number of active HTTP connections"
-        )
-        .expect("failed to register dlpscan_active_connections")
-    });
-
-    /// Record an HTTP request in Prometheus metrics.
-    pub fn record_request(method: &str, path: &str, status: &str, duration_secs: f64) {
-        HTTP_REQUESTS_TOTAL
-            .with_label_values(&[method, path, status])
-            .inc();
-        HTTP_REQUEST_DURATION.observe(duration_secs);
-    }
-
-    /// Total scans completed.
-    pub static SCANS_TOTAL: Lazy<prometheus::Counter> = Lazy::new(|| {
-        prometheus::register_counter!("dlpscan_scans_total", "Total scan operations completed")
-            .expect("failed to register dlpscan_scans_total")
-    });
-
-    /// Total scan errors.
-    pub static SCAN_ERRORS_TOTAL: Lazy<prometheus::Counter> = Lazy::new(|| {
-        prometheus::register_counter!("dlpscan_scan_errors_total", "Total scan errors")
-            .expect("failed to register dlpscan_scan_errors_total")
-    });
-
-    /// Scan duration in seconds (separate from HTTP request duration).
-    pub static SCAN_DURATION: Lazy<Histogram> = Lazy::new(|| {
-        register_histogram!(
-            "dlpscan_scan_duration_seconds",
-            "Scan operation duration in seconds",
-            vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0]
-        )
-        .expect("failed to register dlpscan_scan_duration_seconds")
-    });
-
-    /// Rate limit rejections.
-    pub static RATE_LIMIT_REJECTIONS: Lazy<prometheus::Counter> = Lazy::new(|| {
-        prometheus::register_counter!(
-            "dlpscan_rate_limit_rejections_total",
-            "Total rate limit rejections"
-        )
-        .expect("failed to register dlpscan_rate_limit_rejections_total")
-    });
-
-    /// Record scan match count.
-    pub fn record_matches(count: usize) {
-        SCAN_MATCHES_TOTAL.inc_by(count as f64);
-    }
-
-    /// Record a completed scan.
-    pub fn record_scan(duration_secs: f64, match_count: usize) {
-        SCANS_TOTAL.inc();
-        SCAN_DURATION.observe(duration_secs);
-        SCAN_MATCHES_TOTAL.inc_by(match_count as f64);
-    }
-
-    /// Record a scan error.
-    pub fn record_scan_error() {
-        SCAN_ERRORS_TOTAL.inc();
-    }
-
-    /// Record a rate limit rejection.
-    pub fn record_rate_limit_rejection() {
-        RATE_LIMIT_REJECTIONS.inc();
-    }
 }
 
 // ---------------------------------------------------------------------------

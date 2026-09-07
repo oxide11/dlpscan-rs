@@ -1,4 +1,4 @@
-# Siphon-milter — SMTP content DLP for Postfix and Sendmail.
+# Siphon-smtp — SMTP content DLP for Postfix and Sendmail.
 #
 # Copies `crates/` wholesale rather than enumerating each member's
 # Cargo.toml for a stub layer, as Dockerfile.api and Dockerfile.icap do.
@@ -6,7 +6,7 @@
 # workspace member is added: cargo parses the whole workspace even for
 # `-p <one-crate>`, so a member whose manifest was not copied fails the
 # build with "failed to load manifest for workspace member". Adding
-# siphon-mail and siphon-milter broke both of those files, and this one
+# siphon-mail and siphon-smtp broke both of those files, and this one
 # cannot drift the same way. Dockerfile.fs already takes this approach.
 
 FROM rust:1.98-bookworm AS builder
@@ -22,11 +22,11 @@ COPY Cargo.toml Cargo.lock* ./
 COPY crates/ crates/
 COPY src/ src/
 # The workspace root declares [[bench]] name = "scanning"; cargo parses the
-# whole workspace even for `-p siphon-milter`, so the bench source has to
+# whole workspace even for `-p siphon-smtp`, so the bench source has to
 # exist at image-build time.
 COPY benches/ benches/
 
-RUN cargo build --release -p siphon-milter --locked
+RUN cargo build --release -p siphon-smtp --locked
 
 FROM debian:bookworm-slim
 
@@ -36,12 +36,12 @@ RUN apt-get update && \
 
 RUN groupadd -r siphon && useradd -r -g siphon -s /bin/false siphon
 
-COPY --from=builder /app/target/release/siphon-milter /usr/local/bin/siphon-milter
+COPY --from=builder /app/target/release/siphon-smtp /usr/local/bin/siphon-smtp
 
 USER siphon
 EXPOSE 8894
 
-ENTRYPOINT ["siphon-milter"]
+ENTRYPOINT ["siphon-smtp"]
 
 # No HEALTHCHECK. The milter protocol has no bare liveness probe: the first
 # thing a client must send is an option-negotiation packet, and answering one
@@ -49,6 +49,6 @@ ENTRYPOINT ["siphon-milter"]
 # that the listener is up, which the orchestrator's own port check already
 # establishes — see the chart's tcpSocket probe.
 
-LABEL org.opencontainers.image.title="siphon-milter" \
+LABEL org.opencontainers.image.title="siphon-smtp" \
       org.opencontainers.image.description="Polygon Siphon milter — SMTP content DLP for Postfix and Sendmail" \
-      org.opencontainers.image.version="0.1.0"
+      org.opencontainers.image.version="0.1.1"

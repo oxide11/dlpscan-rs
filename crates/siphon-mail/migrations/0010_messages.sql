@@ -4,7 +4,7 @@
 -- scannable, whose results reconcile into one verdict. See
 -- docs/architecture/email-dlp.md §2.
 --
--- Nothing writes these tables yet; siphon-milter does. They land first
+-- Nothing writes these tables yet; siphon-smtp does. They land first
 -- because §2 is explicit that this schema is painful to retrofit, and
 -- because the fail-closed default (§4.4) makes MTA retries the normal
 -- operating mode rather than an edge case — so the idempotency guarantees

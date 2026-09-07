@@ -10,7 +10,7 @@ use std::fmt;
 /// What the milter does when a message is `indeterminate` — when something
 /// was not inspected, so the message has not been cleared.
 ///
-/// Configured by `SIPHON_MILTER_ON_INDETERMINATE`, defaulting to [`Defer`].
+/// Configured by `SIPHON_SMTP_ON_INDETERMINATE`, defaulting to [`Defer`].
 ///
 /// [`Defer`]: OnIndeterminate::Defer
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -70,11 +70,11 @@ impl fmt::Display for PolicyError {
         match self {
             PolicyError::UnknownIndeterminate(v) => write!(
                 f,
-                "SIPHON_MILTER_ON_INDETERMINATE={v:?} is not one of defer|quarantine|deliver"
+                "SIPHON_SMTP_ON_INDETERMINATE={v:?} is not one of defer|quarantine|deliver"
             ),
             PolicyError::QuarantineUnavailable => write!(
                 f,
-                "SIPHON_MILTER_ON_INDETERMINATE=quarantine needs a quarantine destination, \
+                "SIPHON_SMTP_ON_INDETERMINATE=quarantine needs a quarantine destination, \
                  which is not built yet — set defer or deliver"
             ),
         }
