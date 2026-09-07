@@ -254,7 +254,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.smtp
-    image: siphon-smtp:0.1.0
+    image: siphon-smtp:0.1.1
     profiles: [auth]
     environment:
       # The MTA subnet allowed to connect. 0.0.0.0/0 for local dev only —

@@ -19,14 +19,14 @@ members and report that false picture; `cargo tree -p` does not.
 
 | Artifact | Components | Third-party |
 |---|---|---|
-| `siphon-fs` | 370 | 367 |
-| `siphon-smtp` | 321 | 317 |
-| `siphon-cli` | 299 | 297 |
-| `siphon-api` | 197 | 193 |
-| `siphon-launcher` | 109 | 107 |
-| `siphon-icap` | 80 | 78 |
-| `siphon-mail` | 70 | 69 |
-| `siphon-core` | 63 | 62 |
+| `siphon-fs` | 381 | 378 |
+| `siphon-smtp` | 332 | 328 |
+| `siphon-cli` | 311 | 309 |
+| `siphon-api` | 203 | 199 |
+| `siphon-launcher` | 116 | 114 |
+| `siphon-icap` | 87 | 85 |
+| `siphon-mail` | 71 | 70 |
+| `siphon-core` | 70 | 69 |
 
 ## Components with native code
 
@@ -57,9 +57,9 @@ Across all third-party components in all artifacts, counted per artifact.
 
 | Licence | Occurrences |
 |---|---|
-| `MIT OR Apache-2.0` | 847 |
-| `MIT` | 281 |
-| `Apache-2.0 OR MIT` | 117 |
+| `MIT OR Apache-2.0` | 889 |
+| `MIT` | 291 |
+| `Apache-2.0 OR MIT` | 124 |
 | `Apache-2.0` | 75 |
 | `Unlicense OR MIT` | 25 |
 | `BSD-3-Clause` | 17 |
@@ -73,6 +73,7 @@ Across all third-party components in all artifacts, counted per artifact.
 | `BSD-2-Clause OR Apache-2.0 OR MIT` | 6 |
 | `BSD-3-Clause OR Apache-2.0` | 6 |
 | `ISC` | 6 |
+| `MIT OR Zlib OR Apache-2.0` | 6 |
 | `Apache-2.0 OR BSL-1.0` | 5 |
 | `Apache-2.0 OR BSL-1.0 OR MIT` | 4 |
 | `Apache-2.0 OR ISC OR MIT` | 4 |
@@ -80,7 +81,6 @@ Across all third-party components in all artifacts, counted per artifact.
 | `Apache-2.0 AND MIT` | 3 |
 | `CC0-1.0 OR Apache-2.0` | 3 |
 | `MIT AND BSD-3-Clause` | 3 |
-| `MIT OR Zlib OR Apache-2.0` | 3 |
 | `Apache-2.0 AND ISC` | 2 |
 | `CDLA-Permissive-2.0` | 2 |
 | `ISC AND (Apache-2.0 OR ISC)` | 2 |

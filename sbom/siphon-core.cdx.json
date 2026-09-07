@@ -6,8 +6,8 @@
     "component": {
       "type": "application",
       "name": "siphon-core",
-      "version": "2.8.0",
-      "purl": "pkg:cargo/siphon-core@2.8.0"
+      "version": "2.8.1",
+      "purl": "pkg:cargo/siphon-core@2.8.1"
     },
     "properties": [
       {
@@ -161,9 +161,27 @@
     },
     {
       "type": "library",
+      "name": "core_detect",
+      "version": "1.0.0",
+      "purl": "pkg:cargo/core_detect@1.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/thomcc/core_detect"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "cpufeatures",
-      "version": "0.3.0",
-      "purl": "pkg:cargo/cpufeatures@0.3.0",
+      "version": "0.3.1",
+      "purl": "pkg:cargo/cpufeatures@0.3.1",
       "scope": "required",
       "licenses": [
         {
@@ -180,8 +198,8 @@
     {
       "type": "library",
       "name": "crossbeam-deque",
-      "version": "0.8.6",
-      "purl": "pkg:cargo/crossbeam-deque@0.8.6",
+      "version": "0.8.8",
+      "purl": "pkg:cargo/crossbeam-deque@0.8.8",
       "scope": "required",
       "licenses": [
         {
@@ -198,8 +216,8 @@
     {
       "type": "library",
       "name": "crossbeam-epoch",
-      "version": "0.9.20",
-      "purl": "pkg:cargo/crossbeam-epoch@0.9.20",
+      "version": "0.9.21",
+      "purl": "pkg:cargo/crossbeam-epoch@0.9.21",
       "scope": "required",
       "licenses": [
         {
@@ -216,8 +234,8 @@
     {
       "type": "library",
       "name": "crossbeam-utils",
-      "version": "0.8.21",
-      "purl": "pkg:cargo/crossbeam-utils@0.8.21",
+      "version": "0.8.23",
+      "purl": "pkg:cargo/crossbeam-utils@0.8.23",
       "scope": "required",
       "licenses": [
         {
@@ -288,8 +306,8 @@
     {
       "type": "library",
       "name": "either",
-      "version": "1.16.0",
-      "purl": "pkg:cargo/either@1.16.0",
+      "version": "1.18.0",
+      "purl": "pkg:cargo/either@1.18.0",
       "scope": "required",
       "licenses": [
         {
@@ -306,8 +324,8 @@
     {
       "type": "library",
       "name": "encoding_rs",
-      "version": "0.8.35",
-      "purl": "pkg:cargo/encoding_rs@0.8.35",
+      "version": "0.8.40",
+      "purl": "pkg:cargo/encoding_rs@0.8.40",
       "scope": "required",
       "licenses": [
         {
@@ -438,8 +456,8 @@
     {
       "type": "library",
       "name": "hybrid-array",
-      "version": "0.4.12",
-      "purl": "pkg:cargo/hybrid-array@0.4.12",
+      "version": "0.4.14",
+      "purl": "pkg:cargo/hybrid-array@0.4.14",
       "scope": "required",
       "licenses": [
         {
@@ -456,8 +474,8 @@
     {
       "type": "library",
       "name": "indexmap",
-      "version": "2.14.0",
-      "purl": "pkg:cargo/indexmap@2.14.0",
+      "version": "2.14.2",
+      "purl": "pkg:cargo/indexmap@2.14.2",
       "scope": "required",
       "licenses": [
         {
@@ -528,8 +546,8 @@
     {
       "type": "library",
       "name": "memchr",
-      "version": "2.8.2",
-      "purl": "pkg:cargo/memchr@2.8.2",
+      "version": "2.8.3",
+      "purl": "pkg:cargo/memchr@2.8.3",
       "scope": "required",
       "licenses": [
         {
@@ -540,6 +558,72 @@
         {
           "type": "vcs",
           "url": "https://github.com/BurntSushi/memchr"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "multiversion",
+      "version": "0.8.0",
+      "purl": "pkg:cargo/multiversion@0.8.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/calebzulawski/multiversion"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "multiversion-macros",
+      "version": "0.8.0",
+      "purl": "pkg:cargo/multiversion-macros@0.8.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/calebzulawski/multiversion"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "multiversion_no_op",
+      "version": "1.0.0",
+      "purl": "pkg:cargo/multiversion_no_op@1.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/hsivonen/multiversion_no_op"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
         }
       ]
     },
@@ -582,8 +666,8 @@
     {
       "type": "library",
       "name": "proc-macro2",
-      "version": "1.0.106",
-      "purl": "pkg:cargo/proc-macro2@1.0.106",
+      "version": "1.0.107",
+      "purl": "pkg:cargo/proc-macro2@1.0.107",
       "scope": "required",
       "licenses": [
         {
@@ -600,8 +684,8 @@
     {
       "type": "library",
       "name": "quote",
-      "version": "1.0.46",
-      "purl": "pkg:cargo/quote@1.0.46",
+      "version": "1.0.47",
+      "purl": "pkg:cargo/quote@1.0.47",
       "scope": "required",
       "licenses": [
         {
@@ -743,6 +827,24 @@
     },
     {
       "type": "library",
+      "name": "scopeguard",
+      "version": "1.2.0",
+      "purl": "pkg:cargo/scopeguard@1.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/bluss/scopeguard"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "serde",
       "version": "1.0.229",
       "purl": "pkg:cargo/serde@1.0.229",
@@ -857,6 +959,24 @@
     },
     {
       "type": "library",
+      "name": "simdutf8",
+      "version": "0.1.5",
+      "purl": "pkg:cargo/simdutf8@0.1.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rusticstuff/simdutf8"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "strsim",
       "version": "0.11.1",
       "purl": "pkg:cargo/strsim@0.11.1",
@@ -878,8 +998,8 @@
     {
       "type": "library",
       "name": "syn",
-      "version": "2.0.118",
-      "purl": "pkg:cargo/syn@2.0.118",
+      "version": "2.0.119",
+      "purl": "pkg:cargo/syn@2.0.119",
       "scope": "required",
       "licenses": [
         {
@@ -896,8 +1016,8 @@
     {
       "type": "library",
       "name": "syn",
-      "version": "3.0.4",
-      "purl": "pkg:cargo/syn@3.0.4",
+      "version": "3.0.5",
+      "purl": "pkg:cargo/syn@3.0.5",
       "scope": "required",
       "licenses": [
         {
@@ -913,9 +1033,27 @@
     },
     {
       "type": "library",
+      "name": "target-features",
+      "version": "0.1.6",
+      "purl": "pkg:cargo/target-features@0.1.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/calebzulawski/target-features"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "tinyvec",
-      "version": "1.11.0",
-      "purl": "pkg:cargo/tinyvec@1.11.0",
+      "version": "1.13.2",
+      "purl": "pkg:cargo/tinyvec@1.13.2",
       "scope": "required",
       "licenses": [
         {
@@ -950,8 +1088,8 @@
     {
       "type": "library",
       "name": "toml",
-      "version": "1.1.4+spec-1.1.0",
-      "purl": "pkg:cargo/toml@1.1.4+spec-1.1.0",
+      "version": "1.1.5+spec-1.1.0",
+      "purl": "pkg:cargo/toml@1.1.5+spec-1.1.0",
       "scope": "required",
       "licenses": [
         {
@@ -1142,8 +1280,8 @@
     {
       "type": "library",
       "name": "winnow",
-      "version": "1.0.3",
-      "purl": "pkg:cargo/winnow@1.0.3",
+      "version": "1.0.4",
+      "purl": "pkg:cargo/winnow@1.0.4",
       "scope": "required",
       "licenses": [
         {
@@ -1162,8 +1300,8 @@
     {
       "type": "library",
       "name": "zmij",
-      "version": "1.0.21",
-      "purl": "pkg:cargo/zmij@1.0.21",
+      "version": "1.0.23",
+      "purl": "pkg:cargo/zmij@1.0.23",
       "scope": "required",
       "licenses": [
         {

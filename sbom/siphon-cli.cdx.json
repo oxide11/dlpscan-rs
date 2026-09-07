@@ -6,8 +6,8 @@
     "component": {
       "type": "application",
       "name": "siphon-cli",
-      "version": "2.3.0",
-      "purl": "pkg:cargo/siphon-cli@2.3.0"
+      "version": "2.3.1",
+      "purl": "pkg:cargo/siphon-cli@2.3.1"
     },
     "properties": [
       {
@@ -132,8 +132,8 @@
     {
       "type": "library",
       "name": "aes",
-      "version": "0.9.1",
-      "purl": "pkg:cargo/aes@0.9.1",
+      "version": "0.9.3",
+      "purl": "pkg:cargo/aes@0.9.3",
       "scope": "required",
       "licenses": [
         {
@@ -342,8 +342,8 @@
     {
       "type": "library",
       "name": "arrayvec",
-      "version": "0.7.7",
-      "purl": "pkg:cargo/arrayvec@0.7.7",
+      "version": "0.7.8",
+      "purl": "pkg:cargo/arrayvec@0.7.8",
       "scope": "required",
       "licenses": [
         {
@@ -360,8 +360,8 @@
     {
       "type": "library",
       "name": "arrow",
-      "version": "59.2.0",
-      "purl": "pkg:cargo/arrow@59.2.0",
+      "version": "59.3.0",
+      "purl": "pkg:cargo/arrow@59.3.0",
       "scope": "required",
       "licenses": [
         {
@@ -784,8 +784,8 @@
     {
       "type": "library",
       "name": "bitflags",
-      "version": "2.13.0",
-      "purl": "pkg:cargo/bitflags@2.13.0",
+      "version": "2.13.1",
+      "purl": "pkg:cargo/bitflags@2.13.1",
       "scope": "required",
       "licenses": [
         {
@@ -910,8 +910,8 @@
     {
       "type": "library",
       "name": "bytemuck",
-      "version": "1.25.0",
-      "purl": "pkg:cargo/bytemuck@1.25.0",
+      "version": "1.25.2",
+      "purl": "pkg:cargo/bytemuck@1.25.2",
       "scope": "required",
       "licenses": [
         {
@@ -1395,6 +1395,24 @@
     },
     {
       "type": "library",
+      "name": "core_detect",
+      "version": "1.0.0",
+      "purl": "pkg:cargo/core_detect@1.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/thomcc/core_detect"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "cpubits",
       "version": "0.1.1",
       "purl": "pkg:cargo/cpubits@0.1.1",
@@ -1432,8 +1450,8 @@
     {
       "type": "library",
       "name": "cpufeatures",
-      "version": "0.3.0",
-      "purl": "pkg:cargo/cpufeatures@0.3.0",
+      "version": "0.3.1",
+      "purl": "pkg:cargo/cpufeatures@0.3.1",
       "scope": "required",
       "licenses": [
         {
@@ -1486,8 +1504,8 @@
     {
       "type": "library",
       "name": "crc32fast",
-      "version": "1.5.0",
-      "purl": "pkg:cargo/crc32fast@1.5.0",
+      "version": "1.5.1",
+      "purl": "pkg:cargo/crc32fast@1.5.1",
       "scope": "required",
       "licenses": [
         {
@@ -1504,8 +1522,8 @@
     {
       "type": "library",
       "name": "crossbeam-deque",
-      "version": "0.8.6",
-      "purl": "pkg:cargo/crossbeam-deque@0.8.6",
+      "version": "0.8.8",
+      "purl": "pkg:cargo/crossbeam-deque@0.8.8",
       "scope": "required",
       "licenses": [
         {
@@ -1522,8 +1540,8 @@
     {
       "type": "library",
       "name": "crossbeam-epoch",
-      "version": "0.9.20",
-      "purl": "pkg:cargo/crossbeam-epoch@0.9.20",
+      "version": "0.9.21",
+      "purl": "pkg:cargo/crossbeam-epoch@0.9.21",
       "scope": "required",
       "licenses": [
         {
@@ -1540,8 +1558,8 @@
     {
       "type": "library",
       "name": "crossbeam-utils",
-      "version": "0.8.21",
-      "purl": "pkg:cargo/crossbeam-utils@0.8.21",
+      "version": "0.8.23",
+      "purl": "pkg:cargo/crossbeam-utils@0.8.23",
       "scope": "required",
       "licenses": [
         {
@@ -1704,28 +1722,26 @@
     {
       "type": "library",
       "name": "ecb",
-      "version": "0.2.0",
-      "purl": "pkg:cargo/ecb@0.2.0",
+      "version": "0.2.1",
+      "purl": "pkg:cargo/ecb@0.2.1",
       "scope": "required",
       "licenses": [
         {
-          "license": {
-            "id": "MIT"
-          }
+          "expression": "MIT OR Apache-2.0"
         }
       ],
       "externalReferences": [
         {
           "type": "vcs",
-          "url": "https://github.com/magic-akari/ecb"
+          "url": "https://github.com/RustCrypto/block-modes"
         }
       ]
     },
     {
       "type": "library",
       "name": "either",
-      "version": "1.16.0",
-      "purl": "pkg:cargo/either@1.16.0",
+      "version": "1.18.0",
+      "purl": "pkg:cargo/either@1.18.0",
       "scope": "required",
       "licenses": [
         {
@@ -1742,8 +1758,8 @@
     {
       "type": "library",
       "name": "encoding_rs",
-      "version": "0.8.35",
-      "purl": "pkg:cargo/encoding_rs@0.8.35",
+      "version": "0.8.40",
+      "purl": "pkg:cargo/encoding_rs@0.8.40",
       "scope": "required",
       "licenses": [
         {
@@ -1842,8 +1858,8 @@
     {
       "type": "library",
       "name": "exr",
-      "version": "1.74.0",
-      "purl": "pkg:cargo/exr@1.74.0",
+      "version": "1.74.2",
+      "purl": "pkg:cargo/exr@1.74.2",
       "scope": "required",
       "licenses": [
         {
@@ -1924,8 +1940,8 @@
     {
       "type": "library",
       "name": "fast-float2",
-      "version": "0.2.3",
-      "purl": "pkg:cargo/fast-float2@0.2.3",
+      "version": "0.2.4",
+      "purl": "pkg:cargo/fast-float2@0.2.4",
       "scope": "required",
       "licenses": [
         {
@@ -1942,8 +1958,8 @@
     {
       "type": "library",
       "name": "fastrand",
-      "version": "2.4.1",
-      "purl": "pkg:cargo/fastrand@2.4.1",
+      "version": "2.5.0",
+      "purl": "pkg:cargo/fastrand@2.5.0",
       "scope": "required",
       "licenses": [
         {
@@ -2054,8 +2070,8 @@
     {
       "type": "library",
       "name": "flate2",
-      "version": "1.1.9",
-      "purl": "pkg:cargo/flate2@1.1.9",
+      "version": "1.1.10",
+      "purl": "pkg:cargo/flate2@1.1.10",
       "scope": "required",
       "licenses": [
         {
@@ -2262,8 +2278,8 @@
     {
       "type": "library",
       "name": "hashlink",
-      "version": "0.12.0",
-      "purl": "pkg:cargo/hashlink@0.12.0",
+      "version": "0.12.2",
+      "purl": "pkg:cargo/hashlink@0.12.2",
       "scope": "required",
       "licenses": [
         {
@@ -2334,8 +2350,8 @@
     {
       "type": "library",
       "name": "hybrid-array",
-      "version": "0.4.12",
-      "purl": "pkg:cargo/hybrid-array@0.4.12",
+      "version": "0.4.14",
+      "purl": "pkg:cargo/hybrid-array@0.4.14",
       "scope": "required",
       "licenses": [
         {
@@ -2426,8 +2442,8 @@
     {
       "type": "library",
       "name": "imgref",
-      "version": "1.12.2",
-      "purl": "pkg:cargo/imgref@1.12.2",
+      "version": "1.12.3",
+      "purl": "pkg:cargo/imgref@1.12.3",
       "scope": "required",
       "licenses": [
         {
@@ -2444,8 +2460,8 @@
     {
       "type": "library",
       "name": "indexmap",
-      "version": "2.14.0",
-      "purl": "pkg:cargo/indexmap@2.14.0",
+      "version": "2.14.2",
+      "purl": "pkg:cargo/indexmap@2.14.2",
       "scope": "required",
       "licenses": [
         {
@@ -2780,8 +2796,8 @@
     {
       "type": "library",
       "name": "log",
-      "version": "0.4.33",
-      "purl": "pkg:cargo/log@0.4.33",
+      "version": "0.4.34",
+      "purl": "pkg:cargo/log@0.4.34",
       "scope": "required",
       "licenses": [
         {
@@ -2916,8 +2932,8 @@
     {
       "type": "library",
       "name": "matrixmultiply",
-      "version": "0.3.10",
-      "purl": "pkg:cargo/matrixmultiply@0.3.10",
+      "version": "0.3.11",
+      "purl": "pkg:cargo/matrixmultiply@0.3.11",
       "scope": "required",
       "licenses": [
         {
@@ -2990,8 +3006,8 @@
     {
       "type": "library",
       "name": "memchr",
-      "version": "2.8.2",
-      "purl": "pkg:cargo/memchr@2.8.2",
+      "version": "2.8.3",
+      "purl": "pkg:cargo/memchr@2.8.3",
       "scope": "required",
       "licenses": [
         {
@@ -3025,6 +3041,24 @@
     },
     {
       "type": "library",
+      "name": "miniz_oxide",
+      "version": "0.9.1",
+      "purl": "pkg:cargo/miniz_oxide@0.9.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Zlib OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "moxcms",
       "version": "0.7.11",
       "purl": "pkg:cargo/moxcms@0.7.11",
@@ -3038,6 +3072,72 @@
         {
           "type": "vcs",
           "url": "https://github.com/awxkee/moxcms.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "multiversion",
+      "version": "0.8.0",
+      "purl": "pkg:cargo/multiversion@0.8.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/calebzulawski/multiversion"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "multiversion-macros",
+      "version": "0.8.0",
+      "purl": "pkg:cargo/multiversion-macros@0.8.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/calebzulawski/multiversion"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "multiversion_no_op",
+      "version": "1.0.0",
+      "purl": "pkg:cargo/multiversion_no_op@1.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/hsivonen/multiversion_no_op"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
         }
       ]
     },
@@ -3186,8 +3286,8 @@
     {
       "type": "library",
       "name": "num-bigint",
-      "version": "0.4.6",
-      "purl": "pkg:cargo/num-bigint@0.4.6",
+      "version": "0.4.8",
+      "purl": "pkg:cargo/num-bigint@0.4.8",
       "scope": "required",
       "licenses": [
         {
@@ -3282,8 +3382,8 @@
     {
       "type": "library",
       "name": "num-integer",
-      "version": "0.1.46",
-      "purl": "pkg:cargo/num-integer@0.1.46",
+      "version": "0.1.47",
+      "purl": "pkg:cargo/num-integer@0.1.47",
       "scope": "required",
       "licenses": [
         {
@@ -3300,8 +3400,8 @@
     {
       "type": "library",
       "name": "num-iter",
-      "version": "0.1.45",
-      "purl": "pkg:cargo/num-iter@0.1.45",
+      "version": "0.1.46",
+      "purl": "pkg:cargo/num-iter@0.1.46",
       "scope": "required",
       "licenses": [
         {
@@ -3392,8 +3492,8 @@
     {
       "type": "library",
       "name": "parquet",
-      "version": "59.2.0",
-      "purl": "pkg:cargo/parquet@59.2.0",
+      "version": "59.3.0",
+      "purl": "pkg:cargo/parquet@59.3.0",
       "scope": "required",
       "licenses": [
         {
@@ -3606,8 +3706,8 @@
     {
       "type": "library",
       "name": "proc-macro2",
-      "version": "1.0.106",
-      "purl": "pkg:cargo/proc-macro2@1.0.106",
+      "version": "1.0.107",
+      "purl": "pkg:cargo/proc-macro2@1.0.107",
       "scope": "required",
       "licenses": [
         {
@@ -3665,9 +3765,49 @@
     },
     {
       "type": "library",
+      "name": "pulp",
+      "version": "0.22.3",
+      "purl": "pkg:cargo/pulp@0.22.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sarah-quinones/pulp/"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "pulp-wasm-simd-flag",
+      "version": "0.1.1",
+      "purl": "pkg:cargo/pulp-wasm-simd-flag@0.1.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sarah-quinones/pulp/"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "pxfm",
-      "version": "0.1.29",
-      "purl": "pkg:cargo/pxfm@0.1.29",
+      "version": "0.1.30",
+      "purl": "pkg:cargo/pxfm@0.1.30",
       "scope": "required",
       "licenses": [
         {
@@ -3760,8 +3900,8 @@
     {
       "type": "library",
       "name": "quote",
-      "version": "1.0.46",
-      "purl": "pkg:cargo/quote@1.0.46",
+      "version": "1.0.47",
+      "purl": "pkg:cargo/quote@1.0.47",
       "scope": "required",
       "licenses": [
         {
@@ -3796,8 +3936,8 @@
     {
       "type": "library",
       "name": "rand",
-      "version": "0.8.6",
-      "purl": "pkg:cargo/rand@0.8.6",
+      "version": "0.8.8",
+      "purl": "pkg:cargo/rand@0.8.8",
       "scope": "required",
       "licenses": [
         {
@@ -3886,8 +4026,8 @@
     {
       "type": "library",
       "name": "rangemap",
-      "version": "1.7.1",
-      "purl": "pkg:cargo/rangemap@1.7.1",
+      "version": "1.8.0",
+      "purl": "pkg:cargo/rangemap@1.8.0",
       "scope": "required",
       "licenses": [
         {
@@ -3943,6 +4083,26 @@
     },
     {
       "type": "library",
+      "name": "raw-cpuid",
+      "version": "11.6.0",
+      "purl": "pkg:cargo/raw-cpuid@11.6.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/gz/rust-cpuid"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "rawpointer",
       "version": "0.2.1",
       "purl": "pkg:cargo/rawpointer@0.2.1",
@@ -3992,6 +4152,26 @@
         {
           "type": "vcs",
           "url": "https://github.com/rayon-rs/rayon"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "reborrow",
+      "version": "0.5.5",
+      "purl": "pkg:cargo/reborrow@0.5.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/sarah-ek/reborrow/"
         }
       ]
     },
@@ -4116,8 +4296,8 @@
     {
       "type": "library",
       "name": "rustversion",
-      "version": "1.0.22",
-      "purl": "pkg:cargo/rustversion@1.0.22",
+      "version": "1.0.23",
+      "purl": "pkg:cargo/rustversion@1.0.23",
       "scope": "required",
       "licenses": [
         {
@@ -4160,8 +4340,8 @@
     {
       "type": "library",
       "name": "rxing-one-d-proc-derive",
-      "version": "0.9.0",
-      "purl": "pkg:cargo/rxing-one-d-proc-derive@0.9.0",
+      "version": "0.9.1",
+      "purl": "pkg:cargo/rxing-one-d-proc-derive@0.9.1",
       "scope": "required",
       "licenses": [
         {
@@ -4216,6 +4396,24 @@
         {
           "type": "vcs",
           "url": "https://github.com/Lokathor/safe_arch"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "scopeguard",
+      "version": "1.2.0",
+      "purl": "pkg:cargo/scopeguard@1.2.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/bluss/scopeguard"
         }
       ]
     },
@@ -4438,8 +4636,8 @@
     {
       "type": "library",
       "name": "simd-adler32",
-      "version": "0.3.9",
-      "purl": "pkg:cargo/simd-adler32@0.3.9",
+      "version": "0.3.10",
+      "purl": "pkg:cargo/simd-adler32@0.3.10",
       "scope": "required",
       "licenses": [
         {
@@ -4483,6 +4681,24 @@
     },
     {
       "type": "library",
+      "name": "simdutf8",
+      "version": "0.1.5",
+      "purl": "pkg:cargo/simdutf8@0.1.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rusticstuff/simdutf8"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "siphasher",
       "version": "1.0.3",
       "purl": "pkg:cargo/siphasher@1.0.3",
@@ -4502,8 +4718,8 @@
     {
       "type": "library",
       "name": "siphon-core",
-      "version": "2.8.0",
-      "purl": "pkg:cargo/siphon-core@2.8.0",
+      "version": "2.8.1",
+      "purl": "pkg:cargo/siphon-core@2.8.1",
       "scope": "required",
       "licenses": [
         {
@@ -4578,8 +4794,8 @@
     {
       "type": "library",
       "name": "syn",
-      "version": "2.0.118",
-      "purl": "pkg:cargo/syn@2.0.118",
+      "version": "2.0.119",
+      "purl": "pkg:cargo/syn@2.0.119",
       "scope": "required",
       "licenses": [
         {
@@ -4596,8 +4812,8 @@
     {
       "type": "library",
       "name": "syn",
-      "version": "3.0.4",
-      "purl": "pkg:cargo/syn@3.0.4",
+      "version": "3.0.5",
+      "purl": "pkg:cargo/syn@3.0.5",
       "scope": "required",
       "licenses": [
         {
@@ -4608,6 +4824,24 @@
         {
           "type": "vcs",
           "url": "https://github.com/dtolnay/syn"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "target-features",
+      "version": "0.1.6",
+      "purl": "pkg:cargo/target-features@0.1.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/calebzulawski/target-features"
         }
       ]
     },
@@ -4650,8 +4884,8 @@
     {
       "type": "library",
       "name": "thiserror",
-      "version": "2.0.18",
-      "purl": "pkg:cargo/thiserror@2.0.18",
+      "version": "2.0.20",
+      "purl": "pkg:cargo/thiserror@2.0.20",
       "scope": "required",
       "licenses": [
         {
@@ -4692,8 +4926,8 @@
     {
       "type": "library",
       "name": "thiserror-impl",
-      "version": "2.0.18",
-      "purl": "pkg:cargo/thiserror-impl@2.0.18",
+      "version": "2.0.20",
+      "purl": "pkg:cargo/thiserror-impl@2.0.20",
       "scope": "required",
       "licenses": [
         {
@@ -4716,8 +4950,8 @@
     {
       "type": "library",
       "name": "thread_local",
-      "version": "1.1.9",
-      "purl": "pkg:cargo/thread_local@1.1.9",
+      "version": "1.1.10",
+      "purl": "pkg:cargo/thread_local@1.1.10",
       "scope": "required",
       "licenses": [
         {
@@ -4754,8 +4988,8 @@
     {
       "type": "library",
       "name": "time",
-      "version": "0.3.51",
-      "purl": "pkg:cargo/time@0.3.51",
+      "version": "0.3.55",
+      "purl": "pkg:cargo/time@0.3.55",
       "scope": "required",
       "licenses": [
         {
@@ -4790,8 +5024,8 @@
     {
       "type": "library",
       "name": "time-macros",
-      "version": "0.2.30",
-      "purl": "pkg:cargo/time-macros@0.2.30",
+      "version": "0.2.32",
+      "purl": "pkg:cargo/time-macros@0.2.32",
       "scope": "required",
       "licenses": [
         {
@@ -4814,8 +5048,8 @@
     {
       "type": "library",
       "name": "tinyvec",
-      "version": "1.11.0",
-      "purl": "pkg:cargo/tinyvec@1.11.0",
+      "version": "1.13.2",
+      "purl": "pkg:cargo/tinyvec@1.13.2",
       "scope": "required",
       "licenses": [
         {
@@ -4850,8 +5084,8 @@
     {
       "type": "library",
       "name": "toml",
-      "version": "1.1.4+spec-1.1.0",
-      "purl": "pkg:cargo/toml@1.1.4+spec-1.1.0",
+      "version": "1.1.5+spec-1.1.0",
+      "purl": "pkg:cargo/toml@1.1.5+spec-1.1.0",
       "scope": "required",
       "licenses": [
         {
@@ -5066,8 +5300,8 @@
     {
       "type": "library",
       "name": "twox-hash",
-      "version": "2.1.2",
-      "purl": "pkg:cargo/twox-hash@2.1.2",
+      "version": "2.1.4",
+      "purl": "pkg:cargo/twox-hash@2.1.4",
       "scope": "required",
       "licenses": [
         {
@@ -5484,8 +5718,8 @@
     {
       "type": "library",
       "name": "winnow",
-      "version": "1.0.3",
-      "purl": "pkg:cargo/winnow@1.0.3",
+      "version": "1.0.4",
+      "purl": "pkg:cargo/winnow@1.0.4",
       "scope": "required",
       "licenses": [
         {
@@ -5504,8 +5738,8 @@
     {
       "type": "library",
       "name": "zerocopy",
-      "version": "0.8.52",
-      "purl": "pkg:cargo/zerocopy@0.8.52",
+      "version": "0.8.56",
+      "purl": "pkg:cargo/zerocopy@0.8.56",
       "scope": "required",
       "licenses": [
         {
@@ -5522,8 +5756,8 @@
     {
       "type": "library",
       "name": "zerocopy-derive",
-      "version": "0.8.52",
-      "purl": "pkg:cargo/zerocopy-derive@0.8.52",
+      "version": "0.8.56",
+      "purl": "pkg:cargo/zerocopy-derive@0.8.56",
       "scope": "required",
       "licenses": [
         {
@@ -5608,8 +5842,8 @@
     {
       "type": "library",
       "name": "zlib-rs",
-      "version": "0.6.4",
-      "purl": "pkg:cargo/zlib-rs@0.6.4",
+      "version": "0.6.7",
+      "purl": "pkg:cargo/zlib-rs@0.6.7",
       "scope": "required",
       "licenses": [
         {
@@ -5628,8 +5862,8 @@
     {
       "type": "library",
       "name": "zmij",
-      "version": "1.0.21",
-      "purl": "pkg:cargo/zmij@1.0.21",
+      "version": "1.0.23",
+      "purl": "pkg:cargo/zmij@1.0.23",
       "scope": "required",
       "licenses": [
         {

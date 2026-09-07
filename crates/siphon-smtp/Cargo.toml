@@ -1,6 +1,6 @@
 [package]
 name = "siphon-smtp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Polygon Siphon milter — Sendmail/Postfix mail filter for SMTP DLP"
 license = "MIT"

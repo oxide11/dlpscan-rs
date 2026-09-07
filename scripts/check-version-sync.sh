@@ -54,7 +54,7 @@ check() {
         printf "  ok   %-55s %s\n" "${label}" "${actual}"
     else
         printf "  MISS %-55s %s (expected %s)\n" "${label}" "${actual}" "${expected}"
-        fail=1
+        fail=$((fail + 1))
     fi
 }
 
@@ -194,7 +194,14 @@ echo "siphon-launcher ${launcher_ver} (standalone)"
 echo
 if [[ $fail -ne 0 ]]; then
     echo "Versions drift — run scripts/bump-version.sh <target> <new> to re-sync" >&2
-    echo "the affected crate's downstream artifacts. ${checks} checks, ${fail} miss." >&2
+    # Counted, not flagged. This line used to print a boolean, so two drifted
+    # files reported "1 miss" — enough to have someone fix one, re-run, and
+    # be surprised.
+    if [[ "${fail}" -eq 1 ]]; then
+        echo "the affected crate's downstream artifacts. ${checks} checks, 1 miss." >&2
+    else
+        echo "the affected crate's downstream artifacts. ${checks} checks, ${fail} misses." >&2
+    fi
     exit 1
 fi
 echo "all ${checks} lockstep checks in sync ✓"
