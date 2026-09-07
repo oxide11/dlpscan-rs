@@ -13,10 +13,16 @@ serialisation it saves is a hundred lines.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import re
 import sys
 from pathlib import Path
+
+# Ensure UTF-8 output with LF line endings regardless of platform. On Windows,
+# Python's default text mode writes cp1252 with CRLF, which breaks the CI diff.
+if hasattr(sys.stdout, "buffer"):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", newline="\n")
 
 # Components with a C or C++ implementation underneath. Rust's memory-safety
 # guarantees stop at these, and they all sit on the path that parses
