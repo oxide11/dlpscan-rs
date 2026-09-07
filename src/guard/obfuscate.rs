@@ -530,7 +530,7 @@ mod tests {
     fn test_generate_valid_iban() {
         set_obfuscation_seed(2);
         let mut rng = StdRng::seed_from_u64(2); // DevSkim: ignore DS148264
-        // DE IBAN: 22 chars
+                                                // DE IBAN: 22 chars
         let fake = generate_valid_iban("DE89370400440532013000", &mut rng);
         let clean: String = fake.chars().filter(|c| c.is_alphanumeric()).collect();
         // Omit the generated value from the panic message — CodeQL would flag it as
@@ -554,7 +554,10 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(4); // DevSkim: ignore DS148264
         for _ in 0..20 {
             let mc = generate_australia_medicare(&mut rng);
-            assert!(is_valid_australia_medicare(&mc), "generated Medicare number is not valid");
+            assert!(
+                is_valid_australia_medicare(&mc),
+                "generated Medicare number is not valid"
+            );
         }
     }
 
@@ -575,7 +578,10 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(6); // DevSkim: ignore DS148264
         for _ in 0..20 {
             let dea = generate_dea_number(&mut rng);
-            assert!(is_valid_dea_number(&dea), "generated DEA number is not valid");
+            assert!(
+                is_valid_dea_number(&dea),
+                "generated DEA number is not valid"
+            );
         }
     }
 
