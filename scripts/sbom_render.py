@@ -65,10 +65,11 @@ def parse(path: Path) -> list[dict]:
         seen[key] = {
             "name": name,
             "version": version,
-            # cargo prints "(/path)" for workspace members. Recording this
-            # separates first-party code from third-party in the document,
-            # which is the first question anyone asks of an SBOM.
-            "first_party": rest.strip().startswith("(/"),
+            # cargo prints "(/path)" (Unix) or "(C:\path)" (Windows) for
+            # workspace members. Either prefix identifies first-party code.
+            "first_party": rest.strip().startswith("(/") or bool(
+                __import__("re").match(r"\([A-Za-z]:\\", rest.strip())
+            ),
             "proc_macro": "(proc-macro)" in rest,
             "license": license_field.strip(),
             "repository": repo_field.strip(),

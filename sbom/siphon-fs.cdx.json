@@ -5657,6 +5657,12 @@
           "type": "vcs",
           "url": "https://github.com/oxide11/dlpscan-rs"
         }
+      ],
+      "properties": [
+        {
+          "name": "siphon:first-party",
+          "value": "true"
+        }
       ]
     },
     {
@@ -5670,6 +5676,12 @@
           "license": {
             "id": "MIT"
           }
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:first-party",
+          "value": "true"
         }
       ]
     },
