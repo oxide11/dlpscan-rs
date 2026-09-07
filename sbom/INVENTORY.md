@@ -10,7 +10,7 @@ rusqlite, unrar, rxing or the image codecs, while `siphon-fs` and
 siphon-api ships a bundled SQLite and a C RAR decoder it has never
 contained.
 
-Resolved per package for `x86_64-unknown-linux-gnu`, normal edges only — dev- and
+Resolved per package for `x86_64-unknown-linux-gnu`, normal edges only â€” dev- and
 build-dependencies are not components of a shipped binary. Note that
 `cargo metadata` and `cargo tree --workspace` unify features across
 members and report that false picture; `cargo tree -p` does not.
