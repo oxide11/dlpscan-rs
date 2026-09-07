@@ -2706,8 +2706,8 @@
     {
       "type": "library",
       "name": "siphon-cli",
-      "version": "2.3.1",
-      "purl": "pkg:cargo/siphon-cli@2.3.1",
+      "version": "2.4.0",
+      "purl": "pkg:cargo/siphon-cli@2.4.0",
       "scope": "required",
       "licenses": [
         {
@@ -2720,12 +2720,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/oxide11/dlpscan-rs"
-        }
-      ],
-      "properties": [
-        {
-          "name": "siphon:first-party",
-          "value": "true"
         }
       ]
     },
@@ -2741,12 +2735,6 @@
             "id": "MIT"
           }
         }
-      ],
-      "properties": [
-        {
-          "name": "siphon:first-party",
-          "value": "true"
-        }
       ]
     },
     {
@@ -2760,12 +2748,6 @@
           "license": {
             "id": "MIT"
           }
-        }
-      ],
-      "properties": [
-        {
-          "name": "siphon:first-party",
-          "value": "true"
         }
       ]
     },
