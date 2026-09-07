@@ -332,7 +332,7 @@ fn build_audit_logger(
 
     if let Some(hex_key) = signing_key_hex {
         match hex::decode(hex_key) {
-            Ok(key) if key.len() >= 16 => {
+            Ok(key) if key.len() >= 32 => {
                 handler = handler.with_chain_key(&key);
                 // Order matters. The seed is the cold-start fallback for hosts
                 // with no durable disk (Cloudflare Containers, scratch FS
@@ -373,9 +373,9 @@ fn build_audit_logger(
                 // and a misconfigured chain is worse than no chain at all.
                 // Refuse to start rather than degrade silently.
                 eprintln!(
-                    "FATAL: SIPHON_AUDIT_SIGNING_KEY_HEX is too short (<16 bytes). \
-                     Use at least 32 hex-encoded bytes (64 hex chars), or unset the \
-                     variable to run without a signing chain."
+                    "FATAL: SIPHON_AUDIT_SIGNING_KEY_HEX is too short (<32 bytes). \
+                     Use at least 32 bytes (64 hex chars, e.g. `openssl rand -hex 32`), \
+                     or unset the variable to run without a signing chain."
                 );
                 std::process::exit(1);
             }
@@ -2447,7 +2447,10 @@ struct CapabilitiesResponse {
     supported_extensions: Option<Vec<String>>,
 }
 
-async fn capabilities(State(state): State<Arc<AppState>>) -> Json<CapabilitiesResponse> {
+async fn capabilities(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<CapabilitiesResponse> {
     Json(CapabilitiesResponse {
         pod_type: "siphon-api",
         pod_id: state.pod_id.to_string(),
@@ -3068,6 +3071,7 @@ struct RollResponse {
 
 #[cfg(not(feature = "k8s-roll"))]
 async fn overrides_roll(
+    _: RequireAdminAction,
     _state: State<Arc<AppState>>,
     _addr: ConnectInfo<SocketAddr>,
     // Accept + ignore a body so the same client code works against
@@ -3416,6 +3420,7 @@ fn pod_summary(pod: &k8s_openapi::api::core::v1::Pod) -> PodSummary {
 
 #[cfg(not(feature = "k8s-roll"))]
 async fn k8s_rollout(
+    _: RequireAdminAction,
     _state: State<Arc<AppState>>,
     _addr: ConnectInfo<SocketAddr>,
     _path: axum::extract::Path<String>,
@@ -4160,7 +4165,7 @@ struct DocIndexResponse {
     entries: Vec<DocIndexEntry>,
 }
 
-async fn docs_index() -> Json<DocIndexResponse> {
+async fn docs_index(_: RequireAdminAction) -> Json<DocIndexResponse> {
     let entries: Vec<DocIndexEntry> = DOCS_INDEX
         .iter()
         .map(|(path, content)| DocIndexEntry {
@@ -4182,6 +4187,7 @@ struct DocContentQuery {
 }
 
 async fn docs_content(
+    _: RequireAdminAction,
     Query(q): Query<DocContentQuery>,
 ) -> Result<Json<DocResponse>, (StatusCode, Json<ErrorResponse>)> {
     match doc_by_path(&q.path) {
@@ -4204,7 +4210,7 @@ async fn docs_content(
 }
 
 // Legacy shortcut handlers — kept so older UI callers don't break.
-async fn doc_changelog() -> Json<DocResponse> {
+async fn doc_changelog(_: RequireAdminAction) -> Json<DocResponse> {
     let c = doc_by_path("docs/CHANGELOG.md").unwrap_or("");
     Json(DocResponse {
         path: "docs/CHANGELOG.md",
@@ -4213,7 +4219,7 @@ async fn doc_changelog() -> Json<DocResponse> {
         bytes: c.len(),
     })
 }
-async fn doc_architecture() -> Json<DocResponse> {
+async fn doc_architecture(_: RequireAdminAction) -> Json<DocResponse> {
     let c = doc_by_path("docs/ARCHITECTURE.md").unwrap_or("");
     Json(DocResponse {
         path: "docs/ARCHITECTURE.md",
@@ -4222,7 +4228,7 @@ async fn doc_architecture() -> Json<DocResponse> {
         bytes: c.len(),
     })
 }
-async fn doc_readme() -> Json<DocResponse> {
+async fn doc_readme(_: RequireAdminAction) -> Json<DocResponse> {
     let c = doc_by_path("README.md").unwrap_or("");
     Json(DocResponse {
         path: "README.md",
