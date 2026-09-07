@@ -5087,10 +5087,11 @@ async fn create_baseline_snapshot(
     let label = body.as_ref().and_then(|b| b.label.as_deref());
     let version = siphon_core::VERSION;
     match db::compute_baseline_snapshot(&state.db_pool, label, version).await {
-        Ok(id) => {
-            (StatusCode::CREATED, Json(serde_json::json!({"snapshot_id": id.to_string()})))
-                .into_response()
-        }
+        Ok(id) => (
+            StatusCode::CREATED,
+            Json(serde_json::json!({"snapshot_id": id.to_string()})),
+        )
+            .into_response(),
         Err(e) => {
             tracing::warn!("create_baseline_snapshot: {e}");
             (
@@ -5164,7 +5165,11 @@ async fn get_baseline_current(
         Ok(c) => c,
         Err(e) => {
             tracing::warn!("get_baseline_current: pool get: {e}");
-            return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
         }
     };
     let snap_row = match client
@@ -5179,11 +5184,19 @@ async fn get_baseline_current(
     {
         Ok(Some(r)) => r,
         Ok(None) => {
-            return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "no snapshots"}))).into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "no snapshots"})),
+            )
+                .into_response();
         }
         Err(e) => {
             tracing::warn!("get_baseline_current: query failed: {e}");
-            return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
         }
     };
     let snap_id: uuid::Uuid = snap_row.get("id");
@@ -5198,17 +5211,29 @@ async fn get_baseline_by_id(
     let snapshot_id = match uuid::Uuid::parse_str(&id) {
         Ok(u) => u,
         Err(_) => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid snapshot id"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "invalid snapshot id"})),
+            )
+                .into_response();
         }
     };
     let Some(pool) = state.db_pool.as_ref() else {
-        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "not found"}))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "not found"})),
+        )
+            .into_response();
     };
     let client = match pool.get().await {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!("get_baseline_by_id: pool get: {e}");
-            return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
         }
     };
     let snap_row = match client
@@ -5221,11 +5246,19 @@ async fn get_baseline_by_id(
     {
         Ok(Some(r)) => r,
         Ok(None) => {
-            return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "not found"}))).into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "not found"})),
+            )
+                .into_response();
         }
         Err(e) => {
             tracing::warn!("get_baseline_by_id: query: {e}");
-            return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
         }
     };
     fetch_and_return_snapshot(&client, snapshot_id, snap_row).await
@@ -5260,7 +5293,11 @@ async fn fetch_and_return_snapshot(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("fetch_and_return_snapshot: categories query: {e}");
-            return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
         }
     };
     let categories: Vec<CategoryBaselineRow> = cat_rows
@@ -5320,23 +5357,39 @@ async fn get_baseline_delta(
     let from_id = match uuid::Uuid::parse_str(&q.from) {
         Ok(u) => u,
         Err(_) => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid 'from' id"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "invalid 'from' id"})),
+            )
+                .into_response();
         }
     };
     let to_id = match uuid::Uuid::parse_str(&q.to) {
         Ok(u) => u,
         Err(_) => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid 'to' id"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "invalid 'to' id"})),
+            )
+                .into_response();
         }
     };
     let Some(pool) = state.db_pool.as_ref() else {
-        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "no data"}))).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "no data"})),
+        )
+            .into_response();
     };
     let client = match pool.get().await {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!("get_baseline_delta: pool get: {e}");
-            return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
         }
     };
 
@@ -5350,8 +5403,20 @@ async fn get_baseline_delta(
         .await
     {
         Ok(Some(r)) => r,
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "'from' snapshot not found"}))).into_response(),
-        Err(e) => return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "'from' snapshot not found"})),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
     };
     let to_snap = match client
         .query_opt(
@@ -5362,8 +5427,20 @@ async fn get_baseline_delta(
         .await
     {
         Ok(Some(r)) => r,
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "'to' snapshot not found"}))).into_response(),
-        Err(e) => return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": e.to_string()}))).into_response(),
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "'to' snapshot not found"})),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response()
+        }
     };
 
     // Join both snapshots' category rows to compute deltas in one query.
@@ -5389,7 +5466,11 @@ async fn get_baseline_delta(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("get_baseline_delta: join query: {e}");
-            return (StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"error": e.to_string()}))).into_response();
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": e.to_string()})),
+            )
+                .into_response();
         }
     };
 

@@ -1371,9 +1371,11 @@ fn wilson_ci(p: f64, n: i64) -> (f64, f64) {
     let z = 1.96_f64;
     let nf = n as f64;
     let center = (p + z * z / (2.0 * nf)) / (1.0 + z * z / nf);
-    let margin = z * ((p * (1.0 - p) / nf) + (z * z / (4.0 * nf * nf))).sqrt()
-        / (1.0 + z * z / nf);
-    (f64::max(0.0, center - margin), f64::min(1.0, center + margin))
+    let margin = z * ((p * (1.0 - p) / nf) + (z * z / (4.0 * nf * nf))).sqrt() / (1.0 + z * z / nf);
+    (
+        f64::max(0.0, center - margin),
+        f64::min(1.0, center + margin),
+    )
 }
 
 /// Compute and persist a baseline snapshot.
@@ -1423,20 +1425,22 @@ pub async fn compute_baseline_snapshot(
             0.0
         };
         let (recall_ci_low, recall_ci_high) = wilson_ci(recall_val, recall_n);
-        metrics.entry(category.clone()).or_insert_with(|| CategoryMetrics {
-            category: category.clone(),
-            recall_tp: None,
-            recall_n: None,
-            recall_val: None,
-            recall_ci_low: None,
-            recall_ci_high: None,
-            precision_tp: None,
-            precision_n: None,
-            precision_val: None,
-            precision_ci_low: None,
-            precision_ci_high: None,
-            f1_val: None,
-        });
+        metrics
+            .entry(category.clone())
+            .or_insert_with(|| CategoryMetrics {
+                category: category.clone(),
+                recall_tp: None,
+                recall_n: None,
+                recall_val: None,
+                recall_ci_low: None,
+                recall_ci_high: None,
+                precision_tp: None,
+                precision_n: None,
+                precision_val: None,
+                precision_ci_low: None,
+                precision_ci_high: None,
+                f1_val: None,
+            });
         let m = metrics.get_mut(&category).unwrap();
         m.recall_tp = Some(recall_tp);
         m.recall_n = Some(recall_n);
@@ -1472,20 +1476,22 @@ pub async fn compute_baseline_snapshot(
             0.0
         };
         let (precision_ci_low, precision_ci_high) = wilson_ci(precision_val, precision_n);
-        let m = metrics.entry(category.clone()).or_insert_with(|| CategoryMetrics {
-            category: category.clone(),
-            recall_tp: None,
-            recall_n: None,
-            recall_val: None,
-            recall_ci_low: None,
-            recall_ci_high: None,
-            precision_tp: None,
-            precision_n: None,
-            precision_val: None,
-            precision_ci_low: None,
-            precision_ci_high: None,
-            f1_val: None,
-        });
+        let m = metrics
+            .entry(category.clone())
+            .or_insert_with(|| CategoryMetrics {
+                category: category.clone(),
+                recall_tp: None,
+                recall_n: None,
+                recall_val: None,
+                recall_ci_low: None,
+                recall_ci_high: None,
+                precision_tp: None,
+                precision_n: None,
+                precision_val: None,
+                precision_ci_low: None,
+                precision_ci_high: None,
+                f1_val: None,
+            });
         m.precision_tp = Some(precision_tp);
         m.precision_n = Some(precision_n);
         m.precision_val = Some(precision_val);
