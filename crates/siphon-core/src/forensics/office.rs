@@ -99,8 +99,12 @@ fn parse_core_xml(xml: &str, meta: &mut FileMetadata) -> Result<(), ForensicsErr
                         "keywords" => meta.keywords = Some(text),
                         "created" => meta.created_at = Some(text),
                         "modified" => meta.modified_at = Some(text),
+                        // dc:language — Dublin Core BCP-47 document language
+                        "language" => meta.language = Some(text),
                         other => {
-                            meta.raw.entry(format!("cp:{other}")).or_insert(text);
+                            // core.xml tags are Dublin Core / cp: namespace —
+                            // use the correct dc: prefix for raw storage.
+                            meta.raw.entry(format!("dc:{other}")).or_insert(text);
                         }
                     }
                 }
@@ -178,14 +182,23 @@ fn parse_settings_rsids(xml: &str, meta: &mut FileMetadata) -> Result<(), Forens
         match reader.read_event_into(&mut buf) {
             Ok(Event::Empty(e)) | Ok(Event::Start(e)) => {
                 let local = tag_local_name(e.name().as_ref());
-                // The interesting tags are rsidRoot + rsid. Both carry
-                // the hex ID as the `w:val` attribute.
+                // rsidRoot + rsid: the `w:val` attribute carries the hex ID.
                 if local == "rsidRoot" || local == "rsid" {
                     if let Some(val) = attr_value(&e, "val") {
                         if local == "rsidRoot" {
                             rsid_root = Some(val);
                         } else {
                             rsids.push(val);
+                        }
+                    }
+                }
+                // w:themeFontLang: primary editing locale (e.g. "en-US").
+                // `w:val` is the Latin-script language; the element is
+                // almost always an empty tag.
+                if local == "themeFontLang" {
+                    if let Some(val) = attr_value(&e, "val") {
+                        if meta.locale.is_none() && !val.is_empty() {
+                            meta.locale = Some(val);
                         }
                     }
                 }

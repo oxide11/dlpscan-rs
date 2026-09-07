@@ -509,3 +509,109 @@ fn filekind_from_path_covers_legacy_extensions() {
     assert_eq!(FileKind::from_path(Path::new("baz.PPT")), FileKind::Ppt);
     assert_eq!(FileKind::from_path(Path::new("quux.docx")), FileKind::Docx);
 }
+
+// ---------------------------------------------------------------------------
+// Locale-signal survey — FUTURE.md item 7
+// ---------------------------------------------------------------------------
+
+/// Build a docx with an explicit dc:language in core.xml and a
+/// w:themeFontLang in settings.xml.
+fn build_docx_with_locale(language: &str, theme_font_lang: &str) -> Vec<u8> {
+    let mut buf = Vec::new();
+    {
+        let mut zw = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let opts = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+
+        let core = format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+                   xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <dc:creator>Test Author</dc:creator>
+  <dc:language>{language}</dc:language>
+</cp:coreProperties>"#
+        );
+        zw.start_file("docProps/core.xml", opts).unwrap();
+        zw.write_all(core.as_bytes()).unwrap();
+
+        let settings = format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:themeFontLang w:val="{theme_font_lang}" w:eastAsia="zh-CN"/>
+</w:settings>"#
+        );
+        zw.start_file("word/settings.xml", opts).unwrap();
+        zw.write_all(settings.as_bytes()).unwrap();
+
+        zw.finish().unwrap();
+    }
+    buf
+}
+
+#[test]
+fn docx_dc_language_populates_language_field() {
+    let bytes = build_docx_with_locale("fr-CA", "fr-CA");
+    let meta = office::extract(&bytes, &FileKind::Docx).unwrap();
+
+    assert_eq!(
+        meta.language.as_deref(),
+        Some("fr-CA"),
+        "dc:language must land in FileMetadata.language"
+    );
+    // Must NOT appear in raw under any prefix.
+    assert!(
+        !meta.raw.contains_key("cp:language") && !meta.raw.contains_key("dc:language"),
+        "promoted field must not also live in raw"
+    );
+}
+
+#[test]
+fn docx_theme_font_lang_populates_locale_field() {
+    let bytes = build_docx_with_locale("en-US", "en-US");
+    let meta = office::extract(&bytes, &FileKind::Docx).unwrap();
+
+    assert_eq!(
+        meta.locale.as_deref(),
+        Some("en-US"),
+        "w:themeFontLang w:val must land in FileMetadata.locale"
+    );
+}
+
+#[test]
+fn docx_without_locale_signals_is_none() {
+    // A docx with no dc:language and no w:themeFontLang should leave
+    // both fields as None rather than defaulting to anything.
+    let bytes = build_docx("Alice", "Alice", &[], None);
+    let meta = office::extract(&bytes, &FileKind::Docx).unwrap();
+
+    assert!(
+        meta.language.is_none(),
+        "language should be None when absent"
+    );
+    assert!(meta.locale.is_none(), "locale should be None when absent");
+}
+
+#[test]
+fn pdf_dc_language_xmp_populates_language_field() {
+    let xmp = r#"<?xpacket begin='' id=''?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/">
+   <dc:language>de-DE</dc:language>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>"#;
+
+    let mut meta = FileMetadata::default();
+    pdf::parse_xmp(xmp, &mut meta);
+
+    assert_eq!(
+        meta.language.as_deref(),
+        Some("de-DE"),
+        "dc:language in XMP must land in FileMetadata.language"
+    );
+    assert!(
+        !meta.raw.contains_key("xmp:language"),
+        "promoted field must not also live in raw"
+    );
+}

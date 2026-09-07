@@ -160,6 +160,18 @@ pub struct FileMetadata {
     /// was domain-joined at document creation. Gold for attribution.
     pub company: Option<String>,
 
+    // --- Locale signals -----------------------------------------------------
+    /// BCP-47 document language — OOXML `dc:language` from
+    /// `docProps/core.xml`, or `dc:language` from PDF XMP.
+    /// Survey-only: not used to gate or weight detection yet.
+    pub language: Option<String>,
+    /// Primary editing locale — OOXML `w:themeFontLang/@w:val` from
+    /// `word/settings.xml` (e.g. `"en-US"`, `"fr-CA"`). This is the
+    /// language the author's Word install was configured for at the
+    /// time of authoring, making it a strong attribution signal.
+    /// Survey-only: not used to gate or weight detection yet.
+    pub locale: Option<String>,
+
     // --- Identifiers --------------------------------------------------------
     /// OOXML DOCX revision-session IDs (`w:rsid` values from
     /// word/settings.xml). Every "edit session" records a new
