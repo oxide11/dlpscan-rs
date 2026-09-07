@@ -529,52 +529,42 @@ mod tests {
     #[test]
     fn test_generate_valid_iban() {
         set_obfuscation_seed(2);
-        let mut rng = StdRng::seed_from_u64(2);
+        let mut rng = StdRng::seed_from_u64(2); // DevSkim: ignore DS148264
         // DE IBAN: 22 chars
         let fake = generate_valid_iban("DE89370400440532013000", &mut rng);
         let clean: String = fake.chars().filter(|c| c.is_alphanumeric()).collect();
-        assert!(
-            is_valid_iban(&clean),
-            "generated IBAN {fake:?} is not valid"
-        );
+        // Omit the generated value from the panic message — CodeQL would flag it as
+        // cleartext logging of sensitive data (the function handles real IBANs in prod).
+        assert!(is_valid_iban(&clean), "generated IBAN is not valid");
     }
 
     #[test]
     fn test_generate_australia_tfn_valid() {
         set_obfuscation_seed(3);
-        let mut rng = StdRng::seed_from_u64(3);
+        let mut rng = StdRng::seed_from_u64(3); // DevSkim: ignore DS148264
         for _ in 0..20 {
             let tfn = generate_australia_tfn(&mut rng);
-            assert!(
-                is_valid_australia_tfn(&tfn),
-                "generated TFN {tfn:?} is not valid"
-            );
+            assert!(is_valid_australia_tfn(&tfn), "generated TFN is not valid");
         }
     }
 
     #[test]
     fn test_generate_australia_medicare_valid() {
         set_obfuscation_seed(4);
-        let mut rng = StdRng::seed_from_u64(4);
+        let mut rng = StdRng::seed_from_u64(4); // DevSkim: ignore DS148264
         for _ in 0..20 {
             let mc = generate_australia_medicare(&mut rng);
-            assert!(
-                is_valid_australia_medicare(&mc),
-                "generated Medicare {mc:?} is not valid"
-            );
+            assert!(is_valid_australia_medicare(&mc), "generated Medicare number is not valid");
         }
     }
 
     #[test]
     fn test_generate_iccid_valid() {
         set_obfuscation_seed(5);
-        let mut rng = StdRng::seed_from_u64(5);
+        let mut rng = StdRng::seed_from_u64(5); // DevSkim: ignore DS148264
         for _ in 0..20 {
             let iccid = generate_iccid(&mut rng);
-            assert!(
-                is_valid_iccid(&iccid),
-                "generated ICCID {iccid:?} is not valid"
-            );
+            assert!(is_valid_iccid(&iccid), "generated ICCID is not valid");
             assert!(iccid.starts_with("89"), "ICCID must start with 89");
         }
     }
@@ -582,26 +572,20 @@ mod tests {
     #[test]
     fn test_generate_dea_number_valid() {
         set_obfuscation_seed(6);
-        let mut rng = StdRng::seed_from_u64(6);
+        let mut rng = StdRng::seed_from_u64(6); // DevSkim: ignore DS148264
         for _ in 0..20 {
             let dea = generate_dea_number(&mut rng);
-            assert!(
-                is_valid_dea_number(&dea),
-                "generated DEA {dea:?} is not valid"
-            );
+            assert!(is_valid_dea_number(&dea), "generated DEA number is not valid");
         }
     }
 
     #[test]
     fn test_generate_india_pan_valid() {
         set_obfuscation_seed(7);
-        let mut rng = StdRng::seed_from_u64(7);
+        let mut rng = StdRng::seed_from_u64(7); // DevSkim: ignore DS148264
         for _ in 0..20 {
             let pan = generate_india_pan(&mut rng);
-            assert!(
-                is_valid_india_pan(&pan),
-                "generated PAN {pan:?} is not valid"
-            );
+            assert!(is_valid_india_pan(&pan), "generated India PAN is not valid");
         }
     }
 
