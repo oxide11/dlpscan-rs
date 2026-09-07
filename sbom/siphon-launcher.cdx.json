@@ -1567,6 +1567,12 @@
             "id": "MIT"
           }
         }
+      ],
+      "properties": [
+        {
+          "name": "siphon:first-party",
+          "value": "true"
+        }
       ]
     },
     {
