@@ -44,6 +44,45 @@ Bumps siphon-api 2.9.0 → 2.10.0; all four lockstep files updated.
 Version-sync script: 24/24 ✓.
 changed in a given wave.
 
+## 2026-09-07 — obfuscate generator extensions
+
+### siphon 2.4.0
+
+- **fix(cli): Canada SIN obfuscation now produces Luhn-valid output.** Previously
+  `obfuscate_ssn` replaced digits randomly; the replacement was not Luhn-valid
+  and would have failed the validator. `generate_luhn_sin` generates a proper
+  9-digit Luhn-valid SIN with a valid first digit (1-7 or 9).
+
+- **fix(cli): IBAN obfuscation now produces mod-97-valid output.** The previous
+  generator randomized the check digits without recomputing them; the result
+  would fail `is_valid_iban`. The new `generate_valid_iban` preserves the
+  original country code and length, generates a random BBAN, and computes the
+  correct 2-digit check per ISO 13616.
+
+- **feat(cli): Australia TFN generator.** Generates a weighted-mod-11-valid
+  9-digit TFN. Output passes `is_valid_australia_tfn`.
+
+- **feat(cli): Australia Medicare generator.** Generates a weighted-mod-10-valid
+  10-digit Medicare number (first digit 2-6). Output passes
+  `is_valid_australia_medicare`.
+
+- **feat(cli): ICCID generator.** Generates a 19-digit Luhn-valid ICCID starting
+  with `89` (telecom major industry identifier). Output passes `is_valid_iccid`.
+
+- **feat(cli): DEA number generator.** Generates a structurally valid DEA number
+  with correct weighted-sum check digit and a valid first-letter registrant code.
+  Output passes `is_valid_dea_number`.
+
+- **feat(cli): India PAN generator.** Generates a structurally valid 10-character
+  PAN (`AAAPNNNNA` shape) with the 4th character constrained to a valid entity
+  type code (P/C/H/A/B/G/J/L/F/T). Passes `is_valid_india_pan`.
+
+- **feat(cli): South Africa ID generator.** Generates a 13-digit Luhn-valid SA ID
+  with an embedded plausible DOB (YYMMDD 01-28 day range), random sequence
+  digits, and citizenship code 0 or 1. Output passes `is_valid_south_africa_id`.
+
+---
+
 Format follows [Keep a Changelog](https://keepachangelog.com/), adapted for
 the per-crate SemVer model documented in `CLAUDE.md`. Older
 workspace-single-version history (every crate moving in lockstep) lives in
