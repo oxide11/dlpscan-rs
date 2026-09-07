@@ -33,6 +33,18 @@ ignore = [
     # The traversal vulnerability (0245) is mitigated above; no known exploitable
     # issue remains in our controlled use of the API surface.
     { id = "RUSTSEC-2026-0246", reason = "unmaintained; tracked in BACKLOG.md for migration to sevenz-rust2. Traversal risk mitigated by custom extraction wrapper." },
+
+    # RUSTSEC-2024-0436 — paste macro crate unmaintained.
+    # Transitive-only dependency (pulled by proc-macro ecosystem crates).
+    # No workspace crate directly depends on `paste`; no code path exercises
+    # its macros at runtime. Tracked in BACKLOG.md.
+    { id = "RUSTSEC-2024-0436", reason = "transitive-only; no workspace crate directly uses paste macros. Tracked in BACKLOG.md." },
+
+    # RUSTSEC-2026-0192 — ttf-parser unmaintained.
+    # Transitive-only dependency (pulled by the font-rendering chain via
+    # printpdf → lopdf → owned_ttf_parser). Workspace code never calls
+    # ttf-parser APIs directly. Tracked in BACKLOG.md.
+    { id = "RUSTSEC-2026-0192", reason = "transitive-only via printpdf font chain; no workspace crate calls ttf-parser APIs directly. Tracked in BACKLOG.md." },
 ]
 
 [licenses]
@@ -63,7 +75,7 @@ confidence-threshold = 0.8
 
 [bans]
 multiple-versions = "warn"
-wildcards = "allow"
+wildcards = "deny"
 
 [sources]
 unknown-registry = "deny"

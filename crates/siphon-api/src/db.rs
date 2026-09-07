@@ -17,6 +17,7 @@
 //! instead of a half-applied schema.
 
 use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime, SslMode};
+use rustls_pki_types::pem::PemObject as _;
 use std::time::Duration;
 use tokio_postgres::NoTls;
 
@@ -798,7 +799,7 @@ fn build_tls() -> Result<MaybeTls, String> {
                 let pem = std::fs::read(&path)
                     .map_err(|e| format!("reading SIPHON_DATABASE_CA_FILE {path}: {e}"))?;
                 let mut added = 0usize;
-                for cert in rustls_pemfile::certs(&mut pem.as_slice()).flatten() {
+                for cert in rustls_pki_types::CertificateDer::pem_slice_iter(&pem).flatten() {
                     roots
                         .add(cert)
                         .map_err(|e| format!("adding CA from {path}: {e}"))?;

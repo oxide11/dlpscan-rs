@@ -7153,9 +7153,15 @@ async fn main() {
         });
     }
 
-    let app = Router::new()
+    // Liveness/readiness probes — unauthenticated so Docker HEALTHCHECK and
+    // k8s probes work without an API key. These handlers expose no sensitive
+    // data (version string + uptime only). All other security layers still
+    // apply via the outer merge below.
+    let probes = Router::new()
         .route("/health", get(health))
-        .route("/ready", get(ready))
+        .route("/ready", get(ready));
+
+    let app = Router::new()
         .route("/v1/db/health", get(db_health))
         .route("/v1/health/detailed", get(health_detailed))
         .route("/scan", post(scan))
@@ -7221,7 +7227,6 @@ async fn main() {
         .route("/v1/docs/changelog", get(doc_changelog))
         .route("/v1/docs/architecture", get(doc_architecture))
         .route("/v1/docs/readme", get(doc_readme))
-        .layer(middleware::from_fn(security_headers))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -7230,6 +7235,8 @@ async fn main() {
             state.clone(),
             rate_limit_middleware,
         ))
+        .merge(probes)
+        .layer(middleware::from_fn(security_headers))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(

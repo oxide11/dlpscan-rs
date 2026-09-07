@@ -29,6 +29,7 @@ mod protocol;
 
 use policy::{action_for, verdict_headers, OnIndeterminate, PolicyError, Verdict};
 use protocol::{Command, Decoder, Response};
+use rustls_pki_types::pem::PemObject as _;
 use siphon_core::mime::{parse_message_with_limits, MimeLimits, PartKind};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
 use siphon_mail::{Direction, MessageRecord, PartOutcome, PartRecord, PartStatus};
@@ -233,7 +234,7 @@ fn build_tls() -> Result<MaybeTls, Box<dyn std::error::Error>> {
                 let pem = std::fs::read(&path)
                     .map_err(|e| format!("reading SIPHON_DATABASE_CA_FILE {path}: {e}"))?;
                 let mut added = 0usize;
-                for cert in rustls_pemfile::certs(&mut pem.as_slice()).flatten() {
+                for cert in rustls_pki_types::CertificateDer::pem_slice_iter(&pem).flatten() {
                     roots
                         .add(cert)
                         .map_err(|e| format!("adding CA from {path}: {e}"))?;

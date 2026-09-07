@@ -69,4 +69,4 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio-postgres-rustls = { version = "0.14.0", features = ["ring"] }
 rustls = { version = "0.23", features = ["ring"] }
 webpki-roots = "1.0.9"
-rustls-pemfile = "2"
+rustls-pki-types = "1"
