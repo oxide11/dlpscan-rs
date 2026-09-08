@@ -8,7 +8,8 @@ credentials that identify *who* is calling, what they may do, and whose data
 they are allowed to see. This document is the design for those credentials,
 and the honest account of what a caller gets today.
 
-It is a plan, not a record. Nothing in §3 onward exists yet.
+It is a plan, not a record. Phase 1 of §10 is done; nothing in §3 onward
+exists yet.
 
 ## 1. What an external caller can do today
 
@@ -61,7 +62,7 @@ And five things are wrong, all of which follow from *one key for everyone*:
 |---|---|---|
 | **Identity** | Every caller is `api-key`. `scans.api_key_hash` stores a hash of the **server's own** key hash (`main.rs`, `persist_scan` call site), so every row is attributed to the deployment, not the caller | You cannot answer "which application sent this?", bill, rate-limit or revoke one caller |
 | **Tenant** | `X-Siphon-Tenant` is whatever the caller writes. It picks the policy, tags the rows, and scopes `/v1/findings/stats` and `/v1/findings/export` | Tenant isolation is a claim. Any key holder reads or writes any tenant by editing a header |
-| **Scan gate** | `/scan`, `/scan/batch` and `/v1/scan/explain` carry no permission extractor at all — `RequireScan` exists only in a comment. `Permission::Scan` is declared and gates nothing | An `Auditor` arriving through the proxy can submit scans. The role that is supposed to read and never act, acts |
+| **Scan gate** | `/scan`, `/scan/stream` and `/scan/batch` carry no permission extractor at all — `RequireScan` exists only in a comment. `Permission::Scan` is declared and gates nothing (`/v1/scan/explain` is the exception: it is `AdminAction`, because its trace exposes pipeline internals) | An `Auditor` arriving through the proxy can submit scans. The role that is supposed to read and never act, acts |
 | **Rotation** | `SIPHON_API_KEY_SECONDARY` plus a redeploy | Rotating one caller means rotating everyone |
 | **siphon-fs** | Its own `SIPHON_API_KEY` and `SIPHON_ADMIN_KEY`, no roles, no tenant | A file upload is authenticated by a different secret than a text scan of the same content |
 
@@ -196,10 +197,11 @@ which key it is running with.
 
 Two changes to the request path, both of which stand on their own:
 
-**Gate the scan routes.** `RequireScan` on `/scan` and `/v1/scan/explain`,
+**Gate the scan routes.** `RequireScan` on `/scan` and `/scan/stream`,
 `RequireBatchScan` on `/scan/batch`, via the `require_permission!` macro.
-`Auditor` and `Viewer` get 403 with a `REJECT` audit row. This is a bug fix
-and ships first (§9).
+`Auditor`, `ResponderReadOnly` and `Viewer` get 403 with a `REJECT` audit
+row; `Responder` may scan but not batch. `/v1/scan/explain` stays
+`AdminAction`. This is a bug fix and ships first (§10).
 
 **Tenant from the key.** `AuthContext` gains `tenant: Option<String>`. For a
 key with `tenant_id` set, that value replaces the header on every read and
@@ -243,23 +245,68 @@ current deployment has more than one proxy.
 The milter has no equivalent and gets none. Its identity is the MTA, which
 is `SIPHON_SMTP_ALLOWED_NETS`.
 
-## 9. Phasing
+## 9. Mutual TLS on every internal hop
+
+A requirement in its own right, and the other half of what `siphon-auth`
+exists for: keys say who a *caller* is; certificates say who a *service* is.
+Every hop between a detector and the C2/IR surface or the database
+authenticates both ends. Not "encrypted" — **mutually authenticated**, so a
+pod that can reach siphon-api's port is still nobody until it presents a
+certificate the deployment's CA signed.
+
+Where the hops actually are — this is worth being precise about, because two
+of the five components have no hop to secure:
+
+| Hop | Today | After |
+|---|---|---|
+| nginx → siphon-api (the C2/IR consoles reach the engine here) | plaintext `proxy_pass http://` inside the cluster; Linkerd mTLS if the mesh is on | siphon-api serves TLS (exists: `SIPHON_TLS_CERT`/`KEY`) and **requires a client certificate** chaining to `SIPHON_TLS_CLIENT_CA`. nginx presents one: `proxy_pass https://`, `proxy_ssl_certificate`, `proxy_ssl_verify on`, `proxy_ssl_trusted_certificate`, `proxy_ssl_name` |
+| nginx → siphon-fs | plaintext; siphon-fs has never served TLS | siphon-fs gains the same listener and the same client-CA requirement |
+| siphon-api, siphon-fs, siphon-smtp → Postgres | `SIPHON_DATABASE_TLS=require` — server certificate verified, client anonymous | new mode **`mtls`**: the service presents `SIPHON_DATABASE_CLIENT_CERT`/`_KEY` and refuses to start without them. Postgres side: `ssl=on`, `ssl_ca_file`, and `pg_hba.conf` `hostssl … scram-sha-256 clientcert=verify-full` — password *and* certificate, with the certificate CN required to match the database user |
+| siphon-icap → anything | — | nothing to do. It has no database and never calls siphon-api |
+| Squid → siphon-icap, Postfix → siphon-smtp | network allowlist | unchanged. ICAP and the milter protocol carry no TLS; these are the MTA's and proxy's hops, not ours, and are outside this requirement. Stated here so nobody reads "all internal traffic is mTLS" as covering them |
+
+**One implementation.** The Postgres TLS builder is currently three
+byte-identical copies (`siphon-api/src/db.rs`, `siphon-fs/src/db.rs`,
+`siphon-smtp/src/main.rs`), each ending `.with_no_client_auth()`. That is
+three places to add client authentication and three places for one of them
+to be forgotten. `siphon_auth::db_tls()` replaces all three; the server-side
+`rustls::ServerConfig` with a `WebPkiClientVerifier` lives beside it so
+siphon-api and siphon-fs require client certificates the same way.
+
+**Certificates.** `scripts/dev/mkcerts.sh` generates a local CA and one leaf
+per identity — `nginx` (client), `siphon-api`, `siphon-fs` (server, with the
+Service DNS names as SANs), `postgres` (server), and a DB client cert per
+writer whose CN is the Postgres role it connects as. docker-compose mounts
+them; the Helm chart takes a `tls.internal.issuerRef` for cert-manager and
+otherwise expects the same Secret layout. Linkerd stays available and is no
+longer the only thing making the claim true — a compose deployment gets the
+same property without a mesh.
+
+**Failure direction.** A service with `mtls` configured and no certificate
+does not start. A peer with no certificate or the wrong CA gets a TLS
+handshake failure, not a 401 — it never reaches the HTTP layer. This is the
+one place in the design that fails closed without a grace path, because a
+certificate is deployment configuration, not a runtime credential that can
+lag.
+
+## 10. Phasing
 
 Each is one PR, mergeable alone, in this order:
 
 | # | Scope | Ships |
 |---|---|---|
-| 1 | `fix(api)` — gate `/scan`, `/scan/batch`, `/v1/scan/explain` on their permissions; stop attributing scans to the server's own key hash | The bug fix. Small, no schema |
-| 2 | `feat(auth)` — `siphon-auth` crate, `0013_api_keys.sql`, cache, key resolution in `auth_middleware`; `POST/GET/DELETE /v1/keys`, `/rotate`; `key_id` on `/v1/me`; audit events | Keys exist and authenticate |
-| 3 | `feat(console)` — C2 Settings → **API keys**: list, issue dialog (label, role, tenant, expiry, limit), the show-once secret with copy, revoke with confirm, rotate. Absence is a state: "no keys yet" and "key store unavailable — no Postgres" are different screens | An admin can issue a key without `psql` |
-| 4 | `feat(api)` — tenant on `AuthContext`; every tenant-aware query reads it from there; header semantics per §6 | Tenant isolation is enforced, not claimed |
-| 5 | `feat(fs)` — siphon-fs on `siphon-auth`, role gates, `SIPHON_ADMIN_KEY` removed | One credential across text and file |
-| 6 | `docs` — rewrite `docs/AUTHENTICATION.md` §"API: bearer API keys", `docs/enterprise/api.md`, `rbac.md`; a `docs/getting-started/integrating.md` walking an application owner from "ask for a key" to a handled response | The service has an onboarding document |
-| 7 | *(optional)* `feat(icap)` — `X-Siphon-Key` attribution header | Per-proxy attribution |
+| 1 | `fix(api)` — gate `/scan`, `/scan/stream`, `/scan/batch` on `Scan`/`BatchScan` | The bug fix. Small, no schema |
+| 2 | `feat(auth)` — `siphon-auth` crate with `db_tls()` (client certs, `mtls` mode) and the server client-verifier; siphon-api, siphon-fs and siphon-smtp adopt it; siphon-fs serves TLS; nginx `proxy_ssl_*`; Postgres `clientcert=verify-full` in compose; `scripts/dev/mkcerts.sh`; Helm values | Every detector ↔ C2/IR/database hop is mutually authenticated (§9) |
+| 3 | `feat(auth)` — `0013_api_keys.sql`, cache, key resolution in `auth_middleware`; `POST/GET/DELETE /v1/keys`, `/rotate`; `key_id` on `/v1/me`; audit events; `scans.api_key_id` attribution replacing the server-key hash | Keys exist, authenticate, and every scan names its caller |
+| 4 | `feat(console)` — C2 Settings → **API keys**: list, issue dialog (label, role, tenant, expiry, limit), the show-once secret with copy, revoke with confirm, rotate. Absence is a state: "no keys yet" and "key store unavailable — no Postgres" are different screens | An admin can issue a key without `psql` |
+| 5 | `feat(api)` — tenant on `AuthContext`; every tenant-aware query reads it from there; header semantics per §6 | Tenant isolation is enforced, not claimed |
+| 6 | `feat(fs)` — siphon-fs key resolution through `siphon-auth`, role gates, `SIPHON_ADMIN_KEY` removed | One credential across text and file |
+| 7 | `docs` — rewrite `docs/AUTHENTICATION.md` §"API: bearer API keys", `docs/enterprise/api.md`, `rbac.md`; a `docs/getting-started/integrating.md` walking an application owner from "ask for a key" to a handled response | The service has an onboarding document |
+| 8 | *(optional)* `feat(icap)` — `X-Siphon-Key` attribution header | Per-proxy attribution |
 
-Phases 2–5 each bump the crate their scope names per `CLAUDE.md` versioning.
+Phases 2–6 each bump the crate their scope names per `CLAUDE.md` versioning.
 
-## 10. The service contract, once this lands
+## 11. The service contract, once this lands
 
 What an application owner does:
 
@@ -280,10 +327,10 @@ What the organisation gets: every scan attributed to an integration, per-key
 rate limits and revocation, tenant isolation enforced server-side, and one
 audit trail that names who issued what to whom.
 
-## 11. Decisions this needs
+## 12. Decisions
 
-Recommendations in bold; each is the kind of call that is not mine to make
-silently.
+Taken 2026-09-08: the recommendations below, all eight, plus the mTLS
+requirement in §9. Kept here so the reasoning stays next to the choice.
 
 1. **Roles only, no per-key permission sets** (§2.2). The alternative is a
    `permissions TEXT[]` column that lets an admin compose any subset. Cheaper

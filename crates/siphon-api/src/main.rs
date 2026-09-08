@@ -612,6 +612,13 @@ require_permission!(
     Permission::ReviewAlerts,
     "review_alerts"
 );
+// `Permission::Scan` was declared, documented in the matrix, and gated
+// nothing: `/scan` and `/scan/batch` accepted any authenticated caller, so an
+// `Auditor` — the role that reads and never acts — could submit scans, and
+// `ResponderReadOnly` could too. The gate is what makes the matrix's "Scans"
+// column true.
+require_permission!(RequireScan, Permission::Scan, "scan");
+require_permission!(RequireBatchScan, Permission::BatchScan, "batch_scan");
 
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
@@ -1366,6 +1373,7 @@ fn sanitize_tenant_id(s: &str) -> Option<String> {
 }
 
 async fn scan(
+    _: RequireScan,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -1836,6 +1844,7 @@ struct BatchScanResponse {
 }
 
 async fn scan_batch(
+    _: RequireBatchScan,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -6838,6 +6847,7 @@ async fn findings_prune(
 /// only supports GET.  Use `fetch()` + `ReadableStream` on the client side
 /// (or curl with `--no-buffer`).
 async fn scan_stream(
+    _: RequireScan,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<ScanRequest>,
@@ -8225,6 +8235,76 @@ mod tests {
             outcome,
             StatusCode::FORBIDDEN,
             "operator must not pass an AdminAction gate",
+        );
+    }
+
+    /// Status a gate produced for a role, or `None` if it admitted them.
+    async fn scan_gate_status(role: Role) -> Option<StatusCode> {
+        let mut parts = empty_parts();
+        parts.extensions.insert(test_ctx(role));
+        RequireScan::from_request_parts(&mut parts, &())
+            .await
+            .err()
+            .map(|(s, _)| s)
+    }
+
+    async fn batch_gate_status(role: Role) -> Option<StatusCode> {
+        let mut parts = empty_parts();
+        parts.extensions.insert(test_ctx(role));
+        RequireBatchScan::from_request_parts(&mut parts, &())
+            .await
+            .err()
+            .map(|(s, _)| s)
+    }
+
+    #[tokio::test]
+    async fn scan_gate_refuses_the_roles_that_only_read() {
+        // These three exist to observe. Before the gate existed every one of
+        // them could POST /scan, which is the difference between "read-only"
+        // and "read-only except for the thing the service does".
+        for role in [Role::Auditor, Role::ResponderReadOnly, Role::Viewer] {
+            assert_eq!(
+                scan_gate_status(role).await,
+                Some(StatusCode::FORBIDDEN),
+                "{role:?} must not pass the Scan gate"
+            );
+            assert_eq!(
+                batch_gate_status(role).await,
+                Some(StatusCode::FORBIDDEN),
+                "{role:?} must not pass the BatchScan gate"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn scan_gate_admits_the_roles_that_scan() {
+        for role in [Role::Admin, Role::Analyst, Role::Responder, Role::Operator] {
+            assert_eq!(scan_gate_status(role).await, None, "{role:?} may scan");
+        }
+    }
+
+    #[tokio::test]
+    async fn responder_scans_but_does_not_batch() {
+        // A responder submits a suspect document during an investigation; a
+        // bulk job is an operator's tool. Pinned so the matrix cannot drift
+        // apart from the routes.
+        assert_eq!(scan_gate_status(Role::Responder).await, None);
+        assert_eq!(
+            batch_gate_status(Role::Responder).await,
+            Some(StatusCode::FORBIDDEN)
+        );
+        for role in [Role::Admin, Role::Analyst, Role::Operator] {
+            assert_eq!(batch_gate_status(role).await, None, "{role:?} may batch");
+        }
+    }
+
+    #[tokio::test]
+    async fn scan_gate_rejects_when_no_auth_context() {
+        let mut parts = empty_parts();
+        let outcome = RequireScan::from_request_parts(&mut parts, &()).await;
+        assert!(
+            matches!(outcome, Err((StatusCode::UNAUTHORIZED, _))),
+            "a scan route reached without auth_middleware is a server bug, not an open door"
         );
     }
 }

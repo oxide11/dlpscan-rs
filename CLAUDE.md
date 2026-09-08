@@ -349,6 +349,13 @@ absolute.
 means cannot *act*, not cannot *see* — a consultant should be able to work a
 case fully and still not move it.
 
+**Scan routes are gated.** `POST /scan` and `/scan/stream` need `Scan`,
+`/scan/batch` needs `BatchScan`. Until 2026-09-08 none of the three had any
+permission extractor — `Permission::Scan` was declared, tabulated and bound to
+nothing, so an `Auditor` could submit scans. The full design for per-caller
+keys, tenant binding and mTLS between every detector and the C2/IR/database is
+`docs/architecture/api-keys.md`.
+
 **Alert reads are gated on `ViewAlerts`, not `AdminAction`.** That older gate
 was correct only while those endpoints returned values in the clear; once
 masking moved server-side it was just keeping responders and auditors out of
