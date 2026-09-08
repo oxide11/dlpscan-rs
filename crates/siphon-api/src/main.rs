@@ -569,6 +569,50 @@ where
     }
 }
 
+/// Gate a handler on one permission.
+///
+/// `RequireAdminAction` predates this and stays as-is; everything added since
+/// goes through here so a new gate is a type alias rather than another copy of
+/// the same twenty lines.
+macro_rules! require_permission {
+    ($name:ident, $perm:expr, $what:literal) => {
+        #[doc = concat!("Requires `", $what, "`.")]
+        #[derive(Clone, Copy)]
+        struct $name;
+
+        impl<S> axum::extract::FromRequestParts<S> for $name
+        where
+            S: Send + Sync,
+        {
+            type Rejection = (StatusCode, Json<ErrorResponse>);
+
+            async fn from_request_parts(
+                parts: &mut axum::http::request::Parts,
+                _state: &S,
+            ) -> Result<Self, Self::Rejection> {
+                let ctx = parts.extensions.get::<AuthContext>().cloned().ok_or((
+                    StatusCode::UNAUTHORIZED,
+                    Json(ErrorResponse {
+                        error: "no auth context (auth_middleware not applied to this route?)"
+                            .into(),
+                    }),
+                ))?;
+                if !role_has_permission(ctx.role, $perm) {
+                    return Err(forbidden_response(ctx.role, $perm));
+                }
+                Ok(Self)
+            }
+        }
+    };
+}
+
+require_permission!(RequireViewAlerts, Permission::ViewAlerts, "view_alerts");
+require_permission!(
+    RequireReviewAlerts,
+    Permission::ReviewAlerts,
+    "review_alerts"
+);
+
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -5869,7 +5913,7 @@ async fn get_baseline_delta(
 }
 
 async fn findings_stats(
-    _: RequireAdminAction,
+    _: RequireViewAlerts,
     headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> Response {
@@ -6137,7 +6181,7 @@ struct PgFindingsResponse {
 }
 
 async fn list_pg_findings(
-    _: RequireAdminAction,
+    _: RequireViewAlerts,
     AuthContextExt(ctx): AuthContextExt,
     headers: HeaderMap,
     Query(q): Query<PgFindingsQuery>,
@@ -6291,7 +6335,7 @@ struct FeedbackResponse {
 }
 
 async fn post_finding_feedback(
-    _: RequireAdminAction,
+    _: RequireReviewAlerts,
     State(state): State<Arc<AppState>>,
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(body): Json<FeedbackBody>,
@@ -6436,7 +6480,11 @@ async fn findings_export(
     AuthContextExt(ctx): AuthContextExt,
     Query(q): Query<ExportQuery>,
     State(state): State<Arc<AppState>>,
-    _: RequireAdminAction,
+    // ViewAlerts, not AdminAction: an auditor producing a compliance report
+    // and a responder packaging evidence both need this, and both are
+    // read-only roles. Rows are redacted unless the caller holds an unmask
+    // permission *and* asks, and the 5/min limit still bounds bulk pulls.
+    _: RequireViewAlerts,
 ) -> Response {
     let unmask = masking::UnmaskRequest::parse(q.unmask.as_deref());
     let mut disclosed = 0usize;
@@ -6649,7 +6697,7 @@ struct FindingsResponse {
 }
 
 async fn list_findings(
-    _: RequireAdminAction,
+    _: RequireViewAlerts,
     AuthContextExt(ctx): AuthContextExt,
     headers: HeaderMap,
     Query(q): Query<FindingsQuery>,

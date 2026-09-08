@@ -44,7 +44,7 @@ export const C2: ConsoleId = {
   home: '/',
   nav: [
     { to: '/', label: 'Overview', question: 'Is it healthy, and what needs me?' },
-    { to: '/findings', label: 'Findings', question: 'What did it catch?' },
+    { to: '/detections', label: 'Detections', question: 'What did it catch?' },
     { to: '/scan', label: 'Scan', question: 'What would it do with this?' },
     { to: '/patterns', label: 'Patterns', question: 'What can it detect?' },
     { to: '/policies', label: 'Policies', question: 'What are we telling it to do?' },
@@ -52,7 +52,7 @@ export const C2: ConsoleId = {
     { to: '/assurance', label: 'Assurance', question: 'Can I prove any of this?' },
     { to: '/settings', label: 'Settings', question: 'How is it wired?' },
   ],
-  // sibling: added when the IR routes land.
+  sibling: { name: 'IR', to: '/ir', why: 'Investigate findings — triage, cases, evidence' },
 }
 
 /** IR — investigate. The same eight-question discipline, a responder's day. */
@@ -61,7 +61,7 @@ export const IR: ConsoleId = {
   home: '/ir',
   nav: [
     { to: '/ir', label: 'Respond', question: 'What needs me now?' },
-    { to: '/ir/queue', label: 'Queue', question: "What's waiting to be triaged?" },
+    { to: '/ir/alerts', label: 'Alerts', question: 'What needs a decision?' },
     { to: '/ir/cases', label: 'Cases', question: 'What am I working?' },
     { to: '/ir/analyze', label: 'Analyze', question: 'What is this thing?' },
     { to: '/ir/correlate', label: 'Correlate', question: 'What else is connected?' },
@@ -125,7 +125,7 @@ export function AppShell({
 
   // The nav entry the queue count belongs to: the one that answers "what is
   // waiting for me". Different route per console, same meaning.
-  const countedRoute = id === IR ? '/ir/queue' : '/'
+  const countedRoute = id === IR ? '/ir/alerts' : '/'
 
   return (
     <div className="flex min-h-dvh flex-col bg-page">

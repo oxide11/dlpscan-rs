@@ -325,10 +325,45 @@ policy-mutating route **and** the raw finding/evadex read endpoints — those
 return unredacted matched values, so they are admin-only, not merely
 authenticated.
 
-Roles: `Admin`, `Analyst`, `Responder` (incident response — may unmask PII and
-PCI, cannot change detection), `Operator`, `Viewer`. `GET /v1/me` reports the
-caller's role, how it was established, and the permission list; the console
-renders affordances from it, and every gate is re-checked server-side.
+Seven roles. `GET /v1/me` reports the caller's role, how it was established,
+and the permission list; the console renders affordances from it, and every
+gate is re-checked server-side.
+
+| Role | Reads alerts | Rules on them | Unmask PII | Unmask PCI | Scans | Admin |
+|---|---|---|---|---|---|---|
+| `Admin` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `Analyst` | ✓ | ✓ | ✓ | — | ✓ | — |
+| `Responder` | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| `ResponderReadOnly` | ✓ | — | ✓ | ✓ | — | — |
+| `Auditor` | ✓ | — | — | — | — | — |
+| `Operator` | — | — | — | — | ✓ | — |
+| `Viewer` | — | — | — | — | — | — |
+
+`Auditor` is the role to understand: it can never unmask, on request or
+otherwise. An auditor verifies that process was followed — what matched, when,
+who ruled on it, whether the chain verifies — and none of that needs the
+personal data. Every other role's redaction is a default; the auditor's is
+absolute.
+
+`ResponderReadOnly` keeps unmask and loses `ReviewAlerts`/`Scan`. Read-only
+means cannot *act*, not cannot *see* — a consultant should be able to work a
+case fully and still not move it.
+
+**Alert reads are gated on `ViewAlerts`, not `AdminAction`.** That older gate
+was correct only while those endpoints returned values in the clear; once
+masking moved server-side it was just keeping responders and auditors out of
+the surface built for them. `POST /v1/findings/{id}/feedback` needs
+`ReviewAlerts`; `POST /v1/findings/prune` is still `AdminAction`, because
+deleting evidence is not a read.
+
+### Detections and alerts
+
+Two words, deliberately not synonyms. A **detection** is anything the scanner
+recorded. An **alert** is the subset that crossed a threshold and wants a
+human. C2's surface is Detections (the stream); IR's is Alerts (the queue).
+The stored record and the API still say `findings` — renaming 575 Rust
+identifiers, 47 SQL references and a table holding sensitive rows is its own
+change, and the vocabulary split is worth having before that happens.
 
 ### Masking
 

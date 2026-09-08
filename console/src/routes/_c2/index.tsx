@@ -150,7 +150,7 @@ function Overview() {
                   {f.confidence.toFixed(2)}
                 </span>
                 <Link
-                  to="/findings"
+                  to="/detections"
                   search={{ limit: 100, offset: 0, selected: f.id }}
                   className="text-t5"
                 >

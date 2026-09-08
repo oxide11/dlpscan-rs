@@ -82,12 +82,17 @@ authentication_backend:
 # Authelia's `Remote-Groups` and `siphon::rbac::Role::from_groups`
 # maps it, highest privilege winning:
 #
-#   admins     → Admin      everything
-#   analysts   → Analyst    scan, batch, detokenize, unmask PII
-#   responders → Responder  scan, unmask PII *and* PCI; cannot change
-#                           detection (incident response, not operations)
-#   operators  → Operator   scan, batch, view status
-#   viewers    → Viewer     view status only
+#   admins             → Admin              everything
+#   analysts           → Analyst            scan, batch, detokenize,
+#                                           read + rule on alerts, unmask PII
+#   responders         → Responder          read + rule on alerts, unmask PII
+#                                           and PCI; cannot change detection
+#   responders-readonly→ ResponderReadOnly  read alerts and unmask, but cannot
+#                                           rule on them or submit a scan
+#   auditors           → Auditor            read alerts, **never** unmask —
+#                                           verifies process, not data
+#   operators          → Operator           scan and batch; cannot read alerts
+#   viewers            → Viewer             view status only
 #
 # A group not in that list maps to nothing, and an authenticated user
 # with no recognised group is granted Viewer — authenticated is not

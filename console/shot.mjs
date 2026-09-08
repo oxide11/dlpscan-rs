@@ -71,7 +71,7 @@ const errs = []
 const shots = []
 
 for (const theme of ['dark', 'light']) {
-  for (const r of ['/', '/findings', '/scan', '/patterns']) {
+  for (const r of ['/', '/detections', '/scan', '/patterns', '/ir', '/ir/alerts', '/ir/cases']) {
     const p = await b.newPage({ viewport: { width: 1440, height: 900 } })
     p.on('console', (m) => m.type() === 'error' && errs.push(`${theme}${r}: ${m.text()}`))
     p.on('pageerror', (e) => errs.push(`${theme}${r}: PAGEERROR ${e.message}`))
@@ -89,7 +89,7 @@ for (const theme of ['dark', 'light']) {
     await p.evaluate((t) => (document.documentElement.dataset.theme = t), theme)
     await p.waitForTimeout(500)
     const name = `${OUT}/c2${MOCK ? '' : '-noapi'}-${theme}${r.replace(/\//g, '-') || '-home'}.png`
-    await p.screenshot({ path: name, fullPage: r === '/findings' })
+    await p.screenshot({ path: name, fullPage: r === '/detections' || r === '/ir/alerts' })
     shots.push(name)
     await p.close()
   }

@@ -27,7 +27,7 @@ interface Search {
   unmask?: string
 }
 
-export const Route = createFileRoute('/_c2/findings')({
+export const Route = createFileRoute('/_c2/detections')({
   validateSearch: (raw: Record<string, unknown>): Search => ({
     category: typeof raw.category === 'string' && raw.category ? raw.category : undefined,
     limit: Math.min(500, Math.max(25, Number(raw.limit) || 100)),
@@ -36,10 +36,10 @@ export const Route = createFileRoute('/_c2/findings')({
     selected: typeof raw.selected === 'string' && raw.selected ? raw.selected : undefined,
     unmask: typeof raw.unmask === 'string' && raw.unmask ? raw.unmask : undefined,
   }),
-  component: FindingsRoute,
+  component: DetectionsRoute,
 })
 
-function FindingsRoute() {
+function DetectionsRoute() {
   const search = Route.useSearch()
   const navigate = Route.useNavigate()
   const qc = useQueryClient()
@@ -114,14 +114,14 @@ function FindingsRoute() {
 
   useCommandSource(() => [
     {
-      id: 'findings:export-csv',
-      group: 'Findings',
+      id: 'detections:export-csv',
+      group: 'Detections',
       label: 'Export current filter as CSV',
       run: () =>
         window.open(api.exportUrl({ format: 'csv', category: search.category }), '_blank'),
     },
     ...(categories.data ?? []).slice(0, 40).map((c) => ({
-      id: `findings:cat:${c.category}`,
+      id: `detections:cat:${c.category}`,
       group: 'Filter by category',
       label: c.category,
       hint: String(c.pattern_count),
@@ -196,7 +196,7 @@ function FindingsRoute() {
   return (
     <Page>
       <PageHeader
-        title="Findings"
+        title="Detections"
         description={
           <>
             Postgres-backed history. Retention is enforced server-side, so the oldest rows here
@@ -324,7 +324,7 @@ function FindingsRoute() {
             onRowActivate={(f) => setSearch({ selected: f.id })}
             emptyState={
               <EmptyState
-                title="No findings match"
+                title="No detections match"
                 detail={
                   search.category
                     ? `Nothing in ${search.category} within the retained window.`

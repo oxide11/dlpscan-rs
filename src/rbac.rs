@@ -16,11 +16,24 @@ use serde::{Deserialize, Serialize};
 pub enum Role {
     Admin,
     Analyst,
-    /// Incident responder — investigates findings rather than operating the
+    /// Incident responder — investigates alerts rather than operating the
     /// scanner. Can see and unmask sensitive values in the course of an
-    /// investigation, but cannot change what the scanner detects or enforces.
-    /// See `docs/wireframes/IR-vs-C2.md` for the operate/investigate split.
+    /// investigation, and can rule on them, but cannot change what the scanner
+    /// detects or enforces. See `docs/wireframes/IR-vs-C2.md`.
     Responder,
+    /// A responder who observes but does not act: reads the queue, may unmask
+    /// for an investigation, cannot record a verdict or submit a scan.
+    /// For consultants and shadowing analysts.
+    ResponderReadOnly,
+    /// Compliance auditor. Reads everything **masked, always** — no unmask
+    /// permission at all, not even on request.
+    ///
+    /// This is the point of the role: an auditor verifies that process was
+    /// followed, which needs the metadata (what matched, when, who ruled on
+    /// it, whether the chain verifies) and never the personal data itself.
+    /// Giving them unmask "just in case" would make the narrowest role in the
+    /// system a full-disclosure one.
+    Auditor,
     Operator,
     Viewer,
 }
@@ -34,9 +47,13 @@ impl Role {
     /// silently granting some.
     pub fn from_group(group: &str) -> Option<Self> {
         match group.trim().to_ascii_lowercase().as_str() {
-            "admins" | "admin" => Some(Self::Admin),
+            "admins" | "admin" | "administrator" | "administrators" => Some(Self::Admin),
             "analysts" | "analyst" => Some(Self::Analyst),
             "responders" | "responder" | "ir" => Some(Self::Responder),
+            "responders-readonly" | "responder-readonly" | "ir-readonly" => {
+                Some(Self::ResponderReadOnly)
+            }
+            "auditors" | "auditor" => Some(Self::Auditor),
             "operators" | "operator" => Some(Self::Operator),
             "viewers" | "viewer" => Some(Self::Viewer),
             _ => None,
@@ -57,6 +74,8 @@ impl Role {
             Self::Admin => "admin",
             Self::Analyst => "analyst",
             Self::Responder => "responder",
+            Self::ResponderReadOnly => "responder-readonly",
+            Self::Auditor => "auditor",
             Self::Operator => "operator",
             Self::Viewer => "viewer",
         }
@@ -90,6 +109,19 @@ pub enum Permission {
     ViewStatus,
     /// Admin-only operations (key rotation, configuration changes)
     AdminAction,
+    /// Read the alert/detection stream at all — the queue, the history, the
+    /// export. Values arrive redacted; this is permission to see *that*
+    /// something matched, not *what* matched.
+    ///
+    /// Split out from `AdminAction`, which used to gate these endpoints back
+    /// when they returned values in the clear. Masking is server-side now, so
+    /// that gate was only keeping responders and auditors out of the surface
+    /// built for them.
+    ViewAlerts,
+    /// Record a true/false-positive verdict on an alert. Separate from
+    /// `ViewAlerts` because read-only roles exist precisely to hold one and
+    /// not the other.
+    ReviewAlerts,
     /// Read the matched value of a PII finding in the clear.
     ///
     /// Separate from `UnmaskPci` on purpose. Cardholder data carries its own
@@ -107,7 +139,7 @@ impl Permission {
     /// Every permission, so `Role::permissions()` cannot silently miss one.
     /// A new variant that is not added here is a compile-time nudge rather
     /// than a permission that never appears in `GET /v1/me`.
-    pub const ALL: [Permission; 9] = [
+    pub const ALL: [Permission; 11] = [
         Permission::Scan,
         Permission::BatchScan,
         Permission::ManagePatterns,
@@ -115,6 +147,8 @@ impl Permission {
         Permission::ExportVault,
         Permission::ViewStatus,
         Permission::AdminAction,
+        Permission::ViewAlerts,
+        Permission::ReviewAlerts,
         Permission::UnmaskPii,
         Permission::UnmaskPci,
     ];
@@ -129,6 +163,8 @@ impl Permission {
             Self::ExportVault => "export_vault",
             Self::ViewStatus => "view_status",
             Self::AdminAction => "admin_action",
+            Self::ViewAlerts => "view_alerts",
+            Self::ReviewAlerts => "review_alerts",
             Self::UnmaskPii => "unmask_pii",
             Self::UnmaskPci => "unmask_pci",
         }
@@ -137,56 +173,73 @@ impl Permission {
 
 /// Check whether a role has a given permission.
 ///
-/// Permission matrix:
+/// | Role | Scan | Batch | Patterns | Admin | ViewAlerts | ReviewAlerts | PII | PCI |
+/// |---|---|---|---|---|---|---|---|---|
+/// | Admin             | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+/// | Analyst           | ✓ | ✓ | — | — | ✓ | ✓ | ✓ | — |
+/// | Responder         | ✓ | — | — | — | ✓ | ✓ | ✓ | ✓ |
+/// | ResponderReadOnly | — | — | — | — | ✓ | — | ✓ | ✓ |
+/// | Auditor           | — | — | — | — | ✓ | — | — | — |
+/// | Operator          | ✓ | ✓ | — | — | — | — | — | — |
+/// | Viewer            | — | — | — | — | — | — | — | — |
 ///
-/// | Role | Permissions |
-/// |---|---|
-/// | Admin | all |
-/// | Analyst | Scan, BatchScan, Detokenize, ViewStatus, UnmaskPii |
-/// | Responder | Scan, ViewStatus, UnmaskPii, UnmaskPci |
-/// | Operator | Scan, BatchScan, ViewStatus |
-/// | Viewer | ViewStatus |
+/// Every role also holds `ViewStatus`; it is omitted above to keep the table
+/// readable.
 ///
-/// Two notes on the unmask columns, because they are the ones that will be
-/// argued about:
+/// The columns that will be argued about:
 ///
-/// **Analyst holds `UnmaskPii` but not `UnmaskPci`.** Tuning a pattern means
-/// looking at what it matched, so an analyst who cannot see values cannot do
-/// the job. Cardholder data is the exception: PCI-DSS wants that need-to-know
-/// narrow, and pattern tuning can be done against a redacted PAN plus the
-/// validator result.
+/// **Analyst has PII but not PCI.** Tuning a pattern means looking at what it
+/// matched, so an analyst who cannot see values cannot do the job. Cardholder
+/// data is the exception: PCI-DSS wants that need-to-know narrow, and tuning
+/// works from a redacted PAN plus the validator result.
 ///
-/// **Responder holds both, but not `BatchScan` or `ManagePatterns`.** An
-/// investigation genuinely needs the value in the clear — that is the whole
-/// job — but a responder has no business changing what the scanner detects.
-/// Investigate, don't operate.
+/// **Responder has both, and no `ManagePatterns`.** An investigation needs the
+/// value in the clear — that is the job — but a responder has no business
+/// changing what the scanner detects. Investigate, don't operate.
+///
+/// **ResponderReadOnly keeps unmask but loses `ReviewAlerts` and `Scan`.**
+/// The distinction is acting, not seeing: a consultant or a shadowing analyst
+/// should be able to work a case fully and still not move it. Taking unmask
+/// away instead would make the role useless for investigation while leaving
+/// the ability to *change* the record, which is exactly backwards.
+///
+/// **Auditor has `ViewAlerts` and nothing else.** No unmask, on request or
+/// otherwise. An auditor verifies that process was followed — what matched,
+/// when, who ruled on it, whether the chain verifies — and none of that
+/// requires the personal data. This is the only role for which redaction is
+/// unconditional rather than a default, and that is the entire point of it.
+///
+/// **`Operator` cannot read alerts at all.** It runs scans; the results belong
+/// to whoever investigates them.
 ///
 /// Holding an unmask permission is not the same as data arriving unmasked.
 /// Responses are redacted by default whatever the role; the permission is what
 /// lets an explicit unmask request succeed, and every one of those is audited.
 pub fn role_has_permission(role: Role, perm: Permission) -> bool {
+    use Permission as P;
     match role {
         Role::Admin => true,
         Role::Analyst => matches!(
             perm,
-            Permission::Scan
-                | Permission::BatchScan
-                | Permission::Detokenize
-                | Permission::ViewStatus
-                | Permission::UnmaskPii
+            P::Scan
+                | P::BatchScan
+                | P::Detokenize
+                | P::ViewStatus
+                | P::ViewAlerts
+                | P::ReviewAlerts
+                | P::UnmaskPii
         ),
         Role::Responder => matches!(
             perm,
-            Permission::Scan
-                | Permission::ViewStatus
-                | Permission::UnmaskPii
-                | Permission::UnmaskPci
+            P::Scan | P::ViewStatus | P::ViewAlerts | P::ReviewAlerts | P::UnmaskPii | P::UnmaskPci
         ),
-        Role::Operator => matches!(
+        Role::ResponderReadOnly => matches!(
             perm,
-            Permission::Scan | Permission::BatchScan | Permission::ViewStatus
+            P::ViewStatus | P::ViewAlerts | P::UnmaskPii | P::UnmaskPci
         ),
-        Role::Viewer => matches!(perm, Permission::ViewStatus),
+        Role::Auditor => matches!(perm, P::ViewStatus | P::ViewAlerts),
+        Role::Operator => matches!(perm, P::Scan | P::BatchScan | P::ViewStatus),
+        Role::Viewer => matches!(perm, P::ViewStatus),
     }
 }
 
@@ -313,6 +366,95 @@ mod tests {
             extract_role("GET / HTTP/1.1\r\nX-Role: unknown\r\n"),
             Role::Viewer
         );
+    }
+
+    /// The whole point of the Auditor role: it can see that something
+    /// matched and never what matched. Not "redacted by default" — no unmask
+    /// permission exists for it to hold, so asking cannot help.
+    #[test]
+    fn auditor_can_never_unmask() {
+        assert!(role_has_permission(Role::Auditor, Permission::ViewAlerts));
+        assert!(!role_has_permission(Role::Auditor, Permission::UnmaskPii));
+        assert!(!role_has_permission(Role::Auditor, Permission::UnmaskPci));
+        assert!(!role_has_permission(
+            Role::Auditor,
+            Permission::ReviewAlerts
+        ));
+        assert!(!role_has_permission(Role::Auditor, Permission::Scan));
+    }
+
+    /// Read-only means cannot *act*, not cannot *see*. A consultant works the
+    /// case fully and still cannot move it.
+    #[test]
+    fn responder_read_only_investigates_but_does_not_act() {
+        for p in [
+            Permission::ViewAlerts,
+            Permission::UnmaskPii,
+            Permission::UnmaskPci,
+        ] {
+            assert!(
+                role_has_permission(Role::ResponderReadOnly, p),
+                "read-only responder must still be able to investigate: {p:?}"
+            );
+        }
+        assert!(!role_has_permission(
+            Role::ResponderReadOnly,
+            Permission::ReviewAlerts
+        ));
+        assert!(!role_has_permission(
+            Role::ResponderReadOnly,
+            Permission::Scan
+        ));
+        // The full responder differs by exactly the two acting permissions.
+        assert!(role_has_permission(
+            Role::Responder,
+            Permission::ReviewAlerts
+        ));
+        assert!(role_has_permission(Role::Responder, Permission::Scan));
+    }
+
+    /// Running scans does not entitle you to the results.
+    #[test]
+    fn operator_cannot_read_alerts() {
+        assert!(role_has_permission(Role::Operator, Permission::Scan));
+        assert!(!role_has_permission(Role::Operator, Permission::ViewAlerts));
+        assert!(!role_has_permission(Role::Viewer, Permission::ViewAlerts));
+    }
+
+    #[test]
+    fn the_new_groups_map_and_rank() {
+        assert_eq!(Role::from_group("auditors"), Some(Role::Auditor));
+        assert_eq!(Role::from_group("Administrators"), Some(Role::Admin));
+        assert_eq!(
+            Role::from_group("ir-readonly"),
+            Some(Role::ResponderReadOnly)
+        );
+        // A responder who is also an auditor is a responder.
+        assert_eq!(
+            Role::from_groups("auditors,responders"),
+            Some(Role::Responder)
+        );
+        // Read-only outranks auditor: it can do everything auditor can, plus
+        // unmask.
+        assert_eq!(
+            Role::from_groups("auditors,ir-readonly"),
+            Some(Role::ResponderReadOnly)
+        );
+    }
+
+    /// `GET /v1/me` is built from this, so a permission missing from
+    /// `Permission::ALL` would be invisible to the console.
+    #[test]
+    fn every_permission_is_reachable_from_some_role() {
+        for p in Permission::ALL {
+            assert!(
+                role_has_permission(Role::Admin, p),
+                "Admin should hold every permission, missing {p:?}"
+            );
+            assert!(!p.label().is_empty());
+        }
+        assert_eq!(Role::Admin.permissions().len(), Permission::ALL.len());
+        assert_eq!(Role::Viewer.permissions(), vec![Permission::ViewStatus]);
     }
 
     #[test]
