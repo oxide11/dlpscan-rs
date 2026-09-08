@@ -111,9 +111,15 @@ svc_san() {
 }
 
 # Listeners. Both EKUs: the service's own health probe presents this same
-# certificate to its own mTLS listener.
+# certificate to its own mTLS listener, and a sensor presents it to
+# siphon-api when it reports in.
 leaf siphon-api tls siphon-api "serverAuth,clientAuth" "$(svc_san api)"
 leaf siphon-fs  tls siphon-fs  "serverAuth,clientAuth" "$(svc_san fs)"
+# siphon-icap and siphon-smtp serve no TLS of their own (their protocols
+# carry none), but each reports its heartbeat to siphon-api over mTLS, so
+# each needs a client identity. Same shape, so the mounts match.
+leaf siphon-icap tls siphon-icap "clientAuth" "$(svc_san icap)"
+leaf siphon-smtp tls siphon-smtp "clientAuth" "$(svc_san smtp)"
 
 # The database's server certificate. `postgres` is the compose name;
 # `siphon-postgres` the Helm Service.

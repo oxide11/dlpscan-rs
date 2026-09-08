@@ -8,9 +8,10 @@ credentials that identify *who* is calling, what they may do, and whose data
 they are allowed to see. This document is the design for those credentials,
 and the honest account of what a caller gets today.
 
-It is a plan, not a record. Phases 1–3 of §10 are done — the scan gates,
-mutual TLS on every hop (§9), and the key store with its endpoints. Where the
-implementation departed from the plan: `rate_limit` was dropped from the
+It is a plan, not a record. Phases 1–3, 8 and 9 of §10 are done — the scan
+gates, mutual TLS on every hop (§9), the key store with its endpoints, and
+sensor telemetry (§13) with its Running page. Where the implementation
+departed from the plan: `rate_limit` was dropped from the
 schema rather than shipped as a column nothing enforces; `scans.api_key_hash`
 keeps its legacy contents until it is dropped, with `api_key_id` beside it;
 and a `Sensor` role was added (§13), because a detector reporting its own

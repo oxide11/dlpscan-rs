@@ -36,6 +36,11 @@ pub mod db;
 pub mod keys;
 pub mod pem;
 pub mod server;
+pub mod telemetry;
+
+/// Re-exported so a sensor can build a [`telemetry::Heartbeat`] timestamp
+/// without carrying its own chrono dependency and version.
+pub use chrono;
 
 /// The crypto provider every config in this crate is built with.
 ///

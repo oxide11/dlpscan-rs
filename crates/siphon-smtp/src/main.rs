@@ -62,6 +62,8 @@ struct Config {
     /// loses without one is the retry guard and the investigation record,
     /// not the verdict.
     db: Option<deadpool_postgres::Pool>,
+    /// This instance as a sensor: what it scanned, for its heartbeat.
+    sensor: Arc<siphon_auth::telemetry::SensorCounters>,
     tenant_id: String,
     /// Which way this instance's traffic flows.
     ///
@@ -240,6 +242,7 @@ impl Config {
             max_connections: env_parse("MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS),
             min_confidence: env_parse("MIN_CONFIDENCE", 0.6f64),
             db: build_pool()?,
+            sensor: Arc::new(siphon_auth::telemetry::SensorCounters::new()),
             // Through env_var, like every other setting, so these two get
             // the SIPHON_SMTP_ name and the legacy fallback rather than being
             // the only pair that silently ignores an operator's existing
@@ -685,7 +688,20 @@ async fn handle_connection(
                     write_response(&mut stream, &Response::Continue).await?;
                 }
                 Command::EndOfMessage => {
+                    let scan_started = std::time::Instant::now();
                     let outcome = decide(&session, &config).await;
+                    // Indeterminate means we did not finish looking — an
+                    // error for the sensor's count, not a scan that found
+                    // nothing.
+                    if outcome.verdict == Verdict::Indeterminate {
+                        config.sensor.record_error();
+                    } else {
+                        config.sensor.record_scan(
+                            outcome.finding_count as u64,
+                            session.body.len() as u64,
+                            scan_started.elapsed().as_millis() as u64,
+                        );
+                    }
                     let action = action_for(outcome.verdict, config.on_indeterminate);
                     let scan_id = uuid::Uuid::new_v4().to_string();
 
@@ -838,6 +854,44 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = Arc::new(Config::from_env()?);
     let listener = TcpListener::bind((config.bind.as_str(), config.port)).await?;
+
+    // Report in, if told where. The milter protocol carries no TLS, so the
+    // heartbeat has no listener section; the database hop is reported as
+    // configured.
+    match siphon_auth::telemetry::reporter::Settings::from_env() {
+        Ok(Some(settings)) => {
+            let database = config.db.as_ref().and_then(|_| {
+                let s = siphon_auth::db::Settings::from_env().ok()?;
+                Some(siphon_auth::telemetry::DatabaseState {
+                    mode: s.mode.label().to_string(),
+                    client_authenticated: s.mode != siphon_auth::db::Mode::Disable
+                        && s.client_cert.is_some()
+                        && s.client_key.is_some(),
+                })
+            });
+            let identity = siphon_auth::telemetry::reporter::Identity {
+                sensor: "siphon-smtp",
+                instance: siphon_auth::telemetry::instance_id(),
+                version: env!("CARGO_PKG_VERSION"),
+                started_at: siphon_auth::chrono::Utc::now(),
+                transport: siphon_auth::telemetry::Transport {
+                    listener: None,
+                    database,
+                },
+            };
+            let reporter = siphon_auth::telemetry::reporter::Reporter::new(
+                &settings,
+                identity,
+                Arc::clone(&config.sensor),
+            )?;
+            tracing::info!(endpoint = %settings.url, "telemetry enabled");
+            tokio::spawn(reporter.run());
+        }
+        Ok(None) => {
+            tracing::info!("SIPHON_TELEMETRY_URL not set — this sensor will show as never seen")
+        }
+        Err(e) => return Err(e.into()),
+    }
 
     tracing::info!(
         bind = %config.bind,

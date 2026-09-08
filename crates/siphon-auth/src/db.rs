@@ -193,6 +193,14 @@ impl DbTls {
         matches!(self, Self::Tls { .. })
     }
 
+    /// What the connector will report about itself in a heartbeat.
+    pub fn database_state(&self, mode: Mode) -> crate::telemetry::DatabaseState {
+        crate::telemetry::DatabaseState {
+            mode: mode.label().to_string(),
+            client_authenticated: self.is_client_authenticated(),
+        }
+    }
+
     pub fn is_client_authenticated(&self) -> bool {
         matches!(
             self,

@@ -1,6 +1,6 @@
 [package]
 name = "siphon-icap"
-version = "0.1.4"
+version = "0.2.0"
 edition = "2021"
 description = "Polygon Siphon ICAP — RFC 3507 network DLP server for proxy integration"
 license = "MIT"
@@ -12,6 +12,9 @@ path = "src/main.rs"
 
 [dependencies]
 siphon-core = { path = "../siphon-core" }
+# Heartbeats to siphon-api over mutual TLS, with a Sensor-role key. The only
+# thing this service ever says to siphon-api — it scans on its own.
+siphon-auth = { path = "../siphon-auth", features = ["telemetry-client"] }
 # `sync` is required for tokio::sync::Semaphore, used to bound concurrent ICAP
 # connections. Without it this crate only compiles when some other workspace
 # member happens to enable the feature and unification leaks it in — the

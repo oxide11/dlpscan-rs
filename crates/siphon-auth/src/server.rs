@@ -94,6 +94,26 @@ impl ServerTls {
         self.client_ca.is_some()
     }
 
+    /// When the leaf certificate stops being valid, for the heartbeat. `None`
+    /// if the DER cannot be parsed — rustls will have accepted it for
+    /// serving regardless, so this is reporting, not gating.
+    pub fn not_after(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+        use x509_cert::der::Decode as _;
+        let leaf = self.certs.first()?;
+        let cert = x509_cert::Certificate::from_der(leaf).ok()?;
+        let t = cert.tbs_certificate.validity.not_after.to_system_time();
+        Some(chrono::DateTime::<chrono::Utc>::from(t))
+    }
+
+    /// What this listener will report about itself.
+    pub fn listener_state(&self) -> crate::telemetry::ListenerState {
+        crate::telemetry::ListenerState {
+            tls: true,
+            mtls: self.requires_client_cert(),
+            cert_not_after: self.not_after(),
+        }
+    }
+
     pub fn into_config(self) -> Result<rustls::ServerConfig, String> {
         let provider = crate::provider();
         let builder = rustls::ServerConfig::builder_with_provider(provider.clone())

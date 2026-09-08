@@ -36,9 +36,22 @@ tracing = "0.1"
 # secret, timestamps for expiry and rotation grace.
 sha2 = "0.11"
 getrandom = "0.3"
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+# Certificate validity, for the heartbeat's "days until this cert expires".
+x509-cert = { version = "0.2", default-features = false, features = ["std"] }
+# The heartbeat wire shape; the receiver and every reporter share it.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The reporting client. Optional: siphon-api only receives.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+tokio = { version = "1", features = ["time"], optional = true }
+
+[features]
+default = []
+# `telemetry::reporter` — the HTTP client a sensor posts heartbeats with.
+telemetry-client = ["dep:reqwest", "dep:tokio"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
 tokio-rustls = "0.26"
 tempfile = "3"

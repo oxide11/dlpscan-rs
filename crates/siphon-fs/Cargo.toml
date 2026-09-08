@@ -48,7 +48,7 @@ deadpool-postgres = "0.14"
 # Service identity: the Postgres connector (client certificate) and the
 # listener's own certificate + client-CA requirement. Shared with siphon-api
 # and siphon-smtp so the three cannot disagree about what "TLS on" means.
-siphon-auth = { path = "../siphon-auth" }
+siphon-auth = { path = "../siphon-auth", features = ["telemetry-client"] }
 # TLS listener. Plaintext `axum::serve` stays for the loopback/mesh case.
 axum-server = { version = "0.8", features = ["tls-rustls"] }
 

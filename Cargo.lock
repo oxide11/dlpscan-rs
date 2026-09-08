@@ -5022,8 +5022,11 @@ dependencies = [
  "chrono",
  "deadpool-postgres",
  "getrandom 0.3.4",
+ "reqwest",
  "rustls",
  "rustls-pki-types",
+ "serde",
+ "serde_json",
  "sha2 0.11.0",
  "tempfile",
  "tokio",
@@ -5032,6 +5035,7 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "webpki-roots",
+ "x509-cert",
 ]
 
 [[package]]
@@ -5140,9 +5144,10 @@ dependencies = [
 
 [[package]]
 name = "siphon-icap"
-version = "0.1.4"
+version = "0.2.0"
 dependencies = [
  "serde_json",
+ "siphon-auth",
  "siphon-core",
  "tokio",
  "tracing",

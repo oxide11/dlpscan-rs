@@ -473,6 +473,8 @@ GET  /v1/keys                   list keys, no secrets (?include_revoked=) (admin
 GET  /v1/keys/{id}              one key (admin)
 DELETE /v1/keys/{id}            revoke, soft and idempotent (admin)
 POST /v1/keys/{id}/rotate       new secret, same id; old secret valid for grace_seconds (default 1 d, max 7 d) (admin)
+POST /v1/sensors/heartbeat      a detector reporting in: identity, listener/database transport state, cumulative counters (Sensor role)
+GET  /v1/sensors                per detector and per instance: liveness, availability 24 h / 7 d, mTLS state per hop with cert days left, activity, analyst precision; plus `never_seen`
 GET  /v1/metrics                scans_total, findings_total, scan_errors_total
 GET  /v1/db/health              Postgres pool state
 GET  /v1/lsh/history            paginated LSH query history from Postgres (?limit=&offset=&matched_only=)
@@ -491,6 +493,34 @@ Key env vars for siphon-api:
 | `SIPHON_API_KEY` | — | **required**; empty counts as unset. Without it the service refuses to start |
 | `SIPHON_API_KEY_ROLE` | admin | Role the **bootstrap** bearer key resolves to (`admin`/`analyst`/`responder`/`operator`/`viewer`). Defaults to `admin` so existing automation keeps working, and **warns at startup when unset** — a shared machine credential holding full admin is the first thing to narrow. An unknown value is a startup error, never a fallback. Issued keys carry their own role and ignore this |
 | `SIPHON_API_KEY_REFRESH_SECS` | 30 | How often the issued-key cache is reloaded from Postgres; bounds how late a revocation made on another pod takes effect here |
+| `SIPHON_TELEMETRY_INTERVAL_SECS` | 30 | How often this pod writes its own heartbeat row (it is a sensor too — the text channel) |
+
+### Sensors
+
+Every detector reports in: `POST /v1/sensors/heartbeat` on an interval with
+its identity, its transport state (listener TLS/mTLS and certificate expiry;
+database mode and whether a client certificate was presented) and cumulative
+counters. siphon-api writes its own row in-process. `GET /v1/sensors` answers
+the operator's three questions — up? talking securely? catching things? —
+from the rows alone (`crates/siphon-api/src/sensors_api.rs`; every judgement
+is a pure, tested function):
+
+| Figure | Derived from |
+|---|---|
+| liveness | last heartbeat within 3 intervals → healthy; within 24 h → stale; else gone (listed for 7 d) |
+| availability 24 h / 7 d | heartbeat slots received ÷ slots expected while the instance existed in the window; capped at 1; **no figure, not 0 %, when nothing was expected yet** |
+| mTLS per hop | listener: mutual → ok, TLS-only → warn, plaintext → off, cert < 14 d → warn, expired → off. Database: client cert → ok, `require` → warn, `disable` → off. A hop the sensor lacks is n/a and never counts against it; overall is the worst applicable |
+| activity | counter deltas (max − min) per `(instance, started_at)` segment, summed — so a restart mid-window loses nothing; absent counters stay absent |
+| precision | analyst verdicts on `findings` by `source_pod`, last 7 d |
+| `never_seen` | the four expected sensors minus those ever heard from — rendered as an absence, not omitted |
+
+Sensor side, in `siphon_auth::telemetry` (`telemetry-client` feature):
+`SIPHON_TELEMETRY_URL`, `_KEY` (a Sensor-role key), `_CA`, `_CLIENT_CERT` /
+`_CLIENT_KEY` (the sensor's own listener certificate — every service leaf
+carries `clientAuth` for this), `_INTERVAL_SECS`. Unset is a supported
+deployment: the sensor then shows as never seen, which is the truth.
+Half-set refuses to start. Heartbeats older than 30 days are pruned by the
+retention task.
 | `SIPHON_ALLOW_UNAUTHENTICATED` | false | opt in to running with no auth — local dev only. **Refused on a non-loopback `SIPHON_BIND`**: the service exits at startup rather than serve an open API on a network interface |
 | `SIPHON_DEV_MODE` | false | marks a local-dev run; currently relaxes the production startup guard that otherwise requires `SIPHON_AUDIT_LOG_PATH` |
 | `SIPHON_TLS_CERT` / `SIPHON_TLS_KEY` | — | PEM paths for the listener. Half-set (one without the other) is a startup error |

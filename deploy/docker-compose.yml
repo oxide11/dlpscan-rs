@@ -212,6 +212,15 @@ services:
       - SIPHON_DATABASE_CA_FILE=/etc/siphon/tls/ca.crt
       - SIPHON_DATABASE_CLIENT_CERT=/etc/siphon/tls/db-client.crt
       - SIPHON_DATABASE_CLIENT_KEY=/etc/siphon/tls/db-client.key
+      # --- telemetry: heartbeat to siphon-api over mTLS ---------------------
+      # Needs a key with the Sensor role, issued once via POST /v1/keys and
+      # put in deploy/.env. Unset = this sensor shows as "never seen" on the
+      # Running page, which is the truth.
+      - SIPHON_TELEMETRY_URL=https://siphon-api:8080
+      - SIPHON_TELEMETRY_KEY=${SIPHON_TELEMETRY_KEY:-}
+      - SIPHON_TELEMETRY_CA=/etc/siphon/tls/ca.crt
+      - SIPHON_TELEMETRY_CLIENT_CERT=/etc/siphon/tls/tls.crt
+      - SIPHON_TELEMETRY_CLIENT_KEY=/etc/siphon/tls/tls.key
       - RUST_LOG=info
     user: "1000:1000"
     volumes:
@@ -247,18 +256,19 @@ services:
       - certs-api:/dst/siphon-api
       - certs-fs:/dst/siphon-fs
       - certs-smtp:/dst/siphon-smtp
+      - certs-icap:/dst/siphon-icap
       - certs-nginx:/dst/nginx
       - certs-postgres:/dst/postgres
     command:
       - sh
       - -ec
       - |
-        for d in siphon-api siphon-fs siphon-smtp nginx postgres; do
+        for d in siphon-api siphon-fs siphon-smtp siphon-icap nginx postgres; do
           [ -f "/src/$$d/ca.crt" ] || { echo "missing deploy/certs/$$d — run scripts/dev/mkcerts.sh first" >&2; exit 1; }
           rm -rf "/dst/$$d"/*
           cp "/src/$$d"/* "/dst/$$d/"
         done
-        chown -R 1000:1000 /dst/siphon-api /dst/siphon-fs /dst/siphon-smtp
+        chown -R 1000:1000 /dst/siphon-api /dst/siphon-fs /dst/siphon-smtp /dst/siphon-icap
         chown -R 70:70 /dst/postgres     # postgres:*-alpine runs as uid 70
         chown -R 0:0   /dst/nginx        # nginx's master process reads the key as root
         chmod 600 /dst/*/*.key
@@ -367,7 +377,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.icap
-    image: siphon-icap:0.1.4
+    image: siphon-icap:0.2.0
     profiles: [auth]
     environment:
       # CIDRs whose connections the ICAP server accepts. Default is
@@ -378,7 +388,21 @@ services:
       - SIPHON_ICAP_ALLOWED_NETS=${SIPHON_ICAP_ALLOWED_NETS:-127.0.0.0/8}
       - SIPHON_ICAP_ACTION=${SIPHON_ICAP_ACTION:-flag}
       - SIPHON_ICAP_MIN_CONFIDENCE=${SIPHON_ICAP_MIN_CONFIDENCE:-0.6}
+      # --- telemetry: heartbeat to siphon-api over mTLS ---------------------
+      # Needs a key with the Sensor role, issued once via POST /v1/keys and
+      # put in deploy/.env. Unset = this sensor shows as "never seen" on the
+      # Running page, which is the truth.
+      - SIPHON_TELEMETRY_URL=https://siphon-api:8080
+      - SIPHON_TELEMETRY_KEY=${SIPHON_TELEMETRY_KEY:-}
+      - SIPHON_TELEMETRY_CA=/etc/siphon/tls/ca.crt
+      - SIPHON_TELEMETRY_CLIENT_CERT=/etc/siphon/tls/tls.crt
+      - SIPHON_TELEMETRY_CLIENT_KEY=/etc/siphon/tls/tls.key
       - RUST_LOG=info
+    user: "1000:1000"
+    volumes:
+      - certs-icap:/etc/siphon/tls:ro
+    depends_on:
+      certs-init: { condition: service_completed_successfully }
     expose: ["1344"]
     ports:
       - "1344:1344"
@@ -427,6 +451,15 @@ services:
       - SIPHON_DATABASE_CA_FILE=/etc/siphon/tls/ca.crt
       - SIPHON_DATABASE_CLIENT_CERT=/etc/siphon/tls/db-client.crt
       - SIPHON_DATABASE_CLIENT_KEY=/etc/siphon/tls/db-client.key
+      # --- telemetry: heartbeat to siphon-api over mTLS ---------------------
+      # Needs a key with the Sensor role, issued once via POST /v1/keys and
+      # put in deploy/.env. Unset = this sensor shows as "never seen" on the
+      # Running page, which is the truth.
+      - SIPHON_TELEMETRY_URL=https://siphon-api:8080
+      - SIPHON_TELEMETRY_KEY=${SIPHON_TELEMETRY_KEY:-}
+      - SIPHON_TELEMETRY_CA=/etc/siphon/tls/ca.crt
+      - SIPHON_TELEMETRY_CLIENT_CERT=/etc/siphon/tls/tls.crt
+      - SIPHON_TELEMETRY_CLIENT_KEY=/etc/siphon/tls/tls.key
       - RUST_LOG=info
     user: "1000:1000"
     volumes:
@@ -452,6 +485,7 @@ volumes:
   certs-api:
   certs-fs:
   certs-smtp:
+  certs-icap:
   certs-nginx:
   certs-postgres:
 

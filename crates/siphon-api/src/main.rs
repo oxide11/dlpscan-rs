@@ -82,6 +82,7 @@ use tower_http::trace::TraceLayer;
 mod db;
 mod keys_api;
 mod masking;
+mod sensors_api;
 // The mail model lives in its own crate: siphon-smtp writes what this
 // service reads, and siphon-api has no lib target for it to depend on.
 use siphon_mail as messages;
@@ -152,6 +153,11 @@ struct AppState {
     /// Issued per-caller keys. `None` without Postgres — the bootstrap key is
     /// then the only credential, which startup says out loud.
     keys: Option<Arc<siphon_auth::keys::KeyStore>>,
+    /// What this pod reports about its own hops in its heartbeat. Fixed at
+    /// startup: the listener's TLS state and certificate, the database mode.
+    transport: siphon_auth::telemetry::Transport,
+    /// This pod as a sensor: the text channel's counters, for its heartbeat.
+    sensor: Arc<siphon_auth::telemetry::SensorCounters>,
     /// Networks whose `X-Forwarded-For` is believed. Empty means the TCP peer
     /// is used directly — correct for a direct deployment, and the safe
     /// default because an unconfigured proxy must never grant header trust.
@@ -630,6 +636,12 @@ require_permission!(
 // column true.
 require_permission!(RequireScan, Permission::Scan, "scan");
 require_permission!(RequireBatchScan, Permission::BatchScan, "batch_scan");
+require_permission!(RequireViewStatus, Permission::ViewStatus, "view_status");
+require_permission!(
+    RequireReportTelemetry,
+    Permission::ReportTelemetry,
+    "report_telemetry"
+);
 
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
@@ -1632,6 +1644,9 @@ async fn scan(
     let count = findings.len();
     state.metrics.scans_total.fetch_add(1, Ordering::Relaxed);
     state
+        .sensor
+        .record_scan(count as u64, req.text.len() as u64, duration_ms as u64);
+    state
         .metrics
         .findings_total
         .fetch_add(count as u64, Ordering::Relaxed);
@@ -2068,6 +2083,11 @@ async fn scan_batch(
             .collect();
 
         state.metrics.scans_total.fetch_add(1, Ordering::Relaxed);
+        state.sensor.record_scan(
+            findings.len() as u64,
+            item.text.len() as u64,
+            item_duration_ms,
+        );
         state
             .metrics
             .findings_total
@@ -2355,6 +2375,9 @@ async fn scan_explain(
     let duration_ms = start.elapsed().as_millis() as u64;
 
     state.metrics.scans_total.fetch_add(1, Ordering::Relaxed);
+    state
+        .sensor
+        .record_scan(matches.len() as u64, req.text.len() as u64, duration_ms);
     state
         .metrics
         .findings_total
@@ -7271,6 +7294,22 @@ async fn main() {
         eprintln!("FATAL: {e}");
         std::process::exit(1);
     });
+    // Loaded here rather than at bind time so a bad certificate is refused
+    // before anything else starts, and so the heartbeat can report the
+    // listener's state and certificate expiry.
+    let tls_loaded = tls_settings.as_ref().map(|s| {
+        siphon_auth::server::ServerTls::load(s).unwrap_or_else(|e| {
+            eprintln!("FATAL: TLS config failed: {e}");
+            std::process::exit(1);
+        })
+    });
+    let listener_state = tls_loaded.as_ref().map(|t| t.listener_state()).or(Some(
+        siphon_auth::telemetry::ListenerState {
+            tls: false,
+            mtls: false,
+            cert_not_after: None,
+        },
+    ));
 
     // In-memory ring buffer for /v1/audit. Always installed so the UI
     // has something to show even when no SIPHON_AUDIT_LOG_PATH is set.
@@ -7558,11 +7597,29 @@ async fn main() {
         tracing::info!(count = trusted_proxies.len(), "trusted proxies configured");
     }
 
+    // What this pod will say about its own hops. The database side is the
+    // configuration the connector was built from — the same settings
+    // `db::init_optional` read — reported only when a pool exists.
+    let transport = siphon_auth::telemetry::Transport {
+        listener: listener_state,
+        database: db_pool.as_ref().and_then(|_| {
+            let s = siphon_auth::db::Settings::from_env().ok()?;
+            Some(siphon_auth::telemetry::DatabaseState {
+                mode: s.mode.label().to_string(),
+                client_authenticated: s.mode != siphon_auth::db::Mode::Disable
+                    && s.client_cert.is_some()
+                    && s.client_key.is_some(),
+            })
+        }),
+    };
+
     let state = Arc::new(AppState {
         api_key_hash,
         api_key_hash_secondary,
         api_key_role,
         keys,
+        transport,
+        sensor: Arc::new(siphon_auth::telemetry::SensorCounters::new()),
         trusted_proxies,
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
         rate_limit,
@@ -7605,6 +7662,21 @@ async fn main() {
                 }
             }
         });
+    }
+
+    // This pod's own heartbeat. siphon-api is a sensor too — the text
+    // channel — and it reports through the same table as every other, so the
+    // Running page has one shape for all four.
+    if state.db_pool.is_some() {
+        let interval = std::env::var("SIPHON_TELEMETRY_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|s| (5..=3600).contains(s))
+            .unwrap_or(siphon_auth::telemetry::DEFAULT_INTERVAL_SECS);
+        tokio::spawn(sensors_api::self_report_loop(
+            state.clone(),
+            std::time::Duration::from_secs(interval),
+        ));
     }
 
     // Scan-rollup flush task.
@@ -7669,6 +7741,18 @@ async fn main() {
                 // until siphon-smtp lands, so this is a no-op until then —
                 // wired now so the tables cannot quietly grow without bound
                 // the moment they start being written.
+                // Heartbeats on their own, shorter window: 30 days of
+                // availability history is what the sensor report reads.
+                match sensors_api::prune_heartbeats(
+                    &pool_clone,
+                    sensors_api::HEARTBEAT_RETENTION_DAYS,
+                )
+                .await
+                {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(heartbeats_deleted = n, "heartbeat_prune_complete"),
+                    Err(e) => tracing::warn!(error = %e, "heartbeat_prune_failed"),
+                }
                 match messages::prune_old_messages(&pool_clone, retention_days).await {
                     Ok((0, 0)) => {}
                     Ok((msgs, parts)) => tracing::info!(
@@ -7806,6 +7890,8 @@ async fn main() {
             get(keys_api::get_key).delete(keys_api::revoke_key),
         )
         .route("/v1/keys/{id}/rotate", post(keys_api::rotate_key))
+        .route("/v1/sensors/heartbeat", post(sensors_api::heartbeat))
+        .route("/v1/sensors", get(sensors_api::list_sensors))
         .route("/v1/findings", get(list_findings))
         .route("/v1/version", get(version))
         .route("/v1/capabilities", get(capabilities))
@@ -7865,11 +7951,7 @@ async fn main() {
         "Polygon Siphon API starting"
     );
 
-    if let Some(settings) = tls_settings {
-        let loaded = siphon_auth::server::ServerTls::load(&settings).unwrap_or_else(|e| {
-            tracing::error!(error = %e, "TLS config failed");
-            std::process::exit(1);
-        });
+    if let Some(loaded) = tls_loaded {
         let mutual = loaded.requires_client_cert();
         let config = loaded.into_config().unwrap_or_else(|e| {
             tracing::error!(error = %e, "TLS config failed");

@@ -21,8 +21,29 @@ independent, so a release block typically moves only the crates that actually
 - **`keys::KeyStore`** — per-caller API keys: token format, SHA-256 at
   rest, an in-memory cache that keeps serving through a Postgres outage,
   and issue / revoke / rotate with the `0013_api_keys` migration.
+- **`telemetry`** — the heartbeat wire shape, lock-free `SensorCounters`,
+  and (behind `telemetry-client`) a reporter that posts to siphon-api over
+  mutual TLS with a Sensor-role key. `ServerTls::not_after()` reads the
+  leaf certificate's validity so a heartbeat can say when it expires.
+
+### siphon-icap 0.2.0
+
+- **feat(icap): reports in.** `SIPHON_TELEMETRY_*` sends a heartbeat —
+  scans, findings, errors, bytes, timing — to siphon-api on an interval,
+  presenting its own client certificate. The ICAP side is unchanged; the
+  protocol carries no TLS, and the heartbeat's transport section says so.
 
 ### siphon-api 2.12.0
+
+- **feat(api): sensor telemetry.** `POST /v1/sensors/heartbeat` (Sensor
+  role) stores what each detector reports; `GET /v1/sensors` answers, per
+  detector and per instance, whether it is up (liveness from heartbeat
+  age), how available it has been (slots received ÷ expected over 24 h and
+  7 d — no figure, never a fake 0 %, when nothing was expected yet), whether
+  each hop is mutual TLS (listener, database, certificate days left; a hop
+  the sensor lacks is n/a), and what it caught (counter deltas per restart
+  segment, analyst precision from verdicts). siphon-api writes its own row.
+  Sensors expected but never heard from are listed as such, not omitted.
 
 - **feat(api): mutual TLS on both hops.** `SIPHON_TLS_CLIENT_CA` makes the
   listener require a client certificate from the deployment CA — nginx
@@ -73,8 +94,14 @@ independent, so a release block typically moves only the crates that actually
   environment). Plaintext still works and now warns on a non-loopback bind.
 - Postgres connector via siphon-auth: `SIPHON_DATABASE_TLS=mtls` and the
   client-certificate variables, identical to siphon-api.
+- Reports in (`SIPHON_TELEMETRY_*`): listener TLS state and certificate
+  expiry, database mode, and upload counts, to siphon-api over mTLS.
 
 ### siphon-smtp 0.2.0
+
+- Reports in (`SIPHON_TELEMETRY_*`): database mode and message counts.
+  An indeterminate verdict — the milter did not finish looking — counts as
+  an error, not a clean scan.
 
 - **feat(smtp): the milter's own client certificate to Postgres**, through
   siphon-auth. Mail rows carry whole messages; the writer that stores them

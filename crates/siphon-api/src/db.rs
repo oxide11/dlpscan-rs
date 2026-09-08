@@ -109,6 +109,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         "0014_attribution",
         include_str!("../migrations/0014_attribution.sql"),
     ),
+    (
+        15,
+        "0015_sensors",
+        include_str!("../migrations/0015_sensors.sql"),
+    ),
 ];
 
 /// Initialise an optional database pool from the environment.
