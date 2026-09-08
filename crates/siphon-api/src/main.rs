@@ -2893,10 +2893,7 @@ async fn overrides_apply(
                     "disabled_patterns",
                     serde_json::json!(summary.disabled_patterns),
                 )
-                .with_metadata(
-                    "disabled_pattern_keys",
-                    serde_json::json!(disabled_keys),
-                )
+                .with_metadata("disabled_pattern_keys", serde_json::json!(disabled_keys))
                 .with_metadata(
                     "pattern_overrides",
                     serde_json::json!(summary.pattern_overrides),
@@ -6309,7 +6306,10 @@ async fn findings_export(
                 .map(|b| if b { "true" } else { "false" })
                 .unwrap_or(""),
             source_pod.as_deref().map(csv_field).unwrap_or_default(),
-            scanner_version.as_deref().map(csv_field).unwrap_or_default(),
+            scanner_version
+                .as_deref()
+                .map(csv_field)
+                .unwrap_or_default(),
             file_name.as_deref().map(csv_field).unwrap_or_default(),
             duration_ms.map(|n| n.to_string()).unwrap_or_default(),
         ));
