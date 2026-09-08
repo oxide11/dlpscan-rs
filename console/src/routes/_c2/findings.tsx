@@ -10,7 +10,7 @@ import { Severity } from '../../ui/severity'
 import { Badge } from '../../ui/badge'
 import { Button } from '../../ui/button'
 import { Input, Select } from '../../ui/field'
-import { MaskedValue, MonoValue } from '../../ui/mono'
+import { MonoValue } from '../../ui/mono'
 import { EmptyState, AbsenceNote } from '../../ui/empty'
 import { Sheet } from '../../ui/overlays'
 import { useToast } from '../../ui/toast'
@@ -23,6 +23,8 @@ interface Search {
   offset: number
   q?: string
   selected?: string
+  /** `pii`, `pci` or `pii,pci`. In the URL so the view is reproducible. */
+  unmask?: string
 }
 
 export const Route = createFileRoute('/_c2/findings')({
@@ -32,6 +34,7 @@ export const Route = createFileRoute('/_c2/findings')({
     offset: Math.max(0, Number(raw.offset) || 0),
     q: typeof raw.q === 'string' && raw.q ? raw.q : undefined,
     selected: typeof raw.selected === 'string' && raw.selected ? raw.selected : undefined,
+    unmask: typeof raw.unmask === 'string' && raw.unmask ? raw.unmask : undefined,
   }),
   component: FindingsRoute,
 })
@@ -53,13 +56,23 @@ function FindingsRoute() {
     staleTime: 5 * 60_000,
   })
 
+  // What this operator may do. Purely an affordance: the server re-checks
+  // every permission on the request that matters, so a console that got this
+  // wrong would only mislead itself.
+  const me = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 5 * 60_000 })
+  const canPii = me.data?.permissions.includes('unmask_pii') ?? false
+  const canPci = me.data?.permissions.includes('unmask_pci') ?? false
+  const canUnmask = canPii || canPci
+  const unmasking = !!search.unmask
+
   const findings = useQuery({
-    queryKey: ['findings', search.category, search.limit, search.offset],
+    queryKey: ['findings', search.category, search.limit, search.offset, search.unmask],
     queryFn: () =>
       api.findingsPage({
         category: search.category,
         limit: search.limit,
         offset: search.offset,
+        unmask: search.unmask,
       }),
     // Keeps the previous page on screen while the next loads, so paging does
     // not flash an empty table that reads as "no findings".
@@ -147,7 +160,9 @@ function FindingsRoute() {
         cell: (ctx) => {
           const v = ctx.getValue<string | null>()
           if (!v) return <span className="text-ink-faint">—</span>
-          return <MaskedValue value={v} mask="generic" />
+          // Already redacted or already disclosed by the server — there is
+          // nothing left for the client to reveal.
+          return <MonoValue value={v} truncate="end" copy />
         },
       },
       {
@@ -193,7 +208,14 @@ function FindingsRoute() {
           <>
             <Button
               onClick={() =>
-                window.open(api.exportUrl({ format: 'csv', category: search.category }), '_blank')
+                window.open(
+                  api.exportUrl({
+                    format: 'csv',
+                    category: search.category,
+                    unmask: search.unmask,
+                  }),
+                  '_blank',
+                )
               }
             >
               Export CSV
@@ -226,6 +248,27 @@ function FindingsRoute() {
               <span className="text-t5 text-ink-muted">
                 filtering the {rows.length} loaded rows, not the server
               </span>
+            )}
+            {canUnmask && (
+              <Button
+                size="sm"
+                variant={unmasking ? 'danger' : 'default'}
+                onClick={() =>
+                  setSearch({
+                    unmask: unmasking
+                      ? undefined
+                      : [canPii && 'pii', canPci && 'pci'].filter(Boolean).join(','),
+                    offset: 0,
+                  })
+                }
+              >
+                {unmasking ? 'Hide values' : 'Show values'}
+              </Button>
+            )}
+            {unmasking && (
+              <Badge tone="attn" dot>
+                disclosed · audited
+              </Badge>
             )}
           </>
         }
@@ -316,10 +359,11 @@ function FindingsRoute() {
                 {
                   key: 'Value',
                   value: selected.matched_text ? (
-                    <MaskedValue value={selected.matched_text} />
+                    <MonoValue value={selected.matched_text} copy />
                   ) : (
                     '—'
                   ),
+                  provenance: unmasking ? 'disclosed — recorded in the audit log' : 'redacted by the server',
                 },
                 {
                   key: 'Checksum',

@@ -297,17 +297,68 @@ Other notable modules in siphon-core:
 
 ### siphon-api routes
 
-Auth: every request requires `Authorization: Bearer <key>` header (SHA-256 hashed
-at rest from `SIPHON_API_KEY` env var; stateless per-request check). `/health`
-and `/ready` are unauthenticated (kubelet probes).
+Auth: two callers, one gate. **Humans** arrive through nginx, which runs
+Authelia forward-auth (`/internal/authz`) and forwards `Remote-User` /
+`Remote-Groups`; siphon-api maps the groups to a `Role` via
+`rbac::Role::from_groups`. **Machines** carry `Authorization: Bearer <key>`
+(SHA-256 hashed at rest from `SIPHON_API_KEY`), which short-circuits the
+Authelia sub-request and resolves to `SIPHON_API_KEY_ROLE`. `/health` and
+`/ready` are unauthenticated (kubelet probes).
+
+**`Remote-*` headers are believed only when the TCP peer is in
+`SIPHON_TRUSTED_PROXIES`.** Anything that can open a socket to siphon-api can
+set them, so without that check one `Remote-Groups: admins` from any pod is a
+full privilege escalation. nginx independently overwrites all three from
+Authelia's reply, so a client-supplied value never survives the hop — defence
+in depth, not the gate. An authenticated user whose groups map to nothing gets
+`Viewer`: authenticated is not authorised.
+
+This was broken in two compounding ways until the identity binding landed.
+nginx's `/api/` location had no `auth_request` at all, so every
+`access_control` rule Authelia declares for `^/api/...` was dead configuration;
+and `auth_middleware` then granted `Role::Admin` to any holder of the shared
+key. Four roles and a permission matrix existed and bound to nothing.
 
 Endpoints marked **(admin)** additionally require the `AdminAction` RBAC
-permission (`RequireAdminAction` extractor). Under the single-key model every
-authenticated caller resolves to `Admin`, so this only bites in open mode
-(`SIPHON_ALLOW_UNAUTHENTICATED`, where callers are `Operator`) or once multi-key
-role mapping ships. The gated set covers every policy-mutating route **and** the
-raw finding/evadex read endpoints — those return unredacted matched values, so
-they are admin-only, not merely authenticated.
+permission (`RequireAdminAction` extractor). The gated set covers every
+policy-mutating route **and** the raw finding/evadex read endpoints — those
+return unredacted matched values, so they are admin-only, not merely
+authenticated.
+
+Roles: `Admin`, `Analyst`, `Responder` (incident response — may unmask PII and
+PCI, cannot change detection), `Operator`, `Viewer`. `GET /v1/me` reports the
+caller's role, how it was established, and the permission list; the console
+renders affordances from it, and every gate is re-checked server-side.
+
+### Masking
+
+**Matched values are redacted server-side by default, on every endpoint that
+returns one** — `/v1/findings`, `/v1/findings/pg`, `/v1/findings/export`.
+`crates/siphon-api/src/masking.rs` is the single place it happens.
+
+The console masking that predated this was cosmetic: the endpoints returned
+values in the clear, so the SSN was already in the JSON, in browser memory and
+in devtools. A mask over data the server already handed out is a courtesy, not
+a control — and it can never be audited, because the client can simply not
+report its own unmasking.
+
+| | |
+|---|---|
+| Default | fully redacted (`219•••••999` — first three, last three) for every caller, whatever the role |
+| Asking | `?unmask=pii`, `?unmask=pci`, `?unmask=pii,pci` (or `all`) |
+| Granting | the request succeeds only if the role holds `UnmaskPii` / `UnmaskPci`; otherwise the value stays redacted, no error |
+| Recording | a disclosure emits an `UNMASK` audit event and a structured log line with actor, role, endpoint, classes and **count** — never the values |
+
+`DataClass::of()` **fails closed**: a category nobody has classified is
+treated as PII. Adding a pattern category cannot widen what is visible as a
+side effect. Cardholder categories (`Credit Card Numbers`, `Card Track Data`,
+`PCI Sensitive Data`, …) need the separate `UnmaskPci`; classification
+markings (`Data Classification Labels` and friends) are `Public` and never
+redacted, since masking "CONFIDENTIAL" hides the finding's whole point.
+
+Holding the permission is not enough — a caller must also ask. So an ordinary
+page load discloses nothing and generates no audit noise, and every audit row
+means someone deliberately looked.
 
 ```
 GET  /health                    pod identity + liveness
@@ -330,6 +381,7 @@ GET  /v1/findings/export        bulk CSV/JSON export (?format=csv|json&category=
 POST /v1/findings/prune         manual retention trigger — admin only
 POST /v1/overrides/apply        hot-reload PatternOverrides (no restart) (admin)
 GET  /v1/overrides/current      current PatternOverrides snapshot
+GET  /v1/me                     caller identity: actor, role, auth_source, permission list
 GET  /v1/metrics                scans_total, findings_total, scan_errors_total
 GET  /v1/db/health              Postgres pool state
 GET  /v1/lsh/history            paginated LSH query history from Postgres (?limit=&offset=&matched_only=)
@@ -346,13 +398,14 @@ Key env vars for siphon-api:
 | `SIPHON_PORT` | 8080 | |
 | `SIPHON_BIND` | 127.0.0.1 | |
 | `SIPHON_API_KEY` | — | **required**; empty counts as unset. Without it the service refuses to start |
+| `SIPHON_API_KEY_ROLE` | admin | Role a bare bearer key resolves to (`admin`/`analyst`/`responder`/`operator`/`viewer`). Defaults to `admin` so existing automation keeps working, and **warns at startup when unset** — a shared machine credential holding full admin is the first thing to narrow. An unknown value is a startup error, never a fallback |
 | `SIPHON_ALLOW_UNAUTHENTICATED` | false | opt in to running with no auth — local dev only. **Refused on a non-loopback `SIPHON_BIND`**: the service exits at startup rather than serve an open API on a network interface |
 | `SIPHON_DEV_MODE` | false | marks a local-dev run; currently relaxes the production startup guard that otherwise requires `SIPHON_AUDIT_LOG_PATH` |
 | `SIPHON_TLS_CERT` / `SIPHON_TLS_KEY` | — | PEM paths |
 | `SIPHON_CORS_ORIGINS` | none | comma-separated allowlist; `*` reflects any origin. Unset = **cross-origin denied** (default-deny) |
 | `SIPHON_ALLOW_PERMISSIVE_CORS` | false | dev-only opt-in to any-origin CORS when `SIPHON_CORS_ORIGINS` is unset (e.g. admin console from `file://`) |
 | `SIPHON_RATE_LIMIT` | 120 | req/min per IP |
-| `SIPHON_TRUSTED_PROXIES` | — | comma-separated IPs/CIDRs whose `X-Forwarded-For` is believed for rate-limit keying. Unset = key on the TCP peer, which behind a proxy puts every client in one bucket. Only the right-most forwarded entry is used |
+| `SIPHON_TRUSTED_PROXIES` | — | comma-separated IPs/CIDRs whose `X-Forwarded-For` **and `Remote-User`/`Remote-Groups`** are believed. Unset = key on the TCP peer (every client in one rate-limit bucket) **and no forwarded identity is trusted at all**, so human callers silently fall back to the bearer-key role. Set this to the proxy in any deployment using Authelia. Only the right-most forwarded entry is used |
 | `SIPHON_REQUEST_TIMEOUT_SECS` | 30 | |
 | `SIPHON_AUDIT_LOG_PATH` | — | JSONL audit file. **Required to start in production** (an in-memory ring alone is not a durable audit trail); startup is refused if unset unless `SIPHON_DEV_MODE=true` |
 | `SIPHON_AUDIT_SIGNING_KEY_HEX` | — | enables HMAC-SHA256 chain |

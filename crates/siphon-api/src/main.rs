@@ -80,6 +80,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 mod db;
+mod masking;
 // The mail model lives in its own crate: siphon-smtp writes what this
 // service reads, and siphon-api has no lib target for it to depend on.
 use siphon_mail as messages;
@@ -143,6 +144,10 @@ struct AppState {
     /// Set SIPHON_API_KEY_SECONDARY while clients migrate to a new key; once all
     /// clients are updated, promote the new key to SIPHON_API_KEY and clear this.
     api_key_hash_secondary: Option<[u8; 32]>,
+    /// Role granted to a caller who presents the bearer key and carries no
+    /// proxy-asserted identity. Configurable via `SIPHON_API_KEY_ROLE` so a
+    /// shared machine credential need not be full Admin.
+    api_key_role: Role,
     /// Networks whose `X-Forwarded-For` is believed. Empty means the TCP peer
     /// is used directly — correct for a direct deployment, and the safe
     /// default because an unconfigured proxy must never grant header trust.
@@ -422,12 +427,38 @@ fn emit_audit(event: AuditEvent) {
 /// Per-request auth context inserted by `auth_middleware` once the
 /// bearer key has been validated. Pulled back out by RBAC extractors
 /// to gate handlers on a specific permission.
-#[derive(Clone, Copy, Debug)]
+/// How this request's identity was established. Recorded in audit rows,
+/// because "admin via a forwarded header" and "admin via the bearer key" are
+/// different claims and an auditor will want to tell them apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AuthSource {
+    /// Bearer `SIPHON_API_KEY`. A machine caller.
+    ApiKey,
+    /// Identity headers from an authenticating reverse proxy, believed only
+    /// because the TCP peer is in `SIPHON_TRUSTED_PROXIES`.
+    Proxy,
+    /// `SIPHON_ALLOW_UNAUTHENTICATED` — local dev only.
+    OpenMode,
+}
+
+impl AuthSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::ApiKey => "api_key",
+            Self::Proxy => "proxy",
+            Self::OpenMode => "open_mode",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 struct AuthContext {
-    /// Role assigned to this request. Today every authenticated
-    /// request gets `Role::Admin` (single-key model); follow-up PRs
-    /// will plumb a key→role map for finer differentiation.
+    /// Role assigned to this request.
     role: Role,
+    /// Who is acting, for the audit trail. The proxy's `Remote-User` for a
+    /// human; a fixed label for a machine caller. Never a credential.
+    actor: String,
+    source: AuthSource,
 }
 
 /// 403 helper used by every RBAC extractor. Stamps an audit row so a
@@ -488,7 +519,7 @@ where
         // router that registered the handler before the auth layer.
         // Treat as a server bug and reject with 401 (caller should
         // never have gotten here).
-        let ctx = parts.extensions.get::<AuthContext>().copied().ok_or((
+        let ctx = parts.extensions.get::<AuthContext>().cloned().ok_or((
             StatusCode::UNAUTHORIZED,
             Json(ErrorResponse {
                 error: "no auth context (auth_middleware not applied to this route?)".into(),
@@ -498,6 +529,35 @@ where
             return Err(forbidden_response(ctx.role, Permission::AdminAction));
         }
         Ok(Self)
+    }
+}
+
+/// Pulls the `AuthContext` out of request extensions for a handler that needs
+/// to know who is calling. Unlike `RequireAdminAction` this gates nothing — it
+/// is for handlers whose *behaviour* varies by role, such as redaction.
+struct AuthContextExt(AuthContext);
+
+impl<S> axum::extract::FromRequestParts<S> for AuthContextExt
+where
+    S: Send + Sync,
+{
+    type Rejection = (StatusCode, Json<ErrorResponse>);
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        parts
+            .extensions
+            .get::<AuthContext>()
+            .cloned()
+            .map(Self)
+            .ok_or((
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "no auth context (auth_middleware not applied to this route?)".into(),
+                }),
+            ))
     }
 }
 
@@ -531,6 +591,8 @@ async fn auth_middleware(
         let mut request = request;
         request.extensions_mut().insert(AuthContext {
             role: Role::Operator,
+            actor: "anonymous".to_string(),
+            source: AuthSource::OpenMode,
         });
         return next.run(request).await;
     };
@@ -580,14 +642,34 @@ async fn auth_middleware(
                 )
                     .into_response();
             }
-            // Single-key model — any caller who presents the
-            // configured key gets full Admin authority. Multi-key
-            // role-mapping (HashMap<key, Role>) is the next-step
-            // plumbing; schema is already in rbac::resolve_role.
+            // The key is valid. Now decide *who* this is.
+            //
+            // A valid key used to mean Admin unconditionally, which made the
+            // whole RBAC layer decorative: four roles, a permission matrix,
+            // and Authelia gating `group:admins` at the proxy — then every
+            // holder of one shared secret got everything anyway.
+            //
+            // Identity now comes from the authenticating proxy when there is
+            // one, and the key alone falls back to the configured machine
+            // role rather than to Admin.
+            let ctx =
+                proxy_identity(&state.trusted_proxies, &addr, &headers).unwrap_or_else(|| {
+                    AuthContext {
+                        role: state.api_key_role,
+                        actor: "api-key".to_string(),
+                        source: AuthSource::ApiKey,
+                    }
+                });
+
+            tracing::debug!(
+                actor = %ctx.actor,
+                role = ctx.role.label(),
+                auth_source = ctx.source.label(),
+                "authenticated"
+            );
+
             let mut request = request;
-            request
-                .extensions_mut()
-                .insert(AuthContext { role: Role::Admin });
+            request.extensions_mut().insert(ctx);
             next.run(request).await
         }
         None => {
@@ -665,6 +747,90 @@ fn client_ip(trusted: &[TrustedNet], peer: &SocketAddr, headers: &HeaderMap) -> 
 
 fn is_trusted_proxy(trusted: &[TrustedNet], ip: std::net::IpAddr) -> bool {
     trusted.iter().any(|net| net.contains(ip))
+}
+
+/// Longest actor string we will record. Bounded because it lands in audit
+/// rows and log lines, and the value arrives from outside.
+const MAX_ACTOR_LEN: usize = 128;
+
+/// Sanitise a header-supplied identity before it reaches a log or audit row.
+///
+/// Hyper rejects control characters in header values, so this is belt-and-
+/// braces rather than the only guard — but an actor string is written into a
+/// JSONL audit file and a structured log, and neither should be shapeable by
+/// whatever the IdP happens to put in a username.
+fn sanitize_actor(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_ACTOR_LEN)
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// Identity asserted by an authenticating reverse proxy, or `None` if there
+/// isn't one to believe.
+///
+/// # Security
+///
+/// `Remote-User` / `Remote-Groups` are believed **only** when the TCP peer is
+/// in `SIPHON_TRUSTED_PROXIES`. This is the whole security of the scheme:
+/// anything that can open a socket to siphon-api can set those headers, so
+/// without the peer check a single `Remote-Groups: admins` from any pod in the
+/// namespace is a complete privilege escalation. nginx additionally overwrites
+/// both headers from Authelia's reply on every request, so a client-supplied
+/// value never survives the hop — but that is defence in depth, not the gate.
+///
+/// Fails closed in both directions:
+///
+/// - peer not trusted → `None`, and the caller falls back to key auth
+/// - peer trusted and a user asserted, but no group we recognise → `Viewer`,
+///   not the key's role. A user the IdP has authenticated but not placed in a
+///   known group has been authenticated, not authorised.
+fn proxy_identity(
+    trusted: &[TrustedNet],
+    peer: &SocketAddr,
+    headers: &HeaderMap,
+) -> Option<AuthContext> {
+    let header_str = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+
+    if trusted.is_empty() || !is_trusted_proxy(trusted, peer.ip()) {
+        // Present-but-ignored is worth saying out loud: it is either a
+        // misconfigured SIPHON_TRUSTED_PROXIES (the proxy works but its
+        // identity is being dropped, so everyone silently gets the key role)
+        // or someone probing for exactly this bug.
+        if header_str("remote-user").is_some() || header_str("remote-groups").is_some() {
+            tracing::warn!(
+                peer = %peer.ip(),
+                "ignored Remote-* identity headers from an untrusted peer — \
+                 set SIPHON_TRUSTED_PROXIES if this peer is the reverse proxy"
+            );
+        }
+        return None;
+    }
+
+    // No asserted user means the proxy did not authenticate anyone on this
+    // request; fall through to key auth rather than inventing an identity.
+    let user = sanitize_actor(header_str("remote-user")?);
+    if user.is_empty() {
+        return None;
+    }
+
+    let groups = header_str("remote-groups").unwrap_or("");
+    let role = Role::from_groups(groups).unwrap_or_else(|| {
+        tracing::warn!(
+            actor = %user,
+            groups = %sanitize_actor(groups),
+            "authenticated user carries no recognised group — granting Viewer"
+        );
+        Role::Viewer
+    });
+
+    Some(AuthContext {
+        role,
+        actor: user,
+        source: AuthSource::Proxy,
+    })
 }
 
 /// Parse `SIPHON_TRUSTED_PROXIES` into networks. Accepts bare IPs (treated as
@@ -2345,6 +2511,72 @@ struct MetricsResponse {
     patterns_loaded: usize,
     categories_loaded: usize,
     policies_loaded: usize,
+}
+
+/// Record that sensitive values were disclosed in the clear.
+///
+/// Emitted server-side, on the response path, so it cannot be skipped by a
+/// client that simply declines to report its own unmasking. Carries the count
+/// and the classes touched, not the values — an audit trail that quotes the
+/// secret is a second copy of the breach.
+fn audit_disclosure(ctx: &AuthContext, endpoint: &str, req: masking::UnmaskRequest, count: usize) {
+    if count == 0 {
+        return;
+    }
+    let mut classes = Vec::new();
+    if req.pii {
+        classes.push("pii");
+    }
+    if req.pci {
+        classes.push("pci");
+    }
+    tracing::info!(
+        actor = %ctx.actor,
+        role = ctx.role.label(),
+        auth_source = ctx.source.label(),
+        endpoint,
+        disclosed = count,
+        classes = ?classes,
+        "sensitive values disclosed"
+    );
+    if let Ok(event) = AuditEvent::new("UNMASK") {
+        emit_audit(
+            event
+                .with_action("unmask")
+                .with_outcome("disclosed")
+                .with_metadata("actor", serde_json::json!(ctx.actor))
+                .with_metadata("role", serde_json::json!(ctx.role.label()))
+                .with_metadata("auth_source", serde_json::json!(ctx.source.label()))
+                .with_metadata("endpoint", serde_json::json!(endpoint))
+                .with_metadata("classes", serde_json::json!(classes))
+                .with_metadata("count", serde_json::json!(count)),
+        );
+    }
+}
+
+/// Who the caller is, and what they may do.
+///
+/// The console renders unmask controls, admin actions and the IR/C2 switcher
+/// from this. That is a usability affordance, not the enforcement point —
+/// every gate is checked again server-side on the request that matters. A
+/// client that lies to itself about its own permissions only misleads itself.
+#[derive(Serialize)]
+struct MeResponse {
+    actor: String,
+    role: &'static str,
+    /// How the identity was established: `proxy`, `api_key` or `open_mode`.
+    auth_source: &'static str,
+    permissions: Vec<&'static str>,
+}
+
+async fn whoami(ctx: AuthContextExt) -> Json<MeResponse> {
+    let AuthContextExt(ctx) = ctx;
+    Json(MeResponse {
+        actor: ctx.actor.clone(),
+        role: ctx.role.label(),
+        auth_source: ctx.source.label(),
+        permissions: ctx.role.permissions().iter().map(|p| p.label()).collect(),
+    })
 }
 
 async fn metrics_snapshot(
@@ -5763,6 +5995,9 @@ struct PgFindingsQuery {
     limit: Option<i64>,
     offset: Option<i64>,
     category: Option<String>,
+    /// `pii`, `pci`, `all` — comma separated. Absent means fully masked,
+    /// which is the default for every caller regardless of role.
+    unmask: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -5803,6 +6038,7 @@ struct PgFindingsResponse {
 
 async fn list_pg_findings(
     _: RequireAdminAction,
+    AuthContextExt(ctx): AuthContextExt,
     headers: HeaderMap,
     Query(q): Query<PgFindingsQuery>,
     State(state): State<Arc<AppState>>,
@@ -5863,6 +6099,12 @@ async fn list_pg_findings(
         }
     };
 
+    // Masking is applied on the way out, keyed on the caller's role. Default
+    // is fully masked; a caller who wants values must ask via ?unmask= and
+    // hold the matching permission, and the ask is audited below.
+    let unmask = masking::UnmaskRequest::parse(q.unmask.as_deref());
+    let mut disclosed = 0usize;
+
     let findings: Vec<PgFinding> = rows
         .iter()
         .map(|r| {
@@ -5870,16 +6112,24 @@ async fn list_pg_findings(
             let scan_id: uuid::Uuid = r.get("scan_id");
             let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
             let reviewed_at: Option<chrono::DateTime<chrono::Utc>> = r.get("reviewed_at");
+            let category: String = r.get("category");
+            let raw: Option<String> = r.get("matched_text");
+
+            let decision = masking::apply(raw.as_deref(), &category, ctx.role, unmask);
+            if decision.disclosed {
+                disclosed += 1;
+            }
+
             PgFinding {
                 id: id.to_string(),
                 scan_id: scan_id.to_string(),
                 created_at: created_at.to_rfc3339(),
-                category: r.get("category"),
+                category,
                 sub_category: r.get("sub_category"),
                 confidence: r.get("confidence"),
                 span_start: r.get("span_start"),
                 span_end: r.get("span_end"),
-                matched_text: r.get("matched_text"),
+                matched_text: decision.text,
                 has_context: r.get("has_context"),
                 context_required: r.get("context_required"),
                 metadata: r.get("metadata"),
@@ -5889,6 +6139,8 @@ async fn list_pg_findings(
             }
         })
         .collect();
+
+    audit_disclosure(&ctx, "/v1/findings/pg", unmask, disclosed);
 
     let total: i64 = match client
         .query_one(
@@ -6073,14 +6325,22 @@ struct ExportQuery {
     to: Option<String>,
     /// Maximum rows to return (capped at 100,000)
     limit: Option<i64>,
+    /// See `PgFindingsQuery::unmask`. An export is the highest-risk
+    /// disclosure here — it writes values to a file that leaves the
+    /// application entirely — so it masks by default like everything else,
+    /// and an unmasked export is a single audit row naming the count.
+    unmask: Option<String>,
 }
 
 async fn findings_export(
     headers: HeaderMap,
+    AuthContextExt(ctx): AuthContextExt,
     Query(q): Query<ExportQuery>,
     State(state): State<Arc<AppState>>,
     _: RequireAdminAction,
 ) -> Response {
+    let unmask = masking::UnmaskRequest::parse(q.unmask.as_deref());
+    let mut disclosed = 0usize;
     let format = q.format.as_deref().unwrap_or("csv");
     let limit = q.limit.unwrap_or(EXPORT_MAX_ROWS).min(EXPORT_MAX_ROWS);
     let category = q.category.as_deref();
@@ -6160,13 +6420,19 @@ async fn findings_export(
             .map(|r| {
                 let id: uuid::Uuid = r.get("id");
                 let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+                let category: String = r.get("category");
+                let raw: Option<String> = r.get("matched_text");
+                let decision = masking::apply(raw.as_deref(), &category, ctx.role, unmask);
+                if decision.disclosed {
+                    disclosed += 1;
+                }
                 serde_json::json!({
                     "id": id.to_string(),
                     "created_at": created_at.to_rfc3339(),
-                    "category": r.get::<_, String>("category"),
+                    "category": category,
                     "sub_category": r.get::<_, Option<String>>("sub_category"),
                     "confidence": r.get::<_, f32>("confidence"),
-                    "matched_text": r.get::<_, Option<String>>("matched_text"),
+                    "matched_text": decision.text,
                     "has_context": r.get::<_, Option<bool>>("has_context"),
                     "source_pod": r.get::<_, Option<String>>("source_pod"),
                     "scanner_version": r.get::<_, Option<String>>("scanner_version"),
@@ -6176,6 +6442,7 @@ async fn findings_export(
             })
             .collect();
 
+        audit_disclosure(&ctx, "/v1/findings/export?format=json", unmask, disclosed);
         let body = serde_json::to_vec(&items).unwrap_or_default();
         let filename = format!("siphon-findings-{date_label}.json");
         return (
@@ -6204,7 +6471,14 @@ async fn findings_export(
         let category: String = r.get("category");
         let sub_category: Option<String> = r.get("sub_category");
         let confidence: f32 = r.get("confidence");
-        let matched_text: Option<String> = r.get("matched_text");
+        let matched_text: Option<String> = {
+            let raw: Option<String> = r.get("matched_text");
+            let d = masking::apply(raw.as_deref(), &category, ctx.role, unmask);
+            if d.disclosed {
+                disclosed += 1;
+            }
+            d.text
+        };
         let has_context: Option<bool> = r.get("has_context");
         let source_pod: Option<String> = r.get("source_pod");
         let scanner_version: Option<String> = r.get("scanner_version");
@@ -6233,6 +6507,7 @@ async fn findings_export(
         ));
     }
 
+    audit_disclosure(&ctx, "/v1/findings/export?format=csv", unmask, disclosed);
     let filename = format!("siphon-findings-{date_label}.csv");
     (
         [
@@ -6258,6 +6533,10 @@ struct FindingsQuery {
     severity: Option<String>,
     contains: Option<String>,
     since: Option<String>,
+    /// See `PgFindingsQuery::unmask`. Masking has to cover every endpoint
+    /// that returns a matched value — masking one and leaving another open
+    /// is not a partial control, it is no control.
+    unmask: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -6270,6 +6549,7 @@ struct FindingsResponse {
 
 async fn list_findings(
     _: RequireAdminAction,
+    AuthContextExt(ctx): AuthContextExt,
     headers: HeaderMap,
     Query(q): Query<FindingsQuery>,
     State(state): State<Arc<AppState>>,
@@ -6294,7 +6574,24 @@ async fn list_findings(
     );
 
     let cap = q.limit.unwrap_or(200).min(capacity);
-    let findings: Vec<FindingRecord> = filtered.into_iter().take(cap).cloned().collect();
+    let unmask = masking::UnmaskRequest::parse(q.unmask.as_deref());
+    let mut disclosed = 0usize;
+
+    let findings: Vec<FindingRecord> = filtered
+        .into_iter()
+        .take(cap)
+        .map(|f| {
+            let decision = masking::apply(Some(&f.text), &f.category, ctx.role, unmask);
+            if decision.disclosed {
+                disclosed += 1;
+            }
+            let mut f = f.clone();
+            f.text = decision.text.unwrap_or_default();
+            f
+        })
+        .collect();
+
+    audit_disclosure(&ctx, "/v1/findings", unmask, disclosed);
     let returned = findings.len();
     Json(FindingsResponse {
         total,
@@ -6603,6 +6900,35 @@ async fn main() {
     // promote it to SIPHON_API_KEY (and clear the secondary) once all clients
     // are updated. Both keys are checked with the same constant-time XOR-fold
     // so there is no timing oracle distinguishing primary from secondary.
+    // The role a bare bearer key resolves to.
+    //
+    // Defaults to Admin, which preserves the behaviour every existing
+    // deployment relies on — the CLI, CI jobs and the evadex bridge all
+    // authenticate with this key and would break on a silent downgrade. That
+    // default is also the thing worth narrowing first in any real deployment,
+    // so an unset value warns rather than passing quietly.
+    let api_key_role = match std::env::var("SIPHON_API_KEY_ROLE") {
+        Ok(raw) if !raw.trim().is_empty() => match Role::from_group(raw.trim()) {
+            Some(role) => {
+                tracing::info!(role = role.label(), "bearer-key role configured");
+                role
+            }
+            None => {
+                tracing::error!(
+                    value = %raw,
+                    "SIPHON_API_KEY_ROLE is not a known role                      (admin|analyst|responder|operator|viewer)"
+                );
+                std::process::exit(1);
+            }
+        },
+        _ => {
+            tracing::warn!(
+                "SIPHON_API_KEY_ROLE unset — the shared bearer key grants Admin.                  Human access should arrive through the authenticating proxy                  (Remote-User/Remote-Groups); set this to the least role your                  machine callers need."
+            );
+            Role::Admin
+        }
+    };
+
     let api_key_hash_secondary = std::env::var("SIPHON_API_KEY_SECONDARY")
         .ok()
         .filter(|key| !key.trim().is_empty())
@@ -6973,6 +7299,7 @@ async fn main() {
     let state = Arc::new(AppState {
         api_key_hash,
         api_key_hash_secondary,
+        api_key_role,
         trusted_proxies,
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
         rate_limit,
@@ -7147,6 +7474,7 @@ async fn main() {
         .route("/v1/profiles", get(list_profiles_handler))
         .route("/v1/roles", get(list_roles))
         .route("/v1/compliance/frameworks", get(list_frameworks))
+        .route("/v1/me", get(whoami))
         .route("/v1/metrics", get(metrics_snapshot))
         .route("/v1/audit", get(list_audit_events))
         .route("/v1/cache/stats", get(cache_stats))
@@ -7673,6 +8001,16 @@ mod tests {
         Request::builder().body(()).unwrap().into_parts().0
     }
 
+    /// An AuthContext with the identity fields filled in — these tests are
+    /// about the role gate, not about who is acting.
+    fn test_ctx(role: Role) -> AuthContext {
+        AuthContext {
+            role,
+            actor: "test".to_string(),
+            source: AuthSource::ApiKey,
+        }
+    }
+
     fn assert_status(
         outcome: Result<RequireAdminAction, (StatusCode, Json<ErrorResponse>)>,
         expected: StatusCode,
@@ -7701,7 +8039,7 @@ mod tests {
         // AdminAction in the rbac matrix. Any role that lacks the
         // permission would do; Viewer is the cleanest signal.
         let mut parts = empty_parts();
-        parts.extensions.insert(AuthContext { role: Role::Viewer });
+        parts.extensions.insert(test_ctx(Role::Viewer));
         let outcome = RequireAdminAction::from_request_parts(&mut parts, &()).await;
         assert_status(
             outcome,
@@ -7713,7 +8051,7 @@ mod tests {
     #[tokio::test]
     async fn require_admin_action_admits_admin_role() {
         let mut parts = empty_parts();
-        parts.extensions.insert(AuthContext { role: Role::Admin });
+        parts.extensions.insert(test_ctx(Role::Admin));
         let outcome = RequireAdminAction::from_request_parts(&mut parts, &()).await;
         assert!(outcome.is_ok(), "admin must pass the AdminAction gate");
     }
@@ -7725,9 +8063,7 @@ mod tests {
         // Pin the expectation in a test so a future matrix loosen
         // doesn't silently widen the rollout endpoint.
         let mut parts = empty_parts();
-        parts.extensions.insert(AuthContext {
-            role: Role::Operator,
-        });
+        parts.extensions.insert(test_ctx(Role::Operator));
         let outcome = RequireAdminAction::from_request_parts(&mut parts, &()).await;
         assert_status(
             outcome,
@@ -7794,12 +8130,160 @@ mod csv_export_tests {
 }
 
 #[cfg(test)]
-mod trusted_proxy_tests {
+mod proxy_identity_tests {
     use super::*;
     use std::net::IpAddr;
 
     fn net(s: &str) -> TrustedNet {
         TrustedNet::parse(s).unwrap_or_else(|| panic!("failed to parse {s}"))
+    }
+
+    fn peer(ip: &str) -> SocketAddr {
+        SocketAddr::new(ip.parse::<IpAddr>().expect("ip"), 40000)
+    }
+
+    fn hdrs(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        for (k, v) in pairs {
+            h.insert(
+                axum::http::header::HeaderName::from_bytes(k.as_bytes()).expect("name"),
+                v.parse().expect("value"),
+            );
+        }
+        h
+    }
+
+    /// The test this whole mechanism exists for.
+    ///
+    /// `Remote-Groups` is set by an authenticating proxy, but nothing stops
+    /// any process that can open a socket to siphon-api from sending it too.
+    /// If an untrusted peer's headers were believed, one line of curl from any
+    /// pod in the namespace would be a full privilege escalation.
+    #[test]
+    fn identity_headers_from_an_untrusted_peer_are_ignored() {
+        let trusted = vec![net("10.0.0.1")];
+        let forged = hdrs(&[("remote-user", "mallory"), ("remote-groups", "admins")]);
+
+        assert!(
+            proxy_identity(&trusted, &peer("192.0.2.99"), &forged).is_none(),
+            "a peer outside SIPHON_TRUSTED_PROXIES must not be able to assert its own role"
+        );
+    }
+
+    /// With no trusted proxies configured at all, the headers mean nothing —
+    /// otherwise an unset env var would open the same hole by default.
+    #[test]
+    fn identity_headers_are_ignored_when_no_proxy_is_configured() {
+        let forged = hdrs(&[("remote-user", "mallory"), ("remote-groups", "admins")]);
+        assert!(proxy_identity(&[], &peer("10.0.0.1"), &forged).is_none());
+    }
+
+    #[test]
+    fn a_trusted_proxy_supplies_the_role() {
+        let trusted = vec![net("10.0.0.0/8")];
+        let ctx = proxy_identity(
+            &trusted,
+            &peer("10.4.5.6"),
+            &hdrs(&[
+                ("remote-user", "alice@example.com"),
+                ("remote-groups", "admins"),
+            ]),
+        )
+        .expect("trusted proxy identity");
+
+        assert_eq!(ctx.role, Role::Admin);
+        assert_eq!(ctx.actor, "alice@example.com");
+        assert_eq!(ctx.source, AuthSource::Proxy);
+    }
+
+    /// Authenticated is not authorised. A user the IdP knows but has placed in
+    /// no group we recognise gets the floor, not the bearer key's role.
+    #[test]
+    fn an_unrecognised_group_falls_to_viewer_not_to_the_key_role() {
+        let trusted = vec![net("10.0.0.0/8")];
+        let ctx = proxy_identity(
+            &trusted,
+            &peer("10.1.1.1"),
+            &hdrs(&[
+                ("remote-user", "bob"),
+                ("remote-groups", "contractors,interns"),
+            ]),
+        )
+        .expect("identity");
+
+        assert_eq!(ctx.role, Role::Viewer);
+    }
+
+    /// No asserted user means the proxy authenticated nobody on this request,
+    /// so key auth should handle it rather than an identity being invented.
+    #[test]
+    fn no_remote_user_falls_through_to_key_auth() {
+        let trusted = vec![net("10.0.0.0/8")];
+        assert!(proxy_identity(
+            &trusted,
+            &peer("10.1.1.1"),
+            &hdrs(&[("remote-groups", "admins")])
+        )
+        .is_none());
+        // An empty value is the same fact as an absent one.
+        assert!(proxy_identity(
+            &trusted,
+            &peer("10.1.1.1"),
+            &hdrs(&[("remote-user", "   "), ("remote-groups", "admins")])
+        )
+        .is_none());
+    }
+
+    /// Multiple groups: the most privileged wins, regardless of order.
+    #[test]
+    fn the_highest_privilege_group_wins() {
+        assert_eq!(
+            Role::from_groups("viewers,admins,operators"),
+            Some(Role::Admin)
+        );
+        assert_eq!(Role::from_groups("operators,viewers"), Some(Role::Operator));
+        assert_eq!(
+            Role::from_groups("responders,viewers"),
+            Some(Role::Responder)
+        );
+        assert_eq!(Role::from_groups("nothing,unknown"), None);
+        assert_eq!(Role::from_groups(""), None);
+    }
+
+    /// The actor string reaches a JSONL audit file and a structured log line,
+    /// and it arrives from outside.
+    #[test]
+    fn the_actor_string_is_bounded_and_stripped() {
+        assert_eq!(sanitize_actor("  alice  "), "alice");
+        assert_eq!(sanitize_actor("a\u{7}b"), "ab");
+        assert_eq!(sanitize_actor(&"x".repeat(500)).len(), MAX_ACTOR_LEN);
+    }
+
+    /// Unmasking PCI data is deliberately narrower than unmasking PII: an
+    /// analyst tuning a pattern can work from a redacted PAN plus the
+    /// validator result, and PCI-DSS wants that need-to-know small.
+    #[test]
+    fn analyst_can_unmask_pii_but_not_pci() {
+        assert!(role_has_permission(Role::Analyst, Permission::UnmaskPii));
+        assert!(!role_has_permission(Role::Analyst, Permission::UnmaskPci));
+        // A responder is investigating an incident and needs both.
+        assert!(role_has_permission(Role::Responder, Permission::UnmaskPci));
+        // Operating the scanner never implies seeing what it caught.
+        assert!(!role_has_permission(Role::Operator, Permission::UnmaskPii));
+        assert!(!role_has_permission(Role::Viewer, Permission::UnmaskPii));
+    }
+
+    /// A responder investigates; it must not be able to change detection.
+    #[test]
+    fn responder_cannot_operate_the_scanner() {
+        assert!(!role_has_permission(
+            Role::Responder,
+            Permission::ManagePatterns
+        ));
+        assert!(!role_has_permission(
+            Role::Responder,
+            Permission::AdminAction
+        ));
     }
     fn ip(s: &str) -> IpAddr {
         s.parse().unwrap()
