@@ -151,7 +151,7 @@ function CaseRow({ c }: { c: Case }) {
         </dl>
         <div>
           <Link
-            to="/ir/queue"
+            to="/ir/alerts"
             search={{ limit: 100, offset: 0, show: 'all', selected: c.findings[0]?.id }}
             className="text-t4"
           >

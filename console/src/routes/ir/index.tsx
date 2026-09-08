@@ -117,7 +117,7 @@ function Respond() {
         actions={
           unreviewed.length > worklist.length ? (
             <Link
-              to="/ir/queue"
+              to="/ir/alerts"
               search={{ limit: 100, offset: 0, show: 'unreviewed' }}
               className="text-t5"
             >
@@ -156,7 +156,7 @@ function Respond() {
                   </span>
                   <Badge tone="muted">{ageLabel(f.created_at)}</Badge>
                   <Link
-                    to="/ir/queue"
+                    to="/ir/alerts"
                     search={{ limit: 100, offset: 0, show: 'unreviewed', selected: f.id }}
                     className="text-t5"
                   >

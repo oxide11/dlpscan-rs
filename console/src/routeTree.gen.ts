@@ -13,7 +13,7 @@ import { Route as C2RouteImport } from './routes/_c2'
 import { Route as IrRouteImport } from './routes/ir'
 import { Route as C2IndexRouteImport } from './routes/_c2/index'
 import { Route as C2AssuranceRouteImport } from './routes/_c2/assurance'
-import { Route as C2FindingsRouteImport } from './routes/_c2/findings'
+import { Route as C2DetectionsRouteImport } from './routes/_c2/detections'
 import { Route as C2PatternsRouteImport } from './routes/_c2/patterns'
 import { Route as C2PoliciesRouteImport } from './routes/_c2/policies'
 import { Route as C2RunningRouteImport } from './routes/_c2/running'
@@ -21,12 +21,12 @@ import { Route as C2ScanRouteImport } from './routes/_c2/scan'
 import { Route as C2SettingsRouteImport } from './routes/_c2/settings'
 import { Route as IrIndexRouteImport } from './routes/ir/index'
 import { Route as IrAccountRouteImport } from './routes/ir/account'
+import { Route as IrAlertsRouteImport } from './routes/ir/alerts'
 import { Route as IrAnalyzeRouteImport } from './routes/ir/analyze'
 import { Route as IrCasesRouteImport } from './routes/ir/cases'
 import { Route as IrCorrelateRouteImport } from './routes/ir/correlate'
 import { Route as IrEvidenceRouteImport } from './routes/ir/evidence'
 import { Route as IrHandoffsRouteImport } from './routes/ir/handoffs'
-import { Route as IrQueueRouteImport } from './routes/ir/queue'
 
 const C2Route = C2RouteImport.update({
   id: '/_c2',
@@ -47,9 +47,9 @@ const C2AssuranceRoute = C2AssuranceRouteImport.update({
   path: '/assurance',
   getParentRoute: () => C2Route,
 } as any)
-const C2FindingsRoute = C2FindingsRouteImport.update({
-  id: '/findings',
-  path: '/findings',
+const C2DetectionsRoute = C2DetectionsRouteImport.update({
+  id: '/detections',
+  path: '/detections',
   getParentRoute: () => C2Route,
 } as any)
 const C2PatternsRoute = C2PatternsRouteImport.update({
@@ -87,6 +87,11 @@ const IrAccountRoute = IrAccountRouteImport.update({
   path: '/account',
   getParentRoute: () => IrRoute,
 } as any)
+const IrAlertsRoute = IrAlertsRouteImport.update({
+  id: '/alerts',
+  path: '/alerts',
+  getParentRoute: () => IrRoute,
+} as any)
 const IrAnalyzeRoute = IrAnalyzeRouteImport.update({
   id: '/analyze',
   path: '/analyze',
@@ -112,46 +117,41 @@ const IrHandoffsRoute = IrHandoffsRouteImport.update({
   path: '/handoffs',
   getParentRoute: () => IrRoute,
 } as any)
-const IrQueueRoute = IrQueueRouteImport.update({
-  id: '/queue',
-  path: '/queue',
-  getParentRoute: () => IrRoute,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof C2IndexRoute
   '/ir': typeof IrRouteWithChildren
   '/assurance': typeof C2AssuranceRoute
-  '/findings': typeof C2FindingsRoute
+  '/detections': typeof C2DetectionsRoute
   '/patterns': typeof C2PatternsRoute
   '/policies': typeof C2PoliciesRoute
   '/running': typeof C2RunningRoute
   '/scan': typeof C2ScanRoute
   '/settings': typeof C2SettingsRoute
   '/ir/account': typeof IrAccountRoute
+  '/ir/alerts': typeof IrAlertsRoute
   '/ir/analyze': typeof IrAnalyzeRoute
   '/ir/cases': typeof IrCasesRoute
   '/ir/correlate': typeof IrCorrelateRoute
   '/ir/evidence': typeof IrEvidenceRoute
   '/ir/handoffs': typeof IrHandoffsRoute
-  '/ir/queue': typeof IrQueueRoute
   '/ir/': typeof IrIndexRoute
 }
 export interface FileRoutesByTo {
   '/assurance': typeof C2AssuranceRoute
-  '/findings': typeof C2FindingsRoute
+  '/detections': typeof C2DetectionsRoute
   '/patterns': typeof C2PatternsRoute
   '/policies': typeof C2PoliciesRoute
   '/running': typeof C2RunningRoute
   '/scan': typeof C2ScanRoute
   '/settings': typeof C2SettingsRoute
   '/ir/account': typeof IrAccountRoute
+  '/ir/alerts': typeof IrAlertsRoute
   '/ir/analyze': typeof IrAnalyzeRoute
   '/ir/cases': typeof IrCasesRoute
   '/ir/correlate': typeof IrCorrelateRoute
   '/ir/evidence': typeof IrEvidenceRoute
   '/ir/handoffs': typeof IrHandoffsRoute
-  '/ir/queue': typeof IrQueueRoute
   '/': typeof C2IndexRoute
   '/ir': typeof IrIndexRoute
 }
@@ -160,19 +160,19 @@ export interface FileRoutesById {
   '/_c2': typeof C2RouteWithChildren
   '/ir': typeof IrRouteWithChildren
   '/_c2/assurance': typeof C2AssuranceRoute
-  '/_c2/findings': typeof C2FindingsRoute
+  '/_c2/detections': typeof C2DetectionsRoute
   '/_c2/patterns': typeof C2PatternsRoute
   '/_c2/policies': typeof C2PoliciesRoute
   '/_c2/running': typeof C2RunningRoute
   '/_c2/scan': typeof C2ScanRoute
   '/_c2/settings': typeof C2SettingsRoute
   '/ir/account': typeof IrAccountRoute
+  '/ir/alerts': typeof IrAlertsRoute
   '/ir/analyze': typeof IrAnalyzeRoute
   '/ir/cases': typeof IrCasesRoute
   '/ir/correlate': typeof IrCorrelateRoute
   '/ir/evidence': typeof IrEvidenceRoute
   '/ir/handoffs': typeof IrHandoffsRoute
-  '/ir/queue': typeof IrQueueRoute
   '/_c2/': typeof C2IndexRoute
   '/ir/': typeof IrIndexRoute
 }
@@ -182,36 +182,36 @@ export interface FileRouteTypes {
     | '/'
     | '/ir'
     | '/assurance'
-    | '/findings'
+    | '/detections'
     | '/patterns'
     | '/policies'
     | '/running'
     | '/scan'
     | '/settings'
     | '/ir/account'
+    | '/ir/alerts'
     | '/ir/analyze'
     | '/ir/cases'
     | '/ir/correlate'
     | '/ir/evidence'
     | '/ir/handoffs'
-    | '/ir/queue'
     | '/ir/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/assurance'
-    | '/findings'
+    | '/detections'
     | '/patterns'
     | '/policies'
     | '/running'
     | '/scan'
     | '/settings'
     | '/ir/account'
+    | '/ir/alerts'
     | '/ir/analyze'
     | '/ir/cases'
     | '/ir/correlate'
     | '/ir/evidence'
     | '/ir/handoffs'
-    | '/ir/queue'
     | '/'
     | '/ir'
   id:
@@ -219,19 +219,19 @@ export interface FileRouteTypes {
     | '/_c2'
     | '/ir'
     | '/_c2/assurance'
-    | '/_c2/findings'
+    | '/_c2/detections'
     | '/_c2/patterns'
     | '/_c2/policies'
     | '/_c2/running'
     | '/_c2/scan'
     | '/_c2/settings'
     | '/ir/account'
+    | '/ir/alerts'
     | '/ir/analyze'
     | '/ir/cases'
     | '/ir/correlate'
     | '/ir/evidence'
     | '/ir/handoffs'
-    | '/ir/queue'
     | '/_c2/'
     | '/ir/'
   fileRoutesById: FileRoutesById
@@ -271,11 +271,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof C2AssuranceRouteImport
       parentRoute: typeof C2Route
     }
-    '/_c2/findings': {
-      id: '/_c2/findings'
-      path: '/findings'
-      fullPath: '/findings'
-      preLoaderRoute: typeof C2FindingsRouteImport
+    '/_c2/detections': {
+      id: '/_c2/detections'
+      path: '/detections'
+      fullPath: '/detections'
+      preLoaderRoute: typeof C2DetectionsRouteImport
       parentRoute: typeof C2Route
     }
     '/_c2/patterns': {
@@ -327,6 +327,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IrAccountRouteImport
       parentRoute: typeof IrRoute
     }
+    '/ir/alerts': {
+      id: '/ir/alerts'
+      path: '/alerts'
+      fullPath: '/ir/alerts'
+      preLoaderRoute: typeof IrAlertsRouteImport
+      parentRoute: typeof IrRoute
+    }
     '/ir/analyze': {
       id: '/ir/analyze'
       path: '/analyze'
@@ -362,19 +369,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IrHandoffsRouteImport
       parentRoute: typeof IrRoute
     }
-    '/ir/queue': {
-      id: '/ir/queue'
-      path: '/queue'
-      fullPath: '/ir/queue'
-      preLoaderRoute: typeof IrQueueRouteImport
-      parentRoute: typeof IrRoute
-    }
   }
 }
 
 interface C2RouteChildren {
   C2AssuranceRoute: typeof C2AssuranceRoute
-  C2FindingsRoute: typeof C2FindingsRoute
+  C2DetectionsRoute: typeof C2DetectionsRoute
   C2PatternsRoute: typeof C2PatternsRoute
   C2PoliciesRoute: typeof C2PoliciesRoute
   C2RunningRoute: typeof C2RunningRoute
@@ -385,7 +385,7 @@ interface C2RouteChildren {
 
 const C2RouteChildren: C2RouteChildren = {
   C2AssuranceRoute: C2AssuranceRoute,
-  C2FindingsRoute: C2FindingsRoute,
+  C2DetectionsRoute: C2DetectionsRoute,
   C2PatternsRoute: C2PatternsRoute,
   C2PoliciesRoute: C2PoliciesRoute,
   C2RunningRoute: C2RunningRoute,
@@ -398,23 +398,23 @@ const C2RouteWithChildren = C2Route._addFileChildren(C2RouteChildren)
 
 interface IrRouteChildren {
   IrAccountRoute: typeof IrAccountRoute
+  IrAlertsRoute: typeof IrAlertsRoute
   IrAnalyzeRoute: typeof IrAnalyzeRoute
   IrCasesRoute: typeof IrCasesRoute
   IrCorrelateRoute: typeof IrCorrelateRoute
   IrEvidenceRoute: typeof IrEvidenceRoute
   IrHandoffsRoute: typeof IrHandoffsRoute
-  IrQueueRoute: typeof IrQueueRoute
   IrIndexRoute: typeof IrIndexRoute
 }
 
 const IrRouteChildren: IrRouteChildren = {
   IrAccountRoute: IrAccountRoute,
+  IrAlertsRoute: IrAlertsRoute,
   IrAnalyzeRoute: IrAnalyzeRoute,
   IrCasesRoute: IrCasesRoute,
   IrCorrelateRoute: IrCorrelateRoute,
   IrEvidenceRoute: IrEvidenceRoute,
   IrHandoffsRoute: IrHandoffsRoute,
-  IrQueueRoute: IrQueueRoute,
   IrIndexRoute: IrIndexRoute,
 }
 

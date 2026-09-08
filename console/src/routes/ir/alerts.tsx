@@ -27,7 +27,7 @@ interface Search {
   unmask?: string
 }
 
-export const Route = createFileRoute('/ir/queue')({
+export const Route = createFileRoute('/ir/alerts')({
   validateSearch: (raw: Record<string, unknown>): Search => ({
     limit: Math.min(500, Math.max(25, Number(raw.limit) || 100)),
     offset: Math.max(0, Number(raw.offset) || 0),
@@ -36,11 +36,11 @@ export const Route = createFileRoute('/ir/queue')({
     selected: typeof raw.selected === 'string' && raw.selected ? raw.selected : undefined,
     unmask: typeof raw.unmask === 'string' && raw.unmask ? raw.unmask : undefined,
   }),
-  component: QueueRoute,
+  component: AlertsRoute,
 })
 
 /** "What's waiting to be triaged?" */
-function QueueRoute() {
+function AlertsRoute() {
   const search = Route.useSearch()
   const navigate = Route.useNavigate()
   const qc = useQueryClient()
@@ -120,13 +120,13 @@ function QueueRoute() {
 
   useCommandSource(() => [
     {
-      id: 'ir:queue:toggle-reviewed',
-      group: 'Queue',
+      id: 'ir:alerts:toggle-reviewed',
+      group: 'Alerts',
       label: search.show === 'all' ? 'Show only unreviewed' : 'Show reviewed too',
       run: () => setSearch({ show: search.show === 'all' ? 'unreviewed' : 'all' }),
     },
     ...(categories.data ?? []).slice(0, 40).map((c) => ({
-      id: `ir:queue:cat:${c.category}`,
+      id: `ir:alerts:cat:${c.category}`,
       group: 'Filter by category',
       label: c.category,
       hint: String(c.pattern_count),
@@ -187,7 +187,7 @@ function QueueRoute() {
   return (
     <Page>
       <PageHeader
-        title="Queue"
+        title="Alerts"
         description={
           <>
             Unreviewed findings, worst and oldest first. A verdict here feeds the per-category
