@@ -17,6 +17,46 @@ maintained alternative exists and the migration risk is low.
 | `paste` | RUSTSEC-2026-0251 | Proc-macro helper; used only at compile time, no runtime attack surface. Prefer inlining or switching to std `concat_idents!` / `format_ident!` (from `syn`) when the using code is next touched. |
 | `proc-macro-error2` | RUSTSEC-2026-0252 | Build-time only (proc-macro support). No exploitable runtime surface; track the originating crate's migration to `proc-macro-error` v2 or `syn` diagnostics. |
 
+## Security debt — operational correctness
+
+### EDM salt stability (`SIPHON_EDM_SALT_HEX`)
+
+`ExactDataMatcher` generates a fresh 32-byte CSPRNG salt per process start when no
+salt is configured. This means EDM vault hashes are invalidated on every restart —
+registered values will never match until the vault is re-registered. The CLI `save`/
+`load` path already serializes the salt correctly; the API path does not.
+
+**Fix:** Add `SIPHON_EDM_SALT_HEX` env var; load it in `siphon-api/src/main.rs` and
+pass it to `ExactDataMatcher::new(Some(salt), ...)`. Warn at startup if EDM vaults
+are registered without a stable salt. Align with the CLI's existing
+`--edm-salt-path` mechanism.
+
+**Files:** `crates/siphon-api/src/main.rs` (AppState init), `crates/siphon-core/src/edm.rs`
+
+### JSON deserialization depth limit
+
+`serde_json` uses recursive descent with no configurable stack-depth cap. A
+request body with deeply nested JSON (e.g. `{"a":{"a":{"a":...}}}` 15k+ levels)
+can overflow the thread stack before the body-size limit rejects it, since nesting
+depth is not proportional to byte count.
+
+**Affected endpoints:** all `Json<T>` extractor sites in siphon-api (POST /scan,
+POST /scan/batch, POST /v1/overrides/apply, POST /v1/evadex/runs, …).
+
+**Fix options (prefer either):**
+1. Add a Tower middleware layer that reads the raw body, checks nesting depth
+   (character-count heuristic on `{`/`[` depth), and returns 400 before handing
+   to serde_json.
+2. Switch the affected handlers to `Bytes` extraction, pre-scan depth with a
+   fast counter loop, then deserialize — avoids any additional dep.
+
+**Severity:** DoS-only (no data exposure); the body-size limit provides partial
+mitigation by capping bytes, but a ~1 MB body can hold ~100k depth levels.
+
+**Files:** `crates/siphon-api/src/main.rs` (all JSON handler sites)
+
+---
+
 ## Ready to build
 
 ### UI/UX improvements

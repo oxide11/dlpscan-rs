@@ -285,6 +285,7 @@ impl RateLimiter {
         }
 
         if self.windows.len() > 100_000 {
+            tracing::warn!("rate-limiter map exceeded 100 000 entries and was reset — all per-IP windows cleared");
             self.windows.clear();
             self.last_cleanup = now;
         }
@@ -336,7 +337,7 @@ fn build_audit_logger(
 
     if let Some(hex_key) = signing_key_hex {
         match hex::decode(hex_key) {
-            Ok(key) if key.len() >= 16 => {
+            Ok(key) if key.len() >= 32 => {
                 handler = handler.with_chain_key(&key);
                 // Order matters. The seed is the cold-start fallback for hosts
                 // with no durable disk (Cloudflare Containers, scratch FS
@@ -372,9 +373,16 @@ fn build_audit_logger(
                 );
             }
             Ok(_) => {
-                tracing::warn!(
-                    "SIPHON_AUDIT_SIGNING_KEY_HEX is too short (<16 bytes); audit chain disabled"
+                // A key that is present but too short silently disables
+                // the tamper-evident chain — operator intent is ambiguous
+                // and a misconfigured chain is worse than no chain at all.
+                // Refuse to start rather than degrade silently.
+                eprintln!(
+                    "FATAL: SIPHON_AUDIT_SIGNING_KEY_HEX is too short (<32 bytes). \
+                     Use at least 32 bytes (64 hex chars, e.g. `openssl rand -hex 32`), \
+                     or unset the variable to run without a signing chain."
                 );
+                std::process::exit(1);
             }
             Err(e) => {
                 tracing::warn!(
@@ -568,21 +576,10 @@ async fn auth_middleware(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    // Kubelet probe paths are always unauthenticated — the kubelet
-    // can't carry a bearer token, and gating them behind auth just
-    // crashloops the pod on every rollout. This matches the chart's
-    // documented contract ("/health and /ready are unauthenticated
-    // by design — Authelia sits in front").
-    let path = request.uri().path();
-    if path == "/health" || path == "/ready" {
-        // Probe paths bypass the AuthContext insertion intentionally —
-        // they have no RBAC gate, and skipping the insert means a
-        // misconfigured RBAC extractor on a probe route fails closed
-        // (UNAUTHORIZED) instead of silently inheriting the no-auth
-        // operator role.
-        return next.run(request).await;
-    }
-
+    // /health and /ready are served by the unauthenticated sub-router that
+    // is merged AFTER the auth+rate-limit layers — they never reach this
+    // middleware. The explicit bypass that existed here was dead code after
+    // the probe sub-router split; removed to avoid misleading future readers.
     let Some(expected_hash) = &state.api_key_hash else {
         // No API-key auth configured (open dev mode). Stamp an
         // `Operator` role into the context so role-aware handlers
@@ -1230,7 +1227,10 @@ struct DetailedHealthResponse {
     ring_evictions_total: u64,
 }
 
-async fn health_detailed(State(state): State<Arc<AppState>>) -> Json<DetailedHealthResponse> {
+async fn health_detailed(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<DetailedHealthResponse> {
     let uptime_secs = state.started_at.elapsed().as_secs();
 
     let db = match state.db_pool.as_ref() {
@@ -1307,6 +1307,20 @@ async fn health_detailed(State(state): State<Arc<AppState>>) -> Json<DetailedHea
     })
 }
 
+fn sanitize_tenant_id(s: &str) -> Option<String> {
+    let s = s.trim();
+    if s.is_empty() || s.len() > 64 {
+        return None;
+    }
+    if s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
+    {
+        Some(s.to_owned())
+    } else {
+        None
+    }
+}
+
 async fn scan(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -1317,7 +1331,7 @@ async fn scan(
     let tenant_id: Option<String> = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_owned());
+        .and_then(sanitize_tenant_id);
 
     if req.text.is_empty() {
         return Err((
@@ -1469,16 +1483,22 @@ async fn scan(
     let elapsed = start.elapsed();
     let duration_ms = elapsed.as_millis() as f64;
 
+    // Response values are redacted; the ring below keeps the raw value.
+    let raw_texts: Vec<String> = matches.iter().map(|m| m.text.clone()).collect();
+
     let findings: Vec<Finding> = matches
         .into_iter()
-        .map(|m| Finding {
-            category: m.category,
-            sub_category: m.sub_category,
-            text: m.text,
-            confidence: m.confidence,
-            has_context: m.has_context,
-            span: m.span,
-            metadata: m.metadata,
+        .map(|m| {
+            let text = m.redacted_text();
+            Finding {
+                category: m.category,
+                sub_category: m.sub_category,
+                text,
+                confidence: m.confidence,
+                has_context: m.has_context,
+                span: m.span,
+                metadata: m.metadata,
+            }
         })
         .collect();
 
@@ -1661,11 +1681,22 @@ async fn scan(
             id: format!("f-{short_req}-{idx:02x}"),
             ts: ts_now.clone(),
             request_id: request_id.clone(),
-            source_ip: source_ip.clone(),
+            source_label: source_ip.clone(),
             source_pod: "siphon-api".to_string(),
             category: f.category.clone(),
             sub_category: f.sub_category.clone(),
-            text: f.text.clone(),
+            // The ring keeps the RAW value; the response above is redacted.
+            //
+            // Round 5 redacted here too, which is stricter but makes
+            // `/v1/findings` impossible to unmask — the value is gone before
+            // the ring ever sees it. Masking is applied on the way *out*
+            // instead (masking.rs), keyed on the caller's role and audited, so
+            // an authorised responder can still investigate. The response body
+            // stays redacted either way.
+            text: raw_texts
+                .get(idx)
+                .cloned()
+                .unwrap_or_else(|| f.text.clone()),
             confidence: f.confidence,
             has_context: f.has_context,
             span: f.span,
@@ -1769,7 +1800,7 @@ async fn scan_batch(
     let tenant_id: Option<String> = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_owned());
+        .and_then(sanitize_tenant_id);
     const MAX_BATCH: usize = 500;
     if items.is_empty() {
         return Err((
@@ -1897,7 +1928,7 @@ async fn scan_batch(
             .map(|m| Finding {
                 category: m.category.clone(),
                 sub_category: m.sub_category.clone(),
-                text: m.text.clone(),
+                text: m.redacted_text(),
                 confidence: m.confidence,
                 has_context: m.has_context,
                 span: m.span,
@@ -1935,11 +1966,16 @@ async fn scan_batch(
                 id: format!("f-{short_batch}-{}-{idx:02x}", item.id),
                 ts: ts_now.clone(),
                 request_id: batch_id.clone(),
-                source_ip: source_ip.clone(),
+                source_label: source_ip.clone(),
                 source_pod: "siphon-api".to_string(),
                 category: f.category.clone(),
                 sub_category: f.sub_category.clone(),
-                text: f.text.clone(),
+                // Raw in the ring, redacted in the response — see the note on
+                // the single-scan path above.
+                text: matches
+                    .get(idx)
+                    .map(|m| m.text.clone())
+                    .unwrap_or_else(|| f.text.clone()),
                 confidence: f.confidence,
                 has_context: f.has_context,
                 span: f.span,
@@ -2102,6 +2138,7 @@ struct ExplainResponse {
 }
 
 async fn scan_explain(
+    _: RequireAdminAction,
     State(state): State<Arc<AppState>>,
     Json(req): Json<ScanRequest>,
 ) -> Result<Json<ExplainResponse>, (StatusCode, Json<ErrorResponse>)> {
@@ -2211,10 +2248,11 @@ async fn scan_explain(
                 .find(|e| e.stage == "validation")
                 .map(|e| e.outcome == "pass");
 
+            let text = m.redacted_text();
             ExplainFinding {
                 category: m.category,
                 sub_category: m.sub_category,
-                text: m.text,
+                text,
                 confidence: m.confidence,
                 has_context: m.has_context,
                 span: m.span,
@@ -2402,7 +2440,7 @@ struct ProfilesResponse {
     profiles: Vec<siphon::profiles::MaskingProfile>,
 }
 
-async fn list_profiles_handler() -> Json<ProfilesResponse> {
+async fn list_profiles_handler(_: RequireAdminAction) -> Json<ProfilesResponse> {
     let names = list_profiles();
     let profiles: Vec<siphon::profiles::MaskingProfile> =
         names.into_iter().filter_map(|n| get_profile(&n)).collect();
@@ -2425,7 +2463,7 @@ struct RolesResponse {
     roles: Vec<RoleItem>,
 }
 
-async fn list_roles() -> Json<RolesResponse> {
+async fn list_roles(_: RequireAdminAction) -> Json<RolesResponse> {
     const ROLES: [(Role, &str, &str); 4] = [
         (Role::Admin, "admin", "Full control. All permissions."),
         (Role::Analyst, "analyst", "Scan + detokenize + read status."),
@@ -2471,7 +2509,7 @@ struct FrameworksResponse {
     frameworks: Vec<FrameworkItem>,
 }
 
-async fn list_frameworks() -> Json<FrameworksResponse> {
+async fn list_frameworks(_: RequireAdminAction) -> Json<FrameworksResponse> {
     // Mirrors siphon::compliance::framework_failing_categories (private fn).
     // Kept here to avoid widening that module's visibility just for the API.
     let frameworks = vec![
@@ -2660,7 +2698,10 @@ struct CapabilitiesResponse {
     supported_extensions: Option<Vec<String>>,
 }
 
-async fn capabilities(State(state): State<Arc<AppState>>) -> Json<CapabilitiesResponse> {
+async fn capabilities(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<CapabilitiesResponse> {
     Json(CapabilitiesResponse {
         pod_type: "siphon-api",
         pod_id: state.pod_id.to_string(),
@@ -2740,7 +2781,10 @@ struct StagesResponse {
     stages: Vec<StageState>,
 }
 
-async fn pipeline_stages_get(State(state): State<Arc<AppState>>) -> Json<StagesResponse> {
+async fn pipeline_stages_get(
+    State(state): State<Arc<AppState>>,
+    _: RequireAdminAction,
+) -> Json<StagesResponse> {
     let disabled: HashSet<String> = state
         .disabled_stages
         .read()
@@ -2954,6 +2998,26 @@ async fn overrides_apply(
         ));
     }
 
+    // Refuse a request that would disable every built-in pattern — that
+    // would completely blind the scanner.  An operator who genuinely needs
+    // that can first clear any existing disabled_patterns before adding
+    // new ones, but submitting a payload whose disabled_patterns list
+    // covers the entire static pattern set in one shot is almost certainly
+    // a mistake or an attack.
+    let total_builtin = siphon_core::patterns::PATTERNS.len();
+    if new_overrides.disabled_patterns.len() >= total_builtin {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(ErrorResponse {
+                error: format!(
+                    "disabled_patterns ({}) equals or exceeds the total built-in pattern count \
+                     ({total_builtin}); this would fully blind the scanner and is rejected",
+                    new_overrides.disabled_patterns.len()
+                ),
+            }),
+        ));
+    }
+
     let payload = serde_json::to_vec_pretty(&new_overrides).map_err(|e| {
         (
             StatusCode::BAD_REQUEST,
@@ -3061,6 +3125,16 @@ async fn overrides_apply(
     );
 
     if let Ok(event) = AuditEvent::new("CONFIG") {
+        // Cap the per-key list at 100 entries so the audit record stays
+        // bounded even when many patterns are toggled at once. The count
+        // field already captures the total; these keys let forensics
+        // answer "which patterns were disabled?" without reading the file.
+        let disabled_keys: Vec<String> = new_overrides
+            .disabled_patterns
+            .iter()
+            .take(100)
+            .map(|k| format!("{}/{}", k.category, k.sub_category))
+            .collect();
         emit_audit(
             event
                 .with_action("overrides_apply")
@@ -3070,6 +3144,7 @@ async fn overrides_apply(
                     "disabled_patterns",
                     serde_json::json!(summary.disabled_patterns),
                 )
+                .with_metadata("disabled_pattern_keys", serde_json::json!(disabled_keys))
                 .with_metadata(
                     "pattern_overrides",
                     serde_json::json!(summary.pattern_overrides),
@@ -3161,7 +3236,19 @@ async fn overrides_reload(
             event
                 .with_action("overrides_reload")
                 .with_outcome("reloaded")
-                .with_source_ip(&addr.ip().to_string()),
+                .with_source_ip(&addr.ip().to_string())
+                .with_metadata(
+                    "disabled_patterns",
+                    serde_json::json!(summary.disabled_patterns),
+                )
+                .with_metadata(
+                    "pattern_overrides",
+                    serde_json::json!(summary.pattern_overrides),
+                )
+                .with_metadata(
+                    "custom_categories",
+                    serde_json::json!(summary.custom_categories),
+                ),
         );
     }
     Ok(Json(ReloadResponse {
@@ -3278,6 +3365,7 @@ struct RollResponse {
 
 #[cfg(not(feature = "k8s-roll"))]
 async fn overrides_roll(
+    _: RequireAdminAction,
     _state: State<Arc<AppState>>,
     _addr: ConnectInfo<SocketAddr>,
     // Accept + ignore a body so the same client code works against
@@ -3626,6 +3714,7 @@ fn pod_summary(pod: &k8s_openapi::api::core::v1::Pod) -> PodSummary {
 
 #[cfg(not(feature = "k8s-roll"))]
 async fn k8s_rollout(
+    _: RequireAdminAction,
     _state: State<Arc<AppState>>,
     _addr: ConnectInfo<SocketAddr>,
     _path: axum::extract::Path<String>,
@@ -4370,7 +4459,7 @@ struct DocIndexResponse {
     entries: Vec<DocIndexEntry>,
 }
 
-async fn docs_index() -> Json<DocIndexResponse> {
+async fn docs_index(_: RequireAdminAction) -> Json<DocIndexResponse> {
     let entries: Vec<DocIndexEntry> = DOCS_INDEX
         .iter()
         .map(|(path, content)| DocIndexEntry {
@@ -4392,6 +4481,7 @@ struct DocContentQuery {
 }
 
 async fn docs_content(
+    _: RequireAdminAction,
     Query(q): Query<DocContentQuery>,
 ) -> Result<Json<DocResponse>, (StatusCode, Json<ErrorResponse>)> {
     match doc_by_path(&q.path) {
@@ -4414,7 +4504,7 @@ async fn docs_content(
 }
 
 // Legacy shortcut handlers — kept so older UI callers don't break.
-async fn doc_changelog() -> Json<DocResponse> {
+async fn doc_changelog(_: RequireAdminAction) -> Json<DocResponse> {
     let c = doc_by_path("docs/CHANGELOG.md").unwrap_or("");
     Json(DocResponse {
         path: "docs/CHANGELOG.md",
@@ -4423,7 +4513,7 @@ async fn doc_changelog() -> Json<DocResponse> {
         bytes: c.len(),
     })
 }
-async fn doc_architecture() -> Json<DocResponse> {
+async fn doc_architecture(_: RequireAdminAction) -> Json<DocResponse> {
     let c = doc_by_path("docs/ARCHITECTURE.md").unwrap_or("");
     Json(DocResponse {
         path: "docs/ARCHITECTURE.md",
@@ -4432,7 +4522,7 @@ async fn doc_architecture() -> Json<DocResponse> {
         bytes: c.len(),
     })
 }
-async fn doc_readme() -> Json<DocResponse> {
+async fn doc_readme(_: RequireAdminAction) -> Json<DocResponse> {
     let c = doc_by_path("README.md").unwrap_or("");
     Json(DocResponse {
         path: "README.md",
@@ -4487,7 +4577,7 @@ struct CacheStatsResponse {
     hit_rate: f64,
 }
 
-async fn cache_stats() -> Json<CacheStatsResponse> {
+async fn cache_stats(_: RequireAdminAction) -> Json<CacheStatsResponse> {
     let cell = siphon::cache::get_default_cache();
     let guard = cell.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(cache) = guard.as_ref() {
@@ -4546,7 +4636,7 @@ struct TokenizeStatusResponse {
     note: &'static str,
 }
 
-async fn tokenize_status() -> Json<TokenizeStatusResponse> {
+async fn tokenize_status(_: RequireAdminAction) -> Json<TokenizeStatusResponse> {
     // TokenVault is constructed per-scanner, not held globally in
     // siphon-api. We surface that honestly rather than faking a vault.
     Json(TokenizeStatusResponse {
@@ -5319,11 +5409,22 @@ async fn create_baseline_snapshot(
     let label = body.as_ref().and_then(|b| b.label.as_deref());
     let version = siphon_core::VERSION;
     match db::compute_baseline_snapshot(&state.db_pool, label, version).await {
-        Ok(id) => (
-            StatusCode::CREATED,
-            Json(serde_json::json!({"snapshot_id": id.to_string()})),
-        )
-            .into_response(),
+        Ok(id) => {
+            if let Ok(event) = AuditEvent::new("CONFIG") {
+                emit_audit(
+                    event
+                        .with_action("baseline_create")
+                        .with_outcome("created")
+                        .with_metadata("snapshot_id", serde_json::json!(id.to_string()))
+                        .with_metadata("label", serde_json::json!(label)),
+                );
+            }
+            (
+                StatusCode::CREATED,
+                Json(serde_json::json!({"snapshot_id": id.to_string()})),
+            )
+                .into_response()
+        }
         Err(e) => {
             tracing::warn!("create_baseline_snapshot: {e}");
             (
@@ -5775,8 +5876,7 @@ async fn findings_stats(
     let tenant_id: Option<String> = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_owned());
+        .and_then(sanitize_tenant_id);
 
     // Return cached response if fresh enough — keyed by tenant so one
     // tenant's aggregate is never served to another.
@@ -6071,8 +6171,7 @@ async fn list_pg_findings(
     let tenant_id: Option<String> = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_owned());
+        .and_then(sanitize_tenant_id);
     let tenant_filter = tenant_id.as_deref();
 
     let rows = match client
@@ -6353,8 +6452,7 @@ async fn findings_export(
     let tenant_id: Option<String> = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_owned());
+        .and_then(sanitize_tenant_id);
     let tenant_filter = tenant_id.as_deref();
 
     let Some(pool) = state.db_pool.as_ref() else {
@@ -6500,8 +6598,11 @@ async fn findings_export(
             has_context
                 .map(|b| if b { "true" } else { "false" })
                 .unwrap_or(""),
-            source_pod.as_deref().unwrap_or(""),
-            scanner_version.as_deref().unwrap_or(""),
+            source_pod.as_deref().map(csv_field).unwrap_or_default(),
+            scanner_version
+                .as_deref()
+                .map(csv_field)
+                .unwrap_or_default(),
             file_name.as_deref().map(csv_field).unwrap_or_default(),
             duration_ms.map(|n| n.to_string()).unwrap_or_default(),
         ));
@@ -6557,8 +6658,7 @@ async fn list_findings(
     let tenant_id: Option<String> = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_owned());
+        .and_then(sanitize_tenant_id);
 
     let snapshot = state.findings.snapshot();
     let total = snapshot.len();
@@ -6764,10 +6864,11 @@ async fn scan_stream(
             Ok(matches) => {
                 let count = matches.len();
                 for m in matches {
+                    let text = m.redacted_text();
                     let finding = Finding {
                         category: m.category,
                         sub_category: m.sub_category,
-                        text: m.text,
+                        text,
                         confidence: m.confidence,
                         has_context: m.has_context,
                         span: m.span,
@@ -7459,9 +7560,15 @@ async fn main() {
         });
     }
 
-    let app = Router::new()
+    // Liveness/readiness probes — unauthenticated so Docker HEALTHCHECK and
+    // k8s probes work without an API key. These handlers expose no sensitive
+    // data (version string + uptime only). All other security layers still
+    // apply via the outer merge below.
+    let probes = Router::new()
         .route("/health", get(health))
-        .route("/ready", get(ready))
+        .route("/ready", get(ready));
+
+    let app = Router::new()
         .route("/v1/db/health", get(db_health))
         .route("/v1/health/detailed", get(health_detailed))
         .route("/scan", post(scan))
@@ -7528,7 +7635,6 @@ async fn main() {
         .route("/v1/docs/changelog", get(doc_changelog))
         .route("/v1/docs/architecture", get(doc_architecture))
         .route("/v1/docs/readme", get(doc_readme))
-        .layer(middleware::from_fn(security_headers))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -7537,6 +7643,8 @@ async fn main() {
             state.clone(),
             rate_limit_middleware,
         ))
+        .merge(probes)
+        .layer(middleware::from_fn(security_headers))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
