@@ -24,7 +24,7 @@ categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]
 # Siphon crates
-siphon-core = { path = "crates/siphon-core", features = [] }
+siphon-core = { path = "crates/siphon-core", version = "2.9", features = [] }
 
 # Core matching
 regex = "1"

@@ -2577,7 +2577,9 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
                     // comes from the RAR header and is attacker-controlled, so
                     // a crafted archive could set it to 0 and bypass the cap.
                     if let Some(dest) = sanitize_archive_path(tmp_dir.path(), &name) {
-                        let on_disk = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(u64::MAX);
+                        let on_disk = std::fs::metadata(&dest)
+                            .map(|m| m.len())
+                            .unwrap_or(u64::MAX);
                         if on_disk >= 1_048_576 {
                             continue;
                         }
