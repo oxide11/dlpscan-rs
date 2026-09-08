@@ -8,9 +8,13 @@ credentials that identify *who* is calling, what they may do, and whose data
 they are allowed to see. This document is the design for those credentials,
 and the honest account of what a caller gets today.
 
-It is a plan, not a record. Phases 1 and 2 of §10 are done — the scan
-gates, and mutual TLS on every hop (§9) — and nothing from §3 to §8 exists
-yet.
+It is a plan, not a record. Phases 1–3 of §10 are done — the scan gates,
+mutual TLS on every hop (§9), and the key store with its endpoints. Where the
+implementation departed from the plan: `rate_limit` was dropped from the
+schema rather than shipped as a column nothing enforces; `scans.api_key_hash`
+keeps its legacy contents until it is dropped, with `api_key_id` beside it;
+and a `Sensor` role was added (§13), because a detector reporting its own
+health needs an identity to report as.
 
 ## 1. What an external caller can do today
 
@@ -116,8 +120,11 @@ api_keys
   revoked_at    TIMESTAMPTZ
   revoked_by    TEXT
   last_used_at  TIMESTAMPTZ           -- write-behind, at most once a minute per key
-  rate_limit    INTEGER               -- req/min; NULL = the global SIPHON_RATE_LIMIT
 ```
+
+(A per-key `rate_limit` was planned here and dropped: a column nothing
+enforces is a promise the schema makes and the service breaks. It returns
+with the enforcement.)
 
 The secret on the wire is `sk_<id>_<secret>` so a leaked key can be matched
 to its row from the prefix alone without knowing the secret — that is what
@@ -303,7 +310,9 @@ Each is one PR, mergeable alone, in this order:
 | 5 | `feat(api)` — tenant on `AuthContext`; every tenant-aware query reads it from there; header semantics per §6 | Tenant isolation is enforced, not claimed |
 | 6 | `feat(fs)` — siphon-fs key resolution through `siphon-auth`, role gates, `SIPHON_ADMIN_KEY` removed | One credential across text and file |
 | 7 | `docs` — rewrite `docs/AUTHENTICATION.md` §"API: bearer API keys", `docs/enterprise/api.md`, `rbac.md`; a `docs/getting-started/integrating.md` walking an application owner from "ask for a key" to a handled response | The service has an onboarding document |
-| 8 | *(optional)* `feat(icap)` — `X-Siphon-Key` attribution header | Per-proxy attribution |
+| 8 | `feat(api)` + `feat(fs,icap,smtp)` — sensor telemetry per §13: `sensor_status` / `sensor_heartbeats`, `POST /v1/sensors/heartbeat`, `GET /v1/sensors`, each detector reporting with a `Sensor` key over mTLS | mTLS health, availability and efficacy per detector, in one place |
+| 9 | `feat(console)` — the Running page renders `GET /v1/sensors` | The operator's three questions answered on one screen |
+| 10 | *(optional)* `feat(icap)` — `X-Siphon-Key` attribution header | Per-proxy attribution |
 
 Phases 2–6 each bump the crate their scope names per `CLAUDE.md` versioning.
 
@@ -327,6 +336,64 @@ What an application owner does:
 What the organisation gets: every scan attributed to an integration, per-key
 rate limits and revocation, tenant isolation enforced server-side, and one
 audit trail that names who issued what to whom.
+
+## 13. Sensors: mTLS health, availability and efficacy per detector
+
+A detector is a **sensor**: siphon-fs, siphon-icap, siphon-smtp, and
+siphon-api itself for the text channel. The operator's questions about each
+are the same three — *is it up, is it talking securely, is it catching
+things* — and today none can be answered from one place: each service
+knows its own uptime and TLS state, and only siphon-api's channel writes
+`scan_rollup`.
+
+**Identity first.** A sensor reports *as* something, and that something is
+an issued key with the `Sensor` role — `ReportTelemetry` and `ViewStatus`,
+nothing else. This is what "update the detectors to support these API keys"
+turns out to mean for the two that never call siphon-api: not a permission
+to scan, which they do not need, but an identity with which to report.
+`SIPHON_TELEMETRY_URL` + `SIPHON_TELEMETRY_KEY`, over the same mTLS — the
+sensor presents its own listener certificate as a client certificate, which
+is why every service leaf carries `clientAuth`.
+
+**What a heartbeat carries.** `POST /v1/sensors/heartbeat` every 30 s:
+
+```
+sensor      siphon-fs | siphon-icap | siphon-smtp | siphon-api
+instance    pod id
+version, started_at
+transport   { listener: { tls, mtls, cert_not_after },
+              database: { mode, client_authenticated } | null,
+              upstream:  { verified } }          — what this sensor can vouch for
+counters    cumulative since start: scans_total, scans_with_findings,
+            findings_total, errors_total, bytes_scanned, duration_ms_sum
+```
+
+Stored twice: the latest per `(sensor, instance)` in `sensor_status`, and
+every row in `sensor_heartbeats`, pruned on the findings retention window.
+The log is what makes availability a measurement rather than a claim.
+
+**What `GET /v1/sensors` answers**, per instance and rolled up per sensor:
+
+| Question | Derived from |
+|---|---|
+| Up? | `last_seen` within 3 intervals → healthy; else stale, with how long |
+| Availability 24 h / 7 d | heartbeats received ÷ heartbeats expected over the window |
+| Uptime | `started_at` of the current instance; restarts counted from distinct `started_at` values |
+| mTLS health | listener mtls on/off, database client-authenticated yes/no, certificate days remaining — each `ok` / `warn` / `off`, and the roll-up is the worst of them |
+| Efficacy | detection rate = scans with findings ÷ scans, from heartbeat counter deltas over the window; precision = true positives ÷ reviewed, from analyst verdicts joined to `scans.source_pod`/channel; evadex bypass rate where a run exists |
+
+Efficacy from counter deltas rather than `scan_rollup` because three of the
+four sensors never write rollups, and a heartbeat counter is one row a
+sensor already sends. The precision figure is only as good as the verdicts
+behind it, and says how many reviewed findings it rests on.
+
+**Where it shows.** C2's Running page, which is currently a stub naming what
+the engine would need to provide. This is that.
+
+**Not covered.** Whether the *proxy* or the *MTA* is reaching the sensor is
+the proxy's and MTA's health, not ours; a sensor that is up and idle looks
+the same as one nothing is wired to. The heartbeat carries the last-scan
+time so the console can say "up, and idle for 6 h" rather than "healthy".
 
 ## 12. Decisions
 

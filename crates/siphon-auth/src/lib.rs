@@ -16,6 +16,9 @@
 //! * [`server::ServerTls`] — the listener side for siphon-api and siphon-fs.
 //!   When a client CA is configured, a peer without a certificate chaining
 //!   to it never reaches the HTTP layer; the handshake fails.
+//! * [`keys::KeyStore`] — per-caller API keys: who a *caller* is, where the
+//!   two above say who a *service* is. Issued, rotated and revoked in one
+//!   place so siphon-api and siphon-fs resolve a bearer token identically.
 //!
 //! # Failure direction
 //!
@@ -30,6 +33,7 @@
 //! purpose, and the startup log line says which one is in effect.
 
 pub mod db;
+pub mod keys;
 pub mod pem;
 pub mod server;
 

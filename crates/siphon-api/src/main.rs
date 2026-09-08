@@ -80,6 +80,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 mod db;
+mod keys_api;
 mod masking;
 // The mail model lives in its own crate: siphon-smtp writes what this
 // service reads, and siphon-api has no lib target for it to depend on.
@@ -148,6 +149,9 @@ struct AppState {
     /// proxy-asserted identity. Configurable via `SIPHON_API_KEY_ROLE` so a
     /// shared machine credential need not be full Admin.
     api_key_role: Role,
+    /// Issued per-caller keys. `None` without Postgres — the bootstrap key is
+    /// then the only credential, which startup says out loud.
+    keys: Option<Arc<siphon_auth::keys::KeyStore>>,
     /// Networks whose `X-Forwarded-For` is believed. Empty means the TCP peer
     /// is used directly — correct for a direct deployment, and the safe
     /// default because an unconfigured proxy must never grant header trust.
@@ -464,9 +468,16 @@ struct AuthContext {
     /// Role assigned to this request.
     role: Role,
     /// Who is acting, for the audit trail. The proxy's `Remote-User` for a
-    /// human; a fixed label for a machine caller. Never a credential.
+    /// human; the public key id for an issued key; `bootstrap` for the
+    /// shared `SIPHON_API_KEY`. Never a credential.
     actor: String,
     source: AuthSource,
+    /// The issued key this request authenticated with, for attribution.
+    /// `None` for humans and the bootstrap key.
+    key_id: Option<String>,
+    /// The tenant the key is bound to. Carried now, enforced by the
+    /// tenant-scoping phase (docs/architecture/api-keys.md §6).
+    tenant: Option<String>,
 }
 
 /// 403 helper used by every RBAC extractor. Stamps an audit row so a
@@ -641,6 +652,8 @@ async fn auth_middleware(
             role: Role::Operator,
             actor: "anonymous".to_string(),
             source: AuthSource::OpenMode,
+            key_id: None,
+            tenant: None,
         });
         return next.run(request).await;
     };
@@ -671,43 +684,102 @@ async fn auth_middleware(
                 diff == 0
             });
 
-            if !matches_primary && !matches_secondary {
-                tracing::warn!("auth_failed: invalid API key");
+            // Not the bootstrap key: try the issued-key store. The store is
+            // consulted only when the env key did not match, so the shared
+            // credential keeps working for existing automation and an
+            // issued key can never shadow it.
+            let issued = if matches_primary || matches_secondary {
+                None
+            } else {
+                Some(
+                    state
+                        .keys
+                        .as_ref()
+                        .map_or(siphon_auth::keys::Resolution::Unknown, |store| {
+                            store.resolve(key)
+                        }),
+                )
+            };
+
+            let reject = |reason: &str, key_id: Option<&str>| {
+                tracing::warn!(reason, key_id, "auth_failed");
                 if let Ok(event) = AuditEvent::new("REJECT") {
-                    emit_audit(
-                        event
-                            .with_action("auth")
-                            .with_outcome("rejected")
-                            .with_source_ip(&addr.ip().to_string())
-                            .with_metadata("reason", serde_json::json!("invalid_api_key")),
-                    );
+                    let mut event = event
+                        .with_action("auth")
+                        .with_outcome("rejected")
+                        .with_source_ip(&addr.ip().to_string())
+                        .with_metadata("reason", serde_json::json!(reason));
+                    if let Some(id) = key_id {
+                        event = event.with_metadata("key_id", serde_json::json!(id));
+                    }
+                    emit_audit(event);
                 }
-                return (
+                (
                     StatusCode::UNAUTHORIZED,
                     Json(ErrorResponse {
                         error: "invalid API key".into(),
                     }),
                 )
-                    .into_response();
-            }
-            // The key is valid. Now decide *who* this is.
-            //
-            // A valid key used to mean Admin unconditionally, which made the
-            // whole RBAC layer decorative: four roles, a permission matrix,
-            // and Authelia gating `group:admins` at the proxy — then every
-            // holder of one shared secret got everything anyway.
-            //
-            // Identity now comes from the authenticating proxy when there is
-            // one, and the key alone falls back to the configured machine
-            // role rather than to Admin.
-            let ctx =
-                proxy_identity(&state.trusted_proxies, &addr, &headers).unwrap_or_else(|| {
-                    AuthContext {
-                        role: state.api_key_role,
-                        actor: "api-key".to_string(),
-                        source: AuthSource::ApiKey,
+                    .into_response()
+            };
+
+            let ctx = match issued {
+                // The bootstrap key is valid. Now decide *who* this is.
+                //
+                // A valid key used to mean Admin unconditionally, which made
+                // the whole RBAC layer decorative: four roles, a permission
+                // matrix, and Authelia gating `group:admins` at the proxy —
+                // then every holder of one shared secret got everything
+                // anyway. Identity comes from the authenticating proxy when
+                // there is one, and the key alone falls back to the
+                // configured machine role rather than to Admin.
+                None => {
+                    proxy_identity(&state.trusted_proxies, &addr, &headers).unwrap_or_else(|| {
+                        AuthContext {
+                            role: state.api_key_role,
+                            actor: "bootstrap".to_string(),
+                            source: AuthSource::ApiKey,
+                            key_id: None,
+                            tenant: None,
+                        }
+                    })
+                }
+                Some(siphon_auth::keys::Resolution::Ok(rec)) => {
+                    // A stored label the binary does not know is a deployment
+                    // skew (newer schema, older pod). Refuse rather than guess
+                    // a role — and say so at error level, because it is not
+                    // the caller's fault.
+                    let Some(role) = Role::from_label(&rec.role) else {
+                        tracing::error!(key_id = %rec.id, role = %rec.role, "issued key carries a role this build does not know");
+                        return reject("unknown_key_role", Some(&rec.id));
+                    };
+                    if let Some(store) = &state.keys {
+                        store.touch(&rec.id);
                     }
-                });
+                    // The key is the identity. Proxy headers are not consulted:
+                    // an issued key arriving through nginx is still a machine.
+                    AuthContext {
+                        role,
+                        actor: rec.id.clone(),
+                        source: AuthSource::ApiKey,
+                        key_id: Some(rec.id.clone()),
+                        tenant: rec.tenant_id.clone(),
+                    }
+                }
+                Some(siphon_auth::keys::Resolution::Revoked(rec)) => {
+                    return reject("revoked_api_key", Some(&rec.id));
+                }
+                Some(siphon_auth::keys::Resolution::Expired(rec)) => {
+                    return reject("expired_api_key", Some(&rec.id));
+                }
+                Some(siphon_auth::keys::Resolution::Unknown) => {
+                    // The presented token's id prefix, if it has one, goes in
+                    // the audit row: "someone tried sk_xxxx" is actionable
+                    // where "someone tried a wrong key" is not. Never trusted
+                    // for anything else.
+                    return reject("invalid_api_key", siphon_auth::keys::id_of(key));
+                }
+            };
 
             tracing::debug!(
                 actor = %ctx.actor,
@@ -878,6 +950,8 @@ fn proxy_identity(
         role,
         actor: user,
         source: AuthSource::Proxy,
+        key_id: None,
+        tenant: None,
     })
 }
 
@@ -1374,6 +1448,7 @@ fn sanitize_tenant_id(s: &str) -> Option<String> {
 
 async fn scan(
     _: RequireScan,
+    AuthContextExt(ctx): AuthContextExt,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -1623,6 +1698,7 @@ async fn scan(
         let api_key_hash_bytes_for_lsh = api_key_hash_bytes.clone();
         let input_hash_bytes_for_lsh = input_hash_bytes.clone();
         let tenant_id_clone = tenant_id.clone();
+        let key_id = ctx.key_id.clone();
         tokio::spawn(async move {
             if let Err(e) = db::persist_scan(
                 &pool_clone,
@@ -1639,6 +1715,7 @@ async fn scan(
                 None,
                 None,
                 tenant_id_clone.as_deref(),
+                key_id.as_deref(),
             )
             .await
             {
@@ -1845,6 +1922,7 @@ struct BatchScanResponse {
 
 async fn scan_batch(
     _: RequireBatchScan,
+    AuthContextExt(ctx): AuthContextExt,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -2064,6 +2142,7 @@ async fn scan_batch(
             let pool_clone = state.db_pool.clone();
             let api_key_hash_clone = api_key_hash_bytes.clone();
             let tenant_id_clone = tenant_id.clone();
+            let key_id = ctx.key_id.clone();
             tokio::spawn(async move {
                 if let Err(e) = db::persist_scan(
                     &pool_clone,
@@ -2080,6 +2159,7 @@ async fn scan_batch(
                     None,
                     None,
                     tenant_id_clone.as_deref(),
+                    key_id.as_deref(),
                 )
                 .await
                 {
@@ -2517,31 +2597,15 @@ struct RolesResponse {
 }
 
 async fn list_roles(_: RequireAdminAction) -> Json<RolesResponse> {
-    const ROLES: [(Role, &str, &str); 4] = [
-        (Role::Admin, "admin", "Full control. All permissions."),
-        (Role::Analyst, "analyst", "Scan + detokenize + read status."),
-        (Role::Operator, "operator", "Scan + read status."),
-        (Role::Viewer, "viewer", "Read status only."),
-    ];
-    const PERMS: [(Permission, &str); 7] = [
-        (Permission::Scan, "Scan"),
-        (Permission::BatchScan, "BatchScan"),
-        (Permission::ManagePatterns, "ManagePatterns"),
-        (Permission::Detokenize, "Detokenize"),
-        (Permission::ExportVault, "ExportVault"),
-        (Permission::ViewStatus, "ViewStatus"),
-        (Permission::AdminAction, "AdminAction"),
-    ];
-    let roles: Vec<RoleItem> = ROLES
+    // Rendered from the model, not from a copy of it. This used to list four
+    // roles and seven permissions by hand and had been wrong since the fifth
+    // role landed — the console's key-issuance dialog reads this.
+    let roles: Vec<RoleItem> = Role::ALL
         .iter()
-        .map(|(r, name, desc)| RoleItem {
-            role: name,
-            description: desc,
-            permissions: PERMS
-                .iter()
-                .filter(|(p, _)| role_has_permission(*r, *p))
-                .map(|(_, n)| *n)
-                .collect(),
+        .map(|r| RoleItem {
+            role: r.label(),
+            description: r.description(),
+            permissions: r.permissions().iter().map(|p| p.label()).collect(),
         })
         .collect();
     Json(RolesResponse {
@@ -2658,6 +2722,12 @@ struct MeResponse {
     /// How the identity was established: `proxy`, `api_key` or `open_mode`.
     auth_source: &'static str,
     permissions: Vec<&'static str>,
+    /// The issued key this request used, so an integration can confirm
+    /// which key it is running with. Absent for humans and the bootstrap key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tenant: Option<String>,
 }
 
 async fn whoami(ctx: AuthContextExt) -> Json<MeResponse> {
@@ -2667,6 +2737,8 @@ async fn whoami(ctx: AuthContextExt) -> Json<MeResponse> {
         role: ctx.role.label(),
         auth_source: ctx.source.label(),
         permissions: ctx.role.permissions().iter().map(|p| p.label()).collect(),
+        key_id: ctx.key_id.clone(),
+        tenant: ctx.tenant.clone(),
     })
 }
 
@@ -7448,6 +7520,31 @@ async fn main() {
         tracing::info!("database migrations applied");
     }
 
+    // Issued API keys. Loaded once here, after migrations, and refreshed on
+    // an interval below. A failed initial load is not fatal — the bootstrap
+    // key still authenticates — but it is loud, because until the next
+    // successful refresh every issued key is a stranger to this pod.
+    let keys = match &db_pool {
+        Some(pool) => {
+            let store = Arc::new(siphon_auth::keys::KeyStore::new(pool.clone()));
+            match store.refresh().await {
+                Ok(0) => tracing::warn!(
+                    "no API keys issued yet — the bootstrap SIPHON_API_KEY is the only \
+                     credential. Issue per-caller keys with POST /v1/keys (docs/architecture/api-keys.md)"
+                ),
+                Ok(n) => tracing::info!(live_keys = n, "API keys loaded"),
+                Err(e) => tracing::error!(error = %e, "API keys could not be loaded; issued keys will not authenticate until the next refresh succeeds"),
+            }
+            Some(store)
+        }
+        None => {
+            tracing::warn!(
+                "no database, so no issued API keys: the bootstrap SIPHON_API_KEY is the only credential"
+            );
+            None
+        }
+    };
+
     let trusted_proxies = std::env::var("SIPHON_TRUSTED_PROXIES")
         .map(|raw| parse_trusted_proxies(&raw))
         .unwrap_or_default();
@@ -7465,6 +7562,7 @@ async fn main() {
         api_key_hash,
         api_key_hash_secondary,
         api_key_role,
+        keys,
         trusted_proxies,
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
         rate_limit,
@@ -7485,6 +7583,29 @@ async fn main() {
         stats_cache: Arc::new(Mutex::new(HashMap::new())),
         rollup: Arc::new(db::RollupAccumulator::new()),
     });
+
+    // API-key refresh task: reload the key set and flush last-used marks.
+    //
+    // 30 s bounds how late a revocation made on another pod (or by hand in
+    // SQL) takes effect here. Writes through this pod's own /v1/keys take
+    // effect immediately. A refresh failure keeps the last loaded set —
+    // see siphon_auth::keys for why that is the right failure direction.
+    if let Some(store) = state.keys.clone() {
+        let refresh_secs = std::env::var("SIPHON_API_KEY_REFRESH_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|&s| s > 0)
+            .unwrap_or(30);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(refresh_secs)).await;
+                store.refresh_logged().await;
+                if let Err(e) = store.flush_touches().await {
+                    tracing::debug!(error = %e, "api key last_used flush failed; retried next tick");
+                }
+            }
+        });
+    }
 
     // Scan-rollup flush task.
     //
@@ -7676,6 +7797,15 @@ async fn main() {
         .route("/v1/findings/export", get(findings_export))
         .route("/v1/findings/prune", post(findings_prune))
         .route("/v1/findings/{id}/feedback", post(post_finding_feedback))
+        .route(
+            "/v1/keys",
+            post(keys_api::issue_key).get(keys_api::list_keys),
+        )
+        .route(
+            "/v1/keys/{id}",
+            get(keys_api::get_key).delete(keys_api::revoke_key),
+        )
+        .route("/v1/keys/{id}/rotate", post(keys_api::rotate_key))
         .route("/v1/findings", get(list_findings))
         .route("/v1/version", get(version))
         .route("/v1/capabilities", get(capabilities))
@@ -8195,6 +8325,8 @@ mod tests {
             role,
             actor: "test".to_string(),
             source: AuthSource::ApiKey,
+            key_id: None,
+            tenant: None,
         }
     }
 

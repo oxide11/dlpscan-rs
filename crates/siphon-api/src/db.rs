@@ -31,8 +31,8 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const INSERT_SCAN_SQL: &str = "INSERT INTO scans \
      (id, source_pod, scanner_version, api_key_hash, input_hash, \
       input_length, finding_count, duration_ms, action, \
-      file_name, file_hash, mime_type, tenant_id) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
+      file_name, file_hash, mime_type, tenant_id, api_key_id) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) \
      ON CONFLICT (id) DO NOTHING";
 
 /// Connection-state classification surfaced via /v1/db/health.
@@ -100,6 +100,14 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         12,
         "0012_baselines",
         include_str!("../migrations/0012_baselines.sql"),
+    ),
+    // Owned by siphon-auth, which also owns the store that reads and writes
+    // it. Registered here because this service runs the migration runner.
+    (13, "0013_api_keys", siphon_auth::keys::MIGRATION_SQL),
+    (
+        14,
+        "0014_attribution",
+        include_str!("../migrations/0014_attribution.sql"),
     ),
 ];
 
@@ -300,6 +308,10 @@ pub async fn persist_scan(
     file_hash: Option<&[u8]>,
     mime_type: Option<&str>,
     tenant_id: Option<&str>,
+    // The public id of the issued key that submitted this scan — the
+    // caller's identity, where `api_key_hash` only ever recorded the
+    // server's. NULL for the bootstrap key and for proxy-authenticated humans.
+    api_key_id: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let Some(pool) = pool else {
         return Ok(());
@@ -363,6 +375,7 @@ pub async fn persist_scan(
                 &file_hash,
                 &mime_type,
                 &tenant_id,
+                &api_key_id,
             ],
         )
         .await?;
@@ -405,8 +418,8 @@ pub async fn persist_scan(
                  (scan_id, source_pod, scanner_version, api_key_hash, input_hash, \
                   input_length, category, sub_category, confidence, \
                   span_start, span_end, matched_text, has_context, context_required, \
-                  metadata, tenant_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
+                  metadata, tenant_id, api_key_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)",
                 &[
                     &scan_id,
                     &source_pod,
@@ -424,6 +437,7 @@ pub async fn persist_scan(
                     &context_required,
                     &metadata,
                     &tenant_id,
+                    &api_key_id,
                 ],
             )
             .await?;

@@ -1180,6 +1180,24 @@
     {
       "type": "library",
       "name": "getrandom",
+      "version": "0.3.4",
+      "purl": "pkg:cargo/getrandom@0.3.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-random/getrandom"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "getrandom",
       "version": "0.4.3",
       "purl": "pkg:cargo/getrandom@0.4.3",
       "scope": "required",

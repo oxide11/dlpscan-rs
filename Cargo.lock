@@ -5019,9 +5019,12 @@ dependencies = [
 name = "siphon-auth"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "deadpool-postgres",
+ "getrandom 0.3.4",
  "rustls",
  "rustls-pki-types",
+ "sha2 0.11.0",
  "tempfile",
  "tokio",
  "tokio-postgres",

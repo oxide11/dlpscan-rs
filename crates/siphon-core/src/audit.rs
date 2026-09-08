@@ -30,6 +30,11 @@ pub const VALID_EVENT_TYPES: &[&str] = &[
     "LSH_QUERY",
     "ADMIN",
     "CONFIG",
+    // API-key lifecycle. Metadata names the key id, label, role and tenant —
+    // never the secret.
+    "KEY_ISSUE",
+    "KEY_REVOKE",
+    "KEY_ROTATE",
 ];
 
 // ---------------------------------------------------------------------------

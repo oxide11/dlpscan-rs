@@ -35,6 +35,11 @@ pub enum Role {
     /// system a full-disclosure one.
     Auditor,
     Operator,
+    /// A detector reporting in: siphon-fs, siphon-icap, siphon-smtp. Holds
+    /// `ReportTelemetry` and `ViewStatus` and nothing else — a sensor's key
+    /// says what the sensor is, not what it may read. It does not scan
+    /// through siphon-api (each embeds the engine) and it never reads alerts.
+    Sensor,
     Viewer,
 }
 
@@ -55,8 +60,44 @@ impl Role {
             }
             "auditors" | "auditor" => Some(Self::Auditor),
             "operators" | "operator" => Some(Self::Operator),
+            "sensors" | "sensor" => Some(Self::Sensor),
             "viewers" | "viewer" => Some(Self::Viewer),
             _ => None,
+        }
+    }
+
+    /// Every role, so a table that must cover all of them cannot silently
+    /// miss one — the `api_keys.role` CHECK constraint is asserted against
+    /// this, and `GET /v1/roles` renders from it.
+    pub const ALL: [Role; 8] = [
+        Role::Admin,
+        Role::Analyst,
+        Role::Responder,
+        Role::ResponderReadOnly,
+        Role::Auditor,
+        Role::Operator,
+        Role::Sensor,
+        Role::Viewer,
+    ];
+
+    /// The strict inverse of [`Role::label`]: the wire name, and only the
+    /// wire name. `from_group` accepts IdP spellings (`admins`, `ir`); a
+    /// stored role label is not an IdP group and gets no such latitude.
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|r| r.label() == label)
+    }
+
+    /// One line for the console and `GET /v1/roles`.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Admin => "Full control. Every permission, unscoped.",
+            Self::Analyst => "Tunes detection: scans, reads and rules on alerts, unmasks PII but not cardholder data.",
+            Self::Responder => "Investigates: reads, rules on and fully unmasks alerts; submits scans; changes nothing about detection.",
+            Self::ResponderReadOnly => "Investigates without acting: reads and unmasks, records no verdict, submits no scan.",
+            Self::Auditor => "Verifies process: reads everything masked, always. No unmask permission exists for it to hold.",
+            Self::Operator => "Runs scans and reads status. The application-owner key: sees only its own responses.",
+            Self::Sensor => "A detector reporting in: heartbeat, mTLS state and counters. Reads nothing.",
+            Self::Viewer => "Status only.",
         }
     }
 
@@ -77,6 +118,7 @@ impl Role {
             Self::ResponderReadOnly => "responder-readonly",
             Self::Auditor => "auditor",
             Self::Operator => "operator",
+            Self::Sensor => "sensor",
             Self::Viewer => "viewer",
         }
     }
@@ -133,13 +175,17 @@ pub enum Permission {
     /// Read the matched value of a PCI-DSS finding (PAN, track data) in the
     /// clear. Every use is audited server-side.
     UnmaskPci,
+    /// `POST /v1/sensors/heartbeat` — a detector reporting its identity,
+    /// transport state and counters. Writes one row about itself and reads
+    /// nothing, which is why `Sensor` can hold it and nothing else.
+    ReportTelemetry,
 }
 
 impl Permission {
     /// Every permission, so `Role::permissions()` cannot silently miss one.
     /// A new variant that is not added here is a compile-time nudge rather
     /// than a permission that never appears in `GET /v1/me`.
-    pub const ALL: [Permission; 11] = [
+    pub const ALL: [Permission; 12] = [
         Permission::Scan,
         Permission::BatchScan,
         Permission::ManagePatterns,
@@ -151,6 +197,7 @@ impl Permission {
         Permission::ReviewAlerts,
         Permission::UnmaskPii,
         Permission::UnmaskPci,
+        Permission::ReportTelemetry,
     ];
 
     /// Stable wire name, used in `GET /v1/me` and audit metadata.
@@ -167,6 +214,7 @@ impl Permission {
             Self::ReviewAlerts => "review_alerts",
             Self::UnmaskPii => "unmask_pii",
             Self::UnmaskPci => "unmask_pci",
+            Self::ReportTelemetry => "report_telemetry",
         }
     }
 }
@@ -181,10 +229,13 @@ impl Permission {
 /// | ResponderReadOnly | — | — | — | — | ✓ | — | ✓ | ✓ |
 /// | Auditor           | — | — | — | — | ✓ | — | — | — |
 /// | Operator          | ✓ | ✓ | — | — | — | — | — | — |
+/// | Sensor            | — | — | — | — | — | — | — | — |
 /// | Viewer            | — | — | — | — | — | — | — | — |
 ///
 /// Every role also holds `ViewStatus`; it is omitted above to keep the table
-/// readable.
+/// readable. `Sensor` additionally holds `ReportTelemetry`, which no human
+/// role needs and which appears in no column because it is the whole of what
+/// a sensor may do.
 ///
 /// The columns that will be argued about:
 ///
@@ -239,6 +290,7 @@ pub fn role_has_permission(role: Role, perm: Permission) -> bool {
         ),
         Role::Auditor => matches!(perm, P::ViewStatus | P::ViewAlerts),
         Role::Operator => matches!(perm, P::Scan | P::BatchScan | P::ViewStatus),
+        Role::Sensor => matches!(perm, P::ViewStatus | P::ReportTelemetry),
         Role::Viewer => matches!(perm, P::ViewStatus),
     }
 }
@@ -467,5 +519,72 @@ mod tests {
             Permission::AdminAction
         ));
         assert!(!role_has_permission(Role::Viewer, Permission::AdminAction));
+    }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    use super::*;
+
+    #[test]
+    fn all_covers_every_variant() {
+        // The match is the guard: adding a variant without listing it in
+        // ALL fails to compile here rather than silently vanishing from
+        // GET /v1/roles and the api_keys CHECK.
+        for r in Role::ALL {
+            let _ = match r {
+                Role::Admin
+                | Role::Analyst
+                | Role::Responder
+                | Role::ResponderReadOnly
+                | Role::Auditor
+                | Role::Operator
+                | Role::Sensor
+                | Role::Viewer => (),
+            };
+        }
+        assert_eq!(Role::ALL.len(), 8);
+    }
+
+    #[test]
+    fn labels_round_trip_and_are_strict() {
+        for r in Role::ALL {
+            assert_eq!(Role::from_label(r.label()), Some(r));
+        }
+        // IdP spellings are for from_group; a stored label gets no latitude.
+        assert_eq!(Role::from_label("admins"), None);
+        assert_eq!(Role::from_label("Admin"), None);
+        assert_eq!(Role::from_label(""), None);
+    }
+
+    #[test]
+    fn a_sensor_reports_and_does_nothing_else() {
+        assert_eq!(
+            Role::Sensor.permissions(),
+            vec![Permission::ViewStatus, Permission::ReportTelemetry]
+        );
+        // And no human role reports telemetry — it is a machine's permission.
+        for r in [
+            Role::Analyst,
+            Role::Responder,
+            Role::ResponderReadOnly,
+            Role::Auditor,
+            Role::Operator,
+            Role::Viewer,
+        ] {
+            assert!(
+                !role_has_permission(r, Permission::ReportTelemetry),
+                "{r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_sensor_is_below_operator_and_above_viewer() {
+        // min() across groups picks the highest privilege, so the declared
+        // order is load-bearing.
+        assert!(Role::Operator < Role::Sensor);
+        assert!(Role::Sensor < Role::Viewer);
+        assert_eq!(Role::from_groups("viewers,sensors"), Some(Role::Sensor));
     }
 }

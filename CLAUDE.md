@@ -336,7 +336,33 @@ policy-mutating route **and** the raw finding/evadex read endpoints — those
 return unredacted matched values, so they are admin-only, not merely
 authenticated.
 
-Seven roles. `GET /v1/me` reports the caller's role, how it was established,
+### API keys
+
+Two kinds of bearer key. The **bootstrap** key is `SIPHON_API_KEY` from the
+environment: it resolves to `SIPHON_API_KEY_ROLE`, is labelled `bootstrap` in
+every audit row, and exists so a deployment can come up with no Postgres and
+an admin can issue the first real key. **Issued** keys live in the `api_keys`
+table (`crates/siphon-auth/src/keys.rs` owns the store, the cache and the
+migration): `sk_<id>_<secret>`, SHA-256 of the whole token at rest, shown
+exactly once by `POST /v1/keys` and by rotate. A key carries a role, an
+optional tenant, an owner, an expiry (default a year) and soft revocation —
+the row stays, because scans point at it via `scans.api_key_id`. Rotation
+keeps the id so attribution is continuous.
+
+Resolution order in `auth_middleware`: bootstrap first (so an issued key can
+never shadow it), then the store — one SHA-256 and one map read against a
+cache refreshed every `SIPHON_API_KEY_REFRESH_SECS` (30). Writes through this
+pod's `/v1/keys` hit the cache immediately; a revocation elsewhere is at most
+one interval late. **The cache keeps serving through a Postgres outage** and
+logs once: failing closed would turn every database blip into a scanning
+outage across every integration. Without Postgres there is no store, the
+bootstrap key is the only credential, and startup says so.
+
+A stored role label the binary does not know is refused with a 401 and an
+error-level log — deployment skew, not a caller mistake. Roles are the wire
+labels only (`Role::from_label`); IdP spellings are for `from_group`.
+
+Eight roles. `GET /v1/me` reports the caller's role, how it was established,
 and the permission list; the console renders affordances from it, and every
 gate is re-checked server-side.
 
@@ -348,7 +374,12 @@ gate is re-checked server-side.
 | `ResponderReadOnly` | ✓ | — | ✓ | ✓ | — | — |
 | `Auditor` | ✓ | — | — | — | — | — |
 | `Operator` | — | — | — | — | ✓ | — |
+| `Sensor` | — | — | — | — | — | — |
 | `Viewer` | — | — | — | — | — | — |
+
+`Sensor` is a machine role: a detector (siphon-fs, siphon-icap, siphon-smtp)
+reporting in. It holds `ReportTelemetry` and `ViewStatus` and nothing else —
+its key says what the sensor *is*, not what it may read.
 
 `Auditor` is the role to understand: it can never unmask, on request or
 otherwise. An auditor verifies that process was followed — what matched, when,
@@ -436,7 +467,12 @@ PATCH /v1/pipeline/stages       toggle a pipeline stage (admin)
 POST /v1/findings/prune         manual retention trigger — admin only
 POST /v1/overrides/apply        hot-reload PatternOverrides (no restart) (admin)
 GET  /v1/overrides/current      current PatternOverrides snapshot
-GET  /v1/me                     caller identity: actor, role, auth_source, permission list
+GET  /v1/me                     caller identity: actor, role, auth_source, permission list, key_id + tenant for an issued key
+POST /v1/keys                   issue a per-caller key — the ONE response that carries the secret (admin)
+GET  /v1/keys                   list keys, no secrets (?include_revoked=) (admin)
+GET  /v1/keys/{id}              one key (admin)
+DELETE /v1/keys/{id}            revoke, soft and idempotent (admin)
+POST /v1/keys/{id}/rotate       new secret, same id; old secret valid for grace_seconds (default 1 d, max 7 d) (admin)
 GET  /v1/metrics                scans_total, findings_total, scan_errors_total
 GET  /v1/db/health              Postgres pool state
 GET  /v1/lsh/history            paginated LSH query history from Postgres (?limit=&offset=&matched_only=)
@@ -453,7 +489,8 @@ Key env vars for siphon-api:
 | `SIPHON_PORT` | 8080 | |
 | `SIPHON_BIND` | 127.0.0.1 | |
 | `SIPHON_API_KEY` | — | **required**; empty counts as unset. Without it the service refuses to start |
-| `SIPHON_API_KEY_ROLE` | admin | Role a bare bearer key resolves to (`admin`/`analyst`/`responder`/`operator`/`viewer`). Defaults to `admin` so existing automation keeps working, and **warns at startup when unset** — a shared machine credential holding full admin is the first thing to narrow. An unknown value is a startup error, never a fallback |
+| `SIPHON_API_KEY_ROLE` | admin | Role the **bootstrap** bearer key resolves to (`admin`/`analyst`/`responder`/`operator`/`viewer`). Defaults to `admin` so existing automation keeps working, and **warns at startup when unset** — a shared machine credential holding full admin is the first thing to narrow. An unknown value is a startup error, never a fallback. Issued keys carry their own role and ignore this |
+| `SIPHON_API_KEY_REFRESH_SECS` | 30 | How often the issued-key cache is reloaded from Postgres; bounds how late a revocation made on another pod takes effect here |
 | `SIPHON_ALLOW_UNAUTHENTICATED` | false | opt in to running with no auth — local dev only. **Refused on a non-loopback `SIPHON_BIND`**: the service exits at startup rather than serve an open API on a network interface |
 | `SIPHON_DEV_MODE` | false | marks a local-dev run; currently relaxes the production startup guard that otherwise requires `SIPHON_AUDIT_LOG_PATH` |
 | `SIPHON_TLS_CERT` / `SIPHON_TLS_KEY` | — | PEM paths for the listener. Half-set (one without the other) is a startup error |
@@ -501,6 +538,13 @@ nothing):
 - `0007_evadex.sql` — evadex run + finding tables
 - `0008_tenant_id.sql` — tenant_id on scans + findings
 - `0009_scan_rollup.sql` — aggregate scan counters per (hour, tenant, channel)
+- `0011_feedback.sql` — analyst verdicts on findings
+- `0012_baselines.sql` — category baselines
+- `0013_api_keys.sql` — lives in `crates/siphon-auth/migrations/`, registered
+  here via `siphon_auth::keys::MIGRATION_SQL`. The `role` CHECK mirrors
+  `Role::label()`; a test in `keys_api.rs` asserts the two agree
+- `0014_attribution.sql` — `api_key_id` on scans and findings: the caller's
+  identity, where `api_key_hash` only ever recorded the server's own key
 - `0010_messages.sql` — lives in `crates/siphon-mail/migrations/` and is
   registered here via `siphon_mail::MIGRATION_SQL`. `messages` +
   `message_parts` for the mail path, plus

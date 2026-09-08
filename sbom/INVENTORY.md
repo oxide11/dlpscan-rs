@@ -22,10 +22,10 @@ members and report that false picture; `cargo tree -p` does not.
 | `siphon-fs` | 385 | 381 |
 | `siphon-smtp` | 350 | 345 |
 | `siphon-cli` | 311 | 309 |
-| `siphon-api` | 203 | 198 |
+| `siphon-api` | 204 | 199 |
 | `siphon-launcher` | 116 | 114 |
+| `siphon-auth` | 90 | 89 |
 | `siphon-icap` | 87 | 85 |
-| `siphon-auth` | 86 | 85 |
 | `siphon-mail` | 71 | 70 |
 | `siphon-core` | 70 | 69 |
 
@@ -58,7 +58,7 @@ Across all third-party components in all artifacts, counted per artifact.
 
 | Licence | Occurrences |
 |---|---|
-| `MIT OR Apache-2.0` | 943 |
+| `MIT OR Apache-2.0` | 948 |
 | `MIT` | 304 |
 | `Apache-2.0 OR MIT` | 139 |
 | `Apache-2.0` | 77 |

@@ -18,6 +18,9 @@ independent, so a release block typically moves only the crates that actually
   in `.with_no_client_auth()`. `tests/mtls.rs` performs real handshakes
   against certificates from `scripts/dev/mkcerts.sh`: a peer with no
   certificate, or one from another CA, never reaches the application.
+- **`keys::KeyStore`** — per-caller API keys: token format, SHA-256 at
+  rest, an in-memory cache that keeps serving through a Postgres outage,
+  and issue / revoke / rotate with the `0013_api_keys` migration.
 
 ### siphon-api 2.12.0
 
@@ -29,6 +32,19 @@ independent, so a release block typically moves only the crates that actually
   to Postgres and refuses to start without them; `require` presents them if
   set. Half-configured TLS (a certificate without a key, a client CA on a
   plaintext bind) is a startup error rather than a silent downgrade.
+- **feat(api): per-caller API keys.** `POST /v1/keys` issues a key with a
+  role, an optional tenant, an owner and an expiry (default a year); the
+  secret appears in that one response and nowhere else. `GET`, `DELETE`
+  (soft, idempotent) and `POST …/rotate` (new secret, same id, old one valid
+  for a grace window) complete the lifecycle, each with a `KEY_*` audit
+  event naming the key and never the secret. `auth_middleware` resolves the
+  bootstrap `SIPHON_API_KEY` first, then the store — one SHA-256 and one
+  map read against a cache refreshed every `SIPHON_API_KEY_REFRESH_SECS`.
+  `scans.api_key_id` and `findings.api_key_id` attribute every scan to its
+  key; `GET /v1/me` reports `key_id` and `tenant`. New `Sensor` role and
+  `ReportTelemetry` permission for detectors reporting in. `GET /v1/roles`
+  is rendered from the model — it had listed four roles by hand since the
+  fifth landed.
 - **fix(api): the scan routes are gated.** `POST /scan` and `/scan/stream`
   need `Scan`, `/scan/batch` needs `BatchScan`. `Permission::Scan` was
   declared, tabulated in the RBAC matrix and bound to nothing, so
