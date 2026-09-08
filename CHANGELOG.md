@@ -62,6 +62,33 @@ independent, so a release block typically moves only the crates that actually
   contains Dublin Core properties — they are now filed as `dc:*`.
 
 ---
+---
+
+## 2026-09-07 — ICAP/SMTP protocol security (round 5)
+
+### siphon-icap 0.1.4
+
+- **fix(icap): oversized-body audit path was dead code / partial-scan bypass.**
+  `read_chunked_buf` accumulated chunks up to `max_body_bytes` and silently
+  drained any remainder, meaning `req.body.len()` could never exceed the cap
+  and the `pass-oversized` warn + audit event in `handle_scan` was unreachable.
+  A sender who placed clean content in the first 10 MB and sensitive data after
+  would have their body partially scanned with no `pass-oversized` record and
+  no indication that later content was unseen. Fixed: `read_chunked_buf` now
+  returns a `(Vec<u8>, bool)` pair; the bool (`truncated`) is `true` when any
+  chunk was drained without storing. `handle_scan` checks `req.body_truncated`
+  directly, makes the audit event reachable, and accurately reports the stored
+  byte count in the warning log.
+
+### siphon-smtp 0.1.3
+
+- **fix(smtp): envelope address not sanitized for embedded newlines.**
+  `envelope_address()` stripped angle brackets but did not remove `\r`, `\n`,
+  or `\0`. A compromised or malicious MTA could pass a MAIL FROM or RCPT TO
+  containing embedded newlines, which `raw_message()` would write verbatim into
+  reconstructed RFC 5322 headers, corrupting Postgres storage. Fixed by
+  filtering those three characters before storing the address. Exploitability
+  requires a trusted-peer MTA to be compromised, so LOW severity.
 
 ## 2026-09-07 — per-category baselines
 

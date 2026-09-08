@@ -166,7 +166,7 @@ services:
       dockerfile: deploy/Dockerfile.fs
     # Pinned per the per-crate SemVer rules in CLAUDE.md. Bump
     # in lockstep with crates/siphon-fs/Cargo.toml.
-    image: siphon-fs:1.2.0
+    image: siphon-fs:1.3.0
     profiles: [auth]
     environment:
       - SIPHON_FS_BIND=0.0.0.0:8081
@@ -189,11 +189,16 @@ services:
       - ./authelia:/config
       - authelia-data:/config/runtime
     environment:
-      # Rotate these with AUTHELIA_*_FILE secrets in prod. For
-      # compose dev, pull defaults from the shell or an .env file.
-      - AUTHELIA_JWT_SECRET=${AUTHELIA_JWT_SECRET:-please-change-me-32bytes-minimum}
-      - AUTHELIA_SESSION_SECRET=${AUTHELIA_SESSION_SECRET:-please-change-me-32bytes-minimum}
-      - AUTHELIA_STORAGE_ENCRYPTION_KEY=${AUTHELIA_STORAGE_ENCRYPTION_KEY:-please-change-me-32bytes-minimum}
+      # These three must be set in the shell or in a .env file before
+      # `docker compose up` — there is no silent fallback. Generate with:
+      #   export AUTHELIA_JWT_SECRET="$(openssl rand -hex 32)"
+      #   export AUTHELIA_SESSION_SECRET="$(openssl rand -hex 32)"
+      #   export AUTHELIA_STORAGE_ENCRYPTION_KEY="$(openssl rand -hex 32)"
+      # The :? syntax fails compose immediately if any var is unset or
+      # empty, preventing a stack that uses a known, repo-committed key.
+      - AUTHELIA_JWT_SECRET=${AUTHELIA_JWT_SECRET:?Set AUTHELIA_JWT_SECRET (min 32 bytes); see deploy/.env.example}
+      - AUTHELIA_SESSION_SECRET=${AUTHELIA_SESSION_SECRET:?Set AUTHELIA_SESSION_SECRET (min 32 bytes); see deploy/.env.example}
+      - AUTHELIA_STORAGE_ENCRYPTION_KEY=${AUTHELIA_STORAGE_ENCRYPTION_KEY:?Set AUTHELIA_STORAGE_ENCRYPTION_KEY (min 32 bytes); see deploy/.env.example}
     expose: ["9091"]
     restart: unless-stopped
     healthcheck:
@@ -231,12 +236,15 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.icap
-    image: siphon-icap:0.1.2
+    image: siphon-icap:0.1.4
     profiles: [auth]
     environment:
-      # Set to the proxy subnet that will connect to this ICAP server.
-      # Use 0.0.0.0/0 for local dev (accepts all); restrict in prod.
-      - SIPHON_ICAP_ALLOWED_NETS=${SIPHON_ICAP_ALLOWED_NETS:-0.0.0.0/0}
+      # CIDRs whose connections the ICAP server accepts. Default is
+      # loopback-only. For local dev widen to your proxy subnet, e.g.:
+      #   SIPHON_ICAP_ALLOWED_NETS=10.0.0.0/8
+      # NEVER use 0.0.0.0/0 on an internet-facing host — anyone can
+      # feed the ICAP server arbitrary traffic with no authentication.
+      - SIPHON_ICAP_ALLOWED_NETS=${SIPHON_ICAP_ALLOWED_NETS:-127.0.0.0/8}
       - SIPHON_ICAP_ACTION=${SIPHON_ICAP_ACTION:-flag}
       - SIPHON_ICAP_MIN_CONFIDENCE=${SIPHON_ICAP_MIN_CONFIDENCE:-0.6}
       - RUST_LOG=info
@@ -254,13 +262,15 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.smtp
-    image: siphon-smtp:0.1.1
+    image: siphon-smtp:0.1.3
     profiles: [auth]
     environment:
-      # The MTA subnet allowed to connect. 0.0.0.0/0 for local dev only —
-      # a mail filter reachable from anywhere is one anybody can feed mail
-      # to. Required, with no default in the binary.
-      - SIPHON_SMTP_ALLOWED_NETS=${SIPHON_SMTP_ALLOWED_NETS:-0.0.0.0/0}
+      # CIDRs whose connections the milter accepts. Default is loopback-
+      # only. Widen to your MTA subnet for real Postfix integration, e.g.:
+      #   SIPHON_SMTP_ALLOWED_NETS=10.0.0.0/8
+      # NEVER use 0.0.0.0/0 on an internet-facing host — a mail filter
+      # reachable from anywhere accepts arbitrary message injection.
+      - SIPHON_SMTP_ALLOWED_NETS=${SIPHON_SMTP_ALLOWED_NETS:-127.0.0.0/8}
       # defer (fail closed, the default) | deliver (fail open).
       # `quarantine` is refused at startup: there is nowhere to hold a
       # message yet, and silently behaving as defer would replace the

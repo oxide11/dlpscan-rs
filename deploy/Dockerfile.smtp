@@ -51,4 +51,4 @@ ENTRYPOINT ["siphon-smtp"]
 
 LABEL org.opencontainers.image.title="siphon-smtp" \
       org.opencontainers.image.description="Polygon Siphon milter — SMTP content DLP for Postfix and Sendmail" \
-      org.opencontainers.image.version="0.1.1"
+      org.opencontainers.image.version="0.1.3"
