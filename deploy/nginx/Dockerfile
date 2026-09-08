@@ -1,14 +1,32 @@
-# Siphon reverse proxy + wireframe consoles.
+# Siphon reverse proxy + analyst console.
 #
-# Single-stage: nginx serves the static C2 / IR wireframe consoles
-# at /ui/. There is no Next.js build step — the wireframes are
-# self-contained HTML files (siphon-shared.css and siphon-shared.js
-# are inlined into each at sync time via docs/wireframes/sync-shared.sh).
+# Two stages: Node builds the console/ SPA, nginx serves the static output
+# and proxies /api/ and /fs/. Node exists only in the build stage — the
+# runtime image is nginx and static files, so there is no JavaScript runtime
+# in the deployed artifact and nothing to patch on the Node CVE cadence.
 #
-# Build from the repo root so the docs/wireframes/ tree and
-# deploy/nginx/ are both in the build context:
+# Build from the repo root so console/ and deploy/nginx/ are both in the
+# build context:
 #
 #   docker build -f deploy/nginx/Dockerfile -t siphon-nginx:latest .
+
+FROM node:22-alpine AS console
+
+RUN corepack enable
+WORKDIR /build
+
+# Manifest and lockfile first, so a source-only change reuses the cached
+# install layer. `--frozen-lockfile` is the pnpm equivalent of cargo's
+# `--locked`: the build fails rather than silently resolving something the
+# lockfile does not describe.
+COPY console/package.json console/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+COPY console/ ./
+# `pnpm build` runs `tsc -b --noEmit && vite build`, so a type error fails the
+# image build rather than shipping a console that only fails in the browser.
+RUN pnpm build
+
 
 FROM nginx:1.27-alpine AS runtime
 
@@ -19,14 +37,14 @@ RUN apk add --no-cache curl \
 
 COPY deploy/nginx/nginx.conf /etc/nginx/nginx.conf
 
-# The wireframes link to each other via relative paths
-# (`<a href="siphon-ir.html">`), so both files must live in the
-# same served directory. siphon-logo.png is referenced externally
-# from siphon-ir.html (siphon-c2.html inlines its own logo as a
-# data: URI).
-COPY docs/wireframes/siphon-c2.html  /srv/ui/siphon-c2.html
-COPY docs/wireframes/siphon-ir.html  /srv/ui/siphon-ir.html
-COPY docs/wireframes/siphon-logo.png /srv/ui/siphon-logo.png
+# The console, served at the origin root.
+COPY --from=console /build/dist/ /srv/console/
+
+# The IR wireframe, served at /ir/. It is kept because the incident-response
+# surface has no replacement yet — the C2 wireframe does (this console), so it
+# is no longer shipped and lives on in docs/wireframes/ as the design source.
+COPY docs/wireframes/siphon-ir.html  /srv/ir/index.html
+COPY docs/wireframes/siphon-logo.png /srv/ir/siphon-logo.png
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -sf http://localhost/nginx-health || exit 1

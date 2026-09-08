@@ -1,7 +1,7 @@
 # kind cluster spec for the Siphon lab.
 #
 # Exposes port 80 on the host so the Ingress is reachable at
-# http://localhost — analysts can point siphon-c2.html's API URL
+# http://localhost — analysts can point the console's API URL
 # at http://localhost/api and the file-mode uploader at
 # http://localhost/fs.
 #

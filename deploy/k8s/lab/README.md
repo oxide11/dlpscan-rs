@@ -52,14 +52,15 @@ curl -s http://localhost/api/scan \
 
 ## Point the admin console at it
 
-Open http://localhost/ui/ in a browser — siphon-nginx routes to siphon-ui
-and injects the API key automatically. No localStorage setup needed.
+Open http://localhost/ in a browser — siphon-nginx routes to siphon-ui,
+which serves the console built from `console/`, and injects the API key
+automatically.
 
-If opening `docs/wireframes/siphon-c2.html` as a local file instead:
+To run the console against the lab from a dev server instead:
 
-```js
-localStorage.setItem('c2:apiUrl', 'http://localhost/api');
-location.reload();
+```bash
+cd console
+SIPHON_API=http://localhost/api pnpm dev
 ```
 
 ## Layout

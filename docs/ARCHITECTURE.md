@@ -198,13 +198,18 @@ polygon-siphon/
 `siphon-vision`, `siphon-classify`, `siphon-c2` (server-backed
 replacement for the single-file console).
 
-## Admin console (siphon-c2.html)
+## Analyst console (console/)
 
-The admin surface ships today as a single-file React app at
-`docs/wireframes/siphon-c2.html`. It's a browser page you open
-directly (file://) or serve from any static host — every surface,
-stat, and graph is backed by a live `/v1` endpoint on one or more
-pods.
+The admin surface ships as a Vite + React SPA in `console/`, built
+into the reverse-proxy image and served at the origin root. Its build
+contract — the hard rules, route table and component signatures — is
+`console/docs/COMPONENTS.md`.
+
+It replaced a single-file React prototype, which is kept as the design
+reference at `docs/wireframes/siphon-c2.html` and is no longer served.
+The notes below describe that prototype's client-side pod registry;
+the console instead talks to one origin, with the proxy routing `/api/`
+and `/fs/`.
 
 Key design points:
 - **Pod registry**: `c2:pods` localStorage holds the list of known

@@ -1,6 +1,6 @@
 # docker-compose.dev.yml — simple local dev without kind/k8s
 # Usage: docker-compose -f deploy/docker-compose.dev.yml up
-# Browse to http://localhost:3000/ui/
+# Browse to http://localhost:3000/
 version: '3.8'
 
 services:

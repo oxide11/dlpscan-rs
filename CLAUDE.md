@@ -438,13 +438,43 @@ Env vars for postgres:
 | `SIPHON_DATABASE_CA_FILE` | — | extra PEM CA bundle for a self-signed Postgres certificate |
 | `SIPHON_FINDINGS_RETENTION_DAYS` | 90 | Days to retain findings (0 = keep forever) |
 
-C2 wireframe:
-- `docs/wireframes/siphon-c2.html` — current full-stack C2 dashboard
-- Command palette `Ctrl+K` — full surface search + quick actions, keyboard-navigable
-- LiveScan — `Ctrl+Enter` shortcut, last-5-scan session history, green no-findings banner
-- FindingsHistory tab — sortable columns, CSV export button (`↓ CSV` → `/v1/findings/export`), postgres-backed pagination
-- History tab polls `/v1/findings/stats` every 60s, `/v1/findings/pg` on filter change
-- Live tab fans out to `/v1/findings` ring per pod; Adversarial Testing tab shows evadex bridge metrics
+## The console
+
+`console/` — the analyst console. Vite + React 19 + TypeScript strict,
+TanStack Query/Table/Virtual/Router, Tailwind v4 CSS-first tokens, Radix only
+where focus/portal/dismiss behaviour matters, cmdk for the palette. No
+Next.js, no client-state store, no runtime CSS-in-JS, no component library —
+the reasoning for each exclusion is in `console/docs/COMPONENTS.md`, which is
+the build contract and should be read before touching `console/src/ui/`.
+
+Static output only: Node runs at build time inside `deploy/nginx/Dockerfile`
+and never reaches the deployed artifact. nginx serves the bundle at the origin
+root and proxies `/api/` and `/fs/`.
+
+The `ui/` Next.js app it replaced is gone. It was orphaned — nothing built or
+served it, though its README claimed nginx did. The design prototypes stay in
+`docs/wireframes/` as reference; `siphon-ir.html` is still shipped, at `/ir/`,
+because the incident-response surface has no replacement yet.
+
+Four things that are load-bearing:
+
+- **The API is reached under `/api`, never the origin root.** siphon-api
+  serves `POST /scan` and the console has a `/scan` route; from one origin
+  those are the same path separated only by HTTP method.
+- **Deep links must survive a refresh.** Routes are real URLs holding filter,
+  sort and selection state, so every server that fronts the bundle needs a
+  `try_files … /index.html` fallback. Without it a pasted URL 404s and the
+  URL-state design is decorative.
+- **Auth never touches `localStorage`.** Admin endpoints return unredacted
+  matched values, so an XSS here is credential theft against them. The proxy
+  sets an httpOnly `SameSite=Strict` cookie, or a short-lived token is held in
+  memory. Only the theme is persisted.
+- **Severity is derived, in one place** (`console/src/lib/severity.ts`), from
+  confidence + category + validator state. The engine emits no severity;
+  `derive()` returns its reasoning so "why is this critical?" has an answer.
+
+`console/package.json` `version` tracks the root crate and is enforced by
+`scripts/check-version-sync.sh`.
 
 ## Open PRs
 

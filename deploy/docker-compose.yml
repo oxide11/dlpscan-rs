@@ -205,8 +205,8 @@ services:
   nginx:
     build:
       # Repo root is the build context so the multi-stage Dockerfile
-      # can see both `ui/` (Next.js source) and `deploy/nginx/` (the
-      # proxy config). Running `docker compose build` from the repo
+      # can see both `console/` (the SPA source) and `deploy/nginx/`
+      # (the proxy config). Running `docker compose build` from the repo
       # root already resolves `..` correctly because the compose
       # file lives in deploy/.
       context: ..

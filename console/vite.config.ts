@@ -3,11 +3,14 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 
-// Static output only — the bundle is embedded into the siphon-api binary via
-// rust-embed, so there is no Node runtime in production. `base` is relative so
-// the same build serves from `/` or from a sub-path without a rebuild.
+// Static output only — no Node runtime in production. The bundle is served by
+// the nginx front door today (deploy/nginx/Dockerfile) and is ready to be
+// embedded into the siphon-api binary via rust-embed.
 export default defineConfig({
-  base: './',
+  // Absolute, not './'. The console is served at the origin root and its
+  // routes are real paths, so a relative base would resolve assets against
+  // `/findings` rather than `/` and 404 on every deep link or refresh.
+  base: '/',
   plugins: [
     tanstackRouter({ target: 'react', autoCodeSplitting: true }),
     react(),

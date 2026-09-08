@@ -44,7 +44,7 @@ function useTheme() {
 function Logo() {
   return (
     <img
-      src="./assets/octopus-64.png"
+      src="/assets/octopus-64.png"
       alt="Polygon Cyber"
       width={22}
       height={22}
