@@ -110,6 +110,17 @@ impl Enforcement {
             Enforcement::Advisory => "advisory",
         }
     }
+
+    /// The inverse of `as_str`, for a stored row. An unknown label is
+    /// `None`: a newer sensor talking to an older receiver, not a default.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "block" => Some(Enforcement::Block),
+            "annotate" => Some(Enforcement::Annotate),
+            "advisory" => Some(Enforcement::Advisory),
+            _ => None,
+        }
+    }
 }
 
 /// What happens when the sensor cannot decide.
@@ -131,6 +142,15 @@ impl FailMode {
             FailMode::Closed => "closed",
             FailMode::Open => "open",
             FailMode::NotApplicable => "not_applicable",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "closed" => Some(FailMode::Closed),
+            "open" => Some(FailMode::Open),
+            "not_applicable" => Some(FailMode::NotApplicable),
+            _ => None,
         }
     }
 }

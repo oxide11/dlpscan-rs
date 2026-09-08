@@ -166,6 +166,14 @@ services:
       - SIPHON_DATABASE_CA_FILE=/etc/siphon/tls/ca.crt
       - SIPHON_DATABASE_CLIENT_CERT=/etc/siphon/tls/db-client.crt
       - SIPHON_DATABASE_CLIENT_KEY=/etc/siphon/tls/db-client.key
+      # --- sensor objectives ----------------------------------------------
+      # What the Running page judges each ACEE axis against. Empty = the
+      # declared defaults; see deploy/.env.example.
+      - SIPHON_SENSORS_TARGET_AVAILABILITY=${SIPHON_SENSORS_TARGET_AVAILABILITY:-}
+      - SIPHON_SENSORS_TARGET_COVERAGE=${SIPHON_SENSORS_TARGET_COVERAGE:-}
+      - SIPHON_SENSORS_TARGET_PRECISION=${SIPHON_SENSORS_TARGET_PRECISION:-}
+      - SIPHON_SENSORS_TARGET_CANARY=${SIPHON_SENSORS_TARGET_CANARY:-}
+      - SIPHON_SENSORS_EXPECTED=${SIPHON_SENSORS_EXPECTED:-}
       - RUST_LOG=info
     # The image runs as `siphon`, a system uid chosen at build time. The
     # certificate volume is owned by 1000 (what the Helm chart runs every

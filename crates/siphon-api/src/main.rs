@@ -158,6 +158,9 @@ struct AppState {
     transport: siphon_auth::telemetry::Transport,
     /// This pod as a sensor: the text channel's counters, for its heartbeat.
     sensor: Arc<siphon_auth::telemetry::SensorCounters>,
+    /// What `/v1/sensors` judges each axis against: targets and the
+    /// expected-sensor list, from `SIPHON_SENSORS_*` or declared defaults.
+    sensor_objectives: sensors_api::Objectives,
     /// Networks whose `X-Forwarded-For` is believed. Empty means the TCP peer
     /// is used directly — correct for a direct deployment, and the safe
     /// default because an unconfigured proxy must never grant header trust.
@@ -7620,6 +7623,29 @@ async fn main() {
         }),
     };
 
+    // Targets are what the Running page reads each axis against. An
+    // unparseable target is a startup error: a target the operator set and
+    // we silently replaced would judge the fleet against a number nobody
+    // chose.
+    let sensor_objectives = match sensors_api::Objectives::from_env() {
+        Ok(o) => {
+            tracing::info!(
+                source = %o.source,
+                expected = ?o.expected,
+                availability = o.availability,
+                coverage = o.coverage,
+                precision = o.precision,
+                canary = o.canary,
+                "sensor objectives"
+            );
+            o
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "sensor objectives misconfigured; refusing to start");
+            std::process::exit(1);
+        }
+    };
+
     let state = Arc::new(AppState {
         api_key_hash,
         api_key_hash_secondary,
@@ -7627,6 +7653,7 @@ async fn main() {
         keys,
         transport,
         sensor: Arc::new(siphon_auth::telemetry::SensorCounters::new()),
+        sensor_objectives,
         trusted_proxies,
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
         rate_limit,
