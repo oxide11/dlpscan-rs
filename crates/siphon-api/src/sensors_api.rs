@@ -18,7 +18,9 @@ use axum::Json;
 use chrono::{DateTime, Duration, Utc};
 use deadpool_postgres::Pool;
 use serde::{Deserialize, Serialize};
-use siphon_auth::telemetry::Heartbeat;
+use siphon_auth::telemetry::{
+    judge_canary, Canary, Enforcement, FailMode, Heartbeat, Posture, CANARY_TEXT,
+};
 
 use crate::{AppState, AuthContextExt, ErrorResponse, RequireReportTelemetry, RequireViewStatus};
 
@@ -74,6 +76,19 @@ fn validate(hb: &Heartbeat, now: DateTime<Utc>) -> Result<(), String> {
             return Err("last_scan_at is in the future".into());
         }
     }
+    if let Some(p) = &hb.posture {
+        if p.degraded
+            .as_ref()
+            .is_some_and(|d| d.is_empty() || d.len() > 256)
+        {
+            return Err("posture.degraded must be 1–256 characters when present".into());
+        }
+    }
+    if let Some(c) = &hb.canary {
+        if c.missing.len() > 16 || c.missing.iter().any(|m| m.len() > 128) {
+            return Err("canary.missing is implausibly large".into());
+        }
+    }
     Ok(())
 }
 
@@ -95,14 +110,29 @@ pub async fn insert_heartbeat(
     };
     let c = &hb.counters;
     let as_i64 = |v: Option<u64>| v.map(|n| i64::try_from(n).unwrap_or(i64::MAX));
+    let (p_finding, p_indet, p_degraded) = match &hb.posture {
+        Some(p) => (
+            Some(p.on_finding.as_str()),
+            Some(p.on_indeterminate.as_str()),
+            p.degraded.as_deref(),
+        ),
+        None => (None, None, None),
+    };
+    let (canary_passed, canary_detail) = match &hb.canary {
+        Some(c) => (Some(c.passed), Some(c.detail())),
+        None => (None, None),
+    };
     let row = client
         .query_one(
             "INSERT INTO sensor_heartbeats \
              (sensor, instance, api_key_id, version, started_at, interval_secs, \
               listener_tls, listener_mtls, listener_cert_not_after, db_mode, db_client_authenticated, \
               scans_total, scans_with_findings, findings_total, errors_total, bytes_scanned, \
-              duration_ms_sum, last_scan_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) \
+              duration_ms_sum, last_scan_at, \
+              posture_on_finding, posture_on_indeterminate, posture_degraded, \
+              unscanned_total, canary_passed, canary_detail) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,\
+                     $19,$20,$21,$22,$23,$24) \
              RETURNING received_at",
             &[
                 &hb.sensor,
@@ -123,6 +153,12 @@ pub async fn insert_heartbeat(
                 &as_i64(c.bytes_scanned),
                 &as_i64(c.duration_ms_sum),
                 &hb.last_scan_at,
+                &p_finding,
+                &p_indet,
+                &p_degraded,
+                &as_i64(c.unscanned_total),
+                &canary_passed,
+                &canary_detail,
             ],
         )
         .await?;
@@ -188,6 +224,8 @@ pub async fn self_report_loop(state: Arc<AppState>, interval: std::time::Duratio
             transport: state.transport.clone(),
             counters: state.sensor.snapshot(),
             last_scan_at: state.sensor.last_scan_at(),
+            posture: Some(own_posture(&state)),
+            canary: Some(own_canary(&state)),
         };
         match insert_heartbeat(&pool, &hb, None).await {
             Ok(_) => failing = false,
@@ -199,6 +237,68 @@ pub async fn self_report_loop(state: Arc<AppState>, interval: std::time::Duratio
             }
         }
         tokio::time::sleep(interval).await;
+    }
+}
+
+/// siphon-api is advisory — it answers a scan and the caller decides — so its
+/// posture is about degradation only: a pipeline stage an operator toggled
+/// off through `PATCH /v1/pipeline/stages` is the one way this sensor does
+/// less than its whole job while still answering.
+fn own_posture(state: &AppState) -> Posture {
+    let mut disabled: Vec<String> = state
+        .disabled_stages
+        .read()
+        .map(|g| g.iter().cloned().collect())
+        .unwrap_or_default();
+    disabled.sort();
+    Posture {
+        on_finding: Enforcement::Advisory,
+        on_indeterminate: FailMode::NotApplicable,
+        degraded: (!disabled.is_empty())
+            .then(|| format!("pipeline stages disabled: {}", disabled.join(", "))),
+    }
+}
+
+/// The canary through this pod's own scan path, with the same overrides and
+/// disabled stages a caller's scan would get — that is the point: it tests
+/// the configuration in force, not the scanner in the abstract.
+fn own_canary(state: &AppState) -> Canary {
+    let ov = state
+        .live_overrides
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let disabled = state
+        .disabled_stages
+        .read()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let mut config = siphon_core::scanner::ScanConfig {
+        disabled_patterns: Some(ov.disabled_patterns.clone()),
+        pattern_field_overrides: Some(ov.pattern_field_overrides.clone()),
+        runtime_patterns: Some(ov.runtime_patterns.clone()),
+        pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
+        list_bindings: Some(ov.list_bindings.clone()),
+        max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+        ..Default::default()
+    };
+    if disabled.contains("min_confidence") {
+        config.min_confidence = 0.0;
+    }
+    if disabled.contains("require_context") {
+        config.require_context = false;
+    }
+    match siphon_core::scanner::scan_text_with_config(CANARY_TEXT, &config) {
+        Ok(matches) => {
+            let found: Vec<&str> = matches.iter().map(|m| m.category.as_str()).collect();
+            judge_canary(&found)
+        }
+        // A scan that errors found nothing: that is a failed canary, and
+        // the detail says why rather than leaving "missing everything".
+        Err(e) => {
+            tracing::warn!(error = %e, "own canary scan failed");
+            judge_canary::<&str>(&[])
+        }
     }
 }
 
@@ -919,8 +1019,20 @@ mod tests {
             },
             counters: Counters::default(),
             last_scan_at: None,
+            posture: None,
+            canary: None,
         };
         assert!(validate(&hb, now).is_ok());
+        hb.posture = Some(Posture {
+            on_finding: Enforcement::Block,
+            on_indeterminate: FailMode::Closed,
+            degraded: Some(String::new()),
+        });
+        assert!(
+            validate(&hb, now).is_err(),
+            "an empty degraded reason is a bug, not a state"
+        );
+        hb.posture = None;
         hb.sensor = "siphon fs".into();
         assert!(validate(&hb, now).is_err());
         hb.sensor = "siphon-fs".into();

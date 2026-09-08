@@ -604,9 +604,11 @@ async fn handle_scan(req: &IcapRequest, state: &AppState, client_ip: &str) -> Ve
         return response_204();
     }
 
-    // Non-text bodies pass through unscanned
+    // Non-text bodies pass through unscanned — and are counted as such, so
+    // the coverage figure says how much of what reached this sensor it read.
     let text = String::from_utf8_lossy(&req.body);
     if text.trim().is_empty() || looks_binary(&req.body) {
+        state.sensor.record_unscanned();
         emit_audit(
             req.method.as_str(),
             client_ip,
@@ -618,6 +620,7 @@ async fn handle_scan(req: &IcapRequest, state: &AppState, client_ip: &str) -> Ve
     }
 
     if req.body_truncated {
+        state.sensor.record_unscanned();
         tracing::warn!(
             client_ip = %client_ip,
             stored = req.body.len(),
@@ -816,7 +819,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 started_at: siphon_auth::chrono::Utc::now(),
                 transport: siphon_auth::telemetry::Transport::default(),
             };
-            match siphon_auth::telemetry::reporter::Reporter::new(&settings, identity, sensor) {
+            // Posture: `block` stops the traffic itself; `flag` annotates and
+            // lets the proxy pass it, which is audit-only from here. A scan
+            // that errors returns 500 to the proxy, whose own bypass setting
+            // then decides — so there is no fail mode of this sensor's own.
+            // The canary runs the fixture through the same scan this sensor
+            // gives a body, at the same confidence floor.
+            let probe: siphon_auth::telemetry::reporter::Probe = Arc::new(move || {
+                use siphon_auth::telemetry::{judge_canary, Enforcement, FailMode, Posture};
+                let config = ScanConfig {
+                    min_confidence,
+                    ..Default::default()
+                };
+                let canary =
+                    match scan_text_with_config(siphon_auth::telemetry::CANARY_TEXT, &config) {
+                        Ok(m) => {
+                            judge_canary(&m.iter().map(|m| m.category.as_str()).collect::<Vec<_>>())
+                        }
+                        Err(_) => judge_canary::<&str>(&[]),
+                    };
+                siphon_auth::telemetry::reporter::Observation {
+                    posture: Posture {
+                        on_finding: match action {
+                            IcapAction::Block => Enforcement::Block,
+                            IcapAction::Flag => Enforcement::Annotate,
+                        },
+                        on_indeterminate: FailMode::NotApplicable,
+                        degraded: None,
+                    },
+                    canary: Some(canary),
+                }
+            });
+            match siphon_auth::telemetry::reporter::Reporter::new(
+                &settings, identity, sensor, probe,
+            ) {
                 Ok(r) => {
                     info!(endpoint = %settings.url, "telemetry enabled");
                     tokio::spawn(r.run());
@@ -908,5 +944,32 @@ async fn accept_loop(listener: TcpListener, state: Arc<AppState>) {
                 tracing::warn!(error = %e, "icap: accept error");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The canary fixture and its expected categories live in siphon-auth,
+    /// which cannot scan. This is the consumer's test of the generator: the
+    /// fixture, scanned as a body would be at the default confidence floor,
+    /// must produce every planted category — so a pattern rename fails a
+    /// build here rather than every heartbeat in production.
+    #[test]
+    fn the_canary_fixture_passes_through_the_real_scanner() {
+        let config = ScanConfig {
+            min_confidence: 0.6,
+            ..Default::default()
+        };
+        let matches = scan_text_with_config(siphon_auth::telemetry::CANARY_TEXT, &config)
+            .expect("canary text scans");
+        let found: Vec<&str> = matches.iter().map(|m| m.category.as_str()).collect();
+        let canary = siphon_auth::telemetry::judge_canary(&found);
+        assert!(
+            canary.passed,
+            "canary missing {:?}; scanner produced {:?}",
+            canary.missing, found
+        );
     }
 }

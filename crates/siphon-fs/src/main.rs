@@ -406,6 +406,48 @@ fn sanitize_tenant_id(s: &str) -> Option<String> {
     }
 }
 
+/// The canary through this sensor's whole path: the fixture written to a
+/// `.txt` file in the same temp dir an upload lands in, read back through
+/// the extractor registry, scanned with the overrides in force. Returns the
+/// categories found; a failure at any step returns none, which the judge
+/// reads as every planted category missing.
+fn fs_canary(
+    overrides: &std::sync::RwLock<LiveOverrides>,
+    temp_dir: Option<&std::path::Path>,
+) -> Vec<String> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("siphon-fs-canary-").suffix(".txt");
+    let tmp = match temp_dir {
+        Some(dir) => builder.tempfile_in(dir),
+        None => builder.tempfile(),
+    };
+    let Ok(mut tmp) = tmp else {
+        return Vec::new();
+    };
+    if std::io::Write::write_all(&mut tmp, siphon_auth::telemetry::CANARY_TEXT.as_bytes()).is_err()
+    {
+        return Vec::new();
+    }
+    let path = tmp.path().to_string_lossy().into_owned();
+    let Ok(extract) = siphon::extractors::extract_text(&path) else {
+        return Vec::new();
+    };
+    let ov = overrides.read().unwrap_or_else(|e| e.into_inner()).clone();
+    let config = ScanConfig {
+        disabled_patterns: Some(ov.disabled_patterns.clone()),
+        pattern_field_overrides: Some(ov.pattern_field_overrides.clone()),
+        runtime_patterns: Some(ov.runtime_patterns.clone()),
+        pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
+        list_bindings: Some(ov.list_bindings.clone()),
+        max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+        ..Default::default()
+    };
+    match scan_text_with_config(&extract.text, &config) {
+        Ok(m) => m.into_iter().map(|m| m.category).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 // ─── /scan handler ───────────────────────────────────────────────
 async fn scan(
     State(state): State<AppState>,
@@ -548,6 +590,9 @@ async fn scan(
                 error = %e,
                 "extraction failed"
             );
+            // Tried to read it and could not: an error for the sensor, not
+            // a scan and not a deliberate pass.
+            state.sensor.record_error();
             return JsonResponse(ScanResponse {
                 request_id,
                 filename,
@@ -583,6 +628,17 @@ async fn scan(
         // is empty but that warning is the whole point: it is the only signal
         // that unscanned sensitive content may be present. Dropping it here
         // would turn a flagged gap back into a silent one.
+        //
+        // Read in full and empty is a completed scan with nothing in it, so
+        // it counts as one; a warning means part of it was not read, which
+        // is the seen-but-not-read count instead.
+        if extract.warnings.is_empty() {
+            state
+                .sensor
+                .record_scan(0, file_len as u64, start.elapsed().as_millis() as u64);
+        } else {
+            state.sensor.record_unscanned();
+        }
         let mut warnings = extract.warnings.clone();
         warnings.push("no extractable text in file".to_string());
         return JsonResponse(ScanResponse {
@@ -629,6 +685,7 @@ async fn scan(
             scanner_cap = siphon_core::validation::MAX_INPUT_SIZE,
             "extracted text exceeds scanner limit; file not scanned"
         );
+        state.sensor.record_unscanned();
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
             JsonResponse(ScanResponse {
@@ -1362,6 +1419,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let sensor = Arc::new(siphon_auth::telemetry::SensorCounters::new());
     let db_configured = db_pool.is_some();
+    let state_overrides = Arc::new(std::sync::RwLock::new(live_overrides));
     let state = AppState {
         // Resolved before the listener binds, so a misconfigured deployment
         // fails at startup rather than serving an open upload endpoint.
@@ -1369,7 +1427,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sensor: sensor.clone(),
         admin_key_hash: resolve_admin_key_hash(),
         findings: Arc::new(FindingsRing::new(FINDINGS_RING_CAP)),
-        live_overrides: Arc::new(std::sync::RwLock::new(live_overrides)),
+        live_overrides: state_overrides.clone(),
         overrides_path: Arc::new(std::path::PathBuf::from(&overrides_path)),
         pod_id: pod_id.clone(),
         started_at_iso,
@@ -1411,7 +1469,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     database,
                 },
             };
-            match siphon_auth::telemetry::reporter::Reporter::new(&settings, identity, sensor) {
+            // Posture: advisory by design — the caller acts on the findings.
+            // The one way this sensor does less than its whole job while
+            // still answering is `SIPHON_ON_FORMAT_MISMATCH=ignore`, which
+            // keeps reading by content but stops recording that a file lied
+            // about what it was. The canary goes through extraction, not
+            // just the scanner: a fixture written to a file and read back
+            // the way an upload would be.
+            let mismatch_ignored = std::env::var("SIPHON_ON_FORMAT_MISMATCH")
+                .map(|v| v.trim().eq_ignore_ascii_case("ignore"))
+                .unwrap_or(false);
+            let canary_overrides = state_overrides.clone();
+            let canary_temp_dir = temp_dir.clone();
+            let probe: siphon_auth::telemetry::reporter::Probe = Arc::new(move || {
+                use siphon_auth::telemetry::{judge_canary, Enforcement, FailMode, Posture};
+                let canary =
+                    judge_canary(&fs_canary(&canary_overrides, canary_temp_dir.as_deref()));
+                siphon_auth::telemetry::reporter::Observation {
+                    posture: Posture {
+                        on_finding: Enforcement::Advisory,
+                        on_indeterminate: FailMode::NotApplicable,
+                        degraded: mismatch_ignored.then(|| {
+                            "SIPHON_ON_FORMAT_MISMATCH=ignore: a file that lies about its \
+                             format is read by content but the lie is not recorded"
+                                .to_string()
+                        }),
+                    },
+                    canary: Some(canary),
+                }
+            });
+            match siphon_auth::telemetry::reporter::Reporter::new(
+                &settings, identity, sensor, probe,
+            ) {
                 Ok(r) => {
                     info!(endpoint = %settings.url, "telemetry enabled");
                     tokio::spawn(r.run());

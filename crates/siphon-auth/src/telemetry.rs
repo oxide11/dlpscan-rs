@@ -65,10 +65,141 @@ pub struct Counters {
     pub findings_total: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub errors_total: Option<u64>,
+    /// Items the sensor saw and deliberately did not read — a body over the
+    /// size cap, a binary body, a file whose extracted text exceeds the
+    /// scanner limit. Distinct from an error (tried and failed): these are
+    /// the coverage gap, the traffic that passed without inspection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unscanned_total: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bytes_scanned: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms_sum: Option<u64>,
+}
+
+// ---------------------------------------------------------------------------
+// Posture: is the sensor doing its whole job?
+// ---------------------------------------------------------------------------
+//
+// Availability, in the ACEE sense, is deployed ∧ running ∧ operational. The
+// heartbeat's arrival proves running; this proves operational. A DLP agent
+// that silently fell back to audit-only is the canonical way a control that
+// "is up" stops protecting anything, and nothing on the running side of a
+// heartbeat can tell the difference without the sensor saying so.
+
+/// What the sensor does with a positive finding.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Enforcement {
+    /// The sensor itself stops the traffic.
+    Block,
+    /// The sensor marks the traffic and something downstream acts on the
+    /// mark — the milter stamps headers, ICAP in `flag` mode annotates. The
+    /// sensor cannot see whether anything downstream honours the mark.
+    Annotate,
+    /// The sensor answers a scan and the caller decides. siphon-api and
+    /// siphon-fs are advisory by design; this is a role, not a degradation.
+    Advisory,
+}
+
+impl Enforcement {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Enforcement::Block => "block",
+            Enforcement::Annotate => "annotate",
+            Enforcement::Advisory => "advisory",
+        }
+    }
+}
+
+/// What happens when the sensor cannot decide.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FailMode {
+    /// Uninspected traffic does not pass.
+    Closed,
+    /// Uninspected traffic passes.
+    Open,
+    /// The sensor has no verdict of its own to fail on: an advisory sensor
+    /// returns an error and the caller decides.
+    NotApplicable,
+}
+
+impl FailMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FailMode::Closed => "closed",
+            FailMode::Open => "open",
+            FailMode::NotApplicable => "not_applicable",
+        }
+    }
+}
+
+/// The sensor's operational mode, as configured, reported every beat so a
+/// change made at runtime — a pipeline stage toggled off — shows up within
+/// one interval.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Posture {
+    pub on_finding: Enforcement,
+    pub on_indeterminate: FailMode,
+    /// Why the sensor is doing less than its whole job, if it is. `None`
+    /// is full function.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub degraded: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Canary: does the deployed path still find what it is for?
+// ---------------------------------------------------------------------------
+//
+// Recall cannot be read from operational counts: a false negative is by
+// definition something nobody saw. The honest source is synthetic injection
+// on the live path, and the smallest form of that is a fixed text with
+// planted values, scanned through the deployed binary with its deployed
+// configuration once per beat. One fixture proves the path works; it does
+// not prove recall is high, and the console says so. The conformance matrix
+// at CI cadence is the wider net; this is the one that runs in production.
+
+/// The fixture. Two planted values with the context their patterns want,
+/// values that every validator accepts (`219-09-9999` is a well-formed SSN;
+/// the card number passes Luhn).
+pub const CANARY_TEXT: &str = "Siphon canary record. Employee SSN: 219-09-9999. \
+                               Corporate card number: 4111 1111 1111 1111.";
+
+/// The categories the fixture must produce. The consumer tests this against
+/// the real scanner, so a pattern rename fails a build rather than a beat.
+pub const CANARY_EXPECTED: [&str; 2] = ["North America - United States", "Credit Card Numbers"];
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Canary {
+    pub passed: bool,
+    /// Expected categories the scan did not produce. Empty when it passed.
+    #[serde(default)]
+    pub missing: Vec<String>,
+}
+
+impl Canary {
+    /// One line for the row and the console.
+    pub fn detail(&self) -> String {
+        if self.passed {
+            format!("found {}", CANARY_EXPECTED.join(" and "))
+        } else {
+            format!("missing {}", self.missing.join(", "))
+        }
+    }
+}
+
+/// Judge a canary scan by the categories it produced.
+pub fn judge_canary<S: AsRef<str>>(found: &[S]) -> Canary {
+    let missing: Vec<String> = CANARY_EXPECTED
+        .iter()
+        .filter(|want| !found.iter().any(|f| f.as_ref() == **want))
+        .map(|s| s.to_string())
+        .collect();
+    Canary {
+        passed: missing.is_empty(),
+        missing,
+    }
 }
 
 /// One heartbeat, as sent and as received.
@@ -87,6 +218,14 @@ pub struct Heartbeat {
     pub counters: Counters,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_scan_at: Option<DateTime<Utc>>,
+    /// Absent from a sensor built before posture was reported; the receiver
+    /// shows "not reported", never "enforcing".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub posture: Option<Posture>,
+    /// Absent when the sensor did not run one; the receiver shows recall as
+    /// unverified, never as passing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canary: Option<Canary>,
 }
 
 /// What to call this instance. The pod name under Kubernetes (`HOSTNAME`),
@@ -112,6 +251,7 @@ pub struct SensorCounters {
     scans_with_findings: AtomicU64,
     findings_total: AtomicU64,
     errors_total: AtomicU64,
+    unscanned_total: AtomicU64,
     bytes_scanned: AtomicU64,
     duration_ms_sum: AtomicU64,
     /// Unix seconds; 0 = never.
@@ -145,12 +285,20 @@ impl SensorCounters {
         self.errors_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Something the sensor saw and passed without reading: over a size
+    /// cap, a binary body, extracted text beyond the scanner limit. This is
+    /// the coverage denominator's other half — what was seen but not read.
+    pub fn record_unscanned(&self) {
+        self.unscanned_total.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn snapshot(&self) -> Counters {
         Counters {
             scans_total: Some(self.scans_total.load(Ordering::Relaxed)),
             scans_with_findings: Some(self.scans_with_findings.load(Ordering::Relaxed)),
             findings_total: Some(self.findings_total.load(Ordering::Relaxed)),
             errors_total: Some(self.errors_total.load(Ordering::Relaxed)),
+            unscanned_total: Some(self.unscanned_total.load(Ordering::Relaxed)),
             bytes_scanned: Some(self.bytes_scanned.load(Ordering::Relaxed)),
             duration_ms_sum: Some(self.duration_ms_sum.load(Ordering::Relaxed)),
         }
@@ -247,6 +395,18 @@ pub mod reporter {
         pub transport: Transport,
     }
 
+    /// What the sensor observes about itself at the moment of a beat:
+    /// its posture (which can change at runtime) and the result of running
+    /// the canary through its own scan path.
+    pub struct Observation {
+        pub posture: Posture,
+        pub canary: Option<Canary>,
+    }
+
+    /// Called on the beat task once per interval. It runs the canary, so it
+    /// costs a scan — milliseconds — and must not block on anything slower.
+    pub type Probe = Arc<dyn Fn() -> Observation + Send + Sync>;
+
     pub struct Reporter {
         client: reqwest::Client,
         endpoint: String,
@@ -254,6 +414,7 @@ pub mod reporter {
         interval: Duration,
         identity: Identity,
         counters: Arc<SensorCounters>,
+        probe: Probe,
     }
 
     impl Reporter {
@@ -261,6 +422,7 @@ pub mod reporter {
             settings: &Settings,
             identity: Identity,
             counters: Arc<SensorCounters>,
+            probe: Probe,
         ) -> Result<Self, String> {
             let mut builder = reqwest::Client::builder()
                 .use_rustls_tls()
@@ -307,10 +469,12 @@ pub mod reporter {
                 interval: settings.interval,
                 identity,
                 counters,
+                probe,
             })
         }
 
         fn heartbeat(&self) -> Heartbeat {
+            let observed = (self.probe)();
             Heartbeat {
                 sensor: self.identity.sensor.to_string(),
                 instance: self.identity.instance.clone(),
@@ -320,6 +484,8 @@ pub mod reporter {
                 transport: self.identity.transport.clone(),
                 counters: self.counters.snapshot(),
                 last_scan_at: self.counters.last_scan_at(),
+                posture: Some(observed.posture),
+                canary: observed.canary,
             }
         }
 
@@ -399,6 +565,55 @@ mod tests {
         assert_eq!(s.bytes_scanned, Some(300));
         assert_eq!(s.duration_ms_sum, Some(12));
         assert!(c.last_scan_at().is_some());
+        // Seen-but-not-read is its own count: neither a scan nor an error.
+        c.record_unscanned();
+        let s = c.snapshot();
+        assert_eq!(s.unscanned_total, Some(1));
+        assert_eq!(s.scans_total, Some(2));
+        assert_eq!(s.errors_total, Some(1));
+    }
+
+    #[test]
+    fn a_canary_passes_only_when_every_planted_category_is_found() {
+        let both = judge_canary(&["Credit Card Numbers", "North America - United States"]);
+        assert!(both.passed);
+        assert!(both.missing.is_empty());
+        assert_eq!(
+            both.detail(),
+            "found North America - United States and Credit Card Numbers"
+        );
+        let one = judge_canary(&["Credit Card Numbers", "Email Addresses"]);
+        assert!(!one.passed);
+        assert_eq!(
+            one.missing,
+            vec!["North America - United States".to_string()]
+        );
+        assert_eq!(one.detail(), "missing North America - United States");
+        let none: Canary = judge_canary::<String>(&[]);
+        assert_eq!(none.missing.len(), 2);
+    }
+
+    #[test]
+    fn posture_and_canary_are_absent_from_an_old_sensor_and_round_trip_from_a_new_one() {
+        // A sensor built before these fields existed sends neither; the
+        // receiver must not read that as "enforcing" or "passing".
+        let old = r#"{"sensor":"siphon-icap","instance":"p","version":"0.1.0",
+                      "started_at":"2026-09-08T00:00:00Z","interval_secs":30}"#;
+        let hb: Heartbeat = serde_json::from_str(old).unwrap();
+        assert!(hb.posture.is_none());
+        assert!(hb.canary.is_none());
+        let p = Posture {
+            on_finding: Enforcement::Annotate,
+            on_indeterminate: FailMode::Open,
+            degraded: None,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        assert_eq!(
+            json,
+            r#"{"on_finding":"annotate","on_indeterminate":"open"}"#
+        );
+        assert_eq!(Enforcement::Annotate.as_str(), "annotate");
+        assert_eq!(FailMode::NotApplicable.as_str(), "not_applicable");
     }
 
     #[test]
@@ -423,6 +638,8 @@ mod tests {
                 ..Default::default()
             },
             last_scan_at: None,
+            posture: None,
+            canary: None,
         };
         let json = serde_json::to_string(&hb).unwrap();
         assert!(!json.contains("\"listener\""));

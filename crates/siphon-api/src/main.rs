@@ -1588,11 +1588,13 @@ async fn scan(
         // other errors because it is the coverage gap — the measure of how
         // much traffic passed without inspection.
         let counts = if matches!(e, siphon_core::DlpError::InputTooLarge { .. }) {
+            state.sensor.record_unscanned();
             db::RollupCounts {
                 oversize_skipped: 1,
                 ..Default::default()
             }
         } else {
+            state.sensor.record_error();
             db::RollupCounts {
                 scan_errors: 1,
                 ..Default::default()
@@ -2059,6 +2061,11 @@ async fn scan_batch(
                 .metrics
                 .scan_errors_total
                 .fetch_add(1, Ordering::Relaxed);
+            if matches!(e, siphon_core::DlpError::InputTooLarge { .. }) {
+                state.sensor.record_unscanned();
+            } else {
+                state.sensor.record_error();
+            }
             tracing::error!(batch_id = %batch_id, item_id = %item.id, error = %e, "batch_item_scan_failed");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,

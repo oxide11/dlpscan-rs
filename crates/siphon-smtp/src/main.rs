@@ -692,8 +692,12 @@ async fn handle_connection(
                     let outcome = decide(&session, &config).await;
                     // Indeterminate means we did not finish looking — an
                     // error for the sensor's count, not a scan that found
-                    // nothing.
-                    if outcome.verdict == Verdict::Indeterminate {
+                    // nothing. Oversize is the one indeterminate cause that
+                    // is a limit rather than a failure: the message was seen
+                    // and deliberately not read, which is the coverage gap.
+                    if session.oversize {
+                        config.sensor.record_unscanned();
+                    } else if outcome.verdict == Verdict::Indeterminate {
                         config.sensor.record_error();
                     } else {
                         config.sensor.record_scan(
@@ -879,10 +883,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     database,
                 },
             };
+            // Posture: the milter annotates — it stamps the verdict and the
+            // MTA's rules act on the stamp — and it cannot see whether
+            // Postfix honours the header, so it never claims to block. Its
+            // fail mode is the one setting this whole service is organised
+            // around. The canary runs the fixture through the same scan a
+            // text part gets, at the same confidence floor.
+            let on_indeterminate = config.on_indeterminate;
+            let min_confidence = config.min_confidence;
+            let probe: siphon_auth::telemetry::reporter::Probe = Arc::new(move || {
+                use siphon_auth::telemetry::{judge_canary, Enforcement, FailMode, Posture};
+                let scan_config = ScanConfig {
+                    min_confidence,
+                    ..Default::default()
+                };
+                let canary = match scan_text_with_config(
+                    siphon_auth::telemetry::CANARY_TEXT,
+                    &scan_config,
+                ) {
+                    Ok(m) => {
+                        judge_canary(&m.iter().map(|m| m.category.as_str()).collect::<Vec<_>>())
+                    }
+                    Err(_) => judge_canary::<&str>(&[]),
+                };
+                siphon_auth::telemetry::reporter::Observation {
+                    posture: Posture {
+                        on_finding: Enforcement::Annotate,
+                        on_indeterminate: match on_indeterminate {
+                            OnIndeterminate::Deliver => FailMode::Open,
+                            OnIndeterminate::Defer | OnIndeterminate::Quarantine => {
+                                FailMode::Closed
+                            }
+                        },
+                        degraded: None,
+                    },
+                    canary: Some(canary),
+                }
+            });
             let reporter = siphon_auth::telemetry::reporter::Reporter::new(
                 &settings,
                 identity,
                 Arc::clone(&config.sensor),
+                probe,
             )?;
             tracing::info!(endpoint = %settings.url, "telemetry enabled");
             tokio::spawn(reporter.run());
