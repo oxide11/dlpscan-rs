@@ -473,8 +473,8 @@ GET  /v1/keys                   list keys, no secrets (?include_revoked=) (admin
 GET  /v1/keys/{id}              one key (admin)
 DELETE /v1/keys/{id}            revoke, soft and idempotent (admin)
 POST /v1/keys/{id}/rotate       new secret, same id; old secret valid for grace_seconds (default 1 d, max 7 d) (admin)
-POST /v1/sensors/heartbeat      a detector reporting in: identity, listener/database transport state, cumulative counters (Sensor role)
-GET  /v1/sensors                per detector and per instance: liveness, availability 24 h / 7 d, mTLS state per hop with cert days left, activity, analyst precision; plus `never_seen`
+POST /v1/sensors/heartbeat      a detector reporting in: identity, transport state, posture, cumulative counters, canary result (Sensor role)
+GET  /v1/sensors                schema 2: ACEE per sensor — availability, coverage, efficacy, efficiency, each a Reading against its target — plus per-instance detail, a program header (coverage against the matrix, evadex recall) and `never_seen`
 GET  /v1/metrics                scans_total, findings_total, scan_errors_total
 GET  /v1/db/health              Postgres pool state
 GET  /v1/lsh/history            paginated LSH query history from Postgres (?limit=&offset=&matched_only=)
@@ -494,33 +494,49 @@ Key env vars for siphon-api:
 | `SIPHON_API_KEY_ROLE` | admin | Role the **bootstrap** bearer key resolves to (`admin`/`analyst`/`responder`/`operator`/`viewer`). Defaults to `admin` so existing automation keeps working, and **warns at startup when unset** — a shared machine credential holding full admin is the first thing to narrow. An unknown value is a startup error, never a fallback. Issued keys carry their own role and ignore this |
 | `SIPHON_API_KEY_REFRESH_SECS` | 30 | How often the issued-key cache is reloaded from Postgres; bounds how late a revocation made on another pod takes effect here |
 | `SIPHON_TELEMETRY_INTERVAL_SECS` | 30 | How often this pod writes its own heartbeat row (it is a sensor too — the text channel) |
+| `SIPHON_SENSORS_TARGET_AVAILABILITY` / `_COVERAGE` / `_PRECISION` / `_CANARY` | 0.99 / 0.95 / 0.80 / 1.0 | What `/v1/sensors` judges each axis against. Fractions; the response says `defaults` or which were set. **Unparseable refuses to start** — a target the operator set and we silently replaced would judge the fleet against a number nobody chose |
+| `SIPHON_SENSORS_EXPECTED` | all four | Comma-separated sensors the deployment expects. Coverage against the matrix is measured over it; `never_seen` names its gaps |
 
 ### Sensors
 
 Every detector reports in: `POST /v1/sensors/heartbeat` on an interval with
 its identity, its transport state (listener TLS/mTLS and certificate expiry;
-database mode and whether a client certificate was presented) and cumulative
-counters. siphon-api writes its own row in-process. `GET /v1/sensors` answers
-the operator's three questions — up? talking securely? catching things? —
-from the rows alone (`crates/siphon-api/src/sensors_api.rs`; every judgement
-is a pure, tested function):
+database mode and whether a client certificate was presented), its
+**posture** (what it does with a finding; what happens when it cannot
+decide; why it is degraded, if it is), cumulative counters including
+`unscanned_total` (seen and deliberately not read — the coverage gap), and
+a **canary** result (a fixed fixture scanned through its own deployed path,
+once per beat). siphon-api writes its own row in-process.
 
-| Figure | Derived from |
+`GET /v1/sensors` reads the rows back as **ACEE** — Availability, Coverage,
+Efficacy, Efficiency — per sensor, each axis a `Reading` with numerator,
+denominator, target and gap, from `crates/siphon-api/src/sensors_api.rs`;
+every judgement is a pure, tested function. The vocabulary is the
+performance lens from *Inside the Adversary's Loop* (Noun, 2026);
+`docs/architecture/acee.md` says what each axis means here and what it
+cannot yet read. Three rules: unmeasured is absent, never zero; four axes,
+never an average; every figure shows its working.
+
+| Axis | Derived from |
 |---|---|
-| liveness | last heartbeat within 3 intervals → healthy; within 24 h → stale; else gone (listed for 7 d) |
-| availability 24 h / 7 d | heartbeat slots received ÷ slots expected while the instance existed in the window; capped at 1; **no figure, not 0 %, when nothing was expected yet** |
-| mTLS per hop | listener: mutual → ok, TLS-only → warn, plaintext → off, cert < 14 d → warn, expired → off. Database: client cert → ok, `require` → warn, `disable` → off. A hop the sensor lacks is n/a and never counts against it; overall is the worst applicable |
-| activity | counter deltas (max − min) per `(instance, started_at)` segment, summed — so a restart mid-window loses nothing; absent counters stay absent |
-| precision | analyst verdicts on `findings` by `source_pod`, last 7 d |
-| `never_seen` | the four expected sensors minus those ever heard from — rendered as an absence, not omitted |
+| availability | deployed ∧ running ∧ operational. Running: last heartbeat within 3 intervals → healthy, within 24 h → stale, else gone; slots received ÷ expected, **no figure when nothing was expected yet**. Operational: posture judged — block ok, advisory ok by design, **annotate warns** (enforcement delegated, not verified here), fail-open warns, degraded warns naming why, not reported → unmeasured. Stale or audit-only is a gap whatever the ratio says |
+| coverage | at depth: scans ÷ (scans + unscanned), per sensor. Program-wide: expected sensors healthy and operational ÷ expected. Coverage against the environment is not knowable from here and the page says so in words |
+| efficacy | recall and precision **separately, never F1**. Recall: heartbeats whose canary passed ÷ heartbeats that ran one (proves the path, not the recall — the tile says so), plus the latest evadex run in the header. Precision: analyst verdicts on `findings` by `source_pod`, 7 d |
+| efficiency | compute (ms/scan, ms/MB, errors/scan), operator attention, false-positive count — and the three of the book's six it cannot measure, named |
+| mTLS per hop | listener: mutual → ok, TLS-only → warn, plaintext → off, cert < 14 d → warn, expired → off. Database: client cert → ok, `require` → warn, `disable` → off. A hop the sensor lacks is n/a; overall is the worst applicable |
+| activity | counter deltas (max − min) per `(instance, started_at)` segment, summed — a restart mid-window loses nothing; absent counters stay absent |
+| `never_seen` | expected sensors minus those ever heard from — rendered as an absence, not omitted, and counted against matrix coverage |
 
 Sensor side, in `siphon_auth::telemetry` (`telemetry-client` feature):
 `SIPHON_TELEMETRY_URL`, `_KEY` (a Sensor-role key), `_CA`, `_CLIENT_CERT` /
 `_CLIENT_KEY` (the sensor's own listener certificate — every service leaf
-carries `clientAuth` for this), `_INTERVAL_SECS`. Unset is a supported
-deployment: the sensor then shows as never seen, which is the truth.
-Half-set refuses to start. Heartbeats older than 30 days are pruned by the
-retention task.
+carries `clientAuth` for this), `_INTERVAL_SECS`. Each sensor supplies a
+`Probe` closure that reports its posture and runs the canary on the beat.
+The fixture and its expected categories live in siphon-auth; siphon-icap's
+test scans it with the real scanner, so a pattern rename fails a build, not
+a beat. Unset is a supported deployment: the sensor then shows as never
+seen, which is the truth. Half-set refuses to start. Heartbeats older than
+30 days are pruned by the retention task.
 | `SIPHON_ALLOW_UNAUTHENTICATED` | false | opt in to running with no auth — local dev only. **Refused on a non-loopback `SIPHON_BIND`**: the service exits at startup rather than serve an open API on a network interface |
 | `SIPHON_DEV_MODE` | false | marks a local-dev run; currently relaxes the production startup guard that otherwise requires `SIPHON_AUDIT_LOG_PATH` |
 | `SIPHON_TLS_CERT` / `SIPHON_TLS_KEY` | — | PEM paths for the listener. Half-set (one without the other) is a startup error |

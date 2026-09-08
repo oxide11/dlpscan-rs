@@ -23,6 +23,14 @@ export type PillarProps = {
   unit: string
   format?: 'pct' | 'count' | 'ratio'
   delta?: { pct: number; period: string } | null
+  /**
+   * What the objective specified, as a fraction of the denominator. Read
+   * against this rather than against a prior period: a figure can rise every
+   * week and still be short of what the obligation requires. Rendered as the
+   * target and the gap to it, in points, with the color following whether
+   * the gap is met.
+   */
+  target?: number | null
   polarity?: 'higher-better' | 'lower-better' | 'neutral'
   note?: string
   className?: string
@@ -68,6 +76,58 @@ function Delta({
   )
 }
 
+function Target({
+  target,
+  numerator,
+  denominator,
+  polarity,
+}: {
+  target: number
+  numerator: number
+  denominator: number
+  polarity: NonNullable<PillarProps['polarity']>
+}) {
+  const value = denominator === 0 ? null : numerator / denominator
+  const gapPts = value === null ? null : (value - target) * 100
+  const met =
+    gapPts === null
+      ? null
+      : polarity === 'lower-better'
+        ? gapPts <= 1e-9
+        : gapPts >= -1e-9
+  return (
+    <p
+      className={cn(
+        'text-t5 tabular-nums',
+        met === null ? 'text-ink-faint' : met ? 'text-brand' : 'text-attn',
+      )}
+    >
+      target {polarity === 'lower-better' ? '≤' : '≥'} {(target * 100).toFixed(target * 100 % 1 === 0 ? 0 : 1)}%
+      {gapPts !== null && (
+        <>
+          {' · '}
+          {met
+            ? 'met'
+            : Math.abs(gapPts) < 0.05
+              ? // A gap that rounds to nothing in points is still a gap; say it
+                // in counts, which is what 1 failed canary in 2,100 actually is.
+                `${Math.ceil(Math.abs(target * denominator - numerator))} short of target`
+              : `${Math.abs(gapPts).toFixed(1)} pts short`}
+        </>
+      )}
+    </p>
+  )
+}
+
+/** 1 decimal, except that a fraction short of 1 must never print as 100.0%:
+ * 2,099 / 2,100 is 99.95%, and rounding it up is the lie the fraction below
+ * the headline exists to prevent. */
+function pctOf(numerator: number, denominator: number) {
+  const v = (numerator / denominator) * 100
+  const one = v.toFixed(1)
+  return one === '100.0' && numerator !== denominator ? `${v.toFixed(2)}%` : `${one}%`
+}
+
 export function Pillar({
   label,
   numerator,
@@ -75,6 +135,7 @@ export function Pillar({
   unit,
   format = 'pct',
   delta,
+  target,
   polarity = 'higher-better',
   note,
   className,
@@ -89,7 +150,7 @@ export function Pillar({
   } else if (format === 'ratio') {
     headline = denominator === 0 ? '—' : (numerator / denominator).toFixed(2)
   } else {
-    headline = denominator === 0 ? '—' : `${((numerator / denominator) * 100).toFixed(1)}%`
+    headline = denominator === 0 ? '—' : pctOf(numerator, denominator)
   }
 
   return (
@@ -122,8 +183,13 @@ export function Pillar({
       </div>
 
       {note && <p className="text-t5 text-ink-muted">{note}</p>}
-      {!unverified && delta === null && (
-        <p className="text-t5 text-ink-faint">no comparable prior period</p>
+      {/* A target is the reference; a prior period is only a reference when
+          there is no target. Unverified has neither: nothing to compare. */}
+      {!unverified && typeof target === 'number' && denominator !== null ? (
+        <Target target={target} numerator={numerator} denominator={denominator} polarity={polarity} />
+      ) : (
+        !unverified &&
+        delta === null && <p className="text-t5 text-ink-faint">no comparable prior period</p>
       )}
     </div>
   )

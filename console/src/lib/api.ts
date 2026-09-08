@@ -126,8 +126,10 @@ export interface Me {
   tenant?: string
 }
 
-/* Sensors — `GET /v1/sensors`. Every figure here is derived server-side from
- * heartbeat rows; the console renders, it does not judge. */
+/* Sensors — `GET /v1/sensors`, schema 2: ACEE per sensor. Every figure here
+ * is derived server-side from heartbeat rows and judged there against a
+ * target; the console renders a judgement and shows its working, it does not
+ * make one. */
 
 export type Liveness = 'healthy' | 'stale' | 'gone'
 export type HopState = 'not_applicable' | 'ok' | 'warn' | 'off'
@@ -150,14 +152,92 @@ export interface Activity {
   scans_with_findings?: number
   findings?: number
   errors?: number
+  /** Seen and passed without reading. Absent from a sensor that predates the count. */
+  unscanned?: number
   bytes?: number
   avg_duration_ms?: number
-  detection_rate?: number
 }
 
 export interface Windowed<T> {
   h24: T
   d7: T
+}
+
+/** met / gap are judged against a target; no_target is a figure with nothing
+ * to judge it by; unmeasured is absence — never a fake pass, never a fake fail. */
+export type AxisState = 'met' | 'gap' | 'no_target' | 'unmeasured'
+
+export interface Reading {
+  value: number | null
+  numerator: number | null
+  denominator: number | null
+  target: number | null
+  /** value − target; negative is short. */
+  gap: number | null
+  state: AxisState
+  /** What the fraction is, in words. */
+  basis: string
+}
+
+export type Enforcement = 'block' | 'annotate' | 'advisory'
+export type FailMode = 'closed' | 'open' | 'not_applicable'
+
+export interface Posture {
+  on_finding: Enforcement
+  on_indeterminate: FailMode
+  degraded?: string
+}
+
+export type OperationalState = 'ok' | 'warn' | 'not_reported'
+
+export interface OperationalReport {
+  state: OperationalState
+  detail: string
+  posture?: Posture
+}
+
+export interface CanaryLast {
+  passed: boolean
+  detail: string
+  at: string
+}
+
+export interface Verdicts {
+  reviewed: number
+  true_positives: number
+  false_positives: number
+  precision: number | null
+}
+
+export interface Acee {
+  availability: {
+    running: Liveness
+    beats: Windowed<Reading>
+    operational: OperationalReport
+    state: AxisState
+  }
+  coverage: {
+    at_depth: Windowed<Reading>
+    state: AxisState
+    note: string
+  }
+  efficacy: {
+    canary: Windowed<Reading>
+    last_canary?: CanaryLast
+    precision: Reading
+    verdicts: Verdicts | null
+    state: AxisState
+    note: string
+  }
+  efficiency: {
+    ms_per_scan_24h?: number
+    ms_per_mb_24h?: number
+    errors_per_scan_24h?: number
+    reviewed_7d?: number
+    false_positives_7d?: number
+    measured: string[]
+    unmeasured: string[]
+  }
 }
 
 export interface SensorInstance {
@@ -172,31 +252,52 @@ export interface SensorInstance {
   liveness: Liveness
   stale_for_secs: number
   availability: Windowed<Ratio>
+  operational: OperationalReport
   transport: { listener: HopReport; database: HopReport; overall: HopState }
   activity: Windowed<Activity>
+  last_canary?: CanaryLast
   last_scan_at: string | null
 }
 
 export interface SensorReport {
   sensor: string
   liveness: Liveness
+  acee: Acee
   instances: SensorInstance[]
   availability: Windowed<Ratio>
   transport_overall: HopState
   activity: Windowed<Activity>
-  verdicts: {
-    reviewed: number
-    true_positives: number
-    false_positives: number
-    precision: number | null
-  } | null
   last_scan_at: string | null
 }
 
+export interface Objectives {
+  expected: string[]
+  availability: number
+  coverage: number
+  precision: number
+  canary: number
+  /** "defaults", or the variables that overrode them. */
+  source: string
+}
+
+export interface ProgramReport {
+  /** Expected sensors healthy and operational ÷ expected. */
+  matrix_coverage: Reading
+  adversarial?: {
+    recall: Reading
+    runs: number
+    last_run_at: string
+    scanner_label?: string
+  }
+}
+
 export interface SensorsReport {
+  schema_version: number
   generated_at: string
+  objectives: Objectives
+  program: ProgramReport
   sensors: SensorReport[]
-  /** Expected by every deployment, never heard from. */
+  /** Expected by this deployment, never heard from. */
   never_seen: string[]
 }
 
