@@ -52,7 +52,7 @@ export const C2: ConsoleId = {
     { to: '/assurance', label: 'Assurance', question: 'Can I prove any of this?' },
     { to: '/settings', label: 'Settings', question: 'How is it wired?' },
   ],
-  // sibling: added when the IR routes land.
+  sibling: { name: 'IR', to: '/ir', why: 'Investigate findings — triage, cases, evidence' },
 }
 
 /** IR — investigate. The same eight-question discipline, a responder's day. */
