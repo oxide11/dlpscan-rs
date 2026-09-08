@@ -6,17 +6,71 @@ import { Kbd, MOD_KEY } from './mono'
 import { BannerStack, type BannerSpec } from './banner'
 import { useCommandPalette } from './command-palette'
 
-/** Eight routes. Each is a question an operator asks. */
-export const NAV = [
-  { to: '/', label: 'Overview', question: 'Is it healthy, and what needs me?' },
-  { to: '/findings', label: 'Findings', question: 'What did it catch?' },
-  { to: '/scan', label: 'Scan', question: 'What would it do with this?' },
-  { to: '/patterns', label: 'Patterns', question: 'What can it detect?' },
-  { to: '/policies', label: 'Policies', question: 'What are we telling it to do?' },
-  { to: '/running', label: 'Running', question: 'What is actually running right now?' },
-  { to: '/assurance', label: 'Assurance', question: 'Can I prove any of this?' },
-  { to: '/settings', label: 'Settings', question: 'How is it wired?' },
-] as const
+/**
+ * One shell, two consoles.
+ *
+ * C2 and IR are the same product seen through opposite verbs — operate vs
+ * investigate (docs/wireframes/IR-vs-C2.md). They share the token layer, every
+ * primitive, the API client and the palette; what actually differs is the nav
+ * and who is reading it. So the difference lives here, in a prop, rather than
+ * in a second copy of the design system that would drift within weeks.
+ */
+export interface NavItem {
+  to: string
+  label: string
+  /** Shown as the link's title, and matched by the command palette. */
+  question: string
+}
+
+export interface ConsoleId {
+  /** Shown beside the mark. */
+  name: string
+  /** Root path for this console — the logo links here. */
+  home: string
+  nav: readonly NavItem[]
+  /**
+   * The other console, for the header switcher.
+   *
+   * Optional, and omitted until the sibling's routes actually exist — a nav
+   * entry that 404s teaches operators to distrust the nav, which is a worse
+   * outcome than the switcher arriving one release later.
+   */
+  sibling?: { name: string; to: string; why: string }
+}
+
+/** C2 — operate. Eight routes, each a question an operator asks. */
+export const C2: ConsoleId = {
+  name: 'Siphon',
+  home: '/',
+  nav: [
+    { to: '/', label: 'Overview', question: 'Is it healthy, and what needs me?' },
+    { to: '/findings', label: 'Findings', question: 'What did it catch?' },
+    { to: '/scan', label: 'Scan', question: 'What would it do with this?' },
+    { to: '/patterns', label: 'Patterns', question: 'What can it detect?' },
+    { to: '/policies', label: 'Policies', question: 'What are we telling it to do?' },
+    { to: '/running', label: 'Running', question: 'What is actually running right now?' },
+    { to: '/assurance', label: 'Assurance', question: 'Can I prove any of this?' },
+    { to: '/settings', label: 'Settings', question: 'How is it wired?' },
+  ],
+  // sibling: added when the IR routes land.
+}
+
+/** IR — investigate. The same eight-question discipline, a responder's day. */
+export const IR: ConsoleId = {
+  name: 'Siphon IR',
+  home: '/ir',
+  nav: [
+    { to: '/ir', label: 'Respond', question: 'What needs me now?' },
+    { to: '/ir/queue', label: 'Queue', question: "What's waiting to be triaged?" },
+    { to: '/ir/cases', label: 'Cases', question: 'What am I working?' },
+    { to: '/ir/analyze', label: 'Analyze', question: 'What is this thing?' },
+    { to: '/ir/correlate', label: 'Correlate', question: 'What else is connected?' },
+    { to: '/ir/evidence', label: 'Evidence', question: 'Can I hand this over?' },
+    { to: '/ir/handoffs', label: 'Handoffs', question: 'What did I escalate?' },
+    { to: '/ir/account', label: 'Account', question: 'My profile and preferences' },
+  ],
+  sibling: { name: 'C2', to: '/', why: 'Operate Siphon — patterns, policies, pods' },
+}
 
 function useTheme() {
   const [theme, setTheme] = React.useState<'light' | 'dark'>(
@@ -54,18 +108,24 @@ function Logo() {
 }
 
 export function AppShell({
+  console: id,
   banners = [],
+  /** Queue depth is the only number allowed in the nav. */
+  queueDepth = 0,
   children,
 }: {
+  console: ConsoleId
   banners?: BannerSpec[]
+  queueDepth?: number
   children: React.ReactNode
 }) {
   const { theme, toggle } = useTheme()
   const { open } = useCommandPalette()
   const [navOpen, setNavOpen] = React.useState(false)
 
-  // Queue depth is the only number in the nav.
-  const queueDepth = 0
+  // The nav entry the queue count belongs to: the one that answers "what is
+  // waiting for me". Different route per console, same meaning.
+  const countedRoute = id === IR ? '/ir/queue' : '/'
 
   return (
     <div className="flex min-h-dvh flex-col bg-page">
@@ -85,10 +145,22 @@ export function AppShell({
           ☰
         </button>
 
-        <Link to="/" className="flex items-center gap-2 no-underline">
+        <Link to={id.home} className="flex items-center gap-2 no-underline">
           <Logo />
-          <span className="text-t3 font-semibold text-ink">Siphon</span>
+          <span className="text-t3 font-semibold text-ink">{id.name}</span>
         </Link>
+
+        {/* The consoles are two lenses on one dataset, so crossing between
+            them is navigation, not a context switch to be hidden in a menu. */}
+        {id.sibling && (
+          <Link
+            to={id.sibling.to}
+            title={id.sibling.why}
+            className="ml-1 rounded-1 border border-line px-1.5 py-0.5 text-t5 text-ink-muted no-underline hover:border-line-strong hover:text-ink"
+          >
+            {id.sibling.name} ↗
+          </Link>
+        )}
 
         <button
           type="button"
@@ -120,17 +192,19 @@ export function AppShell({
           style={{ width: 'var(--nav-width)' }}
         >
           <ul className="flex flex-col gap-px p-2">
-            {NAV.map((n) => (
+            {id.nav.map((n) => (
               <li key={n.to}>
                 <Link
                   to={n.to}
                   title={n.question}
                   onClick={() => setNavOpen(false)}
                   className="flex items-center justify-between rounded-1 px-2 py-1.5 text-t4 text-ink-soft no-underline hover:bg-hover hover:text-ink [&.active]:bg-hover [&.active]:font-medium [&.active]:text-ink"
-                  activeOptions={{ exact: n.to === '/' }}
+                  activeOptions={{ exact: n.to === id.home }}
                 >
                   {n.label}
-                  {n.to === '/' && queueDepth > 0 && <Badge tone="count">{queueDepth}</Badge>}
+                  {n.to === countedRoute && queueDepth > 0 && (
+                    <Badge tone="count">{queueDepth}</Badge>
+                  )}
                 </Link>
               </li>
             ))}

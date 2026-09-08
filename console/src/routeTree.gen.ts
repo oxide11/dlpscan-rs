@@ -9,86 +9,92 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as AssuranceRouteImport } from './routes/assurance'
-import { Route as FindingsRouteImport } from './routes/findings'
-import { Route as PatternsRouteImport } from './routes/patterns'
-import { Route as PoliciesRouteImport } from './routes/policies'
-import { Route as RunningRouteImport } from './routes/running'
-import { Route as ScanRouteImport } from './routes/scan'
-import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as C2RouteImport } from './routes/_c2'
+import { Route as C2IndexRouteImport } from './routes/_c2/index'
+import { Route as C2AssuranceRouteImport } from './routes/_c2/assurance'
+import { Route as C2FindingsRouteImport } from './routes/_c2/findings'
+import { Route as C2PatternsRouteImport } from './routes/_c2/patterns'
+import { Route as C2PoliciesRouteImport } from './routes/_c2/policies'
+import { Route as C2RunningRouteImport } from './routes/_c2/running'
+import { Route as C2ScanRouteImport } from './routes/_c2/scan'
+import { Route as C2SettingsRouteImport } from './routes/_c2/settings'
 
-const IndexRoute = IndexRouteImport.update({
+const C2Route = C2RouteImport.update({
+  id: '/_c2',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const C2IndexRoute = C2IndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => C2Route,
 } as any)
-const AssuranceRoute = AssuranceRouteImport.update({
+const C2AssuranceRoute = C2AssuranceRouteImport.update({
   id: '/assurance',
   path: '/assurance',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => C2Route,
 } as any)
-const FindingsRoute = FindingsRouteImport.update({
+const C2FindingsRoute = C2FindingsRouteImport.update({
   id: '/findings',
   path: '/findings',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => C2Route,
 } as any)
-const PatternsRoute = PatternsRouteImport.update({
+const C2PatternsRoute = C2PatternsRouteImport.update({
   id: '/patterns',
   path: '/patterns',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => C2Route,
 } as any)
-const PoliciesRoute = PoliciesRouteImport.update({
+const C2PoliciesRoute = C2PoliciesRouteImport.update({
   id: '/policies',
   path: '/policies',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => C2Route,
 } as any)
-const RunningRoute = RunningRouteImport.update({
+const C2RunningRoute = C2RunningRouteImport.update({
   id: '/running',
   path: '/running',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => C2Route,
 } as any)
-const ScanRoute = ScanRouteImport.update({
+const C2ScanRoute = C2ScanRouteImport.update({
   id: '/scan',
   path: '/scan',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => C2Route,
 } as any)
-const SettingsRoute = SettingsRouteImport.update({
+const C2SettingsRoute = C2SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => C2Route,
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/assurance': typeof AssuranceRoute
-  '/findings': typeof FindingsRoute
-  '/patterns': typeof PatternsRoute
-  '/policies': typeof PoliciesRoute
-  '/running': typeof RunningRoute
-  '/scan': typeof ScanRoute
-  '/settings': typeof SettingsRoute
+  '/': typeof C2IndexRoute
+  '/assurance': typeof C2AssuranceRoute
+  '/findings': typeof C2FindingsRoute
+  '/patterns': typeof C2PatternsRoute
+  '/policies': typeof C2PoliciesRoute
+  '/running': typeof C2RunningRoute
+  '/scan': typeof C2ScanRoute
+  '/settings': typeof C2SettingsRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/assurance': typeof AssuranceRoute
-  '/findings': typeof FindingsRoute
-  '/patterns': typeof PatternsRoute
-  '/policies': typeof PoliciesRoute
-  '/running': typeof RunningRoute
-  '/scan': typeof ScanRoute
-  '/settings': typeof SettingsRoute
+  '/assurance': typeof C2AssuranceRoute
+  '/findings': typeof C2FindingsRoute
+  '/patterns': typeof C2PatternsRoute
+  '/policies': typeof C2PoliciesRoute
+  '/running': typeof C2RunningRoute
+  '/scan': typeof C2ScanRoute
+  '/settings': typeof C2SettingsRoute
+  '/': typeof C2IndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/assurance': typeof AssuranceRoute
-  '/findings': typeof FindingsRoute
-  '/patterns': typeof PatternsRoute
-  '/policies': typeof PoliciesRoute
-  '/running': typeof RunningRoute
-  '/scan': typeof ScanRoute
-  '/settings': typeof SettingsRoute
+  '/_c2': typeof C2RouteWithChildren
+  '/_c2/assurance': typeof C2AssuranceRoute
+  '/_c2/findings': typeof C2FindingsRoute
+  '/_c2/patterns': typeof C2PatternsRoute
+  '/_c2/policies': typeof C2PoliciesRoute
+  '/_c2/running': typeof C2RunningRoute
+  '/_c2/scan': typeof C2ScanRoute
+  '/_c2/settings': typeof C2SettingsRoute
+  '/_c2/': typeof C2IndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -103,7 +109,6 @@ export interface FileRouteTypes {
     | '/settings'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/'
     | '/assurance'
     | '/findings'
     | '/patterns'
@@ -111,99 +116,118 @@ export interface FileRouteTypes {
     | '/running'
     | '/scan'
     | '/settings'
+    | '/'
   id:
     | '__root__'
-    | '/'
-    | '/assurance'
-    | '/findings'
-    | '/patterns'
-    | '/policies'
-    | '/running'
-    | '/scan'
-    | '/settings'
+    | '/_c2'
+    | '/_c2/assurance'
+    | '/_c2/findings'
+    | '/_c2/patterns'
+    | '/_c2/policies'
+    | '/_c2/running'
+    | '/_c2/scan'
+    | '/_c2/settings'
+    | '/_c2/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  AssuranceRoute: typeof AssuranceRoute
-  FindingsRoute: typeof FindingsRoute
-  PatternsRoute: typeof PatternsRoute
-  PoliciesRoute: typeof PoliciesRoute
-  RunningRoute: typeof RunningRoute
-  ScanRoute: typeof ScanRoute
-  SettingsRoute: typeof SettingsRoute
+  C2Route: typeof C2RouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
+    '/_c2': {
+      id: '/_c2'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof C2RouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_c2/': {
+      id: '/_c2/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof C2IndexRouteImport
+      parentRoute: typeof C2Route
     }
-    '/assurance': {
-      id: '/assurance'
+    '/_c2/assurance': {
+      id: '/_c2/assurance'
       path: '/assurance'
       fullPath: '/assurance'
-      preLoaderRoute: typeof AssuranceRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof C2AssuranceRouteImport
+      parentRoute: typeof C2Route
     }
-    '/findings': {
-      id: '/findings'
+    '/_c2/findings': {
+      id: '/_c2/findings'
       path: '/findings'
       fullPath: '/findings'
-      preLoaderRoute: typeof FindingsRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof C2FindingsRouteImport
+      parentRoute: typeof C2Route
     }
-    '/patterns': {
-      id: '/patterns'
+    '/_c2/patterns': {
+      id: '/_c2/patterns'
       path: '/patterns'
       fullPath: '/patterns'
-      preLoaderRoute: typeof PatternsRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof C2PatternsRouteImport
+      parentRoute: typeof C2Route
     }
-    '/policies': {
-      id: '/policies'
+    '/_c2/policies': {
+      id: '/_c2/policies'
       path: '/policies'
       fullPath: '/policies'
-      preLoaderRoute: typeof PoliciesRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof C2PoliciesRouteImport
+      parentRoute: typeof C2Route
     }
-    '/running': {
-      id: '/running'
+    '/_c2/running': {
+      id: '/_c2/running'
       path: '/running'
       fullPath: '/running'
-      preLoaderRoute: typeof RunningRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof C2RunningRouteImport
+      parentRoute: typeof C2Route
     }
-    '/scan': {
-      id: '/scan'
+    '/_c2/scan': {
+      id: '/_c2/scan'
       path: '/scan'
       fullPath: '/scan'
-      preLoaderRoute: typeof ScanRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof C2ScanRouteImport
+      parentRoute: typeof C2Route
     }
-    '/settings': {
-      id: '/settings'
+    '/_c2/settings': {
+      id: '/_c2/settings'
       path: '/settings'
       fullPath: '/settings'
-      preLoaderRoute: typeof SettingsRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof C2SettingsRouteImport
+      parentRoute: typeof C2Route
     }
   }
 }
 
+interface C2RouteChildren {
+  C2AssuranceRoute: typeof C2AssuranceRoute
+  C2FindingsRoute: typeof C2FindingsRoute
+  C2PatternsRoute: typeof C2PatternsRoute
+  C2PoliciesRoute: typeof C2PoliciesRoute
+  C2RunningRoute: typeof C2RunningRoute
+  C2ScanRoute: typeof C2ScanRoute
+  C2SettingsRoute: typeof C2SettingsRoute
+  C2IndexRoute: typeof C2IndexRoute
+}
+
+const C2RouteChildren: C2RouteChildren = {
+  C2AssuranceRoute: C2AssuranceRoute,
+  C2FindingsRoute: C2FindingsRoute,
+  C2PatternsRoute: C2PatternsRoute,
+  C2PoliciesRoute: C2PoliciesRoute,
+  C2RunningRoute: C2RunningRoute,
+  C2ScanRoute: C2ScanRoute,
+  C2SettingsRoute: C2SettingsRoute,
+  C2IndexRoute: C2IndexRoute,
+}
+
+const C2RouteWithChildren = C2Route._addFileChildren(C2RouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  AssuranceRoute: AssuranceRoute,
-  FindingsRoute: FindingsRoute,
-  PatternsRoute: PatternsRoute,
-  PoliciesRoute: PoliciesRoute,
-  RunningRoute: RunningRoute,
-  ScanRoute: ScanRoute,
-  SettingsRoute: SettingsRoute,
+  C2Route: C2RouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

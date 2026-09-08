@@ -1,8 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Page, PageHeader, Card } from '../ui/layout'
-import { EmptyState } from '../ui/empty'
+import { Page, PageHeader, Card } from '../../ui/layout'
+import { EmptyState } from '../../ui/empty'
 
-export const Route = createFileRoute('/running')({ component: RunningRoute })
+export const Route = createFileRoute('/_c2/running')({ component: RunningRoute })
 
 /** "What is actually running right now?" */
 function RunningRoute() {

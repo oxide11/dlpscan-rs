@@ -1,8 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Page, PageHeader, Card } from '../ui/layout'
-import { EmptyState } from '../ui/empty'
+import { Page, PageHeader, Card } from '../../ui/layout'
+import { EmptyState } from '../../ui/empty'
 
-export const Route = createFileRoute('/policies')({ component: PoliciesRoute })
+export const Route = createFileRoute('/_c2/policies')({ component: PoliciesRoute })
 
 /** "What are we telling it to do?" */
 function PoliciesRoute() {

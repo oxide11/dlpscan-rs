@@ -1,25 +1,18 @@
 import { createRootRoute, Outlet } from '@tanstack/react-router'
-import { AppShell } from '../ui/app-shell'
 import { CommandPaletteProvider } from '../ui/command-palette'
 import { ToastProvider } from '../ui/toast'
 import { TooltipProvider } from '../ui/overlays'
-import { useGlobalCommands } from '../features/global-commands'
 
-function Shell() {
-  useGlobalCommands()
-  return (
-    <AppShell>
-      <Outlet />
-    </AppShell>
-  )
-}
-
+/**
+ * Providers only. The shell lives in each console's layout route (`_c2`, `ir`)
+ * because C2 and IR carry different navigation — see `ui/app-shell.tsx`.
+ */
 export const Route = createRootRoute({
   component: () => (
     <TooltipProvider delayDuration={200}>
       <ToastProvider>
         <CommandPaletteProvider>
-          <Shell />
+          <Outlet />
         </CommandPaletteProvider>
       </ToastProvider>
     </TooltipProvider>

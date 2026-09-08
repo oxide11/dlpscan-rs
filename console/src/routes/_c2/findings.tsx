@@ -2,19 +2,19 @@ import * as React from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import { api, type Finding } from '../lib/api'
-import { deriveFinding } from '../lib/severity'
-import { Page, PageHeader, Card, KeyValue } from '../ui/layout'
-import { DataTable } from '../ui/data-table'
-import { Severity } from '../ui/severity'
-import { Badge } from '../ui/badge'
-import { Button } from '../ui/button'
-import { Input, Select } from '../ui/field'
-import { MaskedValue, MonoValue } from '../ui/mono'
-import { EmptyState, AbsenceNote } from '../ui/empty'
-import { Sheet } from '../ui/overlays'
-import { useToast } from '../ui/toast'
-import { useCommandSource } from '../ui/command-palette'
+import { api, type Finding } from '../../lib/api'
+import { deriveFinding } from '../../lib/severity'
+import { Page, PageHeader, Card, KeyValue } from '../../ui/layout'
+import { DataTable } from '../../ui/data-table'
+import { Severity } from '../../ui/severity'
+import { Badge } from '../../ui/badge'
+import { Button } from '../../ui/button'
+import { Input, Select } from '../../ui/field'
+import { MaskedValue, MonoValue } from '../../ui/mono'
+import { EmptyState, AbsenceNote } from '../../ui/empty'
+import { Sheet } from '../../ui/overlays'
+import { useToast } from '../../ui/toast'
+import { useCommandSource } from '../../ui/command-palette'
 
 /** URL state, not component state — a pasted URL reproduces a colleague's view. */
 interface Search {
@@ -25,7 +25,7 @@ interface Search {
   selected?: string
 }
 
-export const Route = createFileRoute('/findings')({
+export const Route = createFileRoute('/_c2/findings')({
   validateSearch: (raw: Record<string, unknown>): Search => ({
     category: typeof raw.category === 'string' && raw.category ? raw.category : undefined,
     limit: Math.min(500, Math.max(25, Number(raw.limit) || 100)),

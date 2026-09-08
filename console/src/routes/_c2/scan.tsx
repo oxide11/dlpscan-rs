@@ -1,18 +1,18 @@
 import * as React from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useMutation } from '@tanstack/react-query'
-import { api, type ScanMatch } from '../lib/api'
-import { Page, PageHeader, Card } from '../ui/layout'
-import { Textarea, Field } from '../ui/field'
-import { Button } from '../ui/button'
-import { Severity } from '../ui/severity'
-import { derive } from '../lib/severity'
-import { Badge } from '../ui/badge'
-import { MonoValue, Kbd, MOD_KEY } from '../ui/mono'
-import { EmptyState } from '../ui/empty'
-import { useCommandSource } from '../ui/command-palette'
+import { api, type ScanMatch } from '../../lib/api'
+import { Page, PageHeader, Card } from '../../ui/layout'
+import { Textarea, Field } from '../../ui/field'
+import { Button } from '../../ui/button'
+import { Severity } from '../../ui/severity'
+import { derive } from '../../lib/severity'
+import { Badge } from '../../ui/badge'
+import { MonoValue, Kbd, MOD_KEY } from '../../ui/mono'
+import { EmptyState } from '../../ui/empty'
+import { useCommandSource } from '../../ui/command-palette'
 
-export const Route = createFileRoute('/scan')({ component: ScanRoute })
+export const Route = createFileRoute('/_c2/scan')({ component: ScanRoute })
 
 /** "What would it do with *this*?" */
 function ScanRoute() {

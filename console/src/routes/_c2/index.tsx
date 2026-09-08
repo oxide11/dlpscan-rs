@@ -1,13 +1,13 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { api } from '../lib/api'
-import { Page, PageHeader, Card } from '../ui/layout'
-import { Pillar } from '../ui/pillar'
-import { Badge } from '../ui/badge'
-import { Disclosure } from '../ui/disclosure'
-import { AbsenceNote, EmptyState } from '../ui/empty'
+import { api } from '../../lib/api'
+import { Page, PageHeader, Card } from '../../ui/layout'
+import { Pillar } from '../../ui/pillar'
+import { Badge } from '../../ui/badge'
+import { Disclosure } from '../../ui/disclosure'
+import { AbsenceNote, EmptyState } from '../../ui/empty'
 
-export const Route = createFileRoute('/')({ component: Overview })
+export const Route = createFileRoute('/_c2/')({ component: Overview })
 
 /**
  * "Is it healthy, and what needs me?"

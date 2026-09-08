@@ -1,8 +1,8 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Page, PageHeader, Card } from '../ui/layout'
-import { EmptyState } from '../ui/empty'
+import { Page, PageHeader, Card } from '../../ui/layout'
+import { EmptyState } from '../../ui/empty'
 
-export const Route = createFileRoute('/settings')({ component: SettingsRoute })
+export const Route = createFileRoute('/_c2/settings')({ component: SettingsRoute })
 
 /** "How is it wired?" */
 function SettingsRoute() {

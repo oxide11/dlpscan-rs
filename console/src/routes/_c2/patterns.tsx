@@ -1,14 +1,14 @@
 import * as React from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { api } from '../lib/api'
-import { Page, PageHeader, Card } from '../ui/layout'
-import { Input } from '../ui/field'
-import { Badge } from '../ui/badge'
-import { Disclosure } from '../ui/disclosure'
-import { AbsenceNote, EmptyState } from '../ui/empty'
+import { api } from '../../lib/api'
+import { Page, PageHeader, Card } from '../../ui/layout'
+import { Input } from '../../ui/field'
+import { Badge } from '../../ui/badge'
+import { Disclosure } from '../../ui/disclosure'
+import { AbsenceNote, EmptyState } from '../../ui/empty'
 
-export const Route = createFileRoute('/patterns')({
+export const Route = createFileRoute('/_c2/patterns')({
   validateSearch: (raw: Record<string, unknown>) => ({
     q: typeof raw.q === 'string' && raw.q ? raw.q : undefined,
   }),
