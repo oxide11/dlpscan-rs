@@ -39,6 +39,50 @@ independent, so a release block typically moves only the crates that actually
 
 - **feat(api): `GET /v1/me`** — caller identity, role, auth source and
   permission list, so a client can render only affordances that will work.
+---
+
+## 2026-09-08 — phone span correctness
+
+### siphon-core 2.9.1
+
+- **fix(core): `US Phone Number` no longer reports its leading separator.**
+  The pattern asserts "not glued to a preceding digit" by *consuming* a
+  non-digit, because the `regex` crate has no lookbehind. That character
+  landed inside the reported span and inside `Match::text`, so
+  `Phone: 613-859-6932` came back as `": 613-859-6932"`. Both
+  `redacted_text()` and `masked_text()` work off that text, so redaction
+  covered one or two characters that were never part of the value, and a
+  consumer masking by span over-masked identically.
+
+  Measured on 3,000 samples of the Canadian public-contact corpus, this
+  affected **2,310 of 2,310** phone findings. Exact-span agreement with the
+  corpus annotations goes 0% → 96.3%; the residual 3.7% is entirely the
+  corpus annotating an extension (`450-478-5960 ext. 8152`) as part of the
+  number, which Siphon deliberately does not.
+
+- **fix(core): a pattern may report a capture group instead of its whole
+  match.** When a regex declares capture group 1, that group is the reported
+  span; the full match still does the asserting. This is how the phone guard
+  keeps working without leaking into the span. No other pattern carries a
+  capturing group, so the remaining 571 stay on the cheaper `find_iter`
+  path — the choice is made per regex off `captures_len`, so a runtime regex
+  override is honoured too.
+
+- **fix(core): `E.164 Phone Number` specificity 0.40 → 0.35.** The
+  country-specific phone patterns are meant to win dedup ties against the
+  generic E.164 shape, and did — but only because the over-wide phone span
+  made them longer, which is dedup's *last* tiebreaker. With the spans now
+  identical every tiebreaker tied and the generic label won. The ordering is
+  stated in the specificity table rather than resting on a bug. No verdict
+  changes at the default `min_confidence` of 0.6: an E.164-only finding was
+  already below it at 0.40.
+
+  Known residual: `US NPI` (`\b[12]\d{9}\b`, Luhn-checked) also ties
+  `US Phone Number` at 0.40 and can now win on a 10-digit NANP number that
+  happens to pass the NPI check digit — 2 of 2,310 in the corpus sample.
+  Pre-existing whenever the phone sat at the start of a line; the span fix
+  makes it reachable mid-line. Deliberately not addressed here, as narrowing
+  NPI is a detection-policy change that wants its own measurement.
 
 ---
 
