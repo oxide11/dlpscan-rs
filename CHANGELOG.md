@@ -6,6 +6,42 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-09-08
+
+### siphon-api 2.11.0
+
+- **feat(api): proxy identity binds to an RBAC role.** `Remote-User` /
+  `Remote-Groups` from the authenticating proxy now decide the caller's role,
+  believed only when the TCP peer is in `SIPHON_TRUSTED_PROXIES`. nginx's
+  `/api/` gained an `auth_request` that accepts either a bearer key or an
+  Authelia session, so Authelia's per-group rules run for the first time.
+  Previously a valid bearer key resolved unconditionally to `Admin`, and the
+  proxy's rules for `^/api/...` never executed — the role model bound to
+  nothing.
+  - New `SIPHON_API_KEY_ROLE` (default `admin`, warns when unset) sets what a
+    bare bearer key resolves to. Existing automation is unaffected.
+  - New roles: `Responder` (incident response). New permissions: `UnmaskPii`,
+    `UnmaskPci`.
+  - An authenticated user whose groups map to nothing gets `Viewer`.
+  - **Action required:** set `SIPHON_TRUSTED_PROXIES` to your reverse proxy.
+    Without it no forwarded identity is trusted and every human caller falls
+    back to the bearer-key role.
+
+- **feat(api): matched values are redacted server-side.** `/v1/findings`,
+  `/v1/findings/pg` and `/v1/findings/export` now return `219•••••999` by
+  default for every caller. Values in the clear require `?unmask=pii,pci`
+  *and* the matching permission; each disclosure emits an `UNMASK` audit
+  event and a structured log line carrying actor, role, endpoint and count —
+  never the values. Category classification fails closed, so an unclassified
+  category is treated as PII.
+  - **Breaking for API consumers that read `matched_text`:** add
+    `?unmask=pii` (and hold `UnmaskPii`) to keep receiving values.
+
+- **feat(api): `GET /v1/me`** — caller identity, role, auth source and
+  permission list, so a client can render only affordances that will work.
+
+---
+
 ## 2026-09-07 — locale-signal survey
 
 ### siphon-core 2.9.0

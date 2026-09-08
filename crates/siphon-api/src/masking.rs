@@ -76,14 +76,6 @@ impl DataClass {
             Self::Public => None,
         }
     }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Pci => "pci",
-            Self::Pii => "pii",
-            Self::Public => "public",
-        }
-    }
 }
 
 /// Which classes the caller asked to see in the clear.
@@ -117,10 +109,6 @@ impl UnmaskRequest {
             }
         }
         req
-    }
-
-    pub fn any(self) -> bool {
-        self.pii || self.pci
     }
 
     fn wants(self, class: DataClass) -> bool {
