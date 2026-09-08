@@ -80,6 +80,7 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 mod db;
+mod masking;
 // The mail model lives in its own crate: siphon-smtp writes what this
 // service reads, and siphon-api has no lib target for it to depend on.
 use siphon_mail as messages;
@@ -2510,6 +2511,47 @@ struct MetricsResponse {
     patterns_loaded: usize,
     categories_loaded: usize,
     policies_loaded: usize,
+}
+
+/// Record that sensitive values were disclosed in the clear.
+///
+/// Emitted server-side, on the response path, so it cannot be skipped by a
+/// client that simply declines to report its own unmasking. Carries the count
+/// and the classes touched, not the values — an audit trail that quotes the
+/// secret is a second copy of the breach.
+fn audit_disclosure(ctx: &AuthContext, endpoint: &str, req: masking::UnmaskRequest, count: usize) {
+    if count == 0 {
+        return;
+    }
+    let mut classes = Vec::new();
+    if req.pii {
+        classes.push("pii");
+    }
+    if req.pci {
+        classes.push("pci");
+    }
+    tracing::info!(
+        actor = %ctx.actor,
+        role = ctx.role.label(),
+        auth_source = ctx.source.label(),
+        endpoint,
+        disclosed = count,
+        classes = ?classes,
+        "sensitive values disclosed"
+    );
+    if let Ok(event) = AuditEvent::new("UNMASK") {
+        emit_audit(
+            event
+                .with_action("unmask")
+                .with_outcome("disclosed")
+                .with_metadata("actor", serde_json::json!(ctx.actor))
+                .with_metadata("role", serde_json::json!(ctx.role.label()))
+                .with_metadata("auth_source", serde_json::json!(ctx.source.label()))
+                .with_metadata("endpoint", serde_json::json!(endpoint))
+                .with_metadata("classes", serde_json::json!(classes))
+                .with_metadata("count", serde_json::json!(count)),
+        );
+    }
 }
 
 /// Who the caller is, and what they may do.
@@ -5953,6 +5995,9 @@ struct PgFindingsQuery {
     limit: Option<i64>,
     offset: Option<i64>,
     category: Option<String>,
+    /// `pii`, `pci`, `all` — comma separated. Absent means fully masked,
+    /// which is the default for every caller regardless of role.
+    unmask: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -5993,6 +6038,7 @@ struct PgFindingsResponse {
 
 async fn list_pg_findings(
     _: RequireAdminAction,
+    AuthContextExt(ctx): AuthContextExt,
     headers: HeaderMap,
     Query(q): Query<PgFindingsQuery>,
     State(state): State<Arc<AppState>>,
@@ -6053,6 +6099,12 @@ async fn list_pg_findings(
         }
     };
 
+    // Masking is applied on the way out, keyed on the caller's role. Default
+    // is fully masked; a caller who wants values must ask via ?unmask= and
+    // hold the matching permission, and the ask is audited below.
+    let unmask = masking::UnmaskRequest::parse(q.unmask.as_deref());
+    let mut disclosed = 0usize;
+
     let findings: Vec<PgFinding> = rows
         .iter()
         .map(|r| {
@@ -6060,16 +6112,24 @@ async fn list_pg_findings(
             let scan_id: uuid::Uuid = r.get("scan_id");
             let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
             let reviewed_at: Option<chrono::DateTime<chrono::Utc>> = r.get("reviewed_at");
+            let category: String = r.get("category");
+            let raw: Option<String> = r.get("matched_text");
+
+            let decision = masking::apply(raw.as_deref(), &category, ctx.role, unmask);
+            if decision.disclosed {
+                disclosed += 1;
+            }
+
             PgFinding {
                 id: id.to_string(),
                 scan_id: scan_id.to_string(),
                 created_at: created_at.to_rfc3339(),
-                category: r.get("category"),
+                category,
                 sub_category: r.get("sub_category"),
                 confidence: r.get("confidence"),
                 span_start: r.get("span_start"),
                 span_end: r.get("span_end"),
-                matched_text: r.get("matched_text"),
+                matched_text: decision.text,
                 has_context: r.get("has_context"),
                 context_required: r.get("context_required"),
                 metadata: r.get("metadata"),
@@ -6079,6 +6139,8 @@ async fn list_pg_findings(
             }
         })
         .collect();
+
+    audit_disclosure(&ctx, "/v1/findings/pg", unmask, disclosed);
 
     let total: i64 = match client
         .query_one(
@@ -6263,14 +6325,22 @@ struct ExportQuery {
     to: Option<String>,
     /// Maximum rows to return (capped at 100,000)
     limit: Option<i64>,
+    /// See `PgFindingsQuery::unmask`. An export is the highest-risk
+    /// disclosure here — it writes values to a file that leaves the
+    /// application entirely — so it masks by default like everything else,
+    /// and an unmasked export is a single audit row naming the count.
+    unmask: Option<String>,
 }
 
 async fn findings_export(
     headers: HeaderMap,
+    AuthContextExt(ctx): AuthContextExt,
     Query(q): Query<ExportQuery>,
     State(state): State<Arc<AppState>>,
     _: RequireAdminAction,
 ) -> Response {
+    let unmask = masking::UnmaskRequest::parse(q.unmask.as_deref());
+    let mut disclosed = 0usize;
     let format = q.format.as_deref().unwrap_or("csv");
     let limit = q.limit.unwrap_or(EXPORT_MAX_ROWS).min(EXPORT_MAX_ROWS);
     let category = q.category.as_deref();
@@ -6350,13 +6420,19 @@ async fn findings_export(
             .map(|r| {
                 let id: uuid::Uuid = r.get("id");
                 let created_at: chrono::DateTime<chrono::Utc> = r.get("created_at");
+                let category: String = r.get("category");
+                let raw: Option<String> = r.get("matched_text");
+                let decision = masking::apply(raw.as_deref(), &category, ctx.role, unmask);
+                if decision.disclosed {
+                    disclosed += 1;
+                }
                 serde_json::json!({
                     "id": id.to_string(),
                     "created_at": created_at.to_rfc3339(),
-                    "category": r.get::<_, String>("category"),
+                    "category": category,
                     "sub_category": r.get::<_, Option<String>>("sub_category"),
                     "confidence": r.get::<_, f32>("confidence"),
-                    "matched_text": r.get::<_, Option<String>>("matched_text"),
+                    "matched_text": decision.text,
                     "has_context": r.get::<_, Option<bool>>("has_context"),
                     "source_pod": r.get::<_, Option<String>>("source_pod"),
                     "scanner_version": r.get::<_, Option<String>>("scanner_version"),
@@ -6366,6 +6442,7 @@ async fn findings_export(
             })
             .collect();
 
+        audit_disclosure(&ctx, "/v1/findings/export?format=json", unmask, disclosed);
         let body = serde_json::to_vec(&items).unwrap_or_default();
         let filename = format!("siphon-findings-{date_label}.json");
         return (
@@ -6394,7 +6471,14 @@ async fn findings_export(
         let category: String = r.get("category");
         let sub_category: Option<String> = r.get("sub_category");
         let confidence: f32 = r.get("confidence");
-        let matched_text: Option<String> = r.get("matched_text");
+        let matched_text: Option<String> = {
+            let raw: Option<String> = r.get("matched_text");
+            let d = masking::apply(raw.as_deref(), &category, ctx.role, unmask);
+            if d.disclosed {
+                disclosed += 1;
+            }
+            d.text
+        };
         let has_context: Option<bool> = r.get("has_context");
         let source_pod: Option<String> = r.get("source_pod");
         let scanner_version: Option<String> = r.get("scanner_version");
@@ -6423,6 +6507,7 @@ async fn findings_export(
         ));
     }
 
+    audit_disclosure(&ctx, "/v1/findings/export?format=csv", unmask, disclosed);
     let filename = format!("siphon-findings-{date_label}.csv");
     (
         [
@@ -6448,6 +6533,10 @@ struct FindingsQuery {
     severity: Option<String>,
     contains: Option<String>,
     since: Option<String>,
+    /// See `PgFindingsQuery::unmask`. Masking has to cover every endpoint
+    /// that returns a matched value — masking one and leaving another open
+    /// is not a partial control, it is no control.
+    unmask: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -6460,6 +6549,7 @@ struct FindingsResponse {
 
 async fn list_findings(
     _: RequireAdminAction,
+    AuthContextExt(ctx): AuthContextExt,
     headers: HeaderMap,
     Query(q): Query<FindingsQuery>,
     State(state): State<Arc<AppState>>,
@@ -6484,7 +6574,24 @@ async fn list_findings(
     );
 
     let cap = q.limit.unwrap_or(200).min(capacity);
-    let findings: Vec<FindingRecord> = filtered.into_iter().take(cap).cloned().collect();
+    let unmask = masking::UnmaskRequest::parse(q.unmask.as_deref());
+    let mut disclosed = 0usize;
+
+    let findings: Vec<FindingRecord> = filtered
+        .into_iter()
+        .take(cap)
+        .map(|f| {
+            let decision = masking::apply(Some(&f.text), &f.category, ctx.role, unmask);
+            if decision.disclosed {
+                disclosed += 1;
+            }
+            let mut f = f.clone();
+            f.text = decision.text.unwrap_or_default();
+            f
+        })
+        .collect();
+
+    audit_disclosure(&ctx, "/v1/findings", unmask, disclosed);
     let returned = findings.len();
     Json(FindingsResponse {
         total,

@@ -330,6 +330,36 @@ PCI, cannot change detection), `Operator`, `Viewer`. `GET /v1/me` reports the
 caller's role, how it was established, and the permission list; the console
 renders affordances from it, and every gate is re-checked server-side.
 
+### Masking
+
+**Matched values are redacted server-side by default, on every endpoint that
+returns one** — `/v1/findings`, `/v1/findings/pg`, `/v1/findings/export`.
+`crates/siphon-api/src/masking.rs` is the single place it happens.
+
+The console masking that predated this was cosmetic: the endpoints returned
+values in the clear, so the SSN was already in the JSON, in browser memory and
+in devtools. A mask over data the server already handed out is a courtesy, not
+a control — and it can never be audited, because the client can simply not
+report its own unmasking.
+
+| | |
+|---|---|
+| Default | fully redacted (`219•••••999` — first three, last three) for every caller, whatever the role |
+| Asking | `?unmask=pii`, `?unmask=pci`, `?unmask=pii,pci` (or `all`) |
+| Granting | the request succeeds only if the role holds `UnmaskPii` / `UnmaskPci`; otherwise the value stays redacted, no error |
+| Recording | a disclosure emits an `UNMASK` audit event and a structured log line with actor, role, endpoint, classes and **count** — never the values |
+
+`DataClass::of()` **fails closed**: a category nobody has classified is
+treated as PII. Adding a pattern category cannot widen what is visible as a
+side effect. Cardholder categories (`Credit Card Numbers`, `Card Track Data`,
+`PCI Sensitive Data`, …) need the separate `UnmaskPci`; classification
+markings (`Data Classification Labels` and friends) are `Public` and never
+redacted, since masking "CONFIDENTIAL" hides the finding's whole point.
+
+Holding the permission is not enough — a caller must also ask. So an ordinary
+page load discloses nothing and generates no audit noise, and every audit row
+means someone deliberately looked.
+
 ```
 GET  /health                    pod identity + liveness
 GET  /ready                     readiness probe

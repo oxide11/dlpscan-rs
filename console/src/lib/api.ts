@@ -2,9 +2,8 @@
  * siphon-api client.
  *
  * Auth is deliberately **not** handled here. Per the component contract, the
- * bearer token never touches `localStorage` — admin endpoints return
- * unredacted matched values, so an XSS in this console would be credential
- * theft against those same endpoints. Two supported deployments:
+ * bearer token never touches `localStorage` — an XSS in this console would
+ * otherwise be credential theft against the API. Two supported deployments:
  *
  *   1. The reverse proxy terminates auth and sets an httpOnly, SameSite=Strict
  *      cookie. `credentials: 'same-origin'` below is what carries it.
@@ -12,6 +11,12 @@
  *      after an interactive login. It dies with the tab.
  *
  * There is no third option, and nothing here writes to storage.
+ *
+ * Matched values arrive **redacted by default**. Masking is a server-side
+ * control keyed on the caller's role, not a UI courtesy — see
+ * `crates/siphon-api/src/masking.rs`. Passing `unmask` asks for values in the
+ * clear; the server grants it only if the role holds the permission, and
+ * records the disclosure either way.
  */
 
 let memoryToken: string | null = null
@@ -102,6 +107,14 @@ export interface FindingsPage {
   offset: number
 }
 
+/** Who the caller is, per `GET /v1/me`. */
+export interface Me {
+  actor: string
+  role: 'admin' | 'analyst' | 'responder' | 'operator' | 'viewer'
+  auth_source: 'proxy' | 'api_key' | 'open_mode'
+  permissions: string[]
+}
+
 export interface CategoryInfo {
   category: string
   pattern_count: number
@@ -183,8 +196,19 @@ export const api = {
 
   findingsRing: () => request<Finding[]>('/v1/findings'),
 
-  findingsPage: (p: { category?: string; limit?: number; offset?: number }) =>
-    request<FindingsPage>(`/v1/findings/pg${qs(p)}`),
+  me: () => request<Me>('/v1/me'),
+
+  /**
+   * `unmask` is `pii`, `pci` or `pii,pci`. Omitting it returns redacted
+   * values, which is the default for every caller whatever their role — the
+   * server decides, and an unmasked request is audited there.
+   */
+  findingsPage: (p: {
+    category?: string
+    limit?: number
+    offset?: number
+    unmask?: string
+  }) => request<FindingsPage>(`/v1/findings/pg${qs(p)}`),
 
   findingsStats: () => request<Record<string, unknown>>('/v1/findings/stats'),
 
@@ -198,6 +222,7 @@ export const api = {
     from?: string
     to?: string
     limit?: number
+    unmask?: string
   }) => `${BASE}/v1/findings/export${qs(p)}`,
 
   feedback: (id: string, verdict: 'tp' | 'fp' | 'unsure', note?: string) =>
