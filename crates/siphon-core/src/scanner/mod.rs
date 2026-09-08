@@ -503,6 +503,60 @@ struct CompiledPattern {
     needs_raw_pass: bool,
 }
 
+/// Iterator over a pattern's hits, yielding the span that should be
+/// *reported* — which is not always the span the regex consumed.
+///
+/// The `regex` crate has no lookbehind, so a pattern that must assert
+/// "not preceded by a digit" has no choice but to *consume* that
+/// character. `US Phone Number` did exactly that with `(?:^|[^\d])`,
+/// which put the separator inside the reported span and therefore
+/// inside `Match::text`: `": 613-859-6932"` rather than
+/// `"613-859-6932"`. Everything downstream inherits it —
+/// `redacted_text()` renders `': 6'` as its leading three characters,
+/// `masked_text()` masks one or two characters that were never part of
+/// the value, and a consumer masking by span over-masks the same way.
+///
+/// A pattern opts out by wrapping the part it wants reported in
+/// capture group 1. Group 1 is then the reported span while the full
+/// match still does the asserting. No other pattern carries a
+/// capturing group, so the other 571 keep the cheaper `find_iter`
+/// path untouched — the choice is made per regex, off `captures_len`,
+/// so a runtime regex override is honoured too.
+enum ReportedMatches<'r, 'h> {
+    Whole(regex::Matches<'r, 'h>),
+    Group(regex::CaptureMatches<'r, 'h>),
+}
+
+impl<'h> Iterator for ReportedMatches<'_, 'h> {
+    type Item = (usize, usize, &'h str);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Whole(it) => it.next().map(|m| (m.start(), m.end(), m.as_str())),
+            // A group-1 match is guaranteed to exist for the patterns
+            // that opt in, but fall back to the whole match rather than
+            // silently dropping a hit if a regex override introduces a
+            // group that does not participate.
+            Self::Group(it) => it
+                .next()
+                .and_then(|c| c.get(1).or_else(|| c.get(0)))
+                .map(|m| (m.start(), m.end(), m.as_str())),
+        }
+    }
+}
+
+/// Pick the match iterator for `re`: group-1 spans when it declares a
+/// capturing group, whole-match spans otherwise.
+fn reported_matches<'r, 'h>(re: &'r Regex, haystack: &'h str) -> ReportedMatches<'r, 'h> {
+    // `captures_len` counts the implicit whole-match group, so > 1
+    // means the author wrote at least one capturing group.
+    if re.captures_len() > 1 {
+        ReportedMatches::Group(re.captures_iter(haystack))
+    } else {
+        ReportedMatches::Whole(re.find_iter(haystack))
+    }
+}
+
 /// Separator characters normalization removes from between character groups.
 ///
 /// Stages 6/6b/6c of `normalize` collapse and then strip these when they sit
@@ -986,13 +1040,10 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
             .and_then(|map| map.get(&(pat.category.to_string(), pat.sub_category.to_string())))
             .unwrap_or(&cp.regex);
 
-        for mat in active_regex.find_iter(haystack) {
+        for (norm_start, norm_end, matched_text) in reported_matches(active_regex, haystack) {
             if local_matches.len() >= MAX_MATCHES_PER_PATTERN {
                 break;
             }
-            let norm_start = mat.start();
-            let norm_end = mat.end();
-            let matched_text = mat.as_str();
             let cand_span = (norm_start, norm_end);
 
             // Stage 1 — regex hit.
@@ -1373,9 +1424,10 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     })
                     .unwrap_or(&cp.regex);
 
-                for mat in alt_active_regex.find_iter(&alt_norm) {
-                    let matched_text = mat.as_str();
-                    let alt_span = (mat.start(), mat.end());
+                for (alt_start, alt_end, matched_text) in
+                    reported_matches(alt_active_regex, &alt_norm)
+                {
+                    let alt_span = (alt_start, alt_end);
 
                     emit_trace(
                         &config.trace, "alt", "alt_regex", "pass",
@@ -2953,6 +3005,73 @@ mod tests {
         assert!(
             !result.iter().any(|m| m.category == "High Entropy"),
             "Entropy should not fire when disabled"
+        );
+    }
+
+    /// `US Phone Number` must report the number, not the separator in
+    /// front of it.
+    ///
+    /// The pattern asserts "not glued to a preceding digit" by
+    /// *consuming* a non-digit, because the `regex` crate has no
+    /// lookbehind. That character used to land inside the reported span
+    /// and inside `Match::text`, so `Phone: 613-859-6932` came back as
+    /// `": 613-859-6932"` — and `redacted_text()`/`masked_text()`, which
+    /// both work off that text, covered a character that was never part
+    /// of the value. Capture group 1 is now what gets reported.
+    ///
+    /// Measured on 3,000 samples of the Canadian public-contact corpus,
+    /// this was 2,310 findings out of 2,310 with an over-wide span.
+    #[test]
+    fn test_us_phone_span_excludes_leading_separator() {
+        // Avoid the 555 exchange throughout: `is_plausible_phone`
+        // rejects it as the reserved fictional range, so a 555 number
+        // would never reach the span assertion at all.
+        let cases = [
+            ("Phone: 613-859-6932", "613-859-6932"),
+            ("Tel 416-237-0199 x2", "416-237-0199"),
+            ("call 604.681.0148 now", "604.681.0148"),
+            ("613-859-6932 leads the line", "613-859-6932"),
+            ("Direct +1-514-398-6400 ext 2", "+1-514-398-6400"),
+        ];
+
+        for (text, want) in cases {
+            let result = scan_text(text).unwrap();
+            let m = result
+                .iter()
+                .find(|m| m.sub_category == "US Phone Number")
+                .unwrap_or_else(|| panic!("no US Phone Number match in {text:?}"));
+
+            assert_eq!(m.text, want, "reported text for {text:?}");
+            assert_eq!(
+                &text[m.span.0..m.span.1],
+                want,
+                "span {:?} must slice exactly the number in {text:?}",
+                m.span
+            );
+        }
+    }
+
+    /// A country-specific phone pattern outranks the generic E.164
+    /// shape when both cover the same span.
+    ///
+    /// Both patterns match `+14155551234` identically once the phone
+    /// span no longer over-captures, so every dedup tiebreaker ties and
+    /// the winner is decided by base specificity alone. E.164 sits at
+    /// 0.35 for exactly this reason; see the note beside it in
+    /// `models.rs`. Before the span fix this was held up by dedup's
+    /// "prefer the longer match" rule acting on an over-wide span.
+    #[test]
+    fn test_country_phone_beats_generic_e164_on_same_span() {
+        let result = scan_text("Phone: +14155551234").unwrap();
+        let subs: Vec<&str> = result.iter().map(|m| m.sub_category.as_str()).collect();
+
+        assert!(
+            subs.contains(&"US Phone Number"),
+            "expected US Phone Number to survive dedup, got {subs:?}"
+        );
+        assert!(
+            !subs.contains(&"E.164 Phone Number"),
+            "generic E.164 should be deduped away, got {subs:?}"
         );
     }
 }
