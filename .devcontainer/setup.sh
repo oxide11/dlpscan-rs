@@ -35,12 +35,12 @@ if ! command -v k3d >/dev/null; then
     curl -sL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
 fi
 
-# ---- UI deps --------------------------------------------------------------
+# ---- Console deps ---------------------------------------------------------
 # pnpm is in the universal image but the lockfile hasn't been
 # installed against this workspace copy yet.
-if [[ -d ui && -f ui/package.json ]]; then
-    echo "▶ Installing UI deps (pnpm install --frozen-lockfile)…"
-    (cd ui && pnpm install --frozen-lockfile) || true
+if [[ -d console && -f console/package.json ]]; then
+    echo "▶ Installing console deps (pnpm install --frozen-lockfile)…"
+    (cd console && pnpm install --frozen-lockfile) || true
 fi
 
 # ---- Cargo dep cache warm --------------------------------------------------

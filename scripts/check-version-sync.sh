@@ -11,7 +11,7 @@
 #   * crates/siphon-fs/Cargo.toml     == Dockerfile.fs LABEL
 #                                     == values.yaml `fs.image.tag`
 #                                     == docker-compose.yml `siphon-fs:VER`
-#   * Cargo.toml (root `siphon`)      == ui/package.json `version`
+#   * Cargo.toml (root `siphon`)      == console/package.json `version`
 #                                     == Chart.yaml `appVersion`
 #
 # What this deliberately does NOT enforce: per-crate SemVer is the
@@ -131,16 +131,16 @@ smtp_compose_ver="$(awk -F: '/image:[[:space:]]+siphon-smtp:/{gsub(/[[:space:]]/
 check "  deploy/docker-compose.yml siphon-smtp"  "${smtp_ver}" "${smtp_compose_ver}"
 
 # ---------------------------------------------------------------------------
-# root siphon CLI + UI + Helm appVersion lockstep
+# root siphon CLI + console + Helm appVersion lockstep
 # ---------------------------------------------------------------------------
 # The root crate's version is the "headline" release label. Chart.yaml's
-# own comment pins appVersion to the root crate, and the UI ships
-# alongside the CLI so ui/package.json tracks it too.
+# own comment pins appVersion to the root crate, and the console ships
+# alongside the CLI so console/package.json tracks it too.
 root_ver="$(cargo_version Cargo.toml)"
 echo "siphon (root) ${root_ver}"
 
-ui_ver="$(awk -F\" '/^[[:space:]]*"version":/{print $4; exit}' ui/package.json)"
-check "  ui/package.json"                          "${root_ver}" "${ui_ver}"
+console_ver="$(awk -F\" '/^[[:space:]]*"version":/{print $4; exit}' console/package.json)"
+check "  console/package.json"                     "${root_ver}" "${console_ver}"
 
 chart_app_ver="$(awk -F\" '/^appVersion:/{print $2; exit}' deploy/helm/siphon/Chart.yaml)"
 check "  deploy/helm/siphon/Chart.yaml appVersion" "${root_ver}" "${chart_app_ver}"

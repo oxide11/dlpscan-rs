@@ -458,13 +458,18 @@ for the full pod inventory and deployment topology.
 | `siphon-launcher` | Local-dev process manager. Spawns siphon-api / siphon-fs from a terminal, inherits stdio, reaps + tombstones dead children. k8s users don't need it. |
 | `siphon` (this crate) | CLI + extractors + libraries shared by all the pods. |
 
-The **admin console** lives at
-[`docs/wireframes/siphon-c2.html`](docs/wireframes/siphon-c2.html) —
-a single-file React app that talks to every `/v1` endpoint above.
-Open it directly in a browser. Point it at one or more pods via the
-Pod Registry under Settings → Deployment; every surface (Findings,
-Patterns, Policies, Overrides history, Live Scan, FP Troubleshooter)
-reads live data from whatever's registered.
+The **analyst console** lives in [`console/`](console/) — a Vite +
+React SPA that talks to the `/v1` surface above. It is built into the
+reverse-proxy image (`deploy/nginx/Dockerfile`) and served at the origin
+root, so `docker compose --profile auth up --build` puts it on
+<http://localhost:8080/>. For local work, `cd console && pnpm dev`
+proxies `/api` to a siphon-api on port 8080.
+
+Its build contract — the four hard rules, the route table and every
+component signature — is [`console/docs/COMPONENTS.md`](console/docs/COMPONENTS.md).
+The original design prototypes are kept in
+[`docs/wireframes/`](docs/wireframes/) as reference, and are no longer
+what runs.
 
 ### Quickstart for the services
 
@@ -472,11 +477,10 @@ reads live data from whatever's registered.
 # terminal 1: the launcher
 cargo run -p siphon-launcher
 
-# then open docs/wireframes/siphon-c2.html in a browser
-# and click Start under Settings → Deployment → Local launcher
-# to spawn siphon-api + siphon-fs.
+# then, in another terminal:
+#   cd console && pnpm dev
 #
-# or start them directly:
+# or start the services directly:
 SIPHON_PORT=8080    cargo run -p siphon-api
 SIPHON_FS_BIND=127.0.0.1:8081 cargo run -p siphon-fs
 ```

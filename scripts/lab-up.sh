@@ -203,7 +203,7 @@ else
 fi
 
 printf '\n'
-printf 'Admin console served at http://localhost/ui/ (or open docs/wireframes/siphon-c2.html locally)\n'
+printf 'Analyst console served at http://localhost/ (built from console/)\n'
 printf 'If using the file:// version, set localStorage key:\n'
 printf "  c2:apiUrl = 'http://localhost/api'\n"
 printf '\n'

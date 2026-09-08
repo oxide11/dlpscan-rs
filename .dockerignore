@@ -15,14 +15,14 @@
 target/
 **/target/
 
-# --- UI build artifacts ---------------------------------------------------
-# The Next.js SPA is rebuilt inside deploy/nginx/Dockerfile via pnpm.
-# Sending the host's node_modules + .next blows the build context up
-# by hundreds of megabytes for files the build will replace anyway.
-ui/node_modules/
-ui/.next/
-ui/out/
-ui/.turbo/
+# --- Console build artifacts ----------------------------------------------
+# The console SPA is rebuilt inside deploy/nginx/Dockerfile via pnpm.
+# Sending the host's node_modules + dist blows the build context up by
+# hundreds of megabytes for files the build will replace anyway. The
+# lockfile and package.json are NOT excluded — the image installs with
+# --frozen-lockfile and needs both.
+console/node_modules/
+console/dist/
 
 # --- Version control ------------------------------------------------------
 .git/

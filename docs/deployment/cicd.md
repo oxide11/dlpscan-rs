@@ -48,7 +48,7 @@ cargo test --test evasion_test
 ```
 
 **Version sync** is the job most likely to surprise you: every place a
-version is declared — workspace crates, `ui/package.json`, the Helm
+version is declared — workspace crates, `console/package.json`, the Helm
 `appVersion` and image tags — must agree with the root `Cargo.toml`. A
 forgotten Helm tag lands as a red check, not a silent drift.
 

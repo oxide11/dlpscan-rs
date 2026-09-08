@@ -74,7 +74,7 @@ cargo build --release                          # default features
   `0001`–`0007`), findings/EDM/LSH/evadex endpoints, audit chain.
 - `crates/siphon-fs` — multipart file-scan service (PDF/Office/archives/…).
 - `crates/siphon-launcher` — loopback-only local-dev process manager.
-- `docs/wireframes/siphon-c2.html` — single-file React C2 UI.
+- `console/` — the analyst console (Vite + React). `docs/wireframes/siphon-c2.html` is the design prototype it was built from, kept for reference.
 - `deploy/k8s/lab/` — kind cluster manifests; `deploy/helm/siphon/` — prod chart.
 
 Full detail lives in `CLAUDE.md`.

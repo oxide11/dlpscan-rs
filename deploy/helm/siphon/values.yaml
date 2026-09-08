@@ -310,13 +310,14 @@ postgres:
       memory: 1Gi
 
 # ---------------------------------------------------------------------------
-# UI (Next.js SPA) — served from the nginx Deployment below
+# Console (the analyst SPA) — served from the nginx Deployment below
 # ---------------------------------------------------------------------------
-# There is no standalone `ui` section. The reverse-proxy image
-# produced by `deploy/nginx/Dockerfile` is a multi-stage build:
-# Node compiles the SPA, nginx serves it out of `/srv/ui/`. Scaling
-# the SPA and scaling the forward-auth proxy go together — one
-# image, one Deployment, one scale knob (`nginx.replicaCount`).
+# There is no standalone `console` section. The reverse-proxy image
+# produced by `deploy/nginx/Dockerfile` is a multi-stage build: Node
+# compiles the SPA from `console/`, nginx serves it at the origin root
+# out of `/srv/console/`. Scaling the SPA and scaling the forward-auth
+# proxy go together — one image, one Deployment, one scale knob
+# (`nginx.replicaCount`).
 
 # ---------------------------------------------------------------------------
 # authelia — OIDC + passkey front door
