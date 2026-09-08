@@ -197,15 +197,26 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
 
         // Contact Info
         "Email Address" => 0.90,
-        // NB: no entry for "E.164 Phone Number" — it intentionally uses
-        // DEFAULT_SPECIFICITY (0.40) like "US Phone Number" and
-        // "UK Phone Number", so the country-specific phone patterns win
-        // dedup ties over the generic E.164 shape. An earlier revision
-        // carried a dead "Phone Number (E.164)" => 0.70 key here that
-        // matched no pattern; raising E.164 above the country patterns
-        // makes the generic label win dedup and mislabels findings
-        // (caught by tests/detection_quality.rs), so the key was removed
-        // rather than renamed.
+        // The generic E.164 shape scores *below* DEFAULT_SPECIFICITY so
+        // the country-specific phone patterns ("US Phone Number",
+        // "UK Phone Number", both at 0.40) win dedup ties against it and
+        // the more informative label is the one reported.
+        //
+        // This used to be left implicit — every phone pattern sat at
+        // DEFAULT_SPECIFICITY and the tie was broken further down, by
+        // dedup's "prefer the longer match" rule. That only worked
+        // because `US Phone Number` over-captured its leading separator
+        // and was therefore always a character or two longer than the
+        // E.164 match covering the same number. Fixing that span (the
+        // regex now reports capture group 1) made the spans identical,
+        // every tiebreaker tie, and the generic label win — so the
+        // ordering is stated here rather than depending on a bug.
+        //
+        // An earlier revision carried a dead "Phone Number (E.164)" =>
+        // 0.70 key that matched no pattern; raising E.164 *above* the
+        // country patterns mislabels findings and is caught by
+        // tests/detection_quality.rs.
+        "E.164 Phone Number" => 0.35,
         "IPv4 Address" => 0.60,
         "IPv6 Address" => 0.80,
         "MAC Address" => 0.80,

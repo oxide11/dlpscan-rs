@@ -1828,7 +1828,13 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "North America - United States",
         sub_category: "US Phone Number",
-        regex: r"(?:^|[^\d])(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",
+        // The leading `(?:^|[^\d])` asserts "not glued to a preceding
+        // digit" by consuming that character — the `regex` crate has no
+        // lookbehind. Capture group 1 is what gets reported, so the
+        // guard still does its job without the separator landing in the
+        // span. Without the group, `Phone: 613-859-6932` reported
+        // `": 613-859-6932"` and redaction covered the colon too.
+        regex: r"(?:^|[^\d])((?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})\b",
         case_insensitive: false,
         specificity: 0.40,
         context_required: false,
