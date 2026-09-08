@@ -25,13 +25,24 @@ reason to break either.
   warning once at startup — a filter that quietly reverts to its defaults
   because a variable name moved is one that stops filtering mail while
   looking healthy
-- `siphon-mail` — **the one library in `crates/`**: message/part schema,
-  persistence and verdict reconciliation. It exists because two binaries need
-  the same model — siphon-smtp writes what siphon-api reads — and siphon-api
-  has no lib target to depend on; giving it one would link its whole axum
-  stack into a milter that serves no HTTP. Owns both its DDL (exported as
-  `MIGRATION_SQL`) and its DML, so a CHECK constraint and the Rust enum that
-  feeds it cannot drift apart in separate crates
+- `siphon-mail` — a library: message/part schema, persistence and verdict
+  reconciliation. It exists because two binaries need the same model —
+  siphon-smtp writes what siphon-api reads — and siphon-api has no lib target
+  to depend on; giving it one would link its whole axum stack into a milter
+  that serves no HTTP. Owns both its DDL (exported as `MIGRATION_SQL`) and
+  its DML, so a CHECK constraint and the Rust enum that feeds it cannot drift
+  apart in separate crates
+- `siphon-auth` — the other library, on the same precedent: service
+  identity. One Postgres connector (`db::DbTls` — `disable` / `require` /
+  `mtls`, the last presenting a client certificate and refusing to start
+  without one) and one listener builder (`server::ServerTls` — a service
+  certificate plus an optional client CA every peer must chain to). It
+  replaced three byte-identical copies of the TLS builder, each ending in
+  `.with_no_client_auth()`. API-key resolution lands here next
+  (`docs/architecture/api-keys.md`), for the same reason: siphon-api and
+  siphon-fs must resolve a bearer key identically. `tests/mtls.rs` performs
+  real handshakes against certificates from `scripts/dev/mkcerts.sh`, so the
+  generator is tested by the thing that consumes it
 
 Deployment assets live under `deploy/` (Dockerfiles, docker-compose, Helm
 chart, k8s manifests). Rulesets live in `rulesets/` as **YAML** files.
@@ -325,7 +336,33 @@ policy-mutating route **and** the raw finding/evadex read endpoints — those
 return unredacted matched values, so they are admin-only, not merely
 authenticated.
 
-Seven roles. `GET /v1/me` reports the caller's role, how it was established,
+### API keys
+
+Two kinds of bearer key. The **bootstrap** key is `SIPHON_API_KEY` from the
+environment: it resolves to `SIPHON_API_KEY_ROLE`, is labelled `bootstrap` in
+every audit row, and exists so a deployment can come up with no Postgres and
+an admin can issue the first real key. **Issued** keys live in the `api_keys`
+table (`crates/siphon-auth/src/keys.rs` owns the store, the cache and the
+migration): `sk_<id>_<secret>`, SHA-256 of the whole token at rest, shown
+exactly once by `POST /v1/keys` and by rotate. A key carries a role, an
+optional tenant, an owner, an expiry (default a year) and soft revocation —
+the row stays, because scans point at it via `scans.api_key_id`. Rotation
+keeps the id so attribution is continuous.
+
+Resolution order in `auth_middleware`: bootstrap first (so an issued key can
+never shadow it), then the store — one SHA-256 and one map read against a
+cache refreshed every `SIPHON_API_KEY_REFRESH_SECS` (30). Writes through this
+pod's `/v1/keys` hit the cache immediately; a revocation elsewhere is at most
+one interval late. **The cache keeps serving through a Postgres outage** and
+logs once: failing closed would turn every database blip into a scanning
+outage across every integration. Without Postgres there is no store, the
+bootstrap key is the only credential, and startup says so.
+
+A stored role label the binary does not know is refused with a 401 and an
+error-level log — deployment skew, not a caller mistake. Roles are the wire
+labels only (`Role::from_label`); IdP spellings are for `from_group`.
+
+Eight roles. `GET /v1/me` reports the caller's role, how it was established,
 and the permission list; the console renders affordances from it, and every
 gate is re-checked server-side.
 
@@ -337,7 +374,12 @@ gate is re-checked server-side.
 | `ResponderReadOnly` | ✓ | — | ✓ | ✓ | — | — |
 | `Auditor` | ✓ | — | — | — | — | — |
 | `Operator` | — | — | — | — | ✓ | — |
+| `Sensor` | — | — | — | — | — | — |
 | `Viewer` | — | — | — | — | — | — |
+
+`Sensor` is a machine role: a detector (siphon-fs, siphon-icap, siphon-smtp)
+reporting in. It holds `ReportTelemetry` and `ViewStatus` and nothing else —
+its key says what the sensor *is*, not what it may read.
 
 `Auditor` is the role to understand: it can never unmask, on request or
 otherwise. An auditor verifies that process was followed — what matched, when,
@@ -348,6 +390,13 @@ absolute.
 `ResponderReadOnly` keeps unmask and loses `ReviewAlerts`/`Scan`. Read-only
 means cannot *act*, not cannot *see* — a consultant should be able to work a
 case fully and still not move it.
+
+**Scan routes are gated.** `POST /scan` and `/scan/stream` need `Scan`,
+`/scan/batch` needs `BatchScan`. Until 2026-09-08 none of the three had any
+permission extractor — `Permission::Scan` was declared, tabulated and bound to
+nothing, so an `Auditor` could submit scans. The full design for per-caller
+keys, tenant binding and mTLS between every detector and the C2/IR/database is
+`docs/architecture/api-keys.md`.
 
 **Alert reads are gated on `ViewAlerts`, not `AdminAction`.** That older gate
 was correct only while those endpoints returned values in the clear; once
@@ -418,7 +467,14 @@ PATCH /v1/pipeline/stages       toggle a pipeline stage (admin)
 POST /v1/findings/prune         manual retention trigger — admin only
 POST /v1/overrides/apply        hot-reload PatternOverrides (no restart) (admin)
 GET  /v1/overrides/current      current PatternOverrides snapshot
-GET  /v1/me                     caller identity: actor, role, auth_source, permission list
+GET  /v1/me                     caller identity: actor, role, auth_source, permission list, key_id + tenant for an issued key
+POST /v1/keys                   issue a per-caller key — the ONE response that carries the secret (admin)
+GET  /v1/keys                   list keys, no secrets (?include_revoked=) (admin)
+GET  /v1/keys/{id}              one key (admin)
+DELETE /v1/keys/{id}            revoke, soft and idempotent (admin)
+POST /v1/keys/{id}/rotate       new secret, same id; old secret valid for grace_seconds (default 1 d, max 7 d) (admin)
+POST /v1/sensors/heartbeat      a detector reporting in: identity, listener/database transport state, cumulative counters (Sensor role)
+GET  /v1/sensors                per detector and per instance: liveness, availability 24 h / 7 d, mTLS state per hop with cert days left, activity, analyst precision; plus `never_seen`
 GET  /v1/metrics                scans_total, findings_total, scan_errors_total
 GET  /v1/db/health              Postgres pool state
 GET  /v1/lsh/history            paginated LSH query history from Postgres (?limit=&offset=&matched_only=)
@@ -435,10 +491,40 @@ Key env vars for siphon-api:
 | `SIPHON_PORT` | 8080 | |
 | `SIPHON_BIND` | 127.0.0.1 | |
 | `SIPHON_API_KEY` | — | **required**; empty counts as unset. Without it the service refuses to start |
-| `SIPHON_API_KEY_ROLE` | admin | Role a bare bearer key resolves to (`admin`/`analyst`/`responder`/`operator`/`viewer`). Defaults to `admin` so existing automation keeps working, and **warns at startup when unset** — a shared machine credential holding full admin is the first thing to narrow. An unknown value is a startup error, never a fallback |
+| `SIPHON_API_KEY_ROLE` | admin | Role the **bootstrap** bearer key resolves to (`admin`/`analyst`/`responder`/`operator`/`viewer`). Defaults to `admin` so existing automation keeps working, and **warns at startup when unset** — a shared machine credential holding full admin is the first thing to narrow. An unknown value is a startup error, never a fallback. Issued keys carry their own role and ignore this |
+| `SIPHON_API_KEY_REFRESH_SECS` | 30 | How often the issued-key cache is reloaded from Postgres; bounds how late a revocation made on another pod takes effect here |
+| `SIPHON_TELEMETRY_INTERVAL_SECS` | 30 | How often this pod writes its own heartbeat row (it is a sensor too — the text channel) |
+
+### Sensors
+
+Every detector reports in: `POST /v1/sensors/heartbeat` on an interval with
+its identity, its transport state (listener TLS/mTLS and certificate expiry;
+database mode and whether a client certificate was presented) and cumulative
+counters. siphon-api writes its own row in-process. `GET /v1/sensors` answers
+the operator's three questions — up? talking securely? catching things? —
+from the rows alone (`crates/siphon-api/src/sensors_api.rs`; every judgement
+is a pure, tested function):
+
+| Figure | Derived from |
+|---|---|
+| liveness | last heartbeat within 3 intervals → healthy; within 24 h → stale; else gone (listed for 7 d) |
+| availability 24 h / 7 d | heartbeat slots received ÷ slots expected while the instance existed in the window; capped at 1; **no figure, not 0 %, when nothing was expected yet** |
+| mTLS per hop | listener: mutual → ok, TLS-only → warn, plaintext → off, cert < 14 d → warn, expired → off. Database: client cert → ok, `require` → warn, `disable` → off. A hop the sensor lacks is n/a and never counts against it; overall is the worst applicable |
+| activity | counter deltas (max − min) per `(instance, started_at)` segment, summed — so a restart mid-window loses nothing; absent counters stay absent |
+| precision | analyst verdicts on `findings` by `source_pod`, last 7 d |
+| `never_seen` | the four expected sensors minus those ever heard from — rendered as an absence, not omitted |
+
+Sensor side, in `siphon_auth::telemetry` (`telemetry-client` feature):
+`SIPHON_TELEMETRY_URL`, `_KEY` (a Sensor-role key), `_CA`, `_CLIENT_CERT` /
+`_CLIENT_KEY` (the sensor's own listener certificate — every service leaf
+carries `clientAuth` for this), `_INTERVAL_SECS`. Unset is a supported
+deployment: the sensor then shows as never seen, which is the truth.
+Half-set refuses to start. Heartbeats older than 30 days are pruned by the
+retention task.
 | `SIPHON_ALLOW_UNAUTHENTICATED` | false | opt in to running with no auth — local dev only. **Refused on a non-loopback `SIPHON_BIND`**: the service exits at startup rather than serve an open API on a network interface |
 | `SIPHON_DEV_MODE` | false | marks a local-dev run; currently relaxes the production startup guard that otherwise requires `SIPHON_AUDIT_LOG_PATH` |
-| `SIPHON_TLS_CERT` / `SIPHON_TLS_KEY` | — | PEM paths |
+| `SIPHON_TLS_CERT` / `SIPHON_TLS_KEY` | — | PEM paths for the listener. Half-set (one without the other) is a startup error |
+| `SIPHON_TLS_CLIENT_CA` | — | PEM CA bundle. When set, every peer must present a certificate chaining to it or the handshake fails — the request never reaches the router. This is what makes the nginx hop **mutual**; without it TLS is encryption only, and startup says so at warn level. Meaningless (and refused) without the two above |
 | `SIPHON_CORS_ORIGINS` | none | comma-separated allowlist; `*` reflects any origin. Unset = **cross-origin denied** (default-deny) |
 | `SIPHON_ALLOW_PERMISSIVE_CORS` | false | dev-only opt-in to any-origin CORS when `SIPHON_CORS_ORIGINS` is unset (e.g. admin console from `file://`) |
 | `SIPHON_RATE_LIMIT` | 120 | req/min per IP |
@@ -452,8 +538,9 @@ Key env vars for siphon-api:
 | `SIPHON_POLICIES_DIR` | — | directory of *.yaml rulesets |
 | `SIPHON_ALLOWLIST_PATH` | — | JSON allowlist |
 | `SIPHON_DATABASE_URL` | — | Postgres (optional) |
-| `SIPHON_DATABASE_TLS` | require | `require` or `disable`. Findings rows carry matched sensitive values, so the Postgres hop is encrypted by default; `require` pins `sslmode=require` and verifies the server certificate |
+| `SIPHON_DATABASE_TLS` | require | `disable`, `require` or `mtls`. Findings rows carry matched sensitive values, so the Postgres hop is encrypted by default; `require` verifies the server certificate and presents a client certificate *if* the two variables below are set; **`mtls` refuses to start without them**. An unknown value is an error, never a weaker mode. One implementation for siphon-api, siphon-fs and siphon-smtp: `crates/siphon-auth/src/db.rs` |
 | `SIPHON_DATABASE_CA_FILE` | — | extra PEM CA bundle for a self-signed Postgres certificate |
+| `SIPHON_DATABASE_CLIENT_CERT` / `SIPHON_DATABASE_CLIENT_KEY` | — | the service's client identity to Postgres. `pg_hba.conf` (`deploy/postgres/pg_hba.conf`) requires it with `clientcert=verify-full`, so the certificate's **CN must be the database role** (`siphon`), not the service name — a wrong CN fails in a way that looks like a bad password. Setting one without the other is a startup error |
 | `SIPHON_FINDINGS_RETENTION_DAYS` | 90 | Days to retain findings (0 = keep forever) |
 | `SIPHON_ROLLUP_FLUSH_SECS` | 60 | How often aggregate scan counters are flushed to `scan_rollup`. Counters accumulate in memory between flushes, so a pod killed mid-window loses at most that much *counting* — findings themselves are unaffected |
 | `SIPHON_OVERRIDES_PATH` | — | PatternOverrides YAML (hot-reloadable) |
@@ -481,6 +568,13 @@ nothing):
 - `0007_evadex.sql` — evadex run + finding tables
 - `0008_tenant_id.sql` — tenant_id on scans + findings
 - `0009_scan_rollup.sql` — aggregate scan counters per (hour, tenant, channel)
+- `0011_feedback.sql` — analyst verdicts on findings
+- `0012_baselines.sql` — category baselines
+- `0013_api_keys.sql` — lives in `crates/siphon-auth/migrations/`, registered
+  here via `siphon_auth::keys::MIGRATION_SQL`. The `role` CHECK mirrors
+  `Role::label()`; a test in `keys_api.rs` asserts the two agree
+- `0014_attribution.sql` — `api_key_id` on scans and findings: the caller's
+  identity, where `api_key_hash` only ever recorded the server's own key
 - `0010_messages.sql` — lives in `crates/siphon-mail/migrations/` and is
   registered here via `siphon_mail::MIGRATION_SQL`. `messages` +
   `message_parts` for the mail path, plus
@@ -524,8 +618,9 @@ Env vars for postgres:
 | Variable | Default | Notes |
 |---|---|---|
 | `SIPHON_DATABASE_URL` | — | Postgres connection string (optional) |
-| `SIPHON_DATABASE_TLS` | require | `require` or `disable` (see above); applies to siphon-api and siphon-fs alike |
+| `SIPHON_DATABASE_TLS` | require | `disable`, `require` or `mtls` (see above); the same code in siphon-api, siphon-fs and siphon-smtp |
 | `SIPHON_DATABASE_CA_FILE` | — | extra PEM CA bundle for a self-signed Postgres certificate |
+| `SIPHON_DATABASE_CLIENT_CERT` / `SIPHON_DATABASE_CLIENT_KEY` | — | client identity to Postgres, CN = the database role (see above) |
 | `SIPHON_FINDINGS_RETENTION_DAYS` | 90 | Days to retain findings (0 = keep forever) |
 
 ## The console
@@ -587,6 +682,12 @@ One additional endpoint:
 POST /scan    multipart/form-data file upload → extraction → findings
 GET  /v1/findings
 ```
+
+TLS: `SIPHON_FS_TLS_CERT` / `SIPHON_FS_TLS_KEY` / `SIPHON_FS_TLS_CLIENT_CA`,
+with the same semantics as siphon-api's `SIPHON_TLS_*` — the prefix differs
+because siphon-launcher runs both from one environment and each presents its
+own identity. siphon-fs served no TLS at all before 2026-09-08 and relied on
+the mesh; without these it still does, and warns on a non-loopback bind.
 
 Max body: `SIPHON_FS_BODY_LIMIT_MB` (default 100 MB). Per-file streaming cap: `SIPHON_FS_MAX_FILE_SIZE_MB`, which **defaults to the body limit** and tracks it when raised — a larger value is allowed but warned about at startup, since the body layer rejects first and the per-file check then cannot bind. Note both sit above siphon-core's 30 MB `MAX_INPUT_SIZE`: a file can be accepted and fully extracted, then found to exceed the scanner cap, which siphon-fs reports as `TEXT_EXCEEDS_SCANNER_LIMIT` with the file marked **not scanned** rather than clean. Rate limit:
 `SIPHON_FS_RATE_LIMIT` (default 30 req/min, per IP **and** per key; `/health`
@@ -939,13 +1040,27 @@ appear in any artifact.
   `SIPHON_AUDIT_LOG_PATH`, `SIPHON_BIND`, `SIPHON_FS_BIND` and
   `SIPHON_ALLOW_PRIVATE_DESTINATIONS` are blocked outright, so a spawned pod
   can't have security-critical env injected through the launcher.
-- Pod-to-pod traffic is mTLS-encrypted by default via Linkerd sidecar injection
-  (`global.linkerd.enabled=true` in the chart) — requires the Linkerd control
-  plane installed; without it pods start unmeshed and unencrypted. The
-  siphon-api→Postgres hop is additionally encrypted at the app level
-  (`SIPHON_DATABASE_TLS=require`). siphon-fs serves no TLS of its own and relies
-  on the mesh; it therefore emits no HSTS header (HSTS over plaintext is ignored
-  per RFC 6797).
+- **Every detector ↔ C2/IR/database hop is mutually authenticated at the
+  application layer**, whatever the deployment. nginx → siphon-api and
+  nginx → siphon-fs: the service requires a client certificate
+  (`SIPHON_TLS_CLIENT_CA` / `SIPHON_FS_TLS_CLIENT_CA`) and nginx presents one
+  while verifying the service (`proxy_ssl_verify on`). siphon-api, siphon-fs,
+  siphon-smtp → Postgres: `SIPHON_DATABASE_TLS=mtls` presents a client
+  certificate and refuses to start without one; `deploy/postgres/pg_hba.conf`
+  admits only `hostssl … scram-sha-256 clientcert=verify-full` (certificate
+  **and** password, CN = role). One implementation, `crates/siphon-auth` —
+  the Postgres builder used to be three identical copies ending
+  `.with_no_client_auth()`. Material: `scripts/dev/mkcerts.sh` for compose,
+  `tls.internal.certManager` in the chart. `scripts/validate-nginx.sh` proves
+  the nginx side against a stub that requires a client certificate. Not
+  covered, and said so: Squid → siphon-icap and Postfix → siphon-smtp, whose
+  protocols carry no TLS — those stay network allowlists. Design and
+  reasoning: `docs/architecture/api-keys.md` §9.
+- Linkerd sidecar injection (`global.linkerd.enabled=true` in the chart) is
+  the second layer in-cluster — requires the control plane installed;
+  without it pods start unmeshed. It is no longer the only thing making the
+  mTLS claim true. siphon-fs emits no HSTS header (HSTS over its formerly
+  plaintext listener would have been ignored per RFC 6797).
 
 ## Where things live
 

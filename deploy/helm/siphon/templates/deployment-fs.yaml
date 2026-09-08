@@ -49,6 +49,17 @@ spec:
               value: /etc/siphon/overrides.json
             - name: RUST_LOG
               value: info
+            {{- if .Values.tls.internal.enabled }}
+            # siphon-fs served plaintext and relied on the mesh. Uploads are
+            # the data the scanner exists to find; they now cross the pod
+            # network only to a peer holding nginx's certificate.
+            - name: SIPHON_FS_TLS_CERT
+              value: /etc/siphon/tls/tls.crt
+            - name: SIPHON_FS_TLS_KEY
+              value: /etc/siphon/tls/tls.key
+            - name: SIPHON_FS_TLS_CLIENT_CA
+              value: /etc/siphon/tls/ca.crt
+            {{- end }}
             {{- with .Values.fs.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -58,15 +69,37 @@ spec:
               readOnly: true
             - name: scratch
               mountPath: /tmp
+            {{- if .Values.tls.internal.enabled }}
+            - name: tls
+              mountPath: /etc/siphon/tls
+              readOnly: true
+            {{- end }}
             {{- with .Values.fs.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          {{- if .Values.tls.internal.enabled }}
+          # kubelet cannot present a client certificate, so an httpGet probe
+          # would be refused in the handshake. tcpSocket confirms the
+          # listener is up, which is what siphon-api's probes already do.
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: {{ .Values.fs.livenessProbe.initialDelaySeconds | default 5 }}
+            periodSeconds: {{ .Values.fs.livenessProbe.periodSeconds | default 15 }}
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: {{ .Values.fs.readinessProbe.initialDelaySeconds | default 2 }}
+            periodSeconds: {{ .Values.fs.readinessProbe.periodSeconds | default 3 }}
+            failureThreshold: {{ .Values.fs.readinessProbe.failureThreshold | default 3 }}
+          {{- else }}
           livenessProbe:
             {{- toYaml .Values.fs.livenessProbe | nindent 12 }}
           readinessProbe:
             {{- toYaml .Values.fs.readinessProbe | nindent 12 }}
+          {{- end }}
           resources:
             {{- toYaml .Values.fs.resources | nindent 12 }}
       volumes:
@@ -84,6 +117,12 @@ spec:
           emptyDir:
             sizeLimit: {{ .Values.fs.scratchVolume.sizeLimit }}
           {{- end }}
+        {{- if .Values.tls.internal.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "siphon.internalTlsSecret" (dict "root" . "id" "fs") }}
+            defaultMode: 0440
+        {{- end }}
         {{- with .Values.fs.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

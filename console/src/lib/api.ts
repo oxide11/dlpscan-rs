@@ -110,9 +110,94 @@ export interface FindingsPage {
 /** Who the caller is, per `GET /v1/me`. */
 export interface Me {
   actor: string
-  role: 'admin' | 'analyst' | 'responder' | 'operator' | 'viewer'
+  role:
+    | 'admin'
+    | 'analyst'
+    | 'responder'
+    | 'responder-readonly'
+    | 'auditor'
+    | 'operator'
+    | 'sensor'
+    | 'viewer'
   auth_source: 'proxy' | 'api_key' | 'open_mode'
   permissions: string[]
+  /** Present only for an issued key. */
+  key_id?: string
+  tenant?: string
+}
+
+/* Sensors — `GET /v1/sensors`. Every figure here is derived server-side from
+ * heartbeat rows; the console renders, it does not judge. */
+
+export type Liveness = 'healthy' | 'stale' | 'gone'
+export type HopState = 'not_applicable' | 'ok' | 'warn' | 'off'
+
+export interface HopReport {
+  state: HopState
+  detail: string
+  cert_days_left?: number
+}
+
+export interface Ratio {
+  received: number
+  expected: number
+  /** Absent when nothing was expected yet — not 0. */
+  ratio: number | null
+}
+
+export interface Activity {
+  scans?: number
+  scans_with_findings?: number
+  findings?: number
+  errors?: number
+  bytes?: number
+  avg_duration_ms?: number
+  detection_rate?: number
+}
+
+export interface Windowed<T> {
+  h24: T
+  d7: T
+}
+
+export interface SensorInstance {
+  instance: string
+  api_key_id: string | null
+  version: string
+  started_at: string
+  uptime_secs: number
+  restarts_7d: number
+  last_seen: string
+  interval_secs: number
+  liveness: Liveness
+  stale_for_secs: number
+  availability: Windowed<Ratio>
+  transport: { listener: HopReport; database: HopReport; overall: HopState }
+  activity: Windowed<Activity>
+  last_scan_at: string | null
+}
+
+export interface SensorReport {
+  sensor: string
+  liveness: Liveness
+  instances: SensorInstance[]
+  availability: Windowed<Ratio>
+  transport_overall: HopState
+  activity: Windowed<Activity>
+  verdicts: {
+    reviewed: number
+    true_positives: number
+    false_positives: number
+    precision: number | null
+  } | null
+  last_scan_at: string | null
+}
+
+export interface SensorsReport {
+  generated_at: string
+  sensors: SensorReport[]
+  /** Expected by every deployment, never heard from. */
+  never_seen: string[]
 }
 
 export interface CategoryInfo {
@@ -197,6 +282,8 @@ export const api = {
   findingsRing: () => request<Finding[]>('/v1/findings'),
 
   me: () => request<Me>('/v1/me'),
+
+  sensors: () => request<SensorsReport>('/v1/sensors'),
 
   /**
    * `unmask` is `pii`, `pci` or `pii,pci`. Omitting it returns redacted

@@ -80,7 +80,9 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 mod db;
+mod keys_api;
 mod masking;
+mod sensors_api;
 // The mail model lives in its own crate: siphon-smtp writes what this
 // service reads, and siphon-api has no lib target for it to depend on.
 use siphon_mail as messages;
@@ -148,6 +150,14 @@ struct AppState {
     /// proxy-asserted identity. Configurable via `SIPHON_API_KEY_ROLE` so a
     /// shared machine credential need not be full Admin.
     api_key_role: Role,
+    /// Issued per-caller keys. `None` without Postgres — the bootstrap key is
+    /// then the only credential, which startup says out loud.
+    keys: Option<Arc<siphon_auth::keys::KeyStore>>,
+    /// What this pod reports about its own hops in its heartbeat. Fixed at
+    /// startup: the listener's TLS state and certificate, the database mode.
+    transport: siphon_auth::telemetry::Transport,
+    /// This pod as a sensor: the text channel's counters, for its heartbeat.
+    sensor: Arc<siphon_auth::telemetry::SensorCounters>,
     /// Networks whose `X-Forwarded-For` is believed. Empty means the TCP peer
     /// is used directly — correct for a direct deployment, and the safe
     /// default because an unconfigured proxy must never grant header trust.
@@ -464,9 +474,16 @@ struct AuthContext {
     /// Role assigned to this request.
     role: Role,
     /// Who is acting, for the audit trail. The proxy's `Remote-User` for a
-    /// human; a fixed label for a machine caller. Never a credential.
+    /// human; the public key id for an issued key; `bootstrap` for the
+    /// shared `SIPHON_API_KEY`. Never a credential.
     actor: String,
     source: AuthSource,
+    /// The issued key this request authenticated with, for attribution.
+    /// `None` for humans and the bootstrap key.
+    key_id: Option<String>,
+    /// The tenant the key is bound to. Carried now, enforced by the
+    /// tenant-scoping phase (docs/architecture/api-keys.md §6).
+    tenant: Option<String>,
 }
 
 /// 403 helper used by every RBAC extractor. Stamps an audit row so a
@@ -612,6 +629,19 @@ require_permission!(
     Permission::ReviewAlerts,
     "review_alerts"
 );
+// `Permission::Scan` was declared, documented in the matrix, and gated
+// nothing: `/scan` and `/scan/batch` accepted any authenticated caller, so an
+// `Auditor` — the role that reads and never acts — could submit scans, and
+// `ResponderReadOnly` could too. The gate is what makes the matrix's "Scans"
+// column true.
+require_permission!(RequireScan, Permission::Scan, "scan");
+require_permission!(RequireBatchScan, Permission::BatchScan, "batch_scan");
+require_permission!(RequireViewStatus, Permission::ViewStatus, "view_status");
+require_permission!(
+    RequireReportTelemetry,
+    Permission::ReportTelemetry,
+    "report_telemetry"
+);
 
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
@@ -634,6 +664,8 @@ async fn auth_middleware(
             role: Role::Operator,
             actor: "anonymous".to_string(),
             source: AuthSource::OpenMode,
+            key_id: None,
+            tenant: None,
         });
         return next.run(request).await;
     };
@@ -664,43 +696,102 @@ async fn auth_middleware(
                 diff == 0
             });
 
-            if !matches_primary && !matches_secondary {
-                tracing::warn!("auth_failed: invalid API key");
+            // Not the bootstrap key: try the issued-key store. The store is
+            // consulted only when the env key did not match, so the shared
+            // credential keeps working for existing automation and an
+            // issued key can never shadow it.
+            let issued = if matches_primary || matches_secondary {
+                None
+            } else {
+                Some(
+                    state
+                        .keys
+                        .as_ref()
+                        .map_or(siphon_auth::keys::Resolution::Unknown, |store| {
+                            store.resolve(key)
+                        }),
+                )
+            };
+
+            let reject = |reason: &str, key_id: Option<&str>| {
+                tracing::warn!(reason, key_id, "auth_failed");
                 if let Ok(event) = AuditEvent::new("REJECT") {
-                    emit_audit(
-                        event
-                            .with_action("auth")
-                            .with_outcome("rejected")
-                            .with_source_ip(&addr.ip().to_string())
-                            .with_metadata("reason", serde_json::json!("invalid_api_key")),
-                    );
+                    let mut event = event
+                        .with_action("auth")
+                        .with_outcome("rejected")
+                        .with_source_ip(&addr.ip().to_string())
+                        .with_metadata("reason", serde_json::json!(reason));
+                    if let Some(id) = key_id {
+                        event = event.with_metadata("key_id", serde_json::json!(id));
+                    }
+                    emit_audit(event);
                 }
-                return (
+                (
                     StatusCode::UNAUTHORIZED,
                     Json(ErrorResponse {
                         error: "invalid API key".into(),
                     }),
                 )
-                    .into_response();
-            }
-            // The key is valid. Now decide *who* this is.
-            //
-            // A valid key used to mean Admin unconditionally, which made the
-            // whole RBAC layer decorative: four roles, a permission matrix,
-            // and Authelia gating `group:admins` at the proxy — then every
-            // holder of one shared secret got everything anyway.
-            //
-            // Identity now comes from the authenticating proxy when there is
-            // one, and the key alone falls back to the configured machine
-            // role rather than to Admin.
-            let ctx =
-                proxy_identity(&state.trusted_proxies, &addr, &headers).unwrap_or_else(|| {
-                    AuthContext {
-                        role: state.api_key_role,
-                        actor: "api-key".to_string(),
-                        source: AuthSource::ApiKey,
+                    .into_response()
+            };
+
+            let ctx = match issued {
+                // The bootstrap key is valid. Now decide *who* this is.
+                //
+                // A valid key used to mean Admin unconditionally, which made
+                // the whole RBAC layer decorative: four roles, a permission
+                // matrix, and Authelia gating `group:admins` at the proxy —
+                // then every holder of one shared secret got everything
+                // anyway. Identity comes from the authenticating proxy when
+                // there is one, and the key alone falls back to the
+                // configured machine role rather than to Admin.
+                None => {
+                    proxy_identity(&state.trusted_proxies, &addr, &headers).unwrap_or_else(|| {
+                        AuthContext {
+                            role: state.api_key_role,
+                            actor: "bootstrap".to_string(),
+                            source: AuthSource::ApiKey,
+                            key_id: None,
+                            tenant: None,
+                        }
+                    })
+                }
+                Some(siphon_auth::keys::Resolution::Ok(rec)) => {
+                    // A stored label the binary does not know is a deployment
+                    // skew (newer schema, older pod). Refuse rather than guess
+                    // a role — and say so at error level, because it is not
+                    // the caller's fault.
+                    let Some(role) = Role::from_label(&rec.role) else {
+                        tracing::error!(key_id = %rec.id, role = %rec.role, "issued key carries a role this build does not know");
+                        return reject("unknown_key_role", Some(&rec.id));
+                    };
+                    if let Some(store) = &state.keys {
+                        store.touch(&rec.id);
                     }
-                });
+                    // The key is the identity. Proxy headers are not consulted:
+                    // an issued key arriving through nginx is still a machine.
+                    AuthContext {
+                        role,
+                        actor: rec.id.clone(),
+                        source: AuthSource::ApiKey,
+                        key_id: Some(rec.id.clone()),
+                        tenant: rec.tenant_id.clone(),
+                    }
+                }
+                Some(siphon_auth::keys::Resolution::Revoked(rec)) => {
+                    return reject("revoked_api_key", Some(&rec.id));
+                }
+                Some(siphon_auth::keys::Resolution::Expired(rec)) => {
+                    return reject("expired_api_key", Some(&rec.id));
+                }
+                Some(siphon_auth::keys::Resolution::Unknown) => {
+                    // The presented token's id prefix, if it has one, goes in
+                    // the audit row: "someone tried sk_xxxx" is actionable
+                    // where "someone tried a wrong key" is not. Never trusted
+                    // for anything else.
+                    return reject("invalid_api_key", siphon_auth::keys::id_of(key));
+                }
+            };
 
             tracing::debug!(
                 actor = %ctx.actor,
@@ -871,6 +962,8 @@ fn proxy_identity(
         role,
         actor: user,
         source: AuthSource::Proxy,
+        key_id: None,
+        tenant: None,
     })
 }
 
@@ -1366,6 +1459,8 @@ fn sanitize_tenant_id(s: &str) -> Option<String> {
 }
 
 async fn scan(
+    _: RequireScan,
+    AuthContextExt(ctx): AuthContextExt,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -1549,6 +1644,9 @@ async fn scan(
     let count = findings.len();
     state.metrics.scans_total.fetch_add(1, Ordering::Relaxed);
     state
+        .sensor
+        .record_scan(count as u64, req.text.len() as u64, duration_ms as u64);
+    state
         .metrics
         .findings_total
         .fetch_add(count as u64, Ordering::Relaxed);
@@ -1615,6 +1713,7 @@ async fn scan(
         let api_key_hash_bytes_for_lsh = api_key_hash_bytes.clone();
         let input_hash_bytes_for_lsh = input_hash_bytes.clone();
         let tenant_id_clone = tenant_id.clone();
+        let key_id = ctx.key_id.clone();
         tokio::spawn(async move {
             if let Err(e) = db::persist_scan(
                 &pool_clone,
@@ -1631,6 +1730,7 @@ async fn scan(
                 None,
                 None,
                 tenant_id_clone.as_deref(),
+                key_id.as_deref(),
             )
             .await
             {
@@ -1836,6 +1936,8 @@ struct BatchScanResponse {
 }
 
 async fn scan_batch(
+    _: RequireBatchScan,
+    AuthContextExt(ctx): AuthContextExt,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
@@ -1981,6 +2083,11 @@ async fn scan_batch(
             .collect();
 
         state.metrics.scans_total.fetch_add(1, Ordering::Relaxed);
+        state.sensor.record_scan(
+            findings.len() as u64,
+            item.text.len() as u64,
+            item_duration_ms,
+        );
         state
             .metrics
             .findings_total
@@ -2055,6 +2162,7 @@ async fn scan_batch(
             let pool_clone = state.db_pool.clone();
             let api_key_hash_clone = api_key_hash_bytes.clone();
             let tenant_id_clone = tenant_id.clone();
+            let key_id = ctx.key_id.clone();
             tokio::spawn(async move {
                 if let Err(e) = db::persist_scan(
                     &pool_clone,
@@ -2071,6 +2179,7 @@ async fn scan_batch(
                     None,
                     None,
                     tenant_id_clone.as_deref(),
+                    key_id.as_deref(),
                 )
                 .await
                 {
@@ -2266,6 +2375,9 @@ async fn scan_explain(
     let duration_ms = start.elapsed().as_millis() as u64;
 
     state.metrics.scans_total.fetch_add(1, Ordering::Relaxed);
+    state
+        .sensor
+        .record_scan(matches.len() as u64, req.text.len() as u64, duration_ms);
     state
         .metrics
         .findings_total
@@ -2508,31 +2620,15 @@ struct RolesResponse {
 }
 
 async fn list_roles(_: RequireAdminAction) -> Json<RolesResponse> {
-    const ROLES: [(Role, &str, &str); 4] = [
-        (Role::Admin, "admin", "Full control. All permissions."),
-        (Role::Analyst, "analyst", "Scan + detokenize + read status."),
-        (Role::Operator, "operator", "Scan + read status."),
-        (Role::Viewer, "viewer", "Read status only."),
-    ];
-    const PERMS: [(Permission, &str); 7] = [
-        (Permission::Scan, "Scan"),
-        (Permission::BatchScan, "BatchScan"),
-        (Permission::ManagePatterns, "ManagePatterns"),
-        (Permission::Detokenize, "Detokenize"),
-        (Permission::ExportVault, "ExportVault"),
-        (Permission::ViewStatus, "ViewStatus"),
-        (Permission::AdminAction, "AdminAction"),
-    ];
-    let roles: Vec<RoleItem> = ROLES
+    // Rendered from the model, not from a copy of it. This used to list four
+    // roles and seven permissions by hand and had been wrong since the fifth
+    // role landed — the console's key-issuance dialog reads this.
+    let roles: Vec<RoleItem> = Role::ALL
         .iter()
-        .map(|(r, name, desc)| RoleItem {
-            role: name,
-            description: desc,
-            permissions: PERMS
-                .iter()
-                .filter(|(p, _)| role_has_permission(*r, *p))
-                .map(|(_, n)| *n)
-                .collect(),
+        .map(|r| RoleItem {
+            role: r.label(),
+            description: r.description(),
+            permissions: r.permissions().iter().map(|p| p.label()).collect(),
         })
         .collect();
     Json(RolesResponse {
@@ -2649,6 +2745,12 @@ struct MeResponse {
     /// How the identity was established: `proxy`, `api_key` or `open_mode`.
     auth_source: &'static str,
     permissions: Vec<&'static str>,
+    /// The issued key this request used, so an integration can confirm
+    /// which key it is running with. Absent for humans and the bootstrap key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tenant: Option<String>,
 }
 
 async fn whoami(ctx: AuthContextExt) -> Json<MeResponse> {
@@ -2658,6 +2760,8 @@ async fn whoami(ctx: AuthContextExt) -> Json<MeResponse> {
         role: ctx.role.label(),
         auth_source: ctx.source.label(),
         permissions: ctx.role.permissions().iter().map(|p| p.label()).collect(),
+        key_id: ctx.key_id.clone(),
+        tenant: ctx.tenant.clone(),
     })
 }
 
@@ -6838,6 +6942,7 @@ async fn findings_prune(
 /// only supports GET.  Use `fetch()` + `ReadableStream` on the client side
 /// (or curl with `--no-buffer`).
 async fn scan_stream(
+    _: RequireScan,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<ScanRequest>,
@@ -7181,8 +7286,30 @@ async fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(30);
 
-    let tls_cert = std::env::var("SIPHON_TLS_CERT").ok();
-    let tls_key = std::env::var("SIPHON_TLS_KEY").ok();
+    // SIPHON_TLS_CERT / SIPHON_TLS_KEY, and SIPHON_TLS_CLIENT_CA to require a
+    // client certificate from every peer — which is what makes the nginx →
+    // siphon-api hop mutual rather than merely encrypted. Half-configured
+    // TLS is refused here, before anything binds.
+    let tls_settings = siphon_auth::server::Settings::from_env("SIPHON_TLS").unwrap_or_else(|e| {
+        eprintln!("FATAL: {e}");
+        std::process::exit(1);
+    });
+    // Loaded here rather than at bind time so a bad certificate is refused
+    // before anything else starts, and so the heartbeat can report the
+    // listener's state and certificate expiry.
+    let tls_loaded = tls_settings.as_ref().map(|s| {
+        siphon_auth::server::ServerTls::load(s).unwrap_or_else(|e| {
+            eprintln!("FATAL: TLS config failed: {e}");
+            std::process::exit(1);
+        })
+    });
+    let listener_state = tls_loaded.as_ref().map(|t| t.listener_state()).or(Some(
+        siphon_auth::telemetry::ListenerState {
+            tls: false,
+            mtls: false,
+            cert_not_after: None,
+        },
+    ));
 
     // In-memory ring buffer for /v1/audit. Always installed so the UI
     // has something to show even when no SIPHON_AUDIT_LOG_PATH is set.
@@ -7432,6 +7559,31 @@ async fn main() {
         tracing::info!("database migrations applied");
     }
 
+    // Issued API keys. Loaded once here, after migrations, and refreshed on
+    // an interval below. A failed initial load is not fatal — the bootstrap
+    // key still authenticates — but it is loud, because until the next
+    // successful refresh every issued key is a stranger to this pod.
+    let keys = match &db_pool {
+        Some(pool) => {
+            let store = Arc::new(siphon_auth::keys::KeyStore::new(pool.clone()));
+            match store.refresh().await {
+                Ok(0) => tracing::warn!(
+                    "no API keys issued yet — the bootstrap SIPHON_API_KEY is the only \
+                     credential. Issue per-caller keys with POST /v1/keys (docs/architecture/api-keys.md)"
+                ),
+                Ok(n) => tracing::info!(live_keys = n, "API keys loaded"),
+                Err(e) => tracing::error!(error = %e, "API keys could not be loaded; issued keys will not authenticate until the next refresh succeeds"),
+            }
+            Some(store)
+        }
+        None => {
+            tracing::warn!(
+                "no database, so no issued API keys: the bootstrap SIPHON_API_KEY is the only credential"
+            );
+            None
+        }
+    };
+
     let trusted_proxies = std::env::var("SIPHON_TRUSTED_PROXIES")
         .map(|raw| parse_trusted_proxies(&raw))
         .unwrap_or_default();
@@ -7445,10 +7597,29 @@ async fn main() {
         tracing::info!(count = trusted_proxies.len(), "trusted proxies configured");
     }
 
+    // What this pod will say about its own hops. The database side is the
+    // configuration the connector was built from — the same settings
+    // `db::init_optional` read — reported only when a pool exists.
+    let transport = siphon_auth::telemetry::Transport {
+        listener: listener_state,
+        database: db_pool.as_ref().and_then(|_| {
+            let s = siphon_auth::db::Settings::from_env().ok()?;
+            Some(siphon_auth::telemetry::DatabaseState {
+                mode: s.mode.label().to_string(),
+                client_authenticated: s.mode != siphon_auth::db::Mode::Disable
+                    && s.client_cert.is_some()
+                    && s.client_key.is_some(),
+            })
+        }),
+    };
+
     let state = Arc::new(AppState {
         api_key_hash,
         api_key_hash_secondary,
         api_key_role,
+        keys,
+        transport,
+        sensor: Arc::new(siphon_auth::telemetry::SensorCounters::new()),
         trusted_proxies,
         rate_limiter: Arc::new(Mutex::new(RateLimiter::new())),
         rate_limit,
@@ -7469,6 +7640,44 @@ async fn main() {
         stats_cache: Arc::new(Mutex::new(HashMap::new())),
         rollup: Arc::new(db::RollupAccumulator::new()),
     });
+
+    // API-key refresh task: reload the key set and flush last-used marks.
+    //
+    // 30 s bounds how late a revocation made on another pod (or by hand in
+    // SQL) takes effect here. Writes through this pod's own /v1/keys take
+    // effect immediately. A refresh failure keeps the last loaded set —
+    // see siphon_auth::keys for why that is the right failure direction.
+    if let Some(store) = state.keys.clone() {
+        let refresh_secs = std::env::var("SIPHON_API_KEY_REFRESH_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|&s| s > 0)
+            .unwrap_or(30);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(refresh_secs)).await;
+                store.refresh_logged().await;
+                if let Err(e) = store.flush_touches().await {
+                    tracing::debug!(error = %e, "api key last_used flush failed; retried next tick");
+                }
+            }
+        });
+    }
+
+    // This pod's own heartbeat. siphon-api is a sensor too — the text
+    // channel — and it reports through the same table as every other, so the
+    // Running page has one shape for all four.
+    if state.db_pool.is_some() {
+        let interval = std::env::var("SIPHON_TELEMETRY_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|s| (5..=3600).contains(s))
+            .unwrap_or(siphon_auth::telemetry::DEFAULT_INTERVAL_SECS);
+        tokio::spawn(sensors_api::self_report_loop(
+            state.clone(),
+            std::time::Duration::from_secs(interval),
+        ));
+    }
 
     // Scan-rollup flush task.
     //
@@ -7532,6 +7741,18 @@ async fn main() {
                 // until siphon-smtp lands, so this is a no-op until then —
                 // wired now so the tables cannot quietly grow without bound
                 // the moment they start being written.
+                // Heartbeats on their own, shorter window: 30 days of
+                // availability history is what the sensor report reads.
+                match sensors_api::prune_heartbeats(
+                    &pool_clone,
+                    sensors_api::HEARTBEAT_RETENTION_DAYS,
+                )
+                .await
+                {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(heartbeats_deleted = n, "heartbeat_prune_complete"),
+                    Err(e) => tracing::warn!(error = %e, "heartbeat_prune_failed"),
+                }
                 match messages::prune_old_messages(&pool_clone, retention_days).await {
                     Ok((0, 0)) => {}
                     Ok((msgs, parts)) => tracing::info!(
@@ -7660,6 +7881,17 @@ async fn main() {
         .route("/v1/findings/export", get(findings_export))
         .route("/v1/findings/prune", post(findings_prune))
         .route("/v1/findings/{id}/feedback", post(post_finding_feedback))
+        .route(
+            "/v1/keys",
+            post(keys_api::issue_key).get(keys_api::list_keys),
+        )
+        .route(
+            "/v1/keys/{id}",
+            get(keys_api::get_key).delete(keys_api::revoke_key),
+        )
+        .route("/v1/keys/{id}/rotate", post(keys_api::rotate_key))
+        .route("/v1/sensors/heartbeat", post(sensors_api::heartbeat))
+        .route("/v1/sensors", get(sensors_api::list_sensors))
         .route("/v1/findings", get(list_findings))
         .route("/v1/version", get(version))
         .route("/v1/capabilities", get(capabilities))
@@ -7709,7 +7941,8 @@ async fn main() {
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         addr = %addr,
-        tls = tls_cert.is_some(),
+        tls = tls_settings.is_some(),
+        mtls = tls_settings.as_ref().is_some_and(|s| s.client_ca.is_some()),
         auth = api_key_hash.is_some(),
         rate_limit = rate_limit,
         timeout_secs = request_timeout,
@@ -7718,17 +7951,27 @@ async fn main() {
         "Polygon Siphon API starting"
     );
 
-    if let (Some(cert_path), Some(key_path)) = (tls_cert, tls_key) {
-        let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
-            &cert_path, &key_path,
-        )
-        .await
-        .unwrap_or_else(|e| {
-            tracing::error!(cert = %cert_path, key = %key_path, error = %e, "TLS config failed");
+    if let Some(loaded) = tls_loaded {
+        let mutual = loaded.requires_client_cert();
+        let config = loaded.into_config().unwrap_or_else(|e| {
+            tracing::error!(error = %e, "TLS config failed");
             std::process::exit(1);
         });
+        let rustls_config = axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(config));
 
-        tracing::info!("TLS enabled");
+        if mutual {
+            tracing::info!(
+                "TLS enabled — a client certificate signed by SIPHON_TLS_CLIENT_CA is required"
+            );
+        } else {
+            // Encrypted is not authenticated. Said at warn level because a
+            // deployment that reads "TLS enabled" and assumes the hop is
+            // mutual is the failure this crate exists to prevent.
+            tracing::warn!(
+                "TLS enabled without SIPHON_TLS_CLIENT_CA — any peer that can reach the port \
+                 is accepted. Set it to the deployment CA so only nginx can speak to this service"
+            );
+        }
 
         // axum-server uses a Handle-based graceful shutdown rather than
         // axum::serve's with_graceful_shutdown future. Spawn a task that
@@ -8164,6 +8407,8 @@ mod tests {
             role,
             actor: "test".to_string(),
             source: AuthSource::ApiKey,
+            key_id: None,
+            tenant: None,
         }
     }
 
@@ -8225,6 +8470,76 @@ mod tests {
             outcome,
             StatusCode::FORBIDDEN,
             "operator must not pass an AdminAction gate",
+        );
+    }
+
+    /// Status a gate produced for a role, or `None` if it admitted them.
+    async fn scan_gate_status(role: Role) -> Option<StatusCode> {
+        let mut parts = empty_parts();
+        parts.extensions.insert(test_ctx(role));
+        RequireScan::from_request_parts(&mut parts, &())
+            .await
+            .err()
+            .map(|(s, _)| s)
+    }
+
+    async fn batch_gate_status(role: Role) -> Option<StatusCode> {
+        let mut parts = empty_parts();
+        parts.extensions.insert(test_ctx(role));
+        RequireBatchScan::from_request_parts(&mut parts, &())
+            .await
+            .err()
+            .map(|(s, _)| s)
+    }
+
+    #[tokio::test]
+    async fn scan_gate_refuses_the_roles_that_only_read() {
+        // These three exist to observe. Before the gate existed every one of
+        // them could POST /scan, which is the difference between "read-only"
+        // and "read-only except for the thing the service does".
+        for role in [Role::Auditor, Role::ResponderReadOnly, Role::Viewer] {
+            assert_eq!(
+                scan_gate_status(role).await,
+                Some(StatusCode::FORBIDDEN),
+                "{role:?} must not pass the Scan gate"
+            );
+            assert_eq!(
+                batch_gate_status(role).await,
+                Some(StatusCode::FORBIDDEN),
+                "{role:?} must not pass the BatchScan gate"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn scan_gate_admits_the_roles_that_scan() {
+        for role in [Role::Admin, Role::Analyst, Role::Responder, Role::Operator] {
+            assert_eq!(scan_gate_status(role).await, None, "{role:?} may scan");
+        }
+    }
+
+    #[tokio::test]
+    async fn responder_scans_but_does_not_batch() {
+        // A responder submits a suspect document during an investigation; a
+        // bulk job is an operator's tool. Pinned so the matrix cannot drift
+        // apart from the routes.
+        assert_eq!(scan_gate_status(Role::Responder).await, None);
+        assert_eq!(
+            batch_gate_status(Role::Responder).await,
+            Some(StatusCode::FORBIDDEN)
+        );
+        for role in [Role::Admin, Role::Analyst, Role::Operator] {
+            assert_eq!(batch_gate_status(role).await, None, "{role:?} may batch");
+        }
+    }
+
+    #[tokio::test]
+    async fn scan_gate_rejects_when_no_auth_context() {
+        let mut parts = empty_parts();
+        let outcome = RequireScan::from_request_parts(&mut parts, &()).await;
+        assert!(
+            matches!(outcome, Err((StatusCode::UNAUTHORIZED, _))),
+            "a scan route reached without auth_middleware is a server bug, not an open door"
         );
     }
 }

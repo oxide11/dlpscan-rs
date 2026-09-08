@@ -137,6 +137,8 @@ struct AppState {
     max_body_bytes: usize,
     service_name: String,
     max_connections: usize,
+    /// This pod as a sensor: what it scanned, for its heartbeat.
+    sensor: Arc<siphon_auth::telemetry::SensorCounters>,
 }
 
 // ── ICAP request ─────────────────────────────────────────────────
@@ -641,12 +643,16 @@ async fn handle_scan(req: &IcapRequest, state: &AppState, client_ip: &str) -> Ve
         Ok(m) => m,
         Err(e) => {
             tracing::warn!(client_ip = %client_ip, error = %e, "icap: scan failed");
+            state.sensor.record_error();
             return response_500();
         }
     };
 
     let finding_count = matches.len();
     let duration_ms = start.elapsed().as_millis();
+    state
+        .sensor
+        .record_scan(finding_count as u64, text.len() as u64, duration_ms as u64);
 
     if finding_count == 0 {
         emit_audit(req.method.as_str(), client_ip, 0, "clean", duration_ms);
@@ -787,6 +793,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(256);
 
+    let sensor = Arc::new(siphon_auth::telemetry::SensorCounters::new());
     let state = Arc::new(AppState {
         allowed_nets: Arc::new(allowed_nets),
         action,
@@ -794,7 +801,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         max_body_bytes,
         service_name: service_name.clone(),
         max_connections,
+        sensor: sensor.clone(),
     });
+
+    // Report in, if told where. ICAP itself carries no TLS and this service
+    // has no database, so the heartbeat's transport section is empty — the
+    // console shows both hops as n/a, which is the truth, not a gap.
+    match siphon_auth::telemetry::reporter::Settings::from_env() {
+        Ok(Some(settings)) => {
+            let identity = siphon_auth::telemetry::reporter::Identity {
+                sensor: "siphon-icap",
+                instance: siphon_auth::telemetry::instance_id(),
+                version: VERSION,
+                started_at: siphon_auth::chrono::Utc::now(),
+                transport: siphon_auth::telemetry::Transport::default(),
+            };
+            match siphon_auth::telemetry::reporter::Reporter::new(&settings, identity, sensor) {
+                Ok(r) => {
+                    info!(endpoint = %settings.url, "telemetry enabled");
+                    tokio::spawn(r.run());
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "telemetry client could not be built; refusing to start");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Ok(None) => info!("SIPHON_TELEMETRY_URL not set — this sensor will show as never seen"),
+        Err(e) => {
+            tracing::error!(error = %e, "telemetry misconfigured; refusing to start");
+            std::process::exit(1);
+        }
+    }
 
     let listener = match TcpListener::bind(&addr).await {
         Ok(l) => l,

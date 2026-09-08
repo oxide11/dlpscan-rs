@@ -8,6 +8,128 @@ independent, so a release block typically moves only the crates that actually
 
 ## 2026-09-08
 
+### siphon-auth 0.1.0
+
+- **New library crate: service identity.** One Postgres connector
+  (`db::DbTls` — `disable` / `require` / `mtls`) and one listener builder
+  (`server::ServerTls` — a service certificate plus an optional client CA
+  every peer must chain to). Replaces three byte-identical copies of the
+  TLS builder in siphon-api, siphon-fs and siphon-smtp, each of which ended
+  in `.with_no_client_auth()`. `tests/mtls.rs` performs real handshakes
+  against certificates from `scripts/dev/mkcerts.sh`: a peer with no
+  certificate, or one from another CA, never reaches the application.
+- **`keys::KeyStore`** — per-caller API keys: token format, SHA-256 at
+  rest, an in-memory cache that keeps serving through a Postgres outage,
+  and issue / revoke / rotate with the `0013_api_keys` migration.
+- **`telemetry`** — the heartbeat wire shape, lock-free `SensorCounters`,
+  and (behind `telemetry-client`) a reporter that posts to siphon-api over
+  mutual TLS with a Sensor-role key. `ServerTls::not_after()` reads the
+  leaf certificate's validity so a heartbeat can say when it expires.
+
+### siphon-icap 0.2.0
+
+- **feat(icap): reports in.** `SIPHON_TELEMETRY_*` sends a heartbeat —
+  scans, findings, errors, bytes, timing — to siphon-api on an interval,
+  presenting its own client certificate. The ICAP side is unchanged; the
+  protocol carries no TLS, and the heartbeat's transport section says so.
+
+### siphon-api 2.12.0
+
+- **feat(api): sensor telemetry.** `POST /v1/sensors/heartbeat` (Sensor
+  role) stores what each detector reports; `GET /v1/sensors` answers, per
+  detector and per instance, whether it is up (liveness from heartbeat
+  age), how available it has been (slots received ÷ expected over 24 h and
+  7 d — no figure, never a fake 0 %, when nothing was expected yet), whether
+  each hop is mutual TLS (listener, database, certificate days left; a hop
+  the sensor lacks is n/a), and what it caught (counter deltas per restart
+  segment, analyst precision from verdicts). siphon-api writes its own row.
+  Sensors expected but never heard from are listed as such, not omitted.
+
+- **feat(api): mutual TLS on both hops.** `SIPHON_TLS_CLIENT_CA` makes the
+  listener require a client certificate from the deployment CA — nginx
+  holds one; nothing else in the cluster does — and startup now warns when
+  TLS is on without it, because encrypted is not authenticated.
+  `SIPHON_DATABASE_TLS=mtls` presents `SIPHON_DATABASE_CLIENT_CERT`/`_KEY`
+  to Postgres and refuses to start without them; `require` presents them if
+  set. Half-configured TLS (a certificate without a key, a client CA on a
+  plaintext bind) is a startup error rather than a silent downgrade.
+- **feat(api): per-caller API keys.** `POST /v1/keys` issues a key with a
+  role, an optional tenant, an owner and an expiry (default a year); the
+  secret appears in that one response and nowhere else. `GET`, `DELETE`
+  (soft, idempotent) and `POST …/rotate` (new secret, same id, old one valid
+  for a grace window) complete the lifecycle, each with a `KEY_*` audit
+  event naming the key and never the secret. `auth_middleware` resolves the
+  bootstrap `SIPHON_API_KEY` first, then the store — one SHA-256 and one
+  map read against a cache refreshed every `SIPHON_API_KEY_REFRESH_SECS`.
+  `scans.api_key_id` and `findings.api_key_id` attribute every scan to its
+  key; `GET /v1/me` reports `key_id` and `tenant`. New `Sensor` role and
+  `ReportTelemetry` permission for detectors reporting in. `GET /v1/roles`
+  is rendered from the model — it had listed four roles by hand since the
+  fifth landed.
+- **fix(api): the scan routes are gated.** `POST /scan` and `/scan/stream`
+  need `Scan`, `/scan/batch` needs `BatchScan`. `Permission::Scan` was
+  declared, tabulated in the RBAC matrix and bound to nothing, so
+  `Auditor` — the role whose definition is that it reads and never acts —
+  could submit scans. `Responder` scans but does not batch, pinned by test.
+- **feat(api): four IR roles, and alerts stop being admin-only.** New
+  `ResponderReadOnly` (sees and unmasks, cannot act) and `Auditor` (reads
+  everything masked, always — no unmask permission exists for it to hold).
+  New `ViewAlerts` / `ReviewAlerts` permissions; the alert read endpoints
+  moved from `AdminAction` to `ViewAlerts`, which had only been keeping
+  responders and auditors out of the surface built for them once masking
+  went server-side. `POST /v1/findings/{id}/feedback` needs `ReviewAlerts`;
+  `prune` stays `AdminAction`.
+- C2's `/findings` route is `/detections`; IR's queue is `/ir/alerts`. A
+  detection is anything recorded; an alert is the subset that wants a human.
+  The API and schema still say `findings`.
+- Design for per-caller API keys, tenant binding and the service surface:
+  `docs/architecture/api-keys.md`.
+
+### siphon-fs 1.4.0
+
+- **feat(fs): a TLS listener, and a mutual one.** siphon-fs served plaintext
+  and relied on the mesh while taking file uploads full of the data the
+  scanner detects. `SIPHON_FS_TLS_CERT` / `_KEY` / `_CLIENT_CA` mirror
+  siphon-api's under their own prefix (siphon-launcher runs both from one
+  environment). Plaintext still works and now warns on a non-loopback bind.
+- Postgres connector via siphon-auth: `SIPHON_DATABASE_TLS=mtls` and the
+  client-certificate variables, identical to siphon-api.
+- Reports in (`SIPHON_TELEMETRY_*`): listener TLS state and certificate
+  expiry, database mode, and upload counts, to siphon-api over mTLS.
+
+### siphon-smtp 0.2.0
+
+- Reports in (`SIPHON_TELEMETRY_*`): database mode and message counts.
+  An indeterminate verdict — the milter did not finish looking — counts as
+  an error, not a clean scan.
+
+- **feat(smtp): the milter's own client certificate to Postgres**, through
+  siphon-auth. Mail rows carry whole messages; the writer that stores them
+  now proves who it is. The MTA-facing side is unchanged — the milter
+  protocol carries no TLS, so that stays `SIPHON_SMTP_ALLOWED_NETS`.
+
+### chart 2.5.0
+
+- **`tls.internal`, on by default.** One Secret per identity (api, fs,
+  postgres, nginx client, database client — CN = `postgres.username`),
+  issued by cert-manager from a chart-bootstrapped CA or an Issuer you name
+  (`tls.internal.certManager`), or mounted from your PKI. siphon-api and
+  siphon-fs get their listener and database identities; nginx its client
+  certificate; the bundled Postgres serves TLS and mounts
+  `files/pg_hba.conf` — `hostssl … scram-sha-256 clientcert=verify-full`
+  and nothing else. siphon-fs's probes become `tcpSocket` while it is on,
+  since kubelet cannot present a client certificate.
+- The shipped nginx image proxies to `https://` upstreams with
+  `proxy_ssl_verify on` and presents its client certificate.
+  `scripts/validate-nginx.sh` proves both: an upstream from a stranger's CA
+  gets a 502, and siphon-api sees `CN=siphon-nginx`.
+- docker-compose gains `postgres` (TLS + client certs, same `pg_hba.conf`)
+  and `certs-init`, which stages `deploy/certs/` from
+  `scripts/dev/mkcerts.sh` into per-service volumes with the right
+  ownership. The siphon-api and siphon-fs images now carry `curl`, which
+  their healthchecks have invoked since they were written without it ever
+  being installed.
+
 ### siphon-api 2.11.0
 
 - **feat(api): proxy identity binds to an RBAC role.** `Remote-User` /

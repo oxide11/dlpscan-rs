@@ -182,13 +182,31 @@ done < <(grep -hoE '^\s*toolchain: "[0-9.]+"' -r .github/workflows/*.yml >/dev/n
          done)
 
 # ---------------------------------------------------------------------------
-# siphon-core + siphon-launcher: standalone — no downstream artifacts to
-# check. Their versions live only in their own Cargo.toml.
+# Postgres client-auth policy lockstep
+# ---------------------------------------------------------------------------
+# One policy, two consumers: compose mounts deploy/postgres/pg_hba.conf
+# directly, and the Helm chart can only read files inside its own directory,
+# so it carries a copy. A drifted copy is a database that admits something
+# the other deployment refuses — checked byte-for-byte, like a version.
+checks=$((checks + 1))
+if cmp -s deploy/postgres/pg_hba.conf deploy/helm/siphon/files/pg_hba.conf; then
+    printf "  ok   %-55s %s\n" "deploy/helm/siphon/files/pg_hba.conf" "== deploy/postgres/pg_hba.conf"
+else
+    printf "  MISS %-55s %s\n" "deploy/helm/siphon/files/pg_hba.conf" "differs from deploy/postgres/pg_hba.conf"
+    fail=$((fail + 1))
+fi
+
+# ---------------------------------------------------------------------------
+# siphon-core, siphon-launcher, siphon-mail, siphon-auth: standalone — no
+# downstream artifacts to check. Their versions live only in their own
+# Cargo.toml.
 # ---------------------------------------------------------------------------
 core_ver="$(cargo_version crates/siphon-core/Cargo.toml)"
 launcher_ver="$(cargo_version crates/siphon-launcher/Cargo.toml)"
+auth_ver="$(cargo_version crates/siphon-auth/Cargo.toml)"
 echo "siphon-core ${core_ver} (standalone)"
 echo "siphon-launcher ${launcher_ver} (standalone)"
+echo "siphon-auth ${auth_ver} (standalone)"
 
 # ---------------------------------------------------------------------------
 echo

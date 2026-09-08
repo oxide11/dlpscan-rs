@@ -61,6 +61,14 @@ spec:
               mountPath: /var/cache/nginx
             - name: nginx-run
               mountPath: /var/run
+            {{- if .Values.tls.internal.enabled }}
+            # nginx.conf reads client.crt / client.key / ca.crt from here:
+            # what nginx presents to siphon-api and siphon-fs, and the CA it
+            # verifies them against.
+            - name: internal-tls
+              mountPath: /etc/nginx/certs/internal
+              readOnly: true
+            {{- end }}
           securityContext:
             {{- toYaml (default .Values.containerSecurityContext .Values.nginx.containerSecurityContext) | nindent 12 }}
           livenessProbe:
@@ -84,6 +92,20 @@ spec:
         - name: nginx-run
           emptyDir:
             sizeLimit: 16Mi
+        {{- if .Values.tls.internal.enabled }}
+        - name: internal-tls
+          secret:
+            secretName: {{ include "siphon.internalTlsSecret" (dict "root" . "id" "nginx") }}
+            # The master process reads the key as root at config load.
+            defaultMode: 0400
+            items:
+              - key: tls.crt
+                path: client.crt
+              - key: tls.key
+                path: client.key
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}
       {{- end }}

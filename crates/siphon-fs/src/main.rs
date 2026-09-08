@@ -174,6 +174,8 @@ struct AppState {
     /// explicitly opted into running unauthenticated. Mirrors siphon-api:
     /// the key is never held in plaintext beyond startup.
     api_key_hash: Option<[u8; 32]>,
+    /// This pod as a sensor: what it scanned, for its heartbeat.
+    sensor: Arc<siphon_auth::telemetry::SensorCounters>,
     /// SHA-256 of the admin key for admin-only endpoints (e.g. overrides/reload).
     /// Defaults to the API key hash so single-key deployments need no extra config.
     /// Set SIPHON_ADMIN_KEY to a separate credential in multi-key deployments.
@@ -700,6 +702,7 @@ async fn scan(
         Ok(m) => m,
         Err(e) => {
             warn!(request_id = %request_id, error = %e, "scan failed");
+            state.sensor.record_error();
             return err(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "scan processing failed".to_string(),
@@ -751,6 +754,9 @@ async fn scan(
         .collect();
 
     let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+    state
+        .sensor
+        .record_scan(findings.len() as u64, file_len as u64, duration_ms as u64);
 
     // Persist findings to Postgres in the background — never blocks the response.
     // SHA-256 was computed incrementally during streaming; raw bytes are not stored.
@@ -1299,6 +1305,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind = std::env::var("SIPHON_FS_BIND").unwrap_or_else(|_| "0.0.0.0:8081".to_string());
     let addr: SocketAddr = bind.parse()?;
 
+    // Resolved and loaded first so half-configured TLS, or a bad certificate,
+    // is refused before anything else starts — and so the heartbeat can
+    // report the listener's state and certificate expiry.
+    let tls_settings = siphon_auth::server::Settings::from_env("SIPHON_FS_TLS")?;
+    let tls_loaded = match &tls_settings {
+        Some(s) => Some(siphon_auth::server::ServerTls::load(s)?),
+        None => None,
+    };
+    let listener_state = tls_loaded.as_ref().map(|t| t.listener_state()).unwrap_or(
+        siphon_auth::telemetry::ListenerState {
+            tls: false,
+            mtls: false,
+            cert_not_after: None,
+        },
+    );
+
     // Load deployable overrides from the path k8s mounts the
     // siphon-overrides ConfigMap into (default /etc/siphon/overrides.json).
     // Missing file → empty (compile-time defaults). Parse error → empty +
@@ -1338,10 +1360,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|v| v.parse().ok())
         .unwrap_or(30);
 
+    let sensor = Arc::new(siphon_auth::telemetry::SensorCounters::new());
+    let db_configured = db_pool.is_some();
     let state = AppState {
         // Resolved before the listener binds, so a misconfigured deployment
         // fails at startup rather than serving an open upload endpoint.
         api_key_hash: resolve_api_key_hash(),
+        sensor: sensor.clone(),
         admin_key_hash: resolve_admin_key_hash(),
         findings: Arc::new(FindingsRing::new(FINDINGS_RING_CAP)),
         live_overrides: Arc::new(std::sync::RwLock::new(live_overrides)),
@@ -1356,6 +1381,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rate_limit,
     };
     let app = build_router(state);
+
+    // Report in, if told where: this pod's listener state, its database
+    // mode, and what it has scanned, every interval, to siphon-api over the
+    // same mutual TLS — presenting its own listener certificate.
+    match siphon_auth::telemetry::reporter::Settings::from_env() {
+        Ok(Some(settings)) => {
+            let database = db_configured.then(|| {
+                let s = siphon_auth::db::Settings::from_env().ok();
+                siphon_auth::telemetry::DatabaseState {
+                    mode: s
+                        .as_ref()
+                        .map(|s| s.mode.label().to_string())
+                        .unwrap_or_else(|| "unknown".into()),
+                    client_authenticated: s.as_ref().is_some_and(|s| {
+                        s.mode != siphon_auth::db::Mode::Disable
+                            && s.client_cert.is_some()
+                            && s.client_key.is_some()
+                    }),
+                }
+            });
+            let identity = siphon_auth::telemetry::reporter::Identity {
+                sensor: POD_NAME,
+                instance: pod_id.to_string(),
+                version: env!("CARGO_PKG_VERSION"),
+                started_at: siphon_auth::chrono::Utc::now(),
+                transport: siphon_auth::telemetry::Transport {
+                    listener: Some(listener_state),
+                    database,
+                },
+            };
+            match siphon_auth::telemetry::reporter::Reporter::new(&settings, identity, sensor) {
+                Ok(r) => {
+                    info!(endpoint = %settings.url, "telemetry enabled");
+                    tokio::spawn(r.run());
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "telemetry client could not be built; refusing to start");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Ok(None) => info!("SIPHON_TELEMETRY_URL not set — this sensor will show as never seen"),
+        Err(e) => {
+            tracing::error!(error = %e, "telemetry misconfigured; refusing to start");
+            std::process::exit(1);
+        }
+    }
 
     // The limits form a chain, and only the smallest one on a given path
     // actually binds. Log all of them together so an operator can see which
@@ -1398,9 +1470,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         temp_dir = ?temp_dir,
         rate_limit_per_min = rate_limit,
         bind = %addr,
+        tls = tls_settings.is_some(),
+        mtls = tls_settings.as_ref().is_some_and(|s| s.client_ca.is_some()),
         "siphon-fs starting"
     );
 
+    // siphon-fs served plaintext and relied on a mesh for the nginx hop —
+    // and took file uploads full of the data the scanner detects while doing
+    // so. SIPHON_FS_TLS_CERT/KEY turn on TLS; SIPHON_FS_TLS_CLIENT_CA makes
+    // it mutual, so a peer that is not nginx fails in the handshake. The
+    // prefix differs from siphon-api's because siphon-launcher runs both from
+    // one environment and each must present its own identity.
+    if let Some(loaded) = tls_loaded {
+        let mutual = loaded.requires_client_cert();
+        let config = loaded.into_config().unwrap_or_else(|e| {
+            tracing::error!(error = %e, "TLS config failed");
+            std::process::exit(1);
+        });
+        if mutual {
+            info!(
+                "TLS enabled — a client certificate signed by SIPHON_FS_TLS_CLIENT_CA is required"
+            );
+        } else {
+            warn!(
+                "TLS enabled without SIPHON_FS_TLS_CLIENT_CA — any peer that can reach the port \
+                 is accepted. Set it to the deployment CA so only nginx can upload here"
+            );
+        }
+
+        // axum-server's graceful shutdown is Handle-based rather than a
+        // future on serve(); same shape as siphon-api. 45 s drain: uploads
+        // can be mid-flight, and the Deployment's grace period is 60 s.
+        let handle = axum_server::Handle::new();
+        let shutdown_handle = handle.clone();
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(45)));
+        });
+        axum_server::bind_rustls(
+            addr,
+            axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(config)),
+        )
+        .handle(handle)
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        .await?;
+        return Ok(());
+    }
+
+    if !addr.ip().is_loopback() {
+        warn!(
+            bind = %addr,
+            "TLS disabled on a non-loopback bind — set SIPHON_FS_TLS_CERT, SIPHON_FS_TLS_KEY and \
+             SIPHON_FS_TLS_CLIENT_CA, or make sure a service mesh secures this hop"
+        );
+    }
     let listener = match tokio::net::TcpListener::bind(&addr).await {
         Ok(l) => l,
         Err(e) => {

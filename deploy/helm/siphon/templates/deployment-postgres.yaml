@@ -31,10 +31,63 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.tls.internal.enabled }}
+      # Postgres insists its key file be 0600 and owned by the server user.
+      # A Secret volume cannot promise either (its files are root-owned with
+      # a group of fsGroup), so copy the material into an emptyDir as uid
+      # 999 and set the mode ourselves.
+      initContainers:
+        - name: tls-perms
+          image: {{ printf "%s:%s" .Values.postgres.image.repository .Values.postgres.image.tag | quote }}
+          command:
+            - sh
+            - -ec
+            - |
+              cp /tls-src/tls.crt /tls-src/tls.key /tls-src/ca.crt /tls/
+              chmod 600 /tls/tls.key
+              chmod 644 /tls/tls.crt /tls/ca.crt
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: tls-src
+              mountPath: /tls-src
+              readOnly: true
+            - name: tls
+              mountPath: /tls
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits:   { cpu: 100m, memory: 64Mi }
+      {{- end }}
       containers:
         - name: postgres
           image: {{ printf "%s:%s" .Values.postgres.image.repository .Values.postgres.image.tag | quote }}
           imagePullPolicy: {{ default .Values.global.imagePullPolicy .Values.postgres.image.pullPolicy }}
+          {{- if .Values.tls.internal.enabled }}
+          # TLS on, and only the mounted pg_hba.conf decides who gets in:
+          # hostssl + client certificate (CN = role) + password. The image's
+          # own generated pg_hba.conf is never consulted.
+          args:
+            - -c
+            - ssl=on
+            - -c
+            - ssl_cert_file=/etc/postgres/certs/tls.crt
+            - -c
+            - ssl_key_file=/etc/postgres/certs/tls.key
+            - -c
+            - ssl_ca_file=/etc/postgres/certs/ca.crt
+            - -c
+            - ssl_min_protocol_version=TLSv1.2
+            - -c
+            - hba_file=/etc/postgres/pg_hba.conf
+          {{- end }}
           ports:
             - name: postgres
               containerPort: {{ .Values.postgres.service.port }}
@@ -68,6 +121,15 @@ spec:
               mountPath: /var/run/postgresql
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.tls.internal.enabled }}
+            - name: tls
+              mountPath: /etc/postgres/certs
+              readOnly: true
+            - name: hba
+              mountPath: /etc/postgres/pg_hba.conf
+              subPath: pg_hba.conf
+              readOnly: true
+            {{- end }}
           securityContext:
             # Postgres needs a writable PGDATA; readOnlyRootFilesystem
             # off. Stay non-root via the image's `postgres` user
@@ -106,6 +168,18 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        {{- if .Values.tls.internal.enabled }}
+        - name: tls-src
+          secret:
+            secretName: {{ include "siphon.internalTlsSecret" (dict "root" . "id" "postgres") }}
+            defaultMode: 0444
+        - name: tls
+          emptyDir:
+            sizeLimit: 1Mi
+        - name: hba
+          configMap:
+            name: {{ include "siphon.componentName" (dict "root" . "component" "postgres") }}-hba
+        {{- end }}
       # Postgres needs the fsGroup to match the PVC's owning GID so
       # the postgres user (UID 999) can write into PGDATA on first
       # init. Force it here in case the chart-wide podSecurityContext

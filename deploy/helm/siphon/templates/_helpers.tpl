@@ -81,6 +81,17 @@ back to chart-default tag (appVersion) and global.imageRegistry.
 Per-component pod annotations. Folds in global commonAnnotations
 and optionally the Linkerd inject annotation.
 */}}
+{{/*
+Secret holding one internal-TLS identity (tls.crt, tls.key, ca.crt).
+`id` is one of api / fs / postgres / nginx / dbClient — see values.yaml
+`tls.internal`. An explicit secretName wins; otherwise "<release>-<id>-tls",
+which is also what templates/certificates.yaml issues into.
+*/}}
+{{- define "siphon.internalTlsSecret" -}}
+{{- $cfg := index .root.Values.tls.internal .id -}}
+{{- default (printf "%s-%s-tls" (include "siphon.fullname" .root) .id) $cfg.secretName -}}
+{{- end }}
+
 {{- define "siphon.podAnnotations" -}}
 {{- with .root.Values.global.commonAnnotations }}
 {{- toYaml . }}

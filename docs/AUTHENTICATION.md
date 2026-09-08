@@ -9,7 +9,7 @@ doesn't see.
 |-------|-----------------------|-----|-----------------|
 | 1. Ingress auth | Human or browser client | OIDC + Passkey (WebAuthn) via Authelia | `deploy/authelia/` + `deploy/nginx/` |
 | 2. API auth | Machine-to-machine client | Bearer API key (SHA-256 hashed) | `siphon-api` built-in |
-| 3. Pod-to-pod auth | Workload identity | Automatic mTLS via Linkerd | Mesh sidecar, transparent |
+| 3. Service-to-service auth | Workload identity | Application-level mutual TLS — every detector ↔ C2/IR/database hop — with Linkerd as a second layer in-cluster | `crates/siphon-auth/`, `deploy/nginx/nginx.conf`, `deploy/postgres/pg_hba.conf` |
 
 ## Ingress: Authelia + Nginx forward-auth
 
@@ -198,12 +198,47 @@ full OIDC resource-server integration (JWT validation inside
 siphon-api), which is deliberately out of scope for this
 deployment-scaffolding sprint.
 
-## Pod-to-pod: Linkerd mTLS
+## Service-to-service: mutual TLS on every internal hop
 
-Pod-to-pod calls inside the cluster (`siphon-api` reaching
-`siphon-fs`, both reaching Redis if the rate-limit feature is on,
-etc.) are authenticated and encrypted by **Linkerd** — the lighter
-of the two mesh options the roadmap proposed.
+Every hop between a detector and the C2/IR surface or the database is
+**mutually** authenticated at the application layer, whatever the
+deployment — compose or Kubernetes, mesh or no mesh. Not "encrypted":
+a pod that can reach siphon-api's port is nobody until it presents a
+certificate the deployment CA signed.
+
+| Hop | How |
+|---|---|
+| nginx → siphon-api | siphon-api requires a client certificate (`SIPHON_TLS_CLIENT_CA`); nginx presents one (`proxy_ssl_certificate`) and verifies the service (`proxy_ssl_verify on`) |
+| nginx → siphon-fs | the same, under `SIPHON_FS_TLS_*` |
+| siphon-api / siphon-fs / siphon-smtp → Postgres | `SIPHON_DATABASE_TLS=mtls`: the service presents `SIPHON_DATABASE_CLIENT_CERT`/`_KEY` and refuses to start without them. Postgres's `pg_hba.conf` admits only `hostssl … scram-sha-256 clientcert=verify-full` — certificate **and** password, and the certificate's CN must be the role |
+| Squid → siphon-icap, Postfix → siphon-smtp | unchanged: network allowlists. ICAP and the milter protocol carry no TLS; these are the proxy's and MTA's hops, and "all internal traffic is mTLS" does not cover them |
+
+One implementation, `crates/siphon-auth` — the Postgres builder used to be
+three identical copies ending `.with_no_client_auth()`, which is three
+places to forget. `scripts/validate-nginx.sh` proves the nginx side with a
+stub siphon-api that requires a client certificate: nginx must arrive as
+`CN=siphon-nginx`, and an upstream whose certificate chains to a stranger's
+CA must get a 502.
+
+**Certificates.** `scripts/dev/mkcerts.sh` writes a private CA and one
+identity per service into `deploy/certs/` (gitignored) for compose; the
+Helm chart issues the same identities through cert-manager
+(`tls.internal.certManager.enabled=true`, from a chart-bootstrapped CA or
+an Issuer you name) or mounts Secrets from your PKI. Service leaves carry
+both `serverAuth` and `clientAuth`, because a pod's health probe presents
+its own listener certificate back to its own mTLS listener.
+
+**Failure direction.** No grace path anywhere: a service configured for
+`mtls` with no certificate does not start, and a peer with the wrong CA
+gets a TLS alert, not a 401. A certificate is deployment configuration,
+not a runtime credential that can lag.
+
+## Pod-to-pod: Linkerd mTLS (second layer)
+
+In-cluster, pod-to-pod calls are additionally authenticated and encrypted
+by **Linkerd** — the lighter of the two mesh options the roadmap proposed.
+It is no longer the only thing making the mTLS claim true, and a compose
+deployment gets the same property without it.
 
 Why Linkerd over Istio here:
 
