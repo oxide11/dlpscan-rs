@@ -6,13 +6,71 @@
 use serde::{Deserialize, Serialize};
 
 /// API roles ordered by privilege level (Admin highest).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Ord` is derived and the variants are declared most-privileged first, so
+/// `min()` across a set of groups picks the *highest* privilege. That is the
+/// behaviour we want when a user belongs to several groups, and deriving it
+/// means adding a role cannot silently break the comparison.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     Admin,
     Analyst,
+    /// Incident responder — investigates findings rather than operating the
+    /// scanner. Can see and unmask sensitive values in the course of an
+    /// investigation, but cannot change what the scanner detects or enforces.
+    /// See `docs/wireframes/IR-vs-C2.md` for the operate/investigate split.
+    Responder,
     Operator,
     Viewer,
+}
+
+impl Role {
+    /// Map an identity-provider group name to a role.
+    ///
+    /// The names match the groups Authelia is configured with
+    /// (`deploy/authelia/configuration.yml`). Unknown groups map to `None`
+    /// rather than a default, so a typo in the IdP drops privilege instead of
+    /// silently granting some.
+    pub fn from_group(group: &str) -> Option<Self> {
+        match group.trim().to_ascii_lowercase().as_str() {
+            "admins" | "admin" => Some(Self::Admin),
+            "analysts" | "analyst" => Some(Self::Analyst),
+            "responders" | "responder" | "ir" => Some(Self::Responder),
+            "operators" | "operator" => Some(Self::Operator),
+            "viewers" | "viewer" => Some(Self::Viewer),
+            _ => None,
+        }
+    }
+
+    /// Highest-privilege role among a comma-separated group list.
+    ///
+    /// Returns `None` when the list carries no group we recognise — the caller
+    /// must then decide, and every caller here fails closed.
+    pub fn from_groups(groups: &str) -> Option<Self> {
+        groups.split(',').filter_map(Self::from_group).min()
+    }
+
+    /// Short lowercase name, as it appears in audit rows and `GET /v1/me`.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Admin => "admin",
+            Self::Analyst => "analyst",
+            Self::Responder => "responder",
+            Self::Operator => "operator",
+            Self::Viewer => "viewer",
+        }
+    }
+
+    /// Every permission this role holds. Drives `GET /v1/me`, so the console
+    /// can render only the affordances that will actually work.
+    pub fn permissions(self) -> Vec<Permission> {
+        Permission::ALL
+            .iter()
+            .copied()
+            .filter(|p| role_has_permission(self, *p))
+            .collect()
+    }
 }
 
 /// API permissions for gating endpoint access.
@@ -32,15 +90,80 @@ pub enum Permission {
     ViewStatus,
     /// Admin-only operations (key rotation, configuration changes)
     AdminAction,
+    /// Read the matched value of a PII finding in the clear.
+    ///
+    /// Separate from `UnmaskPci` on purpose. Cardholder data carries its own
+    /// regulatory basis under PCI-DSS and a narrower need-to-know than personal
+    /// data generally, so a role can hold one without the other. Collapsing
+    /// them into a single "unmask" permission is how the narrower control
+    /// quietly becomes the wider one.
+    UnmaskPii,
+    /// Read the matched value of a PCI-DSS finding (PAN, track data) in the
+    /// clear. Every use is audited server-side.
+    UnmaskPci,
+}
+
+impl Permission {
+    /// Every permission, so `Role::permissions()` cannot silently miss one.
+    /// A new variant that is not added here is a compile-time nudge rather
+    /// than a permission that never appears in `GET /v1/me`.
+    pub const ALL: [Permission; 9] = [
+        Permission::Scan,
+        Permission::BatchScan,
+        Permission::ManagePatterns,
+        Permission::Detokenize,
+        Permission::ExportVault,
+        Permission::ViewStatus,
+        Permission::AdminAction,
+        Permission::UnmaskPii,
+        Permission::UnmaskPci,
+    ];
+
+    /// Stable wire name, used in `GET /v1/me` and audit metadata.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Scan => "scan",
+            Self::BatchScan => "batch_scan",
+            Self::ManagePatterns => "manage_patterns",
+            Self::Detokenize => "detokenize",
+            Self::ExportVault => "export_vault",
+            Self::ViewStatus => "view_status",
+            Self::AdminAction => "admin_action",
+            Self::UnmaskPii => "unmask_pii",
+            Self::UnmaskPci => "unmask_pci",
+        }
+    }
 }
 
 /// Check whether a role has a given permission.
 ///
 /// Permission matrix:
-///   - Admin:    all permissions
-///   - Analyst:  Scan, BatchScan, Detokenize, ViewStatus
-///   - Operator: Scan, BatchScan, ViewStatus
-///   - Viewer:   ViewStatus only
+///
+/// | Role | Permissions |
+/// |---|---|
+/// | Admin | all |
+/// | Analyst | Scan, BatchScan, Detokenize, ViewStatus, UnmaskPii |
+/// | Responder | Scan, ViewStatus, UnmaskPii, UnmaskPci |
+/// | Operator | Scan, BatchScan, ViewStatus |
+/// | Viewer | ViewStatus |
+///
+/// Two notes on the unmask columns, because they are the ones that will be
+/// argued about:
+///
+/// **Analyst holds `UnmaskPii` but not `UnmaskPci`.** Tuning a pattern means
+/// looking at what it matched, so an analyst who cannot see values cannot do
+/// the job. Cardholder data is the exception: PCI-DSS wants that need-to-know
+/// narrow, and pattern tuning can be done against a redacted PAN plus the
+/// validator result.
+///
+/// **Responder holds both, but not `BatchScan` or `ManagePatterns`.** An
+/// investigation genuinely needs the value in the clear — that is the whole
+/// job — but a responder has no business changing what the scanner detects.
+/// Investigate, don't operate.
+///
+/// Holding an unmask permission is not the same as data arriving unmasked.
+/// Responses are redacted by default whatever the role; the permission is what
+/// lets an explicit unmask request succeed, and every one of those is audited.
 pub fn role_has_permission(role: Role, perm: Permission) -> bool {
     match role {
         Role::Admin => true,
@@ -50,6 +173,14 @@ pub fn role_has_permission(role: Role, perm: Permission) -> bool {
                 | Permission::BatchScan
                 | Permission::Detokenize
                 | Permission::ViewStatus
+                | Permission::UnmaskPii
+        ),
+        Role::Responder => matches!(
+            perm,
+            Permission::Scan
+                | Permission::ViewStatus
+                | Permission::UnmaskPii
+                | Permission::UnmaskPci
         ),
         Role::Operator => matches!(
             perm,

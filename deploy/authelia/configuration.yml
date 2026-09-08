@@ -76,10 +76,23 @@ authentication_backend:
 # Rules below map to actual siphon-api routes (see
 # crates/siphon-api/src/main.rs `Router::new()`). Nginx strips the
 # `/api/` prefix when forwarding to siphon-api, so what the binary
-# sees as `/scan` shows up here as `/api/scan`. Tighten the
-# `subject:` matchers once you've wired real groups into the auth
-# backend; until then, anyone authenticated to a group named
-# `admins` / `operators` is treated as such.
+# sees as `/scan` shows up here as `/api/scan`.
+#
+# Group names are the contract with siphon-api's RBAC. nginx forwards
+# Authelia's `Remote-Groups` and `siphon::rbac::Role::from_groups`
+# maps it, highest privilege winning:
+#
+#   admins     → Admin      everything
+#   analysts   → Analyst    scan, batch, detokenize, unmask PII
+#   responders → Responder  scan, unmask PII *and* PCI; cannot change
+#                           detection (incident response, not operations)
+#   operators  → Operator   scan, batch, view status
+#   viewers    → Viewer     view status only
+#
+# A group not in that list maps to nothing, and an authenticated user
+# with no recognised group is granted Viewer — authenticated is not
+# authorised. Rules here are the coarse gate; siphon-api re-checks
+# every permission on the request that matters.
 
 access_control:
   default_policy: deny

@@ -22,6 +22,19 @@ users:
       - admins
       - operators
 
+  # An incident responder: investigates findings, may unmask PII and
+  # cardholder data in the course of a case, cannot touch patterns or
+  # policies. See docs/wireframes/IR-vs-C2.md for the operate/investigate
+  # split these groups encode.
+  responder:
+    disabled: false
+    displayname: "Example Responder"
+    # password: use `authelia crypto hash generate argon2` — never commit one
+    password: "$argon2id$v=19$m=65536,t=3,p=4$REPLACE_ME"
+    email: responder@example.com
+    groups:
+      - responders
+
   analyst:
     disabled: false
     displayname: "Example Analyst"
