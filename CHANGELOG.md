@@ -8,6 +8,85 @@ independent, so a release block typically moves only the crates that actually
 
 ## 2026-09-08
 
+### siphon-auth 0.1.0
+
+- **New library crate: service identity.** One Postgres connector
+  (`db::DbTls` — `disable` / `require` / `mtls`) and one listener builder
+  (`server::ServerTls` — a service certificate plus an optional client CA
+  every peer must chain to). Replaces three byte-identical copies of the
+  TLS builder in siphon-api, siphon-fs and siphon-smtp, each of which ended
+  in `.with_no_client_auth()`. `tests/mtls.rs` performs real handshakes
+  against certificates from `scripts/dev/mkcerts.sh`: a peer with no
+  certificate, or one from another CA, never reaches the application.
+
+### siphon-api 2.12.0
+
+- **feat(api): mutual TLS on both hops.** `SIPHON_TLS_CLIENT_CA` makes the
+  listener require a client certificate from the deployment CA — nginx
+  holds one; nothing else in the cluster does — and startup now warns when
+  TLS is on without it, because encrypted is not authenticated.
+  `SIPHON_DATABASE_TLS=mtls` presents `SIPHON_DATABASE_CLIENT_CERT`/`_KEY`
+  to Postgres and refuses to start without them; `require` presents them if
+  set. Half-configured TLS (a certificate without a key, a client CA on a
+  plaintext bind) is a startup error rather than a silent downgrade.
+- **fix(api): the scan routes are gated.** `POST /scan` and `/scan/stream`
+  need `Scan`, `/scan/batch` needs `BatchScan`. `Permission::Scan` was
+  declared, tabulated in the RBAC matrix and bound to nothing, so
+  `Auditor` — the role whose definition is that it reads and never acts —
+  could submit scans. `Responder` scans but does not batch, pinned by test.
+- **feat(api): four IR roles, and alerts stop being admin-only.** New
+  `ResponderReadOnly` (sees and unmasks, cannot act) and `Auditor` (reads
+  everything masked, always — no unmask permission exists for it to hold).
+  New `ViewAlerts` / `ReviewAlerts` permissions; the alert read endpoints
+  moved from `AdminAction` to `ViewAlerts`, which had only been keeping
+  responders and auditors out of the surface built for them once masking
+  went server-side. `POST /v1/findings/{id}/feedback` needs `ReviewAlerts`;
+  `prune` stays `AdminAction`.
+- C2's `/findings` route is `/detections`; IR's queue is `/ir/alerts`. A
+  detection is anything recorded; an alert is the subset that wants a human.
+  The API and schema still say `findings`.
+- Design for per-caller API keys, tenant binding and the service surface:
+  `docs/architecture/api-keys.md`.
+
+### siphon-fs 1.4.0
+
+- **feat(fs): a TLS listener, and a mutual one.** siphon-fs served plaintext
+  and relied on the mesh while taking file uploads full of the data the
+  scanner detects. `SIPHON_FS_TLS_CERT` / `_KEY` / `_CLIENT_CA` mirror
+  siphon-api's under their own prefix (siphon-launcher runs both from one
+  environment). Plaintext still works and now warns on a non-loopback bind.
+- Postgres connector via siphon-auth: `SIPHON_DATABASE_TLS=mtls` and the
+  client-certificate variables, identical to siphon-api.
+
+### siphon-smtp 0.2.0
+
+- **feat(smtp): the milter's own client certificate to Postgres**, through
+  siphon-auth. Mail rows carry whole messages; the writer that stores them
+  now proves who it is. The MTA-facing side is unchanged — the milter
+  protocol carries no TLS, so that stays `SIPHON_SMTP_ALLOWED_NETS`.
+
+### chart 2.5.0
+
+- **`tls.internal`, on by default.** One Secret per identity (api, fs,
+  postgres, nginx client, database client — CN = `postgres.username`),
+  issued by cert-manager from a chart-bootstrapped CA or an Issuer you name
+  (`tls.internal.certManager`), or mounted from your PKI. siphon-api and
+  siphon-fs get their listener and database identities; nginx its client
+  certificate; the bundled Postgres serves TLS and mounts
+  `files/pg_hba.conf` — `hostssl … scram-sha-256 clientcert=verify-full`
+  and nothing else. siphon-fs's probes become `tcpSocket` while it is on,
+  since kubelet cannot present a client certificate.
+- The shipped nginx image proxies to `https://` upstreams with
+  `proxy_ssl_verify on` and presents its client certificate.
+  `scripts/validate-nginx.sh` proves both: an upstream from a stranger's CA
+  gets a 502, and siphon-api sees `CN=siphon-nginx`.
+- docker-compose gains `postgres` (TLS + client certs, same `pg_hba.conf`)
+  and `certs-init`, which stages `deploy/certs/` from
+  `scripts/dev/mkcerts.sh` into per-service volumes with the right
+  ownership. The siphon-api and siphon-fs images now carry `curl`, which
+  their healthchecks have invoked since they were written without it ever
+  being installed.
+
 ### siphon-api 2.11.0
 
 - **feat(api): proxy identity binds to an RBAC role.** `Remote-User` /

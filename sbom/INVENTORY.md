@@ -19,12 +19,13 @@ members and report that false picture; `cargo tree -p` does not.
 
 | Artifact | Components | Third-party |
 |---|---|---|
-| `siphon-fs` | 381 | 378 |
-| `siphon-smtp` | 332 | 328 |
+| `siphon-fs` | 385 | 381 |
+| `siphon-smtp` | 350 | 345 |
 | `siphon-cli` | 311 | 309 |
-| `siphon-api` | 203 | 199 |
+| `siphon-api` | 203 | 198 |
 | `siphon-launcher` | 116 | 114 |
 | `siphon-icap` | 87 | 85 |
+| `siphon-auth` | 86 | 85 |
 | `siphon-mail` | 71 | 70 |
 | `siphon-core` | 70 | 69 |
 
@@ -36,7 +37,7 @@ path that parses attacker-supplied files.
 | Component | Why it is here | Shipped in |
 |---|---|---|
 | `libsqlite3-sys` | bundled SQLite (C), reached via rusqlite for .sqlite extraction | `siphon-cli`, `siphon-fs`, `siphon-smtp` |
-| `ring` | assembly + C crypto primitives, reached via rustls | `siphon-api`, `siphon-fs` |
+| `ring` | assembly + C crypto primitives, reached via rustls | `siphon-api`, `siphon-auth`, `siphon-fs`, `siphon-smtp` |
 | `rusqlite` | safe wrapper over libsqlite3-sys | `siphon-cli`, `siphon-fs`, `siphon-smtp` |
 | `unrar` | safe wrapper over unrar_sys | `siphon-cli`, `siphon-fs`, `siphon-smtp` |
 | `unrar_sys` | UnRAR (C++), reached via unrar for .rar extraction | `siphon-cli`, `siphon-fs`, `siphon-smtp` |
@@ -57,32 +58,32 @@ Across all third-party components in all artifacts, counted per artifact.
 
 | Licence | Occurrences |
 |---|---|
-| `MIT OR Apache-2.0` | 889 |
-| `MIT` | 291 |
-| `Apache-2.0 OR MIT` | 124 |
-| `Apache-2.0` | 75 |
-| `Unlicense OR MIT` | 25 |
-| `BSD-3-Clause` | 17 |
-| `MIT OR Apache-2.0 OR Zlib` | 17 |
-| `Zlib OR Apache-2.0 OR MIT` | 17 |
+| `MIT OR Apache-2.0` | 943 |
+| `MIT` | 304 |
+| `Apache-2.0 OR MIT` | 139 |
+| `Apache-2.0` | 77 |
+| `Unlicense OR MIT` | 27 |
+| `BSD-3-Clause` | 19 |
+| `MIT OR Apache-2.0 OR Zlib` | 18 |
+| `Zlib OR Apache-2.0 OR MIT` | 18 |
+| `ISC` | 10 |
+| `(MIT OR Apache-2.0) AND Unicode-3.0` | 9 |
 | `BSD-2-Clause` | 9 |
-| `(MIT OR Apache-2.0) AND Unicode-3.0` | 8 |
 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | 8 |
 | `(Apache-2.0 OR MIT) AND BSD-3-Clause` | 7 |
 | `Zlib` | 7 |
 | `BSD-2-Clause OR Apache-2.0 OR MIT` | 6 |
 | `BSD-3-Clause OR Apache-2.0` | 6 |
-| `ISC` | 6 |
 | `MIT OR Zlib OR Apache-2.0` | 6 |
 | `Apache-2.0 OR BSL-1.0` | 5 |
-| `Apache-2.0 OR BSL-1.0 OR MIT` | 4 |
+| `Apache-2.0 OR BSL-1.0 OR MIT` | 5 |
+| `Apache-2.0 AND ISC` | 4 |
 | `Apache-2.0 OR ISC OR MIT` | 4 |
+| `CDLA-Permissive-2.0` | 4 |
+| `ISC AND (Apache-2.0 OR ISC)` | 4 |
+| `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)` | 4 |
 | `0BSD OR MIT OR Apache-2.0` | 3 |
 | `Apache-2.0 AND MIT` | 3 |
 | `CC0-1.0 OR Apache-2.0` | 3 |
 | `MIT AND BSD-3-Clause` | 3 |
-| `Apache-2.0 AND ISC` | 2 |
-| `CDLA-Permissive-2.0` | 2 |
-| `ISC AND (Apache-2.0 OR ISC)` | 2 |
-| `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)` | 2 |
 | `CC0-1.0` | 1 |

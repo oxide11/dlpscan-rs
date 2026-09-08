@@ -20,8 +20,10 @@ RUN cargo build --release -p siphon-fs --locked
 
 FROM debian:bookworm-slim
 
+# curl for the compose healthcheck, which under mutual TLS has to present the
+# pod's own certificate to its own listener — only a real client can.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r siphon && useradd -r -g siphon -s /bin/false siphon
@@ -33,12 +35,11 @@ EXPOSE 8081
 
 ENTRYPOINT ["siphon-fs"]
 
-# K8s liveness/readiness probes hit /health and /ready directly, so
-# there's no Docker HEALTHCHECK here — keeps the image slim (no curl
-# dep needed) and the single source of health truth is the Deployment
-# manifest. Add --with curl if you need standalone docker-compose
-# healthchecks.
+# No Docker HEALTHCHECK here: the Deployment manifest is the single source
+# of health truth (tcpSocket under mutual TLS, since kubelet cannot present
+# a client certificate), and docker-compose declares its own curl probe
+# with the pod's certificate. curl is installed above for that probe.
 
 LABEL org.opencontainers.image.title="siphon-fs" \
       org.opencontainers.image.description="Polygon Siphon file-scanner HTTP service" \
-      org.opencontainers.image.version="1.3.0"
+      org.opencontainers.image.version="1.4.0"

@@ -1,0 +1,109 @@
+{{- /*
+Internal PKI via cert-manager: one Certificate per service identity, issued
+from either the operator's Issuer or a CA the chart bootstraps itself.
+
+The bootstrap chain is the standard cert-manager pattern — a selfSigned
+Issuer signs a CA Certificate, whose Secret backs a CA Issuer that signs
+everything else. Nothing outside the release ever trusts the self-signed
+root; the services trust ca.crt from their own Secrets, which cert-manager
+populates from the issuing CA.
+
+Service leaves carry BOTH server and client auth: a pod's own probe presents
+its listener certificate back to its own mTLS listener, and siphon-api's
+identity is what it would present if it ever called siphon-fs.
+*/ -}}
+{{- if and .Values.tls.internal.enabled .Values.tls.internal.certManager.enabled }}
+{{- $cm := .Values.tls.internal.certManager }}
+{{- $ca := printf "%s-internal-ca" (include "siphon.fullname" .) }}
+{{- $issuer := ternary (dict "name" $cm.issuerRef.name "kind" $cm.issuerRef.kind) (dict "name" $ca "kind" "Issuer") (ne $cm.issuerRef.name "") }}
+{{- $ns := .Release.Namespace }}
+{{- if eq $cm.issuerRef.name "" }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $ca }}-bootstrap
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "pki") | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $ca }}
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "pki") | nindent 4 }}
+spec:
+  isCA: true
+  commonName: Siphon internal CA
+  secretName: {{ $ca }}
+  duration: 87600h  # 10 years; leaves rotate, the root does not need to
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: {{ $ca }}-bootstrap
+    kind: Issuer
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $ca }}
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "pki") | nindent 4 }}
+spec:
+  ca:
+    secretName: {{ $ca }}
+---
+{{- end }}
+{{- range $id, $spec := dict
+  "api"      (dict "component" "api"      "usages" (list "server auth" "client auth") "svc" true)
+  "fs"       (dict "component" "fs"       "usages" (list "server auth" "client auth") "svc" true)
+  "postgres" (dict "component" "postgres" "usages" (list "server auth")               "svc" true)
+  "nginx"    (dict "component" "nginx"    "usages" (list "client auth")               "svc" false)
+  "dbClient" (dict "component" "api"      "usages" (list "client auth")               "svc" false)
+}}
+{{- $svc := include "siphon.componentName" (dict "root" $ "component" $spec.component) }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "siphon.internalTlsSecret" (dict "root" $ "id" $id) }}
+  labels:
+    {{- include "siphon.labels" (dict "root" $ "component" "pki") | nindent 4 }}
+spec:
+  secretName: {{ include "siphon.internalTlsSecret" (dict "root" $ "id" $id) }}
+  duration: {{ $cm.duration }}
+  renewBefore: {{ $cm.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  usages:
+    - digital signature
+    {{- range $spec.usages }}
+    - {{ . }}
+    {{- end }}
+  {{- if eq $id "dbClient" }}
+  # pg_hba.conf's clientcert=verify-full matches the CN against the role.
+  commonName: {{ $.Values.postgres.username | quote }}
+  {{- else if eq $id "nginx" }}
+  commonName: siphon-nginx
+  {{- else }}
+  commonName: {{ $svc }}
+  {{- end }}
+  {{- if $spec.svc }}
+  dnsNames:
+    - {{ $svc }}
+    - {{ $svc }}.{{ $ns }}
+    - {{ $svc }}.{{ $ns }}.svc
+    - {{ $svc }}.{{ $ns }}.svc.cluster.local
+    - localhost
+  ipAddresses:
+    - 127.0.0.1
+  {{- end }}
+  issuerRef:
+    name: {{ $issuer.name }}
+    kind: {{ $issuer.kind }}
+---
+{{- end }}
+{{- end }}

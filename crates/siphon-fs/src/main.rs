@@ -1299,6 +1299,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind = std::env::var("SIPHON_FS_BIND").unwrap_or_else(|_| "0.0.0.0:8081".to_string());
     let addr: SocketAddr = bind.parse()?;
 
+    // Resolved first so half-configured TLS is refused before anything else
+    // starts — a certificate with no key, or a client CA on a plaintext bind.
+    let tls_settings = siphon_auth::server::Settings::from_env("SIPHON_FS_TLS")?;
+
     // Load deployable overrides from the path k8s mounts the
     // siphon-overrides ConfigMap into (default /etc/siphon/overrides.json).
     // Missing file → empty (compile-time defaults). Parse error → empty +
@@ -1398,9 +1402,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         temp_dir = ?temp_dir,
         rate_limit_per_min = rate_limit,
         bind = %addr,
+        tls = tls_settings.is_some(),
+        mtls = tls_settings.as_ref().is_some_and(|s| s.client_ca.is_some()),
         "siphon-fs starting"
     );
 
+    // siphon-fs served plaintext and relied on a mesh for the nginx hop —
+    // and took file uploads full of the data the scanner detects while doing
+    // so. SIPHON_FS_TLS_CERT/KEY turn on TLS; SIPHON_FS_TLS_CLIENT_CA makes
+    // it mutual, so a peer that is not nginx fails in the handshake. The
+    // prefix differs from siphon-api's because siphon-launcher runs both from
+    // one environment and each must present its own identity.
+    if let Some(settings) = tls_settings {
+        let loaded = siphon_auth::server::ServerTls::load(&settings).unwrap_or_else(|e| {
+            tracing::error!(error = %e, "TLS config failed");
+            std::process::exit(1);
+        });
+        let mutual = loaded.requires_client_cert();
+        let config = loaded.into_config().unwrap_or_else(|e| {
+            tracing::error!(error = %e, "TLS config failed");
+            std::process::exit(1);
+        });
+        if mutual {
+            info!(
+                "TLS enabled — a client certificate signed by SIPHON_FS_TLS_CLIENT_CA is required"
+            );
+        } else {
+            warn!(
+                "TLS enabled without SIPHON_FS_TLS_CLIENT_CA — any peer that can reach the port \
+                 is accepted. Set it to the deployment CA so only nginx can upload here"
+            );
+        }
+
+        // axum-server's graceful shutdown is Handle-based rather than a
+        // future on serve(); same shape as siphon-api. 45 s drain: uploads
+        // can be mid-flight, and the Deployment's grace period is 60 s.
+        let handle = axum_server::Handle::new();
+        let shutdown_handle = handle.clone();
+        tokio::spawn(async move {
+            shutdown_signal().await;
+            shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(45)));
+        });
+        axum_server::bind_rustls(
+            addr,
+            axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(config)),
+        )
+        .handle(handle)
+        .serve(app.into_make_service_with_connect_info::<SocketAddr>())
+        .await?;
+        return Ok(());
+    }
+
+    if !addr.ip().is_loopback() {
+        warn!(
+            bind = %addr,
+            "TLS disabled on a non-loopback bind — set SIPHON_FS_TLS_CERT, SIPHON_FS_TLS_KEY and \
+             SIPHON_FS_TLS_CLIENT_CA, or make sure a service mesh secures this hop"
+        );
+    }
     let listener = match tokio::net::TcpListener::bind(&addr).await {
         Ok(l) => l,
         Err(e) => {

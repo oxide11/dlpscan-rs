@@ -8,8 +8,9 @@ credentials that identify *who* is calling, what they may do, and whose data
 they are allowed to see. This document is the design for those credentials,
 and the honest account of what a caller gets today.
 
-It is a plan, not a record. Phase 1 of §10 is done; nothing in §3 onward
-exists yet.
+It is a plan, not a record. Phases 1 and 2 of §10 are done — the scan
+gates, and mutual TLS on every hop (§9) — and nothing from §3 to §8 exists
+yet.
 
 ## 1. What an external caller can do today
 

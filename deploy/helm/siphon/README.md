@@ -217,14 +217,46 @@ Cluster-scoped access is never granted. A compromised siphon-api
 pod can't touch anything outside the release namespace, and
 within it is limited to the Deployments you name.
 
-## Linkerd mTLS
+## Internal mutual TLS
+
+**On by default** (`tls.internal.enabled: true`) and required by the
+shipped nginx image, whose config proxies to `https://` upstreams and
+presents a client certificate. Every detector ↔ C2/IR/database hop is
+mutually authenticated at the application layer: siphon-api and
+siphon-fs require a client certificate from the deployment CA; siphon-api
+presents its own to Postgres, whose `pg_hba.conf` (`files/pg_hba.conf`)
+admits nothing else.
+
+The chart needs one `kubernetes.io/tls` Secret per identity, each
+carrying `tls.crt`, `tls.key` **and** `ca.crt`:
+
+| id | default Secret | what |
+|---|---|---|
+| `api` | `<release>-api-tls` | siphon-api listener; SAN = Service DNS names + localhost |
+| `fs` | `<release>-fs-tls` | siphon-fs listener |
+| `postgres` | `<release>-postgres-tls` | the database's server certificate |
+| `nginx` | `<release>-nginx-tls` | nginx's client identity, CN `siphon-nginx` |
+| `dbClient` | `<release>-dbClient-tls` | siphon-api's client identity to Postgres; **CN must equal `postgres.username`** |
+
+The recommended path is cert-manager: `tls.internal.certManager.enabled=true`
+renders a `Certificate` per identity, issued from an Issuer you name in
+`issuerRef` or — left empty — from a CA the chart bootstraps (selfSigned
+Issuer → CA Certificate → CA Issuer). Leaves rotate every 90 days by
+default. To use your own PKI instead, create the Secrets in the layout
+above and point `tls.internal.<id>.secretName` at them.
+
+Note siphon-fs's probes switch to `tcpSocket` while this is on: kubelet
+cannot present a client certificate, so an `httpGet` would be refused in
+the handshake. That is the listener working, not a probe bug.
+
+## Linkerd mTLS (second layer)
 
 **On by default** (`global.linkerd.enabled: true`). It adds
 `linkerd.io/inject: enabled` to every pod so all pod-to-pod traffic
-is mTLS-encrypted and mutually authenticated — the baseline for
-encrypting the in-cluster hops, and the reason siphon-fs (which
-serves no TLS of its own but takes file uploads full of sensitive
-data) is not sending cleartext across the pod network.
+is mTLS-encrypted and mutually authenticated by the mesh as well —
+defence in depth over the application-level identities above, and
+still the only encryption on hops the application does not own
+(Authelia, the ingress controller).
 
 **Prerequisite: the Linkerd control plane must be installed**
 (`linkerd install | kubectl apply -f -`). The inject annotation is
@@ -255,11 +287,15 @@ Before pointing real traffic at the release:
       `4.38` and should match the Authelia version you've
       exercised in staging.
 - [ ] Flip `ingress.tls.enabled=true` and provide `secretName`.
+- [ ] Internal TLS material exists: either cert-manager is installed and
+      `tls.internal.certManager.enabled=true`, or the five Secrets in
+      the table above were created from your PKI. Pods stay Pending on
+      a missing Secret; that is the chart refusing to start a plaintext
+      hop, not a bug.
 - [ ] Confirm Linkerd is installed and the pods are meshed
-      (`linkerd viz stat deploy -n siphon` → MESHED 1/1). mTLS is
-      on by default (`global.linkerd.enabled=true`); if you disabled
-      it or run a different mesh, make sure pod-to-pod traffic is
-      still encrypted and authenticated some other way.
+      (`linkerd viz stat deploy -n siphon` → MESHED 1/1). The mesh is
+      the second layer (`global.linkerd.enabled=true`); the
+      application-level mTLS above does not depend on it.
 - [ ] Verify `kubectl auth can-i patch deployments.apps -n siphon
       --as=system:serviceaccount:siphon:siphon-api` returns
       `yes` only for the Deployments you listed in

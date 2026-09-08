@@ -145,12 +145,36 @@ spec:
             # certificate, so the default would crashloop against it — hence
             # an explicit mode here. Point postgres.external at a managed
             # instance and set postgres.sslMode=require to encrypt the hop.
+            {{- if .Values.tls.internal.enabled }}
+            # Mutual: this pod's own client certificate, whose CN is the
+            # database role, is what pg_hba.conf admits.
+            - name: SIPHON_DATABASE_TLS
+              value: mtls
+            - name: SIPHON_DATABASE_CA_FILE
+              value: /etc/siphon/db-tls/ca.crt
+            - name: SIPHON_DATABASE_CLIENT_CERT
+              value: /etc/siphon/db-tls/tls.crt
+            - name: SIPHON_DATABASE_CLIENT_KEY
+              value: /etc/siphon/db-tls/tls.key
+            {{- else }}
             - name: SIPHON_DATABASE_TLS
               value: {{ .Values.postgres.sslMode | quote }}
             {{- with .Values.postgres.caFile }}
             - name: SIPHON_DATABASE_CA_FILE
               value: {{ . | quote }}
             {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.tls.internal.enabled }}
+            # The listener's identity, and the CA every peer must chain to.
+            # nginx holds a certificate from it; nothing else in the cluster
+            # does, so nothing else can reach the HTTP layer.
+            - name: SIPHON_TLS_CERT
+              value: /etc/siphon/tls/tls.crt
+            - name: SIPHON_TLS_KEY
+              value: /etc/siphon/tls/tls.key
+            - name: SIPHON_TLS_CLIENT_CA
+              value: /etc/siphon/tls/ca.crt
             {{- end }}
             {{- with .Values.api.extraEnv }}
             {{- toYaml . | nindent 12 }}
@@ -161,6 +185,16 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.tls.internal.enabled }}
+            - name: tls
+              mountPath: /etc/siphon/tls
+              readOnly: true
+            {{- if .Values.postgres.enabled }}
+            - name: db-tls
+              mountPath: /etc/siphon/db-tls
+              readOnly: true
+            {{- end }}
+            {{- end }}
             {{- with .Values.api.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -182,6 +216,18 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 256Mi
+        {{- if .Values.tls.internal.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "siphon.internalTlsSecret" (dict "root" . "id" "api") }}
+            defaultMode: 0440
+        {{- if .Values.postgres.enabled }}
+        - name: db-tls
+          secret:
+            secretName: {{ include "siphon.internalTlsSecret" (dict "root" . "id" "dbClient") }}
+            defaultMode: 0440
+        {{- end }}
+        {{- end }}
         {{- with .Values.api.extraVolumes }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

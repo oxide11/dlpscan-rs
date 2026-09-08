@@ -7191,8 +7191,14 @@ async fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(30);
 
-    let tls_cert = std::env::var("SIPHON_TLS_CERT").ok();
-    let tls_key = std::env::var("SIPHON_TLS_KEY").ok();
+    // SIPHON_TLS_CERT / SIPHON_TLS_KEY, and SIPHON_TLS_CLIENT_CA to require a
+    // client certificate from every peer — which is what makes the nginx →
+    // siphon-api hop mutual rather than merely encrypted. Half-configured
+    // TLS is refused here, before anything binds.
+    let tls_settings = siphon_auth::server::Settings::from_env("SIPHON_TLS").unwrap_or_else(|e| {
+        eprintln!("FATAL: {e}");
+        std::process::exit(1);
+    });
 
     // In-memory ring buffer for /v1/audit. Always installed so the UI
     // has something to show even when no SIPHON_AUDIT_LOG_PATH is set.
@@ -7719,7 +7725,8 @@ async fn main() {
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         addr = %addr,
-        tls = tls_cert.is_some(),
+        tls = tls_settings.is_some(),
+        mtls = tls_settings.as_ref().is_some_and(|s| s.client_ca.is_some()),
         auth = api_key_hash.is_some(),
         rate_limit = rate_limit,
         timeout_secs = request_timeout,
@@ -7728,17 +7735,31 @@ async fn main() {
         "Polygon Siphon API starting"
     );
 
-    if let (Some(cert_path), Some(key_path)) = (tls_cert, tls_key) {
-        let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
-            &cert_path, &key_path,
-        )
-        .await
-        .unwrap_or_else(|e| {
-            tracing::error!(cert = %cert_path, key = %key_path, error = %e, "TLS config failed");
+    if let Some(settings) = tls_settings {
+        let loaded = siphon_auth::server::ServerTls::load(&settings).unwrap_or_else(|e| {
+            tracing::error!(error = %e, "TLS config failed");
             std::process::exit(1);
         });
+        let mutual = loaded.requires_client_cert();
+        let config = loaded.into_config().unwrap_or_else(|e| {
+            tracing::error!(error = %e, "TLS config failed");
+            std::process::exit(1);
+        });
+        let rustls_config = axum_server::tls_rustls::RustlsConfig::from_config(Arc::new(config));
 
-        tracing::info!("TLS enabled");
+        if mutual {
+            tracing::info!(
+                "TLS enabled — a client certificate signed by SIPHON_TLS_CLIENT_CA is required"
+            );
+        } else {
+            // Encrypted is not authenticated. Said at warn level because a
+            // deployment that reads "TLS enabled" and assumes the hop is
+            // mutual is the failure this crate exists to prevent.
+            tracing::warn!(
+                "TLS enabled without SIPHON_TLS_CLIENT_CA — any peer that can reach the port \
+                 is accepted. Set it to the deployment CA so only nginx can speak to this service"
+            );
+        }
 
         // axum-server uses a Handle-based graceful shutdown rather than
         // axum::serve's with_graceful_shutdown future. Spawn a task that

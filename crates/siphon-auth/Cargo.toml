@@ -1,0 +1,39 @@
+[package]
+name = "siphon-auth"
+version = "0.1.0"
+edition = "2021"
+description = "Polygon Siphon service identity — mutual TLS for the database and service hops"
+license = "MIT"
+rust-version = "1.98"
+
+# A library, on the siphon-mail precedent: code that two or more binaries
+# must agree on lives in one crate rather than being copied into each.
+#
+# Before this crate existed the Postgres TLS builder was three byte-identical
+# copies — siphon-api, siphon-fs, siphon-smtp — every one ending in
+# `.with_no_client_auth()`. That is three places to add client
+# authentication and three places for one of them to be forgotten, and the
+# one that is forgotten is the one that connects to the database
+# unauthenticated while the other two claim the hop is mutual.
+#
+# Deliberately no siphon-core, no HTTP stack, no scanner: this crate answers
+# "who is this service, and who is it talking to", nothing else. API-key
+# resolution (docs/architecture/api-keys.md) lands here next, for the same
+# reason: siphon-api and siphon-fs must resolve a bearer key identically.
+[lib]
+name = "siphon_auth"
+path = "src/lib.rs"
+
+[dependencies]
+rustls = { version = "0.23", features = ["ring"] }
+rustls-pki-types = "1"
+webpki-roots = "1.0.9"
+tokio-postgres-rustls = { version = "0.14.0", features = ["ring"] }
+deadpool-postgres = "0.14"
+tokio-postgres = "0.7"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
+tokio-rustls = "0.26"
+tempfile = "3"

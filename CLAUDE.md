@@ -25,13 +25,24 @@ reason to break either.
   warning once at startup — a filter that quietly reverts to its defaults
   because a variable name moved is one that stops filtering mail while
   looking healthy
-- `siphon-mail` — **the one library in `crates/`**: message/part schema,
-  persistence and verdict reconciliation. It exists because two binaries need
-  the same model — siphon-smtp writes what siphon-api reads — and siphon-api
-  has no lib target to depend on; giving it one would link its whole axum
-  stack into a milter that serves no HTTP. Owns both its DDL (exported as
-  `MIGRATION_SQL`) and its DML, so a CHECK constraint and the Rust enum that
-  feeds it cannot drift apart in separate crates
+- `siphon-mail` — a library: message/part schema, persistence and verdict
+  reconciliation. It exists because two binaries need the same model —
+  siphon-smtp writes what siphon-api reads — and siphon-api has no lib target
+  to depend on; giving it one would link its whole axum stack into a milter
+  that serves no HTTP. Owns both its DDL (exported as `MIGRATION_SQL`) and
+  its DML, so a CHECK constraint and the Rust enum that feeds it cannot drift
+  apart in separate crates
+- `siphon-auth` — the other library, on the same precedent: service
+  identity. One Postgres connector (`db::DbTls` — `disable` / `require` /
+  `mtls`, the last presenting a client certificate and refusing to start
+  without one) and one listener builder (`server::ServerTls` — a service
+  certificate plus an optional client CA every peer must chain to). It
+  replaced three byte-identical copies of the TLS builder, each ending in
+  `.with_no_client_auth()`. API-key resolution lands here next
+  (`docs/architecture/api-keys.md`), for the same reason: siphon-api and
+  siphon-fs must resolve a bearer key identically. `tests/mtls.rs` performs
+  real handshakes against certificates from `scripts/dev/mkcerts.sh`, so the
+  generator is tested by the thing that consumes it
 
 Deployment assets live under `deploy/` (Dockerfiles, docker-compose, Helm
 chart, k8s manifests). Rulesets live in `rulesets/` as **YAML** files.
@@ -445,7 +456,8 @@ Key env vars for siphon-api:
 | `SIPHON_API_KEY_ROLE` | admin | Role a bare bearer key resolves to (`admin`/`analyst`/`responder`/`operator`/`viewer`). Defaults to `admin` so existing automation keeps working, and **warns at startup when unset** — a shared machine credential holding full admin is the first thing to narrow. An unknown value is a startup error, never a fallback |
 | `SIPHON_ALLOW_UNAUTHENTICATED` | false | opt in to running with no auth — local dev only. **Refused on a non-loopback `SIPHON_BIND`**: the service exits at startup rather than serve an open API on a network interface |
 | `SIPHON_DEV_MODE` | false | marks a local-dev run; currently relaxes the production startup guard that otherwise requires `SIPHON_AUDIT_LOG_PATH` |
-| `SIPHON_TLS_CERT` / `SIPHON_TLS_KEY` | — | PEM paths |
+| `SIPHON_TLS_CERT` / `SIPHON_TLS_KEY` | — | PEM paths for the listener. Half-set (one without the other) is a startup error |
+| `SIPHON_TLS_CLIENT_CA` | — | PEM CA bundle. When set, every peer must present a certificate chaining to it or the handshake fails — the request never reaches the router. This is what makes the nginx hop **mutual**; without it TLS is encryption only, and startup says so at warn level. Meaningless (and refused) without the two above |
 | `SIPHON_CORS_ORIGINS` | none | comma-separated allowlist; `*` reflects any origin. Unset = **cross-origin denied** (default-deny) |
 | `SIPHON_ALLOW_PERMISSIVE_CORS` | false | dev-only opt-in to any-origin CORS when `SIPHON_CORS_ORIGINS` is unset (e.g. admin console from `file://`) |
 | `SIPHON_RATE_LIMIT` | 120 | req/min per IP |
@@ -459,8 +471,9 @@ Key env vars for siphon-api:
 | `SIPHON_POLICIES_DIR` | — | directory of *.yaml rulesets |
 | `SIPHON_ALLOWLIST_PATH` | — | JSON allowlist |
 | `SIPHON_DATABASE_URL` | — | Postgres (optional) |
-| `SIPHON_DATABASE_TLS` | require | `require` or `disable`. Findings rows carry matched sensitive values, so the Postgres hop is encrypted by default; `require` pins `sslmode=require` and verifies the server certificate |
+| `SIPHON_DATABASE_TLS` | require | `disable`, `require` or `mtls`. Findings rows carry matched sensitive values, so the Postgres hop is encrypted by default; `require` verifies the server certificate and presents a client certificate *if* the two variables below are set; **`mtls` refuses to start without them**. An unknown value is an error, never a weaker mode. One implementation for siphon-api, siphon-fs and siphon-smtp: `crates/siphon-auth/src/db.rs` |
 | `SIPHON_DATABASE_CA_FILE` | — | extra PEM CA bundle for a self-signed Postgres certificate |
+| `SIPHON_DATABASE_CLIENT_CERT` / `SIPHON_DATABASE_CLIENT_KEY` | — | the service's client identity to Postgres. `pg_hba.conf` (`deploy/postgres/pg_hba.conf`) requires it with `clientcert=verify-full`, so the certificate's **CN must be the database role** (`siphon`), not the service name — a wrong CN fails in a way that looks like a bad password. Setting one without the other is a startup error |
 | `SIPHON_FINDINGS_RETENTION_DAYS` | 90 | Days to retain findings (0 = keep forever) |
 | `SIPHON_ROLLUP_FLUSH_SECS` | 60 | How often aggregate scan counters are flushed to `scan_rollup`. Counters accumulate in memory between flushes, so a pod killed mid-window loses at most that much *counting* — findings themselves are unaffected |
 | `SIPHON_OVERRIDES_PATH` | — | PatternOverrides YAML (hot-reloadable) |
@@ -531,8 +544,9 @@ Env vars for postgres:
 | Variable | Default | Notes |
 |---|---|---|
 | `SIPHON_DATABASE_URL` | — | Postgres connection string (optional) |
-| `SIPHON_DATABASE_TLS` | require | `require` or `disable` (see above); applies to siphon-api and siphon-fs alike |
+| `SIPHON_DATABASE_TLS` | require | `disable`, `require` or `mtls` (see above); the same code in siphon-api, siphon-fs and siphon-smtp |
 | `SIPHON_DATABASE_CA_FILE` | — | extra PEM CA bundle for a self-signed Postgres certificate |
+| `SIPHON_DATABASE_CLIENT_CERT` / `SIPHON_DATABASE_CLIENT_KEY` | — | client identity to Postgres, CN = the database role (see above) |
 | `SIPHON_FINDINGS_RETENTION_DAYS` | 90 | Days to retain findings (0 = keep forever) |
 
 ## The console
@@ -594,6 +608,12 @@ One additional endpoint:
 POST /scan    multipart/form-data file upload → extraction → findings
 GET  /v1/findings
 ```
+
+TLS: `SIPHON_FS_TLS_CERT` / `SIPHON_FS_TLS_KEY` / `SIPHON_FS_TLS_CLIENT_CA`,
+with the same semantics as siphon-api's `SIPHON_TLS_*` — the prefix differs
+because siphon-launcher runs both from one environment and each presents its
+own identity. siphon-fs served no TLS at all before 2026-09-08 and relied on
+the mesh; without these it still does, and warns on a non-loopback bind.
 
 Max body: `SIPHON_FS_BODY_LIMIT_MB` (default 100 MB). Per-file streaming cap: `SIPHON_FS_MAX_FILE_SIZE_MB`, which **defaults to the body limit** and tracks it when raised — a larger value is allowed but warned about at startup, since the body layer rejects first and the per-file check then cannot bind. Note both sit above siphon-core's 30 MB `MAX_INPUT_SIZE`: a file can be accepted and fully extracted, then found to exceed the scanner cap, which siphon-fs reports as `TEXT_EXCEEDS_SCANNER_LIMIT` with the file marked **not scanned** rather than clean. Rate limit:
 `SIPHON_FS_RATE_LIMIT` (default 30 req/min, per IP **and** per key; `/health`
@@ -946,13 +966,27 @@ appear in any artifact.
   `SIPHON_AUDIT_LOG_PATH`, `SIPHON_BIND`, `SIPHON_FS_BIND` and
   `SIPHON_ALLOW_PRIVATE_DESTINATIONS` are blocked outright, so a spawned pod
   can't have security-critical env injected through the launcher.
-- Pod-to-pod traffic is mTLS-encrypted by default via Linkerd sidecar injection
-  (`global.linkerd.enabled=true` in the chart) — requires the Linkerd control
-  plane installed; without it pods start unmeshed and unencrypted. The
-  siphon-api→Postgres hop is additionally encrypted at the app level
-  (`SIPHON_DATABASE_TLS=require`). siphon-fs serves no TLS of its own and relies
-  on the mesh; it therefore emits no HSTS header (HSTS over plaintext is ignored
-  per RFC 6797).
+- **Every detector ↔ C2/IR/database hop is mutually authenticated at the
+  application layer**, whatever the deployment. nginx → siphon-api and
+  nginx → siphon-fs: the service requires a client certificate
+  (`SIPHON_TLS_CLIENT_CA` / `SIPHON_FS_TLS_CLIENT_CA`) and nginx presents one
+  while verifying the service (`proxy_ssl_verify on`). siphon-api, siphon-fs,
+  siphon-smtp → Postgres: `SIPHON_DATABASE_TLS=mtls` presents a client
+  certificate and refuses to start without one; `deploy/postgres/pg_hba.conf`
+  admits only `hostssl … scram-sha-256 clientcert=verify-full` (certificate
+  **and** password, CN = role). One implementation, `crates/siphon-auth` —
+  the Postgres builder used to be three identical copies ending
+  `.with_no_client_auth()`. Material: `scripts/dev/mkcerts.sh` for compose,
+  `tls.internal.certManager` in the chart. `scripts/validate-nginx.sh` proves
+  the nginx side against a stub that requires a client certificate. Not
+  covered, and said so: Squid → siphon-icap and Postfix → siphon-smtp, whose
+  protocols carry no TLS — those stay network allowlists. Design and
+  reasoning: `docs/architecture/api-keys.md` §9.
+- Linkerd sidecar injection (`global.linkerd.enabled=true` in the chart) is
+  the second layer in-cluster — requires the control plane installed;
+  without it pods start unmeshed. It is no longer the only thing making the
+  mTLS claim true. siphon-fs emits no HSTS header (HSTS over its formerly
+  plaintext listener would have been ignored per RFC 6797).
 
 ## Where things live
 

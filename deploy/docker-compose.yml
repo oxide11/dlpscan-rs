@@ -129,7 +129,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
-    image: siphon-api:2.11.0
+    image: siphon-api:2.12.0
     profiles: [auth]
     environment:
       # siphon-api reads SIPHON_BIND + SIPHON_PORT separately, never
@@ -151,11 +151,40 @@ services:
       #     export SIPHON_ALLOW_UNAUTHENTICATED=true
       - SIPHON_API_KEY=${SIPHON_API_KEY:-}
       - SIPHON_ALLOW_UNAUTHENTICATED=${SIPHON_ALLOW_UNAUTHENTICATED:-}
+      # --- identity: mutual TLS on both hops -------------------------------
+      # The listener requires a client certificate from the deployment CA,
+      # so only nginx (which holds one) can speak to this service; and the
+      # Postgres connection presents this service's own client certificate,
+      # which pg_hba.conf requires. Material from scripts/dev/mkcerts.sh,
+      # copied in by certs-init.
+      - SIPHON_TLS_CERT=/etc/siphon/tls/tls.crt
+      - SIPHON_TLS_KEY=/etc/siphon/tls/tls.key
+      - SIPHON_TLS_CLIENT_CA=/etc/siphon/tls/ca.crt
+      - SIPHON_DATABASE_URL=postgres://siphon@postgres:5432/siphon
+      - SIPHON_DATABASE_PASSWORD=${SIPHON_DATABASE_PASSWORD:?Set SIPHON_DATABASE_PASSWORD; see deploy/.env.example}
+      - SIPHON_DATABASE_TLS=mtls
+      - SIPHON_DATABASE_CA_FILE=/etc/siphon/tls/ca.crt
+      - SIPHON_DATABASE_CLIENT_CERT=/etc/siphon/tls/db-client.crt
+      - SIPHON_DATABASE_CLIENT_KEY=/etc/siphon/tls/db-client.key
       - RUST_LOG=info
+    # The image runs as `siphon`, a system uid chosen at build time. The
+    # certificate volume is owned by 1000 (what the Helm chart runs every
+    # service as), so run as that here too.
+    user: "1000:1000"
+    volumes:
+      - certs-api:/etc/siphon/tls:ro
+    depends_on:
+      certs-init: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
     expose: ["8080"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      # The probe has to satisfy the listener's client-CA requirement, and
+      # the service's own certificate carries clientAuth for exactly this.
+      test: ["CMD", "curl", "-sf",
+             "--cacert", "/etc/siphon/tls/ca.crt",
+             "--cert", "/etc/siphon/tls/tls.crt", "--key", "/etc/siphon/tls/tls.key",
+             "https://localhost:8080/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -166,18 +195,115 @@ services:
       dockerfile: deploy/Dockerfile.fs
     # Pinned per the per-crate SemVer rules in CLAUDE.md. Bump
     # in lockstep with crates/siphon-fs/Cargo.toml.
-    image: siphon-fs:1.3.0
+    image: siphon-fs:1.4.0
     profiles: [auth]
     environment:
       - SIPHON_FS_BIND=0.0.0.0:8081
+      # Same shape as siphon-api, under its own prefix: this listener holds
+      # its own identity and requires nginx's client certificate. Uploads
+      # carry the data the scanner exists to find; they do not cross the
+      # bridge network in the clear.
+      - SIPHON_FS_TLS_CERT=/etc/siphon/tls/tls.crt
+      - SIPHON_FS_TLS_KEY=/etc/siphon/tls/tls.key
+      - SIPHON_FS_TLS_CLIENT_CA=/etc/siphon/tls/ca.crt
+      - SIPHON_DATABASE_URL=postgres://siphon@postgres:5432/siphon
+      - SIPHON_DATABASE_PASSWORD=${SIPHON_DATABASE_PASSWORD:?Set SIPHON_DATABASE_PASSWORD; see deploy/.env.example}
+      - SIPHON_DATABASE_TLS=mtls
+      - SIPHON_DATABASE_CA_FILE=/etc/siphon/tls/ca.crt
+      - SIPHON_DATABASE_CLIENT_CERT=/etc/siphon/tls/db-client.crt
+      - SIPHON_DATABASE_CLIENT_KEY=/etc/siphon/tls/db-client.key
       - RUST_LOG=info
+    user: "1000:1000"
+    volumes:
+      - certs-fs:/etc/siphon/tls:ro
+    depends_on:
+      certs-init: { condition: service_completed_successfully }
+      # siphon-api owns the schema; the milter and siphon-fs only write
+      # into tables it created.
+      siphon-api: { condition: service_healthy }
     expose: ["8081"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
+      test: ["CMD", "curl", "-sf",
+             "--cacert", "/etc/siphon/tls/ca.crt",
+             "--cert", "/etc/siphon/tls/tls.crt", "--key", "/etc/siphon/tls/tls.key",
+             "https://localhost:8081/health"]
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # -------------------------------------------------------------------------
+  # Internal PKI plumbing
+  # -------------------------------------------------------------------------
+  # Copies deploy/certs/ (from scripts/dev/mkcerts.sh) into one volume per
+  # service, owned by the uid that service runs as. A bind mount cannot do
+  # this: a private key is 0600 to the host user, and the containers are not
+  # that user. Runs to completion before anything that needs a certificate.
+  certs-init:
+    image: alpine:3.20
+    profiles: [auth]
+    volumes:
+      - ./certs:/src:ro
+      - certs-api:/dst/siphon-api
+      - certs-fs:/dst/siphon-fs
+      - certs-smtp:/dst/siphon-smtp
+      - certs-nginx:/dst/nginx
+      - certs-postgres:/dst/postgres
+    command:
+      - sh
+      - -ec
+      - |
+        for d in siphon-api siphon-fs siphon-smtp nginx postgres; do
+          [ -f "/src/$$d/ca.crt" ] || { echo "missing deploy/certs/$$d — run scripts/dev/mkcerts.sh first" >&2; exit 1; }
+          rm -rf "/dst/$$d"/*
+          cp "/src/$$d"/* "/dst/$$d/"
+        done
+        chown -R 1000:1000 /dst/siphon-api /dst/siphon-fs /dst/siphon-smtp
+        chown -R 70:70 /dst/postgres     # postgres:*-alpine runs as uid 70
+        chown -R 0:0   /dst/nginx        # nginx's master process reads the key as root
+        chmod 600 /dst/*/*.key
+        chmod 644 /dst/*/*.crt
+        echo "certificates staged"
+
+  # The findings store. Every network connection must be TLS with a client
+  # certificate whose CN is the role AND the password — deploy/postgres/
+  # pg_hba.conf. There is no plaintext listener to fall back to.
+  postgres:
+    image: postgres:17-alpine
+    profiles: [auth]
+    environment:
+      - POSTGRES_DB=siphon
+      - POSTGRES_USER=siphon
+      - POSTGRES_PASSWORD=${SIPHON_DATABASE_PASSWORD:?Set SIPHON_DATABASE_PASSWORD; see deploy/.env.example}
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/etc/postgres/certs/tls.crt
+      - -c
+      - ssl_key_file=/etc/postgres/certs/tls.key
+      - -c
+      - ssl_ca_file=/etc/postgres/certs/ca.crt
+      - -c
+      - ssl_min_protocol_version=TLSv1.2
+      - -c
+      - hba_file=/etc/postgres/pg_hba.conf
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - certs-postgres:/etc/postgres/certs:ro
+      - ./postgres/pg_hba.conf:/etc/postgres/pg_hba.conf:ro
+    depends_on:
+      certs-init: { condition: service_completed_successfully }
+    expose: ["5432"]
+    restart: unless-stopped
+    healthcheck:
+      # Over the Unix socket, which pg_hba trusts and which nothing outside
+      # the container can reach.
+      test: ["CMD", "pg_isready", "-U", "siphon", "-d", "siphon"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
 
   authelia:
     image: authelia/authelia:4.38
@@ -221,7 +347,12 @@ services:
     ports:
       - "8080:80"
       # - "8443:443"  # enable once TLS certs are mounted
+    # What nginx presents to siphon-api and siphon-fs, and the CA it verifies
+    # them against — nginx.conf reads these paths.
+    volumes:
+      - certs-nginx:/etc/nginx/certs/internal:ro
     depends_on:
+      certs-init: { condition: service_completed_successfully }
       authelia: { condition: service_healthy }
       siphon-api: { condition: service_healthy }
       siphon-fs: { condition: service_healthy }
@@ -262,7 +393,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.smtp
-    image: siphon-smtp:0.1.3
+    image: siphon-smtp:0.2.0
     profiles: [auth]
     environment:
       # CIDRs whose connections the milter accepts. Default is loopback-
@@ -288,8 +419,21 @@ services:
       # Optional. Without it the milter still scans, decides and stamps;
       # what it loses is the retry guard and the investigation record.
       # siphon-api owns the migration runner, so bring that up first.
-      - SIPHON_DATABASE_URL=${SIPHON_DATABASE_URL:-}
+      - SIPHON_DATABASE_URL=postgres://siphon@postgres:5432/siphon
+      - SIPHON_DATABASE_PASSWORD=${SIPHON_DATABASE_PASSWORD:?Set SIPHON_DATABASE_PASSWORD; see deploy/.env.example}
+      # The milter's own client certificate to Postgres. Its MTA-facing side
+      # stays a network allowlist: the milter protocol carries no TLS.
+      - SIPHON_DATABASE_TLS=mtls
+      - SIPHON_DATABASE_CA_FILE=/etc/siphon/tls/ca.crt
+      - SIPHON_DATABASE_CLIENT_CERT=/etc/siphon/tls/db-client.crt
+      - SIPHON_DATABASE_CLIENT_KEY=/etc/siphon/tls/db-client.key
       - RUST_LOG=info
+    user: "1000:1000"
+    volumes:
+      - certs-smtp:/etc/siphon/tls:ro
+    depends_on:
+      certs-init: { condition: service_completed_successfully }
+      siphon-api: { condition: service_healthy }
     expose: ["8894"]
     ports:
       - "8894:8894"
@@ -303,6 +447,13 @@ services:
 volumes:
   evadex-results:
   authelia-data:
+  pg-data:
+  # Per-service certificate volumes, populated by certs-init.
+  certs-api:
+  certs-fs:
+  certs-smtp:
+  certs-nginx:
+  certs-postgres:
 
 networks:
   default:

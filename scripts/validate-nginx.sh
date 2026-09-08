@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
-# Validate the reverse-proxy configs — syntax, and the authorization
-# behaviour they are responsible for.
+# Validate the reverse-proxy configs — syntax, and the authorization and
+# transport behaviour they are responsible for.
 #
-# `nginx -t` alone is close to worthless here. The /api/ location is now an
+# `nginx -t` alone is close to worthless here. The /api/ location is an
 # authorization gate: it decides whether Authelia's group rules run, and it is
 # the only thing standing between a client-supplied `Remote-Groups: admins`
-# and siphon-api's RBAC. A config can be syntactically perfect and still
-# forward a forged identity header, so this script starts nginx against
-# stubbed upstreams and asserts the behaviour.
+# and siphon-api's RBAC. And the upstream hops are mutual TLS: a config can be
+# syntactically perfect and still skip `proxy_ssl_verify`, encrypting to
+# whatever answers on the port. So this script starts nginx against stubbed
+# upstreams — a TLS siphon-api that REQUIRES a client certificate — and
+# asserts the behaviour from both sides.
 #
 #   scripts/validate-nginx.sh            # syntax + behaviour
 #   scripts/validate-nginx.sh --syntax   # syntax only (no root needed)
 #
-# Requires nginx with http_auth_request_module (Debian/Ubuntu nginx-light
-# has it). Behaviour mode binds :80 and edits /etc/hosts, so it wants root
-# or a container.
+# Requires nginx with http_auth_request_module and http_ssl_module
+# (Debian/Ubuntu nginx-light has both), openssl, and python3. Behaviour mode
+# binds :80 and edits /etc/hosts, so it wants root or a container.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -27,12 +29,22 @@ ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
 command -v nginx >/dev/null || fail "nginx not installed (apt-get install nginx-light)"
 nginx -V 2>&1 | grep -q http_auth_request_module \
   || fail "this nginx lacks http_auth_request_module; /api/ cannot be gated"
+nginx -V 2>&1 | grep -q http_ssl_module \
+  || fail "this nginx lacks http_ssl_module; the upstream hops cannot be mTLS"
+
+# The config names certificate files and nginx opens them at load time, so
+# even a syntax check needs real material. Two CAs: ours, and a stranger's,
+# to prove nginx refuses an upstream it cannot verify.
+"$REPO/scripts/dev/mkcerts.sh" --out "$WORK/certs" --quiet
+"$REPO/scripts/dev/mkcerts.sh" --out "$WORK/stranger" --quiet
 
 # Upstreams are resolved at config-load time, so the names must resolve even
 # for a syntax check. IPv6 is stripped because many containers have no
 # AF_INET6 and `listen [::]:80` then fails for reasons unrelated to the file.
+# The certificate paths are redirected at the generated material.
 prep() {
-  sed 's/^\( *\)listen \[::\]:80 default_server;/\1# ipv6 omitted by validate-nginx.sh/' "$1"
+  sed -e 's/^\( *\)listen \[::\]:80 default_server;/\1# ipv6 omitted by validate-nginx.sh/' \
+      -e "s#/etc/nginx/certs/internal#$WORK/certs/nginx#g" "$1"
 }
 
 # ---------------------------------------------------------------- syntax ---
@@ -53,12 +65,24 @@ ok "deploy/nginx/nginx.conf — syntax"
 nginx -t -c "$WORK/lab.conf" >/dev/null 2>&1 || { nginx -t -c "$WORK/lab.conf"; fail "lab nginx.conf"; }
 ok "deploy/k8s/lab/nginx-config/nginx.conf — syntax"
 
+# The config must not merely mention verification — it must turn it on.
+grep -qE '^\s*proxy_ssl_verify\s+on;' "$REPO/deploy/nginx/nginx.conf" \
+  || fail "proxy_ssl_verify is not 'on' — nginx would encrypt to any upstream"
+ok "proxy_ssl_verify on"
+
 [ "${1:-}" = "--syntax" ] && exit 0
 
 # ------------------------------------------------------------- behaviour ---
+# The siphon-api stub is TLS and REQUIRES a client certificate from our CA.
+# It reports the CN nginx presented, so the assertion below is not "the
+# request arrived" but "the request arrived as siphon-nginx". Which
+# certificate the stub serves is an argument, so it can be run once as an
+# impostor and once as the real thing.
 cat > "$WORK/stubs.py" <<'PY'
-import json, threading
+import json, ssl, sys, threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+CERT_DIR, CA = sys.argv[1], sys.argv[2]
 
 class Authelia(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -73,10 +97,13 @@ class Authelia(BaseHTTPRequestHandler):
 
 class Api(BaseHTTPRequestHandler):
     def do_GET(self):
+        peer = self.connection.getpeercert() or {}
+        cn = next((v for rdn in peer.get("subject", ()) for k, v in rdn if k == "commonName"), None)
         body = json.dumps({
             "remote_user": self.headers.get("Remote-User"),
             "remote_groups": self.headers.get("Remote-Groups"),
             "authorization": self.headers.get("Authorization"),
+            "client_cn": cn,
         }).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -85,9 +112,17 @@ class Api(BaseHTTPRequestHandler):
     do_POST = do_GET
     def log_message(self, *a): pass
 
-def serve(p, h): HTTPServer(("127.0.0.1", p), h).serve_forever()
+def serve(p, h, tls=False):
+    srv = HTTPServer(("127.0.0.1", p), h)
+    if tls:
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(f"{CERT_DIR}/tls.crt", f"{CERT_DIR}/tls.key")
+        ctx.load_verify_locations(CA)
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+    srv.serve_forever()
 threading.Thread(target=serve, args=(9091, Authelia), daemon=True).start()
-threading.Thread(target=serve, args=(8080, Api), daemon=True).start()
+threading.Thread(target=serve, args=(8080, Api, True), daemon=True).start()
 threading.Event().wait()
 PY
 
@@ -96,14 +131,36 @@ echo '<!doctype html>console' > /srv/console/index.html
 echo 'body{}'                 > /srv/console/assets/probe.css
 echo '<h1>ir</h1>'            > /srv/ir/index.html
 
-setsid python3 "$WORK/stubs.py" >/dev/null 2>&1 </dev/null &
-for _ in $(seq 1 40); do sleep 0.25; curl -sf -o /dev/null http://127.0.0.1:9091/api/verify && break; done
-nginx -c "$WORK/main.conf" 2>/dev/null || true
-for _ in $(seq 1 40); do sleep 0.25; curl -sf -o /dev/null http://127.0.0.1/ && break; done
+start_stubs() {
+  pkill -f "$WORK/stubs.py" 2>/dev/null || true
+  sleep 0.3
+  setsid python3 "$WORK/stubs.py" "$1" "$2" >/dev/null 2>&1 </dev/null &
+  for _ in $(seq 1 40); do sleep 0.25; curl -sf -o /dev/null http://127.0.0.1:9091/api/verify && break; done
+}
 
 get()  { curl -s "http://127.0.0.1$1" "${@:2}"; }
 code() { curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1$1" "${@:2}"; }
 
+# --- transport: the impostor first --------------------------------------
+# A siphon-api whose certificate chains to some other CA. If nginx answers
+# anything but 502 here, proxy_ssl_verify is not doing its job.
+start_stubs "$WORK/stranger/siphon-api" "$WORK/certs/ca/ca.crt"
+nginx -c "$WORK/main.conf" 2>/dev/null || true
+for _ in $(seq 1 40); do sleep 0.25; curl -sf -o /dev/null http://127.0.0.1/ && break; done
+
+c=$(code /api/v1/me -H 'Authorization: Bearer k')
+[ "$c" = "502" ] || fail "nginx accepted an upstream certificate from a stranger's CA (got $c)"
+ok "an upstream certificate from another CA is refused (502)"
+
+# --- transport: the real one --------------------------------------------
+start_stubs "$WORK/certs/siphon-api" "$WORK/certs/ca/ca.crt"
+
+r=$(get /api/v1/me -H 'Authorization: Bearer k')
+echo "$r" | grep -q '"client_cn": "siphon-nginx"' \
+  || fail "nginx did not present its client certificate to siphon-api: $r"
+ok "nginx presents its client certificate; upstream sees CN=siphon-nginx"
+
+# --- authorization ------------------------------------------------------
 # THE test. Anything that can reach nginx can send these headers; if they were
 # forwarded, one curl would be a full privilege escalation.
 r=$(get /api/v1/me -H 'Remote-User: mallory' -H 'Remote-Groups: admins')
@@ -126,9 +183,10 @@ ok "session path receives the proxy-asserted identity"
 [ "$(code /api/v1/me -H 'Cookie: deny=1')" = "401" ] || fail "denied session was not rejected"
 ok "Authelia denial returns 401"
 
+# --- the console ----------------------------------------------------------
 # Routes are real URLs carrying filter state; without try_files every shared
 # link 404s and the URL-state design is decorative.
-get /findings | grep -q console || fail "SPA deep link did not fall back to index.html"
+get /detections | grep -q console || fail "SPA deep link did not fall back to index.html"
 ok "SPA deep links serve the shell"
 
 [ "$(code /ui/)" = "301" ] || fail "/ui/ no longer redirects"

@@ -1,0 +1,15 @@
+{{- if and .Values.postgres.enabled .Values.tls.internal.enabled }}
+# Client authentication for the bundled Postgres: TLS + client certificate
+# (CN = role) + password, and nothing else. The canonical copy is
+# deploy/postgres/pg_hba.conf (compose mounts it directly);
+# scripts/check-version-sync.sh keeps files/pg_hba.conf identical to it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "siphon.componentName" (dict "root" . "component" "postgres") }}-hba
+  labels:
+    {{- include "siphon.labels" (dict "root" . "component" "postgres") | nindent 4 }}
+data:
+  pg_hba.conf: |
+{{ .Files.Get "files/pg_hba.conf" | indent 4 }}
+{{- end }}

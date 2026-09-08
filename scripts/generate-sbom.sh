@@ -43,13 +43,15 @@ cd "${REPO_ROOT}"
 # shipped components is a false positive an auditor has to chase down.
 TARGET="${SBOM_TARGET:-x86_64-unknown-linux-gnu}"
 
-# Every artifact that leaves the build. siphon-mail is a library rather than
-# a binary, but siphon-api and siphon-smtp both link it and it owns the
-# database schema, so it gets its own document.
+# Every artifact that leaves the build. siphon-mail and siphon-auth are
+# libraries rather than binaries, but three services link each of them and
+# they own the database schema and the TLS stack respectively, so each gets
+# its own document.
 ARTIFACTS=(
     siphon-cli
     siphon-core
     siphon-api
+    siphon-auth
     siphon-fs
     siphon-icap
     siphon-launcher

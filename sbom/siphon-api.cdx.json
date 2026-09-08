@@ -6,8 +6,8 @@
     "component": {
       "type": "application",
       "name": "siphon-api",
-      "version": "2.10.0",
-      "purl": "pkg:cargo/siphon-api@2.10.0"
+      "version": "2.12.0",
+      "purl": "pkg:cargo/siphon-api@2.12.0"
     },
     "properties": [
       {
@@ -2327,24 +2327,6 @@
     },
     {
       "type": "library",
-      "name": "rustls-pemfile",
-      "version": "2.2.0",
-      "purl": "pkg:cargo/rustls-pemfile@2.2.0",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 OR ISC OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/rustls/pemfile"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "rustls-pki-types",
       "version": "1.15.1",
       "purl": "pkg:cargo/rustls-pki-types@1.15.1",
@@ -2705,6 +2687,26 @@
     },
     {
       "type": "library",
+      "name": "siphon-auth",
+      "version": "0.1.0",
+      "purl": "pkg:cargo/siphon-auth@0.1.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:first-party",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "siphon-cli",
       "version": "2.4.0",
       "purl": "pkg:cargo/siphon-cli@2.4.0",
@@ -2732,8 +2734,8 @@
     {
       "type": "library",
       "name": "siphon-core",
-      "version": "2.9.0",
-      "purl": "pkg:cargo/siphon-core@2.9.0",
+      "version": "2.9.1",
+      "purl": "pkg:cargo/siphon-core@2.9.1",
       "scope": "required",
       "licenses": [
         {
