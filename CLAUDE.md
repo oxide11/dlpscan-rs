@@ -538,7 +538,7 @@ never an average; every figure shows its working.
 | Axis | Derived from |
 |---|---|
 | availability | deployed ∧ running ∧ operational. Running: last heartbeat within 3 intervals → healthy, within 24 h → stale, else gone; slots received ÷ expected, **no figure when nothing was expected yet**. Operational: posture judged — block ok, advisory ok by design, **annotate warns** (enforcement delegated, not verified here), fail-open warns, degraded warns naming why, not reported → unmeasured. Stale or audit-only is a gap whatever the ratio says |
-| coverage | at depth: scans ÷ (scans + unscanned), per sensor. Program-wide: expected sensors healthy and operational ÷ expected. Coverage against the environment is not knowable from here and the page says so in words |
+| coverage | at depth: scans ÷ (scans + unscanned), per sensor. An empty body is not counted as unscanned — there was nothing to read, and siphon-icap used to count one, so coverage fell as bodyless traffic rose. Program-wide: expected sensors healthy and operational ÷ expected. Coverage against the environment is not knowable from here and the page says so in words |
 | efficacy | recall and precision **separately, never F1**. Recall: heartbeats whose canary passed ÷ heartbeats that ran one (proves the path, not the recall — the tile says so), plus the latest evadex run in the header. Precision: analyst verdicts on `findings` by `source_pod`, 7 d |
 | efficiency | compute (ms/scan, ms/MB, errors/scan), operator attention, false-positive count — and the three of the book's six it cannot measure, named |
 | mTLS per hop | listener: mutual → ok, TLS-only → warn, plaintext → off, cert < 14 d → warn, expired → off. Database: client cert → ok, `require` → warn, `disable` → off. A hop the sensor lacks is n/a; overall is the worst applicable |
@@ -780,9 +780,10 @@ Key env vars:
 | `SIPHON_ICAP_PORT` | 1344 | Standard ICAP port |
 | `SIPHON_ICAP_BIND` | 0.0.0.0 | Bind address |
 | `SIPHON_ICAP_ALLOWED_NETS` | **required** | Comma-separated IP/CIDR allowlist. Connections outside are dropped immediately. Use `0.0.0.0/0` for dev. |
-| `SIPHON_ICAP_ACTION` | flag | `flag` — annotate and allow; `block` — return HTTP 403 to proxy |
+| `SIPHON_ICAP_ACTION` | flag | `flag` — annotate and allow; `block` — return HTTP 403 to proxy. **An unknown value refuses to start**, so a typo cannot leave an enforcing deployment advisory |
+| `SIPHON_ICAP_ON_UNSCANNABLE` | pass | What happens to content this sensor saw and could not read — a body over `MAX_BODY_BYTES`, or a binary one. `pass` allows it and tags the 204 `X-DLP-Action: unscanned`; `block` returns a 403 that says it could not inspect rather than claiming a finding. Unknown values refuse to start. Default is `pass` because flipping it would start blocking large transfers on upgrade, which is the operator's call — but a `pass` deployment **warns at startup**, since "send it in one body over the limit" is otherwise a complete bypass of a hop believed to be enforcing |
 | `SIPHON_ICAP_MIN_CONFIDENCE` | 0.6 | Confidence threshold for block action |
-| `SIPHON_ICAP_MAX_BODY_BYTES` | 10485760 | Bodies larger than this pass through unscanned |
+| `SIPHON_ICAP_MAX_BODY_BYTES` | 10485760 | Bodies larger than this are not scanned; `SIPHON_ICAP_ON_UNSCANNABLE` decides what happens to them |
 | `SIPHON_ICAP_SERVICE_NAME` | dlp | ICAP service path (`/dlp`) |
 | `SIPHON_ICAP_MAX_CONNECTIONS` | 256 | Max concurrent ICAP connections; extras are dropped |
 
