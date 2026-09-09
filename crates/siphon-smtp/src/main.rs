@@ -31,7 +31,7 @@ use policy::{action_for, verdict_headers, OnIndeterminate, PolicyError, Verdict}
 use protocol::{Command, Decoder, Response};
 use siphon_core::mime::{parse_message_with_limits, MimeLimits, PartKind};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
-use siphon_mail::{Direction, MessageRecord, PartOutcome, PartRecord, PartStatus};
+use siphon_mail::{Direction, Inspection, MessageRecord, PartOutcome, PartRecord, PartStatus};
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::net::IpAddr;
@@ -382,6 +382,11 @@ struct PartResult {
 /// One message's scan result.
 struct ScanOutcome {
     verdict: Verdict,
+    /// Whether every part was actually read. Tracked apart from `verdict`
+    /// because severity and completeness are different facts: a message can
+    /// be both flagged and not fully inspected, and the fail-closed policy
+    /// is about the second regardless of the first.
+    inspection: Inspection,
     categories: Vec<String>,
     finding_count: usize,
     parts: Vec<PartResult>,
@@ -537,16 +542,21 @@ fn scan_message(raw: &[u8], min_confidence: f64) -> ScanOutcome {
     // that puts indeterminate above clean and below flagged has one
     // definition, shared with the service that reads these rows back.
     let mut verdict = siphon_mail::reconcile(&outcomes);
+    let mut inspection = siphon_mail::inspection(&outcomes);
 
     // A structural warning is not attached to any part: the walk itself gave
     // up, so there is content we never even enumerated. That cannot leave a
-    // message clean.
+    // message clean, and it is an incompleteness in its own right — the
+    // verdict bump alone was invisible to the policy as soon as any part
+    // produced a finding.
     if !parsed.warnings.is_empty() {
         verdict = verdict.max(Verdict::Indeterminate);
+        inspection = Inspection::Incomplete;
     }
 
     ScanOutcome {
         verdict,
+        inspection,
         categories,
         finding_count,
         parts,
@@ -706,7 +716,8 @@ async fn handle_connection(
                             scan_started.elapsed().as_millis() as u64,
                         );
                     }
-                    let action = action_for(outcome.verdict, config.on_indeterminate);
+                    let action =
+                        action_for(outcome.verdict, outcome.inspection, config.on_indeterminate);
                     let scan_id = uuid::Uuid::new_v4().to_string();
 
                     tracing::info!(
@@ -839,6 +850,7 @@ async fn decide(session: &Session, config: &Config) -> ScanOutcome {
 fn indeterminate() -> ScanOutcome {
     ScanOutcome {
         verdict: Verdict::Indeterminate,
+        inspection: Inspection::Incomplete,
         categories: Vec::new(),
         finding_count: 0,
         // No part rows: we never got far enough to enumerate them. An empty

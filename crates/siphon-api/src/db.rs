@@ -1237,12 +1237,21 @@ pub async fn query_rollup(
 /// Returns `Ok(true)` when the row was found and updated, `Ok(false)` when
 /// no row matched `finding_id` (caller should return 404), and `Err` for
 /// pool / query failures.
+/// Record an analyst verdict on one finding.
+///
+/// `tenant` is the caller's resolved scope: `Some` restricts the update to
+/// that tenant's rows, `None` is an unscoped caller. Audit A01 — a finding
+/// id alone was enough to rule on another tenant's finding, because ids are
+/// the only thing this took and they are returned by every read endpoint.
+/// A row outside scope is reported as not found, which is what it is from
+/// where the caller stands.
 pub async fn record_finding_feedback(
     pool: &Option<Pool>,
     finding_id: uuid::Uuid,
     verdict: &str,
     reviewer_hash: &[u8],
     note: Option<&str>,
+    tenant: Option<&str>,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
     let Some(pool) = pool else {
         return Ok(false);
@@ -1255,8 +1264,9 @@ pub async fn record_finding_feedback(
                  reviewed_by_hash = $2, \
                  reviewed_at      = now(), \
                  review_note      = $3 \
-             WHERE id = $4",
-            &[&verdict, &reviewer_hash, &note, &finding_id],
+             WHERE id = $4 \
+               AND ($5::text IS NULL OR tenant_id = $5)",
+            &[&verdict, &reviewer_hash, &note, &finding_id, &tenant],
         )
         .await?;
     Ok(rows_updated > 0)

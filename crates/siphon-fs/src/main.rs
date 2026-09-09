@@ -784,9 +784,11 @@ async fn scan(
             source_pod: POD_NAME.to_string(),
             category: m.category.to_string(),
             sub_category: m.sub_category.to_string(),
-            // Raw in the ring, redacted in the response body below. Masking is
-            // applied on the way out (siphon-api masking.rs), keyed on role and
-            // audited, so an authorised responder can still investigate.
+            // Raw in the ring, redacted on every way out of this pod: the
+            // response body below, and `/v1/findings` via
+            // `redact_for_response`. The ring holds the raw value so that
+            // siphon-api, which does have a role model and an audit trail,
+            // can serve an authorised unmask from the same row.
             text: m.text.clone(),
             confidence: m.confidence,
             has_context: m.has_context,
@@ -904,6 +906,30 @@ struct FindingsQuery {
     since: Option<String>,
 }
 
+/// Redact a matched value on the way out of this pod.
+///
+/// The ring keeps the raw value on purpose: siphon-api reads these rows back
+/// through `masking::apply`, which is keyed on the caller's role and records
+/// an `UNMASK` audit event, so an authorised responder can still investigate
+/// and the disclosure is accounted for.
+///
+/// This endpoint has neither half. siphon-fs authenticates one shared bearer
+/// key and derives no role from it, so there is no caller here who could be
+/// *authorised* to see a value in the clear, and no identity to write into an
+/// audit row if one did. A surface that cannot say who looked must not show
+/// the value, so every match leaves redacted and there is no `unmask`
+/// parameter to ask otherwise.
+///
+/// `Public` categories are the exception, for the reason they are an
+/// exception everywhere: masking "CONFIDENTIAL" hides the finding's whole
+/// point, and there is nothing in it to protect.
+fn redact_for_response(mut record: FindingRecord) -> FindingRecord {
+    if siphon::masking::DataClass::of(&record.category) != siphon::masking::DataClass::Public {
+        record.text = siphon::masking::redact(&record.text);
+    }
+    record
+}
+
 #[derive(Serialize)]
 struct FindingsResponse {
     total: usize,
@@ -937,7 +963,12 @@ async fn list_findings(
     );
 
     let cap = q.limit.unwrap_or(200).min(capacity);
-    let findings: Vec<FindingRecord> = filtered.into_iter().take(cap).cloned().collect();
+    let findings: Vec<FindingRecord> = filtered
+        .into_iter()
+        .take(cap)
+        .cloned()
+        .map(redact_for_response)
+        .collect();
     let returned = findings.len();
     JsonResponse(FindingsResponse {
         total,
@@ -1155,14 +1186,28 @@ fn resolve_api_key_hash() -> Option<[u8; 32]> {
 /// Uses SIPHON_ADMIN_KEY if set; otherwise falls back to SIPHON_API_KEY so
 /// single-key deployments don't need a second credential.
 fn resolve_admin_key_hash() -> Option<[u8; 32]> {
-    let key = std::env::var("SIPHON_ADMIN_KEY")
+    let key = match std::env::var("SIPHON_ADMIN_KEY")
         .ok()
         .filter(|k| !k.trim().is_empty())
-        .or_else(|| {
-            std::env::var("SIPHON_API_KEY")
+    {
+        Some(k) => k,
+        None => {
+            // Falling back means the admin gate and the scan gate are the
+            // same secret, so `RequireAdminAction` stops being a second
+            // check: anything that may upload a file may also reload
+            // overrides. That is a supported single-key deployment, not a
+            // default to discover from behaviour.
+            let k = std::env::var("SIPHON_API_KEY")
                 .ok()
-                .filter(|k| !k.trim().is_empty())
-        })?;
+                .filter(|k| !k.trim().is_empty())?;
+            tracing::warn!(
+                "SIPHON_ADMIN_KEY is unset — admin-only endpoints accept the \
+                 scan key (SIPHON_API_KEY), so every authenticated caller is \
+                 an admin here. Set SIPHON_ADMIN_KEY to separate them."
+            );
+            k
+        }
+    };
     let mut hasher = Sha256::new();
     hasher.update(key.as_bytes());
     Some(hasher.finalize().into())
@@ -1746,5 +1791,107 @@ mod size_limit_tests {
                  then found to exceed the scanner limit"
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod findings_redaction_tests {
+    use super::*;
+
+    fn rec(category: &str, text: &str) -> FindingRecord {
+        FindingRecord {
+            id: "f-abc-00".into(),
+            ts: "2026-09-09T00:00:00Z".into(),
+            request_id: "abc".into(),
+            source_label: "payroll.xlsx".into(),
+            source_pod: "siphon-fs".into(),
+            category: category.into(),
+            sub_category: "x".into(),
+            text: text.into(),
+            confidence: 0.95,
+            has_context: true,
+            span: (10, 21),
+            metadata: HashMap::new(),
+            severity: severity_for(category, 0.95),
+            tenant_id: Some("acme".into()),
+        }
+    }
+
+    /// The bug this pins: `/v1/findings` served `FindingRecord` straight from
+    /// the ring, and the ring holds the raw value. Every SSN and card number
+    /// extracted from every uploaded file was readable in the clear by anyone
+    /// holding the shared bearer key.
+    #[test]
+    fn a_pii_value_never_leaves_in_the_clear() {
+        let out = redact_for_response(rec("US Social Security Number", "219-09-9999"));
+        assert!(
+            !out.text.contains("09-9999"),
+            "raw value survived: {}",
+            out.text
+        );
+        assert_eq!(out.text, "219•••••999");
+    }
+
+    #[test]
+    fn a_pci_value_never_leaves_in_the_clear() {
+        let out = redact_for_response(rec("Credit Card Numbers", "4111111111111111"));
+        assert!(
+            !out.text.contains("4111111111"),
+            "raw PAN survived: {}",
+            out.text
+        );
+        assert!(out.text.starts_with("411") && out.text.ends_with("111"));
+    }
+
+    /// Fail closed: a category nobody has classified is treated as PII, so
+    /// adding a pattern category cannot widen what this endpoint discloses.
+    #[test]
+    fn an_unclassified_category_is_redacted_too() {
+        let out = redact_for_response(rec(
+            "Some Category Invented Tomorrow",
+            "sensitive-value-here",
+        ));
+        assert!(
+            !out.text.contains("sensitive-value"),
+            "unclassified leaked: {}",
+            out.text
+        );
+    }
+
+    /// The one exception, and the reason redaction is classified rather than
+    /// blanket: masking the label hides the finding's whole point.
+    #[test]
+    fn a_classification_label_stays_legible() {
+        let out = redact_for_response(rec("Data Classification Labels", "CONFIDENTIAL"));
+        assert_eq!(out.text, "CONFIDENTIAL");
+    }
+
+    /// Redaction touches the value and nothing else — the console filters and
+    /// groups on these fields, and a masked category would break the view it
+    /// is meant to protect.
+    #[test]
+    fn every_other_field_survives_redaction() {
+        let before = rec("US Social Security Number", "219-09-9999");
+        let after = redact_for_response(before.clone());
+        assert_eq!(after.id, before.id);
+        assert_eq!(after.category, before.category);
+        assert_eq!(after.sub_category, before.sub_category);
+        assert_eq!(after.source_label, before.source_label);
+        assert_eq!(after.severity, before.severity);
+        assert_eq!(after.confidence, before.confidence);
+        assert_eq!(after.span, before.span);
+        assert_eq!(after.tenant_id, before.tenant_id);
+    }
+
+    /// Redaction is applied to a clone on the way out. The ring keeps the raw
+    /// value so siphon-api can serve an authorised, audited unmask from the
+    /// same row.
+    #[test]
+    fn the_ring_still_holds_the_raw_value() {
+        let ring = FindingsRing::new(4);
+        ring.push(rec("US Social Security Number", "219-09-9999"));
+        let snapshot = ring.snapshot();
+        assert_eq!(snapshot[0].text, "219-09-9999");
+        assert_eq!(redact_for_response(snapshot[0].clone()).text, "219•••••999");
     }
 }

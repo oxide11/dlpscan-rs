@@ -91,7 +91,7 @@ impl std::error::Error for PolicyError {}
 /// the same strings into the same column, with only a test holding them
 /// together. Sharing the crate removes the possibility of drift instead of
 /// testing for it.
-pub use siphon_mail::Verdict;
+pub use siphon_mail::{Inspection, Verdict};
 
 /// What the milter should do about a message, once the verdict is known.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,18 +135,49 @@ impl Action {
 /// §1 is annotate-don't-block and the header carries the finding. Only
 /// `indeterminate` consults the configured policy — it is the one case where
 /// what to do is a deployment decision rather than a property of the message.
-pub fn action_for(verdict: Verdict, on_indeterminate: OnIndeterminate) -> Action {
-    match verdict {
+pub fn action_for(
+    verdict: Verdict,
+    inspection: Inspection,
+    on_indeterminate: OnIndeterminate,
+) -> Action {
+    let by_verdict = match verdict {
         Verdict::Clean | Verdict::Flagged => Action::Accept,
         Verdict::Quarantine => Action::Quarantine("siphon: content policy".into()),
         Verdict::Block => Action::Reject,
-        Verdict::Indeterminate => match on_indeterminate {
-            OnIndeterminate::Defer => Action::Defer,
-            OnIndeterminate::Quarantine => {
-                Action::Quarantine("siphon: message could not be fully inspected".into())
-            }
-            OnIndeterminate::Deliver => Action::Accept,
-        },
+        Verdict::Indeterminate => incomplete_action(on_indeterminate),
+    };
+
+    if inspection.is_complete() {
+        return by_verdict;
+    }
+
+    // Something in this message was not read. The operator's fail-closed
+    // setting is about exactly that, and it must not be skipped because
+    // something *else* in the message was found.
+    //
+    // Severity ranks `Flagged` above `Indeterminate`, which is the right
+    // label — a confirmed finding is the more actionable statement — but it
+    // also mapped straight to `Accept`, so one detectable value in one part
+    // delivered a message whose other part nobody could open. Under `defer`
+    // that is precisely the outcome the setting exists to prevent.
+    //
+    // A verdict that already stops the message is left alone: quarantine and
+    // reject are at least as restrictive as any incomplete-inspection
+    // policy, so there is nothing to add.
+    match by_verdict {
+        Action::Accept => incomplete_action(on_indeterminate),
+        already_stopped => already_stopped,
+    }
+}
+
+/// What the operator asked for when the message could not be fully inspected.
+fn incomplete_action(on_indeterminate: OnIndeterminate) -> Action {
+    match on_indeterminate {
+        OnIndeterminate::Defer => Action::Defer,
+        OnIndeterminate::Quarantine => {
+            Action::Quarantine("siphon: message could not be fully inspected".into())
+        }
+        OnIndeterminate::Deliver => Action::Accept,
     }
 }
 
@@ -177,7 +208,11 @@ mod tests {
     fn the_default_is_fail_closed() {
         assert_eq!(OnIndeterminate::default(), OnIndeterminate::Defer);
         assert_eq!(
-            action_for(Verdict::Indeterminate, OnIndeterminate::default()),
+            action_for(
+                Verdict::Indeterminate,
+                Inspection::Incomplete,
+                OnIndeterminate::default()
+            ),
             Action::Defer
         );
     }
@@ -206,7 +241,10 @@ mod tests {
             ),
             (OnIndeterminate::Deliver, Action::Accept),
         ] {
-            assert_eq!(action_for(Verdict::Indeterminate, policy), expected);
+            assert_eq!(
+                action_for(Verdict::Indeterminate, Inspection::Incomplete, policy),
+                expected
+            );
         }
     }
 
@@ -219,9 +257,10 @@ mod tests {
             OnIndeterminate::Quarantine,
             OnIndeterminate::Deliver,
         ] {
-            assert_eq!(action_for(Verdict::Clean, policy), Action::Accept);
-            assert_eq!(action_for(Verdict::Flagged, policy), Action::Accept);
-            assert_eq!(action_for(Verdict::Block, policy), Action::Reject);
+            let done = Inspection::Complete;
+            assert_eq!(action_for(Verdict::Clean, done, policy), Action::Accept);
+            assert_eq!(action_for(Verdict::Flagged, done, policy), Action::Accept);
+            assert_eq!(action_for(Verdict::Block, done, policy), Action::Reject);
         }
     }
 
@@ -230,9 +269,71 @@ mod tests {
     #[test]
     fn flagged_still_delivers() {
         assert_eq!(
-            action_for(Verdict::Flagged, OnIndeterminate::Defer),
+            action_for(
+                Verdict::Flagged,
+                Inspection::Complete,
+                OnIndeterminate::Defer
+            ),
             Action::Accept
         );
+    }
+
+    /// Audit A02. A detectable value in one part must not deliver a message
+    /// whose other part nobody could read.
+    ///
+    /// This is the case the severity ladder hid: `Flagged` outranks
+    /// `Indeterminate`, so reconciliation reported `flagged`, and `flagged`
+    /// mapped straight to `Accept` — under `defer`, the setting whose whole
+    /// purpose is to stop exactly this.
+    #[test]
+    fn a_finding_does_not_excuse_an_uninspected_part() {
+        assert_eq!(
+            action_for(
+                Verdict::Flagged,
+                Inspection::Incomplete,
+                OnIndeterminate::Defer
+            ),
+            Action::Defer,
+            "flagged plus unread must defer, not deliver"
+        );
+        assert_eq!(
+            action_for(
+                Verdict::Clean,
+                Inspection::Incomplete,
+                OnIndeterminate::Defer
+            ),
+            Action::Defer
+        );
+        // Fail-open is still fail-open: an operator who chose `deliver` gets
+        // delivery, and the header still says what happened.
+        assert_eq!(
+            action_for(
+                Verdict::Flagged,
+                Inspection::Incomplete,
+                OnIndeterminate::Deliver
+            ),
+            Action::Accept
+        );
+    }
+
+    /// A verdict that already stops the message is at least as restrictive
+    /// as any incomplete-inspection policy, so it is left alone.
+    #[test]
+    fn an_already_stopping_verdict_is_not_downgraded() {
+        for policy in [
+            OnIndeterminate::Defer,
+            OnIndeterminate::Quarantine,
+            OnIndeterminate::Deliver,
+        ] {
+            assert_eq!(
+                action_for(Verdict::Block, Inspection::Incomplete, policy),
+                Action::Reject
+            );
+            assert_eq!(
+                action_for(Verdict::Quarantine, Inspection::Incomplete, policy),
+                Action::Quarantine("siphon: content policy".into())
+            );
+        }
     }
 
     #[test]

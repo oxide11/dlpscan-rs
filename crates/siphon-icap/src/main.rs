@@ -19,9 +19,10 @@
 //! | `SIPHON_ICAP_PORT` | 1344 | Standard ICAP port |
 //! | `SIPHON_ICAP_BIND` | 0.0.0.0 | Bind address |
 //! | `SIPHON_ICAP_ALLOWED_NETS` | **required** | Comma-separated IP/CIDR allowlist. Use `0.0.0.0/0` for dev. Connections outside the list are dropped immediately. |
-//! | `SIPHON_ICAP_ACTION` | flag | `flag` — annotate headers and allow; `block` — return 403 block page |
+//! | `SIPHON_ICAP_ACTION` | flag | `flag` — annotate headers and allow; `block` — return 403 block page. An unknown value refuses to start |
+//! | `SIPHON_ICAP_ON_UNSCANNABLE` | pass | What happens to content seen and not read — a body over the limit, or a binary one. `pass` allows it, tagged `X-DLP-Action: unscanned`; `block` refuses it. An unknown value refuses to start |
 //! | `SIPHON_ICAP_MIN_CONFIDENCE` | 0.6 | Confidence threshold that triggers a block (block mode only) |
-//! | `SIPHON_ICAP_MAX_BODY_BYTES` | 10485760 | Bodies larger than this are passed through unscanned |
+//! | `SIPHON_ICAP_MAX_BODY_BYTES` | 10485760 | Bodies larger than this are not scanned; `SIPHON_ICAP_ON_UNSCANNABLE` decides what happens to them |
 //! | `SIPHON_ICAP_SERVICE_NAME` | dlp | ICAP URI path (`/dlp`) |
 //! | `SIPHON_ICAP_MAX_CONNECTIONS` | 256 | Max concurrent connections; extras are dropped immediately |
 
@@ -127,12 +128,48 @@ enum IcapAction {
     Block,
 }
 
+/// What to do with content this sensor saw and could not read.
+///
+/// Every other detector in the fleet lets the operator choose this direction:
+/// siphon-fs marks an oversized file **not scanned** rather than clean, and
+/// siphon-smtp defers by default and says so in `SIPHON_SMTP_ON_INDETERMINATE`.
+/// siphon-icap always passed, with no knob and nothing on the wire, so
+/// "send it in one body larger than the limit" was a complete bypass of a
+/// deployment that believed it was enforcing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Unscannable {
+    /// Allow it through. The default, because flipping it would start
+    /// blocking large transfers on upgrade for every existing deployment,
+    /// which is the operator's call and not an upgrade's.
+    Pass,
+    /// Refuse it. What to set when the proxy hop is meant to enforce.
+    Block,
+}
+
+impl Unscannable {
+    /// An unknown value is a startup error, never a fallback — the same rule
+    /// as `SIPHON_SMTP_ON_INDETERMINATE` and `SIPHON_DATABASE_TLS`. Silently
+    /// treating a typo as `pass` picks the operator's failure direction for
+    /// them, in the permissive direction, on a sensor they think is enforcing.
+    fn parse(raw: &str) -> Result<Self, String> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "" | "pass" => Ok(Self::Pass),
+            "block" => Ok(Self::Block),
+            other => Err(format!(
+                "SIPHON_ICAP_ON_UNSCANNABLE: unknown value {other:?} (expected \"pass\" or \"block\")"
+            )),
+        }
+    }
+}
+
 // ── App state ────────────────────────────────────────────────────
 
 #[derive(Clone)]
 struct AppState {
     allowed_nets: Arc<Vec<IpNet>>,
     action: IcapAction,
+    /// What happens to content that was seen and could not be read.
+    on_unscannable: Unscannable,
     min_confidence: f64,
     max_body_bytes: usize,
     service_name: String,
@@ -489,6 +526,73 @@ fn response_flagged(req: &IcapRequest, finding_count: usize, categories: &str) -
     out
 }
 
+/// A 204 that says *why* nothing was adapted.
+///
+/// A bare 204 means "no adaptation needed", and a proxy is entitled to read
+/// that as "we looked and it was clean". These bodies were not clean; they
+/// were not read. The headers keep the response a 204, so no proxy changes
+/// behaviour on upgrade, while giving anything that logs ICAP responses the
+/// difference between the two.
+fn response_204_unscanned(reason: &str) -> Vec<u8> {
+    format!(
+        "ICAP/1.0 204 No Content\r\n\
+         ISTag: {}\r\n\
+         Date: {}\r\n\
+         X-DLP-Action: unscanned\r\n\
+         X-DLP-Reason: {}\r\n\
+         \r\n",
+        istag(),
+        icap_date(),
+        reason,
+    )
+    .into_bytes()
+}
+
+/// Block-mode response for content that could not be read, as opposed to
+/// content that was read and found to carry sensitive data. The distinction
+/// matters to whoever gets the page: "we could not inspect this" is a
+/// different thing to explain than "this contained a card number".
+fn response_blocked_unscanned(reason: &str) -> Vec<u8> {
+    let body = format!(
+        "<html><head><title>Access Blocked by DLP</title></head>\
+         <body><h1>Access Blocked</h1>\
+         <p>Siphon DLP could not inspect this content ({reason}), and this \
+         deployment is configured to refuse what it cannot read.</p>\
+         <p>Contact your security team if you believe this is an error.</p>\
+         </body></html>"
+    );
+    let body_bytes = body.as_bytes();
+    let body_len = body_bytes.len();
+    let res_hdr = format!(
+        "HTTP/1.1 403 Forbidden\r\n\
+         Content-Type: text/html; charset=utf-8\r\n\
+         Content-Length: {body_len}\r\n\
+         \r\n"
+    );
+    let res_hdr_bytes = res_hdr.as_bytes();
+    let res_body_offset = res_hdr_bytes.len();
+
+    let icap_hdr = format!(
+        "ICAP/1.0 200 OK\r\n\
+         ISTag: {}\r\n\
+         Date: {}\r\n\
+         X-DLP-Action: blocked-unscanned\r\n\
+         X-DLP-Reason: {reason}\r\n\
+         Encapsulated: res-hdr=0, res-body={res_body_offset}\r\n\
+         \r\n",
+        istag(),
+        icap_date(),
+    );
+
+    let chunk_size = format!("{:x}\r\n", body_len);
+    let mut out = icap_hdr.into_bytes();
+    out.extend_from_slice(res_hdr_bytes);
+    out.extend_from_slice(chunk_size.as_bytes());
+    out.extend_from_slice(body_bytes);
+    out.extend_from_slice(b"\r\n0\r\n\r\n");
+    out
+}
+
 /// Block-mode response: return a synthetic 403 to the proxy.
 fn response_blocked(finding_count: usize, categories: &str) -> Vec<u8> {
     let body = format!(
@@ -590,6 +694,45 @@ async fn handle_connection(stream: TcpStream, peer: SocketAddr, state: Arc<AppSt
     }
 }
 
+/// Apply `SIPHON_ICAP_ON_UNSCANNABLE` to content this sensor could not read.
+///
+/// Counted as unscanned either way — the coverage figure is about what was
+/// read, not about what was allowed — and the reason travels into both the
+/// audit record and the ICAP response, so "passed unread" is never
+/// indistinguishable from "scanned clean".
+fn unscannable_verdict(
+    state: &AppState,
+    req: &IcapRequest,
+    client_ip: &str,
+    start: Instant,
+    reason: &'static str,
+) -> Vec<u8> {
+    state.sensor.record_unscanned();
+    let duration_ms = start.elapsed().as_millis();
+    match state.on_unscannable {
+        Unscannable::Pass => {
+            emit_audit(
+                req.method.as_str(),
+                client_ip,
+                0,
+                &format!("pass-unscanned:{reason}"),
+                duration_ms,
+            );
+            response_204_unscanned(reason)
+        }
+        Unscannable::Block => {
+            emit_audit(
+                req.method.as_str(),
+                client_ip,
+                0,
+                &format!("block-unscanned:{reason}"),
+                duration_ms,
+            );
+            response_blocked_unscanned(reason)
+        }
+    }
+}
+
 async fn handle_scan(req: &IcapRequest, state: &AppState, client_ip: &str) -> Vec<u8> {
     let start = Instant::now();
 
@@ -604,37 +747,44 @@ async fn handle_scan(req: &IcapRequest, state: &AppState, client_ip: &str) -> Ve
         return response_204();
     }
 
-    // Non-text bodies pass through unscanned — and are counted as such, so
-    // the coverage figure says how much of what reached this sensor it read.
     let text = String::from_utf8_lossy(&req.body);
-    if text.trim().is_empty() || looks_binary(&req.body) {
-        state.sensor.record_unscanned();
+
+    // An empty body is not a coverage gap: there was nothing to read, so
+    // there is nothing this sensor failed to see. It used to be counted as
+    // unscanned alongside binary bodies, which made coverage fall the more
+    // ordinary bodyless traffic the proxy sent through — a figure that got
+    // worse as the deployment got quieter.
+    if text.trim().is_empty() {
         emit_audit(
             req.method.as_str(),
             client_ip,
             0,
-            "pass-binary",
+            "pass-empty",
             start.elapsed().as_millis(),
         );
         return response_204();
     }
 
+    // Everything below is content that reached this sensor and could not be
+    // read. One policy covers all of it, because on the wire they are the
+    // same event: traffic went past and nobody can say what was in it.
+    //
+    // Truncation is checked first: once the body was cut off at the limit,
+    // what is left in `req.body` is a prefix, and asking whether a prefix
+    // looks binary answers a question about the prefix, not the transfer.
     if req.body_truncated {
-        state.sensor.record_unscanned();
         tracing::warn!(
             client_ip = %client_ip,
             stored = req.body.len(),
             limit = state.max_body_bytes,
-            "icap: body exceeded limit; passing through unscanned"
+            policy = ?state.on_unscannable,
+            "icap: body exceeded limit and was not scanned"
         );
-        emit_audit(
-            req.method.as_str(),
-            client_ip,
-            0,
-            "pass-oversized",
-            start.elapsed().as_millis(),
-        );
-        return response_204();
+        return unscannable_verdict(state, req, client_ip, start, "body-exceeds-limit");
+    }
+
+    if looks_binary(&req.body) {
+        return unscannable_verdict(state, req, client_ip, start, "binary-body");
     }
 
     let config = ScanConfig {
@@ -769,14 +919,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
+    // An unknown value is fatal rather than a silent fall back to `flag`.
+    // `SIPHON_ICAP_ACTION=blok` used to start an advisory sensor in a
+    // deployment that had asked for an enforcing one, and nothing said so.
     let action = match std::env::var("SIPHON_ICAP_ACTION")
         .unwrap_or_default()
         .to_ascii_lowercase()
         .as_str()
     {
+        "" | "flag" => IcapAction::Flag,
         "block" => IcapAction::Block,
-        _ => IcapAction::Flag,
+        other => {
+            eprintln!(
+                "FATAL: SIPHON_ICAP_ACTION has unknown value {other:?} \
+                 (expected \"flag\" or \"block\"). Refusing to start rather than \
+                 guess which direction this sensor should fail."
+            );
+            std::process::exit(1);
+        }
     };
+
+    let on_unscannable = match Unscannable::parse(
+        &std::env::var("SIPHON_ICAP_ON_UNSCANNABLE").unwrap_or_default(),
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("FATAL: {e}. Refusing to start.");
+            std::process::exit(1);
+        }
+    };
+    if on_unscannable == Unscannable::Pass {
+        tracing::warn!(
+            "SIPHON_ICAP_ON_UNSCANNABLE=pass — content this sensor cannot read \
+             (bodies over SIPHON_ICAP_MAX_BODY_BYTES, binary bodies) is allowed \
+             through unscanned. Set it to \"block\" if this hop is meant to enforce."
+        );
+    }
 
     let min_confidence: f64 = std::env::var("SIPHON_ICAP_MIN_CONFIDENCE")
         .ok()
@@ -800,6 +978,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let state = Arc::new(AppState {
         allowed_nets: Arc::new(allowed_nets),
         action,
+        on_unscannable,
         min_confidence,
         max_body_bytes,
         service_name: service_name.clone(),
@@ -950,6 +1129,57 @@ async fn accept_loop(listener: TcpListener, state: Arc<AppState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── SIPHON_ICAP_ON_UNSCANNABLE ────────────────────────────────
+
+    /// A typo used to start an advisory sensor in a deployment that asked for
+    /// an enforcing one, silently. Both knobs refuse instead.
+    #[test]
+    fn an_unknown_policy_value_is_refused_not_guessed() {
+        for bad in ["blok", "allow", "defer", "true", "0"] {
+            assert!(
+                Unscannable::parse(bad).is_err(),
+                "{bad:?} should be refused, not read as a policy"
+            );
+        }
+    }
+
+    #[test]
+    fn the_policy_defaults_to_pass_and_reads_both_values() {
+        assert_eq!(Unscannable::parse("").unwrap(), Unscannable::Pass);
+        assert_eq!(Unscannable::parse("pass").unwrap(), Unscannable::Pass);
+        assert_eq!(Unscannable::parse("block").unwrap(), Unscannable::Block);
+        // Case and surrounding whitespace are the operator's, not a value.
+        assert_eq!(Unscannable::parse("  BLOCK ").unwrap(), Unscannable::Block);
+    }
+
+    /// The bug: a body over the limit got a bare 204, which on the wire is
+    /// the same answer as "we read it and it was clean". A proxy logging ICAP
+    /// responses could not tell an unread transfer from an inspected one.
+    #[test]
+    fn a_pass_through_says_it_was_not_read() {
+        let out = String::from_utf8(response_204_unscanned("body-exceeds-limit")).unwrap();
+        assert!(out.starts_with("ICAP/1.0 204"), "still a 204: {out}");
+        assert!(out.contains("X-DLP-Action: unscanned"), "{out}");
+        assert!(out.contains("X-DLP-Reason: body-exceeds-limit"), "{out}");
+        // A plain 204 carries neither, which is what made the two identical.
+        let plain = String::from_utf8(response_204()).unwrap();
+        assert!(!plain.contains("X-DLP-Action"));
+    }
+
+    /// Blocking unread content explains itself as unread, not as a finding —
+    /// whoever reads the page has a different problem to solve.
+    #[test]
+    fn blocking_unread_content_does_not_claim_a_finding() {
+        let out = String::from_utf8(response_blocked_unscanned("binary-body")).unwrap();
+        assert!(out.contains("403 Forbidden"), "{out}");
+        assert!(out.contains("X-DLP-Action: blocked-unscanned"), "{out}");
+        assert!(out.contains("could not inspect"), "{out}");
+        assert!(
+            !out.contains("X-DLP-Findings"),
+            "a block for unread content must not report findings: {out}"
+        );
+    }
 
     /// The canary fixture and its expected categories live in siphon-auth,
     /// which cannot scan. This is the consumer's test of the generator: the

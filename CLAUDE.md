@@ -331,10 +331,17 @@ and `auth_middleware` then granted `Role::Admin` to any holder of the shared
 key. Four roles and a permission matrix existed and bound to nothing.
 
 Endpoints marked **(admin)** additionally require the `AdminAction` RBAC
-permission (`RequireAdminAction` extractor). The gated set covers every
-policy-mutating route **and** the raw finding/evadex read endpoints — those
-return unredacted matched values, so they are admin-only, not merely
-authenticated.
+permission (`RequireAdminAction` extractor); it covers every policy-mutating
+route, plus the evadex and throughput reads, which are about how the fleet is
+performing rather than about any one finding.
+
+The finding reads are **(alerts)** — `ViewAlerts`, via `RequireViewAlerts`.
+They were admin-only while they returned values in the clear; masking moved
+server-side, so the gate that made sense then was only keeping responders and
+auditors out of the surface built for them. Nothing under `/v1/evadex`
+returns a matched value either — those handlers select technique names and
+counts — so the older claim that the admin set exists because those endpoints
+disclose raw values no longer describes any endpoint.
 
 ### API keys
 
@@ -361,6 +368,17 @@ bootstrap key is the only credential, and startup says so.
 A stored role label the binary does not know is refused with a 401 and an
 error-level log — deployment skew, not a caller mistake. Roles are the wire
 labels only (`Role::from_label`); IdP spellings are for `from_group`.
+
+**Tenant scope comes from the key, not from the caller.** `tenant_scope()`
+in `main.rs` is the single resolver, and every scan, read, export, in-memory
+ring result and feedback write goes through it. A key bound to a tenant is
+scoped to that tenant: `X-Siphon-Tenant` may agree with the binding and may
+not contradict it (403). An unbound identity — the bootstrap key, a human
+through the proxy — may still select a tenant with the header or omit it to
+span all of them. A malformed selector is a 400, never a silently dropped
+filter. Until 2026-09-09 the binding was recorded in `AuthContext` and read
+by nothing but `/v1/me`, while each handler derived its own scope from the
+header, so a tenant-bound caller could drop it to read every tenant.
 
 Eight roles. `GET /v1/me` reports the caller's role, how it was established,
 and the permission list; the console renders affordances from it, and every
@@ -417,8 +435,15 @@ change, and the vocabulary split is worth having before that happens.
 ### Masking
 
 **Matched values are redacted server-side by default, on every endpoint that
-returns one** — `/v1/findings`, `/v1/findings/pg`, `/v1/findings/export`.
-`crates/siphon-api/src/masking.rs` is the single place it happens.
+returns one** — `/v1/findings`, `/v1/findings/pg`, `/v1/findings/export`, and
+siphon-fs's own `/v1/findings`. `src/masking.rs` in the root crate is the
+single place it happens. It lives there rather than in siphon-api because
+siphon-fs serves a findings endpoint too and siphon-api has no lib target to
+depend on; the classification half needs only `siphon::rbac`, which both
+binaries already link. Until 2026-09-09 it was siphon-api-local, and
+siphon-fs's endpoint returned the ring's raw values in the clear while a
+comment asserted masking happened "on the way out (siphon-api masking.rs)" —
+true of another process, not of that handler.
 
 The console masking that predated this was cosmetic: the endpoints returned
 values in the clear, so the SSN was already in the JSON, in browser memory and
@@ -455,13 +480,13 @@ GET  /v1/categories             detection categories with pattern_count + sub_ca
 GET  /v1/policies               loaded *.yaml rulesets (read-only)
 GET  /v1/allowlist              current allowlist
 GET  /v1/audit                  recent events from audit ring buffer
-GET  /v1/findings               recent findings from this pod's FindingsRing (in-memory) (admin)
-GET  /v1/findings/pg            Postgres-backed paginated findings (?category=&limit=&offset=) (admin)
-GET  /v1/findings/stats         category breakdown + daily counts (cached 60s) + LSH section (admin)
+GET  /v1/findings               recent findings from this pod's FindingsRing (in-memory) (alerts)
+GET  /v1/findings/pg            Postgres-backed paginated findings (?category=&limit=&offset=) (alerts)
+GET  /v1/findings/stats         category breakdown + daily counts (cached 60s) + LSH section (alerts)
 GET  /v1/stats/throughput       scanned-traffic counters + derived rates from scan_rollup
                                 (?hours=&tenant=&channel=); the denominator side of detection
                                 metrics — covers clean scans, which store no row of their own (admin)
-GET  /v1/findings/export        bulk CSV/JSON export (?format=csv|json&category=&from=&to=&limit=, max 100k rows; 5/min rate limit) (admin)
+GET  /v1/findings/export        bulk CSV/JSON export (?format=csv|json&category=&from=&to=&limit=, max 100k rows; 5/min rate limit) (alerts)
 GET  /v1/pipeline/stages        list scanner stage enable/disable state (admin)
 PATCH /v1/pipeline/stages       toggle a pipeline stage (admin)
 POST /v1/findings/prune         manual retention trigger — admin only
@@ -520,7 +545,7 @@ never an average; every figure shows its working.
 | Axis | Derived from |
 |---|---|
 | availability | deployed ∧ running ∧ operational. Running: last heartbeat within 3 intervals → healthy, within 24 h → stale, else gone; slots received ÷ expected, **no figure when nothing was expected yet**. Operational: posture judged — block ok, advisory ok by design, **annotate warns** (enforcement delegated, not verified here), fail-open warns, degraded warns naming why, not reported → unmeasured. Stale or audit-only is a gap whatever the ratio says |
-| coverage | at depth: scans ÷ (scans + unscanned), per sensor. Program-wide: expected sensors healthy and operational ÷ expected. Coverage against the environment is not knowable from here and the page says so in words |
+| coverage | at depth: scans ÷ (scans + unscanned), per sensor. An empty body is not counted as unscanned — there was nothing to read, and siphon-icap used to count one, so coverage fell as bodyless traffic rose. Program-wide: expected sensors healthy and operational ÷ expected. Coverage against the environment is not knowable from here and the page says so in words |
 | efficacy | recall and precision **separately, never F1**. Recall: heartbeats whose canary passed ÷ heartbeats that ran one (proves the path, not the recall — the tile says so), plus the latest evadex run in the header. Precision: analyst verdicts on `findings` by `source_pod`, 7 d |
 | efficiency | compute (ms/scan, ms/MB, errors/scan), operator attention, false-positive count — and the three of the book's six it cannot measure, named |
 | mTLS per hop | listener: mutual → ok, TLS-only → warn, plaintext → off, cert < 14 d → warn, expired → off. Database: client cert → ok, `require` → warn, `disable` → off. A hop the sensor lacks is n/a; overall is the worst applicable |
@@ -699,6 +724,19 @@ POST /scan    multipart/form-data file upload → extraction → findings
 GET  /v1/findings
 ```
 
+**siphon-fs redacts unconditionally and offers no `unmask`.** It authenticates
+one shared bearer key and derives no role from it, so no caller here can be
+*authorised* to see a value in the clear and no identity could be written into
+an audit row if one were. A surface that cannot say who looked does not show
+the value; unmasking is siphon-api's, which has both halves. The ring still
+keeps the raw value so siphon-api can serve an audited unmask from the same
+row. `Public` categories stay legible, as everywhere.
+
+**`SIPHON_ADMIN_KEY` defaults to `SIPHON_API_KEY`.** When it does,
+`RequireAdminAction` is not a second gate — anything that may upload a file
+may also reload overrides. Supported for single-key deployments, and warned
+about at startup so it is a choice rather than a discovery.
+
 TLS: `SIPHON_FS_TLS_CERT` / `SIPHON_FS_TLS_KEY` / `SIPHON_FS_TLS_CLIENT_CA`,
 with the same semantics as siphon-api's `SIPHON_TLS_*` — the prefix differs
 because siphon-launcher runs both from one environment and each presents its
@@ -749,9 +787,10 @@ Key env vars:
 | `SIPHON_ICAP_PORT` | 1344 | Standard ICAP port |
 | `SIPHON_ICAP_BIND` | 0.0.0.0 | Bind address |
 | `SIPHON_ICAP_ALLOWED_NETS` | **required** | Comma-separated IP/CIDR allowlist. Connections outside are dropped immediately. Use `0.0.0.0/0` for dev. |
-| `SIPHON_ICAP_ACTION` | flag | `flag` — annotate and allow; `block` — return HTTP 403 to proxy |
+| `SIPHON_ICAP_ACTION` | flag | `flag` — annotate and allow; `block` — return HTTP 403 to proxy. **An unknown value refuses to start**, so a typo cannot leave an enforcing deployment advisory |
+| `SIPHON_ICAP_ON_UNSCANNABLE` | pass | What happens to content this sensor saw and could not read — a body over `MAX_BODY_BYTES`, or a binary one. `pass` allows it and tags the 204 `X-DLP-Action: unscanned`; `block` returns a 403 that says it could not inspect rather than claiming a finding. Unknown values refuse to start. Default is `pass` because flipping it would start blocking large transfers on upgrade, which is the operator's call — but a `pass` deployment **warns at startup**, since "send it in one body over the limit" is otherwise a complete bypass of a hop believed to be enforcing |
 | `SIPHON_ICAP_MIN_CONFIDENCE` | 0.6 | Confidence threshold for block action |
-| `SIPHON_ICAP_MAX_BODY_BYTES` | 10485760 | Bodies larger than this pass through unscanned |
+| `SIPHON_ICAP_MAX_BODY_BYTES` | 10485760 | Bodies larger than this are not scanned; `SIPHON_ICAP_ON_UNSCANNABLE` decides what happens to them |
 | `SIPHON_ICAP_SERVICE_NAME` | dlp | ICAP service path (`/dlp`) |
 | `SIPHON_ICAP_MAX_CONNECTIONS` | 256 | Max concurrent ICAP connections; extras are dropped |
 
@@ -776,7 +815,7 @@ X-Siphon-Scan-Id:    <uuid>
 | `SIPHON_SMTP_PORT` | 8894 | |
 | `SIPHON_SMTP_BIND` | 0.0.0.0 | |
 | `SIPHON_SMTP_ALLOWED_NETS` | **required** | Comma-separated IP/CIDR allowlist for MTA connections. `0.0.0.0/0` for dev |
-| `SIPHON_SMTP_ON_INDETERMINATE` | defer | `defer` (451 tempfail, fail closed) or `deliver` (fail open, annotated). `quarantine` is **refused at startup** — there is nowhere to hold a message yet, and silently behaving as `defer` would replace the operator's chosen failure direction. An unknown value is an error, never a fallback |
+| `SIPHON_SMTP_ON_INDETERMINATE` | defer | `defer` (451 tempfail, fail closed) or `deliver` (fail open, annotated). Applies whenever any part went unread, **including when another part was flagged** — completeness is tracked apart from severity, because ranking `flagged` above `indeterminate` once let a finding in one part deliver a message whose other part nobody could open. `quarantine` is **refused at startup** — there is nowhere to hold a message yet, and silently behaving as `defer` would replace the operator's chosen failure direction. An unknown value is an error, never a fallback |
 | `SIPHON_SMTP_TIMEOUT_SECS` | 10 | From the measurements in `docs/architecture/email-dlp.md` §4.5 |
 | `SIPHON_SMTP_MAX_MESSAGE_BYTES` | 31457280 | 30 MB ingest cap. Distinct from the scanner's per-part text cap |
 | `SIPHON_SMTP_MAX_CONNECTIONS` | 256 | |
@@ -1084,6 +1123,7 @@ appear in any artifact.
 - HTTP handlers: `src/api.rs` (CLI-embedded server) and `crates/siphon-api/src/`
 - File extractors: `src/extractors.rs` and `crates/siphon-fs/src/`
 - RBAC: `src/rbac.rs`
+- Server-side masking: `src/masking.rs` (shared by siphon-api and siphon-fs)
 - Policy engine: `src/policy.rs`
 - SIEM / webhooks: gated by the `siem` / `webhooks` features in the root crate
 - Integration tests: `tests/`

@@ -19,7 +19,7 @@
 //! classified yet is masked, not exposed. Adding a pattern category should
 //! never widen what is visible as a side effect.
 
-use siphon::rbac::{role_has_permission, Permission, Role};
+use crate::rbac::{role_has_permission, Permission, Role};
 
 /// What kind of sensitive data a finding's category holds.
 ///

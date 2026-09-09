@@ -81,7 +81,7 @@ use tower_http::trace::TraceLayer;
 
 mod db;
 mod keys_api;
-mod masking;
+use siphon::masking;
 mod sensors_api;
 // The mail model lives in its own crate: siphon-smtp writes what this
 // service reads, and siphon-api has no lib target for it to depend on.
@@ -1222,7 +1222,7 @@ struct HealthResponse {
     uptime_secs: u64,
 }
 
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Clone, Debug)]
 struct ErrorResponse {
     error: String,
 }
@@ -1461,6 +1461,76 @@ fn sanitize_tenant_id(s: &str) -> Option<String> {
     }
 }
 
+/// The tenant scope for one request, resolved from authenticated identity.
+///
+/// Audit A01. Authentication put the issued key's tenant in `AuthContext`,
+/// and then every handler derived its own scope from `X-Siphon-Tenant`
+/// instead. A tenant-bound caller could drop the header to lift the SQL
+/// restriction entirely, or set it to somebody else's tenant. The binding
+/// was recorded and never enforced.
+///
+/// One rule now, for reads, writes, exports and in-memory results alike:
+///
+/// * A key bound to a tenant is scoped to that tenant. The header may agree
+///   with the binding, and may not contradict it.
+/// * An unbound identity — the bootstrap key, a human through the proxy —
+///   may select a tenant with the header, or omit it to span all of them.
+///   Narrowing what an operator can see is a separate decision from closing
+///   an escape, and this is the escape.
+/// * A malformed selector is refused rather than dropped. Silently treating
+///   `tenant=../../` as "no filter" is how a typo becomes a cross-tenant
+///   read.
+///
+/// `Ok(None)` means unscoped: every tenant.
+fn tenant_scope(
+    ctx: &AuthContext,
+    headers: &HeaderMap,
+) -> Result<Option<String>, (StatusCode, Json<ErrorResponse>)> {
+    let raw = headers
+        .get("x-siphon-tenant")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+
+    let requested = match raw {
+        Some(r) => match sanitize_tenant_id(r) {
+            Some(t) => Some(t),
+            None => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: "X-Siphon-Tenant is not a valid tenant id".into(),
+                    }),
+                ))
+            }
+        },
+        None => None,
+    };
+
+    match &ctx.tenant {
+        Some(bound) => {
+            if let Some(req) = &requested {
+                if req != bound {
+                    tracing::warn!(
+                        key_id = ctx.key_id.as_deref().unwrap_or("-"),
+                        bound = %bound,
+                        requested = %req,
+                        "tenant-bound key asked for another tenant"
+                    );
+                    return Err((
+                        StatusCode::FORBIDDEN,
+                        Json(ErrorResponse {
+                            error: "this key is bound to a different tenant".into(),
+                        }),
+                    ));
+                }
+            }
+            Ok(Some(bound.clone()))
+        }
+        None => Ok(requested),
+    }
+}
+
 async fn scan(
     _: RequireScan,
     AuthContextExt(ctx): AuthContextExt,
@@ -1470,10 +1540,7 @@ async fn scan(
     Json(req): Json<ScanRequest>,
 ) -> Result<Json<ScanResponse>, (StatusCode, Json<ErrorResponse>)> {
     let source_ip = addr.ip().to_string();
-    let tenant_id: Option<String> = headers
-        .get("x-siphon-tenant")
-        .and_then(|v| v.to_str().ok())
-        .and_then(sanitize_tenant_id);
+    let tenant_id = tenant_scope(&ctx, &headers)?;
 
     if req.text.is_empty() {
         return Err((
@@ -1948,10 +2015,7 @@ async fn scan_batch(
     headers: HeaderMap,
     Json(items): Json<Vec<BatchItem>>,
 ) -> Result<Json<BatchScanResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let tenant_id: Option<String> = headers
-        .get("x-siphon-tenant")
-        .and_then(|v| v.to_str().ok())
-        .and_then(sanitize_tenant_id);
+    let tenant_id = tenant_scope(&ctx, &headers)?;
     const MAX_BATCH: usize = 500;
     if items.is_empty() {
         return Err((
@@ -6028,13 +6092,14 @@ async fn get_baseline_delta(
 
 async fn findings_stats(
     _: RequireViewAlerts,
+    AuthContextExt(ctx): AuthContextExt,
     headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    let tenant_id: Option<String> = headers
-        .get("x-siphon-tenant")
-        .and_then(|v| v.to_str().ok())
-        .and_then(sanitize_tenant_id);
+    let tenant_id = match tenant_scope(&ctx, &headers) {
+        Ok(t) => t,
+        Err((status, body)) => return (status, body).into_response(),
+    };
 
     // Return cached response if fresh enough — keyed by tenant so one
     // tenant's aggregate is never served to another.
@@ -6300,22 +6365,22 @@ async fn list_pg_findings(
     headers: HeaderMap,
     Query(q): Query<PgFindingsQuery>,
     State(state): State<Arc<AppState>>,
-) -> Json<PgFindingsResponse> {
+) -> Result<Json<PgFindingsResponse>, (StatusCode, Json<ErrorResponse>)> {
     let Some(pool) = state.db_pool.as_ref() else {
-        return Json(PgFindingsResponse {
+        return Ok(Json(PgFindingsResponse {
             findings: Vec::new(),
             total: 0,
-        });
+        }));
     };
 
     let client = match pool.get().await {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!("list_pg_findings: pool get failed: {e}");
-            return Json(PgFindingsResponse {
+            return Ok(Json(PgFindingsResponse {
                 findings: Vec::new(),
                 total: 0,
-            });
+            }));
         }
     };
 
@@ -6323,13 +6388,9 @@ async fn list_pg_findings(
     let offset = q.offset.unwrap_or(0).max(0);
     let category = q.category.as_deref();
 
-    // Tenant isolation: when X-Siphon-Tenant is present, restrict to rows
-    // whose tenant_id matches. A missing tenant header (e.g. admin calls)
-    // returns findings across all tenants.
-    let tenant_id: Option<String> = headers
-        .get("x-siphon-tenant")
-        .and_then(|v| v.to_str().ok())
-        .and_then(sanitize_tenant_id);
+    // Tenant isolation, from the authenticated identity rather than from
+    // whatever the caller put in the header. See `tenant_scope`.
+    let tenant_id = tenant_scope(&ctx, &headers)?;
     let tenant_filter = tenant_id.as_deref();
 
     let rows = match client
@@ -6349,10 +6410,10 @@ async fn list_pg_findings(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("list_pg_findings: query failed: {e}");
-            return Json(PgFindingsResponse {
+            return Ok(Json(PgFindingsResponse {
                 findings: Vec::new(),
                 total: 0,
-            });
+            }));
         }
     };
 
@@ -6412,7 +6473,7 @@ async fn list_pg_findings(
         Err(_) => findings.len() as i64,
     };
 
-    Json(PgFindingsResponse { findings, total })
+    Ok(Json(PgFindingsResponse { findings, total }))
 }
 
 // ---------------------------------------------------------------------------
@@ -6450,10 +6511,16 @@ struct FeedbackResponse {
 
 async fn post_finding_feedback(
     _: RequireReviewAlerts,
+    AuthContextExt(ctx): AuthContextExt,
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(body): Json<FeedbackBody>,
 ) -> Response {
+    let tenant_id = match tenant_scope(&ctx, &headers) {
+        Ok(t) => t,
+        Err((status, body)) => return (status, body).into_response(),
+    };
     let verdict = body.verdict.trim();
     if !matches!(verdict, "tp" | "fp" | "unsure") {
         return (
@@ -6488,7 +6555,21 @@ async fn post_finding_feedback(
         .as_deref()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .map(|s| if s.len() > 2000 { &s[..2000] } else { s });
+        // Audit A12: `&s[..2000]` panics when 2,000 bytes lands inside a
+        // multi-byte character, and a note ending in an emoji is not a
+        // malformed request. Truncate at the last boundary at or below the
+        // cap instead.
+        .map(|s| {
+            if s.len() <= 2000 {
+                s
+            } else {
+                let mut end = 2000;
+                while !s.is_char_boundary(end) {
+                    end -= 1;
+                }
+                &s[..end]
+            }
+        });
 
     match db::record_finding_feedback(
         &state.db_pool,
@@ -6496,6 +6577,7 @@ async fn post_finding_feedback(
         verdict,
         &reviewer_hash,
         note_trimmed,
+        tenant_id.as_deref(),
     )
     .await
     {
@@ -6609,12 +6691,11 @@ async fn findings_export(
         q.from.as_deref().and_then(|s| s.parse().ok());
     let to_ts: Option<chrono::DateTime<chrono::Utc>> = q.to.as_deref().and_then(|s| s.parse().ok());
 
-    // Tenant isolation: restrict export to the caller's tenant when the header
-    // is present. An admin call without the header exports across all tenants.
-    let tenant_id: Option<String> = headers
-        .get("x-siphon-tenant")
-        .and_then(|v| v.to_str().ok())
-        .and_then(sanitize_tenant_id);
+    // Tenant isolation, from the authenticated identity. See `tenant_scope`.
+    let tenant_id = match tenant_scope(&ctx, &headers) {
+        Ok(t) => t,
+        Err((status, body)) => return (status, body).into_response(),
+    };
     let tenant_filter = tenant_id.as_deref();
 
     let Some(pool) = state.db_pool.as_ref() else {
@@ -6816,11 +6897,10 @@ async fn list_findings(
     headers: HeaderMap,
     Query(q): Query<FindingsQuery>,
     State(state): State<Arc<AppState>>,
-) -> Json<FindingsResponse> {
-    let tenant_id: Option<String> = headers
-        .get("x-siphon-tenant")
-        .and_then(|v| v.to_str().ok())
-        .and_then(sanitize_tenant_id);
+) -> Result<Json<FindingsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // The ring is per-pod and in memory, but it holds the same rows the
+    // database does; scope applies here identically.
+    let tenant_id = tenant_scope(&ctx, &headers)?;
 
     let snapshot = state.findings.snapshot();
     let total = snapshot.len();
@@ -6855,12 +6935,12 @@ async fn list_findings(
 
     audit_disclosure(&ctx, "/v1/findings", unmask, disclosed);
     let returned = findings.len();
-    Json(FindingsResponse {
+    Ok(Json(FindingsResponse {
         total,
         returned,
         capacity,
         findings,
-    })
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -8432,6 +8512,99 @@ mod tests {
 
     fn empty_parts() -> axum::http::request::Parts {
         Request::builder().body(()).unwrap().into_parts().0
+    }
+
+    /// Audit A01. Tenant scope comes from the key, not from the caller.
+    mod tenant_isolation {
+        use super::*;
+
+        fn ctx_bound_to(tenant: Option<&str>) -> AuthContext {
+            AuthContext {
+                role: Role::Analyst,
+                actor: "test".to_string(),
+                source: AuthSource::ApiKey,
+                key_id: Some("k_test".to_string()),
+                tenant: tenant.map(str::to_string),
+            }
+        }
+
+        fn headers_with(tenant: Option<&str>) -> HeaderMap {
+            let mut h = HeaderMap::new();
+            if let Some(t) = tenant {
+                h.insert("x-siphon-tenant", t.parse().unwrap());
+            }
+            h
+        }
+
+        /// The escape: drop the header and the SQL restriction went with it.
+        #[test]
+        fn a_bound_key_stays_scoped_when_the_header_is_absent() {
+            let scope = tenant_scope(&ctx_bound_to(Some("acme")), &headers_with(None))
+                .expect("no header is not an error");
+            assert_eq!(scope.as_deref(), Some("acme"));
+        }
+
+        #[test]
+        fn a_bound_key_may_restate_its_own_tenant() {
+            let scope = tenant_scope(&ctx_bound_to(Some("acme")), &headers_with(Some("acme")))
+                .expect("agreeing with the binding is fine");
+            assert_eq!(scope.as_deref(), Some("acme"));
+        }
+
+        #[test]
+        fn a_bound_key_cannot_select_another_tenant() {
+            let (status, _) =
+                tenant_scope(&ctx_bound_to(Some("acme")), &headers_with(Some("globex")))
+                    .expect_err("selecting another tenant must be refused");
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        /// An unbound identity — bootstrap key, or a human through the proxy
+        /// — keeps the selecting behaviour. Narrowing that is a separate
+        /// decision from closing the escape.
+        #[test]
+        fn an_unbound_identity_may_still_select_or_span() {
+            assert_eq!(
+                tenant_scope(&ctx_bound_to(None), &headers_with(Some("globex")))
+                    .unwrap()
+                    .as_deref(),
+                Some("globex")
+            );
+            assert_eq!(
+                tenant_scope(&ctx_bound_to(None), &headers_with(None)).unwrap(),
+                None
+            );
+        }
+
+        /// Dropping a malformed selector meant "no filter", which is the
+        /// wrong direction for a typo to fail in.
+        #[test]
+        fn a_malformed_selector_is_refused_not_ignored() {
+            for bad in [
+                "../../etc",
+                "a b",
+                "'; DROP TABLE findings--",
+                &"x".repeat(65),
+            ] {
+                match tenant_scope(&ctx_bound_to(None), &headers_with(Some(bad))) {
+                    Err((status, _)) => {
+                        assert_eq!(status, StatusCode::BAD_REQUEST, "for {bad:?}")
+                    }
+                    Ok(scope) => panic!("{bad:?} should be refused, got scope {scope:?}"),
+                }
+            }
+        }
+
+        /// Whitespace is not a tenant, and must not read as one.
+        #[test]
+        fn a_blank_header_is_treated_as_absent() {
+            assert_eq!(
+                tenant_scope(&ctx_bound_to(Some("acme")), &headers_with(Some("   ")))
+                    .unwrap()
+                    .as_deref(),
+                Some("acme")
+            );
+        }
     }
 
     /// An AuthContext with the identity fields filled in — these tests are
