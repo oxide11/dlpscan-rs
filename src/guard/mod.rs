@@ -12,6 +12,8 @@ pub use presets::{Preset, PRESET_CATEGORIES};
 pub use tokenize::TokenVault;
 
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::allowlist::Allowlist;
 use crate::classification::{self, ClassificationLevel, DEFAULT_BLOCK_LEVEL};
@@ -251,15 +253,21 @@ impl InputGuard {
 
     /// Scan text and return a ScanResult.
     pub fn scan(&self, text: &str) -> crate::Result<ScanResult> {
+        // Ask the scanner whether a cap stopped it. Without this the guard
+        // cannot tell "these are all the matches" from "these are the first
+        // 10,000", and it transforms the text on that distinction.
+        let truncated = Arc::new(AtomicBool::new(false));
         let config = ScanConfig {
             categories: self.resolve_categories(),
             require_context: self.require_context,
             min_confidence: self.min_confidence,
             baseline_only: self.baseline_only,
+            truncated: Some(Arc::clone(&truncated)),
             ..Default::default()
         };
 
         let mut findings = scanner::scan_text_with_config(text, &config)?;
+        let scan_truncated = truncated.load(Ordering::Relaxed);
 
         // Apply allowlist
         if let Some(ref allowlist) = self.allowlist {
@@ -296,6 +304,31 @@ impl InputGuard {
         let categories_found: HashSet<String> =
             findings.iter().map(|m| m.category.clone()).collect();
 
+        // Fail closed on a truncated scan, for the transforming actions only.
+        //
+        // Redact, tokenize and obfuscate rewrite exactly the spans in
+        // `findings`. When a cap stopped collection, every value past the cap
+        // stays in the output verbatim — and the caller has asked for, and
+        // believes it received, text with those values removed. Returning
+        // that is worse than returning nothing.
+        //
+        // Flag and Reject are unaffected: neither claims to have transformed
+        // anything, and both surface `scan_truncated` on the result.
+        if scan_truncated {
+            let transforming = match self.action {
+                Action::Redact => Some("redact"),
+                Action::Tokenize => Some("tokenize"),
+                Action::Obfuscate => Some("obfuscate"),
+                Action::Reject | Action::Flag => None,
+            };
+            if let Some(action) = transforming {
+                return Err(crate::errors::DlpError::ScanTruncated {
+                    collected: findings.len(),
+                    action,
+                });
+            }
+        }
+
         let redacted_text = match self.action {
             Action::Redact => Some(self.redact_text(text, &findings)),
             Action::Obfuscate => Some(obfuscate_matches(text, &findings)),
@@ -309,7 +342,7 @@ impl InputGuard {
             findings,
             redacted_text,
             categories_found,
-            scan_truncated: false,
+            scan_truncated,
             classification_level,
         };
 

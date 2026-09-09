@@ -40,6 +40,19 @@ pub enum DlpError {
         threshold: crate::classification::ClassificationLevel,
         labels: Vec<String>,
     },
+    /// A match cap stopped collection, so the scanner's findings are a
+    /// prefix of what is in the text.
+    ///
+    /// Returned by `InputGuard` for the transforming actions only. Redact,
+    /// tokenize and obfuscate rewrite exactly the spans they were handed;
+    /// on a truncated scan that leaves every uncollected value intact in
+    /// output the caller believes is safe. Refusing is the only answer that
+    /// does not lie. A caller that just wants the findings can ask for
+    /// `Action::Flag`, which reports `scan_truncated` and returns them.
+    ScanTruncated {
+        collected: usize,
+        action: &'static str,
+    },
     /// User-supplied path could not be validated (malformed, canonicalize failed).
     InvalidPath,
     /// Canonicalized path escaped the allowed base directory.
@@ -69,6 +82,11 @@ impl fmt::Display for DlpError {
                 f,
                 "Sensitive data detected: {finding_count} findings in categories: {}",
                 categories.join(", ")
+            ),
+            Self::ScanTruncated { collected, action } => write!(
+                f,
+                "scan hit a match cap after {collected} findings, so the text was \
+                 not fully inspected; refusing to {action} a partial result"
             ),
             Self::ClassificationPolicyViolation {
                 level,

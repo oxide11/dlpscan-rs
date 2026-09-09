@@ -29,6 +29,7 @@ use rayon::prelude::*;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -78,6 +79,41 @@ pub struct StageEvent {
 /// the scanner skips emission entirely so there's no cost to callers that
 /// don't opt in.
 pub type TraceSink = Option<Arc<Mutex<Vec<StageEvent>>>>;
+
+/// Thread-safe sink for "a cap stopped collection". `None` (default) means
+/// the caller is not asking.
+///
+/// Every cap in this module is a denial-of-service bound, not a statement
+/// about the document: stopping at 10,000 matches of one pattern is the
+/// right thing to do, and reporting the result as if it were the whole
+/// document is not. A caller that only counts findings can ignore this. A
+/// caller that *transforms* the text — redact, tokenize, obfuscate — cannot,
+/// because it rewrites exactly the spans it was handed and leaves every
+/// uncollected one intact. `InputGuard` reads this and fails closed.
+pub type TruncationSink = Option<Arc<AtomicBool>>;
+
+/// Record that a cap stopped collection. Cheap and lock-free: the hot path
+/// pays an `Option` check when nobody is asking.
+fn mark_truncated(sink: &TruncationSink) {
+    if let Some(flag) = sink {
+        flag.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Is there room for another match? Marks truncation when there is not.
+///
+/// Every post-dedup stage (entropy, EDM, LSH, runtime patterns) stops at
+/// `max_matches`. Routing all of them through one predicate means "we
+/// stopped adding" is recorded the same way wherever it happens, rather
+/// than at whichever sites someone remembered.
+fn room_for_more(len: usize, config: &ScanConfig) -> bool {
+    if len < config.max_matches {
+        true
+    } else {
+        mark_truncated(&config.truncated);
+        false
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 fn emit_trace(
@@ -188,6 +224,10 @@ pub struct ScanConfig {
     /// emit). Used by the admin console's FP Troubleshooter and Live
     /// Scan trace view. `None` (default) disables tracing entirely.
     pub trace: TraceSink,
+    /// Set to `true` by the scanner when a match cap stopped collection, so
+    /// the returned matches are a prefix of what is in the text rather than
+    /// all of it. `None` (default) means the caller is not asking.
+    pub truncated: TruncationSink,
     /// Optional set of `(category, sub_category)` pairs the scanner
     /// must not emit. Built once at startup from the deployable
     /// PatternOverrides file (`crate::overrides::PatternOverrides`)
@@ -261,6 +301,7 @@ impl Default for ScanConfig {
             edm: None,
             lsh: None,
             trace: None,
+            truncated: None,
             disabled_patterns: None,
             pattern_field_overrides: None,
             runtime_patterns: None,
@@ -1042,6 +1083,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
 
         for (norm_start, norm_end, matched_text) in reported_matches(active_regex, haystack) {
             if local_matches.len() >= MAX_MATCHES_PER_PATTERN {
+                mark_truncated(&config.truncated);
                 break;
             }
             let cand_span = (norm_start, norm_end);
@@ -1328,12 +1370,15 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
 
     // Flatten primary matches, then the raw-text pass. Dedup runs over both
     // together further down, so a value found in both views collapses to one.
-    let mut matches: Vec<Match> = per_pattern_matches
+    let collected: Vec<Match> = per_pattern_matches
         .into_iter()
         .flatten()
         .chain(raw_pass_matches.into_iter().flatten())
-        .take(config.max_matches)
         .collect();
+    if collected.len() > config.max_matches {
+        mark_truncated(&config.truncated);
+    }
+    let mut matches: Vec<Match> = collected.into_iter().take(config.max_matches).collect();
 
     // Second pass: try alternative decodings (base32/64, ROT13, reversal)
     // Only if primary scan found few/no matches and text is short enough.
@@ -1508,10 +1553,10 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     }
 
     // Entropy-based secret detection (optional)
-    if config.entropy_scan != EntropyMode::Off && matches.len() < config.max_matches {
+    if config.entropy_scan != EntropyMode::Off && room_for_more(matches.len(), config) {
         let entropy_matches = scan_high_entropy_tokens(text, &normalized, &offset_map, config);
         for em in entropy_matches {
-            if matches.len() >= config.max_matches {
+            if !room_for_more(matches.len(), config) {
                 break;
             }
             // Skip if already covered by a regex match at the same span
@@ -1528,10 +1573,10 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     // EDM matches are NEVER dominated by regex matches because they represent
     // confirmed known sensitive values, not pattern guesses.
     if let Some(ref edm) = config.edm {
-        if matches.len() < config.max_matches {
+        if room_for_more(matches.len(), config) {
             let edm_matches = edm.scan(text, config.categories.as_ref());
             for em in edm_matches {
-                if matches.len() >= config.max_matches {
+                if !room_for_more(matches.len(), config) {
                     break;
                 }
                 {
@@ -1551,10 +1596,10 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
 
     // LSH (Locality-Sensitive Hashing) — check for similar documents
     if let Some(ref lsh) = config.lsh {
-        if matches.len() < config.max_matches {
+        if room_for_more(matches.len(), config) {
             let sim_matches = lsh.query(text, None);
             for sm in sim_matches {
-                if matches.len() >= config.max_matches {
+                if !room_for_more(matches.len(), config) {
                     break;
                 }
                 matches.push(Match::new(
@@ -1584,7 +1629,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     if let Some(rps) = config.runtime_patterns.as_ref() {
         for rp in rps.iter() {
             for mat in rp.regex.find_iter(text) {
-                if matches.len() >= config.max_matches {
+                if !room_for_more(matches.len(), config) {
                     break;
                 }
                 let span = (mat.start(), mat.end());
