@@ -1041,14 +1041,45 @@ crate to a registry.
 
 ### Git tags
 
-One tag per crate per release, namespaced:
+One tag per shipped artifact per release, namespaced. **Ten**, not the six
+this list carried until 2026-09-09 — `siphon-icap`, `siphon-smtp`,
+`siphon-mail` and `siphon-auth` all version independently and were simply
+missing, which is how they went untagged without anyone noticing a rule had
+been broken:
 
+- `siphon-cli-vX.Y.Z`
 - `siphon-core-vX.Y.Z`
 - `siphon-api-vX.Y.Z`
 - `siphon-fs-vX.Y.Z`
+- `siphon-icap-vX.Y.Z`
+- `siphon-smtp-vX.Y.Z`
 - `siphon-launcher-vX.Y.Z`
-- `siphon-cli-vX.Y.Z`
+- `siphon-mail-vX.Y.Z`
+- `siphon-auth-vX.Y.Z`
 - `siphon-chart-vX.Y.Z`
+
+**Tagging is automated — do not do it by hand.**
+`.github/workflows/release-tags.yml` runs on every push to `main` that touches
+a manifest, and pushes whatever tag is missing. In CI the `GITHUB_TOKEN` is a
+real credential with `contents: write`, so tagging no longer depends on what
+the person at the keyboard happens to be allowed to push. It had been
+depending on exactly that, and losing: the remote carried **zero** tags on
+2026-09-09 while ten artifacts had versions and the CHANGELOG described
+releases no ref identified.
+
+`scripts/release-tags.sh` is the same logic, runnable locally; with no flags
+it prints the plan and changes nothing. Two properties are load-bearing:
+
+- **It tags the commit that introduced the version**, found with
+  `git log -S` over that manifest — not `HEAD`. Tagging `HEAD` is right only
+  for the wave that just merged and wrong for every older release still
+  missing a tag.
+- **It never moves or deletes a tag.** A tag that already exists pointing
+  somewhere else is reported and left alone, by *both* the create pass and
+  the local-only rescue pass. Those two disagreed for one commit during
+  development — the guard declined to re-point a tag and the rescue pass then
+  queued the same ref — which is the failure mode to watch for if either pass
+  is edited.
 
 A "release wave" is a single commit on `main` that bumps one or more crates
 and gets one tag per bumped crate (annotated, signed where possible). Tags
