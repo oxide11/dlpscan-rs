@@ -647,7 +647,16 @@ pub static PATTERNS: &[PatternDef] = &[
         sub_category: "E.164 Phone Number",
         regex: r"\+[1-9]\d{6,14}\b",
         case_insensitive: false,
-        specificity: 0.40,
+        // Below DEFAULT_SPECIFICITY on purpose, matching
+        // `pattern_specificity()` — see the reasoning there. The generic
+        // shape must lose a dedup tie to "US Phone Number" / "UK Phone
+        // Number" (both 0.40) so the informative label is the one
+        // reported. This field sat at the 0.40 default because only the
+        // map was lowered, which is the exact value that comment warns
+        // against; the scan path reads the map, so nothing was mislabelled,
+        // but the console catalog reads *this* and showed the generic
+        // pattern as equally specific to the country ones.
+        specificity: 0.35,
         context_required: false,
     },
     PatternDef {

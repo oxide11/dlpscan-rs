@@ -45,6 +45,66 @@ const DEFAULT_BIND: &str = "127.0.0.1:8090";
 /// admin-console Settings UI (Phase 8.5c) — any new kind must land
 /// here first so the launcher doesn't serve as a general-purpose
 /// exec server.
+// Allowlist env key prefixes to prevent injection of security-
+// critical variables (SIPHON_API_KEY, SIPHON_AUDIT_LOG_PATH,
+// SIPHON_BIND, LD_PRELOAD, etc.) via the launcher's start API.
+const ALLOWED_ENV_PREFIXES: &[&str] = &["SIPHON_", "RUST_LOG", "RUST_BACKTRACE"];
+// Explicitly block keys that could downgrade security posture
+// even within the SIPHON_ prefix.
+//
+// This is a denylist inside an allowlist prefix, which fails in
+// the wrong direction: every security-relevant `SIPHON_*`
+// variable added anywhere in the workspace is permitted here
+// until someone remembers to add it. Four of the entries below
+// were missing for exactly that reason. Inverting it — naming
+// the variables that are safe to forward — is the right shape,
+// and is a change to make deliberately rather than in passing,
+// since it will refuse env that local workflows pass today.
+const BLOCKED_ENV_KEYS: &[&str] = &[
+    "SIPHON_API_KEY",
+    "SIPHON_AUDIT_LOG_PATH",
+    "SIPHON_BIND",
+    "SIPHON_FS_BIND",
+    // Disabling SSRF defences globally via an env injection must
+    // not be possible through the launcher start API.
+    "SIPHON_ALLOW_PRIVATE_DESTINATIONS",
+    // Removing authentication or audit-log enforcement via the
+    // launcher start API must not be possible.
+    "SIPHON_ALLOW_UNAUTHENTICATED",
+    "SIPHON_DEV_MODE",
+    // Believing forwarded identity from anywhere is the single
+    // check standing between a Remote-Groups header and Admin;
+    // siphon-api's own docs call losing it a full privilege
+    // escalation. It belongs here with the rest of them.
+    "SIPHON_TRUSTED_PROXIES",
+    // Handing the spawner the chain key lets it write audit
+    // entries that verify, which is the whole property the chain
+    // exists to provide.
+    "SIPHON_AUDIT_SIGNING_KEY_HEX",
+    // Posture downgrades: any-origin CORS, and dropping the
+    // Postgres hop to plaintext or to no client certificate.
+    "SIPHON_ALLOW_PERMISSIVE_CORS",
+    "SIPHON_DATABASE_TLS",
+    // Letting the spawner choose what happens to content the
+    // sensor cannot read turns an enforcing ICAP hop back into an
+    // advisory one.
+    "SIPHON_ICAP_ON_UNSCANNABLE",
+    "SIPHON_ICAP_ACTION",
+];
+
+/// Whether an env key from a start request may be forwarded to the child.
+///
+/// Extracted from the handler so the blocked set is covered by tests. The
+/// comment above explains why this list is the wrong shape; a test is the
+/// cheapest guard against it silently losing an entry in the meantime.
+fn env_key_permitted(key: &str) -> bool {
+    let allowed = ALLOWED_ENV_PREFIXES
+        .iter()
+        .any(|prefix| key.starts_with(prefix));
+    let blocked = BLOCKED_ENV_KEYS.iter().any(|blocked| key == *blocked);
+    allowed && !blocked
+}
+
 const ALLOWED_KINDS: &[&str] = &["siphon-api", "siphon-fs", "siphon-icap"];
 /// How long to wait for a SIGTERM'd child to drain before sending
 /// SIGKILL. Matches the Deployment terminationGracePeriodSeconds in
@@ -332,36 +392,13 @@ async fn start_process(State(state): State<AppState>, Json(req): Json<StartReque
     }
 
     if let Some(extra) = req.env {
-        // Allowlist env key prefixes to prevent injection of security-
-        // critical variables (SIPHON_API_KEY, SIPHON_AUDIT_LOG_PATH,
-        // SIPHON_BIND, LD_PRELOAD, etc.) via the launcher's start API.
-        const ALLOWED_PREFIXES: &[&str] = &["SIPHON_", "RUST_LOG", "RUST_BACKTRACE"];
-        // Explicitly block keys that could downgrade security posture
-        // even within the SIPHON_ prefix.
-        const BLOCKED_KEYS: &[&str] = &[
-            "SIPHON_API_KEY",
-            "SIPHON_AUDIT_LOG_PATH",
-            "SIPHON_BIND",
-            "SIPHON_FS_BIND",
-            // Disabling SSRF defences globally via an env injection must
-            // not be possible through the launcher start API.
-            "SIPHON_ALLOW_PRIVATE_DESTINATIONS",
-            // Removing authentication or audit-log enforcement via the
-            // launcher start API must not be possible.
-            "SIPHON_ALLOW_UNAUTHENTICATED",
-            "SIPHON_DEV_MODE",
-        ];
         for key in extra.keys() {
-            let allowed = ALLOWED_PREFIXES
-                .iter()
-                .any(|prefix| key.starts_with(prefix));
-            let blocked = BLOCKED_KEYS.iter().any(|blocked| key == blocked);
-            if !allowed || blocked {
+            if !env_key_permitted(key) {
                 return err(
                     StatusCode::BAD_REQUEST,
                     format!(
                         "env key {:?} is not permitted; allowed prefixes: {:?}",
-                        key, ALLOWED_PREFIXES
+                        key, ALLOWED_ENV_PREFIXES
                     ),
                 );
             }
@@ -698,4 +735,68 @@ fn find_workspace_root(start: &std::path::Path) -> Option<PathBuf> {
         current = p.parent();
     }
     None
+}
+
+#[cfg(test)]
+mod env_filter_tests {
+    use super::*;
+
+    /// The launcher has no authentication — the loopback bind is the whole
+    /// access control — so what it will and will not forward into a spawned
+    /// pod is the only thing standing between a local caller and a pod with
+    /// its defences turned off. Each key below can do that on its own.
+    #[test]
+    fn security_relevant_keys_are_refused() {
+        for key in [
+            "SIPHON_API_KEY",
+            "SIPHON_AUDIT_LOG_PATH",
+            "SIPHON_AUDIT_SIGNING_KEY_HEX",
+            "SIPHON_BIND",
+            "SIPHON_FS_BIND",
+            "SIPHON_ALLOW_PRIVATE_DESTINATIONS",
+            "SIPHON_ALLOW_UNAUTHENTICATED",
+            "SIPHON_ALLOW_PERMISSIVE_CORS",
+            "SIPHON_DEV_MODE",
+            "SIPHON_TRUSTED_PROXIES",
+            "SIPHON_DATABASE_TLS",
+            "SIPHON_ICAP_ACTION",
+            "SIPHON_ICAP_ON_UNSCANNABLE",
+        ] {
+            assert!(
+                !env_key_permitted(key),
+                "{key} must not be forwardable through the start API"
+            );
+        }
+    }
+
+    /// Anything outside the prefixes is refused whatever it is — the point
+    /// of the prefix list is that LD_PRELOAD and PATH never get a hearing.
+    #[test]
+    fn keys_outside_the_prefixes_are_refused() {
+        for key in [
+            "LD_PRELOAD",
+            "PATH",
+            "HOME",
+            "RUSTFLAGS",
+            "SIPHONX_FOO",
+            "siphon_api_key",
+        ] {
+            assert!(!env_key_permitted(key), "{key} should not be permitted");
+        }
+    }
+
+    /// The tool still has to be usable: ordinary tuning knobs pass.
+    #[test]
+    fn ordinary_configuration_still_passes() {
+        for key in [
+            "SIPHON_PORT",
+            "SIPHON_RATE_LIMIT",
+            "SIPHON_POLICIES_DIR",
+            "SIPHON_FINDINGS_RING_CAP",
+            "RUST_LOG",
+            "RUST_BACKTRACE",
+        ] {
+            assert!(env_key_permitted(key), "{key} should be permitted");
+        }
+    }
 }

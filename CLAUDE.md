@@ -248,14 +248,28 @@ then read correctly *was* read.
 
 Covered by the `disguise` capability in the conformance matrix.
 
-Other test harnesses (not run by default CI):
+Other test harnesses. All but `fp_probe` run in `.github/workflows/ci.yml`
+as hard gates — this list used to say none of them did, and described
+`audit_spec` as the audit chain, which it has never been:
+
 ```bash
-cargo test --test detection_quality   # labeled-corpus regression suite
-cargo test --test fp_probe            # false-positive investigation
-cargo test --test evadex_regressions  # regressions from evadex adversarial harness
-cargo test --test forensics_test      # Office/PDF metadata tests
-cargo test --test audit_spec          # audit chain HMAC integrity
+cargo test --test audit_spec          # specificity / context_required lockstep (CI)
+cargo test --test detection_quality   # labeled-corpus regression suite (CI)
+cargo test --test evadex_regressions  # regressions from the evadex adversarial harness (CI)
+cargo test --test forensics_test      # Office/PDF metadata tests (CI)
+cargo test --test fp_probe            # false-positive investigation (local only)
 ```
+
+`audit_spec` is the one to understand, because it guards a fact stored
+twice. `pattern_specificity()` in `models.rs` and `PatternDef.specificity`
+in `patterns/mod.rs` must agree; the scan path reads only the map, while
+the console catalog reads only the `PatternDef`, so a disagreement means
+the console misreports what the scanner does. It caught exactly that on
+2026-09-08 — `fix(core): report US phone span without its leading
+separator` lowered `E.164 Phone Number` to 0.35 in the map and left the
+`PatternDef` at the 0.40 default — and the change merged with the step
+red, so `main` carried a failing gate for a day. A gate that can be
+merged past is not a gate.
 
 ## Architecture
 
@@ -572,7 +586,7 @@ seen, which is the truth. Half-set refuses to start. Heartbeats older than
 | `SIPHON_TRUSTED_PROXIES` | — | comma-separated IPs/CIDRs whose `X-Forwarded-For` **and `Remote-User`/`Remote-Groups`** are believed. Unset = key on the TCP peer (every client in one rate-limit bucket) **and no forwarded identity is trusted at all**, so human callers silently fall back to the bearer-key role. Set this to the proxy in any deployment using Authelia. Only the right-most forwarded entry is used |
 | `SIPHON_REQUEST_TIMEOUT_SECS` | 30 | |
 | `SIPHON_AUDIT_LOG_PATH` | — | JSONL audit file. **Required to start in production** (an in-memory ring alone is not a durable audit trail); startup is refused if unset unless `SIPHON_DEV_MODE=true` |
-| `SIPHON_AUDIT_SIGNING_KEY_HEX` | — | enables HMAC-SHA256 chain |
+| `SIPHON_AUDIT_SIGNING_KEY_HEX` | — | enables the HMAC-SHA256 chain. Unset is a supported deployment: the log is unsigned and startup says so. **Set-but-unusable refuses to start** — under 32 bytes, or not valid hex. A misconfigured chain is worse than no chain, because the deployment believes it has one; until 2026-09-09 a too-short key was fatal while a malformed one only warned and disabled the chain |
 | `SIPHON_AUDIT_TAIL_PATH` | — | chain tail state file |
 | `SIPHON_AUDIT_RING_CAP` | 500 | in-memory event buffer |
 | `SIPHON_FINDINGS_RING_CAP` | 1000 | recent findings buffer |

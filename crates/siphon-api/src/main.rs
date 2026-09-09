@@ -337,6 +337,42 @@ impl RateLimiter {
 ///   log tamper-evident.
 /// - `tail_path`: chain tail persistence file. Only honoured when chain
 ///   mode is enabled. Lets the chain resume across process restarts.
+/// What `SIPHON_AUDIT_SIGNING_KEY_HEX` resolves to.
+///
+/// Split out of `build_audit_logger` so both refusal paths can be tested:
+/// that function ends in `process::exit`, which no in-process test survives,
+/// and the untestable half is exactly where the two failure modes had
+/// drifted apart.
+#[derive(Debug, PartialEq, Eq)]
+enum SigningKey {
+    /// Unset, or set to nothing. An unsigned audit log is a supported
+    /// deployment and startup says so. Empty counts as unset here for the
+    /// same reason it does for `SIPHON_API_KEY`: clearing a variable by
+    /// setting it empty is how most orchestrators express "off", and
+    /// treating that as a fatal misconfiguration refuses to start a
+    /// deployment that asked for nothing.
+    Absent,
+    Usable(Vec<u8>),
+    /// Set and unusable. The operator asked for a tamper-evident chain and
+    /// we cannot give them one, so the caller refuses to start rather than
+    /// return a log that is unsigned while looking configured.
+    Unusable(String),
+}
+
+fn resolve_signing_key(hex_key: Option<&str>) -> SigningKey {
+    let Some(hex_key) = hex_key.map(str::trim).filter(|k| !k.is_empty()) else {
+        return SigningKey::Absent;
+    };
+    match hex::decode(hex_key) {
+        Ok(key) if key.len() >= 32 => SigningKey::Usable(key),
+        Ok(key) => SigningKey::Unusable(format!(
+            "too short: {} bytes, need at least 32 (64 hex chars)",
+            key.len()
+        )),
+        Err(e) => SigningKey::Unusable(format!("not valid hex ({e})")),
+    }
+}
+
 fn build_audit_logger(
     log_path: Option<&str>,
     signing_key_hex: Option<&str>,
@@ -348,64 +384,61 @@ fn build_audit_logger(
     // defaults used in the root siphon crate.
     let mut handler = RotatingFileAuditHandler::new(path, 50 * 1024 * 1024, 10);
 
-    if let Some(hex_key) = signing_key_hex {
-        match hex::decode(hex_key) {
-            Ok(key) if key.len() >= 32 => {
-                handler = handler.with_chain_key(&key);
-                // Order matters. The seed is the cold-start fallback for hosts
-                // with no durable disk (Cloudflare Containers, scratch FS
-                // pods): an external store hands us the tail it last saw. The
-                // tail *file* is applied second so that a live tail written by
-                // this same container — which is strictly fresher than
-                // anything an external drain has observed — wins. When the
-                // file is absent, with_chain_tail_path's NotFound branch
-                // leaves last_signature untouched, so the seed survives.
-                if let Some(seed) = chain_seed {
-                    let seed = seed.trim();
-                    if !seed.is_empty() && seed.chars().all(|c| c.is_ascii_hexdigit()) {
-                        handler = handler.with_seeded_chain(seed);
-                        tracing::info!("Audit chain seeded from SIPHON_AUDIT_CHAIN_SEED");
-                    } else if !seed.is_empty() {
-                        // Do not fall back to a fresh chain silently: an
-                        // operator who set this expects continuity, and a
-                        // malformed value means the external store handed us
-                        // something wrong.
-                        tracing::warn!(
-                            "SIPHON_AUDIT_CHAIN_SEED is not hex; ignoring and starting fresh chain"
-                        );
-                    }
+    match resolve_signing_key(signing_key_hex) {
+        SigningKey::Usable(key) => {
+            handler = handler.with_chain_key(&key);
+            // Order matters. The seed is the cold-start fallback for hosts
+            // with no durable disk (Cloudflare Containers, scratch FS
+            // pods): an external store hands us the tail it last saw. The
+            // tail *file* is applied second so that a live tail written by
+            // this same container — which is strictly fresher than
+            // anything an external drain has observed — wins. When the
+            // file is absent, with_chain_tail_path's NotFound branch
+            // leaves last_signature untouched, so the seed survives.
+            if let Some(seed) = chain_seed {
+                let seed = seed.trim();
+                if !seed.is_empty() && seed.chars().all(|c| c.is_ascii_hexdigit()) {
+                    handler = handler.with_seeded_chain(seed);
+                    tracing::info!("Audit chain seeded from SIPHON_AUDIT_CHAIN_SEED");
+                } else if !seed.is_empty() {
+                    // Do not fall back to a fresh chain silently: an
+                    // operator who set this expects continuity, and a
+                    // malformed value means the external store handed us
+                    // something wrong.
+                    tracing::warn!(
+                        "SIPHON_AUDIT_CHAIN_SEED is not hex; ignoring and starting fresh chain"
+                    );
                 }
-                if let Some(tp) = tail_path {
-                    handler = handler.with_chain_tail_path(tp);
-                }
-                tracing::info!(
-                    log_path = %path,
-                    tail = tail_path.is_some(),
-                    seeded = chain_seed.is_some(),
-                    "Audit log chain signing enabled"
-                );
             }
-            Ok(_) => {
-                // A key that is present but too short silently disables
-                // the tamper-evident chain — operator intent is ambiguous
-                // and a misconfigured chain is worse than no chain at all.
-                // Refuse to start rather than degrade silently.
-                eprintln!(
-                    "FATAL: SIPHON_AUDIT_SIGNING_KEY_HEX is too short (<32 bytes). \
-                     Use at least 32 bytes (64 hex chars, e.g. `openssl rand -hex 32`), \
-                     or unset the variable to run without a signing chain."
-                );
-                std::process::exit(1);
+            if let Some(tp) = tail_path {
+                handler = handler.with_chain_tail_path(tp);
             }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "SIPHON_AUDIT_SIGNING_KEY_HEX is not valid hex; audit chain disabled"
-                );
-            }
+            tracing::info!(
+                log_path = %path,
+                tail = tail_path.is_some(),
+                seeded = chain_seed.is_some(),
+                "Audit log chain signing enabled"
+            );
         }
-    } else {
-        tracing::info!(log_path = %path, "Audit logging enabled (unsigned — set SIPHON_AUDIT_SIGNING_KEY_HEX for tamper-evidence)");
+        // Set and unusable. Both ways of getting here — too short, or not
+        // hex at all — mean the same thing: the operator asked for a
+        // tamper-evident chain and this process cannot provide one. Until
+        // 2026-09-09 only the first refused to start while the second
+        // warned and disabled the chain, so a typo in the key left a
+        // deployment writing an unsigned log under a compliance claim that
+        // it was signed. A misconfigured chain is worse than no chain,
+        // because nothing downstream can tell the difference.
+        SigningKey::Unusable(why) => {
+            eprintln!(
+                "FATAL: SIPHON_AUDIT_SIGNING_KEY_HEX is unusable — {why}. \
+                 Use at least 32 bytes of hex (e.g. `openssl rand -hex 32`), \
+                 or unset the variable to run without a signing chain."
+            );
+            std::process::exit(1);
+        }
+        SigningKey::Absent => {
+            tracing::info!(log_path = %path, "Audit logging enabled (unsigned — set SIPHON_AUDIT_SIGNING_KEY_HEX for tamper-evidence)");
+        }
     }
 
     // Also mirror events to a lightweight file handler in case
@@ -8474,23 +8507,50 @@ mod tests {
     }
 
     #[test]
-    fn test_build_audit_logger_invalid_hex_key_falls_back_to_unsigned() {
-        let dir = tempfile::tempdir().unwrap();
-        let log_path = dir.path().join("audit.jsonl");
-        let logger = build_audit_logger(
-            Some(log_path.to_str().unwrap()),
-            Some("not-valid-hex!"),
-            None,
-            None,
-        )
-        .expect("logger should still be built, just unsigned");
-        logger.log(&AuditEvent::new("SCAN").unwrap());
-        let content = std::fs::read_to_string(&log_path).unwrap();
-        let event: AuditEvent = serde_json::from_str(content.lines().next().unwrap()).unwrap();
-        assert!(
-            event.signature.is_none(),
-            "invalid hex key should disable signing, not error out"
-        );
+    fn signing_key_set_but_unusable_is_refused_either_way() {
+        // This replaces test_build_audit_logger_invalid_hex_key_falls_back_
+        // to_unsigned, which asserted the opposite. That contract was
+        // already contradicted in the same match arm: a key that was too
+        // short refused to start, on the reasoning that a misconfigured
+        // chain is worse than no chain, while a key that was not hex at all
+        // warned and carried on. Both are the same mistake by the operator
+        // and now get the same answer.
+        for bad in [
+            "not-valid-hex!", // not hex
+            "0xdeadbeef",     // hex with a prefix
+            "abc",            // odd length
+            "deadbeef",       // valid hex, 4 bytes, too short
+            &"a".repeat(62),  // 31 bytes — one short of the floor
+        ] {
+            match resolve_signing_key(Some(bad)) {
+                SigningKey::Unusable(_) => {}
+                other => panic!("{bad:?} should be refused, got {other:?}"),
+            }
+        }
+    }
+
+    /// Unset stays a supported deployment, and so does set-to-empty:
+    /// clearing a variable by emptying it is how orchestrators say "off",
+    /// and it used to reach the too-short branch and kill startup.
+    #[test]
+    fn an_absent_signing_key_is_not_a_misconfiguration() {
+        assert_eq!(resolve_signing_key(None), SigningKey::Absent);
+        assert_eq!(resolve_signing_key(Some("")), SigningKey::Absent);
+        assert_eq!(resolve_signing_key(Some("   ")), SigningKey::Absent);
+    }
+
+    #[test]
+    fn a_key_at_the_floor_is_usable() {
+        let hex = "a".repeat(64); // 32 bytes
+        match resolve_signing_key(Some(&hex)) {
+            SigningKey::Usable(k) => assert_eq!(k.len(), 32),
+            other => panic!("expected a usable key, got {other:?}"),
+        }
+        // Surrounding whitespace is the operator's, not part of the key.
+        match resolve_signing_key(Some(&format!("  {hex}  "))) {
+            SigningKey::Usable(k) => assert_eq!(k.len(), 32),
+            other => panic!("expected a usable key, got {other:?}"),
+        }
     }
 
     // ── RBAC extractor ────────────────────────────────────────────

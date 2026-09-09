@@ -1,6 +1,6 @@
 [package]
 name = "siphon-mail"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Polygon Siphon mail model — message/part schema, persistence and verdict reconciliation"
 license = "MIT"

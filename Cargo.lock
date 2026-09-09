@@ -4987,7 +4987,7 @@ checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
 name = "siphon-api"
-version = "2.12.0"
+version = "2.12.1"
 dependencies = [
  "axum",
  "axum-server",
@@ -5040,7 +5040,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-cli"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "aho-corasick",
  "arrow",
@@ -5093,7 +5093,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-core"
-version = "2.9.1"
+version = "2.9.2"
 dependencies = [
  "aho-corasick",
  "base64 0.23.1",
@@ -5120,7 +5120,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-fs"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "axum",
  "axum-server",
@@ -5144,7 +5144,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-icap"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde_json",
  "siphon-auth",
@@ -5156,7 +5156,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-launcher"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "axum",
  "libc",
@@ -5173,7 +5173,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-mail"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "deadpool-postgres",
@@ -5183,7 +5183,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-smtp"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "deadpool-postgres",
  "sha2 0.11.0",

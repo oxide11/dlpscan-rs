@@ -6,8 +6,8 @@
     "component": {
       "type": "application",
       "name": "siphon-mail",
-      "version": "0.1.0",
-      "purl": "pkg:cargo/siphon-mail@0.1.0"
+      "version": "0.1.1",
+      "purl": "pkg:cargo/siphon-mail@0.1.1"
     },
     "properties": [
       {
