@@ -331,10 +331,17 @@ and `auth_middleware` then granted `Role::Admin` to any holder of the shared
 key. Four roles and a permission matrix existed and bound to nothing.
 
 Endpoints marked **(admin)** additionally require the `AdminAction` RBAC
-permission (`RequireAdminAction` extractor). The gated set covers every
-policy-mutating route **and** the raw finding/evadex read endpoints — those
-return unredacted matched values, so they are admin-only, not merely
-authenticated.
+permission (`RequireAdminAction` extractor); it covers every policy-mutating
+route, plus the evadex and throughput reads, which are about how the fleet is
+performing rather than about any one finding.
+
+The finding reads are **(alerts)** — `ViewAlerts`, via `RequireViewAlerts`.
+They were admin-only while they returned values in the clear; masking moved
+server-side, so the gate that made sense then was only keeping responders and
+auditors out of the surface built for them. Nothing under `/v1/evadex`
+returns a matched value either — those handlers select technique names and
+counts — so the older claim that the admin set exists because those endpoints
+disclose raw values no longer describes any endpoint.
 
 ### API keys
 
@@ -473,13 +480,13 @@ GET  /v1/categories             detection categories with pattern_count + sub_ca
 GET  /v1/policies               loaded *.yaml rulesets (read-only)
 GET  /v1/allowlist              current allowlist
 GET  /v1/audit                  recent events from audit ring buffer
-GET  /v1/findings               recent findings from this pod's FindingsRing (in-memory) (admin)
-GET  /v1/findings/pg            Postgres-backed paginated findings (?category=&limit=&offset=) (admin)
-GET  /v1/findings/stats         category breakdown + daily counts (cached 60s) + LSH section (admin)
+GET  /v1/findings               recent findings from this pod's FindingsRing (in-memory) (alerts)
+GET  /v1/findings/pg            Postgres-backed paginated findings (?category=&limit=&offset=) (alerts)
+GET  /v1/findings/stats         category breakdown + daily counts (cached 60s) + LSH section (alerts)
 GET  /v1/stats/throughput       scanned-traffic counters + derived rates from scan_rollup
                                 (?hours=&tenant=&channel=); the denominator side of detection
                                 metrics — covers clean scans, which store no row of their own (admin)
-GET  /v1/findings/export        bulk CSV/JSON export (?format=csv|json&category=&from=&to=&limit=, max 100k rows; 5/min rate limit) (admin)
+GET  /v1/findings/export        bulk CSV/JSON export (?format=csv|json&category=&from=&to=&limit=, max 100k rows; 5/min rate limit) (alerts)
 GET  /v1/pipeline/stages        list scanner stage enable/disable state (admin)
 PATCH /v1/pipeline/stages       toggle a pipeline stage (admin)
 POST /v1/findings/prune         manual retention trigger — admin only
