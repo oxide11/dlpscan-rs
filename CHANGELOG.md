@@ -105,6 +105,21 @@ authorise, or was not entitled to show.
   incompleteness rather than only bumping the verdict, which was invisible
   to the policy as soon as anything was found.
 
+### siphon-launcher 2.1.2
+
+- **fix(launcher): five more keys the start API must not forward.** The env
+  filter is a denylist inside a `SIPHON_` prefix allowlist, so every
+  security-relevant variable added anywhere in the workspace is forwardable
+  until someone remembers to name it. `SIPHON_TRUSTED_PROXIES` (the single
+  check between a `Remote-Groups` header and Admin),
+  `SIPHON_AUDIT_SIGNING_KEY_HEX` (hand it over and the spawner can write
+  audit entries that verify), `SIPHON_ALLOW_PERMISSIVE_CORS`,
+  `SIPHON_DATABASE_TLS` and the two `SIPHON_ICAP_*` action knobs were all
+  missing. The filter moved to a tested `env_key_permitted`, since a list
+  that rots silently is the actual problem; inverting it to name what *is*
+  safe is the right shape and is left as a deliberate change, because it
+  will refuse env that local workflows pass today.
+
 ### siphon-mail 0.1.1
 
 - **`inspection()`** answers whether every part of a message was read,

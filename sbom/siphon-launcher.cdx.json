@@ -6,8 +6,8 @@
     "component": {
       "type": "application",
       "name": "siphon-launcher",
-      "version": "2.1.1",
-      "purl": "pkg:cargo/siphon-launcher@2.1.1"
+      "version": "2.1.2",
+      "purl": "pkg:cargo/siphon-launcher@2.1.2"
     },
     "properties": [
       {
