@@ -70,7 +70,7 @@ And five things are wrong, all of which follow from *one key for everyone*:
 | **Tenant** | `X-Siphon-Tenant` is whatever the caller writes. It picks the policy, tags the rows, and scopes `/v1/findings/stats` and `/v1/findings/export` | Tenant isolation is a claim. Any key holder reads or writes any tenant by editing a header |
 | **Scan gate** | `/scan`, `/scan/stream` and `/scan/batch` carry no permission extractor at all — `RequireScan` exists only in a comment. `Permission::Scan` is declared and gates nothing (`/v1/scan/explain` is the exception: it is `AdminAction`, because its trace exposes pipeline internals) | An `Auditor` arriving through the proxy can submit scans. The role that is supposed to read and never act, acts |
 | **Rotation** | `SIPHON_API_KEY_SECONDARY` plus a redeploy | Rotating one caller means rotating everyone |
-| **siphon-fs** | Its own `SIPHON_API_KEY` and `SIPHON_ADMIN_KEY`, no roles, no tenant | A file upload is authenticated by a different secret than a text scan of the same content |
+| **siphon-fs** | ~~Its own `SIPHON_API_KEY` and `SIPHON_ADMIN_KEY`, no roles, no tenant~~ — fixed in §7 | ~~A file upload is authenticated by a different secret than a text scan of the same content~~ |
 
 The old CLI-embedded server (`siphon serve`, `src/api.rs`) has a
 `DLPSCAN_API_KEY_ROLES` map that `docs/enterprise/api.md` still documents. It
@@ -233,13 +233,23 @@ application team's own responders" possible: a `Responder` key bound to
 
 ## 7. siphon-fs joins the key store
 
-siphon-fs links `siphon-auth`, drops `SIPHON_ADMIN_KEY`, and resolves a bearer
-value the same way siphon-api does: bootstrap env key, else table lookup. Its
-routes gain the gates they never had — `POST /scan` needs `Scan`,
-`GET /v1/findings` needs `ViewAlerts`, `/v1/overrides/reload` needs
-`AdminAction` — and its persistence writes the key id and the key's tenant.
-The one file-scan credential is then the same credential as the text-scan
-one, issued in the same place with the same role.
+**Landed 2026-09-09 (siphon-fs 1.5.0).** siphon-fs links `siphon-auth`, drops
+`SIPHON_ADMIN_KEY`, and resolves a bearer value the same way siphon-api does:
+bootstrap env key, else table lookup. Its routes carry the gates they never
+had — `POST /scan` needs `Scan`, `GET /v1/findings` needs `ViewAlerts`,
+`/v1/overrides/reload` needs `AdminAction` — and its persistence writes the
+key id and the key's tenant. The one file-scan credential is now the same
+credential as the text-scan one, issued in the same place with the same role.
+
+Two things came out of doing it that the plan above did not say. The tenant
+half was not merely absent: siphon-fs read `X-Siphon-Tenant` and nothing
+else, so any authenticated caller could read and write any tenant's rows by
+editing a header — the same defect §6 describes for siphon-api, in a service
+the plan treated as only needing attribution. And the masking rationale
+inverts rather than disappears: this service redacts unconditionally because
+it has no audit sink, not because it has no roles. It has roles now.
+Authorisation without accounting is the half that must not ship alone, so
+`unmask` stays siphon-api's until siphon-fs can record a disclosure.
 
 ## 8. Detectors that are not callers
 
@@ -309,7 +319,7 @@ Each is one PR, mergeable alone, in this order:
 | 3 | `feat(auth)` — `0013_api_keys.sql`, cache, key resolution in `auth_middleware`; `POST/GET/DELETE /v1/keys`, `/rotate`; `key_id` on `/v1/me`; audit events; `scans.api_key_id` attribution replacing the server-key hash | Keys exist, authenticate, and every scan names its caller |
 | 4 | `feat(console)` — C2 Settings → **API keys**: list, issue dialog (label, role, tenant, expiry, limit), the show-once secret with copy, revoke with confirm, rotate. Absence is a state: "no keys yet" and "key store unavailable — no Postgres" are different screens | An admin can issue a key without `psql` |
 | 5 | `feat(api)` — tenant on `AuthContext`; every tenant-aware query reads it from there; header semantics per §6 | Tenant isolation is enforced, not claimed |
-| 6 | `feat(fs)` — siphon-fs key resolution through `siphon-auth`, role gates, `SIPHON_ADMIN_KEY` removed | One credential across text and file |
+| 6 | ✅ `feat(fs)` — siphon-fs key resolution through `siphon-auth`, role gates, `SIPHON_ADMIN_KEY` removed | One credential across text and file |
 | 7 | `docs` — rewrite `docs/AUTHENTICATION.md` §"API: bearer API keys", `docs/enterprise/api.md`, `rbac.md`; a `docs/getting-started/integrating.md` walking an application owner from "ask for a key" to a handled response | The service has an onboarding document |
 | 8 | `feat(api)` + `feat(fs,icap,smtp)` — sensor telemetry per §13: `sensor_status` / `sensor_heartbeats`, `POST /v1/sensors/heartbeat`, `GET /v1/sensors`, each detector reporting with a `Sensor` key over mTLS | mTLS health, availability and efficacy per detector, in one place |
 | 9 | `feat(console)` — the Running page renders `GET /v1/sensors` | The operator's three questions answered on one screen |

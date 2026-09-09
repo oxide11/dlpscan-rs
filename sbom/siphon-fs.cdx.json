@@ -6,8 +6,8 @@
     "component": {
       "type": "application",
       "name": "siphon-fs",
-      "version": "1.4.1",
-      "purl": "pkg:cargo/siphon-fs@1.4.1"
+      "version": "1.5.0",
+      "purl": "pkg:cargo/siphon-fs@1.5.0"
     },
     "properties": [
       {

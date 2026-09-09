@@ -29,6 +29,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use siphon::rbac::{role_has_permission, Permission, Role};
 use siphon_core::audit::iso8601_now;
 use siphon_core::findings_ring::{filter_findings, severity_for, FindingRecord, FindingsRing};
 use siphon_core::overrides::{
@@ -176,10 +177,13 @@ struct AppState {
     api_key_hash: Option<[u8; 32]>,
     /// This pod as a sensor: what it scanned, for its heartbeat.
     sensor: Arc<siphon_auth::telemetry::SensorCounters>,
-    /// SHA-256 of the admin key for admin-only endpoints (e.g. overrides/reload).
-    /// Defaults to the API key hash so single-key deployments need no extra config.
-    /// Set SIPHON_ADMIN_KEY to a separate credential in multi-key deployments.
-    admin_key_hash: Option<[u8; 32]>,
+    /// Issued per-caller keys, shared with siphon-api through the `api_keys`
+    /// table. `None` when there is no Postgres: the bootstrap key is then the
+    /// only credential, which startup says out loud.
+    keys: Option<Arc<siphon_auth::keys::KeyStore>>,
+    /// Role the **bootstrap** key (`SIPHON_API_KEY`) resolves to. Issued keys
+    /// carry their own role and ignore this.
+    api_key_role: Role,
     findings: Arc<FindingsRing>,
     /// Hot-reloadable overrides. See LiveOverrides above.
     live_overrides: Arc<std::sync::RwLock<LiveOverrides>>,
@@ -450,14 +454,20 @@ fn fs_canary(
 
 // ─── /scan handler ───────────────────────────────────────────────
 async fn scan(
+    _: RequireScan,
+    AuthContextExt(auth): AuthContextExt,
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
     mut multipart: Multipart,
 ) -> Response {
-    let tenant_id: Option<String> = headers
+    let asked = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
         .and_then(sanitize_tenant_id);
+    let tenant_id = match tenant_scope(&auth, asked.as_deref()) {
+        Ok(t) => t,
+        Err((code, body)) => return (code, body).into_response(),
+    };
     let request_id = uuid::Uuid::new_v4().to_string();
     let start = Instant::now();
 
@@ -841,6 +851,7 @@ async fn scan(
             .collect();
         let pool_clone = state.db_pool.clone();
         let tenant_id_clone = tenant_id.clone();
+        let api_key_id_clone = auth.key_id.clone();
         tokio::spawn(async move {
             if let Err(e) = db::persist_scan(
                 &pool_clone,
@@ -855,6 +866,7 @@ async fn scan(
                 Some(&file_hash),
                 mime_type_clone.as_deref(),
                 tenant_id_clone.as_deref(),
+                api_key_id_clone.as_deref(),
             )
             .await
             {
@@ -913,12 +925,17 @@ struct FindingsQuery {
 /// an `UNMASK` audit event, so an authorised responder can still investigate
 /// and the disclosure is accounted for.
 ///
-/// This endpoint has neither half. siphon-fs authenticates one shared bearer
-/// key and derives no role from it, so there is no caller here who could be
-/// *authorised* to see a value in the clear, and no identity to write into an
-/// audit row if one did. A surface that cannot say who looked must not show
-/// the value, so every match leaves redacted and there is no `unmask`
-/// parameter to ask otherwise.
+/// This endpoint now has the first half and not the second. Since siphon-fs
+/// joined the key store it *does* know who is calling and what role they hold
+/// — `UnmaskPii`/`UnmaskPci` are answerable questions here — but it has no
+/// audit sink: siphon-api owns the HMAC-chained log, and this pod writes to
+/// nothing that could record a disclosure. Authorisation without accounting
+/// is the half that must not ship alone, because an unmask nobody can
+/// reconstruct afterwards is indistinguishable from a leak.
+///
+/// So every match still leaves redacted and there is still no `unmask`
+/// parameter. What changed is the reason, and the remaining work is a
+/// disclosure the audit chain can see — not another permission check.
 ///
 /// `Public` categories are the exception, for the reason they are an
 /// exception everywhere: masking "CONFIDENTIAL" hides the finding's whole
@@ -939,15 +956,20 @@ struct FindingsResponse {
 }
 
 async fn list_findings(
-    _: RequireAdminAction,
+    _: RequireViewAlerts,
+    AuthContextExt(auth): AuthContextExt,
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
     Query(q): Query<FindingsQuery>,
-) -> JsonResponse<FindingsResponse> {
-    let tenant_id: Option<String> = headers
+) -> Response {
+    let asked = headers
         .get("x-siphon-tenant")
         .and_then(|v| v.to_str().ok())
         .and_then(sanitize_tenant_id);
+    let tenant_id = match tenant_scope(&auth, asked.as_deref()) {
+        Ok(t) => t,
+        Err((code, body)) => return (code, body).into_response(),
+    };
 
     let snapshot = state.findings.snapshot();
     let total = snapshot.len();
@@ -976,6 +998,7 @@ async fn list_findings(
         capacity,
         findings,
     })
+    .into_response()
 }
 
 // ─── /v1/overrides/reload handler ───────────────────────────────
@@ -1182,81 +1205,194 @@ fn resolve_api_key_hash() -> Option<[u8; 32]> {
     None
 }
 
-/// SHA-256 hash of the admin key for admin-only endpoints.
-/// Uses SIPHON_ADMIN_KEY if set; otherwise falls back to SIPHON_API_KEY so
-/// single-key deployments don't need a second credential.
-fn resolve_admin_key_hash() -> Option<[u8; 32]> {
-    let key = match std::env::var("SIPHON_ADMIN_KEY")
+/// Role the bootstrap key resolves to, from `SIPHON_API_KEY_ROLE`.
+///
+/// Same variable, same default and same failure direction as siphon-api: one
+/// credential issued in one place should not mean two different things
+/// depending on which pod answers. Defaulting to `admin` keeps existing
+/// single-key automation working and warns, because a shared machine
+/// credential holding every permission is the first thing to narrow. An
+/// unknown value is a startup error, never a silent fallback to something
+/// weaker or stronger than the operator wrote.
+fn resolve_api_key_role() -> Result<Role, String> {
+    match std::env::var("SIPHON_API_KEY_ROLE")
         .ok()
-        .filter(|k| !k.trim().is_empty())
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
     {
-        Some(k) => k,
+        Some(label) => Role::from_label(&label).ok_or_else(|| {
+            format!(
+                "SIPHON_API_KEY_ROLE is set to {label:?}, which is not a role this build knows. \
+                 Valid: admin, analyst, responder, responder_readonly, auditor, operator, \
+                 sensor, viewer."
+            )
+        }),
         None => {
-            // Falling back means the admin gate and the scan gate are the
-            // same secret, so `RequireAdminAction` stops being a second
-            // check: anything that may upload a file may also reload
-            // overrides. That is a supported single-key deployment, not a
-            // default to discover from behaviour.
-            let k = std::env::var("SIPHON_API_KEY")
-                .ok()
-                .filter(|k| !k.trim().is_empty())?;
             tracing::warn!(
-                "SIPHON_ADMIN_KEY is unset — admin-only endpoints accept the \
-                 scan key (SIPHON_API_KEY), so every authenticated caller is \
-                 an admin here. Set SIPHON_ADMIN_KEY to separate them."
+                "SIPHON_API_KEY_ROLE is unset — the bootstrap key resolves to `admin`, so any \
+                 holder of SIPHON_API_KEY may reload overrides and read the finding stream. \
+                 Set it to the narrowest role the caller needs (`operator` uploads files and \
+                 reads nothing back)."
             );
-            k
+            Ok(Role::Admin)
         }
-    };
-    let mut hasher = Sha256::new();
-    hasher.update(key.as_bytes());
-    Some(hasher.finalize().into())
+    }
+}
+
+/// Who is calling, established once by [`auth_middleware`] and read by the
+/// permission extractors below.
+///
+/// siphon-fs had no such thing until this landed: it compared a bearer token
+/// against one env hash and derived nothing from the result, so every caller
+/// was the same anonymous holder of a shared secret. That is why the findings
+/// endpoint here redacts unconditionally and offers no `unmask` — see the note
+/// on `list_findings`, which is now half-true rather than wholly true.
+#[derive(Clone, Debug)]
+struct AuthContext {
+    role: Role,
+    /// `bootstrap` for the env key, else the issued key's id. Goes into
+    /// `scans.api_key_id`, so a stored scan names its caller.
+    actor: String,
+    key_id: Option<String>,
+    /// The tenant this key is bound to, if any. Not the header — see
+    /// [`tenant_scope`].
+    tenant: Option<String>,
 }
 
 /// RBAC extractor for admin-only endpoints in siphon-fs.
 /// Checks the bearer token against the admin key hash from AppState.
 /// If no admin key is configured (open-dev mode), the check is skipped.
-#[derive(Clone, Copy)]
-struct RequireAdminAction;
+/// Gate a handler on one permission, read from the [`AuthContext`] that
+/// [`auth_middleware`] put in the request extensions.
+///
+/// These replace a second shared secret. `SIPHON_ADMIN_KEY` used to gate the
+/// admin routes by comparing a *different* env hash, and defaulted to the
+/// scan key when unset — so in the common deployment anything that could
+/// upload a file could also reload overrides, and the "gate" compared one
+/// secret against itself. A permission carried by the caller's own key is a
+/// gate; a second copy of the same secret is not.
+macro_rules! permission_gate {
+    ($name:ident, $perm:expr, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Clone, Copy)]
+        struct $name;
 
-impl axum::extract::FromRequestParts<AppState> for RequireAdminAction {
+        impl axum::extract::FromRequestParts<AppState> for $name {
+            type Rejection = (StatusCode, JsonResponse<serde_json::Value>);
+
+            async fn from_request_parts(
+                parts: &mut axum::http::request::Parts,
+                _state: &AppState,
+            ) -> Result<Self, Self::Rejection> {
+                // No context means the route was registered outside the auth
+                // layer. That is a router bug, not a caller mistake, and it
+                // must not read as "allowed".
+                let Some(ctx) = parts.extensions.get::<AuthContext>().cloned() else {
+                    tracing::error!(
+                        permission = $perm.label(),
+                        "no auth context — route registered outside auth_middleware?"
+                    );
+                    return Err((
+                        StatusCode::UNAUTHORIZED,
+                        JsonResponse(serde_json::json!({
+                            "error": "no auth context (auth_middleware not applied to this route?)"
+                        })),
+                    ));
+                };
+                if !role_has_permission(ctx.role, $perm) {
+                    warn!(
+                        actor = %ctx.actor,
+                        role = ctx.role.label(),
+                        permission = $perm.label(),
+                        "permission_denied"
+                    );
+                    return Err((
+                        StatusCode::FORBIDDEN,
+                        JsonResponse(serde_json::json!({
+                            "error": format!(
+                                "role `{}` lacks permission `{}`",
+                                ctx.role.label(),
+                                $perm.label()
+                            )
+                        })),
+                    ));
+                }
+                Ok(Self)
+            }
+        }
+    };
+}
+
+permission_gate!(
+    RequireScan,
+    Permission::Scan,
+    "Uploading a file to be scanned. The same permission siphon-api's `POST /scan` \
+     requires, because it is the same act on the same content."
+);
+permission_gate!(
+    RequireViewAlerts,
+    Permission::ViewAlerts,
+    "Reading this pod's finding ring. Was `AdminAction`, which kept responders and \
+     auditors out of the surface built for them."
+);
+permission_gate!(
+    RequireAdminAction,
+    Permission::AdminAction,
+    "Reloading overrides — changing what this scanner looks for."
+);
+
+/// Pulls the [`AuthContext`] out for a handler that needs to know *who* is
+/// calling rather than merely *whether* they may. Gates nothing itself.
+struct AuthContextExt(AuthContext);
+
+impl axum::extract::FromRequestParts<AppState> for AuthContextExt {
     type Rejection = (StatusCode, JsonResponse<serde_json::Value>);
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
-        state: &AppState,
+        _state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let Some(expected) = state.admin_key_hash else {
-            return Ok(Self);
-        };
-        let provided = parts
-            .headers
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .filter(|k| !k.is_empty());
-        let Some(key) = provided else {
-            warn!("admin_gate: missing bearer token for admin-only endpoint");
-            return Err((
+        parts
+            .extensions
+            .get::<AuthContext>()
+            .cloned()
+            .map(Self)
+            .ok_or((
                 StatusCode::UNAUTHORIZED,
-                JsonResponse(serde_json::json!({"error": "admin key required"})),
-            ));
-        };
-        let mut hasher = Sha256::new();
-        hasher.update(key.as_bytes());
-        let got: [u8; 32] = hasher.finalize().into();
-        let mut diff = 0u8;
-        for (a, b) in expected.iter().zip(got.iter()) {
-            diff |= a ^ b;
-        }
-        if diff != 0 {
-            warn!("admin_gate: invalid admin key for admin-only endpoint");
-            return Err((
-                StatusCode::FORBIDDEN,
-                JsonResponse(serde_json::json!({"error": "admin access required"})),
-            ));
-        }
-        Ok(Self)
+                JsonResponse(serde_json::json!({
+                    "error": "no auth context (auth_middleware not applied to this route?)"
+                })),
+            ))
+    }
+}
+
+/// Which tenant this request may touch.
+///
+/// The rule is siphon-api's, for the same reason: **scope comes from the key,
+/// not from the caller.** A key bound to a tenant is confined to it; the
+/// `X-Siphon-Tenant` header may agree and may not contradict. An unbound
+/// identity — the bootstrap key — may still select one or omit it to span all.
+///
+/// Until this landed siphon-fs read the header and nothing else, so any
+/// authenticated caller could write and read any tenant's rows by editing one
+/// header.
+fn tenant_scope(
+    ctx: &AuthContext,
+    header: Option<&str>,
+) -> Result<Option<String>, (StatusCode, JsonResponse<serde_json::Value>)> {
+    let asked = header.map(str::trim).filter(|t| !t.is_empty());
+    match (&ctx.tenant, asked) {
+        (Some(bound), Some(asked)) if asked != bound => Err((
+            StatusCode::FORBIDDEN,
+            JsonResponse(serde_json::json!({
+                "error": format!(
+                    "key is bound to tenant `{bound}` and cannot act for `{asked}`"
+                )
+            })),
+        )),
+        (Some(bound), _) => Ok(Some(bound.clone())),
+        (None, Some(asked)) => Ok(Some(asked.to_string())),
+        (None, None) => Ok(None),
     }
 }
 
@@ -1265,18 +1401,34 @@ impl axum::extract::FromRequestParts<AppState> for RequireAdminAction {
 /// `/health` and `/ready` stay open for the same reason as in siphon-api: a
 /// kubelet cannot present a token, and gating the probes crash-loops the pod
 /// on every rollout.
+///
+/// Resolution order matches siphon-api exactly — bootstrap env key first, so
+/// an issued key can never shadow it, then the shared `api_keys` table. One
+/// credential now works across text and file: a key issued by
+/// `POST /v1/keys` on siphon-api authenticates an upload here, with the role
+/// it was issued with. Before this, a file upload was authenticated by a
+/// different secret than a text scan of the same bytes.
 async fn auth_middleware(
     State(state): State<AppState>,
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    let path = request.uri().path();
+    let path = request.uri().path().to_string();
     if path == "/health" || path == "/ready" {
         return next.run(request).await;
     }
 
     let Some(expected) = state.api_key_hash else {
-        // Explicitly opted into open mode at startup.
+        // Explicitly opted into open mode at startup. Everything downstream
+        // still wants an identity, so hand it the widest one — this mode is
+        // refused on a non-loopback bind, so it cannot be a network exposure.
+        let mut request = request;
+        request.extensions_mut().insert(AuthContext {
+            role: Role::Admin,
+            actor: "unauthenticated".to_string(),
+            key_id: None,
+            tenant: None,
+        });
         return next.run(request).await;
     };
 
@@ -1285,30 +1437,90 @@ async fn auth_middleware(
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
-        .filter(|k| !k.is_empty());
+        .filter(|k| !k.is_empty())
+        .map(str::to_string);
 
-    match provided {
-        Some(key) => {
-            let mut hasher = Sha256::new();
-            hasher.update(key.as_bytes());
-            let got: [u8; 32] = hasher.finalize().into();
-            // Constant-time comparison — a byte-wise early return would leak
-            // the expected hash a byte at a time under timing analysis.
-            let mut diff = 0u8;
-            for (a, b) in expected.iter().zip(got.iter()) {
-                diff |= a ^ b;
+    let Some(key) = provided else {
+        tracing::warn!(path = %path, "auth_failed: missing bearer token");
+        return unauthorized();
+    };
+
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    let got: [u8; 32] = hasher.finalize().into();
+    // Constant-time comparison — a byte-wise early return would leak the
+    // expected hash a byte at a time under timing analysis.
+    let mut diff = 0u8;
+    for (a, b) in expected.iter().zip(got.iter()) {
+        diff |= a ^ b;
+    }
+    let is_bootstrap = diff == 0;
+
+    let ctx = if is_bootstrap {
+        AuthContext {
+            role: state.api_key_role,
+            actor: "bootstrap".to_string(),
+            key_id: None,
+            tenant: None,
+        }
+    } else {
+        let resolution = state
+            .keys
+            .as_ref()
+            .map_or(siphon_auth::keys::Resolution::Unknown, |store| {
+                store.resolve(&key)
+            });
+        match resolution {
+            siphon_auth::keys::Resolution::Ok(rec) => {
+                // A stored label this build does not know is deployment skew
+                // — a newer schema against an older pod — not a caller
+                // mistake. Refuse rather than guess a role, and say so at
+                // error level so it is not read as a bad credential.
+                let Some(role) = Role::from_label(&rec.role) else {
+                    tracing::error!(
+                        key_id = %rec.id,
+                        role = %rec.role,
+                        "issued key carries a role this build does not know"
+                    );
+                    return unauthorized();
+                };
+                if let Some(store) = &state.keys {
+                    store.touch(&rec.id);
+                }
+                AuthContext {
+                    role,
+                    actor: rec.id.clone(),
+                    key_id: Some(rec.id.clone()),
+                    tenant: rec.tenant_id.clone(),
+                }
             }
-            if diff != 0 {
-                tracing::warn!(path = %path, "auth_failed: invalid API key");
+            siphon_auth::keys::Resolution::Revoked(rec) => {
+                tracing::warn!(path = %path, key_id = %rec.id, "auth_failed: revoked key");
                 return unauthorized();
             }
-            next.run(request).await
+            siphon_auth::keys::Resolution::Expired(rec) => {
+                tracing::warn!(path = %path, key_id = %rec.id, "auth_failed: expired key");
+                return unauthorized();
+            }
+            siphon_auth::keys::Resolution::Unknown => {
+                // The presented token's id prefix, when it has one, is worth
+                // logging: "someone tried sk_abc123" is actionable where
+                // "someone tried a wrong key" is not. Never trusted further.
+                tracing::warn!(
+                    path = %path,
+                    key_id = siphon_auth::keys::id_of(&key),
+                    "auth_failed: invalid API key"
+                );
+                return unauthorized();
+            }
         }
-        None => {
-            tracing::warn!(path = %path, "auth_failed: missing bearer token");
-            unauthorized()
-        }
-    }
+    };
+
+    tracing::debug!(actor = %ctx.actor, role = ctx.role.label(), "authenticated");
+
+    let mut request = request;
+    request.extensions_mut().insert(ctx);
+    next.run(request).await
 }
 
 fn unauthorized() -> Response {
@@ -1465,12 +1677,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sensor = Arc::new(siphon_auth::telemetry::SensorCounters::new());
     let db_configured = db_pool.is_some();
     let state_overrides = Arc::new(std::sync::RwLock::new(live_overrides));
+    // Role the bootstrap key resolves to. An unknown value is fatal, not a
+    // fallback: a role the operator did not choose is not a safe default in
+    // either direction.
+    let api_key_role = match resolve_api_key_role() {
+        Ok(r) => r,
+        Err(why) => {
+            eprintln!("FATAL: {why}");
+            std::process::exit(1);
+        }
+    };
+
+    // The issued-key store, shared with siphon-api through the `api_keys`
+    // table. No Postgres means no store: the bootstrap key is then the only
+    // credential this pod accepts, and that is worth saying out loud rather
+    // than leaving an operator to infer it from a 401.
+    let key_store = db_pool
+        .as_ref()
+        .map(|pool| Arc::new(siphon_auth::keys::KeyStore::new(pool.clone())));
+    match &key_store {
+        Some(_) => tracing::info!(
+            "issued API keys enabled — a key from siphon-api's POST /v1/keys \
+             authenticates here with the role it was issued with"
+        ),
+        None => tracing::warn!(
+            "no SIPHON_DATABASE_URL, so there is no issued-key store — \
+             SIPHON_API_KEY is the only credential this pod accepts"
+        ),
+    }
+
     let state = AppState {
         // Resolved before the listener binds, so a misconfigured deployment
         // fails at startup rather than serving an open upload endpoint.
         api_key_hash: resolve_api_key_hash(),
         sensor: sensor.clone(),
-        admin_key_hash: resolve_admin_key_hash(),
+        keys: key_store.clone(),
+        api_key_role,
         findings: Arc::new(FindingsRing::new(FINDINGS_RING_CAP)),
         live_overrides: state_overrides.clone(),
         overrides_path: Arc::new(std::path::PathBuf::from(&overrides_path)),

@@ -103,6 +103,11 @@ pub async fn persist_scan(
     file_hash: Option<&[u8]>,
     mime_type: Option<&str>,
     tenant_id: Option<&str>,
+    // Public id of the issued key that submitted this scan, or None for the
+    // bootstrap key. `scans.api_key_hash` only ever held a hash of the
+    // *server's* own key, so every row was attributed to the deployment
+    // rather than to the caller; this is the column that names who.
+    api_key_id: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let Some(pool) = pool else {
         return Ok(());
@@ -130,8 +135,8 @@ pub async fn persist_scan(
             "INSERT INTO scans \
              (id, source_pod, scanner_version, input_hash, \
               input_length, finding_count, duration_ms, action, \
-              file_name, file_hash, mime_type, tenant_id) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+              file_name, file_hash, mime_type, tenant_id, api_key_id) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) \
              ON CONFLICT (id) DO NOTHING",
             &[
                 &scan_id,
@@ -146,6 +151,7 @@ pub async fn persist_scan(
                 &file_hash,
                 &mime_type,
                 &tenant_id,
+                &api_key_id,
             ],
         )
         .await?;
@@ -187,8 +193,8 @@ pub async fn persist_scan(
                  (scan_id, source_pod, scanner_version, input_hash, \
                   input_length, category, sub_category, confidence, \
                   span_start, span_end, matched_text, has_context, context_required, \
-                  metadata, tenant_id) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+                  metadata, tenant_id, api_key_id) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)",
                 &[
                     &scan_id,
                     &source_pod_opt,
@@ -205,6 +211,7 @@ pub async fn persist_scan(
                     &context_required,
                     &metadata,
                     &tenant_id,
+                    &api_key_id,
                 ],
             )
             .await?;
