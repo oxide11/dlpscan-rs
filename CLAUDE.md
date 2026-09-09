@@ -693,8 +693,13 @@ root and proxies `/api/` and `/fs/`.
 
 The `ui/` Next.js app it replaced is gone. It was orphaned — nothing built or
 served it, though its README claimed nginx did. The design prototypes stay in
-`docs/wireframes/` as reference; `siphon-ir.html` is still shipped, at `/ir/`,
-because the incident-response surface has no replacement yet.
+`docs/wireframes/` as reference; `siphon-ir.html` is still shipped, at
+`/ir-legacy/`, for the IR surfaces the console has not absorbed yet. It used
+to sit at `/ir/` and shadowed the console's own IR shell there: a prefix
+`location` beats `location /`, so `/ir/` served the wireframe and `/ir/alerts`
+404'd. Anything added under `deploy/nginx/` that takes a path the router owns
+does the same thing, silently — `scripts/validate-nginx.sh` is where that gets
+caught, and it only catches the paths it is told to ask about.
 
 Four things that are load-bearing:
 
