@@ -30,3 +30,8 @@ Thumbs.db
 tests/corpus/*/*.jsonl
 tests/corpus/*/polygon_siphon_entities_v1.csv
 tests/corpus/*/polygon_siphon_dlp_eval_v1.csv
+
+# Rendered for a specific deployment by scripts/dev/lab-setup.sh — carries the
+# real hostname, so it is generated rather than committed. The committed
+# configuration.yml stays on siphon.local for local dev.
+deploy/authelia/configuration.lab.yml
