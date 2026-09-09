@@ -6,8 +6,8 @@
     "component": {
       "type": "application",
       "name": "siphon-api",
-      "version": "2.12.0",
-      "purl": "pkg:cargo/siphon-api@2.12.0"
+      "version": "2.12.1",
+      "purl": "pkg:cargo/siphon-api@2.12.1"
     },
     "properties": [
       {
@@ -2726,8 +2726,8 @@
     {
       "type": "library",
       "name": "siphon-cli",
-      "version": "2.4.0",
-      "purl": "pkg:cargo/siphon-cli@2.4.0",
+      "version": "2.5.0",
+      "purl": "pkg:cargo/siphon-cli@2.5.0",
       "scope": "required",
       "licenses": [
         {
@@ -2752,8 +2752,8 @@
     {
       "type": "library",
       "name": "siphon-core",
-      "version": "2.9.1",
-      "purl": "pkg:cargo/siphon-core@2.9.1",
+      "version": "2.9.2",
+      "purl": "pkg:cargo/siphon-core@2.9.2",
       "scope": "required",
       "licenses": [
         {
@@ -2772,8 +2772,8 @@
     {
       "type": "library",
       "name": "siphon-mail",
-      "version": "0.1.0",
-      "purl": "pkg:cargo/siphon-mail@0.1.0",
+      "version": "0.1.1",
+      "purl": "pkg:cargo/siphon-mail@0.1.1",
       "scope": "required",
       "licenses": [
         {

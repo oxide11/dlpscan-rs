@@ -6,6 +6,120 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-09-09 — fail closed: five ways the stack reported safe when it wasn't
+
+Every entry below is one shape of the same bug: a surface that answered
+"clean", "redacted" or "allowed" for something it had not read, could not
+authorise, or was not entitled to show.
+
+### siphon-core 2.9.2
+
+- **fix(core): a match cap must not produce a "redacted" result that leaks.**
+  `ScanConfig` gained an opt-in truncation sink, following the existing
+  trace-sink idiom, and every stage that stops collecting at a cap now
+  routes through one `room_for_more` predicate — so "we stopped adding" is
+  recorded the same way wherever it happens, rather than at whichever sites
+  someone remembered.
+
+### siphon-cli 2.5.0
+
+- **fix(cli): `InputGuard` refuses to transform a partial scan.** Reading
+  the new truncation flag, `redact`, `tokenize` and `obfuscate` now return
+  an error instead of a document that looks sanitised and still carries
+  every value found past the cap. `flag` and `reject` are unaffected and
+  report the truncation on the result.
+- **`siphon::masking` is now public.** Server-side redaction moved here
+  from siphon-api so siphon-fs can use it too; siphon-api has no lib target
+  to depend on, and the classification half needs only `siphon::rbac`,
+  which both binaries already link.
+
+### siphon-api 2.12.1
+
+- **fix(api): tenant scope comes from the key, not from the caller.** A
+  key bound to a tenant could drop `X-Siphon-Tenant` and read every tenant:
+  the binding was recorded in `AuthContext` and read by nothing but
+  `/v1/me`, while six handlers each derived their own scope from the
+  header. `tenant_scope()` is now the single resolver for scans, reads,
+  exports, ring results and the feedback write. A header may agree with a
+  binding and may not contradict it; a malformed selector is a 400 rather
+  than a silently dropped filter.
+- **fix(api): the feedback write had no tenant scope at all.** A finding
+  id was enough to rule on another tenant's finding, and ids are returned
+  by every read endpoint. A row outside the caller's scope now reports not
+  found, which is what it is from where they stand.
+- **fix(api): a feedback note ending in a multi-byte character panicked
+  the request task.** The 2,000-byte truncation sliced without checking a
+  character boundary.
+
+### siphon-fs 1.4.1
+
+- **fix(fs): `GET /v1/findings` served every matched value in the clear.**
+  The endpoint returned the ring record directly, and the ring holds the
+  raw match on purpose — so every value extracted from every uploaded file
+  was readable by any holder of the shared bearer key. Values now leave
+  redacted, with no `unmask` parameter: this service authenticates one key
+  and derives no role from it, so no caller here can be *authorised* to see
+  one, and there would be no identity to record if they were. `Public`
+  categories stay legible.
+- **`SIPHON_ADMIN_KEY` falling back to `SIPHON_API_KEY` now warns at
+  startup.** When it does, `RequireAdminAction` is not a second gate —
+  anything that may upload a file may also reload overrides.
+
+### siphon-icap 0.3.0
+
+- **feat(icap): `SIPHON_ICAP_ON_UNSCANNABLE`.** Content this sensor saw
+  and could not read — a body over `MAX_BODY_BYTES`, or a binary one — was
+  allowed through with a bare 204, which on the wire is the same answer as
+  "we read it and it was clean". Sending data in one oversized body was
+  therefore a complete bypass of a hop believed to be enforcing. The
+  default stays `pass`, because flipping it would start refusing large
+  transfers on upgrade, but a pass-through now carries
+  `X-DLP-Action: unscanned` with a reason and startup warns; `block`
+  returns a 403 that says it could not inspect rather than claiming a
+  finding.
+- **fix(icap): an unknown `SIPHON_ICAP_ACTION` refuses to start.** It fell
+  through to `flag`, so `SIPHON_ICAP_ACTION=blok` quietly started an
+  advisory sensor in a deployment that had asked for an enforcing one.
+- **fix(icap): an empty body is no longer counted against coverage.**
+  There is nothing to read in one, so the figure fell as ordinary bodyless
+  traffic rose.
+
+### siphon-smtp 0.2.1
+
+- **fix(smtp): a finding in one part must not deliver an unread one.**
+  Ranking `flagged` above `indeterminate` meant a message with a detected
+  value in the body and an unopenable attachment was delivered on the
+  strength of the part that *was* read. Completeness is now tracked apart
+  from severity: `SIPHON_SMTP_ON_INDETERMINATE` applies whenever any part
+  went unread, whatever else was found. Structural parse warnings set
+  incompleteness rather than only bumping the verdict, which was invisible
+  to the policy as soon as anything was found.
+
+### siphon-mail 0.1.1
+
+- **`inspection()`** answers whether every part of a message was read,
+  separately from what was found in the parts that were.
+
+### Tooling
+
+- **`scripts/bump-version.sh` knows the whole workspace.** It had no
+  `icap`, `smtp`, `mail` or `auth` target, so four crates could not be
+  bumped through the lockstep at all; `cargo check -p siphon` failed on the
+  `cli` target because the root *package* is `siphon-cli`, killing the
+  script after it had already written every file; and the `cli` target
+  never touched `console/package.json` or the chart's `appVersion`, both of
+  which track the root crate, so it left the tree failing
+  `check-version-sync.sh` — the one thing it exists to prevent.
+
+### Docs
+
+- The route table marked the four finding reads `(admin)`; all four carry
+  `RequireViewAlerts`, and a later section of `CLAUDE.md` already said so.
+  The paragraph justifying the admin set claimed the evadex reads return
+  unredacted matched values; they select technique names and counts.
+
+---
+
 ## 2026-09-08
 
 ### siphon-auth 0.1.0

@@ -12,7 +12,8 @@
 # Usage:
 #   scripts/bump-version.sh <target> <bump>
 #
-#   <target>:  core | api | fs | launcher | cli | chart
+#   <target>:  core | api | fs | icap | smtp | mail | auth
+#              | launcher | cli | chart
 #   <bump>:    patch | minor | major | X.Y.Z   (explicit version)
 #
 # Examples:
@@ -74,7 +75,7 @@ done
 [[ -n "${TARGET}" && -n "${BUMP}" ]] || usage 64
 
 case "${TARGET}" in
-    core|api|fs|launcher|cli|chart) ;;
+    core|api|fs|icap|smtp|mail|auth|launcher|cli|chart) ;;
     *) echo "unknown target: ${TARGET}" >&2; usage 64 ;;
 esac
 
@@ -112,13 +113,50 @@ TARGETS = {
         'values_path': 'fs.image.tag',
         'compose_img': 'siphon-fs',
     },
+    # siphon-icap and siphon-smtp ship in docker-compose only — new
+    # protocol services are not in the Helm chart yet (CLAUDE.md), so
+    # they carry a Dockerfile and a compose pin but no values_path.
+    'icap': {
+        'crate':       'siphon-icap',
+        'cargo':       'crates/siphon-icap/Cargo.toml',
+        'dockerfile':  'deploy/Dockerfile.icap',
+        'compose_img': 'siphon-icap',
+    },
+    'smtp': {
+        'crate':       'siphon-smtp',
+        'cargo':       'crates/siphon-smtp/Cargo.toml',
+        'dockerfile':  'deploy/Dockerfile.smtp',
+        'compose_img': 'siphon-smtp',
+    },
+    # Libraries. Like `core`, they have no image of their own, so a
+    # bump touches the manifest and the CHANGELOG and nothing else.
+    'mail': {
+        'crate':   'siphon-mail',
+        'cargo':   'crates/siphon-mail/Cargo.toml',
+    },
+    'auth': {
+        'crate':   'siphon-auth',
+        'cargo':   'crates/siphon-auth/Cargo.toml',
+    },
     'launcher': {
         'crate':   'siphon-launcher',
         'cargo':   'crates/siphon-launcher/Cargo.toml',
     },
     'cli': {
         'crate':   'siphon',
+        # The root package is `siphon-cli`; only its lib and bin targets
+        # are still called `siphon`. `cargo check -p siphon` therefore
+        # fails, which killed this script on its last step after it had
+        # already written every file. `crate` stays as it is because it
+        # names the CHANGELOG heading.
+        'package': 'siphon-cli',
         'cargo':   'Cargo.toml',
+        # Two artifacts track the root crate's version and are enforced
+        # by scripts/check-version-sync.sh. The script did not touch
+        # either, so `bump-version.sh cli` left the tree failing the
+        # repo's own sync check — the one thing it exists to prevent.
+        'package_json':     'console/package.json',
+        'chart_appversion': 'deploy/helm/siphon/Chart.yaml',
     },
     'chart': {
         'crate':       None,
@@ -268,6 +306,35 @@ def bump_compose(path, image_name, current, new):
         return
     write(path, new_body)
 
+def bump_package_json(path, current, new):
+    """Rewrite the top-level `"version"` key. Anchored on the two-space
+    indent so a dependency pinned at the same version cannot be hit."""
+    body = read(path)
+    pat = re.compile(
+        r'^(  "version":\s*)"' + re.escape(current) + r'"',
+        re.MULTILINE,
+    )
+    new_body, count = pat.subn(lambda m: m.group(1) + f'"{new}"', body)
+    if count == 0:
+        warn(f'no top-level "version": "{current}" in {path} — skipping')
+        return
+    write(path, new_body)
+
+def bump_chart_appversion(path, current, new):
+    """`appVersion:` is the stack release label. check-version-sync.sh
+    ties it to the root crate, so the `cli` target owns it; the chart's
+    own `version:` is a separate bump under the `chart` target."""
+    body = read(path)
+    pat = re.compile(
+        r'^(appVersion:\s*)"?' + re.escape(current) + r'"?\s*$',
+        re.MULTILINE,
+    )
+    new_body, count = pat.subn(lambda m: m.group(1) + f'"{new}"', body)
+    if count == 0:
+        warn(f'no appVersion: {current} in {path} — skipping')
+        return
+    write(path, new_body)
+
 def bump_chart_yaml(path, current, new):
     body = read(path)
     new_body = re.sub(
@@ -333,6 +400,10 @@ else:
             'deploy/docker-compose.yml',
             meta['compose_img'], current, new,
         )
+    if meta.get('package_json'):
+        bump_package_json(meta['package_json'], current, new)
+    if meta.get('chart_appversion'):
+        bump_chart_appversion(meta['chart_appversion'], current, new)
     add_changelog_stub(meta['crate'], new)
 
 if target == 'core' and parse_semver(new)[0] > parse_semver(current)[0]:
@@ -346,7 +417,8 @@ if target == 'core' and parse_semver(new)[0] > parse_semver(current)[0]:
 if not DRY_RUN and target != 'chart':
     banner('cargo check (refresh Cargo.lock)')
     try:
-        subprocess.run(['cargo', 'check', '-p', meta['crate'], '-q'], check=True)
+        pkg = meta.get('package', meta['crate'])
+        subprocess.run(['cargo', 'check', '-p', pkg, '-q'], check=True)
     except subprocess.CalledProcessError as e:
         raise SystemExit(f'cargo check failed: {e}')
 
