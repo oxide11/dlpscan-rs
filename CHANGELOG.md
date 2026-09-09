@@ -175,7 +175,33 @@ authorise, or was not entitled to show.
 - **`inspection()`** answers whether every part of a message was read,
   separately from what was found in the parts that were.
 
+### chart 3.0.0
+
+- **BREAKING: the nginx Service listens on 443, not 80.** An Ingress or
+  port-forward pointing at port 80 stops working; point it at 443. The
+  containerPort, NetworkPolicy ingress rule and both probes moved with it,
+  the probes gaining `scheme: HTTPS`. `nginx.service.tlsPort` is gone —
+  there is one port now and it is TLS. The k8s lab manifests under
+  `deploy/k8s/lab/` are unaffected; they run stock nginx with their own
+  ConfigMap.
+
 ### Deploy
+
+- **fix(deploy): nginx accepts TLS only — there is no port 80.** Not a
+  redirect: a redirect still accepts the TCP connection and reads a request
+  line, and this ingress carries session cookies and matched sensitive
+  values. Every other hop in the stack was already authenticated transport
+  — nginx presents a client certificate upstream to siphon-api and
+  siphon-fs, the Postgres hop is mTLS — while the last hop *into* nginx was
+  plaintext. The 443 block had sat commented out since it was written
+  because there was no server certificate to put in it; `mkcerts.sh` now
+  mints `nginx/tls.{crt,key}` (serverAuth, SAN covering `nginx` and
+  `localhost`) alongside the existing client pair. HSTS is set now that it
+  means something. Compose publishes `8443:443`, and the container's own
+  healthcheck verifies the chain rather than passing `-k`.
+  `scripts/validate-nginx.sh` gained an assertion that plaintext on :80 is
+  refused, checked by re-adding a `listen 80` and watching it fail.
+
 
 - **fix(deploy): nginx served the old wireframe at `/ir/`, hiding the IR
   console behind it.** `location /ir/` aliased the baked-in

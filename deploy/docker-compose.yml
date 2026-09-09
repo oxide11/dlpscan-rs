@@ -363,7 +363,11 @@ services:
     image: siphon-nginx:latest
     profiles: [auth]
     ports:
-      - "8080:80"
+      # 8443, not 8080: the listener is TLS-only now. Local dev is
+      # https://siphon.local:8443 with deploy/certs/nginx/ca.crt trusted
+      # (or curl --cacert). Under the tunnel overlay this binding is dropped
+      # entirely and only cloudflared reaches it.
+      - "8443:443"
       # - "8443:443"  # enable once TLS certs are mounted
     # What nginx presents to siphon-api and siphon-fs, and the CA it verifies
     # them against — nginx.conf reads these paths.
@@ -376,7 +380,11 @@ services:
       siphon-fs: { condition: service_healthy }
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost/nginx-health"]
+      # Over TLS, and verifying — not `-k`. The cert's SAN covers localhost
+      # precisely so the container's own probe can check the chain rather
+      # than skip it; a healthcheck that disables verification is a
+      # healthcheck that would pass against a wrong certificate.
+      test: ["CMD", "curl", "-sf", "--cacert", "/etc/nginx/certs/internal/ca.crt", "https://localhost/nginx-health"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -21,12 +21,8 @@ spec:
     # work by accident of this broad allow — the Ingress itself is
     # the trust boundary.
     - ports:
-        - port: 80
-          protocol: TCP
-        {{- if .Values.nginx.service.tlsPort }}
         - port: 443
           protocol: TCP
-        {{- end }}
   egress:
     - to:
         - podSelector:

@@ -18,12 +18,15 @@
 #   siphon-smtp/db-client.{crt,key}
 #   postgres/tls.{crt,key}       the database's server certificate
 #   nginx/client.{crt,key}       what nginx presents to siphon-api and siphon-fs
+#   nginx/tls.{crt,key}          what nginx presents DOWNSTREAM, to cloudflared
+#                                or to a browser; serverAuth only
 #   */ca.crt                     a copy in every directory, so a mount is
 #                                self-contained
 #
 # Service leaves carry BOTH serverAuth and clientAuth, so a container's own
 # certificate is also what its health probe presents to its own listener.
-# Client-only identities (nginx, the database clients) carry clientAuth alone.
+# Client-only identities (the database clients, and nginx's `client` pair)
+# carry clientAuth alone; nginx's `tls` pair is serverAuth alone.
 #
 # This is a development and reference-deployment tool. In a cluster,
 # cert-manager issues the same identities from `tls.internal.certManager` in
@@ -137,6 +140,17 @@ done
 
 # What nginx presents upstream.
 leaf nginx client siphon-nginx "clientAuth" "DNS:siphon-nginx"
+
+# What nginx presents DOWNSTREAM — to cloudflared, or to a browser in local
+# dev. Separate from the client identity above because the EKUs differ and a
+# certificate should say what it is for: `client` is clientAuth only, this is
+# serverAuth only. nginx had no server certificate at all while its listener
+# was plaintext, which is what kept the 443 block commented out.
+#
+# The SAN has to cover the name the peer dials. cloudflared reaches it as
+# `nginx` on the compose network; the container's own healthcheck uses
+# `localhost`. svc_san covers both, plus the k8s Service forms.
+leaf nginx tls siphon-nginx "serverAuth" "$(svc_san nginx)"
 
 chmod 644 ca/ca.crt
 

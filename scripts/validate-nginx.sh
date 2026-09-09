@@ -43,7 +43,7 @@ nginx -V 2>&1 | grep -q http_ssl_module \
 # AF_INET6 and `listen [::]:80` then fails for reasons unrelated to the file.
 # The certificate paths are redirected at the generated material.
 prep() {
-  sed -e 's/^\( *\)listen \[::\]:80 default_server;/\1# ipv6 omitted by validate-nginx.sh/' \
+  sed -E -e 's/^( *)listen \[::\]:[0-9]+( .*)?;/\1# ipv6 omitted by validate-nginx.sh/' \
       -e "s#/etc/nginx/certs/internal#$WORK/certs/nginx#g" "$1"
 }
 
@@ -138,15 +138,16 @@ start_stubs() {
   for _ in $(seq 1 40); do sleep 0.25; curl -sf -o /dev/null http://127.0.0.1:9091/api/verify && break; done
 }
 
-get()  { curl -s "http://127.0.0.1$1" "${@:2}"; }
-code() { curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1$1" "${@:2}"; }
+CA="$WORK/certs/nginx/ca.crt"
+get()  { curl -s --cacert "$CA" "https://127.0.0.1$1" "${@:2}"; }
+code() { curl -s -o /dev/null -w '%{http_code}' --cacert "$CA" "https://127.0.0.1$1" "${@:2}"; }
 
 # --- transport: the impostor first --------------------------------------
 # A siphon-api whose certificate chains to some other CA. If nginx answers
 # anything but 502 here, proxy_ssl_verify is not doing its job.
 start_stubs "$WORK/stranger/siphon-api" "$WORK/certs/ca/ca.crt"
 nginx -c "$WORK/main.conf" 2>/dev/null || true
-for _ in $(seq 1 40); do sleep 0.25; curl -sf -o /dev/null http://127.0.0.1/ && break; done
+for _ in $(seq 1 40); do sleep 0.25; curl -sf -o /dev/null --cacert "$CA" https://127.0.0.1/ && break; done
 
 c=$(code /api/v1/me -H 'Authorization: Bearer k')
 [ "$c" = "502" ] || fail "nginx accepted an upstream certificate from a stranger's CA (got $c)"
@@ -195,6 +196,19 @@ get /detections | grep -q console || fail "SPA deep link did not fall back to in
 get /ir/        | grep -q console || fail "/ir/ did not reach the console"
 get /ir/alerts  | grep -q console || fail "IR deep link did not reach the console"
 ok "SPA deep links serve the shell, /ir included"
+
+# --- the listener is TLS-only -------------------------------------------
+# Not "redirects to https" — refuses. A port 80 that answers 301 still
+# accepts the TCP connection and reads a request line, and this ingress
+# carries session cookies and scan payloads. The whole point of the change
+# was that there is nothing there at all.
+#
+# curl exits 7 (couldn't connect) when nothing is listening. Anything that
+# completes a plaintext HTTP exchange means a listener came back.
+if curl -s -o /dev/null --max-time 5 http://127.0.0.1:80/ 2>/dev/null; then
+    fail "something answered plaintext HTTP on :80 — the listener must be TLS-only"
+fi
+ok "plaintext on :80 is refused, not redirected"
 
 [ "$(code /ui/)" = "301" ] || fail "/ui/ no longer redirects"
 [ "$(code /ir-legacy/)" = "200" ] || fail "/ir-legacy/ not served"
