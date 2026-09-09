@@ -248,14 +248,28 @@ then read correctly *was* read.
 
 Covered by the `disguise` capability in the conformance matrix.
 
-Other test harnesses (not run by default CI):
+Other test harnesses. All but `fp_probe` run in `.github/workflows/ci.yml`
+as hard gates — this list used to say none of them did, and described
+`audit_spec` as the audit chain, which it has never been:
+
 ```bash
-cargo test --test detection_quality   # labeled-corpus regression suite
-cargo test --test fp_probe            # false-positive investigation
-cargo test --test evadex_regressions  # regressions from evadex adversarial harness
-cargo test --test forensics_test      # Office/PDF metadata tests
-cargo test --test audit_spec          # audit chain HMAC integrity
+cargo test --test audit_spec          # specificity / context_required lockstep (CI)
+cargo test --test detection_quality   # labeled-corpus regression suite (CI)
+cargo test --test evadex_regressions  # regressions from the evadex adversarial harness (CI)
+cargo test --test forensics_test      # Office/PDF metadata tests (CI)
+cargo test --test fp_probe            # false-positive investigation (local only)
 ```
+
+`audit_spec` is the one to understand, because it guards a fact stored
+twice. `pattern_specificity()` in `models.rs` and `PatternDef.specificity`
+in `patterns/mod.rs` must agree; the scan path reads only the map, while
+the console catalog reads only the `PatternDef`, so a disagreement means
+the console misreports what the scanner does. It caught exactly that on
+2026-09-08 — `fix(core): report US phone span without its leading
+separator` lowered `E.164 Phone Number` to 0.35 in the map and left the
+`PatternDef` at the 0.40 default — and the change merged with the step
+red, so `main` carried a failing gate for a day. A gate that can be
+merged past is not a gate.
 
 ## Architecture
 

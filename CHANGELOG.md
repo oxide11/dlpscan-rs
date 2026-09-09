@@ -21,6 +21,17 @@ authorise, or was not entitled to show.
   recorded the same way wherever it happens, rather than at whichever sites
   someone remembered.
 
+- **fix(core): `E.164 Phone Number` specificity agreed with itself again.**
+  The value lives twice — `pattern_specificity()` in `models.rs`, which the
+  scan path reads, and `PatternDef.specificity`, which the console catalog
+  reads. Lowering E.164 to 0.35 so the country-specific phone patterns win
+  a dedup tie only landed in the map; the `PatternDef` kept the 0.40
+  default, which is the exact value the map's own comment warns against.
+  Nothing was mislabelled, because the scanner never reads that field, but
+  the catalog showed the generic pattern as equally specific to
+  `US Phone Number`. `cargo test --test audit_spec` has been failing in CI
+  since 2026-09-08 over it.
+
 ### siphon-cli 2.5.0
 
 - **fix(cli): `InputGuard` refuses to transform a partial scan.** Reading
