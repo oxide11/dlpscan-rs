@@ -776,7 +776,7 @@ X-Siphon-Scan-Id:    <uuid>
 | `SIPHON_SMTP_PORT` | 8894 | |
 | `SIPHON_SMTP_BIND` | 0.0.0.0 | |
 | `SIPHON_SMTP_ALLOWED_NETS` | **required** | Comma-separated IP/CIDR allowlist for MTA connections. `0.0.0.0/0` for dev |
-| `SIPHON_SMTP_ON_INDETERMINATE` | defer | `defer` (451 tempfail, fail closed) or `deliver` (fail open, annotated). `quarantine` is **refused at startup** — there is nowhere to hold a message yet, and silently behaving as `defer` would replace the operator's chosen failure direction. An unknown value is an error, never a fallback |
+| `SIPHON_SMTP_ON_INDETERMINATE` | defer | `defer` (451 tempfail, fail closed) or `deliver` (fail open, annotated). Applies whenever any part went unread, **including when another part was flagged** — completeness is tracked apart from severity, because ranking `flagged` above `indeterminate` once let a finding in one part deliver a message whose other part nobody could open. `quarantine` is **refused at startup** — there is nowhere to hold a message yet, and silently behaving as `defer` would replace the operator's chosen failure direction. An unknown value is an error, never a fallback |
 | `SIPHON_SMTP_TIMEOUT_SECS` | 10 | From the measurements in `docs/architecture/email-dlp.md` §4.5 |
 | `SIPHON_SMTP_MAX_MESSAGE_BYTES` | 31457280 | 30 MB ingest cap. Distinct from the scanner's per-part text cap |
 | `SIPHON_SMTP_MAX_CONNECTIONS` | 256 | |

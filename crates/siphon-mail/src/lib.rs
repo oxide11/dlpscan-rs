@@ -210,6 +210,43 @@ impl PartOutcome {
     }
 }
 
+/// Whether every part of a message was actually inspected.
+///
+/// Deliberately not a `Verdict`. Completeness and severity are two different
+/// facts, and collapsing them into one ordinal is what let a flagged part
+/// hide an unread one: `Flagged` outranks `Indeterminate` on the severity
+/// ladder, which is correct for the *label* a message carries and wrong as
+/// the gate deciding whether the message may be delivered.
+///
+/// The ladder still answers "what is the most severe thing true of this
+/// message". This answers "did we finish looking". A caller enforcing a
+/// fail-closed policy needs the second question, and until this existed it
+/// only had the first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Inspection {
+    Complete,
+    Incomplete,
+}
+
+impl Inspection {
+    pub fn is_complete(self) -> bool {
+        self == Inspection::Complete
+    }
+}
+
+/// Did every part get inspected?
+///
+/// An empty part list is `Incomplete`, for the same reason it reconciles to
+/// `Indeterminate`: a message we produced no parts for is one we did not
+/// look at.
+pub fn inspection(parts: &[PartOutcome]) -> Inspection {
+    if parts.is_empty() || parts.iter().any(|p| !p.status.is_inspected()) {
+        Inspection::Incomplete
+    } else {
+        Inspection::Complete
+    }
+}
+
 /// Reconcile part outcomes into one message verdict: the maximum severity.
 ///
 /// An empty part list yields `Indeterminate`, not `Clean`. A message we
@@ -498,6 +535,30 @@ pub async fn prune_old_messages(
 
 #[cfg(test)]
 mod tests {
+
+    /// Audit A02. Completeness is not readable off the verdict, which is
+    /// why it is a separate function.
+    #[test]
+    fn a_flagged_part_does_not_make_a_message_fully_inspected() {
+        let mixed = [
+            PartOutcome::scanned(Verdict::Flagged),
+            PartOutcome::uninspected(PartStatus::SkippedEncrypted),
+        ];
+        // The label is the more severe of the two, which is correct...
+        assert_eq!(reconcile(&mixed), Verdict::Flagged);
+        // ...and says nothing about whether we finished looking.
+        assert_eq!(inspection(&mixed), Inspection::Incomplete);
+
+        let all_read = [
+            PartOutcome::scanned(Verdict::Flagged),
+            PartOutcome::scanned(Verdict::Clean),
+        ];
+        assert_eq!(inspection(&all_read), Inspection::Complete);
+
+        // No parts at all is not a clean bill of health.
+        assert_eq!(inspection(&[]), Inspection::Incomplete);
+        assert_eq!(reconcile(&[]), Verdict::Indeterminate);
+    }
     use super::*;
 
     // --- the verdict ladder ------------------------------------------------

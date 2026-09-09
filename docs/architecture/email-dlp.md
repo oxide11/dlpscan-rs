@@ -298,6 +298,21 @@ This matches how the scan rollup already counts: `oversize_skipped` and
 was never inspected cannot inflate the denominator and flatter the detection
 rate. The same principle applies to a delivery decision.
 
+**Severity and completeness are reported separately.** The ladder above puts
+`flagged` over `indeterminate`, which is the right *label*: a confirmed
+finding is the more actionable statement about a message. It is the wrong
+*gate*. Ranked that way, one detectable value in one part outranks an
+attachment nobody could open, and the message maps to accept — under
+`defer`, the setting whose entire purpose is to stop that.
+
+So `siphon_mail::inspection()` answers "did we finish looking" independently
+of what was found, and `action_for` takes both. An incompletely inspected
+message follows the operator's incomplete-inspection policy whatever its
+severity, unless the verdict already stops it: quarantine and reject are at
+least as restrictive as any such policy and are left alone. The stored
+record keeps both, so an investigator can tell a flagged-and-complete
+message from a flagged-and-partial one.
+
 ### 4.4 Partial failure is a policy, not an accident
 
 Today the system fails open — oversized ICAP bodies pass through unscanned
