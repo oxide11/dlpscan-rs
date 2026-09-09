@@ -48,8 +48,31 @@ jobs:
         with:
           toolchain: "1.98"
       - uses: Swatinem/rust-cache@v2
+        id: setup
       - name: Unit tests
         run: cargo test --lib
+      # Every step below carries an `if:` guard, and it is load-bearing
+      # rather than cosmetic. Steps in a job run in sequence and
+      # stop at the first failure, so one red suite SKIPS every suite after
+      # it — the failure is reported, the eleven questions behind it are
+      # simply never asked. That is not hypothetical: from 2026-09-08 the
+      # lockstep audit below was red on main, and integration, evasion,
+      # conformance, forensics, archive security, siphon-fs auth, evadex,
+      # detection quality, public records and held-out recall did not run
+      # for a day. Main looked like it was failing one check; it was running
+      # `cargo test --lib` and nothing else.
+      #
+      # The guard makes each suite answer for itself, so a run reports every
+      # suite that is red instead of the first one. It is conditioned on the
+      # setup step rather than bare `!cancelled()` so this only ever skips
+      # PAST A FAILING SUITE, never past a broken runner: if checkout or the
+      # toolchain fails, `steps.setup` is skipped, and so is every suite —
+      # otherwise thirteen steps would each fail again for want of a
+      # checkout. Trade-off, stated: when the workspace does not compile,
+      # setup has succeeded and all of them fail together, so the log shows a
+      # wall of red rather than a single error. A wall of red that says
+      # "nothing compiles" is a better failure than one red step hiding
+      # whether anything else works.
       # Pattern/model lockstep. PatternDef.specificity and
       # .context_required in patterns/mod.rs must agree with
       # pattern_specificity() / is_context_required() in models.rs —
@@ -59,10 +82,13 @@ jobs:
       # previously ran in no workflow, which is how Malta TIN, Chile
       # RUN/RUT and Tanzania NIDA silently diverged.
       - name: Pattern/model lockstep audit
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo test --test audit_spec
       - name: Integration tests
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo test --test integration_test
       - name: Evasion tests
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo test --test evasion_test
       # Five cases for every format Siphon advertises: clean, single,
       # structural, damaged, evasive. The `damaged` slot is the one that
@@ -71,8 +97,10 @@ jobs:
       # nobody read. Documented gaps do not fail this; unaccounted-for
       # formats do.
       - name: Conformance matrix
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo test --features conformance --test conformance
       - name: Forensics tests
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo test --test forensics_test
       # Archive-extraction security. sevenz-rust 0.6 does not sanitise entry
       # names — its decompress_file writes dest.join(entry.name()) — so these
@@ -80,14 +108,17 @@ jobs:
       # destination. Demonstrated live before the fix: the library reported Ok
       # while writing a canary outside the extraction directory.
       - name: Archive security tests
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo test --test archive_security_test
       # siphon-fs auth enforcement. This service had no authentication of any
       # kind until 2026-09-02, while CLAUDE.md and the nginx config both said
       # it did — and nginx omits its Authelia gate for /fs/ on the strength of
       # that claim. These tests keep the claim true.
       - name: siphon-fs auth tests
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo test -p siphon-fs --test auth_test
       - name: Evadex regression tests
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo test --test evadex_regressions
       # Labelled-corpus recall + false-positive gate. Asserts 80/80 recall
       # across the positive corpus and zero forbidden matches across the
@@ -96,6 +127,7 @@ jobs:
       # disagreed with the corpus — so it ran nowhere and detection
       # regressions had no automated signal. Both fixed; keep it green.
       - name: Detection quality (labelled corpus)
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo test --test detection_quality
       # Detection baselines against real public-record documents (legislative
       # directories of elected representatives). Unlike every other suite these
@@ -105,11 +137,13 @@ jobs:
       # silently worsen; a failure here caused by *better* detection means the
       # baseline should be re-derived and raised.
       - name: Public records baselines
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo test --test public_records_test
       # The held-out corpus is too large for git (~49 MB here, ~600 MB for the
       # US one), so it is fetched and checksum-verified. Cached on the
       # committed SHA256SUMS.txt, which changes only when the corpus does.
       - name: Cache corpora
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         uses: actions/cache@v6
         with:
           path: |
@@ -117,6 +151,7 @@ jobs:
             tests/corpus/canada_contact_v1/*.jsonl
           key: corpora-${{ hashFiles('tests/corpus/*/SHA256SUMS.txt') }}
       - name: Fetch corpora
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         # Absent SIPHON_CORPUS_BASE_URL the script reports what is missing and
         # exits 0, and the suite below skips rather than fails — so CI stays
         # green on a fork or before the bucket is configured, and starts
@@ -131,6 +166,7 @@ jobs:
       # values; a failure means recall fell, and a rise means the baseline
       # should be re-derived and raised.
       - name: Held-out recall baselines
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo test --test held_out_recall_test
 
   clippy:
