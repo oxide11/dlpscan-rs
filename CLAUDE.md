@@ -428,8 +428,15 @@ change, and the vocabulary split is worth having before that happens.
 ### Masking
 
 **Matched values are redacted server-side by default, on every endpoint that
-returns one** — `/v1/findings`, `/v1/findings/pg`, `/v1/findings/export`.
-`crates/siphon-api/src/masking.rs` is the single place it happens.
+returns one** — `/v1/findings`, `/v1/findings/pg`, `/v1/findings/export`, and
+siphon-fs's own `/v1/findings`. `src/masking.rs` in the root crate is the
+single place it happens. It lives there rather than in siphon-api because
+siphon-fs serves a findings endpoint too and siphon-api has no lib target to
+depend on; the classification half needs only `siphon::rbac`, which both
+binaries already link. Until 2026-09-09 it was siphon-api-local, and
+siphon-fs's endpoint returned the ring's raw values in the clear while a
+comment asserted masking happened "on the way out (siphon-api masking.rs)" —
+true of another process, not of that handler.
 
 The console masking that predated this was cosmetic: the endpoints returned
 values in the clear, so the SSN was already in the JSON, in browser memory and
@@ -709,6 +716,19 @@ One additional endpoint:
 POST /scan    multipart/form-data file upload → extraction → findings
 GET  /v1/findings
 ```
+
+**siphon-fs redacts unconditionally and offers no `unmask`.** It authenticates
+one shared bearer key and derives no role from it, so no caller here can be
+*authorised* to see a value in the clear and no identity could be written into
+an audit row if one were. A surface that cannot say who looked does not show
+the value; unmasking is siphon-api's, which has both halves. The ring still
+keeps the raw value so siphon-api can serve an audited unmask from the same
+row. `Public` categories stay legible, as everywhere.
+
+**`SIPHON_ADMIN_KEY` defaults to `SIPHON_API_KEY`.** When it does,
+`RequireAdminAction` is not a second gate — anything that may upload a file
+may also reload overrides. Supported for single-key deployments, and warned
+about at startup so it is a choice rather than a discovery.
 
 TLS: `SIPHON_FS_TLS_CERT` / `SIPHON_FS_TLS_KEY` / `SIPHON_FS_TLS_CLIENT_CA`,
 with the same semantics as siphon-api's `SIPHON_TLS_*` — the prefix differs
@@ -1095,6 +1115,7 @@ appear in any artifact.
 - HTTP handlers: `src/api.rs` (CLI-embedded server) and `crates/siphon-api/src/`
 - File extractors: `src/extractors.rs` and `crates/siphon-fs/src/`
 - RBAC: `src/rbac.rs`
+- Server-side masking: `src/masking.rs` (shared by siphon-api and siphon-fs)
 - Policy engine: `src/policy.rs`
 - SIEM / webhooks: gated by the `siem` / `webhooks` features in the root crate
 - Integration tests: `tests/`

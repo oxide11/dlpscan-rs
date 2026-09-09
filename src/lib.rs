@@ -42,6 +42,7 @@ pub mod entropy;
 pub mod extractors;
 pub mod guard;
 pub mod http_util;
+pub mod masking;
 pub mod metrics;
 #[cfg(feature = "metrics")]
 pub mod metrics_registry;

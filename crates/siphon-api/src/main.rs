@@ -81,7 +81,7 @@ use tower_http::trace::TraceLayer;
 
 mod db;
 mod keys_api;
-mod masking;
+use siphon::masking;
 mod sensors_api;
 // The mail model lives in its own crate: siphon-smtp writes what this
 // service reads, and siphon-api has no lib target for it to depend on.
