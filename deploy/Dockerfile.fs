@@ -42,4 +42,4 @@ ENTRYPOINT ["siphon-fs"]
 
 LABEL org.opencontainers.image.title="siphon-fs" \
       org.opencontainers.image.description="Polygon Siphon file-scanner HTTP service" \
-      org.opencontainers.image.version="1.4.1"
+      org.opencontainers.image.version="1.5.0"

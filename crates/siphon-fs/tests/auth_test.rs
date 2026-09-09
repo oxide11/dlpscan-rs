@@ -30,14 +30,27 @@ impl Drop for Server {
 }
 
 fn start(port: u16) -> Server {
-    let child = Command::new(env!("CARGO_BIN_EXE_siphon-fs"))
-        .env("SIPHON_API_KEY", KEY)
+    start_as(port, None)
+}
+
+/// Spawn with an explicit `SIPHON_API_KEY_ROLE`, so a test can present the
+/// one bootstrap credential as a narrower identity and watch the gates bind.
+///
+/// No `SIPHON_DATABASE_URL`, so there is no issued-key store here and the
+/// bootstrap key is the only credential — the store's own resolution is
+/// covered by siphon-auth's tests, and what these need is the *gating*.
+fn start_as(port: u16, role: Option<&str>) -> Server {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_siphon-fs"));
+    cmd.env("SIPHON_API_KEY", KEY)
         .env("SIPHON_FS_BIND", format!("127.0.0.1:{port}"))
         .env_remove("SIPHON_DATABASE_URL")
+        .env_remove("SIPHON_API_KEY_ROLE")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn siphon-fs");
+        .stderr(Stdio::null());
+    if let Some(r) = role {
+        cmd.env("SIPHON_API_KEY_ROLE", r);
+    }
+    let child = cmd.spawn().expect("spawn siphon-fs");
 
     for _ in 0..200 {
         if TcpStream::connect(("127.0.0.1", port)).is_ok() {
@@ -147,4 +160,88 @@ fn refuses_to_start_without_a_key() {
             "siphon-fs started with a {label} API key instead of refusing"
         );
     }
+}
+
+/// The role on the key decides what the caller may do — the whole point of
+/// joining the key store.
+///
+/// Before this, siphon-fs compared a bearer token against one env hash and
+/// derived nothing from the result: every authenticated caller could upload,
+/// read the finding stream and reload detection config. `SIPHON_ADMIN_KEY`
+/// was the only separation on offer and it defaulted to the scan key, so in
+/// the common deployment the "admin gate" compared one secret against itself.
+#[test]
+fn role_on_the_key_gates_each_route() {
+    // An auditor verifies that process was followed. It may read the stream
+    // and may not submit work or change what the scanner looks for.
+    let port = 18213;
+    let _s = start_as(port, Some("auditor"));
+    let auth = format!("Bearer {KEY}");
+
+    assert_eq!(
+        status(port, "GET", "/v1/findings", Some(&auth)),
+        200,
+        "auditor must be able to read the finding stream"
+    );
+    assert_eq!(
+        status(port, "POST", "/scan", Some(&auth)),
+        403,
+        "auditor submitted a file scan"
+    );
+    assert_eq!(
+        status(port, "POST", "/v1/overrides/reload", Some(&auth)),
+        403,
+        "auditor reloaded detection config"
+    );
+}
+
+/// The mirror image, so the tests cannot pass by refusing everything.
+///
+/// `operator` is the role a file-submitting integration should hold: it may
+/// scan and it may read nothing back. That asymmetry is the reason the two
+/// routes carry different permissions rather than one shared "authenticated".
+#[test]
+fn operator_may_submit_and_may_not_read() {
+    let port = 18214;
+    let _s = start_as(port, Some("operator"));
+    let auth = format!("Bearer {KEY}");
+
+    assert_eq!(
+        status(port, "GET", "/v1/findings", Some(&auth)),
+        403,
+        "operator read the finding stream"
+    );
+    assert_eq!(
+        status(port, "POST", "/v1/overrides/reload", Some(&auth)),
+        403,
+        "operator reloaded detection config"
+    );
+    // A bodyless POST /scan is a malformed multipart, not an authorization
+    // failure: 400 or 422 both mean the gate let it through, which is the
+    // claim. Anything in the 401/403 range means it did not.
+    let code = status(port, "POST", "/scan", Some(&auth));
+    assert!(
+        !(401..=403).contains(&code),
+        "operator was refused a scan it should be allowed to submit (got {code})"
+    );
+}
+
+/// A role label the binary does not know is deployment skew, and skew must
+/// not resolve to a working default in either direction — neither wider than
+/// the operator wrote nor narrower.
+#[test]
+fn refuses_to_start_on_an_unknown_role() {
+    let out = Command::new(env!("CARGO_BIN_EXE_siphon-fs"))
+        .env("SIPHON_API_KEY", KEY)
+        .env("SIPHON_API_KEY_ROLE", "superuser")
+        .env("SIPHON_FS_BIND", "127.0.0.1:18215")
+        .env_remove("SIPHON_DATABASE_URL")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .expect("run siphon-fs");
+    assert!(
+        !out.status.success(),
+        "siphon-fs started with an unknown SIPHON_API_KEY_ROLE instead of refusing"
+    );
 }

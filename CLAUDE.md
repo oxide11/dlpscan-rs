@@ -727,10 +727,36 @@ have all merged to `main` — see CHANGELOG `siphon-api 2.3.0`–`2.4.0`.
 
 ### siphon-fs routes
 
-Same auth and health/ready as siphon-api — bearer `SIPHON_API_KEY`, empty
-counts as unset, and the service refuses to start without one unless
-`SIPHON_ALLOW_UNAUTHENTICATED` is set. (This was documented long before it
-was true: siphon-fs had no authentication at all until 2026-09-02.)
+Same auth and health/ready as siphon-api, and now literally the same
+resolution: bearer `SIPHON_API_KEY` (empty counts as unset, and the service
+refuses to start without one unless `SIPHON_ALLOW_UNAUTHENTICATED` is set),
+else the shared `api_keys` table through `siphon_auth::keys::KeyStore`.
+**One credential works across text and file** — a key issued by
+`POST /v1/keys` on siphon-api authenticates an upload here with the role it
+was issued with. Before 2026-09-09 a file upload was authenticated by a
+different secret than a text scan of the same bytes. (And this section
+claimed siphon-fs had authentication long before it did: there was none at
+all until 2026-09-02.)
+
+**Its routes carry permissions, not a second secret.** `POST /scan` needs
+`Scan`, `GET /v1/findings` needs `ViewAlerts`, `POST /v1/overrides/reload`
+needs `AdminAction`. `SIPHON_API_KEY_ROLE` sets what the *bootstrap* key
+resolves to — same variable, default and failure direction as siphon-api,
+because one credential should not mean two things depending on which pod
+answers; an unknown value refuses to start. `SIPHON_ADMIN_KEY` is **gone**:
+it defaulted to the scan key, so in the common deployment the admin gate
+compared one secret against itself, and anything that could upload a file
+could also reload detection config.
+
+**Tenant scope comes from the key here too.** `tenant_scope()` applies the
+same rule as siphon-api — a bound key is confined to its tenant,
+`X-Siphon-Tenant` may agree and may not contradict (403), an unbound
+identity may select or span. Until 2026-09-09 this service read the header
+and nothing else, so any authenticated caller could write and read any
+tenant's rows by editing one header. Persistence writes `api_key_id` on both
+`scans` and `findings`, so a stored file scan names its caller rather than
+the deployment.
+
 One additional endpoint:
 
 ```
@@ -738,18 +764,20 @@ POST /scan    multipart/form-data file upload → extraction → findings
 GET  /v1/findings
 ```
 
-**siphon-fs redacts unconditionally and offers no `unmask`.** It authenticates
-one shared bearer key and derives no role from it, so no caller here can be
-*authorised* to see a value in the clear and no identity could be written into
-an audit row if one were. A surface that cannot say who looked does not show
-the value; unmasking is siphon-api's, which has both halves. The ring still
+**siphon-fs redacts unconditionally and offers no `unmask`** — still, but for
+a different reason since it joined the key store. It now knows who is calling
+and what role they hold, so `UnmaskPii`/`UnmaskPci` are answerable questions
+here; what it lacks is an audit sink, because siphon-api owns the HMAC-chained
+log and this pod writes to nothing that could record a disclosure.
+Authorisation without accounting is the half that must not ship alone: an
+unmask nobody can reconstruct afterwards is indistinguishable from a leak.
+Unmasking stays siphon-api's, which has both halves. The ring still
 keeps the raw value so siphon-api can serve an audited unmask from the same
 row. `Public` categories stay legible, as everywhere.
 
-**`SIPHON_ADMIN_KEY` defaults to `SIPHON_API_KEY`.** When it does,
-`RequireAdminAction` is not a second gate — anything that may upload a file
-may also reload overrides. Supported for single-key deployments, and warned
-about at startup so it is a choice rather than a discovery.
+Without `SIPHON_DATABASE_URL` there is no issued-key store, the bootstrap
+key is the only credential, and startup says so at warn level — the same
+shape as siphon-api.
 
 TLS: `SIPHON_FS_TLS_CERT` / `SIPHON_FS_TLS_KEY` / `SIPHON_FS_TLS_CLIENT_CA`,
 with the same semantics as siphon-api's `SIPHON_TLS_*` — the prefix differs

@@ -86,6 +86,45 @@ authorise, or was not entitled to show.
   startup.** When it does, `RequireAdminAction` is not a second gate —
   anything that may upload a file may also reload overrides.
 
+### siphon-fs 1.5.0
+
+- **feat(fs): one credential across text and file.** siphon-fs resolves a
+  bearer token exactly as siphon-api does — bootstrap `SIPHON_API_KEY`
+  first, so an issued key can never shadow it, then the shared `api_keys`
+  table through `siphon_auth::keys::KeyStore`. A key issued by
+  `POST /v1/keys` now authenticates an upload here with the role it was
+  issued with; before, a file upload was authenticated by a different
+  secret than a text scan of the same bytes.
+
+- **feat(fs)!: `SIPHON_ADMIN_KEY` is removed.** It defaulted to the scan
+  key, so in the common deployment the admin gate compared one secret
+  against itself and anything that could upload a file could also reload
+  detection config. The routes now carry permissions from the caller's own
+  key: `POST /scan` needs `Scan`, `GET /v1/findings` needs `ViewAlerts`
+  (was `AdminAction`, which kept responders and auditors out of the surface
+  built for them), `POST /v1/overrides/reload` needs `AdminAction`.
+  `SIPHON_API_KEY_ROLE` sets what the bootstrap key resolves to, with the
+  same default and the same refuse-to-start-on-unknown as siphon-api.
+  **Deployments setting `SIPHON_ADMIN_KEY` should drop it and set
+  `SIPHON_API_KEY_ROLE` instead**; a separate admin credential is now a
+  separate issued key.
+
+- **fix(fs): tenant scope comes from the key, not the header.** This
+  service read `X-Siphon-Tenant` and nothing else, so any authenticated
+  caller could write and read any tenant's rows by editing one header —
+  the defect fixed in siphon-api on 2026-09-09, still open here. A bound
+  key is confined to its tenant; the header may agree and may not
+  contradict (403).
+
+- **fix(fs): a stored file scan names its caller.** `scans.api_key_id` and
+  `findings.api_key_id` are written from the resolved key, where
+  `api_key_hash` only ever recorded the server's own key.
+
+- Unchanged and worth stating: findings still leave redacted with no
+  `unmask`. The reason inverted — this pod now knows who is asking, but
+  owns no audit sink, and authorisation without accounting is the half
+  that must not ship alone.
+
 ### siphon-icap 0.3.0
 
 - **feat(icap): `SIPHON_ICAP_ON_UNSCANNABLE`.** Content this sensor saw
