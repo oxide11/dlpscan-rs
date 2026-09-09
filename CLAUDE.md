@@ -362,6 +362,17 @@ A stored role label the binary does not know is refused with a 401 and an
 error-level log — deployment skew, not a caller mistake. Roles are the wire
 labels only (`Role::from_label`); IdP spellings are for `from_group`.
 
+**Tenant scope comes from the key, not from the caller.** `tenant_scope()`
+in `main.rs` is the single resolver, and every scan, read, export, in-memory
+ring result and feedback write goes through it. A key bound to a tenant is
+scoped to that tenant: `X-Siphon-Tenant` may agree with the binding and may
+not contradict it (403). An unbound identity — the bootstrap key, a human
+through the proxy — may still select a tenant with the header or omit it to
+span all of them. A malformed selector is a 400, never a silently dropped
+filter. Until 2026-09-09 the binding was recorded in `AuthContext` and read
+by nothing but `/v1/me`, while each handler derived its own scope from the
+header, so a tenant-bound caller could drop it to read every tenant.
+
 Eight roles. `GET /v1/me` reports the caller's role, how it was established,
 and the permission list; the console renders affordances from it, and every
 gate is re-checked server-side.
