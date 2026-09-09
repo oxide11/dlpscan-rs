@@ -1,0 +1,58 @@
+# Cloudflare Tunnel overlay — puts the whole `auth` stack on a real hostname
+# without opening a port on the host.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.tunnel.yml \
+#                  --profile auth --profile tunnel up -d
+#
+# Why a tunnel rather than the Workers + Containers config in deploy/cloudflare:
+# that one deploys siphon-api ALONE — a Worker in front of one container, five
+# allowlisted API paths, no console, no Authelia, no Postgres. It is an API
+# demo and cannot show you a UI or a login. The lab needs five services running
+# together, which is this file.
+#
+# cloudflared dials OUT to Cloudflare and holds the connection open, so the VPS
+# needs no inbound firewall rule, no public IP and no certificate. TLS
+# terminates at Cloudflare's edge; the hop from cloudflared to nginx is plain
+# HTTP over the compose network, which is why `nginx` here drops the host port
+# binding it has in the base file — with a tunnel in front, publishing 8080 on
+# the host is a second, unauthenticated way in.
+#
+# Read alongside docs/getting-started/lab.md, which covers the Cloudflare-side
+# setup this file assumes: a named tunnel, its token, and two public hostnames
+# both routed to http://nginx:80.
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    # A remotely-managed tunnel: the ingress rules live in the Cloudflare
+    # dashboard rather than in a config file here, so adding a hostname does
+    # not mean redeploying the stack. --no-autoupdate because an unattended
+    # binary swap under a lab is a variable you did not choose to change.
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN — see docs/getting-started/lab.md}
+    depends_on:
+      - nginx
+    # No `networks:` key — the base file names the default network `siphon-net`
+    # and every service joins it implicitly. Declaring a network here would
+    # have to repeat that name, and a second name is a second thing to keep in
+    # step; cloudflared reaches nginx as `http://nginx:80` either way.
+    #
+    # It only needs outbound 443. No ports, no volumes, no secrets on disk.
+
+  nginx:
+    # Overrides the base file's "8080:80". With the tunnel terminating traffic,
+    # the host port is redundant and would bypass Cloudflare Access if you put
+    # Access in front. Reachable from cloudflared as http://nginx:80.
+    ports: !override []
+
+  authelia:
+    # The committed configuration.yml is hardcoded to siphon.local — ten
+    # occurrences across access_control, session and the redirect URL, and a
+    # session cookie scoped to the wrong domain silently fails to authenticate
+    # rather than erroring. scripts/dev/lab-setup.sh renders a copy with your
+    # real domain; this mounts that copy over the original.
+    volumes:
+      - ./authelia:/config
+      - ./authelia/configuration.lab.yml:/config/configuration.yml:ro
+      - authelia-data:/config/runtime
