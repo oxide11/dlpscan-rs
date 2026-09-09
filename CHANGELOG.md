@@ -50,6 +50,16 @@ authorise, or was not entitled to show.
 - **fix(api): a feedback note ending in a multi-byte character panicked
   the request task.** The 2,000-byte truncation sliced without checking a
   character boundary.
+- **fix(api): a set-but-unusable audit signing key refuses to start.**
+  `SIPHON_AUDIT_SIGNING_KEY_HEX` had two failure modes handled two ways in
+  the same match: a key under 32 bytes was fatal, on the reasoning that a
+  misconfigured chain is worse than no chain, while a key that was not hex
+  at all warned and disabled signing. So a typo left a deployment writing
+  an unsigned audit log under the claim that it was tamper-evident, and
+  nothing downstream could tell. Both now refuse. Unset remains supported
+  and startup says the log is unsigned; **set-to-empty is now read as
+  unset** rather than as a too-short key, since emptying a variable is how
+  orchestrators say "off".
 
 ### siphon-fs 1.4.1
 

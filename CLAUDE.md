@@ -572,7 +572,7 @@ seen, which is the truth. Half-set refuses to start. Heartbeats older than
 | `SIPHON_TRUSTED_PROXIES` | — | comma-separated IPs/CIDRs whose `X-Forwarded-For` **and `Remote-User`/`Remote-Groups`** are believed. Unset = key on the TCP peer (every client in one rate-limit bucket) **and no forwarded identity is trusted at all**, so human callers silently fall back to the bearer-key role. Set this to the proxy in any deployment using Authelia. Only the right-most forwarded entry is used |
 | `SIPHON_REQUEST_TIMEOUT_SECS` | 30 | |
 | `SIPHON_AUDIT_LOG_PATH` | — | JSONL audit file. **Required to start in production** (an in-memory ring alone is not a durable audit trail); startup is refused if unset unless `SIPHON_DEV_MODE=true` |
-| `SIPHON_AUDIT_SIGNING_KEY_HEX` | — | enables HMAC-SHA256 chain |
+| `SIPHON_AUDIT_SIGNING_KEY_HEX` | — | enables the HMAC-SHA256 chain. Unset is a supported deployment: the log is unsigned and startup says so. **Set-but-unusable refuses to start** — under 32 bytes, or not valid hex. A misconfigured chain is worse than no chain, because the deployment believes it has one; until 2026-09-09 a too-short key was fatal while a malformed one only warned and disabled the chain |
 | `SIPHON_AUDIT_TAIL_PATH` | — | chain tail state file |
 | `SIPHON_AUDIT_RING_CAP` | 500 | in-memory event buffer |
 | `SIPHON_FINDINGS_RING_CAP` | 1000 | recent findings buffer |
