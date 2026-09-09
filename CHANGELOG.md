@@ -136,6 +136,22 @@ authorise, or was not entitled to show.
 - **`inspection()`** answers whether every part of a message was read,
   separately from what was found in the parts that were.
 
+### Deploy
+
+- **fix(deploy): nginx served the old wireframe at `/ir/`, hiding the IR
+  console behind it.** `location /ir/` aliased the baked-in
+  `siphon-ir.html`, and a prefix location beats `location /` — so `/ir/`
+  returned the prototype instead of the console's IR shell, and `/ir/alerts`
+  (the alert queue) looked for a file at `/srv/ir/alerts` and 404'd, with no
+  SPA fallback in that block to catch it. Every IR deep link was dead in a
+  deployed image while the routes existed, built and passed their own tests
+  — the same shape as the rest of this block: green where it was measured,
+  broken where it was used. The wireframe moves to `/ir-legacy/`, which
+  keeps it reachable for the surfaces the console has not absorbed yet
+  without holding a path the router needs.
+  `scripts/validate-nginx.sh` asked this question of `/detections` and never
+  of `/ir`; it now asks it of both, and fails against the old config.
+
 ### Tooling
 
 - **`scripts/bump-version.sh` knows the whole workspace.** It had no

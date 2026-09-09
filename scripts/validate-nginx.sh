@@ -126,10 +126,10 @@ threading.Thread(target=serve, args=(8080, Api, True), daemon=True).start()
 threading.Event().wait()
 PY
 
-mkdir -p /srv/console/assets /srv/ir
+mkdir -p /srv/console/assets /srv/ir-legacy
 echo '<!doctype html>console' > /srv/console/index.html
 echo 'body{}'                 > /srv/console/assets/probe.css
-echo '<h1>ir</h1>'            > /srv/ir/index.html
+echo '<h1>ir</h1>'            > /srv/ir-legacy/index.html
 
 start_stubs() {
   pkill -f "$WORK/stubs.py" 2>/dev/null || true
@@ -187,11 +187,18 @@ ok "Authelia denial returns 401"
 # Routes are real URLs carrying filter state; without try_files every shared
 # link 404s and the URL-state design is decorative.
 get /detections | grep -q console || fail "SPA deep link did not fall back to index.html"
-ok "SPA deep links serve the shell"
+
+# The IR shell lives at /ir inside the same SPA. A prefix location for the old
+# wireframe used to sit on /ir/ and swallow both of these — /ir/ served the
+# wireframe and /ir/alerts 404'd — while /detections above kept passing. Ask
+# the same question of the surface that was actually broken.
+get /ir/        | grep -q console || fail "/ir/ did not reach the console"
+get /ir/alerts  | grep -q console || fail "IR deep link did not reach the console"
+ok "SPA deep links serve the shell, /ir included"
 
 [ "$(code /ui/)" = "301" ] || fail "/ui/ no longer redirects"
-[ "$(code /ir/)" = "200" ] || fail "/ir/ not served"
-ok "/ui/ redirects, /ir/ serves"
+[ "$(code /ir-legacy/)" = "200" ] || fail "/ir-legacy/ not served"
+ok "/ui/ redirects, /ir-legacy/ serves"
 
 # nginx inherits server-level add_header only into locations that declare
 # none, so a Cache-Control add_header would silently strip these.

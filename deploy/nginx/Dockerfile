@@ -40,11 +40,13 @@ COPY deploy/nginx/nginx.conf /etc/nginx/nginx.conf
 # The console, served at the origin root.
 COPY --from=console /build/dist/ /srv/console/
 
-# The IR wireframe, served at /ir/. It is kept because the incident-response
-# surface has no replacement yet — the C2 wireframe does (this console), so it
-# is no longer shipped and lives on in docs/wireframes/ as the design source.
-COPY docs/wireframes/siphon-ir.html  /srv/ir/index.html
-COPY docs/wireframes/siphon-logo.png /srv/ir/siphon-logo.png
+# The old IR wireframe, served at /ir-legacy/. The console now owns /ir, and
+# serving the wireframe there shadowed it — so this keeps the prototype
+# reachable for the surfaces the console has not absorbed yet without taking
+# a path the router needs. The C2 wireframe is not shipped at all; it lives on
+# in docs/wireframes/ as the design source.
+COPY docs/wireframes/siphon-ir.html  /srv/ir-legacy/index.html
+COPY docs/wireframes/siphon-logo.png /srv/ir-legacy/siphon-logo.png
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -sf http://localhost/nginx-health || exit 1

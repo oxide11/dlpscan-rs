@@ -1,6 +1,6 @@
 {{- if .Values.nginx.enabled }}
 # Reverse proxy / forward-auth for the whole stack. Fronts the
-# /auth/, /api/, /fs/, /ir/ and / (the console) paths. Sits behind the Ingress so
+# /auth/, /api/, /fs/, /ir-legacy/ and / (the console) paths. Sits behind the Ingress so
 # the Ingress controller only has to route one Service.
 apiVersion: apps/v1
 kind: Deployment
