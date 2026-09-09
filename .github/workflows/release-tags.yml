@@ -1,0 +1,83 @@
+name: release-tags
+
+# Push the per-crate release tag for every shipped artifact that lacks one.
+#
+# This exists because tagging was a manual step performed by whoever remembered.
+# It was not being remembered: when this workflow landed the remote carried
+# ZERO tags, while nine crates and the Helm chart all had versions and
+# CHANGELOG.md described releases that no ref identified. Four tags existed on
+# a developer's disk and had never been pushed, which is the same as not
+# existing — worse, actually, since it looks like the job was done.
+#
+# In CI the GITHUB_TOKEN is a real credential with `contents: write`, so
+# tagging here does not depend on whatever the person at the keyboard is
+# allowed to push. That is the whole point: a sandboxed session or a laptop
+# with narrow scopes can leave a release untagged, and this cannot.
+#
+# The work is in scripts/release-tags.sh so it can be read and rehearsed
+# locally — `scripts/release-tags.sh` with no flags prints the plan and
+# changes nothing. Run that before trusting this.
+
+on:
+  push:
+    branches: [main]
+    # Only paths that can carry a version. A docs-only merge should not spend a
+    # runner deciding that nothing changed.
+    paths:
+      - "Cargo.toml"
+      - "crates/*/Cargo.toml"
+      - "deploy/helm/siphon/Chart.yaml"
+  workflow_dispatch:
+    inputs:
+      plan_only:
+        description: "Print the plan without creating or pushing anything"
+        type: boolean
+        default: false
+
+# Creating and pushing refs is the only write this needs. It does not touch
+# code, releases, packages or issues.
+permissions:
+  contents: write
+
+# Two merges landing together must not race to create the same tag. Not
+# cancel-in-progress: a half-finished tagging run should complete rather than
+# be killed partway through a list.
+concurrency:
+  group: release-tags
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Push missing release tags
+    runs-on: ubuntu-latest
+    # A fork's push cannot write tags here and should not try.
+    if: github.repository == 'oxide11/dlpscan-rs'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history and existing tags are both load-bearing. The script
+          # finds the commit that INTRODUCED each version rather than tagging
+          # HEAD, which is what makes a backfill land on the right commits
+          # instead of stacking ten tags on today's merge. A shallow clone
+          # silently degrades that to the HEAD fallback.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Identify the tagger
+        # Annotated tags carry a tagger. CLAUDE.md asks for signed tags where
+        # possible; there is no signing key in CI, so these are annotated and
+        # unsigned, and that is a deliberate gap rather than an oversight. Add
+        # a key and `git config --global user.signingkey` here if the
+        # provenance ever needs to be cryptographic.
+        run: |
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Plan
+        # Always print the plan, including on a real run, so the log shows what
+        # was about to happen even if the push half fails.
+        run: bash scripts/release-tags.sh
+
+      - name: Push
+        if: github.event_name == 'push' || inputs.plan_only != true
+        run: bash scripts/release-tags.sh --push
