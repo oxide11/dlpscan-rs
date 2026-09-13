@@ -19,52 +19,31 @@ maintained alternative exists and the migration risk is low.
 
 ## Security debt — operational correctness
 
-### EDM salt stability (`SIPHON_EDM_SALT_HEX`)
+### ~~EDM salt stability (`SIPHON_EDM_SALT_HEX`)~~ ✓ implemented
 
-`ExactDataMatcher` generates a fresh 32-byte CSPRNG salt per process start when no
-salt is configured. This means EDM vault hashes are invalidated on every restart —
-registered values will never match until the vault is re-registered. The CLI `save`/
-`load` path already serializes the salt correctly; the API path does not.
+`SIPHON_EDM_SALT_HEX` env var added. Parsed at startup (fail-closed on invalid
+hex or < 32 bytes; warn if unset). Stored in `AppState.edm_salt` and wired into
+all four ScanConfig constructions so the HMAC salt is stable across restarts.
+Vault starts empty (no registration endpoint yet) but hashes survive future
+restarts once persistence is added.
 
-**Fix:** Add `SIPHON_EDM_SALT_HEX` env var; load it in `siphon-api/src/main.rs` and
-pass it to `ExactDataMatcher::new(Some(salt), ...)`. Warn at startup if EDM vaults
-are registered without a stable salt. Align with the CLI's existing
-`--edm-salt-path` mechanism.
+### ~~JSON deserialization depth limit~~ ✓ implemented
 
-**Files:** `crates/siphon-api/src/main.rs` (AppState init), `crates/siphon-core/src/edm.rs`
-
-### JSON deserialization depth limit
-
-`serde_json` uses recursive descent with no configurable stack-depth cap. A
-request body with deeply nested JSON (e.g. `{"a":{"a":{"a":...}}}` 15k+ levels)
-can overflow the thread stack before the body-size limit rejects it, since nesting
-depth is not proportional to byte count.
-
-**Affected endpoints:** all `Json<T>` extractor sites in siphon-api (POST /scan,
-POST /scan/batch, POST /v1/overrides/apply, POST /v1/evadex/runs, …).
-
-**Fix options (prefer either):**
-1. Add a Tower middleware layer that reads the raw body, checks nesting depth
-   (character-count heuristic on `{`/`[` depth), and returns 400 before handing
-   to serde_json.
-2. Switch the affected handlers to `Bytes` extraction, pre-scan depth with a
-   fast counter loop, then deserialize — avoids any additional dep.
-
-**Severity:** DoS-only (no data exposure); the body-size limit provides partial
-mitigation by capping bytes, but a ~1 MB body can hold ~100k depth levels.
-
-**Files:** `crates/siphon-api/src/main.rs` (all JSON handler sites)
+`json_depth_guard` Tower middleware added. String-aware byte scan (tracks
+in-string and escape state) rejects at 128 levels with HTTP 400 before
+serde_json runs. Registered in the router between `security_headers` and
+`RequestBodyLimitLayer`.
 
 ---
 
 ## Ready to build
 
 ### UI/UX improvements
-- [ ] Scan results — show confidence scores, span highlighting, BIN enrichment for credit cards
+- [ ] Scan results — show confidence scores and BIN enrichment for credit cards (span highlighting done)
 - [x] Findings history table — sortable (click headers) and CSV export button (feat/backlog-sprint-2)
 - [ ] Loading states — smoother transitions, skeleton screens
-- [ ] File upload scan — drag and drop interface in Scan tab
-- [ ] Scan results — highlight matched text in original input
+- [x] File upload scan — drag and drop interface in Scan tab (e963a76)
+- [x] Scan results — highlight matched text in original input (e963a76)
 
 ### Stability
 - [x] nginx configmap persists across pod restarts — mounted from siphon-nginx-config ConfigMap (Authorization + API key survive restart), verified (fix/stability)
@@ -72,14 +51,14 @@ mitigation by capping bytes, but a ~1 MB body can hold ~100k depth levels.
 - [x] lab-up.sh idempotent — declarative apply for namespace/secret/configmap + SIGPIPE fix in key generation; runs cleanly twice with a stable API key (fix/stability)
 
 ### Adversarial Testing tab
-- [ ] evadex bridge metrics fully wired — show real detection rate, FP rate, coverage
+- [x] evadex bridge metrics fully wired — detection rate, top bypassed techniques, run history table, baselines delta, audit chain ring (e963a76)
 - [ ] File generator working end to end — generate and download test files from UI
 - [ ] Run Now fully working — trigger scan from C2 and see results
 
 ### Findings tab
 - [x] Postgres history showing correctly — /v1/findings/pg populates from siphon-fs file scans; verified end-to-end (fix/stability)
 - [x] Export button — CSV export via /v1/findings/export (feat/backlog-sprint-2)
-- [ ] Date range filter working
+- [x] Date range filter working — ?since=&until= on /v1/findings/pg + date inputs in detections.tsx (e963a76)
 
 ### High priority
 - [x] siphon-api serve subcommand — persistent HTTP API without k8s (PR #318; siphon serve delegates to siphon-api binary)
@@ -113,7 +92,7 @@ mitigation by capping bytes, but a ~1 MB body can hold ~100k depth levels.
 - [x] #366 — fix(core): unicode digit-script folding + confusable-digit normalization; siphon-core 2.1.6 — **merged to main** (squash 362f792, 2026-07-04)
 - [x] #367 — fix(core): preamble-tolerant delimited digit-morse decoding; siphon-core 2.1.7 — **merged to main** (squash a8ff937, 2026-07-04). Stack merged in order #365 → #366 → #367; each child was rebased onto main after its parent squash-merged (squash collapses history, so a non-force merge-commit resolved the conflict).
 - [x] #349 — fix(core): em-dash/en-dash homoglyphs + IBAN mixed-nosep morse decoder — merged; siphon-core 2.1.4
-- [ ] #350 — deps: bump kube 3.1→4.0 and k8s-openapi 0.27→0.28
+- [x] #350 — deps: bump kube 3.1→4.0 and k8s-openapi 0.27→0.28 (already at 4.0/0.28 in siphon-api/Cargo.toml)
 
 ## Resumption notes (for when you come back)
 
