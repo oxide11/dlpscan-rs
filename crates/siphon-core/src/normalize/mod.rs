@@ -3056,20 +3056,45 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // Partial base64: a literal digit prefix followed by a base64-encoded
     // digit suffix. Handles `base64_partial` evasion where value[:mid] is
     // kept literal and value[mid:] is base64-encoded, yielding e.g.
-    // "45320151MTI4MzAzNjY=".  The literal prefix is ≥ 4 digits; the suffix
-    // decodes to a run of digits; together they form a PAN-length string.
+    // "45320151MTI4MzAzNjY=" or "60111111MTExMTExMTc=".
+    //
+    // We bypass `try_decode_base64`'s quality gates here (the "≥3 distinct
+    // characters" filter in particular) because the decoded suffix is
+    // explicitly checked to be all-ASCII-digits, and Luhn validation on the
+    // combined result is the real quality gate. A repetitive digit run like
+    // "11111117" has only 2 distinct chars but is a valid PAN suffix.
     {
+        use base64::{engine::general_purpose, Engine};
         let bytes = text.as_bytes();
         if bytes.len() >= 8 && bytes[0].is_ascii_digit() {
             let digit_end = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
             if digit_end >= 4 && digit_end < bytes.len() {
                 let prefix = &text[..digit_end];
                 let suffix = &text[digit_end..];
-                if let Some(decoded_suffix) = try_decode_base64(suffix) {
-                    if decoded_suffix.bytes().all(|b| b.is_ascii_digit()) {
-                        let combined = format!("{}{}", prefix, decoded_suffix);
-                        if combined.len() >= 13 && combined.len() <= 22 {
-                            push_if_room(combined, &mut alternatives, &mut total_bytes);
+                // Only attempt if suffix uses standard base64 alphabet.
+                let ok_chars = suffix.bytes().all(|b| {
+                    b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'='
+                });
+                if ok_chars {
+                    let decoded_opt = general_purpose::STANDARD.decode(suffix).ok().or_else(|| {
+                        // Try with corrected padding.
+                        let stripped = suffix.trim_end_matches('=');
+                        let padded = match stripped.len() % 4 {
+                            2 => format!("{}==", stripped),
+                            3 => format!("{}=", stripped),
+                            0 => stripped.to_string(),
+                            _ => return None,
+                        };
+                        general_purpose::STANDARD.decode(&padded).ok()
+                    });
+                    if let Some(decoded_bytes) = decoded_opt {
+                        if let Ok(decoded_str) = std::str::from_utf8(&decoded_bytes) {
+                            if decoded_str.bytes().all(|b| b.is_ascii_digit()) {
+                                let combined = format!("{}{}", prefix, decoded_str);
+                                if combined.len() >= 13 && combined.len() <= 22 {
+                                    push_if_room(combined, &mut alternatives, &mut total_bytes);
+                                }
+                            }
                         }
                     }
                 }
@@ -5154,5 +5179,28 @@ mod tests {
             alts.iter().any(|a| a == card),
             "expected base64_partial combination to produce card, got: {alts:?}"
         );
+    }
+
+    #[test]
+    fn test_alt_decode_base64_partial_repetitive_digits() {
+        // base64_partial with a decoded suffix containing only 1–2 distinct
+        // digits (e.g. Discover "6011111111111117" — suffix "11111117" has
+        // just '1' and '7'). The general try_decode_base64 rejects such
+        // decoded strings via its ≥3-distinct-chars gate; the base64_partial
+        // block bypasses that gate and should still recover the PAN.
+        use base64::{engine::general_purpose, Engine};
+        for (card, mid) in [
+            ("6011111111111117", 8usize),
+            ("3530111333300000", 8usize),
+        ] {
+            let prefix = &card[..mid];
+            let suffix_b64 = general_purpose::STANDARD.encode(&card[mid..]);
+            let input = format!("{}{}", prefix, suffix_b64);
+            let alts = generate_alternative_decodings(&input);
+            assert!(
+                alts.iter().any(|a| a == card),
+                "base64_partial: expected {card} from {input:?}, got: {alts:?}"
+            );
+        }
     }
 }
