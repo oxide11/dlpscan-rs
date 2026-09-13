@@ -6,6 +6,26 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-09-13 — security audit / siphon-auth 0.1.1, siphon-core 2.9.3
+
+### siphon-auth 0.1.1
+- **fix(auth): double-rotation extends superseded secret's grace window.**
+  In `rotate()`, the cache loop rewrote every existing entry for the key ID
+  with the new `KeyRecord` (which carries `previous_valid_until = T2`). On a
+  second rotation within one cache-refresh window, the first rotation's secret
+  had its grace deadline silently extended to T2. The fix: drop all
+  already-`Previous` entries before the loop and demote only `Current` entries.
+
+### siphon-core 2.9.3
+- **fix(core): overrides compile failures now surface as structured `warn` log events.**
+  Bad regex patterns in `pattern_overrides` and `custom_categories`, malformed
+  override keys, and unknown list bindings all previously wrote to `stderr` via
+  `eprintln!`, which is invisible in containerized deployments using structured
+  logging. All seven callsites now use `tracing::warn!` with structured fields
+  so alert rules and log aggregators can catch them.
+
+---
+
 ## 2026-09-13 — security audit / siphon-fs 1.5.1, siphon-icap 0.3.1, siphon-smtp 0.2.2
 
 ### siphon-fs 1.5.1

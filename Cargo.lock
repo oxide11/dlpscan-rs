@@ -5017,7 +5017,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-auth"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "deadpool-postgres",
@@ -5093,7 +5093,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-core"
-version = "2.9.2"
+version = "2.9.3"
 dependencies = [
  "aho-corasick",
  "base64 0.23.1",
