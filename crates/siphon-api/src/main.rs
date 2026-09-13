@@ -38,6 +38,10 @@
 //!   SIPHON_AUDIT_RING_CAP            In-memory audit ring capacity (default: 500)
 //!   SIPHON_FINDINGS_RING_CAP         In-memory findings ring capacity (default: 1000)
 //!   SIPHON_FINDINGS_RETENTION_DAYS   Days to retain findings (0 or unset = keep forever)
+//!   SIPHON_EDM_SALT_HEX              Hex-encoded HMAC-SHA256 salt for EDM vault (>= 32 bytes /
+//!                                    64 hex chars). Without this the salt is random per-process
+//!                                    and vault hashes are lost on restart. Invalid hex or too-
+//!                                    short values are a startup error.
 
 use axum::{
     body::Body,
@@ -214,6 +218,10 @@ struct AppState {
     /// count what was found, these count what was looked at. Recording is
     /// in-memory and infallible, so it never fails or slows a scan.
     rollup: Arc<db::RollupAccumulator>,
+    /// Stable HMAC salt for the EDM vault, loaded from SIPHON_EDM_SALT_HEX.
+    /// None means a random salt was generated — vault hashes are invalidated
+    /// on every restart. Set to at least 32 hex-encoded bytes in production.
+    edm_salt: Option<Arc<Vec<u8>>>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -1190,6 +1198,71 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
 }
 
 // ---------------------------------------------------------------------------
+// JSON nesting-depth guard — DoS protection
+// ---------------------------------------------------------------------------
+// serde_json uses recursive descent with no configurable depth cap. A body
+// with ~15k levels of nesting overflows the thread stack before the body-size
+// limit rejects it, because nesting depth is not proportional to byte count.
+// This middleware scans the raw bytes first and returns 400 before the
+// deserializer runs.
+//
+// The scanner is string-aware to avoid false positives from literal braces
+// inside quoted values.
+const MAX_JSON_NEST_DEPTH: usize = 128;
+
+async fn json_depth_guard(request: Request<Body>, next: Next) -> Response {
+    let is_json = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.starts_with("application/json"))
+        .unwrap_or(false);
+
+    if !is_json {
+        return next.run(request).await;
+    }
+
+    let (parts, body) = request.into_parts();
+    let bytes = match axum::body::to_bytes(body, usize::MAX).await {
+        Ok(b) => b,
+        Err(_) => {
+            return (StatusCode::BAD_REQUEST, "cannot read request body").into_response();
+        }
+    };
+
+    let mut depth: usize = 0;
+    let mut in_string = false;
+    let mut escape_next = false;
+    for &b in bytes.iter() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        match b {
+            b'\\' if in_string => escape_next = true,
+            b'"' => in_string = !in_string,
+            b'{' | b'[' if !in_string => {
+                depth += 1;
+                if depth > MAX_JSON_NEST_DEPTH {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": "request body nesting depth exceeds limit"
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+            b'}' | b']' if !in_string => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+
+    let request = Request::from_parts(parts, Body::from(bytes));
+    next.run(request).await
+}
+
+// ---------------------------------------------------------------------------
 // Request / Response types
 // ---------------------------------------------------------------------------
 
@@ -1663,6 +1736,12 @@ async fn scan(
         pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
         list_bindings: Some(ov.list_bindings.clone()),
         max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+        edm: state.edm_salt.as_ref().map(|s| {
+            Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                Some(s.as_slice()),
+                None,
+            ))
+        }),
         ..Default::default()
     };
     // Force each disabled stage into its most permissive behaviour.
@@ -2146,6 +2225,12 @@ async fn scan_batch(
             pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
             list_bindings: Some(ov.list_bindings.clone()),
             max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+            edm: state.edm_salt.as_ref().map(|s| {
+                Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                    Some(s.as_slice()),
+                    None,
+                ))
+            }),
             ..Default::default()
         };
         if stage_disabled.contains("min_confidence") {
@@ -2451,6 +2536,12 @@ async fn scan_explain(
         pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
         list_bindings: Some(ov.list_bindings.clone()),
         max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+        edm: state.edm_salt.as_ref().map(|s| {
+            Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                Some(s.as_slice()),
+                None,
+            ))
+        }),
         ..Default::default()
     };
     if stage_disabled.contains("min_confidence") {
@@ -4219,7 +4310,22 @@ async fn overrides_content(
     let (target_path, label) = if q.version == "current" {
         (path.to_path_buf(), "current".to_string())
     } else {
-        // Expect "v<nanos>"; look up the sibling backup file.
+        // q.version is caller-supplied (query param). Reject anything
+        // that is not a v<nanos> token — without this, a version like
+        // "../../etc/passwd" composes into the backup filename and
+        // path.with_extension() happily walks out of the overrides directory.
+        if !siphon_core::path_guard::is_safe_version_token(&q.version) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("invalid version {:?}; expected 'v<nanos>'", q.version),
+                }),
+            ));
+        }
+        // Expect "v<nanos>"; look up the sibling backup file. The
+        // numeric parse below provides an additional bounds check; the
+        // token guard above ensures it cannot fail for any traversal
+        // payload.
         let nanos = q
             .version
             .strip_prefix('v')
@@ -6354,6 +6460,10 @@ struct PgFindingsQuery {
     /// `pii`, `pci`, `all` — comma separated. Absent means fully masked,
     /// which is the default for every caller regardless of role.
     unmask: Option<String>,
+    /// ISO8601 lower bound (inclusive), e.g. 2026-01-01T00:00:00Z
+    since: Option<String>,
+    /// ISO8601 upper bound (inclusive)
+    until: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -6420,6 +6530,10 @@ async fn list_pg_findings(
     let limit = q.limit.unwrap_or(50).min(1000);
     let offset = q.offset.unwrap_or(0).max(0);
     let category = q.category.as_deref();
+    let since_ts: Option<chrono::DateTime<chrono::Utc>> =
+        q.since.as_deref().and_then(|s| s.parse().ok());
+    let until_ts: Option<chrono::DateTime<chrono::Utc>> =
+        q.until.as_deref().and_then(|s| s.parse().ok());
 
     // Tenant isolation, from the authenticated identity rather than from
     // whatever the caller put in the header. See `tenant_scope`.
@@ -6434,9 +6548,18 @@ async fn list_pg_findings(
              FROM findings \
              WHERE ($1::text IS NULL OR category = $1) \
                AND ($2::text IS NULL OR tenant_id = $2) \
+               AND ($5::timestamptz IS NULL OR created_at >= $5) \
+               AND ($6::timestamptz IS NULL OR created_at <= $6) \
              ORDER BY created_at DESC \
              LIMIT $3 OFFSET $4",
-            &[&category, &tenant_filter, &limit, &offset],
+            &[
+                &category,
+                &tenant_filter,
+                &limit,
+                &offset,
+                &since_ts,
+                &until_ts,
+            ],
         )
         .await
     {
@@ -6497,8 +6620,10 @@ async fn list_pg_findings(
         .query_one(
             "SELECT COUNT(*) FROM findings \
              WHERE ($1::text IS NULL OR category = $1) \
-               AND ($2::text IS NULL OR tenant_id = $2)",
-            &[&category, &tenant_filter],
+               AND ($2::text IS NULL OR tenant_id = $2) \
+               AND ($3::timestamptz IS NULL OR created_at >= $3) \
+               AND ($4::timestamptz IS NULL OR created_at <= $4)",
+            &[&category, &tenant_filter, &since_ts, &until_ts],
         )
         .await
     {
@@ -7120,6 +7245,12 @@ async fn scan_stream(
         pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
         list_bindings: Some(ov.list_bindings.clone()),
         max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+        edm: state.edm_salt.as_ref().map(|s| {
+            Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                Some(s.as_slice()),
+                None,
+            ))
+        }),
         ..Default::default()
     };
     if stage_disabled.contains("min_confidence") {
@@ -7759,6 +7890,37 @@ async fn main() {
         }
     };
 
+    // EDM salt — must be stable across restarts for vault hashes to survive.
+    let edm_salt: Option<Arc<Vec<u8>>> = match std::env::var("SIPHON_EDM_SALT_HEX").ok() {
+        Some(hex_str) if !hex_str.is_empty() => match hex::decode(&hex_str) {
+            Ok(bytes) if bytes.len() >= 32 => {
+                tracing::info!(
+                    bytes = bytes.len(),
+                    "EDM salt loaded from SIPHON_EDM_SALT_HEX"
+                );
+                Some(Arc::new(bytes))
+            }
+            Ok(bytes) => {
+                tracing::error!(
+                    len = bytes.len(),
+                    "SIPHON_EDM_SALT_HEX is too short (need >= 32 bytes / 64 hex chars); refusing to start"
+                );
+                std::process::exit(1);
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "SIPHON_EDM_SALT_HEX is not valid hex; refusing to start");
+                std::process::exit(1);
+            }
+        },
+        _ => {
+            tracing::warn!(
+                "SIPHON_EDM_SALT_HEX not set — EDM vault uses a random salt; \
+                 hashes will not survive restarts"
+            );
+            None
+        }
+    };
+
     let state = Arc::new(AppState {
         api_key_hash,
         api_key_hash_secondary,
@@ -7786,6 +7948,7 @@ async fn main() {
         db_state,
         stats_cache: Arc::new(Mutex::new(HashMap::new())),
         rollup: Arc::new(db::RollupAccumulator::new()),
+        edm_salt,
     });
 
     // API-key refresh task: reload the key set and flush last-used marks.
@@ -8072,6 +8235,7 @@ async fn main() {
         ))
         .merge(probes)
         .layer(middleware::from_fn(security_headers))
+        .layer(middleware::from_fn(json_depth_guard))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(

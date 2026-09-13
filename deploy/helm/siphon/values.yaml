@@ -108,7 +108,7 @@ api:
 
   image:
     repository: oxide11/siphon-api
-    tag: "2.12.1"
+    tag: "2.12.2"
     pullPolicy: ""  # inherits global.imagePullPolicy
 
   service:
@@ -361,6 +361,41 @@ postgres:
     limits:
       cpu: "1"
       memory: 1Gi
+
+# ---------------------------------------------------------------------------
+# externalPostgres — use a managed Postgres (RDS, Cloud SQL, Neon, etc.)
+# instead of the bundled Deployment above.
+#
+# Set postgres.enabled: false and externalPostgres.enabled: true.
+# Supply the full connection URL either inline (url) or via a Secret
+# (urlSecretRef). siphon-api and siphon-fs both receive SIPHON_DATABASE_URL.
+#
+# Example — RDS with SSL:
+#   postgres:
+#     enabled: false
+#   externalPostgres:
+#     enabled: true
+#     urlSecretRef:
+#       name: siphon-rds-url   # kubectl create secret generic siphon-rds-url \
+#       key: url               #   --from-literal=url="postgres://..."
+# ---------------------------------------------------------------------------
+externalPostgres:
+  enabled: false
+
+  # Inline URL — avoid in production; prefer urlSecretRef so the password
+  # never appears in helm values stored in version control.
+  url: ""
+
+  # Reference to a Secret containing the full connection URL.
+  # Both name and key must be set for the secretRef path to be used.
+  urlSecretRef:
+    name: ""
+    key: url
+
+  # TLS mode for the external Postgres hop (same semantics as postgres.sslMode).
+  # RDS / Cloud SQL / Neon all present valid certificates — set to "require".
+  sslMode: require
+  caFile: ""  # path to a CA bundle mounted via api.extraVolumeMounts / fs.extraVolumeMounts
 
 # ---------------------------------------------------------------------------
 # Console (the analyst SPA) — served from the nginx Deployment below

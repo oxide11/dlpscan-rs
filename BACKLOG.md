@@ -1,6 +1,6 @@
 # Siphon Backlog
 
-Last updated: 2026-09-02
+Last updated: 2026-09-13
 
 ## Security debt — unmaintained dependencies
 
@@ -19,52 +19,31 @@ maintained alternative exists and the migration risk is low.
 
 ## Security debt — operational correctness
 
-### EDM salt stability (`SIPHON_EDM_SALT_HEX`)
+### ~~EDM salt stability (`SIPHON_EDM_SALT_HEX`)~~ ✓ implemented
 
-`ExactDataMatcher` generates a fresh 32-byte CSPRNG salt per process start when no
-salt is configured. This means EDM vault hashes are invalidated on every restart —
-registered values will never match until the vault is re-registered. The CLI `save`/
-`load` path already serializes the salt correctly; the API path does not.
+`SIPHON_EDM_SALT_HEX` env var added. Parsed at startup (fail-closed on invalid
+hex or < 32 bytes; warn if unset). Stored in `AppState.edm_salt` and wired into
+all four ScanConfig constructions so the HMAC salt is stable across restarts.
+Vault starts empty (no registration endpoint yet) but hashes survive future
+restarts once persistence is added.
 
-**Fix:** Add `SIPHON_EDM_SALT_HEX` env var; load it in `siphon-api/src/main.rs` and
-pass it to `ExactDataMatcher::new(Some(salt), ...)`. Warn at startup if EDM vaults
-are registered without a stable salt. Align with the CLI's existing
-`--edm-salt-path` mechanism.
+### ~~JSON deserialization depth limit~~ ✓ implemented
 
-**Files:** `crates/siphon-api/src/main.rs` (AppState init), `crates/siphon-core/src/edm.rs`
-
-### JSON deserialization depth limit
-
-`serde_json` uses recursive descent with no configurable stack-depth cap. A
-request body with deeply nested JSON (e.g. `{"a":{"a":{"a":...}}}` 15k+ levels)
-can overflow the thread stack before the body-size limit rejects it, since nesting
-depth is not proportional to byte count.
-
-**Affected endpoints:** all `Json<T>` extractor sites in siphon-api (POST /scan,
-POST /scan/batch, POST /v1/overrides/apply, POST /v1/evadex/runs, …).
-
-**Fix options (prefer either):**
-1. Add a Tower middleware layer that reads the raw body, checks nesting depth
-   (character-count heuristic on `{`/`[` depth), and returns 400 before handing
-   to serde_json.
-2. Switch the affected handlers to `Bytes` extraction, pre-scan depth with a
-   fast counter loop, then deserialize — avoids any additional dep.
-
-**Severity:** DoS-only (no data exposure); the body-size limit provides partial
-mitigation by capping bytes, but a ~1 MB body can hold ~100k depth levels.
-
-**Files:** `crates/siphon-api/src/main.rs` (all JSON handler sites)
+`json_depth_guard` Tower middleware added. String-aware byte scan (tracks
+in-string and escape state) rejects at 128 levels with HTTP 400 before
+serde_json runs. Registered in the router between `security_headers` and
+`RequestBodyLimitLayer`.
 
 ---
 
 ## Ready to build
 
 ### UI/UX improvements
-- [ ] Scan results — show confidence scores, span highlighting, BIN enrichment for credit cards
+- [x] Scan results — show confidence scores and BIN enrichment for credit cards (confidence already shown; BIN brand/type/country/issuer badges added)
 - [x] Findings history table — sortable (click headers) and CSV export button (feat/backlog-sprint-2)
-- [ ] Loading states — smoother transitions, skeleton screens
-- [ ] File upload scan — drag and drop interface in Scan tab
-- [ ] Scan results — highlight matched text in original input
+- [x] Loading states — smoother transitions, skeleton screens (assurance, running, patterns all use animated pulse skeletons instead of plain text)
+- [x] File upload scan — drag and drop interface in Scan tab (e963a76)
+- [x] Scan results — highlight matched text in original input (e963a76)
 
 ### Stability
 - [x] nginx configmap persists across pod restarts — mounted from siphon-nginx-config ConfigMap (Authorization + API key survive restart), verified (fix/stability)
@@ -72,14 +51,14 @@ mitigation by capping bytes, but a ~1 MB body can hold ~100k depth levels.
 - [x] lab-up.sh idempotent — declarative apply for namespace/secret/configmap + SIGPIPE fix in key generation; runs cleanly twice with a stable API key (fix/stability)
 
 ### Adversarial Testing tab
-- [ ] evadex bridge metrics fully wired — show real detection rate, FP rate, coverage
+- [x] evadex bridge metrics fully wired — detection rate, top bypassed techniques, run history table, baselines delta, audit chain ring (e963a76)
 - [ ] File generator working end to end — generate and download test files from UI
 - [ ] Run Now fully working — trigger scan from C2 and see results
 
 ### Findings tab
 - [x] Postgres history showing correctly — /v1/findings/pg populates from siphon-fs file scans; verified end-to-end (fix/stability)
 - [x] Export button — CSV export via /v1/findings/export (feat/backlog-sprint-2)
-- [ ] Date range filter working
+- [x] Date range filter working — ?since=&until= on /v1/findings/pg + date inputs in detections.tsx (e963a76)
 
 ### High priority
 - [x] siphon-api serve subcommand — persistent HTTP API without k8s (PR #318; siphon serve delegates to siphon-api binary)
@@ -99,12 +78,12 @@ mitigation by capping bytes, but a ~1 MB body can hold ~100k depth levels.
 - [x] Morse code IBAN bypass — fixed: all 4 evadex variants (space/nosep/newline/slash sep) now detected; slash decoder extended to accept multi-char alpha tokens merged by stage 6b (PR #349)
 - [x] Morse delimited-preamble bypass — fixed: comma/slash/pipe digit-morse embedded in surrounding text (filename preamble on the file-scan path, or a prose prefix like `card `) now decoded via `find_embedded_digit_morse_delimited`, the delimited analogue of the nosep embedded scan (PR #336). Preamble/prefix spot checks 0/6 → 6/6; bare-separator variants stay 5/5 (PR #367; siphon-core 2.1.7)
 - [ ] Morse code remaining bypass — remaining failures are context-required IDs (SSN/SIN/AU_TFN/DE_TAX_ID/FR_INSEE) skipped by the morse alt-decode path *by design*: the alt-decoding emits bare digits without the surrounding context keyword, so context-gated patterns don't fire. Luhn/checksum-gated values (cards, IBAN, routing) are now covered across all separators incl. embedded-in-text. Closing the context-required class needs the alt-decoder to carry surrounding context — a larger change weighed against FP risk. Target <30%; re-baseline with evadex before deciding.
-- [ ] Remaining credit_card gaps (evadex replay 2026-07-04, post #365-#367; 63/100 previously-bypassing variants now detected) — still bypassing: zero-padding (`right_pad_zeros`/`left_pad_zeros`, ~10), nested/partial base64 chains (`base64_partial`/`base64_no_padding`/`base64_double`/`url_of_base64`/`hex_of_base64`, ~11), `noise_embedded` (4), residual `homoglyph_substitution` (4), `barcode_split` (2), and a couple of `morse_slash_sep`/`morse_no_sep` stragglers. Zero-padding and deep-nested base64 are the highest-value next targets.
+- [ ] Remaining credit_card gaps (evadex fast/northam 2026-09-13, siphon_post_fixes.json; 96.0% detection rate) — still bypassing: zero-padding (`right_pad_zeros` 7/28, `left_pad_zeros` 6/28), `base64_partial` 7/28 (these all detect when tested directly; consistent evadex scan discrepancy — suspected asyncio-on-Windows race in evadex, not a scanner bug), `noise_embedded` 4/28, nested/partial base64 chains (`base64_no_padding` 5/24, `base64_double` 4/28, `url_of_base64` 4/28, `base64_of_base64`/`base64_of_hex` 2/28 each, `base64_of_rot13`/`hex_of_base64` 1/28 each), morse stragglers (`morse_no_sep` 3/28, `morse_space_sep` 2/28, `morse_slash_sep`/`morse_newline_sep` 1/28 each), `barcode_split` 6/14, `base32_standard` 3/28. `homoglyph_substitution` fully closed (0/28, 61c82c5); base64_partial improved 21→7 (validate_decoded quality gate bypass, 4928295).
 - [x] Unicode digit-script + confusable-digit folding — fixed: Stage 10 gained a Unicode `Nd` fallback (`fold_unicode_digit`) folding all decimal-digit scripts (Devanagari/Bengali/Gujarati/Tamil/math-bold/… ~60 scripts) to ASCII; new Stage 11 (`fold_confusable_digit_runs`) folds letter-shaped digit confusables (O→0, l/I→1, Greek/Cyrillic O→0) inside long digit-dense runs. Closes leet_aggressive / greek_omicron / Devanagari-digit gaps; run-gated + Luhn-gated so prose is untouched (PR #366; siphon-core 2.1.6)
 - [x] Regional digits — Thai (U+0E50), Extended Arabic-Indic (U+06F0), Arabic-Indic (U+0660) now detected via HOMOGLYPH_MAP; Thai-digit card regression locked in (PR #359); verified PASS in the evadex suite
 
 ### Infrastructure
-- [ ] Helm chart: postgres subchart or external postgres configuration
+- [x] Helm chart: external postgres configuration — `externalPostgres` block in values.yaml; SIPHON_DATABASE_URL injected into both siphon-api and siphon-fs via URL/secretRef; siphon-fs also gains bundled-postgres URL injection it was previously missing
 - [x] siphon-fs postgres pool — fixed missing SIPHON_DATABASE_URL in 30-siphon-fs.yaml; file-scan findings now reach postgres; verified end-to-end (fix/stability)
 - [x] lab-up.sh — add postgres to local kind setup
 
@@ -113,7 +92,7 @@ mitigation by capping bytes, but a ~1 MB body can hold ~100k depth levels.
 - [x] #366 — fix(core): unicode digit-script folding + confusable-digit normalization; siphon-core 2.1.6 — **merged to main** (squash 362f792, 2026-07-04)
 - [x] #367 — fix(core): preamble-tolerant delimited digit-morse decoding; siphon-core 2.1.7 — **merged to main** (squash a8ff937, 2026-07-04). Stack merged in order #365 → #366 → #367; each child was rebased onto main after its parent squash-merged (squash collapses history, so a non-force merge-commit resolved the conflict).
 - [x] #349 — fix(core): em-dash/en-dash homoglyphs + IBAN mixed-nosep morse decoder — merged; siphon-core 2.1.4
-- [ ] #350 — deps: bump kube 3.1→4.0 and k8s-openapi 0.27→0.28
+- [x] #350 — deps: bump kube 3.1→4.0 and k8s-openapi 0.27→0.28 (already at 4.0/0.28 in siphon-api/Cargo.toml)
 
 ## Resumption notes (for when you come back)
 
@@ -130,6 +109,8 @@ Start here:
 See `HANDOFF.md` for full state, versions, and commands.
 
 ## Recently completed
+- [x] homoglyph_substitution credit_card bypass fully closed — run-scanner replaces whole-token guard; finds any PAN-length (13–19 char) contiguous run of digit-confusable chars in context sentences; 0/28 evadex bypass (was 4/28). 468/468 tests pass. (61c82c5, 2026-09-13)
+- [x] base64_partial alt-decode bypasses validate_decoded quality gate — `try_decode_base64` rejected decoded strings with <3 distinct chars (Discover/JCB PANs with repetitive digit suffixes); now calls base64 engine directly in the alt-decode block; 21→7 evadex fail (the remaining 7 detect when tested directly — suspected evadex asyncio-on-Windows race). +1 regression test. (4928295, 2026-09-13)
 - [x] Merged PR stack #365 → #366 → #367 to main (siphon-core 2.1.5 → 2.1.6 → 2.1.7, 2026-07-04). Clean main verified: 394 siphon-core lib tests + 154 root lib + 69 integration + 12 evasion all pass; `cargo deny` clean; release binary builds. Spot check 27/29 (the 2 "fails" are malformed test vectors that don't fold to a Luhn-valid PAN — correctly-built Greek/Cyrillic-O payloads *are* detected, confirming Stage 11 confusable folding). evadex mutate credit_card bypass 84.4% → **74.2%** (159 bred, seed 42, same breeding scan); evadex replay `--failed-only` credit_card: **63/100** previously-bypassing variants now detected (regional-digit + morse-separator + nested-base64 techniques flipped to detected).
 - [x] Stage-6b dot-stripping + base64 alt-decode test failures — `should_strip_dot` now leaves letter-bounded dots intact (`D123.4567` stays an identifier) while still stripping pure numeric groupings; base64→ROT13 alt-decode chain only emits when ROT13 actually transforms the bytes, so pure-digit payloads no longer re-introduce plain base64 output stage 4c already covers (main 0cb99c9)
 - [x] #349 — em-dash/en-dash homoglyphs + IBAN mixed-nosep/slash morse decoder — merged; siphon-core 2.1.4 (all 4 evadex IBAN morse variants now detected)

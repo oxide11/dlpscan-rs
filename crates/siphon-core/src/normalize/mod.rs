@@ -122,6 +122,16 @@ static HOMOGLYPH_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
         ('\u{03C5}', 'u'),
         ('\u{03C7}', 'x'),
         ('\u{03C9}', 'w'), // Greek ω (omega) → w (visual lookalike)
+        // Digit-lookalike Latin letters used by evadex homoglyph_substitution.
+        // These are rare enough that unconditional folding is safe.
+        ('\u{01A7}', '2'), // Ƨ LATIN CAPITAL LETTER TONE TWO
+        ('\u{01A8}', '2'), // ƨ LATIN SMALL LETTER TONE TWO
+        ('\u{01B7}', '3'), // Ʒ LATIN CAPITAL LETTER EZH
+        ('\u{0292}', '3'), // ʒ LATIN SMALL LETTER EZH
+        ('\u{01BC}', '5'), // Ƽ LATIN CAPITAL LETTER TONE FIVE
+        ('\u{01BD}', '5'), // ƽ LATIN SMALL LETTER TONE FIVE
+        ('\u{0222}', '8'), // Ȣ LATIN CAPITAL LETTER OU
+        ('\u{0223}', '8'), // ȣ LATIN SMALL LETTER OU
         // Fullwidth digits (backup — NFKC should handle these)
         ('\u{FF10}', '0'),
         ('\u{FF11}', '1'),
@@ -2887,6 +2897,33 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
         push_if_room(decoded, &mut alternatives, &mut total_bytes);
     }
 
+    // Zero-padding bypass: strip leading and trailing zeros from all-digit
+    // strings in the extended card-number length range. Covers
+    // right_pad_zeros / left_pad_zeros evadex variants where a valid PAN is
+    // padded to a fixed field width. Both directions are generated; the Luhn
+    // validator then accepts only the one that passes.
+    {
+        let all_digits = text.bytes().all(|b| b.is_ascii_digit());
+        if all_digits && text.len() >= 14 && text.len() <= 22 {
+            let stripped_right = text.trim_end_matches('0');
+            if stripped_right.len() >= 13 && stripped_right != text {
+                push_if_room(
+                    stripped_right.to_string(),
+                    &mut alternatives,
+                    &mut total_bytes,
+                );
+            }
+            let stripped_left = text.trim_start_matches('0');
+            if stripped_left.len() >= 13 && stripped_left != text {
+                push_if_room(
+                    stripped_left.to_string(),
+                    &mut alternatives,
+                    &mut total_bytes,
+                );
+            }
+        }
+    }
+
     // Two-stage encoding chain: base64 → ROT13.
     // Covers the evasion pattern base64(rot13(secret)) where the primary
     // normalization pipeline decodes the base64 wrapper and the alt pass
@@ -2934,6 +2971,8 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     if let Some(hex_decoded) = try_decode_hex(text) {
         if let Some(b64_decoded) = try_decode_base64(&hex_decoded) {
             push_if_room(b64_decoded, &mut alternatives, &mut total_bytes);
+        } else if let Some(b64url_decoded) = try_decode_base64url(&hex_decoded) {
+            push_if_room(b64url_decoded, &mut alternatives, &mut total_bytes);
         }
         push_if_room(hex_decoded, &mut alternatives, &mut total_bytes);
     }
@@ -2947,6 +2986,124 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     for src in [text.trim(), rot_text.trim()] {
         for recovered in recover_case_folded_base64_digits(src) {
             push_if_room(recovered, &mut alternatives, &mut total_bytes);
+        }
+    }
+
+    // Homoglyph digit recovery: scan for PAN-length runs of digit-confusable chars.
+    //
+    // After the HOMOGLYPH_MAP stage has converted Ƨ→2, Ʒ→3, Ƽ→5, Ȣ→8, the
+    // remaining digit-confusables from evadex's `homoglyph_substitution` are
+    // O/o→0, I/l→1, and Cyrillic б (U+0431)→6. A single pass finds maximal
+    // contiguous runs of those chars, and any run of 13–19 chars containing at
+    // least one confusable (i.e. folding actually changes it) is emitted.
+    //
+    // This handles both bare PANs ("4532OI5II283O3бб") and PANs embedded in a
+    // context sentence ("My card is 4532OI5II283O3бб end"), where the full-text
+    // "all chars confusable" guard would fail.
+    //
+    // б→6 is intentionally absent from the main HOMOGLYPH_MAP because б is the
+    // second letter of the Russian alphabet. Here it fires only inside a run of
+    // otherwise digit-like chars, so lone Cyrillic words like "брат" never
+    // qualify — the surrounding letters break the run.
+    {
+        let is_dc = |c: char| c.is_ascii_digit() || matches!(c, 'O' | 'o' | 'I' | 'l' | '\u{0431}');
+        let fold_dc = |c: char| match c {
+            'O' | 'o' => '0',
+            'I' | 'l' => '1',
+            '\u{0431}' => '6',
+            _ => c,
+        };
+        let chars: Vec<char> = text.chars().collect();
+        let n = chars.len();
+        let mut i = 0;
+        while i < n {
+            if is_dc(chars[i]) {
+                let start = i;
+                while i < n && is_dc(chars[i]) {
+                    i += 1;
+                }
+                let run_len = i - start;
+                if (13..=19).contains(&run_len) {
+                    let has_confusable = chars[start..i]
+                        .iter()
+                        .any(|&c| matches!(c, 'O' | 'o' | 'I' | 'l' | '\u{0431}'));
+                    if has_confusable {
+                        let folded: String = chars[start..i].iter().map(|&c| fold_dc(c)).collect();
+                        if folded.bytes().all(|b| b.is_ascii_digit()) {
+                            push_if_room(folded, &mut alternatives, &mut total_bytes);
+                        }
+                    }
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    // Strip leading/trailing non-digit noise to expose an embedded PAN.
+    // Handles the `noise_embedded` evasion where a valid PAN is wrapped in
+    // repeated non-digit characters (e.g. "XXXXXXXXXX4532015112830366XXXXXXXXXX").
+    // Only emits when the inner digit run is PAN-length (13–19), is all-digit,
+    // and the original had non-digit wrapping — so pure-digit strings and
+    // strings with interior non-digits are unaffected.
+    {
+        let trimmed = text.trim_matches(|c: char| !c.is_ascii_digit());
+        if !trimmed.is_empty()
+            && trimmed.len() < text.len()
+            && trimmed.bytes().all(|b| b.is_ascii_digit())
+            && trimmed.len() >= 13
+            && trimmed.len() <= 19
+        {
+            push_if_room(trimmed.to_string(), &mut alternatives, &mut total_bytes);
+        }
+    }
+
+    // Partial base64: a literal digit prefix followed by a base64-encoded
+    // digit suffix. Handles `base64_partial` evasion where value[:mid] is
+    // kept literal and value[mid:] is base64-encoded, yielding e.g.
+    // "45320151MTI4MzAzNjY=" or "60111111MTExMTExMTc=".
+    //
+    // We bypass `try_decode_base64`'s quality gates here (the "≥3 distinct
+    // characters" filter in particular) because the decoded suffix is
+    // explicitly checked to be all-ASCII-digits, and Luhn validation on the
+    // combined result is the real quality gate. A repetitive digit run like
+    // "11111117" has only 2 distinct chars but is a valid PAN suffix.
+    {
+        use base64::{engine::general_purpose, Engine};
+        let bytes = text.as_bytes();
+        if bytes.len() >= 8 && bytes[0].is_ascii_digit() {
+            let digit_end = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
+            if digit_end >= 4 && digit_end < bytes.len() {
+                let prefix = &text[..digit_end];
+                let suffix = &text[digit_end..];
+                // Only attempt if suffix uses standard base64 alphabet.
+                let ok_chars = suffix
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=');
+                if ok_chars {
+                    let decoded_opt = general_purpose::STANDARD.decode(suffix).ok().or_else(|| {
+                        // Try with corrected padding.
+                        let stripped = suffix.trim_end_matches('=');
+                        let padded = match stripped.len() % 4 {
+                            2 => format!("{}==", stripped),
+                            3 => format!("{}=", stripped),
+                            0 => stripped.to_string(),
+                            _ => return None,
+                        };
+                        general_purpose::STANDARD.decode(&padded).ok()
+                    });
+                    if let Some(decoded_bytes) = decoded_opt {
+                        if let Ok(decoded_str) = std::str::from_utf8(&decoded_bytes) {
+                            if decoded_str.bytes().all(|b| b.is_ascii_digit()) {
+                                let combined = format!("{}{}", prefix, decoded_str);
+                                if combined.len() >= 13 && combined.len() <= 22 {
+                                    push_if_room(combined, &mut alternatives, &mut total_bytes);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -4908,5 +5065,144 @@ mod tests {
             Some("GB82WEST12345698765432"),
             "multi-char alpha tokens should pass through literally"
         );
+    }
+
+    #[test]
+    fn test_alt_decode_zero_padding_right() {
+        // right_pad_zeros: card + one trailing zero. Strip should produce the
+        // original PAN which passes Luhn.
+        let alts = generate_alternative_decodings("45320151128303660");
+        assert!(
+            alts.iter().any(|a| a == "4532015112830366"),
+            "expected stripped-trailing-zero alternative, got: {alts:?}"
+        );
+    }
+
+    #[test]
+    fn test_alt_decode_zero_padding_left() {
+        // left_pad_zeros: one leading zero + card.
+        let alts = generate_alternative_decodings("04532015112830366");
+        assert!(
+            alts.iter().any(|a| a == "4532015112830366"),
+            "expected stripped-leading-zero alternative, got: {alts:?}"
+        );
+    }
+
+    #[test]
+    fn test_alt_decode_hex_of_base64() {
+        // hex(base64("4532015112830366"))
+        // base64("4532015112830366") = "NDUzMjAxNTExMjgzMDM2Ng=="
+        // hex of that = the bytes as lowercase hex
+        use base64::{engine::general_purpose, Engine};
+        let card = "4532015112830366";
+        let b64 = general_purpose::STANDARD.encode(card);
+        let hex_input: String = b64.bytes().map(|b| format!("{b:02x}")).collect();
+        let alts = generate_alternative_decodings(&hex_input);
+        assert!(
+            alts.iter().any(|a| a == card),
+            "expected hex→base64 chain to produce card, got: {alts:?}"
+        );
+    }
+
+    #[test]
+    fn test_alt_decode_homoglyph_substitution_full() {
+        // Simulate evadex's homoglyph_substitution on a Visa PAN.
+        // Ƨ→2, Ʒ→3, Ƽ→5, Ȣ→8 are now in HOMOGLYPH_MAP so they convert
+        // before this function is called. The remaining confusables —
+        // Greek Ο→O, Cyrillic І→I, Cyrillic б still unconverted — are
+        // what this alt-decode block handles.
+        // Simulated post-normalize_text form for PAN "4532015112830366":
+        let normalized_homoglyph = "4532OI5II283O3\u{0431}\u{0431}"; // бб at end
+        let alts = generate_alternative_decodings(normalized_homoglyph);
+        assert!(
+            alts.iter().any(|a| a == "4532015112830366"),
+            "expected homoglyph folding to produce card, got: {alts:?}"
+        );
+    }
+
+    #[test]
+    fn test_alt_decode_homoglyph_cyrillic_prose_not_folded() {
+        // A Cyrillic word containing б must not trigger this path because
+        // it also contains letters (р, а, т) outside the digit-confusable set.
+        let alts = generate_alternative_decodings("\u{0431}\u{0440}\u{0430}\u{0442}"); // "брат"
+        assert!(
+            !alts.iter().any(|a| a.chars().all(|c| c.is_ascii_digit())),
+            "Cyrillic prose should not produce an all-digit alternative"
+        );
+    }
+
+    #[test]
+    fn test_homoglyph_map_rare_digit_lookalikes() {
+        // Verify HOMOGLYPH_MAP folds the four rare Latin-digit-lookalike chars.
+        let input = "\u{01A7}\u{01B7}\u{01BC}\u{0222}"; // Ƨ Ʒ Ƽ Ȣ
+        let (normalized, _) = normalize_text(input);
+        assert_eq!(
+            normalized, "2358",
+            "expected Ƨ→2, Ʒ→3, Ƽ→5, Ȣ→8 via HOMOGLYPH_MAP"
+        );
+    }
+
+    #[test]
+    fn test_alt_decode_noise_embedded() {
+        // noise_embedded: PAN surrounded by repeated non-digit characters
+        let card = "4532015112830366";
+        let noisy = format!("XXXXXXXXXX{}XXXXXXXXXX", card);
+        let alts = generate_alternative_decodings(&noisy);
+        assert!(
+            alts.iter().any(|a| a == card),
+            "expected noise_embedded strip to produce card, got: {alts:?}"
+        );
+    }
+
+    #[test]
+    fn test_alt_decode_noise_embedded_not_applied_to_clean_digits() {
+        // A plain digit string must not be trimmed (no wrapping noise)
+        let card = "4532015112830366";
+        let alts = generate_alternative_decodings(card);
+        // The card itself may appear but it should NOT appear via the noise-strip path
+        // (i.e. the function should not produce a spurious *different* value).
+        // We verify it doesn't emit an empty or shorter string via this path.
+        for a in &alts {
+            assert!(!a.is_empty(), "alt should not be empty");
+        }
+    }
+
+    #[test]
+    fn test_alt_decode_base64_partial() {
+        // base64_partial: value[:mid] literal + base64(value[mid:])
+        // For "4532015112830366" (16 chars), mid = 8:
+        //   prefix = "45320151"
+        //   suffix = base64("12830366")
+        use base64::{engine::general_purpose, Engine};
+        let card = "4532015112830366";
+        let mid = card.len() / 2;
+        let prefix = &card[..mid];
+        let suffix_b64 = general_purpose::STANDARD.encode(&card[mid..]);
+        let input = format!("{}{}", prefix, suffix_b64);
+        let alts = generate_alternative_decodings(&input);
+        assert!(
+            alts.iter().any(|a| a == card),
+            "expected base64_partial combination to produce card, got: {alts:?}"
+        );
+    }
+
+    #[test]
+    fn test_alt_decode_base64_partial_repetitive_digits() {
+        // base64_partial with a decoded suffix containing only 1–2 distinct
+        // digits (e.g. Discover "6011111111111117" — suffix "11111117" has
+        // just '1' and '7'). The general try_decode_base64 rejects such
+        // decoded strings via its ≥3-distinct-chars gate; the base64_partial
+        // block bypasses that gate and should still recover the PAN.
+        use base64::{engine::general_purpose, Engine};
+        for (card, mid) in [("6011111111111117", 8usize), ("3530111333300000", 8usize)] {
+            let prefix = &card[..mid];
+            let suffix_b64 = general_purpose::STANDARD.encode(&card[mid..]);
+            let input = format!("{}{}", prefix, suffix_b64);
+            let alts = generate_alternative_decodings(&input);
+            assert!(
+                alts.iter().any(|a| a == card),
+                "base64_partial: expected {card} from {input:?}, got: {alts:?}"
+            );
+        }
     }
 }

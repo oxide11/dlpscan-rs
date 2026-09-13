@@ -6,6 +6,22 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-09-13 — security hardening round 7
+
+### siphon-api 2.12.2
+
+- **fix(api): add explicit `is_safe_version_token` guard to `overrides_content`.**
+  The `GET /v1/overrides/content?version=` handler validated its version
+  query param inline (requiring a `v`-prefix + parseable `u128`), while
+  `POST /v1/overrides/revert` explicitly calls `is_safe_version_token` and
+  explains the traversal threat model in a comment. Both approaches produce
+  the same security outcome, but the inconsistency leaves the defense-in-depth
+  of `overrides_content` implicit. The explicit guard is now added as the
+  first check in the else branch, matching `overrides_revert` and making the
+  intent clear to anyone auditing the handler pair.
+
+---
+
 ## 2026-09-09 — fail closed: five ways the stack reported safe when it wasn't
 
 Every entry below is one shape of the same bug: a surface that answered
