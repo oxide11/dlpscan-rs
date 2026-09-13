@@ -2887,6 +2887,25 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
         push_if_room(decoded, &mut alternatives, &mut total_bytes);
     }
 
+    // Zero-padding bypass: strip leading and trailing zeros from all-digit
+    // strings in the extended card-number length range. Covers
+    // right_pad_zeros / left_pad_zeros evadex variants where a valid PAN is
+    // padded to a fixed field width. Both directions are generated; the Luhn
+    // validator then accepts only the one that passes.
+    {
+        let all_digits = text.bytes().all(|b| b.is_ascii_digit());
+        if all_digits && text.len() >= 14 && text.len() <= 22 {
+            let stripped_right = text.trim_end_matches('0');
+            if stripped_right.len() >= 13 && stripped_right != text {
+                push_if_room(stripped_right.to_string(), &mut alternatives, &mut total_bytes);
+            }
+            let stripped_left = text.trim_start_matches('0');
+            if stripped_left.len() >= 13 && stripped_left != text {
+                push_if_room(stripped_left.to_string(), &mut alternatives, &mut total_bytes);
+            }
+        }
+    }
+
     // Two-stage encoding chain: base64 → ROT13.
     // Covers the evasion pattern base64(rot13(secret)) where the primary
     // normalization pipeline decodes the base64 wrapper and the alt pass
@@ -2934,6 +2953,8 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     if let Some(hex_decoded) = try_decode_hex(text) {
         if let Some(b64_decoded) = try_decode_base64(&hex_decoded) {
             push_if_room(b64_decoded, &mut alternatives, &mut total_bytes);
+        } else if let Some(b64url_decoded) = try_decode_base64url(&hex_decoded) {
+            push_if_room(b64url_decoded, &mut alternatives, &mut total_bytes);
         }
         push_if_room(hex_decoded, &mut alternatives, &mut total_bytes);
     }
@@ -4907,6 +4928,43 @@ mod tests {
             decoded.as_deref(),
             Some("GB82WEST12345698765432"),
             "multi-char alpha tokens should pass through literally"
+        );
+    }
+
+    #[test]
+    fn test_alt_decode_zero_padding_right() {
+        // right_pad_zeros: card + one trailing zero. Strip should produce the
+        // original PAN which passes Luhn.
+        let alts = generate_alternative_decodings("45320151128303660");
+        assert!(
+            alts.iter().any(|a| a == "4532015112830366"),
+            "expected stripped-trailing-zero alternative, got: {alts:?}"
+        );
+    }
+
+    #[test]
+    fn test_alt_decode_zero_padding_left() {
+        // left_pad_zeros: one leading zero + card.
+        let alts = generate_alternative_decodings("04532015112830366");
+        assert!(
+            alts.iter().any(|a| a == "4532015112830366"),
+            "expected stripped-leading-zero alternative, got: {alts:?}"
+        );
+    }
+
+    #[test]
+    fn test_alt_decode_hex_of_base64() {
+        // hex(base64("4532015112830366"))
+        // base64("4532015112830366") = "NDUzMjAxNTExMjgzMDM2Ng=="
+        // hex of that = the bytes as lowercase hex
+        use base64::{engine::general_purpose, Engine};
+        let card = "4532015112830366";
+        let b64 = general_purpose::STANDARD.encode(card);
+        let hex_input: String = b64.bytes().map(|b| format!("{b:02x}")).collect();
+        let alts = generate_alternative_decodings(&hex_input);
+        assert!(
+            alts.iter().any(|a| a == card),
+            "expected hex→base64 chain to produce card, got: {alts:?}"
         );
     }
 }
