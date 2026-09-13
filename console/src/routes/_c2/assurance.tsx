@@ -30,6 +30,36 @@ function pct(v: number | null): string {
   return v === null ? '—' : `${(v * 100).toFixed(1)} %`
 }
 
+/** Key-value skeleton: two horizontal bars per row, pulse-animated. */
+function SkeletonLines({ n = 4 }: { n?: number }) {
+  return (
+    <div className="flex animate-pulse flex-col gap-3" aria-hidden>
+      {Array.from({ length: n }, (_, i) => (
+        <div key={i} className="flex gap-3">
+          <div className="h-2 w-28 rounded-full bg-sunk" />
+          <div className="h-2 w-40 rounded-full bg-sunk" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** Table-row skeleton: repeating rows of bars, pulse-animated. */
+function SkeletonTableRows({ rows = 6, cols = 4 }: { rows?: number; cols?: number }) {
+  const ws = ['w-24', 'w-32', 'w-20', 'w-16', 'w-28', 'w-12']
+  return (
+    <div className="animate-pulse" aria-hidden>
+      {Array.from({ length: rows }, (_, r) => (
+        <div key={r} className="flex gap-4 border-b border-line-subtle py-1.5">
+          {Array.from({ length: cols }, (_, c) => (
+            <div key={c} className={`h-2 rounded-full bg-sunk ${ws[(r + c) % ws.length]}`} />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** "Can I prove any of this?" */
 function AssuranceRoute() {
   const evadexStats = useQuery({
@@ -82,7 +112,7 @@ function AssuranceRoute() {
             }
           />
         ) : evadexStats.isPending ? (
-          <p className="text-t4 text-ink-muted">Loading…</p>
+          <SkeletonLines n={5} />
         ) : (
           <>
             <KeyValue
@@ -133,7 +163,7 @@ function AssuranceRoute() {
             }
           />
         ) : evadexRuns.isPending ? (
-          <p className="text-t4 text-ink-muted">Loading…</p>
+          <SkeletonTableRows rows={8} cols={6} />
         ) : runs.length === 0 ? (
           <p className="text-t4 text-ink-muted">
             No evadex runs recorded. Run{' '}
@@ -199,7 +229,7 @@ function AssuranceRoute() {
             }
           />
         ) : baselinesDelta.isPending ? (
-          <p className="text-t4 text-ink-muted">Loading…</p>
+          <SkeletonTableRows rows={6} cols={4} />
         ) : categories.length === 0 ? (
           <p className="text-t4 text-ink-muted">
             No baselines recorded yet. Analyst verdicts on the Detections page feed this table.
@@ -255,7 +285,7 @@ function AssuranceRoute() {
             }
           />
         ) : audit.isPending ? (
-          <p className="text-t4 text-ink-muted">Loading…</p>
+          <SkeletonLines n={6} />
         ) : !audit.data?.length ? (
           <p className="text-t4 text-ink-muted">
             Audit ring is empty — no events recorded since this pod started.
