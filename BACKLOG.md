@@ -104,7 +104,7 @@ mitigation by capping bytes, but a ~1 MB body can hold ~100k depth levels.
 - [x] Regional digits — Thai (U+0E50), Extended Arabic-Indic (U+06F0), Arabic-Indic (U+0660) now detected via HOMOGLYPH_MAP; Thai-digit card regression locked in (PR #359); verified PASS in the evadex suite
 
 ### Infrastructure
-- [ ] Helm chart: postgres subchart or external postgres configuration
+- [x] Helm chart: external postgres configuration — `externalPostgres` block in values.yaml; SIPHON_DATABASE_URL injected into both siphon-api and siphon-fs via URL/secretRef; siphon-fs also gains bundled-postgres URL injection it was previously missing
 - [x] siphon-fs postgres pool — fixed missing SIPHON_DATABASE_URL in 30-siphon-fs.yaml; file-scan findings now reach postgres; verified end-to-end (fix/stability)
 - [x] lab-up.sh — add postgres to local kind setup
 
