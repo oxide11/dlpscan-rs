@@ -122,6 +122,16 @@ static HOMOGLYPH_MAP: Lazy<HashMap<char, char>> = Lazy::new(|| {
         ('\u{03C5}', 'u'),
         ('\u{03C7}', 'x'),
         ('\u{03C9}', 'w'), // Greek ω (omega) → w (visual lookalike)
+        // Digit-lookalike Latin letters used by evadex homoglyph_substitution.
+        // These are rare enough that unconditional folding is safe.
+        ('\u{01A7}', '2'), // Ƨ LATIN CAPITAL LETTER TONE TWO
+        ('\u{01A8}', '2'), // ƨ LATIN SMALL LETTER TONE TWO
+        ('\u{01B7}', '3'), // Ʒ LATIN CAPITAL LETTER EZH
+        ('\u{0292}', '3'), // ʒ LATIN SMALL LETTER EZH
+        ('\u{01BC}', '5'), // Ƽ LATIN CAPITAL LETTER TONE FIVE
+        ('\u{01BD}', '5'), // ƽ LATIN SMALL LETTER TONE FIVE
+        ('\u{0222}', '8'), // Ȣ LATIN CAPITAL LETTER OU
+        ('\u{0223}', '8'), // ȣ LATIN SMALL LETTER OU
         // Fullwidth digits (backup — NFKC should handle these)
         ('\u{FF10}', '0'),
         ('\u{FF11}', '1'),
@@ -2971,6 +2981,60 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
         }
     }
 
+    // Homoglyph digit recovery: scan for PAN-length runs of digit-confusable chars.
+    //
+    // After the HOMOGLYPH_MAP stage has converted Ƨ→2, Ʒ→3, Ƽ→5, Ȣ→8, the
+    // remaining digit-confusables from evadex's `homoglyph_substitution` are
+    // O/o→0, I/l→1, and Cyrillic б (U+0431)→6. A single pass finds maximal
+    // contiguous runs of those chars, and any run of 13–19 chars containing at
+    // least one confusable (i.e. folding actually changes it) is emitted.
+    //
+    // This handles both bare PANs ("4532OI5II283O3бб") and PANs embedded in a
+    // context sentence ("My card is 4532OI5II283O3бб end"), where the full-text
+    // "all chars confusable" guard would fail.
+    //
+    // б→6 is intentionally absent from the main HOMOGLYPH_MAP because б is the
+    // second letter of the Russian alphabet. Here it fires only inside a run of
+    // otherwise digit-like chars, so lone Cyrillic words like "брат" never
+    // qualify — the surrounding letters break the run.
+    {
+        let is_dc = |c: char| {
+            c.is_ascii_digit() || matches!(c, 'O' | 'o' | 'I' | 'l' | '\u{0431}')
+        };
+        let fold_dc = |c: char| match c {
+            'O' | 'o' => '0',
+            'I' | 'l' => '1',
+            '\u{0431}' => '6',
+            _ => c,
+        };
+        let chars: Vec<char> = text.chars().collect();
+        let n = chars.len();
+        let mut i = 0;
+        while i < n {
+            if is_dc(chars[i]) {
+                let start = i;
+                while i < n && is_dc(chars[i]) {
+                    i += 1;
+                }
+                let run_len = i - start;
+                if run_len >= 13 && run_len <= 19 {
+                    let has_confusable = chars[start..i]
+                        .iter()
+                        .any(|&c| matches!(c, 'O' | 'o' | 'I' | 'l' | '\u{0431}'));
+                    if has_confusable {
+                        let folded: String =
+                            chars[start..i].iter().map(|&c| fold_dc(c)).collect();
+                        if folded.bytes().all(|b| b.is_ascii_digit()) {
+                            push_if_room(folded, &mut alternatives, &mut total_bytes);
+                        }
+                    }
+                }
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     // Strip leading/trailing non-digit noise to expose an embedded PAN.
     // Handles the `noise_embedded` evasion where a valid PAN is wrapped in
     // repeated non-digit characters (e.g. "XXXXXXXXXX4532015112830366XXXXXXXXXX").
@@ -5007,6 +5071,44 @@ mod tests {
         assert!(
             alts.iter().any(|a| a == card),
             "expected hex→base64 chain to produce card, got: {alts:?}"
+        );
+    }
+
+    #[test]
+    fn test_alt_decode_homoglyph_substitution_full() {
+        // Simulate evadex's homoglyph_substitution on a Visa PAN.
+        // Ƨ→2, Ʒ→3, Ƽ→5, Ȣ→8 are now in HOMOGLYPH_MAP so they convert
+        // before this function is called. The remaining confusables —
+        // Greek Ο→O, Cyrillic І→I, Cyrillic б still unconverted — are
+        // what this alt-decode block handles.
+        // Simulated post-normalize_text form for PAN "4532015112830366":
+        let normalized_homoglyph = "4532OI5II283O3\u{0431}\u{0431}"; // бб at end
+        let alts = generate_alternative_decodings(normalized_homoglyph);
+        assert!(
+            alts.iter().any(|a| a == "4532015112830366"),
+            "expected homoglyph folding to produce card, got: {alts:?}"
+        );
+    }
+
+    #[test]
+    fn test_alt_decode_homoglyph_cyrillic_prose_not_folded() {
+        // A Cyrillic word containing б must not trigger this path because
+        // it also contains letters (р, а, т) outside the digit-confusable set.
+        let alts = generate_alternative_decodings("\u{0431}\u{0440}\u{0430}\u{0442}"); // "брат"
+        assert!(
+            !alts.iter().any(|a| a.chars().all(|c| c.is_ascii_digit())),
+            "Cyrillic prose should not produce an all-digit alternative"
+        );
+    }
+
+    #[test]
+    fn test_homoglyph_map_rare_digit_lookalikes() {
+        // Verify HOMOGLYPH_MAP folds the four rare Latin-digit-lookalike chars.
+        let input = "\u{01A7}\u{01B7}\u{01BC}\u{0222}"; // Ƨ Ʒ Ƽ Ȣ
+        let (normalized, _) = normalize_text(input);
+        assert_eq!(
+            normalized, "2358",
+            "expected Ƨ→2, Ʒ→3, Ƽ→5, Ȣ→8 via HOMOGLYPH_MAP"
         );
     }
 
