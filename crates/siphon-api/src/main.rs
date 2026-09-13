@@ -1377,7 +1377,10 @@ struct DbHealthResponse {
     reason: Option<String>,
 }
 
-async fn db_health(State(state): State<Arc<AppState>>) -> Json<DbHealthResponse> {
+async fn db_health(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<DbHealthResponse> {
     let Some(pool) = state.db_pool.as_ref() else {
         let reason = match state.db_state {
             db::PoolState::Unconfigured => "SIPHON_DATABASE_URL not configured".to_string(),
@@ -1737,7 +1740,10 @@ async fn scan(
         list_bindings: Some(ov.list_bindings.clone()),
         max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
         edm: state.edm_salt.as_ref().map(|s| {
-            Arc::new(siphon_core::edm::ExactDataMatcher::new(Some(s.as_slice()), None))
+            Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                Some(s.as_slice()),
+                None,
+            ))
         }),
         ..Default::default()
     };
@@ -2116,6 +2122,8 @@ struct BatchScanResponse {
     total_duration_ms: u64,
 }
 
+const MAX_BATCH_ITEM_ID_LEN: usize = 256;
+
 async fn scan_batch(
     _: RequireBatchScan,
     AuthContextExt(ctx): AuthContextExt,
@@ -2139,6 +2147,19 @@ async fn scan_batch(
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
                 error: format!("batch size {} exceeds limit {MAX_BATCH}", items.len()),
+            }),
+        ));
+    }
+    if let Some(item) = items.iter().find(|i| i.id.len() > MAX_BATCH_ITEM_ID_LEN) {
+        tracing::warn!(
+            id_len = item.id.len(),
+            limit = MAX_BATCH_ITEM_ID_LEN,
+            "scan_batch: item id exceeds length limit"
+        );
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("item id exceeds {MAX_BATCH_ITEM_ID_LEN} character limit"),
             }),
         ));
     }
@@ -2223,7 +2244,10 @@ async fn scan_batch(
             list_bindings: Some(ov.list_bindings.clone()),
             max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
             edm: state.edm_salt.as_ref().map(|s| {
-                Arc::new(siphon_core::edm::ExactDataMatcher::new(Some(s.as_slice()), None))
+                Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                    Some(s.as_slice()),
+                    None,
+                ))
             }),
             ..Default::default()
         };
@@ -2531,7 +2555,10 @@ async fn scan_explain(
         list_bindings: Some(ov.list_bindings.clone()),
         max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
         edm: state.edm_salt.as_ref().map(|s| {
-            Arc::new(siphon_core::edm::ExactDataMatcher::new(Some(s.as_slice()), None))
+            Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                Some(s.as_slice()),
+                None,
+            ))
         }),
         ..Default::default()
     };
@@ -5738,12 +5765,27 @@ struct CategoryBaselineRow {
     f1_val: Option<f32>,
 }
 
+const MAX_SNAPSHOT_LABEL_LEN: usize = 200;
+
 async fn create_baseline_snapshot(
     _: RequireAdminAction,
     State(state): State<Arc<AppState>>,
     body: Option<Json<SnapshotBody>>,
 ) -> Response {
-    let label = body.as_ref().and_then(|b| b.label.as_deref());
+    let label_owned: Option<String> = body.as_ref().and_then(|b| {
+        b.label.as_deref().map(|s| {
+            if s.len() <= MAX_SNAPSHOT_LABEL_LEN {
+                s.to_string()
+            } else {
+                let mut end = MAX_SNAPSHOT_LABEL_LEN;
+                while !s.is_char_boundary(end) {
+                    end -= 1;
+                }
+                s[..end].to_string()
+            }
+        })
+    });
+    let label = label_owned.as_deref();
     let version = siphon_core::VERSION;
     match db::compute_baseline_snapshot(&state.db_pool, label, version).await {
         Ok(id) => {
@@ -5766,7 +5808,7 @@ async fn create_baseline_snapshot(
             tracing::warn!("create_baseline_snapshot: {e}");
             (
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({"error": e.to_string()})),
+                Json(serde_json::json!({"error": "database error"})),
             )
                 .into_response()
         }
@@ -6528,7 +6570,14 @@ async fn list_pg_findings(
                AND ($6::timestamptz IS NULL OR created_at <= $6) \
              ORDER BY created_at DESC \
              LIMIT $3 OFFSET $4",
-            &[&category, &tenant_filter, &limit, &offset, &since_ts, &until_ts],
+            &[
+                &category,
+                &tenant_filter,
+                &limit,
+                &offset,
+                &since_ts,
+                &until_ts,
+            ],
         )
         .await
     {
@@ -6873,7 +6922,7 @@ async fn findings_export(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("query failed: {e}"),
+                    error: "query failed".into(),
                 }),
             )
                 .into_response();
@@ -7139,7 +7188,7 @@ async fn findings_prune(
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("prune failed: {e}"),
+                    error: "database error".into(),
                 }),
             ))
         }
@@ -7160,6 +7209,8 @@ async fn findings_prune(
 /// (or curl with `--no-buffer`).
 async fn scan_stream(
     _: RequireScan,
+    AuthContextExt(ctx): AuthContextExt,
+    headers: HeaderMap,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<ScanRequest>,
@@ -7215,7 +7266,10 @@ async fn scan_stream(
         list_bindings: Some(ov.list_bindings.clone()),
         max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
         edm: state.edm_salt.as_ref().map(|s| {
-            Arc::new(siphon_core::edm::ExactDataMatcher::new(Some(s.as_slice()), None))
+            Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                Some(s.as_slice()),
+                None,
+            ))
         }),
         ..Default::default()
     };
@@ -7226,6 +7280,13 @@ async fn scan_stream(
         config.require_context = false;
     }
 
+    let tenant_id = match tenant_scope(&ctx, &headers) {
+        Ok(t) => t,
+        Err((status, body)) => return (status, body).into_response(),
+    };
+
+    let stream_id = uuid::Uuid::new_v4().to_string();
+    let findings_ring = state.findings.clone();
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, std::convert::Infallible>>(128);
     let text = req.text;
     let metrics = state.metrics.clone();
@@ -7236,21 +7297,42 @@ async fn scan_stream(
         match scan_text_with_config(&text, &config) {
             Ok(matches) => {
                 let count = matches.len();
-                for m in matches {
-                    let text = m.redacted_text();
+                let ts_now = iso8601_now();
+                let short_id = stream_id
+                    .split('-')
+                    .next()
+                    .unwrap_or(&stream_id)
+                    .to_string();
+                for (idx, m) in matches.iter().enumerate() {
                     let finding = Finding {
-                        category: m.category,
-                        sub_category: m.sub_category,
-                        text,
+                        category: m.category.clone(),
+                        sub_category: m.sub_category.clone(),
+                        text: m.redacted_text(),
                         confidence: m.confidence,
                         has_context: m.has_context,
                         span: m.span,
-                        metadata: m.metadata,
+                        metadata: m.metadata.clone(),
                     };
                     let json_str = serde_json::to_string(&finding).unwrap_or_default();
                     if tx.send(Ok(Event::default().data(json_str))).await.is_err() {
                         return;
                     }
+                    findings_ring.push(FindingRecord {
+                        id: format!("f-{short_id}-{idx:02x}"),
+                        ts: ts_now.clone(),
+                        request_id: stream_id.clone(),
+                        source_label: source_ip.clone(),
+                        source_pod: "siphon-api".to_string(),
+                        category: m.category.clone(),
+                        sub_category: m.sub_category.clone(),
+                        text: m.text.clone(),
+                        confidence: m.confidence,
+                        has_context: m.has_context,
+                        span: m.span,
+                        metadata: m.metadata.clone(),
+                        severity: severity_for(&m.category, m.confidence),
+                        tenant_id: tenant_id.clone(),
+                    });
                 }
                 metrics.scans_total.fetch_add(1, Ordering::Relaxed);
                 metrics
@@ -7285,7 +7367,8 @@ async fn scan_stream(
                             .with_source_ip(&source_ip),
                     );
                 }
-                let err = serde_json::json!({ "error": e.to_string() }).to_string();
+                tracing::debug!(error = %e, "scan_stream_scan_error");
+                let err = serde_json::json!({ "error": "scan failed" }).to_string();
                 let _ = tx.send(Ok(Event::default().data(err))).await;
             }
         }
@@ -7860,7 +7943,10 @@ async fn main() {
     let edm_salt: Option<Arc<Vec<u8>>> = match std::env::var("SIPHON_EDM_SALT_HEX").ok() {
         Some(hex_str) if !hex_str.is_empty() => match hex::decode(&hex_str) {
             Ok(bytes) if bytes.len() >= 32 => {
-                tracing::info!(bytes = bytes.len(), "EDM salt loaded from SIPHON_EDM_SALT_HEX");
+                tracing::info!(
+                    bytes = bytes.len(),
+                    "EDM salt loaded from SIPHON_EDM_SALT_HEX"
+                );
                 Some(Arc::new(bytes))
             }
             Ok(bytes) => {

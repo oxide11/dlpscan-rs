@@ -6,8 +6,8 @@
     "component": {
       "type": "application",
       "name": "siphon-api",
-      "version": "2.12.1",
-      "purl": "pkg:cargo/siphon-api@2.12.1"
+      "version": "2.12.3",
+      "purl": "pkg:cargo/siphon-api@2.12.3"
     },
     "properties": [
       {

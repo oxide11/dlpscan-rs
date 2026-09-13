@@ -6,6 +6,62 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-09-13 — security audit round 8 / siphon-api 2.12.3
+
+### siphon-api 2.12.3
+
+- **fix(api): DB error strings no longer returned to HTTP callers.** `findings_export`,
+  `findings_prune`, and `create_baseline_snapshot` all returned `format!("{e}")` strings
+  verbatim in the response body, leaking schema details, table names, and constraint
+  messages to any authenticated caller. All three now return a fixed generic message
+  while logging the full error at `warn`.
+
+- **fix(api): `scan_stream` enforces tenant scope and pushes to the findings ring.**
+  `POST /scan/stream` had no `AuthContextExt` extractor and no `tenant_scope()` call,
+  so a tenant-bound key could stream scans without tenant isolation. Scan results were
+  also never pushed to the in-memory `FindingsRing`, so streaming scans were invisible to
+  `/v1/findings`. Both gaps are now closed: the handler rejects a mismatched tenant header
+  (403) before opening the SSE stream, and every finding is pushed to the ring as it is
+  emitted.
+
+- **fix(api): `scan_stream` SSE error frame no longer leaks scanner internals.**
+  On a scan engine error, the SSE error frame carried `e.to_string()`, which could expose
+  pattern names and internal scan state. Now sends `{"error": "scan failed"}` and logs
+  the real error at `debug`.
+
+- **fix(api): `BatchItem.id` capped at 256 characters.** Unbounded IDs landed in ring
+  record IDs and structured log lines. Items with IDs exceeding the cap are rejected with
+  a 400 before any scan work begins.
+
+- **fix(api): `SnapshotBody.label` truncated at 200 characters.** A baseline snapshot
+  label had no length limit; it is now truncated at the nearest Unicode scalar boundary
+  at or below 200 bytes before it reaches the database and audit log.
+
+---
+
+## 2026-09-13 — security hardening round 8
+
+### siphon-launcher 2.1.3
+
+- **fix(launcher): reject non-loopback bind addresses in `POST /v1/manage/start`.**
+  `req.bind` is used to set `SIPHON_BIND` / `SIPHON_FS_BIND` on spawned children
+  directly, bypassing the `BLOCKED_ENV_KEYS` check that prevents the same keys
+  from being injected via `req.env`. A local caller could `POST {"kind":
+  "siphon-api", "bind": "0.0.0.0:8080"}` to start a child bound on all
+  interfaces, contradicting the launcher's same-machine-trust model. The bind
+  address is now parsed as a `SocketAddr` and rejected with 400 if it is not a
+  loopback address.
+
+### siphon-api 2.12.2
+
+- **fix(api): gate `GET /v1/db/health` behind `RequireAdminAction`.**
+  The handler was accessible to any authenticated user (all roles). When Postgres
+  is unreachable it returns the connection error string, which can disclose
+  internal host/port details. Only admins need the detailed health signal;
+  non-admins who need liveness can use `/health` or `/ready`.
+
+---
+
 ## 2026-09-09 — fail closed: five ways the stack reported safe when it wasn't
 
 Every entry below is one shape of the same bug: a surface that answered

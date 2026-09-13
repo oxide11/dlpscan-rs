@@ -1,11 +1,11 @@
-# Siphon-API — sync HTTP scan service.
+# Siphon-API â€” sync HTTP scan service.
 #
 # Two-pass build to maximise cargo's layer cache. The first
 # `cargo build` runs against stub source files, which forces the
 # full dep tree (kube, k8s-openapi, axum, the rxing/imageproc
 # image stack the `k8s-roll` feature pulls in) to compile and
 # cache once. The second `cargo build` runs against the real
-# source — only the workspace crates rebuild, deps stay cached.
+# source â€” only the workspace crates rebuild, deps stay cached.
 #
 # Effect on src-only edits: a normal `siphon-api` source change
 # rebuilds in seconds because the dep layer is reused. Without
@@ -22,13 +22,13 @@ ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 
 WORKDIR /app
 
-# ── Stage 1a: dep-tree cache via stub workspace.
+# â”€â”€ Stage 1a: dep-tree cache via stub workspace.
 #
 # Copy ONLY the manifests that drive cargo's resolver. Each
 # crate's src/ is replaced by a hand-written empty stub so cargo
 # has something to compile against without dragging in real source
 # code that would defeat the cache the next layer up. The benches/
-# entry from the workspace root is treated the same way — Cargo
+# entry from the workspace root is treated the same way â€” Cargo
 # parses the workspace before it knows we only want -p siphon-api,
 # so every member needs a parseable manifest + at least one source
 # file.
@@ -70,7 +70,7 @@ RUN mkdir -p src \
 # they're in the cache when the real source compile runs.
 RUN cargo build --release -p siphon-api --features k8s-roll --locked
 
-# ── Stage 1b: real source replaces stubs; rebuild only workspace.
+# â”€â”€ Stage 1b: real source replaces stubs; rebuild only workspace.
 #
 # After this layer, cargo sees the real workspace src files but
 # the registry + target/release/deps tree is already populated
@@ -98,11 +98,11 @@ RUN touch crates/siphon-core/src/lib.rs \
           src/lib.rs \
  && cargo build --release -p siphon-api --features k8s-roll --locked
 
-# ── Stage 2: runtime image.
+# â”€â”€ Stage 2: runtime image.
 FROM debian:bookworm-slim
 
 # curl is what the HEALTHCHECK below and the compose healthcheck run. It was
-# never installed, so both have failed since they were written — and under
+# never installed, so both have failed since they were written â€” and under
 # mutual TLS the probe has to present the pod's own certificate, which only
 # a real client can do.
 RUN apt-get update && \
@@ -134,4 +134,4 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=3s --retries=3 \
 
 LABEL org.opencontainers.image.title="siphon-api" \
       org.opencontainers.image.description="Polygon Siphon sync HTTP scan service" \
-      org.opencontainers.image.version="2.12.1"
+      org.opencontainers.image.version="2.12.3"

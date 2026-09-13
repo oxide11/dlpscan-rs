@@ -2907,11 +2907,19 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
         if all_digits && text.len() >= 14 && text.len() <= 22 {
             let stripped_right = text.trim_end_matches('0');
             if stripped_right.len() >= 13 && stripped_right != text {
-                push_if_room(stripped_right.to_string(), &mut alternatives, &mut total_bytes);
+                push_if_room(
+                    stripped_right.to_string(),
+                    &mut alternatives,
+                    &mut total_bytes,
+                );
             }
             let stripped_left = text.trim_start_matches('0');
             if stripped_left.len() >= 13 && stripped_left != text {
-                push_if_room(stripped_left.to_string(), &mut alternatives, &mut total_bytes);
+                push_if_room(
+                    stripped_left.to_string(),
+                    &mut alternatives,
+                    &mut total_bytes,
+                );
             }
         }
     }
@@ -2998,9 +3006,7 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // otherwise digit-like chars, so lone Cyrillic words like "брат" never
     // qualify — the surrounding letters break the run.
     {
-        let is_dc = |c: char| {
-            c.is_ascii_digit() || matches!(c, 'O' | 'o' | 'I' | 'l' | '\u{0431}')
-        };
+        let is_dc = |c: char| c.is_ascii_digit() || matches!(c, 'O' | 'o' | 'I' | 'l' | '\u{0431}');
         let fold_dc = |c: char| match c {
             'O' | 'o' => '0',
             'I' | 'l' => '1',
@@ -3017,13 +3023,12 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
                     i += 1;
                 }
                 let run_len = i - start;
-                if run_len >= 13 && run_len <= 19 {
+                if (13..=19).contains(&run_len) {
                     let has_confusable = chars[start..i]
                         .iter()
                         .any(|&c| matches!(c, 'O' | 'o' | 'I' | 'l' | '\u{0431}'));
                     if has_confusable {
-                        let folded: String =
-                            chars[start..i].iter().map(|&c| fold_dc(c)).collect();
+                        let folded: String = chars[start..i].iter().map(|&c| fold_dc(c)).collect();
                         if folded.bytes().all(|b| b.is_ascii_digit()) {
                             push_if_room(folded, &mut alternatives, &mut total_bytes);
                         }
@@ -3072,9 +3077,9 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
                 let prefix = &text[..digit_end];
                 let suffix = &text[digit_end..];
                 // Only attempt if suffix uses standard base64 alphabet.
-                let ok_chars = suffix.bytes().all(|b| {
-                    b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'='
-                });
+                let ok_chars = suffix
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=');
                 if ok_chars {
                     let decoded_opt = general_purpose::STANDARD.decode(suffix).ok().or_else(|| {
                         // Try with corrected padding.
@@ -5189,10 +5194,7 @@ mod tests {
         // decoded strings via its ≥3-distinct-chars gate; the base64_partial
         // block bypasses that gate and should still recover the PAN.
         use base64::{engine::general_purpose, Engine};
-        for (card, mid) in [
-            ("6011111111111117", 8usize),
-            ("3530111333300000", 8usize),
-        ] {
+        for (card, mid) in [("6011111111111117", 8usize), ("3530111333300000", 8usize)] {
             let prefix = &card[..mid];
             let suffix_b64 = general_purpose::STANDARD.encode(&card[mid..]);
             let input = format!("{}{}", prefix, suffix_b64);
