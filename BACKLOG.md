@@ -39,7 +39,7 @@ serde_json runs. Registered in the router between `security_headers` and
 ## Ready to build
 
 ### UI/UX improvements
-- [ ] Scan results — show confidence scores and BIN enrichment for credit cards (span highlighting done)
+- [x] Scan results — show confidence scores and BIN enrichment for credit cards (confidence already shown; BIN brand/type/country/issuer badges added)
 - [x] Findings history table — sortable (click headers) and CSV export button (feat/backlog-sprint-2)
 - [ ] Loading states — smoother transitions, skeleton screens
 - [x] File upload scan — drag and drop interface in Scan tab (e963a76)

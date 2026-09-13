@@ -177,6 +177,14 @@ function ScanRoute() {
                         </span>
                         {m.has_context && <Badge tone="muted">keyword nearby</Badge>}
                       </div>
+                      {m.metadata?.bin_brand && (
+                        <div className="flex flex-wrap items-center gap-1 text-t5">
+                          <Badge tone="muted">{m.metadata.bin_brand}</Badge>
+                          {m.metadata.bin_card_type && <Badge tone="muted">{m.metadata.bin_card_type}</Badge>}
+                          {m.metadata.bin_country && <Badge tone="muted">{m.metadata.bin_country}</Badge>}
+                          {m.metadata.bin_issuer && <Badge tone="muted">{m.metadata.bin_issuer}</Badge>}
+                        </div>
+                      )}
                     </li>
                   )
                 })}
@@ -257,6 +265,14 @@ function ScanRoute() {
                       </span>
                       {m.has_context && <Badge tone="muted">keyword nearby</Badge>}
                     </div>
+                    {m.metadata?.bin_brand && (
+                      <div className="flex flex-wrap items-center gap-1 text-t5">
+                        <Badge tone="muted">{m.metadata.bin_brand}</Badge>
+                        {m.metadata.bin_card_type && <Badge tone="muted">{m.metadata.bin_card_type}</Badge>}
+                        {m.metadata.bin_country && <Badge tone="muted">{m.metadata.bin_country}</Badge>}
+                        {m.metadata.bin_issuer && <Badge tone="muted">{m.metadata.bin_issuer}</Badge>}
+                      </div>
+                    )}
                   </li>
                 )
               })}
