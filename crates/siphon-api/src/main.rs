@@ -6354,6 +6354,10 @@ struct PgFindingsQuery {
     /// `pii`, `pci`, `all` — comma separated. Absent means fully masked,
     /// which is the default for every caller regardless of role.
     unmask: Option<String>,
+    /// ISO8601 lower bound (inclusive), e.g. 2026-01-01T00:00:00Z
+    since: Option<String>,
+    /// ISO8601 upper bound (inclusive)
+    until: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -6420,6 +6424,10 @@ async fn list_pg_findings(
     let limit = q.limit.unwrap_or(50).min(1000);
     let offset = q.offset.unwrap_or(0).max(0);
     let category = q.category.as_deref();
+    let since_ts: Option<chrono::DateTime<chrono::Utc>> =
+        q.since.as_deref().and_then(|s| s.parse().ok());
+    let until_ts: Option<chrono::DateTime<chrono::Utc>> =
+        q.until.as_deref().and_then(|s| s.parse().ok());
 
     // Tenant isolation, from the authenticated identity rather than from
     // whatever the caller put in the header. See `tenant_scope`.
@@ -6434,9 +6442,11 @@ async fn list_pg_findings(
              FROM findings \
              WHERE ($1::text IS NULL OR category = $1) \
                AND ($2::text IS NULL OR tenant_id = $2) \
+               AND ($5::timestamptz IS NULL OR created_at >= $5) \
+               AND ($6::timestamptz IS NULL OR created_at <= $6) \
              ORDER BY created_at DESC \
              LIMIT $3 OFFSET $4",
-            &[&category, &tenant_filter, &limit, &offset],
+            &[&category, &tenant_filter, &limit, &offset, &since_ts, &until_ts],
         )
         .await
     {
@@ -6497,8 +6507,10 @@ async fn list_pg_findings(
         .query_one(
             "SELECT COUNT(*) FROM findings \
              WHERE ($1::text IS NULL OR category = $1) \
-               AND ($2::text IS NULL OR tenant_id = $2)",
-            &[&category, &tenant_filter],
+               AND ($2::text IS NULL OR tenant_id = $2) \
+               AND ($3::timestamptz IS NULL OR created_at >= $3) \
+               AND ($4::timestamptz IS NULL OR created_at <= $4)",
+            &[&category, &tenant_filter, &since_ts, &until_ts],
         )
         .await
     {
