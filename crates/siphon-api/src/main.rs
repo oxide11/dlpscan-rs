@@ -1737,7 +1737,10 @@ async fn scan(
         list_bindings: Some(ov.list_bindings.clone()),
         max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
         edm: state.edm_salt.as_ref().map(|s| {
-            Arc::new(siphon_core::edm::ExactDataMatcher::new(Some(s.as_slice()), None))
+            Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                Some(s.as_slice()),
+                None,
+            ))
         }),
         ..Default::default()
     };
@@ -2223,7 +2226,10 @@ async fn scan_batch(
             list_bindings: Some(ov.list_bindings.clone()),
             max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
             edm: state.edm_salt.as_ref().map(|s| {
-                Arc::new(siphon_core::edm::ExactDataMatcher::new(Some(s.as_slice()), None))
+                Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                    Some(s.as_slice()),
+                    None,
+                ))
             }),
             ..Default::default()
         };
@@ -2531,7 +2537,10 @@ async fn scan_explain(
         list_bindings: Some(ov.list_bindings.clone()),
         max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
         edm: state.edm_salt.as_ref().map(|s| {
-            Arc::new(siphon_core::edm::ExactDataMatcher::new(Some(s.as_slice()), None))
+            Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                Some(s.as_slice()),
+                None,
+            ))
         }),
         ..Default::default()
     };
@@ -4301,7 +4310,22 @@ async fn overrides_content(
     let (target_path, label) = if q.version == "current" {
         (path.to_path_buf(), "current".to_string())
     } else {
-        // Expect "v<nanos>"; look up the sibling backup file.
+        // q.version is caller-supplied (query param). Reject anything
+        // that is not a v<nanos> token — without this, a version like
+        // "../../etc/passwd" composes into the backup filename and
+        // path.with_extension() happily walks out of the overrides directory.
+        if !siphon_core::path_guard::is_safe_version_token(&q.version) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("invalid version {:?}; expected 'v<nanos>'", q.version),
+                }),
+            ));
+        }
+        // Expect "v<nanos>"; look up the sibling backup file. The
+        // numeric parse below provides an additional bounds check; the
+        // token guard above ensures it cannot fail for any traversal
+        // payload.
         let nanos = q
             .version
             .strip_prefix('v')
@@ -6528,7 +6552,14 @@ async fn list_pg_findings(
                AND ($6::timestamptz IS NULL OR created_at <= $6) \
              ORDER BY created_at DESC \
              LIMIT $3 OFFSET $4",
-            &[&category, &tenant_filter, &limit, &offset, &since_ts, &until_ts],
+            &[
+                &category,
+                &tenant_filter,
+                &limit,
+                &offset,
+                &since_ts,
+                &until_ts,
+            ],
         )
         .await
     {
@@ -7215,7 +7246,10 @@ async fn scan_stream(
         list_bindings: Some(ov.list_bindings.clone()),
         max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
         edm: state.edm_salt.as_ref().map(|s| {
-            Arc::new(siphon_core::edm::ExactDataMatcher::new(Some(s.as_slice()), None))
+            Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                Some(s.as_slice()),
+                None,
+            ))
         }),
         ..Default::default()
     };
@@ -7860,7 +7894,10 @@ async fn main() {
     let edm_salt: Option<Arc<Vec<u8>>> = match std::env::var("SIPHON_EDM_SALT_HEX").ok() {
         Some(hex_str) if !hex_str.is_empty() => match hex::decode(&hex_str) {
             Ok(bytes) if bytes.len() >= 32 => {
-                tracing::info!(bytes = bytes.len(), "EDM salt loaded from SIPHON_EDM_SALT_HEX");
+                tracing::info!(
+                    bytes = bytes.len(),
+                    "EDM salt loaded from SIPHON_EDM_SALT_HEX"
+                );
                 Some(Arc::new(bytes))
             }
             Ok(bytes) => {
