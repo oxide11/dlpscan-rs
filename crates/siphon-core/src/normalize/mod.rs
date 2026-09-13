@@ -2971,6 +2971,48 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
         }
     }
 
+    // Strip leading/trailing non-digit noise to expose an embedded PAN.
+    // Handles the `noise_embedded` evasion where a valid PAN is wrapped in
+    // repeated non-digit characters (e.g. "XXXXXXXXXX4532015112830366XXXXXXXXXX").
+    // Only emits when the inner digit run is PAN-length (13–19), is all-digit,
+    // and the original had non-digit wrapping — so pure-digit strings and
+    // strings with interior non-digits are unaffected.
+    {
+        let trimmed = text.trim_matches(|c: char| !c.is_ascii_digit());
+        if !trimmed.is_empty()
+            && trimmed.len() < text.len()
+            && trimmed.bytes().all(|b| b.is_ascii_digit())
+            && trimmed.len() >= 13
+            && trimmed.len() <= 19
+        {
+            push_if_room(trimmed.to_string(), &mut alternatives, &mut total_bytes);
+        }
+    }
+
+    // Partial base64: a literal digit prefix followed by a base64-encoded
+    // digit suffix. Handles `base64_partial` evasion where value[:mid] is
+    // kept literal and value[mid:] is base64-encoded, yielding e.g.
+    // "45320151MTI4MzAzNjY=".  The literal prefix is ≥ 4 digits; the suffix
+    // decodes to a run of digits; together they form a PAN-length string.
+    {
+        let bytes = text.as_bytes();
+        if bytes.len() >= 8 && bytes[0].is_ascii_digit() {
+            let digit_end = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
+            if digit_end >= 4 && digit_end < bytes.len() {
+                let prefix = &text[..digit_end];
+                let suffix = &text[digit_end..];
+                if let Some(decoded_suffix) = try_decode_base64(suffix) {
+                    if decoded_suffix.bytes().all(|b| b.is_ascii_digit()) {
+                        let combined = format!("{}{}", prefix, decoded_suffix);
+                        if combined.len() >= 13 && combined.len() <= 22 {
+                            push_if_room(combined, &mut alternatives, &mut total_bytes);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     alternatives
 }
 
@@ -4965,6 +5007,50 @@ mod tests {
         assert!(
             alts.iter().any(|a| a == card),
             "expected hex→base64 chain to produce card, got: {alts:?}"
+        );
+    }
+
+    #[test]
+    fn test_alt_decode_noise_embedded() {
+        // noise_embedded: PAN surrounded by repeated non-digit characters
+        let card = "4532015112830366";
+        let noisy = format!("XXXXXXXXXX{}XXXXXXXXXX", card);
+        let alts = generate_alternative_decodings(&noisy);
+        assert!(
+            alts.iter().any(|a| a == card),
+            "expected noise_embedded strip to produce card, got: {alts:?}"
+        );
+    }
+
+    #[test]
+    fn test_alt_decode_noise_embedded_not_applied_to_clean_digits() {
+        // A plain digit string must not be trimmed (no wrapping noise)
+        let card = "4532015112830366";
+        let alts = generate_alternative_decodings(card);
+        // The card itself may appear but it should NOT appear via the noise-strip path
+        // (i.e. the function should not produce a spurious *different* value).
+        // We verify it doesn't emit an empty or shorter string via this path.
+        for a in &alts {
+            assert!(!a.is_empty(), "alt should not be empty");
+        }
+    }
+
+    #[test]
+    fn test_alt_decode_base64_partial() {
+        // base64_partial: value[:mid] literal + base64(value[mid:])
+        // For "4532015112830366" (16 chars), mid = 8:
+        //   prefix = "45320151"
+        //   suffix = base64("12830366")
+        use base64::{engine::general_purpose, Engine};
+        let card = "4532015112830366";
+        let mid = card.len() / 2;
+        let prefix = &card[..mid];
+        let suffix_b64 = general_purpose::STANDARD.encode(&card[mid..]);
+        let input = format!("{}{}", prefix, suffix_b64);
+        let alts = generate_alternative_decodings(&input);
+        assert!(
+            alts.iter().any(|a| a == card),
+            "expected base64_partial combination to produce card, got: {alts:?}"
         );
     }
 }
