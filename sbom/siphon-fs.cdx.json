@@ -6,13 +6,13 @@
     "component": {
       "type": "application",
       "name": "siphon-fs",
-      "version": "1.5.0",
-      "purl": "pkg:cargo/siphon-fs@1.5.0"
+      "version": "1.5.1",
+      "purl": "pkg:cargo/siphon-fs@1.5.1"
     },
     "properties": [
       {
         "name": "siphon:target",
-        "value": "x86_64-unknown-linux-gnu"
+        "value": "sbom/siphon-fs.cdx.json"
       },
       {
         "name": "siphon:resolution",
@@ -262,6 +262,24 @@
       "name": "anstyle-query",
       "version": "1.1.5",
       "purl": "pkg:cargo/anstyle-query@1.1.5",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/rust-cli/anstyle.git"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "anstyle-wincon",
+      "version": "3.0.11",
+      "purl": "pkg:cargo/anstyle-wincon@3.0.11",
       "scope": "required",
       "licenses": [
         {
@@ -2151,24 +2169,6 @@
     },
     {
       "type": "library",
-      "name": "errno",
-      "version": "0.3.14",
-      "purl": "pkg:cargo/errno@0.3.14",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/lambda-fairy/rust-errno"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "euclid",
       "version": "0.20.14",
       "purl": "pkg:cargo/euclid@0.20.14",
@@ -3033,24 +3033,6 @@
     },
     {
       "type": "library",
-      "name": "iana-time-zone",
-      "version": "0.1.65",
-      "purl": "pkg:cargo/iana-time-zone@0.1.65",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/strawlab/iana-time-zone"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "icu_collections",
       "version": "2.3.0",
       "purl": "pkg:cargo/icu_collections@2.3.0",
@@ -3632,24 +3614,6 @@
         {
           "name": "siphon:native-code",
           "value": "bundled SQLite (C), reached via rusqlite for .sqlite extraction"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "linux-raw-sys",
-      "version": "0.12.1",
-      "purl": "pkg:cargo/linux-raw-sys@0.12.1",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/sunfishcode/linux-raw-sys"
         }
       ]
     },
@@ -4440,6 +4404,24 @@
         {
           "type": "vcs",
           "url": "https://github.com/matklad/once_cell"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "once_cell_polyfill",
+      "version": "1.70.2",
+      "purl": "pkg:cargo/once_cell_polyfill@1.70.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/polyfill-rs/once_cell_polyfill"
         }
       ]
     },
@@ -5443,24 +5425,6 @@
     },
     {
       "type": "library",
-      "name": "rustix",
-      "version": "1.1.4",
-      "purl": "pkg:cargo/rustix@1.1.4",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/bytecodealliance/rustix"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "name": "rustls",
       "version": "0.23.44",
       "purl": "pkg:cargo/rustls@0.23.44",
@@ -5868,24 +5832,6 @@
         {
           "type": "vcs",
           "url": "https://github.com/hawkw/sharded-slab"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "signal-hook-registry",
-      "version": "1.4.8",
-      "purl": "pkg:cargo/signal-hook-registry@1.4.8",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/vorner/signal-hook"
         }
       ]
     },
@@ -7564,6 +7510,114 @@
         {
           "type": "vcs",
           "url": "https://github.com/VoidStarKat/widestring-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "winapi",
+      "version": "0.3.9",
+      "purl": "pkg:cargo/winapi@0.3.9",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/retep998/winapi-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "windows-link",
+      "version": "0.2.1",
+      "purl": "pkg:cargo/windows-link@0.2.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/microsoft/windows-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "windows-sys",
+      "version": "0.52.0",
+      "purl": "pkg:cargo/windows-sys@0.52.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/microsoft/windows-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "windows-sys",
+      "version": "0.61.2",
+      "purl": "pkg:cargo/windows-sys@0.61.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/microsoft/windows-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "windows-targets",
+      "version": "0.52.6",
+      "purl": "pkg:cargo/windows-targets@0.52.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/microsoft/windows-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "windows_x86_64_msvc",
+      "version": "0.52.6",
+      "purl": "pkg:cargo/windows_x86_64_msvc@0.52.6",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "MIT OR Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/microsoft/windows-rs"
         }
       ]
     },

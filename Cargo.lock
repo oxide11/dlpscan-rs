@@ -5120,7 +5120,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-fs"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "axum",
  "axum-server",
@@ -5144,7 +5144,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-icap"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "serde_json",
  "siphon-auth",
@@ -5183,7 +5183,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-smtp"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "deadpool-postgres",
  "sha2 0.11.0",

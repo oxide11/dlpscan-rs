@@ -6,7 +6,51 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
-## 2026-09-13 — security audit round 8 / siphon-api 2.12.3
+## 2026-09-13 — security audit / siphon-fs 1.5.1, siphon-icap 0.3.1, siphon-smtp 0.2.2
+
+### siphon-fs 1.5.1
+- **fix(fs): return generic error strings for tempfile and extraction failures (CWE-209).**
+  `tempfile create failed: {e}`, `tempfile write failed: {e}`, and
+  `extraction failed: {e}` all leaked OS error details and library internals
+  to any authenticated `Scan`-role caller. All three now return fixed strings
+  and log the real error at `warn`.
+- **fix(fs): cap multipart `filename` at 512 bytes and `content-type` at 256 bytes.**
+  Both were stored without length bounds — `filename` into the FindingsRing
+  record ID and Postgres `file_name`, `content-type` into `mime_type`. An
+  upload with a crafted `Content-Disposition: filename` of arbitrary size
+  could flood the ring and the DB on every request.
+
+### siphon-icap 0.3.1
+- **fix(icap): cap ICAP header line length at 8 KB.**
+  `MAX_REQUEST_HEADERS = 256` capped header *count* but not individual line
+  size. A single header line of arbitrary length could consume unbounded
+  memory. Lines exceeding 8 192 bytes now return a parse error.
+- **fix(icap): wrap connection handler in a 60-second timeout.**
+  A proxy that connected and then stalled mid-header held a semaphore slot
+  indefinitely. With `SIPHON_ICAP_MAX_CONNECTIONS` exhausted by stalled
+  connections, all legitimate traffic was denied. The timeout is logged at
+  `warn`.
+
+### siphon-smtp 0.2.2
+- **fix(smtp): cap envelope sender/recipient addresses at 512 bytes.**
+  `envelope_address()` sanitized control characters but imposed no length
+  limit. Both sender and recipient addresses are stored in Postgres; a
+  crafted `MAIL FROM` / `RCPT TO` argument could exceed column bounds and
+  produce confusing errors. 512 bytes is generous for any RFC 5321-compliant
+  address.
+- **fix(smtp): cap MTA queue ID (ingest_key) at 128 bytes.**
+  `session.macros.get("i")` was returned directly as the ingest key, which
+  goes into a partial unique index and audit log lines. Postfix queue IDs are
+  ≤ 15 characters in practice; cap ensures no malformed MTA can overflow the
+  column.
+- **fix(smtp): store generic string for scan errors in DB detail column.**
+  `format!("scan failed: {e}")` was persisted to `message_parts.detail`,
+  leaking scanner internal state into persistence. Now stores `"scan failed"`
+  and logs the real error at `warn`.
+
+---
+
+## 2026-09-13 — security audit / siphon-api 2.12.3
 
 ### siphon-api 2.12.3
 

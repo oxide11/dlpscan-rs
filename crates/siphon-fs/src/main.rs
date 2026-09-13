@@ -483,8 +483,16 @@ async fn scan(
             Ok(Some(mut field)) => {
                 let name = field.name().unwrap_or("").to_string();
                 if name == "file" {
-                    filename = field.file_name().map(|s| s.to_string());
-                    content_type = field.content_type().map(|s| s.to_string());
+                    filename = field.file_name().map(|s| {
+                        let mut s = s.to_string();
+                        s.truncate(512);
+                        s
+                    });
+                    content_type = field.content_type().map(|s| {
+                        let mut s = s.to_string();
+                        s.truncate(256);
+                        s
+                    });
                     let suffix = filename
                         .as_deref()
                         .and_then(|f| std::path::Path::new(f).extension())
@@ -499,9 +507,10 @@ async fn scan(
                     } {
                         Ok(t) => t,
                         Err(e) => {
+                            tracing::warn!(error = %e, "fs: tempfile create failed");
                             return err(
                                 StatusCode::INTERNAL_SERVER_ERROR,
-                                format!("tempfile create failed: {e}"),
+                                "internal error".to_string(),
                             );
                         }
                     };
@@ -522,9 +531,10 @@ async fn scan(
                                 }
                                 hasher.update(chunk.as_ref());
                                 if let Err(e) = std::io::Write::write_all(&mut tmp, &chunk) {
+                                    tracing::warn!(error = %e, "fs: tempfile write failed");
                                     return err(
                                         StatusCode::INTERNAL_SERVER_ERROR,
-                                        format!("tempfile write failed: {e}"),
+                                        "internal error".to_string(),
                                     );
                                 }
                             }
@@ -614,7 +624,10 @@ async fn scan(
                 findings: vec![],
                 scanned: false,
                 trace: None,
-                error: Some(format!("extraction failed: {e}")),
+                error: {
+                    tracing::warn!(error = %e, "fs: extraction failed");
+                    Some("extraction failed".to_string())
+                },
                 error_code: if is_password {
                     Some("PASSWORD_REQUIRED".to_string())
                 } else {

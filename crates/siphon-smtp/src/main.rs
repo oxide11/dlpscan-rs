@@ -298,9 +298,14 @@ impl Session {
     }
 
     /// The MTA's queue ID — stable across delivery attempts, and so the
-    /// message's ingest key (§2.2a).
+    /// message's ingest key (§2.2a). Capped at 128 bytes: queue IDs are
+    /// short in practice (Postfix: ≤15 chars) and this value goes into a
+    /// partial unique index and audit log lines.
     fn ingest_key(&self) -> Option<&str> {
-        self.macros.get("i").map(String::as_str)
+        self.macros.get("i").map(|s| {
+            let s = s.as_str();
+            &s[..s.len().min(128)]
+        })
     }
 
     /// SHA-256 of the Subject header, or `None` when there is no subject.
@@ -352,9 +357,13 @@ fn envelope_address(raw: &str) -> Option<String> {
     } else {
         // Strip characters that would corrupt RFC 5322 header reassembly or
         // Postgres storage if an MTA passes malformed envelope data.
+        // Cap at 512 bytes — the longest valid RFC 5321 path is 256 octets
+        // for the local part plus domain, so 512 is generous while still
+        // bounding what lands in the DB and log lines.
         let sanitized: String = inner
             .chars()
             .filter(|&c| c != '\r' && c != '\n' && c != '\0')
+            .take(512)
             .collect();
         if sanitized.is_empty() {
             None
@@ -531,8 +540,9 @@ fn scan_message(raw: &[u8], min_confidence: f64) -> ScanOutcome {
                 finish_part(&mut parts, &mut outcomes, record, Some(part_verdict));
             }
             Err(e) => {
+                tracing::warn!(error = %e, "smtp: scan failed");
                 record.status = PartStatus::Error;
-                record.detail = Some(format!("scan failed: {e}"));
+                record.detail = Some("scan failed".to_string());
                 finish_part(&mut parts, &mut outcomes, record, None);
             }
         }

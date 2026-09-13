@@ -234,12 +234,19 @@ async fn parse_icap_request<R: AsyncBufReadExt + Unpin>(
         uri
     };
 
-    // Read ICAP headers, capped to reject header-flood attacks.
+    // Read ICAP headers, capped to reject header-flood and large-line attacks.
     const MAX_REQUEST_HEADERS: usize = 256;
+    const MAX_HEADER_LINE_BYTES: usize = 8 * 1024;
     let mut headers = Vec::new();
     loop {
         let mut line = String::new();
         reader.read_line(&mut line).await?;
+        if line.len() > MAX_HEADER_LINE_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("ICAP header line exceeds limit of {MAX_HEADER_LINE_BYTES} bytes"),
+            ));
+        }
         let trimmed = line.trim_end_matches(['\r', '\n']);
         if trimmed.is_empty() {
             break; // blank line = end of headers
@@ -1115,7 +1122,18 @@ async fn accept_loop(listener: TcpListener, state: Arc<AppState>) {
                 };
                 let state = state.clone();
                 tokio::spawn(async move {
-                    handle_connection(stream, peer, state).await;
+                    // A stalled connection holding a semaphore slot is a DoS
+                    // vector when max_connections is exhausted. 60 s is
+                    // generous for a proxy that keeps ICAP connections alive
+                    // between requests; real proxies cycle idle connections
+                    // far faster.
+                    let timeout = std::time::Duration::from_secs(60);
+                    if tokio::time::timeout(timeout, handle_connection(stream, peer, state))
+                        .await
+                        .is_err()
+                    {
+                        tracing::warn!(peer = %peer, "icap: connection timed out after 60s");
+                    }
                     drop(permit);
                 });
             }
