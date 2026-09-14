@@ -1,4 +1,4 @@
-# Siphon Helm values — the single source of operator-facing
+# Siphon Helm values â€” the single source of operator-facing
 # configuration. Each top-level key groups settings for one
 # component; `global` carries cross-cutting concerns (image
 # registry, labels, RBAC).
@@ -10,7 +10,7 @@
 # at the result.
 
 # ---------------------------------------------------------------------------
-# Global — cross-cutting concerns
+# Global â€” cross-cutting concerns
 # ---------------------------------------------------------------------------
 global:
   # Common image registry + pull policy. Components can override
@@ -28,21 +28,21 @@ global:
   commonLabels: {}
   commonAnnotations: {}
 
-  # Linkerd sidecar injection — the baseline for pod-to-pod mTLS.
+  # Linkerd sidecar injection â€” the baseline for pod-to-pod mTLS.
   # When enabled, every pod picks up the `linkerd.io/inject: enabled`
   # annotation and the Linkerd control plane adds a sidecar that
   # transparently mTLS-encrypts and mutually-authenticates all
-  # pod-to-pod traffic (api↔fs↔nginx↔postgres) with certificates it
+  # pod-to-pod traffic (apiâ†”fsâ†”nginxâ†”postgres) with certificates it
   # rotates automatically. This is the recommended way to encrypt the
-  # in-cluster hops — siphon-fs in particular takes file uploads full
+  # in-cluster hops â€” siphon-fs in particular takes file uploads full
   # of the sensitive data the scanner detects and serves no TLS of its
   # own, so without a mesh that traffic crosses the pod network in the
   # clear.
   #
   # Enabled by default. **Prerequisite: the Linkerd control plane must
   # be installed in the cluster** (`linkerd install | kubectl apply -f -`).
-  # The inject annotation is inert if the control plane is absent — pods
-  # start without a sidecar and traffic is unencrypted — so a cluster
+  # The inject annotation is inert if the control plane is absent â€” pods
+  # start without a sidecar and traffic is unencrypted â€” so a cluster
   # without Linkerd should either install it or set this to false
   # knowingly and secure the hops another way (e.g. a different mesh, or
   # app-level TLS terminated at the ingress).
@@ -50,7 +50,7 @@ global:
     enabled: true
 
 # ---------------------------------------------------------------------------
-# Internal mutual TLS — every detector ↔ C2/IR/database hop
+# Internal mutual TLS â€” every detector â†” C2/IR/database hop
 # ---------------------------------------------------------------------------
 # Application-level mTLS, independent of the mesh. nginx verifies siphon-api
 # and siphon-fs against the deployment CA and presents a client certificate
@@ -63,7 +63,7 @@ global:
 # (see the table below); `certManager.enabled: true` issues all of them from
 # a chart-managed CA on any cluster with cert-manager installed, which is the
 # recommended path. Turning `enabled` off only makes sense with a replacement
-# nginx image whose config speaks plaintext to the upstreams — the Linkerd
+# nginx image whose config speaks plaintext to the upstreams â€” the Linkerd
 # mesh would then be the only thing authenticating those hops.
 tls:
   internal:
@@ -80,7 +80,7 @@ tls:
     #   postgres  postgres       the database's server certificate
     #   nginx     nginx          client identity presented to api/fs, CN=siphon-nginx
     #   dbClient  siphon-api     client identity presented to Postgres; CN MUST equal
-    #                            postgres.username — pg_hba's clientcert=verify-full
+    #                            postgres.username â€” pg_hba's clientcert=verify-full
     #                            checks it
     api:      { secretName: "" }
     fs:       { secretName: "" }
@@ -90,8 +90,8 @@ tls:
 
     certManager:
       enabled: false
-      # Empty: the chart bootstraps its own CA (a self-signed Issuer → a CA
-      # Certificate → a CA Issuer) and issues every identity from it. Set to
+      # Empty: the chart bootstraps its own CA (a self-signed Issuer â†’ a CA
+      # Certificate â†’ a CA Issuer) and issues every identity from it. Set to
       # an existing Issuer/ClusterIssuer to use the organisation's PKI.
       issuerRef:
         name: ""
@@ -100,7 +100,7 @@ tls:
       renewBefore: 360h  # 15 days
 
 # ---------------------------------------------------------------------------
-# siphon-api — REST scanner + k8s discovery endpoints
+# siphon-api â€” REST scanner + k8s discovery endpoints
 # ---------------------------------------------------------------------------
 api:
   enabled: true
@@ -108,7 +108,7 @@ api:
 
   image:
     repository: oxide11/siphon-api
-    tag: "2.12.1"
+    tag: "2.12.3"
     pullPolicy: ""  # inherits global.imagePullPolicy
 
   service:
@@ -125,7 +125,7 @@ api:
   #
   # Left empty by default because it must match your cluster: the pod CIDR
   # is cluster-specific (10.42.0.0/16 on k3d/k3s, 10.244.0.0/16 on kubeadm
-  # and kind, 10.0.0.0/8 on many managed clusters — check with
+  # and kind, 10.0.0.0/8 on many managed clusters â€” check with
   # `kubectl get node -o jsonpath='{.items[*].spec.podCIDR}'`). Widening it
   # past the networks your proxy actually occupies lets anything in range
   # forge its own rate-limit bucket, so do not simply set 0.0.0.0/0.
@@ -139,7 +139,7 @@ api:
   k8sRoll:
     enabled: true
     # Deployments the roller is allowed to patch. Leaving the list
-    # empty makes the Role wildcard — not recommended; the default
+    # empty makes the Role wildcard â€” not recommended; the default
     # restricts to Siphon's own Deployments.
     deployments:
       - siphon-api
@@ -208,7 +208,7 @@ api:
     minAvailable: 1
 
 # ---------------------------------------------------------------------------
-# siphon-fs — multipart file-scan service
+# siphon-fs â€” multipart file-scan service
 # ---------------------------------------------------------------------------
 fs:
   enabled: true
@@ -218,7 +218,7 @@ fs:
     repository: oxide11/siphon-fs
     # Pinned per the per-crate SemVer rules in CLAUDE.md. Bump
     # this in lockstep with crates/siphon-fs/Cargo.toml.
-    tag: "1.5.0"
+    tag: "1.5.1"
     pullPolicy: ""
 
   service:
@@ -279,7 +279,7 @@ fs:
   extraVolumeMounts: []
 
   podDisruptionBudget:
-    # siphon-fs ships with replicaCount 1 by default — a PDB only
+    # siphon-fs ships with replicaCount 1 by default â€” a PDB only
     # bites once you scale fs > 1 replica. Disabled here so the
     # default install doesn't render an unsatisfiable PDB; flip
     # this to `true` after bumping replicaCount.
@@ -291,10 +291,10 @@ fs:
     minAvailable: 1
 
 # ---------------------------------------------------------------------------
-# postgres — backing store for scan findings history + C2 shared state
+# postgres â€” backing store for scan findings history + C2 shared state
 # ---------------------------------------------------------------------------
 # Single-replica vanilla Postgres (no built-in TDE; encryption at rest
-# comes from the underlying StorageClass — set storageClassName to a
+# comes from the underlying StorageClass â€” set storageClassName to a
 # StorageClass with `csi.storage.k8s.io/fstype: ext4` + a CSI driver
 # that supports per-volume encryption keys, or rely on the cloud
 # provider's at-rest default for AWS EBS / Azure Disk / GCE PD).
@@ -324,7 +324,7 @@ postgres:
 
   # Logical database name + role. siphon-api connects as this user
   # over the in-cluster Service ClusterIP. The role's password is
-  # sourced from a Secret you create out of band — the chart does
+  # sourced from a Secret you create out of band â€” the chart does
   # not generate one (avoids the helm-upgrade-rotates-everything
   # footgun). See codespace-deploy.sh for the dev recipe:
   #
@@ -334,21 +334,21 @@ postgres:
   username: siphon
   secretName: ""  # e.g. "siphon-postgres"
 
-  # TLS on the api→Postgres hop. Findings rows contain the card numbers,
+  # TLS on the apiâ†’Postgres hop. Findings rows contain the card numbers,
   # national IDs and credentials the scanner matched, so this link is worth
-  # encrypting even inside the cluster — a compromised node or a sniffing
+  # encrypting even inside the cluster â€” a compromised node or a sniffing
   # sidecar reads it otherwise.
   #
   # Defaults to "disable" only because the bundled postgres:17-alpine above
   # serves no certificate; siphon-api's own default is "require". When you
-  # point at a managed Postgres (RDS, Cloud SQL, Neon — all of which present
+  # point at a managed Postgres (RDS, Cloud SQL, Neon â€” all of which present
   # a real certificate) set this to "require". For an in-cluster Postgres you
   # have given a self-signed certificate, set "require" and mount the issuing
   # CA, then name its path in caFile.
   #
   # "require" verifies the server certificate against the platform root store
   # plus caFile; it is not libpq's weaker verify-nothing "require".
-  # Ignored while tls.internal.enabled is true — that forces `mtls` with the
+  # Ignored while tls.internal.enabled is true â€” that forces `mtls` with the
   # chart's own material. Only consulted for an external Postgres with
   # tls.internal disabled.
   sslMode: disable
@@ -363,17 +363,52 @@ postgres:
       memory: 1Gi
 
 # ---------------------------------------------------------------------------
-# Console (the analyst SPA) — served from the nginx Deployment below
+# externalPostgres â€” use a managed Postgres (RDS, Cloud SQL, Neon, etc.)
+# instead of the bundled Deployment above.
+#
+# Set postgres.enabled: false and externalPostgres.enabled: true.
+# Supply the full connection URL either inline (url) or via a Secret
+# (urlSecretRef). siphon-api and siphon-fs both receive SIPHON_DATABASE_URL.
+#
+# Example â€” RDS with SSL:
+#   postgres:
+#     enabled: false
+#   externalPostgres:
+#     enabled: true
+#     urlSecretRef:
+#       name: siphon-rds-url   # kubectl create secret generic siphon-rds-url \
+#       key: url               #   --from-literal=url="postgres://..."
+# ---------------------------------------------------------------------------
+externalPostgres:
+  enabled: false
+
+  # Inline URL â€” avoid in production; prefer urlSecretRef so the password
+  # never appears in helm values stored in version control.
+  url: ""
+
+  # Reference to a Secret containing the full connection URL.
+  # Both name and key must be set for the secretRef path to be used.
+  urlSecretRef:
+    name: ""
+    key: url
+
+  # TLS mode for the external Postgres hop (same semantics as postgres.sslMode).
+  # RDS / Cloud SQL / Neon all present valid certificates â€” set to "require".
+  sslMode: require
+  caFile: ""  # path to a CA bundle mounted via api.extraVolumeMounts / fs.extraVolumeMounts
+
+# ---------------------------------------------------------------------------
+# Console (the analyst SPA) â€” served from the nginx Deployment below
 # ---------------------------------------------------------------------------
 # There is no standalone `console` section. The reverse-proxy image
 # produced by `deploy/nginx/Dockerfile` is a multi-stage build: Node
 # compiles the SPA from `console/`, nginx serves it at the origin root
 # out of `/srv/console/`. Scaling the SPA and scaling the forward-auth
-# proxy go together — one image, one Deployment, one scale knob
+# proxy go together â€” one image, one Deployment, one scale knob
 # (`nginx.replicaCount`).
 
 # ---------------------------------------------------------------------------
-# authelia — OIDC + passkey front door
+# authelia â€” OIDC + passkey front door
 # ---------------------------------------------------------------------------
 authelia:
   enabled: true
@@ -405,7 +440,7 @@ authelia:
   # then set authelia.secretName = "siphon-authelia".
   secretName: ""
 
-  # ConfigMap mount — the chart packages deploy/authelia/
+  # ConfigMap mount â€” the chart packages deploy/authelia/
   # configuration.yml as a ConfigMap. Override `configYaml` below
   # to point at your own, or leave it null to use the shipped
   # defaults.
@@ -415,7 +450,7 @@ authelia:
   # Authelia refuses to start if this file is missing or empty,
   # even when every request goes through devBypass. Defaults to a
   # single admin user with the Authelia-project demo argon2id hash
-  # for the password `authelia` — useful for local smoke-tests,
+  # for the password `authelia` â€” useful for local smoke-tests,
   # useless in prod. Replace with real entries (see
   # deploy/authelia/users_database.yml.example) in production.
   usersDatabase: null
@@ -452,19 +487,19 @@ authelia:
   # sub-request without a real login. Intended for Codespace /
   # k3d smoke-tests where there's no user directory seeded and the
   # point is to exercise the rest of the stack. NEVER set this true
-  # in production — it defeats every access-control rule.
+  # in production â€” it defeats every access-control rule.
   devBypass: false
 
   # Authelia's password-reset flow needs a way to deliver the reset
   # link. With `smtp.enabled: false` the chart falls back to the
-  # filesystem notifier — Authelia writes the "email" body to
+  # filesystem notifier â€” Authelia writes the "email" body to
   # /config/notification.txt and the operator tails the file to grab
   # the link. Fine for local dev / smoke tests; useless in prod.
   #
   # In prod, set `smtp.enabled: true` and fill in host / port /
   # username / sender. The SMTP password is sourced from the same
   # Secret as the other Authelia high-entropy values
-  # (authelia.secretName above) under the key `smtp_password` —
+  # (authelia.secretName above) under the key `smtp_password` â€”
   # add that key to the Secret in lockstep with flipping the toggle.
   notifier:
     smtp:
@@ -483,7 +518,7 @@ authelia:
       tls:
         # `true` accepts self-signed / private-CA SMTP relays.
         # Leave false unless you know the relay's TLS chain isn't
-        # publicly trusted — accepting any cert lets a MITM see
+        # publicly trusted â€” accepting any cert lets a MITM see
         # reset links.
         skipVerify: false
         serverName: ""        # SNI override; empty = derive from `host`
@@ -511,7 +546,7 @@ authelia:
     periodSeconds: 5
 
 # ---------------------------------------------------------------------------
-# nginx — reverse proxy / forward-auth
+# nginx â€” reverse proxy / forward-auth
 # ---------------------------------------------------------------------------
 nginx:
   enabled: true
@@ -528,7 +563,7 @@ nginx:
     # tlsPort: 443  # enable when TLS cert / key are mounted
 
   # Upstream hostnames Nginx resolves to. Defaults match the
-  # Service names this chart creates — override if you front
+  # Service names this chart creates â€” override if you front
   # a siphon-api that lives in another namespace or cluster.
   upstreams:
     api: ""        # empty -> chart-default Service name
@@ -570,7 +605,7 @@ nginx:
       add: [NET_BIND_SERVICE, CHOWN, SETUID, SETGID]
 
 # ---------------------------------------------------------------------------
-# ingress — single ingress for the proxy
+# ingress â€” single ingress for the proxy
 # ---------------------------------------------------------------------------
 ingress:
   enabled: true
@@ -586,14 +621,14 @@ ingress:
     secretName: ""
 
 # ---------------------------------------------------------------------------
-# Shared ConfigMap — overrides for siphon-api + siphon-fs
+# Shared ConfigMap â€” overrides for siphon-api + siphon-fs
 # ---------------------------------------------------------------------------
 # Both the API and the file scanner read the same overrides JSON
 # so ruleset tweaks land in one place. Override keys here become
 # the ConfigMap contents.
 overrides:
   # JSON as a string (Helm will render it into a ConfigMap key).
-  # Default is an empty-overrides shell — extend as needed.
+  # Default is an empty-overrides shell â€” extend as needed.
   config: |
     {
       "patterns": {},
@@ -616,7 +651,7 @@ containerSecurityContext:
   readOnlyRootFilesystem: true
   # Defense-in-depth duplicates of the pod-level fields. Pod
   # Security Admission's "restricted" baseline requires both
-  # runAsNonRoot and seccompProfile at container level too —
+  # runAsNonRoot and seccompProfile at container level too â€”
   # admission rejects pods where the values appear only at pod
   # level, even though k8s itself inherits them. Setting them
   # again here makes the admission check pass without any
@@ -628,7 +663,7 @@ containerSecurityContext:
     drop: [ALL]
 
 # ---------------------------------------------------------------------------
-# NetworkPolicy — default-deny + explicit allow-list
+# NetworkPolicy â€” default-deny + explicit allow-list
 # ---------------------------------------------------------------------------
 networkPolicy:
   enabled: true

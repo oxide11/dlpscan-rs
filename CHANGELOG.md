@@ -6,6 +6,126 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-09-13 — security audit / siphon-auth 0.1.1, siphon-core 2.9.3
+
+### siphon-auth 0.1.1
+- **fix(auth): double-rotation extends superseded secret's grace window.**
+  In `rotate()`, the cache loop rewrote every existing entry for the key ID
+  with the new `KeyRecord` (which carries `previous_valid_until = T2`). On a
+  second rotation within one cache-refresh window, the first rotation's secret
+  had its grace deadline silently extended to T2. The fix: drop all
+  already-`Previous` entries before the loop and demote only `Current` entries.
+
+### siphon-core 2.9.3
+- **fix(core): overrides compile failures now surface as structured `warn` log events.**
+  Bad regex patterns in `pattern_overrides` and `custom_categories`, malformed
+  override keys, and unknown list bindings all previously wrote to `stderr` via
+  `eprintln!`, which is invisible in containerized deployments using structured
+  logging. All seven callsites now use `tracing::warn!` with structured fields
+  so alert rules and log aggregators can catch them.
+
+---
+
+## 2026-09-13 — security audit / siphon-fs 1.5.1, siphon-icap 0.3.1, siphon-smtp 0.2.2
+
+### siphon-fs 1.5.1
+- **fix(fs): return generic error strings for tempfile and extraction failures (CWE-209).**
+  `tempfile create failed: {e}`, `tempfile write failed: {e}`, and
+  `extraction failed: {e}` all leaked OS error details and library internals
+  to any authenticated `Scan`-role caller. All three now return fixed strings
+  and log the real error at `warn`.
+- **fix(fs): cap multipart `filename` at 512 bytes and `content-type` at 256 bytes.**
+  Both were stored without length bounds — `filename` into the FindingsRing
+  record ID and Postgres `file_name`, `content-type` into `mime_type`. An
+  upload with a crafted `Content-Disposition: filename` of arbitrary size
+  could flood the ring and the DB on every request.
+
+### siphon-icap 0.3.1
+- **fix(icap): cap ICAP header line length at 8 KB.**
+  `MAX_REQUEST_HEADERS = 256` capped header *count* but not individual line
+  size. A single header line of arbitrary length could consume unbounded
+  memory. Lines exceeding 8 192 bytes now return a parse error.
+- **fix(icap): wrap connection handler in a 60-second timeout.**
+  A proxy that connected and then stalled mid-header held a semaphore slot
+  indefinitely. With `SIPHON_ICAP_MAX_CONNECTIONS` exhausted by stalled
+  connections, all legitimate traffic was denied. The timeout is logged at
+  `warn`.
+
+### siphon-smtp 0.2.2
+- **fix(smtp): cap envelope sender/recipient addresses at 512 bytes.**
+  `envelope_address()` sanitized control characters but imposed no length
+  limit. Both sender and recipient addresses are stored in Postgres; a
+  crafted `MAIL FROM` / `RCPT TO` argument could exceed column bounds and
+  produce confusing errors. 512 bytes is generous for any RFC 5321-compliant
+  address.
+- **fix(smtp): cap MTA queue ID (ingest_key) at 128 bytes.**
+  `session.macros.get("i")` was returned directly as the ingest key, which
+  goes into a partial unique index and audit log lines. Postfix queue IDs are
+  ≤ 15 characters in practice; cap ensures no malformed MTA can overflow the
+  column.
+- **fix(smtp): store generic string for scan errors in DB detail column.**
+  `format!("scan failed: {e}")` was persisted to `message_parts.detail`,
+  leaking scanner internal state into persistence. Now stores `"scan failed"`
+  and logs the real error at `warn`.
+
+---
+
+## 2026-09-13 — security audit / siphon-api 2.12.3
+
+### siphon-api 2.12.3
+
+- **fix(api): DB error strings no longer returned to HTTP callers.** `findings_export`,
+  `findings_prune`, and `create_baseline_snapshot` all returned `format!("{e}")` strings
+  verbatim in the response body, leaking schema details, table names, and constraint
+  messages to any authenticated caller. All three now return a fixed generic message
+  while logging the full error at `warn`.
+
+- **fix(api): `scan_stream` enforces tenant scope and pushes to the findings ring.**
+  `POST /scan/stream` had no `AuthContextExt` extractor and no `tenant_scope()` call,
+  so a tenant-bound key could stream scans without tenant isolation. Scan results were
+  also never pushed to the in-memory `FindingsRing`, so streaming scans were invisible to
+  `/v1/findings`. Both gaps are now closed: the handler rejects a mismatched tenant header
+  (403) before opening the SSE stream, and every finding is pushed to the ring as it is
+  emitted.
+
+- **fix(api): `scan_stream` SSE error frame no longer leaks scanner internals.**
+  On a scan engine error, the SSE error frame carried `e.to_string()`, which could expose
+  pattern names and internal scan state. Now sends `{"error": "scan failed"}` and logs
+  the real error at `debug`.
+
+- **fix(api): `BatchItem.id` capped at 256 characters.** Unbounded IDs landed in ring
+  record IDs and structured log lines. Items with IDs exceeding the cap are rejected with
+  a 400 before any scan work begins.
+
+- **fix(api): `SnapshotBody.label` truncated at 200 characters.** A baseline snapshot
+  label had no length limit; it is now truncated at the nearest Unicode scalar boundary
+  at or below 200 bytes before it reaches the database and audit log.
+
+---
+
+## 2026-09-13 — security hardening round 8
+
+### siphon-launcher 2.1.3
+
+- **fix(launcher): reject non-loopback bind addresses in `POST /v1/manage/start`.**
+  `req.bind` is used to set `SIPHON_BIND` / `SIPHON_FS_BIND` on spawned children
+  directly, bypassing the `BLOCKED_ENV_KEYS` check that prevents the same keys
+  from being injected via `req.env`. A local caller could `POST {"kind":
+  "siphon-api", "bind": "0.0.0.0:8080"}` to start a child bound on all
+  interfaces, contradicting the launcher's same-machine-trust model. The bind
+  address is now parsed as a `SocketAddr` and rejected with 400 if it is not a
+  loopback address.
+
+### siphon-api 2.12.2
+
+- **fix(api): gate `GET /v1/db/health` behind `RequireAdminAction`.**
+  The handler was accessible to any authenticated user (all roles). When Postgres
+  is unreachable it returns the connection error string, which can disclose
+  internal host/port details. Only admins need the detailed health signal;
+  non-admins who need liveness can use `/health` or `/ready`.
+
+---
+
 ## 2026-09-09 — fail closed: five ways the stack reported safe when it wasn't
 
 Every entry below is one shape of the same bug: a surface that answered

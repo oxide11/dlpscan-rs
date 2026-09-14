@@ -76,13 +76,13 @@ services:
       - RUST_LOG=info
     command: ["guard", "--action", "redact", "--presets", "pci-dss,credentials"]
 
-  # evadex — adversarial testing bridge. FastAPI service that drives
+  # evadex â€” adversarial testing bridge. FastAPI service that drives
   # evadex runs from siphon-c2 and exposes /v1/evadex/{run,metrics,generate}.
   # Builds from the sibling evadex repo (../evadex), so both checkouts
   # need to live under the same parent directory for `docker compose up`.
   evadex:
     build:
-      # Relative to the repo root — matches the sibling dlpscan services
+      # Relative to the repo root â€” matches the sibling dlpscan services
       # above. Assumes the evadex checkout lives next to dlpscan-rs so
       # `docker compose -f deploy/docker-compose.yml up` from the repo
       # root can find ../evadex.
@@ -123,25 +123,25 @@ services:
       retries: 3
 
   # -------------------------------------------------------------------------
-  # Phase 2 — zero-trust front door
+  # Phase 2 â€” zero-trust front door
   # -------------------------------------------------------------------------
   siphon-api:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.api
-    image: siphon-api:2.12.1
+    image: siphon-api:2.12.3
     profiles: [auth]
     environment:
       # siphon-api reads SIPHON_BIND + SIPHON_PORT separately, never
       # a combined SIPHON_API_BIND. Default bind is 127.0.0.1 which
-      # makes the container unreachable from nginx — force 0.0.0.0
+      # makes the container unreachable from nginx â€” force 0.0.0.0
       # explicitly, matching the Helm chart.
       - SIPHON_BIND=0.0.0.0
       - SIPHON_PORT=8080
       # `${SIPHON_API_KEY:-}` expands to an empty string when the variable is
       # absent, and siphon-api now treats empty as unset and refuses to start
       # rather than silently accepting `Authorization: Bearer ` with nothing
-      # after it — which is what the previous behaviour did while logging
+      # after it â€” which is what the previous behaviour did while logging
       # "API key authentication enabled".
       #
       # So either export a key:
@@ -203,7 +203,7 @@ services:
       dockerfile: deploy/Dockerfile.fs
     # Pinned per the per-crate SemVer rules in CLAUDE.md. Bump
     # in lockstep with crates/siphon-fs/Cargo.toml.
-    image: siphon-fs:1.5.0
+    image: siphon-fs:1.5.1
     profiles: [auth]
     environment:
       - SIPHON_FS_BIND=0.0.0.0:8081
@@ -272,7 +272,7 @@ services:
       - -ec
       - |
         for d in siphon-api siphon-fs siphon-smtp siphon-icap nginx postgres; do
-          [ -f "/src/$$d/ca.crt" ] || { echo "missing deploy/certs/$$d — run scripts/dev/mkcerts.sh first" >&2; exit 1; }
+          [ -f "/src/$$d/ca.crt" ] || { echo "missing deploy/certs/$$d â€” run scripts/dev/mkcerts.sh first" >&2; exit 1; }
           rm -rf "/dst/$$d"/*
           cp "/src/$$d"/* "/dst/$$d/"
         done
@@ -284,7 +284,7 @@ services:
         echo "certificates staged"
 
   # The findings store. Every network connection must be TLS with a client
-  # certificate whose CN is the role AND the password — deploy/postgres/
+  # certificate whose CN is the role AND the password â€” deploy/postgres/
   # pg_hba.conf. There is no plaintext listener to fall back to.
   postgres:
     image: postgres:17-alpine
@@ -334,7 +334,7 @@ services:
       - authelia-data:/config/runtime
     environment:
       # These three must be set in the shell or in a .env file before
-      # `docker compose up` — there is no silent fallback. Generate with:
+      # `docker compose up` â€” there is no silent fallback. Generate with:
       #   export AUTHELIA_JWT_SECRET="$(openssl rand -hex 32)"
       #   export AUTHELIA_SESSION_SECRET="$(openssl rand -hex 32)"
       #   export AUTHELIA_STORAGE_ENCRYPTION_KEY="$(openssl rand -hex 32)"
@@ -366,7 +366,7 @@ services:
       - "8080:80"
       # - "8443:443"  # enable once TLS certs are mounted
     # What nginx presents to siphon-api and siphon-fs, and the CA it verifies
-    # them against — nginx.conf reads these paths.
+    # them against â€” nginx.conf reads these paths.
     volumes:
       - certs-nginx:/etc/nginx/certs/internal:ro
     depends_on:
@@ -385,13 +385,13 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.icap
-    image: siphon-icap:0.3.0
+    image: siphon-icap:0.3.1
     profiles: [auth]
     environment:
       # CIDRs whose connections the ICAP server accepts. Default is
       # loopback-only. For local dev widen to your proxy subnet, e.g.:
       #   SIPHON_ICAP_ALLOWED_NETS=10.0.0.0/8
-      # NEVER use 0.0.0.0/0 on an internet-facing host — anyone can
+      # NEVER use 0.0.0.0/0 on an internet-facing host â€” anyone can
       # feed the ICAP server arbitrary traffic with no authentication.
       - SIPHON_ICAP_ALLOWED_NETS=${SIPHON_ICAP_ALLOWED_NETS:-127.0.0.0/8}
       - SIPHON_ICAP_ACTION=${SIPHON_ICAP_ACTION:-flag}
@@ -425,13 +425,13 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.smtp
-    image: siphon-smtp:0.2.1
+    image: siphon-smtp:0.2.2
     profiles: [auth]
     environment:
       # CIDRs whose connections the milter accepts. Default is loopback-
       # only. Widen to your MTA subnet for real Postfix integration, e.g.:
       #   SIPHON_SMTP_ALLOWED_NETS=10.0.0.0/8
-      # NEVER use 0.0.0.0/0 on an internet-facing host — a mail filter
+      # NEVER use 0.0.0.0/0 on an internet-facing host â€” a mail filter
       # reachable from anywhere accepts arbitrary message injection.
       - SIPHON_SMTP_ALLOWED_NETS=${SIPHON_SMTP_ALLOWED_NETS:-127.0.0.0/8}
       # defer (fail closed, the default) | deliver (fail open).
@@ -443,7 +443,7 @@ services:
       # to match: the MTA gets the last word on a timeout, and a
       # disagreement between the two is a silent bypass.
       - SIPHON_SMTP_ON_INDETERMINATE=${SIPHON_SMTP_ON_INDETERMINATE:-defer}
-      # 10 s, from the measurements in docs/architecture/email-dlp.md §4.5:
+      # 10 s, from the measurements in docs/architecture/email-dlp.md Â§4.5:
       # ~4x the worst contended message, ~40x the mixed-flow p99.
       - SIPHON_SMTP_TIMEOUT_SECS=${SIPHON_SMTP_TIMEOUT_SECS:-10}
       - SIPHON_SMTP_DIRECTION=${SIPHON_SMTP_DIRECTION:-inbound}
@@ -479,7 +479,7 @@ services:
     ports:
       - "8894:8894"
     restart: unless-stopped
-    # No healthcheck. The milter protocol has no bare liveness probe — the
+    # No healthcheck. The milter protocol has no bare liveness probe â€” the
     # first thing a client must send is an option-negotiation packet, and
     # answering one would mean speaking the protocol from a shell. Compose
     # restarts the container if the process exits, which is the signal that
