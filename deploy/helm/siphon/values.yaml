@@ -524,8 +524,12 @@ nginx:
 
   service:
     type: ClusterIP
-    port: 80
-    # tlsPort: 443  # enable when TLS cert / key are mounted
+    # 443, not 80. The nginx image is TLS-only — its config has no plaintext
+    # listener to fall back to — so a Service port targeting 80 would point
+    # at a port that refuses connections. The certificate comes from the
+    # deployment's own CA (tls.internal.certManager), mounted at
+    # /etc/nginx/certs/internal, the same material every other hop uses.
+    port: 443
 
   # Upstream hostnames Nginx resolves to. Defaults match the
   # Service names this chart creates — override if you front

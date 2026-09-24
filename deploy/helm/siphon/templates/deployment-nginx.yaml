@@ -39,14 +39,12 @@ spec:
           image: {{ include "siphon.image" (dict "root" . "image" .Values.nginx.image) }}
           imagePullPolicy: {{ default .Values.global.imagePullPolicy .Values.nginx.image.pullPolicy }}
           ports:
-            - name: http
-              containerPort: 80
-              protocol: TCP
-            {{- if .Values.nginx.service.tlsPort }}
+            # TLS only. The image's nginx.conf has no port 80 listener at
+            # all — not a redirect — so declaring `http` here would advertise
+            # a port that refuses connections.
             - name: https
               containerPort: 443
               protocol: TCP
-            {{- end }}
           # Upstream hostnames are hardcoded in nginx.conf — they
           # match the Service names the chart's siphon.componentName
           # helper emits (siphon-api, siphon-fs, siphon-authelia).
@@ -74,13 +72,17 @@ spec:
           livenessProbe:
             httpGet:
               path: /nginx-health
-              port: http
+              port: https
+              # kubelet does not verify the origin certificate on an HTTPS
+              # probe, so the deployment CA needs no distribution here.
+              scheme: HTTPS
             initialDelaySeconds: 5
             periodSeconds: 15
           readinessProbe:
             httpGet:
               path: /nginx-health
-              port: http
+              port: https
+              scheme: HTTPS
             initialDelaySeconds: 2
             periodSeconds: 5
           resources:

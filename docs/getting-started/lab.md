@@ -4,7 +4,9 @@ The end state: `https://siphon.polygoncyber.com` serves the C2 console, you log
 in with an account you control, and uploads, scans and findings all work
 against a real Postgres. A small VPS runs the stack; Cloudflare fronts it
 through a tunnel, so the box needs no inbound firewall rule, no public IP and
-no certificate.
+no *public* certificate — nginx serves a certificate from the deployment's own
+CA, minted by `scripts/dev/mkcerts.sh`, because the hop from cloudflared to
+nginx is TLS too.
 
 ## Read this first: it is not the Workers deployment
 
@@ -43,8 +45,8 @@ binding, and it is reversible: every piece of that config is in the repo, so
 | `siphon-icap`, `siphon-smtp` | the network and mail detectors, if you want them |
 
 `docker-compose.tunnel.yml` adds `cloudflared` and removes nginx's host port
-binding — with the tunnel in front, publishing `8080` on the host is a second,
-unauthenticated way in.
+binding — with the tunnel in front, publishing `8443` on the host is a second
+way in that bypasses Cloudflare entirely.
 
 ## Accounts: there is no signup, and that is not a gap
 
@@ -69,14 +71,40 @@ service:
 
 | Hostname | Service |
 |---|---|
-| `siphon.polygoncyber.com` | `http://nginx:80` |
-| `auth.polygoncyber.com` | `http://nginx:80` |
+| `siphon.polygoncyber.com` | `HTTPS` → `nginx:443` |
+| `auth.polygoncyber.com` | `HTTPS` → `nginx:443` |
 
-Both go to nginx. It is the `default_server` on port 80, so it answers for any
-Host, and it routes `/auth/` to Authelia internally. Both hostnames must sit
-under one registrable domain — Authelia scopes its session cookie to the
-parent, so a cookie set at `auth.polygoncyber.com` is only sent to
-`siphon.polygoncyber.com` because both are under `polygoncyber.com`.
+Both go to nginx. It is the `default_server`, so it answers for any Host, and
+it routes `/auth/` to Authelia internally.
+
+**HTTPS, not HTTP.** nginx is TLS-only — there is no port 80 to fall back to,
+so an ingress rule pointing at `http://nginx:80` fails outright rather than
+quietly serving your session cookies and scan payloads in the clear. That hop
+is short, but it carries the sensitive data this product exists to find, and
+every other hop in the stack is already authenticated transport.
+
+nginx presents `nginx/tls.crt`, minted by `scripts/dev/mkcerts.sh` from the
+deployment's own CA. Cloudflare does not know that CA, so under
+**Additional application settings → TLS** set:
+
+- **Origin Server Name**: `nginx` — the SAN the certificate actually carries
+- **CA Pool**: the contents of `deploy/certs/nginx/ca.crt`
+
+Do **not** reach for *No TLS Verify*. It makes the handshake succeed against
+any certificate at all, which is the same mistake this stack already removed
+once when three Postgres connectors were each ending in
+`.with_no_client_auth()`.
+
+If you would rather not manage a CA pool, the alternative is a **Cloudflare
+Origin Certificate** (SSL/TLS → Origin Server → Create): Cloudflare trusts it
+by default, so no CA pool and no origin server name are needed. Put the pair
+at `deploy/certs/nginx/tls.{crt,key}` and nginx serves it with no config
+change — the paths are the same.
+
+**Both hostnames must sit under one registrable domain.** Authelia scopes its
+session cookie to the parent, so a cookie set at `auth.polygoncyber.com` is
+only sent to `siphon.polygoncyber.com` because both are under
+`polygoncyber.com`.
 
 **3. Render the config and create your account.**
 
@@ -117,8 +145,13 @@ reason; if you edited the config by hand, check `session.cookies[].domain` is
 completed before `siphon-api` and `siphon-fs` start.
 
 **The tunnel is up but nothing answers:** `docker compose logs cloudflared`.
-The ingress hostname in the dashboard must be `http://nginx:80`, not
-`localhost` — cloudflared resolves it on the compose network.
+The ingress service must be `https://nginx:443` — `https`, the compose
+service name (not `localhost`, which is cloudflared's own container), and
+port 443 (nginx no longer listens on 80).
+
+**cloudflared logs a certificate error:** it does not trust the deployment CA.
+Set Origin Server Name to `nginx` and the CA Pool to `deploy/certs/nginx/ca.crt`,
+or switch to a Cloudflare Origin Certificate as above.
 
 **Everything works but findings do not persist:** check `postgres` is healthy
 and `SIPHON_DATABASE_PASSWORD` in `deploy/.env` matches what the database was

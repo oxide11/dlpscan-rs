@@ -37,9 +37,10 @@ Next steps:
 2. Port-forward to the nginx Service to reach the UI locally:
 
      kubectl -n {{ .Release.Namespace }} port-forward \
-       svc/{{ include "siphon.componentName" (dict "root" . "component" "nginx") }} 8080:80
+       svc/{{ include "siphon.componentName" (dict "root" . "component" "nginx") }} 8443:443
 
-   Then browse http://localhost:8080/ui/
+   Then browse https://localhost:8443/ — the certificate is the deployment's
+   own, so expect a browser warning unless you trust its CA.
 
 {{- end }}
 
