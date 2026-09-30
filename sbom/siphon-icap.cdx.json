@@ -6,13 +6,13 @@
     "component": {
       "type": "application",
       "name": "siphon-icap",
-      "version": "0.3.1",
-      "purl": "pkg:cargo/siphon-icap@0.3.1"
+      "version": "0.3.2",
+      "purl": "pkg:cargo/siphon-icap@0.3.2"
     },
     "properties": [
       {
         "name": "siphon:target",
-        "value": "sbom/siphon-icap.cdx.json"
+        "value": "x86_64-unknown-linux-gnu"
       },
       {
         "name": "siphon:resolution",

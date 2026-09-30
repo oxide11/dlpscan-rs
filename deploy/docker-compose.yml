@@ -385,7 +385,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.icap
-    image: siphon-icap:0.3.1
+    image: siphon-icap:0.3.2
     profiles: [auth]
     environment:
       # CIDRs whose connections the ICAP server accepts. Default is
@@ -425,7 +425,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.smtp
-    image: siphon-smtp:0.2.2
+    image: siphon-smtp:0.2.3
     profiles: [auth]
     environment:
       # CIDRs whose connections the milter accepts. Default is loopback-

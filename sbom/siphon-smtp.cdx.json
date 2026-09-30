@@ -6,13 +6,13 @@
     "component": {
       "type": "application",
       "name": "siphon-smtp",
-      "version": "0.2.2",
-      "purl": "pkg:cargo/siphon-smtp@0.2.2"
+      "version": "0.2.3",
+      "purl": "pkg:cargo/siphon-smtp@0.2.3"
     },
     "properties": [
       {
         "name": "siphon:target",
-        "value": "sbom/siphon-smtp.cdx.json"
+        "value": "x86_64-unknown-linux-gnu"
       },
       {
         "name": "siphon:resolution",

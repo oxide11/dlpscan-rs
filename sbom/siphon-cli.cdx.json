@@ -4718,8 +4718,8 @@
     {
       "type": "library",
       "name": "siphon-core",
-      "version": "2.9.2",
-      "purl": "pkg:cargo/siphon-core@2.9.2",
+      "version": "2.9.3",
+      "purl": "pkg:cargo/siphon-core@2.9.3",
       "scope": "required",
       "licenses": [
         {
