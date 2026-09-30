@@ -2328,8 +2328,8 @@
     {
       "type": "library",
       "name": "rustls",
-      "version": "0.23.44",
-      "purl": "pkg:cargo/rustls@0.23.44",
+      "version": "0.23.45",
+      "purl": "pkg:cargo/rustls@0.23.45",
       "scope": "required",
       "licenses": [
         {

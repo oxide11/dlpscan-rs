@@ -198,6 +198,34 @@ required-features = ["conformance"]
 name = "scanning"
 harness = false
 
+# ---------------------------------------------------------------------------
+# Development profile — why this exists
+#
+# A working checkout reached 54 GB in `target/`, 43 GB of it in `debug/deps`,
+# and nothing was misconfigured. A debug build defaults to full DWARF
+# (`debuginfo=2`); cargo keeps a separate artifact set for every feature
+# combination and toolchain it has ever built here, and it never garbage-
+# collects any of them. The third-party closure behind `--features full` —
+# arrow, parquet, rxing, image, aws-lc-sys — is the bulk of that volume, and
+# complete debug info for crates nobody in this repo single-steps through is
+# the part that is pure cost.
+#
+# So dependencies are built without debug info and our own crates keep all of
+# it. A backtrace through siphon-core still resolves to a file, a line and a
+# local; one through parquet resolves to a symbol, which is as far as anyone
+# was going to read it anyway. Measured on `cargo test --workspace --features
+# full --no-run`: 54 GB -> 3.7 GB.
+#
+# This governs `cargo test` as well — the test profile inherits from dev.
+[profile.dev]
+debug = true
+
+# Dependencies only. A named `[profile.dev.package.<crate>]` still wins over
+# this glob, so add one rather than editing this if you ever need to step into
+# a specific dependency.
+[profile.dev.package."*"]
+debug = false
+
 [profile.release]
 lto = true
 strip = true

@@ -691,6 +691,26 @@ Static output only: Node runs at build time inside `deploy/nginx/Dockerfile`
 and never reaches the deployed artifact. nginx serves the bundle at the origin
 root and proxies `/api/` and `/fs/`.
 
+**nginx is TLS-only.** Since 2026-09-09 there is no port 80 listener at all —
+not one that redirects, which still accepts the connection and reads a request
+line. It presents `nginx/tls.{crt,key}` from the deployment CA
+(`scripts/dev/mkcerts.sh`, serverAuth, SAN covering `nginx` and `localhost`),
+which is new: nginx had a `client` certificate for talking *upstream* to
+siphon-api and siphon-fs, and nothing to present *downstream*, so the last hop
+into the ingress carried session cookies and scan payloads in the clear while
+every other hop in the stack was authenticated transport. HSTS is set here for
+the same reason siphon-fs still omits it — it means something now that the
+listener is TLS.
+
+Consequences worth knowing: compose publishes `8443:443` (local dev is
+`https://siphon.local:8443`, trusting `deploy/certs/nginx/ca.crt`); the Helm
+chart's Service, containerPort, NetworkPolicy and probes all moved to 443 with
+`scheme: HTTPS`, which is a chart MAJOR because an Ingress pointing at port 80
+stops working; and a Cloudflare Tunnel must route to `https://nginx:443`.
+`scripts/validate-nginx.sh` asserts plaintext on :80 is *refused* — verified by
+re-adding a `listen 80` and watching it fail. The k8s lab manifest
+(`deploy/k8s/lab/`) is unaffected: it runs stock nginx with its own ConfigMap.
+
 The `ui/` Next.js app it replaced is gone. It was orphaned — nothing built or
 served it, though its README claimed nginx did. The design prototypes stay in
 `docs/wireframes/` as reference; `siphon-ir.html` is still shipped, at

@@ -55,6 +55,37 @@ beyond its existing 1 MiB per-section cap.
 
 ---
 
+## 2026-09-30 — dependency security
+
+### workspace (lockfile only)
+
+- chore(deps): bump `rustls` 0.23.44 → 0.23.45 (**RUSTSEC-2026-0285**,
+  GHSA-2mjx-qc3c-rqvc). Rustls accepted TLS 1.3 handshake messages sent at
+  the wrong encryption level when they followed a key-changing message in
+  the same record — a plaintext `EncryptedExtensions` packed into the same
+  record as the `ServerHello` was accepted rather than refused. RFC 8446
+  §5.1 requires that handshake messages do not span a key change and that
+  the connection is terminated with `unexpected_message` if they do. The
+  handshake transcript stays authenticated, so a network-position attacker
+  cannot alter or complete a handshake with this (CVSS
+  AV:N/AC:L/PR:N/UI:N/S:U/**C:L/I:N/A:N**); the practical effect is that a
+  peer could send in plaintext what should have been encrypted without
+  rustls rejecting the connection. Functionally the same bug as Go's
+  CVE-2025-61730 (GO-2026-4340).
+
+  Lockfile-only: `rustls` is a transitive and optional-feature dependency,
+  no workspace crate's public API changes, so no crate version bumps per
+  the `chore(deps)` rule in CLAUDE.md. The bump is a single-package update
+  with no dependency cascade. It reaches every TLS surface in the stack —
+  siphon-auth's Postgres TLS and mTLS (`tokio-postgres-rustls`), the
+  `axum-server` TLS listeners in siphon-api and siphon-fs, the optional
+  `tls` feature on the root crate, and `reqwest`'s rustls backend.
+
+  No `deny.toml` exception is needed: the advisory is patched rather than
+  accepted, so it stops matching once the lockfile lands.
+
+---
+
 ## 2026-09-13 — security audit / siphon-auth 0.1.1, siphon-core 2.9.3
 
 ### siphon-auth 0.1.1
@@ -172,7 +203,6 @@ beyond its existing 1 MiB per-section cap.
   is unreachable it returns the connection error string, which can disclose
   internal host/port details. Only admins need the detailed health signal;
   non-admins who need liveness can use `/health` or `/ready`.
-
 ---
 
 ## 2026-09-09 — fail closed: five ways the stack reported safe when it wasn't
@@ -344,7 +374,33 @@ authorise, or was not entitled to show.
 - **`inspection()`** answers whether every part of a message was read,
   separately from what was found in the parts that were.
 
+### chart 3.0.0
+
+- **BREAKING: the nginx Service listens on 443, not 80.** An Ingress or
+  port-forward pointing at port 80 stops working; point it at 443. The
+  containerPort, NetworkPolicy ingress rule and both probes moved with it,
+  the probes gaining `scheme: HTTPS`. `nginx.service.tlsPort` is gone —
+  there is one port now and it is TLS. The k8s lab manifests under
+  `deploy/k8s/lab/` are unaffected; they run stock nginx with their own
+  ConfigMap.
+
 ### Deploy
+
+- **fix(deploy): nginx accepts TLS only — there is no port 80.** Not a
+  redirect: a redirect still accepts the TCP connection and reads a request
+  line, and this ingress carries session cookies and matched sensitive
+  values. Every other hop in the stack was already authenticated transport
+  — nginx presents a client certificate upstream to siphon-api and
+  siphon-fs, the Postgres hop is mTLS — while the last hop *into* nginx was
+  plaintext. The 443 block had sat commented out since it was written
+  because there was no server certificate to put in it; `mkcerts.sh` now
+  mints `nginx/tls.{crt,key}` (serverAuth, SAN covering `nginx` and
+  `localhost`) alongside the existing client pair. HSTS is set now that it
+  means something. Compose publishes `8443:443`, and the container's own
+  healthcheck verifies the chain rather than passing `-k`.
+  `scripts/validate-nginx.sh` gained an assertion that plaintext on :80 is
+  refused, checked by re-adding a `listen 80` and watching it fail.
+
 
 - **fix(deploy): nginx served the old wireframe at `/ir/`, hiding the IR
   console behind it.** `location /ir/` aliased the baked-in

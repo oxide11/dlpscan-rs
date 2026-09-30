@@ -1,6 +1,86 @@
 # Siphon Backlog
 
-Last updated: 2026-09-13
+Last updated: 2026-09-30
+
+## Security audit log
+
+### 2026-09-30 — rustls advisory + first pass over the four new crates
+
+`rustls` 0.23.44 → 0.23.45 for **RUSTSEC-2026-0285** (TLS 1.3 handshake
+messages accepted across an encryption-level boundary, RFC 8446 §5.1).
+Patched rather than accepted, so it needs no `deny.toml` entry.
+
+`siphon-icap`, `siphon-smtp`, `siphon-mail` and `siphon-auth` had not been
+reviewed since they were split out. First dedicated pass — **no findings**.
+Recorded so the next audit starts from what was already checked rather than
+re-deriving it:
+
+- **Secrets.** No hardcoded keys, PEM material or credential-bearing
+  connection strings in any of the four. The only secret reads are
+  `SIPHON_DATABASE_URL` / `SIPHON_DATABASE_PASSWORD` from the environment in
+  `siphon-smtp`.
+- **Answering "clean" for unread content** — the 2026-09-09 class. Covered in
+  all three mail/proxy surfaces. `siphon-icap` routes oversize and binary
+  bodies through `unscannable_verdict` under `SIPHON_ICAP_ON_UNSCANNABLE`,
+  checking truncation *before* binary-sniffing (a sniff on a truncated prefix
+  answers a question about the prefix, not the transfer), and a scan error
+  returns 500 rather than a clean 204. `siphon-smtp` has the equivalent
+  control in `SIPHON_SMTP_ON_INDETERMINATE`, and `policy::action_for` applies
+  it to any `Accept` verdict whose inspection was incomplete — so one
+  detectable value in one part cannot deliver a message whose other part
+  nobody could open. The linchpin is `siphon_mail::inspection()`:
+  `PartStatus::is_inspected` is a strict allowlist of `Scanned`, and no parts
+  at all is `Incomplete`, not a clean bill of health. `siphon-smtp` only ever
+  moves that value toward `Incomplete` (on a structural parse warning), never
+  back.
+- **Tenant scope from the key, not the header.** `siphon-auth` reads no
+  headers at all; `tenant_id` comes from the `api_keys` row matched on the
+  presented secret's hash. Centralising auth did not reintroduce the
+  header-trust bug fixed in siphon-api and siphon-fs on 2026-09-09 — both
+  `tenant_scope()` resolvers still confine a bound key and let a header only
+  agree, never contradict.
+
+Three things this pass turned up that are not security findings but are worth
+keeping, none of them caused by the rustls bump — all three reproduce on an
+unmodified `main`:
+
+- **`siphon-auth` had no CI at all.** No workflow named the crate, so
+  `tests/mtls.rs` — the only suite anywhere that drives a real rustls
+  handshake — had never run in CI. Added as a step in this PR. Note that its
+  first CI run is also its first-ever run.
+- **`siphon-fs` `size_limit_tests` race (flaky).** `with_env` in
+  `crates/siphon-fs/src/main.rs` saves, sets and restores process-global env
+  vars with no lock, and the test harness runs tests in parallel threads in
+  one process. Several tests in that module drive the same two variables
+  (`SIPHON_FS_BODY_LIMIT_MB`, `SIPHON_FS_MAX_FILE_SIZE_MB`), so they clobber
+  each other: `per_file_default_follows_a_raised_body_limit` reads 100 MB —
+  exactly the neighbouring test's value — where it set 250 MB. A `static
+  Mutex` around `with_env` fixes it. Not currently visible because CI runs
+  `-p siphon-fs --test auth_test` and never the bin's unit tests.
+- **Two suites are sensitive to a CRLF checkout.** On Windows,
+  `scripts/dev/mkcerts.sh` fails (`set -Eeuo pipefail\r`, and openssl's
+  `-subj /O=Siphon/...` is mangled by MSYS path conversion), taking all six
+  mtls tests with it; and `guard::obfuscate`'s source-scanning test
+  (`every_dispatch_arm_names_something_the_scanner_emits`) mis-parses
+  `obfuscate.rs` because it splits on `"\n}\n"`. Both files are `i/lf` in the
+  index, so Linux CI is unaffected — this only bites contributors on a
+  `core.autocrlf=true` checkout.
+
+### 2026-09-30 — the parsers on the untrusted edge
+
+The pass the entry above deferred: siphon-icap's ICAP framing and
+siphon-smtp's milter protocol parsing. Four findings, all fixed — three of
+them the same shape as the 2026-09-09 wave. See the CHANGELOG entry for
+siphon-icap 0.3.2 and siphon-smtp 0.2.3.
+
+The milter framing was audited and deliberately left alone: `next_packet`
+checks the declared length against `MAX_PACKET_SIZE` before it reserves or
+copies anything, rejects a zero length, `parse_command` bounds-checks every
+fixed-width field, and `nul_list` terminates on every input including a
+leading NUL and a missing terminator.
+
+Still not reviewed: the ICAP `Encapsulated` offset handling beyond its
+existing 1 MiB per-section cap.
 
 ## Security debt — unmaintained dependencies
 

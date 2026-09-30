@@ -11,15 +11,20 @@
 # together, which is this file.
 #
 # cloudflared dials OUT to Cloudflare and holds the connection open, so the VPS
-# needs no inbound firewall rule, no public IP and no certificate. TLS
-# terminates at Cloudflare's edge; the hop from cloudflared to nginx is plain
-# HTTP over the compose network, which is why `nginx` here drops the host port
-# binding it has in the base file — with a tunnel in front, publishing 8080 on
-# the host is a second, unauthenticated way in.
+# needs no inbound firewall rule and no public IP.
+#
+# The hop from cloudflared to nginx is **TLS as well**, not plaintext. It is a
+# short hop over a compose bridge, but it carries session cookies and scan
+# payloads — the sensitive data this product exists to find — and every other
+# hop in this stack is already authenticated transport. nginx is TLS-only:
+# there is no port 80 to fall back to, so a misconfigured ingress rule fails
+# loudly instead of quietly downgrading. `nginx` still drops its host port
+# binding here, because with a tunnel in front publishing it is a second way
+# in that bypasses Cloudflare entirely.
 #
 # Read alongside docs/getting-started/lab.md, which covers the Cloudflare-side
 # setup this file assumes: a named tunnel, its token, and two public hostnames
-# both routed to http://nginx:80.
+# both routed to **https://nginx:443**.
 
 services:
   cloudflared:
@@ -36,14 +41,14 @@ services:
     # No `networks:` key — the base file names the default network `siphon-net`
     # and every service joins it implicitly. Declaring a network here would
     # have to repeat that name, and a second name is a second thing to keep in
-    # step; cloudflared reaches nginx as `http://nginx:80` either way.
+    # step; cloudflared reaches nginx as `https://nginx:443` either way.
     #
     # It only needs outbound 443. No ports, no volumes, no secrets on disk.
 
   nginx:
-    # Overrides the base file's "8080:80". With the tunnel terminating traffic,
-    # the host port is redundant and would bypass Cloudflare Access if you put
-    # Access in front. Reachable from cloudflared as http://nginx:80.
+    # Overrides the base file's "8443:443". With the tunnel in front, the host
+    # port is redundant and would bypass Cloudflare entirely. Reachable from
+    # cloudflared as https://nginx:443.
     ports: !override []
 
   authelia:
