@@ -1096,8 +1096,8 @@
     {
       "type": "library",
       "name": "hyper-util",
-      "version": "0.1.20",
-      "purl": "pkg:cargo/hyper-util@0.1.20",
+      "version": "0.1.21",
+      "purl": "pkg:cargo/hyper-util@0.1.21",
       "scope": "required",
       "licenses": [
         {
@@ -1456,8 +1456,8 @@
     {
       "type": "library",
       "name": "mail-parser",
-      "version": "0.11.8",
-      "purl": "pkg:cargo/mail-parser@0.11.8",
+      "version": "0.11.9",
+      "purl": "pkg:cargo/mail-parser@0.11.9",
       "scope": "required",
       "licenses": [
         {
@@ -1876,8 +1876,8 @@
     {
       "type": "library",
       "name": "rand",
-      "version": "0.10.2",
-      "purl": "pkg:cargo/rand@0.10.2",
+      "version": "0.10.3",
+      "purl": "pkg:cargo/rand@0.10.3",
       "scope": "required",
       "licenses": [
         {
@@ -2822,8 +2822,8 @@
     {
       "type": "library",
       "name": "toml",
-      "version": "1.1.5+spec-1.1.0",
-      "purl": "pkg:cargo/toml@1.1.5+spec-1.1.0",
+      "version": "1.1.6+spec-1.1.0",
+      "purl": "pkg:cargo/toml@1.1.6+spec-1.1.0",
       "scope": "required",
       "licenses": [
         {
