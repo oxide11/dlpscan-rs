@@ -38,6 +38,10 @@
 //!   SIPHON_AUDIT_RING_CAP            In-memory audit ring capacity (default: 500)
 //!   SIPHON_FINDINGS_RING_CAP         In-memory findings ring capacity (default: 1000)
 //!   SIPHON_FINDINGS_RETENTION_DAYS   Days to retain findings (0 or unset = keep forever)
+//!   SIPHON_EDM_SALT_HEX              Hex-encoded HMAC-SHA256 salt for EDM vault (>= 32 bytes /
+//!                                    64 hex chars). Without this the salt is random per-process
+//!                                    and vault hashes are lost on restart. Invalid hex or too-
+//!                                    short values are a startup error.
 
 use axum::{
     body::Body,
@@ -214,6 +218,10 @@ struct AppState {
     /// count what was found, these count what was looked at. Recording is
     /// in-memory and infallible, so it never fails or slows a scan.
     rollup: Arc<db::RollupAccumulator>,
+    /// Stable HMAC salt for the EDM vault, loaded from SIPHON_EDM_SALT_HEX.
+    /// None means a random salt was generated — vault hashes are invalidated
+    /// on every restart. Set to at least 32 hex-encoded bytes in production.
+    edm_salt: Option<Arc<Vec<u8>>>,
 }
 
 // FindingsRing + FindingRecord + severity_for now live in
@@ -1190,6 +1198,71 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
 }
 
 // ---------------------------------------------------------------------------
+// JSON nesting-depth guard — DoS protection
+// ---------------------------------------------------------------------------
+// serde_json uses recursive descent with no configurable depth cap. A body
+// with ~15k levels of nesting overflows the thread stack before the body-size
+// limit rejects it, because nesting depth is not proportional to byte count.
+// This middleware scans the raw bytes first and returns 400 before the
+// deserializer runs.
+//
+// The scanner is string-aware to avoid false positives from literal braces
+// inside quoted values.
+const MAX_JSON_NEST_DEPTH: usize = 128;
+
+async fn json_depth_guard(request: Request<Body>, next: Next) -> Response {
+    let is_json = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.starts_with("application/json"))
+        .unwrap_or(false);
+
+    if !is_json {
+        return next.run(request).await;
+    }
+
+    let (parts, body) = request.into_parts();
+    let bytes = match axum::body::to_bytes(body, usize::MAX).await {
+        Ok(b) => b,
+        Err(_) => {
+            return (StatusCode::BAD_REQUEST, "cannot read request body").into_response();
+        }
+    };
+
+    let mut depth: usize = 0;
+    let mut in_string = false;
+    let mut escape_next = false;
+    for &b in bytes.iter() {
+        if escape_next {
+            escape_next = false;
+            continue;
+        }
+        match b {
+            b'\\' if in_string => escape_next = true,
+            b'"' => in_string = !in_string,
+            b'{' | b'[' if !in_string => {
+                depth += 1;
+                if depth > MAX_JSON_NEST_DEPTH {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({
+                            "error": "request body nesting depth exceeds limit"
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+            b'}' | b']' if !in_string => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+
+    let request = Request::from_parts(parts, Body::from(bytes));
+    next.run(request).await
+}
+
+// ---------------------------------------------------------------------------
 // Request / Response types
 // ---------------------------------------------------------------------------
 
@@ -1304,7 +1377,10 @@ struct DbHealthResponse {
     reason: Option<String>,
 }
 
-async fn db_health(State(state): State<Arc<AppState>>) -> Json<DbHealthResponse> {
+async fn db_health(
+    _: RequireAdminAction,
+    State(state): State<Arc<AppState>>,
+) -> Json<DbHealthResponse> {
     let Some(pool) = state.db_pool.as_ref() else {
         let reason = match state.db_state {
             db::PoolState::Unconfigured => "SIPHON_DATABASE_URL not configured".to_string(),
@@ -1663,6 +1739,12 @@ async fn scan(
         pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
         list_bindings: Some(ov.list_bindings.clone()),
         max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+        edm: state.edm_salt.as_ref().map(|s| {
+            Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                Some(s.as_slice()),
+                None,
+            ))
+        }),
         ..Default::default()
     };
     // Force each disabled stage into its most permissive behaviour.
@@ -2040,6 +2122,8 @@ struct BatchScanResponse {
     total_duration_ms: u64,
 }
 
+const MAX_BATCH_ITEM_ID_LEN: usize = 256;
+
 async fn scan_batch(
     _: RequireBatchScan,
     AuthContextExt(ctx): AuthContextExt,
@@ -2063,6 +2147,19 @@ async fn scan_batch(
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
                 error: format!("batch size {} exceeds limit {MAX_BATCH}", items.len()),
+            }),
+        ));
+    }
+    if let Some(item) = items.iter().find(|i| i.id.len() > MAX_BATCH_ITEM_ID_LEN) {
+        tracing::warn!(
+            id_len = item.id.len(),
+            limit = MAX_BATCH_ITEM_ID_LEN,
+            "scan_batch: item id exceeds length limit"
+        );
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: format!("item id exceeds {MAX_BATCH_ITEM_ID_LEN} character limit"),
             }),
         ));
     }
@@ -2146,6 +2243,12 @@ async fn scan_batch(
             pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
             list_bindings: Some(ov.list_bindings.clone()),
             max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+            edm: state.edm_salt.as_ref().map(|s| {
+                Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                    Some(s.as_slice()),
+                    None,
+                ))
+            }),
             ..Default::default()
         };
         if stage_disabled.contains("min_confidence") {
@@ -2451,6 +2554,12 @@ async fn scan_explain(
         pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
         list_bindings: Some(ov.list_bindings.clone()),
         max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+        edm: state.edm_salt.as_ref().map(|s| {
+            Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                Some(s.as_slice()),
+                None,
+            ))
+        }),
         ..Default::default()
     };
     if stage_disabled.contains("min_confidence") {
@@ -5656,12 +5765,27 @@ struct CategoryBaselineRow {
     f1_val: Option<f32>,
 }
 
+const MAX_SNAPSHOT_LABEL_LEN: usize = 200;
+
 async fn create_baseline_snapshot(
     _: RequireAdminAction,
     State(state): State<Arc<AppState>>,
     body: Option<Json<SnapshotBody>>,
 ) -> Response {
-    let label = body.as_ref().and_then(|b| b.label.as_deref());
+    let label_owned: Option<String> = body.as_ref().and_then(|b| {
+        b.label.as_deref().map(|s| {
+            if s.len() <= MAX_SNAPSHOT_LABEL_LEN {
+                s.to_string()
+            } else {
+                let mut end = MAX_SNAPSHOT_LABEL_LEN;
+                while !s.is_char_boundary(end) {
+                    end -= 1;
+                }
+                s[..end].to_string()
+            }
+        })
+    });
+    let label = label_owned.as_deref();
     let version = siphon_core::VERSION;
     match db::compute_baseline_snapshot(&state.db_pool, label, version).await {
         Ok(id) => {
@@ -5684,7 +5808,7 @@ async fn create_baseline_snapshot(
             tracing::warn!("create_baseline_snapshot: {e}");
             (
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({"error": e.to_string()})),
+                Json(serde_json::json!({"error": "database error"})),
             )
                 .into_response()
         }
@@ -6354,6 +6478,10 @@ struct PgFindingsQuery {
     /// `pii`, `pci`, `all` — comma separated. Absent means fully masked,
     /// which is the default for every caller regardless of role.
     unmask: Option<String>,
+    /// ISO8601 lower bound (inclusive), e.g. 2026-01-01T00:00:00Z
+    since: Option<String>,
+    /// ISO8601 upper bound (inclusive)
+    until: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -6420,6 +6548,10 @@ async fn list_pg_findings(
     let limit = q.limit.unwrap_or(50).min(1000);
     let offset = q.offset.unwrap_or(0).max(0);
     let category = q.category.as_deref();
+    let since_ts: Option<chrono::DateTime<chrono::Utc>> =
+        q.since.as_deref().and_then(|s| s.parse().ok());
+    let until_ts: Option<chrono::DateTime<chrono::Utc>> =
+        q.until.as_deref().and_then(|s| s.parse().ok());
 
     // Tenant isolation, from the authenticated identity rather than from
     // whatever the caller put in the header. See `tenant_scope`.
@@ -6434,9 +6566,18 @@ async fn list_pg_findings(
              FROM findings \
              WHERE ($1::text IS NULL OR category = $1) \
                AND ($2::text IS NULL OR tenant_id = $2) \
+               AND ($5::timestamptz IS NULL OR created_at >= $5) \
+               AND ($6::timestamptz IS NULL OR created_at <= $6) \
              ORDER BY created_at DESC \
              LIMIT $3 OFFSET $4",
-            &[&category, &tenant_filter, &limit, &offset],
+            &[
+                &category,
+                &tenant_filter,
+                &limit,
+                &offset,
+                &since_ts,
+                &until_ts,
+            ],
         )
         .await
     {
@@ -6497,8 +6638,10 @@ async fn list_pg_findings(
         .query_one(
             "SELECT COUNT(*) FROM findings \
              WHERE ($1::text IS NULL OR category = $1) \
-               AND ($2::text IS NULL OR tenant_id = $2)",
-            &[&category, &tenant_filter],
+               AND ($2::text IS NULL OR tenant_id = $2) \
+               AND ($3::timestamptz IS NULL OR created_at >= $3) \
+               AND ($4::timestamptz IS NULL OR created_at <= $4)",
+            &[&category, &tenant_filter, &since_ts, &until_ts],
         )
         .await
     {
@@ -6779,7 +6922,7 @@ async fn findings_export(
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("query failed: {e}"),
+                    error: "query failed".into(),
                 }),
             )
                 .into_response();
@@ -7045,7 +7188,7 @@ async fn findings_prune(
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
-                    error: format!("prune failed: {e}"),
+                    error: "database error".into(),
                 }),
             ))
         }
@@ -7066,6 +7209,8 @@ async fn findings_prune(
 /// (or curl with `--no-buffer`).
 async fn scan_stream(
     _: RequireScan,
+    AuthContextExt(ctx): AuthContextExt,
+    headers: HeaderMap,
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(req): Json<ScanRequest>,
@@ -7120,6 +7265,12 @@ async fn scan_stream(
         pattern_regex_overrides: Some(ov.pattern_regex_overrides.clone()),
         list_bindings: Some(ov.list_bindings.clone()),
         max_unique_per_subcategory: Some(ov.unique_thresholds.clone()),
+        edm: state.edm_salt.as_ref().map(|s| {
+            Arc::new(siphon_core::edm::ExactDataMatcher::new(
+                Some(s.as_slice()),
+                None,
+            ))
+        }),
         ..Default::default()
     };
     if stage_disabled.contains("min_confidence") {
@@ -7129,6 +7280,13 @@ async fn scan_stream(
         config.require_context = false;
     }
 
+    let tenant_id = match tenant_scope(&ctx, &headers) {
+        Ok(t) => t,
+        Err((status, body)) => return (status, body).into_response(),
+    };
+
+    let stream_id = uuid::Uuid::new_v4().to_string();
+    let findings_ring = state.findings.clone();
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Event, std::convert::Infallible>>(128);
     let text = req.text;
     let metrics = state.metrics.clone();
@@ -7139,21 +7297,42 @@ async fn scan_stream(
         match scan_text_with_config(&text, &config) {
             Ok(matches) => {
                 let count = matches.len();
-                for m in matches {
-                    let text = m.redacted_text();
+                let ts_now = iso8601_now();
+                let short_id = stream_id
+                    .split('-')
+                    .next()
+                    .unwrap_or(&stream_id)
+                    .to_string();
+                for (idx, m) in matches.iter().enumerate() {
                     let finding = Finding {
-                        category: m.category,
-                        sub_category: m.sub_category,
-                        text,
+                        category: m.category.clone(),
+                        sub_category: m.sub_category.clone(),
+                        text: m.redacted_text(),
                         confidence: m.confidence,
                         has_context: m.has_context,
                         span: m.span,
-                        metadata: m.metadata,
+                        metadata: m.metadata.clone(),
                     };
                     let json_str = serde_json::to_string(&finding).unwrap_or_default();
                     if tx.send(Ok(Event::default().data(json_str))).await.is_err() {
                         return;
                     }
+                    findings_ring.push(FindingRecord {
+                        id: format!("f-{short_id}-{idx:02x}"),
+                        ts: ts_now.clone(),
+                        request_id: stream_id.clone(),
+                        source_label: source_ip.clone(),
+                        source_pod: "siphon-api".to_string(),
+                        category: m.category.clone(),
+                        sub_category: m.sub_category.clone(),
+                        text: m.text.clone(),
+                        confidence: m.confidence,
+                        has_context: m.has_context,
+                        span: m.span,
+                        metadata: m.metadata.clone(),
+                        severity: severity_for(&m.category, m.confidence),
+                        tenant_id: tenant_id.clone(),
+                    });
                 }
                 metrics.scans_total.fetch_add(1, Ordering::Relaxed);
                 metrics
@@ -7188,7 +7367,8 @@ async fn scan_stream(
                             .with_source_ip(&source_ip),
                     );
                 }
-                let err = serde_json::json!({ "error": e.to_string() }).to_string();
+                tracing::debug!(error = %e, "scan_stream_scan_error");
+                let err = serde_json::json!({ "error": "scan failed" }).to_string();
                 let _ = tx.send(Ok(Event::default().data(err))).await;
             }
         }
@@ -7759,6 +7939,37 @@ async fn main() {
         }
     };
 
+    // EDM salt — must be stable across restarts for vault hashes to survive.
+    let edm_salt: Option<Arc<Vec<u8>>> = match std::env::var("SIPHON_EDM_SALT_HEX").ok() {
+        Some(hex_str) if !hex_str.is_empty() => match hex::decode(&hex_str) {
+            Ok(bytes) if bytes.len() >= 32 => {
+                tracing::info!(
+                    bytes = bytes.len(),
+                    "EDM salt loaded from SIPHON_EDM_SALT_HEX"
+                );
+                Some(Arc::new(bytes))
+            }
+            Ok(bytes) => {
+                tracing::error!(
+                    len = bytes.len(),
+                    "SIPHON_EDM_SALT_HEX is too short (need >= 32 bytes / 64 hex chars); refusing to start"
+                );
+                std::process::exit(1);
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "SIPHON_EDM_SALT_HEX is not valid hex; refusing to start");
+                std::process::exit(1);
+            }
+        },
+        _ => {
+            tracing::warn!(
+                "SIPHON_EDM_SALT_HEX not set — EDM vault uses a random salt; \
+                 hashes will not survive restarts"
+            );
+            None
+        }
+    };
+
     let state = Arc::new(AppState {
         api_key_hash,
         api_key_hash_secondary,
@@ -7786,6 +7997,7 @@ async fn main() {
         db_state,
         stats_cache: Arc::new(Mutex::new(HashMap::new())),
         rollup: Arc::new(db::RollupAccumulator::new()),
+        edm_salt,
     });
 
     // API-key refresh task: reload the key set and flush last-used marks.
@@ -8072,6 +8284,7 @@ async fn main() {
         ))
         .merge(probes)
         .layer(middleware::from_fn(security_headers))
+        .layer(middleware::from_fn(json_depth_guard))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(

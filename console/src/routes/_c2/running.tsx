@@ -77,7 +77,14 @@ function RunningRoute() {
         />
       ) : q.isPending ? (
         <Card>
-          <p className="text-t4 text-ink-muted">Reading heartbeats…</p>
+          <div className="flex animate-pulse flex-col gap-3" aria-hidden>
+            {[32, 48, 40, 36, 44].map((w, i) => (
+              <div key={i} className="flex gap-3">
+                <div className="h-2 w-28 rounded-full bg-sunk" />
+                <div className={`h-2 rounded-full bg-sunk`} style={{ width: `${w * 4}px` }} />
+              </div>
+            ))}
+          </div>
         </Card>
       ) : (
         <>

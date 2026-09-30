@@ -25,6 +25,10 @@ interface Search {
   selected?: string
   /** `pii`, `pci` or `pii,pci`. In the URL so the view is reproducible. */
   unmask?: string
+  /** ISO8601 lower bound for created_at, e.g. 2026-01-01T00:00:00Z */
+  since?: string
+  /** ISO8601 upper bound for created_at */
+  until?: string
 }
 
 export const Route = createFileRoute('/_c2/detections')({
@@ -35,6 +39,8 @@ export const Route = createFileRoute('/_c2/detections')({
     q: typeof raw.q === 'string' && raw.q ? raw.q : undefined,
     selected: typeof raw.selected === 'string' && raw.selected ? raw.selected : undefined,
     unmask: typeof raw.unmask === 'string' && raw.unmask ? raw.unmask : undefined,
+    since: typeof raw.since === 'string' && raw.since ? raw.since : undefined,
+    until: typeof raw.until === 'string' && raw.until ? raw.until : undefined,
   }),
   component: DetectionsRoute,
 })
@@ -66,13 +72,15 @@ function DetectionsRoute() {
   const unmasking = !!search.unmask
 
   const findings = useQuery({
-    queryKey: ['findings', search.category, search.limit, search.offset, search.unmask],
+    queryKey: ['findings', search.category, search.limit, search.offset, search.unmask, search.since, search.until],
     queryFn: () =>
       api.findingsPage({
         category: search.category,
         limit: search.limit,
         offset: search.offset,
         unmask: search.unmask,
+        since: search.since,
+        until: search.until,
       }),
     // Keeps the previous page on screen while the next loads, so paging does
     // not flash an empty table that reads as "no findings".
@@ -243,6 +251,32 @@ function DetectionsRoute() {
               onChange={(e) => setSearch({ q: e.target.value || undefined })}
               className="w-56"
               aria-label="Filter loaded rows"
+            />
+            <Input
+              type="date"
+              value={search.since ? search.since.slice(0, 10) : ''}
+              onChange={(e) =>
+                setSearch({
+                  since: e.target.value ? `${e.target.value}T00:00:00Z` : undefined,
+                  offset: 0,
+                })
+              }
+              className="w-40"
+              aria-label="From date"
+              title="From (inclusive)"
+            />
+            <Input
+              type="date"
+              value={search.until ? search.until.slice(0, 10) : ''}
+              onChange={(e) =>
+                setSearch({
+                  until: e.target.value ? `${e.target.value}T23:59:59Z` : undefined,
+                  offset: 0,
+                })
+              }
+              className="w-40"
+              aria-label="To date"
+              title="To (inclusive)"
             />
             {search.q && (
               <span className="text-t5 text-ink-muted">

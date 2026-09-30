@@ -374,6 +374,12 @@ export const api = {
       body: JSON.stringify({ text, options }),
     }),
 
+  scanFile: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return request<ScanMatch[]>('/fs/scan', { method: 'POST', body: form })
+  },
+
   explain: (text: string) =>
     request<unknown>('/v1/scan/explain', {
       method: 'POST',
@@ -396,6 +402,8 @@ export const api = {
     limit?: number
     offset?: number
     unmask?: string
+    since?: string
+    until?: string
   }) => request<FindingsPage>(`/v1/findings/pg${qs(p)}`),
 
   findingsStats: () => request<Record<string, unknown>>('/v1/findings/stats'),

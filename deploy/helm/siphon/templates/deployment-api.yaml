@@ -164,6 +164,24 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             {{- end }}
+            {{- else if .Values.externalPostgres.enabled }}
+            # External managed Postgres (RDS, Cloud SQL, Neon, etc.).
+            # Provide a full connection URL via urlSecretRef (preferred) or inline url.
+            - name: SIPHON_DATABASE_URL
+              {{- if and .Values.externalPostgres.urlSecretRef.name .Values.externalPostgres.urlSecretRef.key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalPostgres.urlSecretRef.name }}
+                  key: {{ .Values.externalPostgres.urlSecretRef.key }}
+              {{- else }}
+              value: {{ required "externalPostgres.url or externalPostgres.urlSecretRef must be set when externalPostgres.enabled is true" .Values.externalPostgres.url | quote }}
+              {{- end }}
+            - name: SIPHON_DATABASE_TLS
+              value: {{ .Values.externalPostgres.sslMode | quote }}
+            {{- with .Values.externalPostgres.caFile }}
+            - name: SIPHON_DATABASE_CA_FILE
+              value: {{ . | quote }}
+            {{- end }}
             {{- end }}
             {{- if .Values.tls.internal.enabled }}
             # The listener's identity, and the CA every peer must chain to.

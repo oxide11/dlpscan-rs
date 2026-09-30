@@ -298,9 +298,24 @@ impl Session {
     }
 
     /// The MTA's queue ID — stable across delivery attempts, and so the
-    /// message's ingest key (§2.2a).
+    /// message's ingest key (§2.2a). Capped at 128 bytes: queue IDs are
+    /// short in practice (Postfix: ≤15 chars) and this value goes into a
+    /// partial unique index and audit log lines.
     fn ingest_key(&self) -> Option<&str> {
-        self.macros.get("i").map(String::as_str)
+        self.macros.get("i").map(|s| {
+            let s = s.as_str();
+            // Truncate on a character boundary, not a byte offset. Macro
+            // values are decoded with `from_utf8_lossy`, so every invalid
+            // byte the MTA sends becomes a three-byte U+FFFD: 43 junk bytes
+            // produce a 129-byte string whose byte 128 sits in the middle of
+            // the last character, and slicing there panics. That is reachable
+            // from anything that can write to the milter socket.
+            let mut end = s.len().min(128);
+            while end > 0 && !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            &s[..end]
+        })
     }
 
     /// SHA-256 of the Subject header, or `None` when there is no subject.
@@ -352,9 +367,13 @@ fn envelope_address(raw: &str) -> Option<String> {
     } else {
         // Strip characters that would corrupt RFC 5322 header reassembly or
         // Postgres storage if an MTA passes malformed envelope data.
+        // Cap at 512 bytes — the longest valid RFC 5321 path is 256 octets
+        // for the local part plus domain, so 512 is generous while still
+        // bounding what lands in the DB and log lines.
         let sanitized: String = inner
             .chars()
             .filter(|&c| c != '\r' && c != '\n' && c != '\0')
+            .take(512)
             .collect();
         if sanitized.is_empty() {
             None
@@ -531,8 +550,9 @@ fn scan_message(raw: &[u8], min_confidence: f64) -> ScanOutcome {
                 finish_part(&mut parts, &mut outcomes, record, Some(part_verdict));
             }
             Err(e) => {
+                tracing::warn!(error = %e, "smtp: scan failed");
                 record.status = PartStatus::Error;
-                record.detail = Some(format!("scan failed: {e}"));
+                record.detail = Some("scan failed".to_string());
                 finish_part(&mut parts, &mut outcomes, record, None);
             }
         }
@@ -1073,6 +1093,40 @@ mod tests {
         assert_eq!(s.ingest_key(), None);
         s.macros.insert("i".into(), "4F2A9B".into());
         assert_eq!(s.ingest_key(), Some("4F2A9B"));
+    }
+
+    /// The cap is a byte count, and macro values are decoded with
+    /// `from_utf8_lossy`, so a queue ID of junk bytes is a string of
+    /// three-byte replacement characters. 43 of them is 129 bytes, and byte
+    /// 128 lands inside the last one — slicing there panicked, taking the
+    /// connection task with it, and anything that can write to the milter
+    /// socket could send it.
+    #[test]
+    fn a_queue_id_of_invalid_bytes_is_truncated_not_panicked_on() {
+        let mut s = Session::default();
+        let junk = String::from_utf8_lossy(&[0xFFu8; 43]).into_owned();
+        assert_eq!(junk.len(), 129, "43 invalid bytes should decode to 129");
+        assert!(
+            !junk.is_char_boundary(128),
+            "byte 128 must split a character"
+        );
+        s.macros.insert("i".into(), junk);
+
+        let key = s.ingest_key().expect("a queue ID is present");
+        assert!(key.len() <= 128);
+        // Truncation stops at the boundary below the cap rather than inside a
+        // character: 42 whole replacement characters, 126 bytes.
+        assert_eq!(key.len(), 126);
+        assert_eq!(key.chars().count(), 42);
+    }
+
+    /// The ordinary case still truncates at exactly the cap when the boundary
+    /// allows it, so the fix above did not quietly shorten normal queue IDs.
+    #[test]
+    fn an_ascii_queue_id_truncates_at_the_cap() {
+        let mut s = Session::default();
+        s.macros.insert("i".into(), "A".repeat(200));
+        assert_eq!(s.ingest_key().map(str::len), Some(128));
     }
 
     /// Macros are connection-scoped and must survive a message boundary;

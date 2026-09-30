@@ -73,7 +73,14 @@ function PatternsRoute() {
         />
       ) : categories.isPending ? (
         <Card>
-          <p className="text-t4 text-ink-muted">Loading catalog…</p>
+          <div className="flex animate-pulse flex-col gap-3" aria-hidden>
+            {[48, 32, 40, 56, 28, 44].map((w, i) => (
+              <div key={i} className="flex gap-3">
+                <div className="h-2 w-24 rounded-full bg-sunk" />
+                <div className="h-2 rounded-full bg-sunk" style={{ width: `${w * 4}px` }} />
+              </div>
+            ))}
+          </div>
         </Card>
       ) : filtered.length === 0 ? (
         <Card>

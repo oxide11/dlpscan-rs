@@ -311,10 +311,10 @@ impl PatternOverrides {
             Ok(o) => o,
             Err(LoadError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => Self::empty(),
             Err(e) => {
-                eprintln!(
-                    "siphon overrides: failed to load {} — {} · falling back to compile-time defaults",
-                    path.as_ref().display(),
-                    e
+                tracing::warn!(
+                    path = %path.as_ref().display(),
+                    error = %e,
+                    "siphon overrides: failed to load overrides file, falling back to compile-time defaults"
                 );
                 Self::empty()
             }
@@ -456,9 +456,7 @@ impl PatternOverrides {
         let mut out = HashMap::new();
         for (wire_key, po) in &self.pattern_overrides {
             let Some((cat, sub)) = wire_key.split_once('/') else {
-                eprintln!(
-                    "siphon overrides: pattern_overrides key '{wire_key}' is not '<cat>/<sub>', skipping"
-                );
+                tracing::warn!(key = %wire_key, "siphon overrides: pattern_overrides key is not '<cat>/<sub>', skipping");
                 continue;
             };
             let Some(regex_str) = po.regex.as_ref() else {
@@ -477,9 +475,7 @@ impl PatternOverrides {
                     out.insert((cat.to_string(), sub.to_string()), re);
                 }
                 Err(e) => {
-                    eprintln!(
-                        "siphon overrides: regex for '{wire_key}' failed to compile — {e} · skipping override (static pattern still applies)"
-                    );
+                    tracing::warn!(key = %wire_key, error = %e, "siphon overrides: pattern override regex failed to compile, static pattern still applies");
                 }
             }
         }
@@ -497,10 +493,7 @@ impl PatternOverrides {
         for cat in &self.custom_categories {
             for cp in &cat.patterns {
                 if cp.sub_category.is_empty() || cp.regex.is_empty() {
-                    eprintln!(
-                        "siphon overrides: custom pattern in '{}' has empty regex or sub_category, skipping",
-                        cat.name
-                    );
+                    tracing::warn!(category = %cat.name, "siphon overrides: custom pattern has empty regex or sub_category, skipping");
                     continue;
                 }
                 let regex_str = if cp.case_insensitive {
@@ -519,9 +512,11 @@ impl PatternOverrides {
                         proximity_chars: cp.proximity_chars as usize,
                     }),
                     Err(e) => {
-                        eprintln!(
-                            "siphon overrides: custom pattern '{}/{}' regex failed to compile — {} · skipping",
-                            cat.name, cp.sub_category, e
+                        tracing::warn!(
+                            category = %cat.name,
+                            sub_category = %cp.sub_category,
+                            error = %e,
+                            "siphon overrides: custom pattern regex failed to compile, skipping"
                         );
                     }
                 }
@@ -825,9 +820,7 @@ impl PatternOverrides {
                 match wire_key.split_once('/') {
                     Some((cat, sub)) => Some(((cat.to_string(), sub.to_string()), *limit)),
                     None => {
-                        eprintln!(
-                            "siphon overrides: max_unique_per_subcategory key '{wire_key}' is not '<cat>/<sub>', skipping"
-                        );
+                        tracing::warn!(key = %wire_key, "siphon overrides: max_unique_per_subcategory key is not '<cat>/<sub>', skipping");
                         None
                     }
                 }
@@ -854,10 +847,7 @@ impl PatternOverrides {
                 match lists.get(&b.list_id) {
                     Some(cl) => Some((b.action.clone(), cl.clone())),
                     None => {
-                        eprintln!(
-                            "siphon overrides: active_list_bindings references unknown list '{}' — skipping",
-                            b.list_id
-                        );
+                        tracing::warn!(list_id = %b.list_id, "siphon overrides: active_list_bindings references unknown list, skipping");
                         None
                     }
                 }
