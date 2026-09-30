@@ -117,6 +117,20 @@ jobs:
       - name: siphon-fs auth tests
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo test -p siphon-fs --test auth_test
+      # siphon-auth mTLS. The crate exists to decide who may talk to the
+      # database and to this stack, and `tests/mtls.rs` is the only suite
+      # anywhere that drives a real rustls handshake — it admits a peer
+      # holding a certificate from the configured CA and refuses one with
+      # none or one from elsewhere, using material from
+      # scripts/dev/mkcerts.sh, so a generator that emits a CA without
+      # keyCertSign fails here rather than at deploy time. Until this step
+      # existed no workflow named siphon-auth at all: the crate that owns
+      # authentication had no CI, and a rustls bump could land without the
+      # one test that exercises a handshake ever running. Needs bash and
+      # openssl, both present on ubuntu-latest.
+      - name: siphon-auth mTLS tests
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        run: cargo test -p siphon-auth
       - name: Evadex regression tests
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         run: cargo test --test evadex_regressions
