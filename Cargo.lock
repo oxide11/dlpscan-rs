@@ -5144,7 +5144,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-icap"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "serde_json",
  "siphon-auth",
@@ -5183,7 +5183,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-smtp"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "deadpool-postgres",
  "sha2 0.11.0",

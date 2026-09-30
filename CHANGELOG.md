@@ -6,6 +6,55 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-09-30 — the parsers on the untrusted edge
+
+Both services that read attacker-shaped bytes off a socket, audited for the
+first time since they were split out. Three of the four findings are the same
+shape as the ones above: a cap that was checked but not enforced, and a
+surface that reported a clean body it had not finished reading.
+
+### siphon-icap 0.3.2
+
+- **fix(icap): line caps now bound the allocation instead of reporting it.**
+  `MAX_HEADER_LINE_BYTES` was checked after `read_line` returned, so an
+  oversized line was rejected having already been allocated in full — the
+  peak the cap exists to bound was untouched, and a peer that never sent a
+  newline could still exhaust memory. Every line read now goes through one
+  `read_line_capped` that reads via `take`, so the bound applies to the
+  allocation itself.
+- **fix(icap): the request line had no cap at all.** The header-line cap
+  covered the header loop and stopped one statement short of the request
+  line above it, which was still an uncapped `read_line`. The 60 s
+  connection timeout limits how long a peer can grow that buffer, not how
+  far.
+- **fix(icap): a chunk size that would not parse ended the body early and
+  called it clean.** `usize::from_str_radix(..).unwrap_or(0)` turned an
+  unreadable chunk header into `0` — the end-of-body marker — so the body
+  stopped there, `truncated` stayed false, and whatever had arrived was
+  scanned as if it were the whole message. An empty one scanned clean and
+  the request was allowed, which is the outcome
+  `SIPHON_ICAP_ON_UNSCANNABLE` exists to prevent and never saw. Framing the
+  sensor cannot follow is now unread content, and so is a stream that ends
+  before its terminating zero chunk.
+
+### siphon-smtp 0.2.3
+
+- **fix(smtp): a queue ID of invalid bytes panicked the connection task.**
+  The 128-byte cap added on 2026-09-13 sliced the string at a byte offset.
+  Macro values are decoded with `from_utf8_lossy`, so every invalid byte the
+  MTA sends becomes a three-byte U+FFFD: 43 of them make a 129-byte string
+  whose byte 128 is inside the last character, and slicing there panics.
+  Reachable from anything able to write to the milter socket. Truncation now
+  walks back to a character boundary.
+
+The milter framing itself was audited and left alone: `next_packet` checks
+the declared length against `MAX_PACKET_SIZE` before it reserves or copies
+anything, rejects a zero length, and `parse_command` bounds-checks every
+fixed-width field. Not re-reviewed: the ICAP `Encapsulated` offset handling
+beyond its existing 1 MiB per-section cap.
+
+---
+
 ## 2026-09-13 — security audit / siphon-auth 0.1.1, siphon-core 2.9.3
 
 ### siphon-auth 0.1.1
