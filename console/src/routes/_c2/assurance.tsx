@@ -1,4 +1,3 @@
-import * as React from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { api, type AuditEvent } from '../../lib/api'
@@ -135,8 +134,7 @@ function AssuranceRoute() {
                         <span className="flex-1 font-mono">{str(te.technique) ?? '—'}</span>
                         <span className="text-ink-muted">{num(te.bypass_count) ?? '—'} bypasses</span>
                         <Badge tone={
-                          (num(te.detection_rate) ?? 1) < 0.5 ? 'attn' :
-                          (num(te.detection_rate) ?? 1) < 0.8 ? 'warn' : 'ok'
+                          (num(te.detection_rate) ?? 1) < 0.8 ? 'attn' : 'ok'
                         }>
                           {pct(num(te.detection_rate))}
                         </Badge>
@@ -201,8 +199,7 @@ function AssuranceRoute() {
                       <td className="py-1.5">
                         <Badge tone={
                           rate === null ? 'muted' :
-                          rate < 0.5 ? 'attn' :
-                          rate < 0.8 ? 'warn' : 'ok'
+                          rate < 0.8 ? 'attn' : 'ok'
                         }>
                           {pct(rate)}
                         </Badge>
