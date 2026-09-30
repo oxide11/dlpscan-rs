@@ -6,6 +6,37 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-09-30 — dependency security
+
+### workspace (lockfile only)
+
+- chore(deps): bump `rustls` 0.23.44 → 0.23.45 (**RUSTSEC-2026-0285**,
+  GHSA-2mjx-qc3c-rqvc). Rustls accepted TLS 1.3 handshake messages sent at
+  the wrong encryption level when they followed a key-changing message in
+  the same record — a plaintext `EncryptedExtensions` packed into the same
+  record as the `ServerHello` was accepted rather than refused. RFC 8446
+  §5.1 requires that handshake messages do not span a key change and that
+  the connection is terminated with `unexpected_message` if they do. The
+  handshake transcript stays authenticated, so a network-position attacker
+  cannot alter or complete a handshake with this (CVSS
+  AV:N/AC:L/PR:N/UI:N/S:U/**C:L/I:N/A:N**); the practical effect is that a
+  peer could send in plaintext what should have been encrypted without
+  rustls rejecting the connection. Functionally the same bug as Go's
+  CVE-2025-61730 (GO-2026-4340).
+
+  Lockfile-only: `rustls` is a transitive and optional-feature dependency,
+  no workspace crate's public API changes, so no crate version bumps per
+  the `chore(deps)` rule in CLAUDE.md. The bump is a single-package update
+  with no dependency cascade. It reaches every TLS surface in the stack —
+  siphon-auth's Postgres TLS and mTLS (`tokio-postgres-rustls`), the
+  `axum-server` TLS listeners in siphon-api and siphon-fs, the optional
+  `tls` feature on the root crate, and `reqwest`'s rustls backend.
+
+  No `deny.toml` exception is needed: the advisory is patched rather than
+  accepted, so it stops matching once the lockfile lands.
+
+---
+
 ## 2026-09-09 — fail closed: five ways the stack reported safe when it wasn't
 
 Every entry below is one shape of the same bug: a surface that answered
