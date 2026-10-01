@@ -596,7 +596,14 @@ mod tests {
             .flat_map(|p| [p.sub_category, p.category])
             .collect();
 
-        let source = include_str!("obfuscate.rs");
+        // Normalised first: `include_str!` embeds this file exactly as it sits
+        // on disk, so on a CRLF checkout the separator searched for below is
+        // really "\r\n}\r\n", `find` misses it, `unwrap_or(body.len())`
+        // swallows the rest of the file, and every string literal after the
+        // function reads as a dispatch arm. A test that parses source has no
+        // business caring how that source was checked out.
+        let source = include_str!("obfuscate.rs").replace("\r\n", "\n");
+        let source = source.as_str();
         let body_start = source
             .find("pub fn obfuscate_match")
             .expect("obfuscate_match must exist");

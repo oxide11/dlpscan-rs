@@ -17,15 +17,62 @@ use siphon_auth::pem;
 use siphon_auth::server::{ServerTls, Settings};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+/// A path that MSYS `bash` still recognises after it has rebuilt its own argv.
+///
+/// Cargo spawns the test binary as a native Windows process, so when it in turn
+/// spawns `bash.exe` the arguments cross as a single command-line string and the
+/// MSYS runtime parses them back into argv — treating `\\` as an escape
+/// character. `C:\\Users\\x\\dlpscan-rs` therefore arrives inside bash as
+/// `C:Usersxdlpscan-rs`, and every test in this file failed with
+/// `No such file or directory` before a single handshake ran. Forward slashes
+/// survive that round trip, and Windows accepts them anywhere it accepts a path.
+///
+/// On Unix there are no backslashes to replace, so this is the identity
+/// function and CI behaves exactly as before.
+fn bash_path(p: &Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
+}
+
+/// Which `bash` runs the generator.
+///
+/// Not plainly `"bash"`, because on Windows `CreateProcess` searches `System32`
+/// *before* it searches `PATH`, and `C:\\Windows\\System32\\bash.exe` is the WSL
+/// launcher. WSL mounts the host filesystem elsewhere, so it answers every
+/// `C:/...` script path with `No such file or directory` — which is what failed
+/// all six tests in this file, even on a machine where `where bash` lists Git's
+/// bash first and running the script by hand in Git Bash works.
+///
+/// `SIPHON_BASH` wins if set, for an install in an unusual place; then the
+/// standard Git for Windows locations; then a bare `bash`, so an environment
+/// this list does not know about degrades to the previous behaviour rather than
+/// to a panic.
+fn bash_program() -> PathBuf {
+    if let Some(explicit) = std::env::var_os("SIPHON_BASH") {
+        return PathBuf::from(explicit);
+    }
+    #[cfg(windows)]
+    for candidate in [
+        r"C:\Program Files\Git\bin\bash.exe",
+        r"C:\Program Files\Git\usr\bin\bash.exe",
+        r"C:\Program Files (x86)\Git\bin\bash.exe",
+    ] {
+        let p = Path::new(candidate);
+        if p.is_file() {
+            return p.to_path_buf();
+        }
+    }
+    PathBuf::from("bash")
+}
+
 fn mkcerts(out: &Path) {
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/dev/mkcerts.sh");
-    let status = Command::new("bash")
-        .arg(&script)
+    let status = Command::new(bash_program())
+        .arg(bash_path(&script))
         .arg("--out")
-        .arg(out)
+        .arg(bash_path(out))
         .arg("--quiet")
         .status()
-        .expect("run scripts/dev/mkcerts.sh (needs bash and openssl)");
+        .expect("run scripts/dev/mkcerts.sh (needs bash and openssl; set SIPHON_BASH if bash is not where this expects)");
     assert!(status.success(), "mkcerts.sh failed");
 }
 
