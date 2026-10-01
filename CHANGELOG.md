@@ -55,6 +55,61 @@ beyond its existing 1 MiB per-section cap.
 
 ---
 
+## 2026-09-30 — ICAP Encapsulated framing
+
+### siphon-icap 0.3.3
+
+- **fix(icap): a REQMOD or RESPMOD whose `Encapsulated` header named no body
+  section was answered with a clean 204 and its payload left unread.** Only the
+  last-section branch of the parse loop reads a body, and only for a section
+  named `null-body` or ending in `-body`. Three shapes therefore came out of
+  that loop with an empty body and `truncated` false, which `handle_scan` reads
+  as "nothing to scan" and answers `204 No Content`:
+
+  - no `Encapsulated` header at all, leaving the section list empty and the loop
+    body unexecuted;
+  - a last section that is neither `*-body` nor `null-body` — a bare
+    `req-hdr=0`, say — so every earlier section was consumed from the socket and
+    the payload was not;
+  - offsets that do not increase, where `next - this` goes negative and
+    `saturating_sub` turns it into a zero-length read, skipping a section
+    without reading it. RFC 3507 §4.4.1 requires increasing offsets and nothing
+    here checked.
+
+  Separately, an unparseable offset (`req-body=abc`) was dropped by a
+  `filter_map`, which turned the message into a header-only one and its body
+  into something nobody read.
+
+  All four are now refused with `400 Bad Request`, which also closes the
+  connection — `handle_connection` breaks out of its keep-alive loop on a parse
+  error. The close matters as much as the verdict: once the sensor and the peer
+  disagree about where a message ends, the bytes left unconsumed would
+  otherwise be parsed as the next request on the same connection.
+
+  This is the `Encapsulated` offset handling that the round-8 audit entry
+  recorded as still unreviewed. It is the same class as the four fixes in
+  0.3.2 — content that was seen and not read must never be reported as clean —
+  and the fifth instance of it in this crate.
+
+  Reaching the ICAP port requires being inside `SIPHON_ICAP_ALLOWED_NETS`, and
+  a compliant proxy does not emit any of these shapes, so the realistic threat
+  is a buggy or compromised proxy rather than a client behind one. Fixed on the
+  invariant rather than on the reachability: a sensor that cannot frame a
+  message must not vouch for it.
+
+- Five regression tests. Three fail with the method-gated validation
+  neutralised; the fourth is covered by the section-parsing change; the fifth
+  asserts the shapes a compliant proxy actually sends — REQMOD with a chunked
+  body, REQMOD with `null-body`, and OPTIONS — still parse, so the guard cannot
+  become a denial of service against the real deployment.
+
+Bumps siphon-icap 0.3.2 → 0.3.3; `deploy/Dockerfile.icap` LABEL and the
+`docker-compose.yml` image pin updated in lockstep. Note that
+`scripts/check-version-sync.sh` does not cover siphon-icap — its own comment
+says so and calls the omission out as archaeology-in-waiting — so those two
+were checked by hand.
+
+
 ## 2026-09-30 — dependency security
 
 ### workspace (lockfile only)

@@ -305,16 +305,82 @@ async fn parse_icap_request<R: AsyncBufReadExt + Unpin>(
 
     // Parse Encapsulated header
     // e.g. "req-hdr=0, req-body=412" or "req-hdr=0, null-body=412"
+    //
+    // A section we cannot parse is not the same thing as a section that is not
+    // there. `filter_map(|..| ...ok()?)` dropped an unparseable entry in
+    // silence, so `req-hdr=0, req-body=abc` arrived at the read loop below
+    // looking like a header-only message: the body was never read, `truncated`
+    // stayed false, and `handle_scan` returned a clean 204 for a payload
+    // nobody had looked at. Refusing the message is the only honest answer to
+    // framing we cannot follow.
     let encapsulated = hdr(&headers, "Encapsulated").unwrap_or("").to_string();
-    let sections: Vec<(&str, usize)> = encapsulated
-        .split(',')
-        .filter_map(|part| {
-            let p = part.trim();
-            let (name, off) = p.split_once('=')?;
-            let offset: usize = off.trim().parse().ok()?;
-            Some((name.trim(), offset))
-        })
-        .collect();
+    let mut sections: Vec<(&str, usize)> = Vec::new();
+    for part in encapsulated.split(',') {
+        let p = part.trim();
+        if p.is_empty() {
+            continue;
+        }
+        let Some((name, off)) = p.split_once('=') else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("icap: malformed Encapsulated section {p:?}"),
+            ));
+        };
+        let Ok(offset) = off.trim().parse::<usize>() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("icap: unparseable Encapsulated offset in {p:?}"),
+            ));
+        };
+        sections.push((name.trim(), offset));
+    }
+
+    // REQMOD and RESPMOD either carry a body section or say in so many words
+    // that there is none. Three shapes used to reach the loop below and come
+    // out of it with an empty body, `truncated` false, and therefore a clean
+    // 204 from `handle_scan` — for a message whose payload was still sitting
+    // unread in the socket:
+    //
+    //   * no Encapsulated header at all, which leaves `sections` empty and the
+    //     loop body unexecuted;
+    //   * a last section that is neither `*-body` nor `null-body` (a bare
+    //     `req-hdr=0`, say). Only the last-section branch ever reads a body,
+    //     and it reads one only for those two names, so every earlier section
+    //     was consumed and the payload was not;
+    //   * offsets that do not increase, where `next - this` goes negative and
+    //     `saturating_sub` turns it into a zero-length read, skipping a section
+    //     without reading it. RFC 3507 §4.4.1 requires increasing offsets;
+    //     nothing here checked.
+    //
+    // All three are malformed framing rather than readable-but-unscannable
+    // content, so they earn a 400 and the connection closes —
+    // `handle_connection` breaks out of its keep-alive loop on a parse error.
+    // Closing matters as much as the verdict: once we and the peer disagree
+    // about where this message ends, bytes we did not consume would otherwise
+    // be parsed as the next request on the same connection.
+    if method == "REQMOD" || method == "RESPMOD" {
+        let Some((last_name, _)) = sections.last() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("icap: {method} without an Encapsulated header"),
+            ));
+        };
+        if *last_name != "null-body" && !last_name.ends_with("-body") {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("icap: Encapsulated declares no body section (last section {last_name:?})"),
+            ));
+        }
+        if let Some(w) = sections.windows(2).find(|w| w[1].1 < w[0].1) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "icap: Encapsulated offsets decrease ({} then {})",
+                    w[0].1, w[1].1
+                ),
+            ));
+        }
+    }
 
     let mut http_headers_raw = Vec::new();
     let mut body = Vec::new();
@@ -1330,6 +1396,116 @@ mod tests {
         assert_eq!(req.uri_path, "/dlp");
         assert_eq!(hdr(&req.headers, "host"), Some("host"));
     }
+    /// A REQMOD whose Encapsulated header names no body section used to parse
+    /// clean: only the last-section branch reads a body, and only for a name
+    /// ending `-body` or equal to `null-body`, so a bare `req-hdr=0` left the
+    /// payload unread in the socket while `handle_scan` saw an empty body and
+    /// answered 204. Malformed framing has to be refused, not scanned.
+    #[tokio::test]
+    async fn a_reqmod_declaring_no_body_section_is_refused() {
+        let input = b"REQMOD icap://host/dlp ICAP/1.0\r\nHost: host\r\nEncapsulated: req-hdr=0\r\n\r\nPOST /upload HTTP/1.1\r\n\r\ncard 4532015112830366\r\n".to_vec();
+        let mut reader = BufReader::new(&input[..]);
+        let Err(err) = parse_icap_request(&mut reader, 65536).await else {
+            panic!("a REQMOD with no body section must be refused");
+        };
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(
+            err.to_string().contains("no body section"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// The same hole with the header omitted altogether: `sections` came back
+    /// empty, the read loop never ran, nothing was consumed from the socket,
+    /// and the verdict was a clean 204.
+    #[tokio::test]
+    async fn a_reqmod_without_an_encapsulated_header_is_refused() {
+        let input =
+            b"REQMOD icap://host/dlp ICAP/1.0\r\nHost: host\r\n\r\ncard 4532015112830366\r\n"
+                .to_vec();
+        let mut reader = BufReader::new(&input[..]);
+        let Err(err) = parse_icap_request(&mut reader, 65536).await else {
+            panic!("a REQMOD with no Encapsulated header must be refused");
+        };
+        assert!(
+            err.to_string().contains("without an Encapsulated header"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// An offset that is not a number used to be dropped by `filter_map`, which
+    /// turned `req-hdr=0, req-body=abc` into a header-only message and the body
+    /// into something nobody read.
+    #[tokio::test]
+    async fn an_unparseable_encapsulated_offset_is_refused() {
+        let input =
+            b"REQMOD icap://host/dlp ICAP/1.0\r\nEncapsulated: req-hdr=0, req-body=abc\r\n\r\n"
+                .to_vec();
+        let mut reader = BufReader::new(&input[..]);
+        let Err(err) = parse_icap_request(&mut reader, 65536).await else {
+            panic!("an unparseable offset must be refused");
+        };
+        assert!(
+            err.to_string().contains("unparseable Encapsulated offset"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// RFC 3507 §4.4.1 has the offsets increase. A decreasing pair made
+    /// `next_offset.saturating_sub(this_offset)` zero, so the section was
+    /// skipped without being read and whatever it held stayed in the socket to
+    /// be mistaken for the next request.
+    #[tokio::test]
+    async fn decreasing_encapsulated_offsets_are_refused() {
+        let input = b"REQMOD icap://host/dlp ICAP/1.0\r\nEncapsulated: req-hdr=100, res-hdr=0, req-body=200\r\n\r\n".to_vec();
+        let mut reader = BufReader::new(&input[..]);
+        let Err(err) = parse_icap_request(&mut reader, 65536).await else {
+            panic!("decreasing offsets must be refused");
+        };
+        assert!(
+            err.to_string().contains("offsets decrease"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// The shapes a compliant proxy actually sends must keep working, or the
+    /// guard above would be a denial of service against the real deployment.
+    #[tokio::test]
+    async fn compliant_encapsulated_shapes_still_parse() {
+        // REQMOD with a body.
+        let body = b"REQMOD icap://host/dlp ICAP/1.0\r\nEncapsulated: req-hdr=0, req-body=29\r\n\r\nPOST /u HTTP/1.1\r\nHost: h\r\n\r\n4\r\nAAAA\r\n0\r\n\r\n".to_vec();
+        let mut reader = BufReader::new(&body[..]);
+        let req = parse_icap_request(&mut reader, 65536)
+            .await
+            .expect("a compliant REQMOD parses")
+            .expect("a request is present");
+        assert_eq!(req.method, "REQMOD");
+        assert_eq!(req.body, b"AAAA");
+        assert!(!req.body_truncated);
+
+        // A legitimately bodyless REQMOD says so with null-body.
+        let bodyless =
+            b"REQMOD icap://host/dlp ICAP/1.0\r\nEncapsulated: req-hdr=0, null-body=18\r\n\r\nGET /x HTTP/1.1\r\n\r\n"
+                .to_vec();
+        let mut reader = BufReader::new(&bodyless[..]);
+        let req = parse_icap_request(&mut reader, 65536)
+            .await
+            .expect("null-body REQMOD parses")
+            .expect("a request is present");
+        assert!(req.body.is_empty());
+        assert!(!req.body_truncated);
+
+        // OPTIONS is not a scan and is not subject to the body-section rule.
+        let opts =
+            b"OPTIONS icap://host/dlp ICAP/1.0\r\nEncapsulated: null-body=0\r\n\r\n".to_vec();
+        let mut reader = BufReader::new(&opts[..]);
+        let req = parse_icap_request(&mut reader, 1024)
+            .await
+            .expect("OPTIONS parses")
+            .expect("a request is present");
+        assert_eq!(req.method, "OPTIONS");
+    }
+
     /// A chunk size that is not hex used to land on `unwrap_or(0)` — the
     /// end-of-body marker — so the body ended early, `truncated` stayed
     /// false, and the partial content was scanned as if it were the whole
