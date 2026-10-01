@@ -1949,13 +1949,46 @@ async fn shutdown_signal() {
 mod size_limit_tests {
     use super::*;
 
-    // Serial-ish by construction: each test sets the vars it reads and clears
-    // them again, so ordering between them does not matter.
+    /// Serialises the tests in this module against the process environment.
+    ///
+    /// The previous comment here read "serial-ish by construction: each test
+    /// sets the vars it reads and clears them again, so ordering between them
+    /// does not matter." Ordering does not, but **concurrency** does: the
+    /// harness runs these on parallel threads of one process and they drive the
+    /// same two globals, so one test's `set_var` lands inside another's
+    /// section. `per_file_default_follows_a_raised_body_limit` read 100 MB —
+    /// the neighbouring test's number — where it had set 250 MB. Each test
+    /// clearing up after itself cannot fix that, because the clash happens
+    /// while both are still running.
+    ///
+    /// Poisoning is recovered rather than propagated: a panic in one test has
+    /// to fail that test, not every test that follows it.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Puts the variables back when the section ends, panic included. Without
+    /// this a failing assertion leaks its value into whichever test acquires
+    /// the lock next, turning one real failure into several confusing ones.
+    struct EnvRestore<'a>(Vec<(&'a str, Option<String>)>);
+
+    impl Drop for EnvRestore<'_> {
+        fn drop(&mut self) {
+            for (k, v) in &self.0 {
+                match v {
+                    Some(v) => std::env::set_var(k, v),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
     fn with_env<F: FnOnce()>(pairs: &[(&str, Option<&str>)], f: F) {
-        let saved: Vec<_> = pairs
-            .iter()
-            .map(|(k, _)| (*k, std::env::var(k).ok()))
-            .collect();
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _restore = EnvRestore(
+            pairs
+                .iter()
+                .map(|(k, _)| (*k, std::env::var(k).ok()))
+                .collect(),
+        );
         for (k, v) in pairs {
             match v {
                 Some(v) => std::env::set_var(k, v),
@@ -1963,12 +1996,6 @@ mod size_limit_tests {
             }
         }
         f();
-        for (k, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
-        }
     }
 
     /// The per-file streaming cap defaulted to 500 MB against a 100 MB body
