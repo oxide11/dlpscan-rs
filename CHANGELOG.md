@@ -6,6 +6,84 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-09-30 — archive extraction: declared sizes and silent skips
+
+### siphon 2.5.1
+
+- **fix(cli): a ZIP entry that understated its uncompressed size was read in
+  full.** Every guard on the Office-XML extraction path — the per-entry size
+  cap, `zip_entry_is_bomb`'s ratio test, and the cumulative budget — reads
+  `file.size()`, which is a number the archive asserts about itself. The read
+  that followed was `read_to_string`, bounded by nothing. A `.docx` whose
+  central directory declared 1 KB for a `word/document.xml` that inflated to
+  120 MB therefore passed all three checks and was then decompressed whole:
+  **427 KB on disk reaching 339 MB resident and 24 s of CPU**, with the
+  100 MB per-entry cap bypassed by exactly the lie it exists to catch.
+  Declaring the size honestly got the entry skipped; lying about it got the
+  entry read.
+
+  Reads are now bounded by `take(min(declared, remaining_budget) + 1)`, and an
+  entry that delivers more than it claimed is refused with a warning. Bounding
+  by the declaration and not merely by the cap is what makes the three guards
+  mean something again: an entry can never cost more than it claimed, so
+  buying a large read requires claiming a large size, and a large claim against
+  a small compressed size is precisely what `zip_entry_is_bomb` rejects. Same
+  input now peaks at the process baseline with a 1,025-byte read.
+
+  Reachable from `siphon-fs`, which calls `extractors::extract_text` on
+  uploaded files (`crates/siphon-fs/src/main.rs:436`, `:602`), so this was a
+  remote memory-exhaustion vector on an HTTP service and not only a CLI
+  concern. `extract_7z` and the generic-ZIP pass already read through `take`
+  for this reason; the Office-XML and OpenDocument passes did not.
+
+- **fix(cli): the OpenDocument path had the same defect and no cumulative
+  budget at all.** `content.xml`, `meta.xml` and `styles.xml` were each free to
+  inflate to the per-entry cap independently. `total_read` is now tracked
+  across the three.
+
+- **fix(cli): entries skipped by the size and ratio guards vanished without
+  a trace.** Both passes `continue`d in silence, so a document whose body was
+  never examined reported zero findings — for a DLP scanner, an answer
+  indistinguishable from a clean document. They now record a warning, matching
+  what the generic-ZIP pass already did for nested and encrypted entries.
+
+- **fix(cli): `PipelineResult` dropped every extraction warning on the
+  floor.** `extract_text` has always reported unreadable content through
+  `ExtractionResult::warnings`, and `siphon-fs` has always returned those to
+  its callers, but `PipelineResult` had nowhere to put them — so
+  `Pipeline::process_file` discarded them and `siphon scan` printed a bare
+  `Matches: 0`. A `.zip` holding one nested archive with a card number in it
+  scanned to zero findings with no signal at all, on the path an analyst
+  actually runs. `PipelineResult` gains a `warnings: Vec<String>` and the CLI
+  prints an `Unscanned content:` block beside the match count, where it
+  qualifies that count rather than hiding below the matches.
+
+  The field is additive for JSON and CSV consumers (`#[serde(default,
+  skip_serializing_if = "Vec::is_empty")]`, so output for a clean file is
+  byte-identical). It is a struct-literal break for an out-of-tree caller that
+  constructs `PipelineResult` directly; nothing in this workspace does, and the
+  other crates only read it, so this ships as a PATCH per the `fix(cli)` rule
+  in CLAUDE.md.
+
+  `PipelineResult` is now also `#[non_exhaustive]`. The struct grows —
+  `file_entropy` and `entropy_classification` were added after it shipped and
+  `warnings` after those — and every one of those additions was the same
+  out-of-tree struct-literal break. Marking it takes that break once, in the
+  release already taking it, and makes every later field free. No effect inside
+  the crate; the other crates only read the struct.
+
+- Four regression tests in `tests/archive_security_test.rs`, including a
+  helper that crafts a ZIP whose local header and central directory both
+  understate the entry size while the deflate stream carries the full body.
+  Deflated and not stored on purpose: a stored entry is bounded by its declared
+  size on read, so a lie there truncates and proves nothing. Both
+  understatement tests fail against the unfixed extractor with the planted
+  marker visible in the output; the honest-archive test guards against a fix
+  that simply refuses everything.
+
+Bumps siphon 2.5.0 → 2.5.1; `console/package.json` and Chart.yaml
+`appVersion` updated in lockstep. Version-sync script: 26/26 ✓.
+
 ## 2026-09-30 — dependency security
 
 ### workspace (lockfile only)

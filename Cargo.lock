@@ -5040,7 +5040,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-cli"
-version = "2.5.0"
+version = "2.5.1"
 dependencies = [
  "aho-corasick",
  "arrow",

@@ -1209,6 +1209,14 @@ fn extract_zip_archive(
     let mut total_read: u64 = 0;
     let mut entry_count: usize = 0;
 
+    // Entries this pass could not read. An analyst has to be told that content
+    // was present and skipped, because the alternative — a document whose body
+    // was never examined, reported as zero findings — is indistinguishable
+    // from a clean document. The generic-ZIP pass below already does this for
+    // nested and encrypted entries; the size and ratio guards here used to
+    // `continue` in silence.
+    let mut skipped_warnings: Vec<String> = Vec::new();
+
     for xml_path in xml_paths {
         if entry_count >= MAX_EXTRACT_FILE_COUNT {
             break;
@@ -1216,6 +1224,11 @@ fn extract_zip_archive(
         if let Ok(mut file) = archive.by_name(&xml_path) {
             // Skip entries larger than the per-entry limit
             if file.size() > MAX_EXTRACT_ENTRY_SIZE {
+                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+                    skipped_warnings.push(format!(
+                        "entry exceeds per-entry size cap, not scanned: {xml_path}"
+                    ));
+                }
                 continue;
             }
             // Zip-bomb defense: reject entries whose uncompressed size
@@ -1231,21 +1244,78 @@ fn extract_zip_archive(
                     ratio_cap = MAX_ZIP_COMPRESSION_RATIO,
                     "ZIP entry exceeds compression ratio cap — skipping"
                 );
+                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+                    skipped_warnings.push(format!(
+                        "entry exceeds compression ratio cap, not scanned: {xml_path}"
+                    ));
+                }
                 continue;
             }
             // Check total budget before reading
             if total_read + file.size() > MAX_EXTRACT_TOTAL_SIZE {
+                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+                    skipped_warnings.push(
+                        "extraction size budget exhausted; remaining entries not scanned"
+                            .to_string(),
+                    );
+                }
                 break;
             }
             use std::io::Read;
-            let mut xml_content = String::new();
-            if file.read_to_string(&mut xml_content).is_ok() {
-                total_read += xml_content.len() as u64;
-                entry_count += 1;
-                // Simple XML text extraction: strip tags
-                text.push_str(&strip_xml_tags(&xml_content));
-                text.push('\n');
+            // Bound the read by the remaining budget, not by the declared
+            // size. All three checks above consult `file.size()`, a number the
+            // archive supplies about itself: a .docx whose central directory
+            // declares 1 KB for a `word/document.xml` that inflates to 120 MB
+            // passes every one of them, and `read_to_string` then decompressed
+            // the whole thing — 427 KB on disk reaching 339 MB resident, the
+            // per-entry cap bypassed by the very lie it exists to catch.
+            // Declaring the true size got the entry skipped; lying about it got
+            // it read in full.
+            //
+            // `extract_7z` and the generic-ZIP pass below already read through
+            // `take` for this reason. One byte past the budget is enough to
+            // know the header lied, so ask for `budget + 1` and treat a read
+            // that long as the overrun.
+            //
+            // The bound is the declared size and not just the cap, which is
+            // what makes the three guards above mean something again: an entry
+            // can never cost more than it claimed, so buying a large read
+            // requires claiming a large size, and a large claim against a small
+            // compressed size is precisely what `zip_entry_is_bomb` rejects.
+            // Bounding by the cap alone would still have let a 1 KB claim pull
+            // 100 MB before being refused.
+            let declared = file.size();
+            let budget = declared
+                .min(MAX_EXTRACT_ENTRY_SIZE)
+                .min(MAX_EXTRACT_TOTAL_SIZE - total_read);
+            let mut raw = Vec::new();
+            if (&mut file).take(budget + 1).read_to_end(&mut raw).is_err() {
+                continue;
             }
+            if raw.len() as u64 > budget {
+                tracing::warn!(
+                    entry = %xml_path,
+                    declared,
+                    read_bytes = raw.len(),
+                    budget,
+                    "ZIP entry inflated past its declared size — skipping"
+                );
+                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+                    skipped_warnings.push(format!(
+                        "entry inflated past its declared size, not scanned: {xml_path}"
+                    ));
+                }
+                continue;
+            }
+            // Lossy rather than `read_to_string`, which dropped an entry whole
+            // on one invalid byte — a third way for content to go unscanned
+            // without saying so. The generic-ZIP pass is already lossy here.
+            let xml_content = String::from_utf8_lossy(&raw);
+            total_read += raw.len() as u64;
+            entry_count += 1;
+            // Simple XML text extraction: strip tags
+            text.push_str(&strip_xml_tags(&xml_content));
+            text.push('\n');
         }
     }
 
@@ -1330,7 +1400,7 @@ fn extract_zip_archive(
     }
 
     let mut result = ExtractionResult::new(text.trim().to_string(), format);
-    for w in nested_warnings {
+    for w in skipped_warnings.into_iter().chain(nested_warnings) {
         result = result.with_warning(&w);
     }
     Ok(result)
@@ -2375,10 +2445,23 @@ fn extract_opendocument(file_path: &str) -> Result<ExtractionResult, String> {
     };
 
     // Extract text from content.xml (primary content) and meta.xml (metadata)
+    //
+    // Same two defects the OOXML pass above carried, and the same fix: every
+    // guard here reads `file.size()`, which the archive asserts about itself,
+    // and the read that followed was unbounded. This pass additionally had no
+    // cumulative budget at all — three entries, each free to inflate to the
+    // per-entry cap — so `total_read` is now tracked across them.
+    let mut total_read: u64 = 0;
+    let mut skipped_warnings: Vec<String> = Vec::new();
     for xml_name in &["content.xml", "meta.xml", "styles.xml"] {
         if let Ok(mut file) = archive.by_name(xml_name) {
             // Skip entries larger than 100MB
             if file.size() > MAX_EXTRACT_ENTRY_SIZE {
+                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+                    skipped_warnings.push(format!(
+                        "entry exceeds per-entry size cap, not scanned: {xml_name}"
+                    ));
+                }
                 continue;
             }
             // Zip-bomb defense: reject entries whose compression ratio
@@ -2391,18 +2474,57 @@ fn extract_opendocument(file_path: &str) -> Result<ExtractionResult, String> {
                     ratio_cap = MAX_ZIP_COMPRESSION_RATIO,
                     "ODT entry exceeds compression ratio cap — skipping"
                 );
+                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+                    skipped_warnings.push(format!(
+                        "entry exceeds compression ratio cap, not scanned: {xml_name}"
+                    ));
+                }
                 continue;
             }
-            use std::io::Read;
-            let mut xml_content = String::new();
-            if file.read_to_string(&mut xml_content).is_ok() {
-                text.push_str(&strip_xml_tags(&xml_content));
-                text.push('\n');
+            if total_read + file.size() > MAX_EXTRACT_TOTAL_SIZE {
+                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+                    skipped_warnings.push(
+                        "extraction size budget exhausted; remaining entries not scanned"
+                            .to_string(),
+                    );
+                }
+                break;
             }
+            use std::io::Read;
+            let declared = file.size();
+            let budget = declared
+                .min(MAX_EXTRACT_ENTRY_SIZE)
+                .min(MAX_EXTRACT_TOTAL_SIZE - total_read);
+            let mut raw = Vec::new();
+            if (&mut file).take(budget + 1).read_to_end(&mut raw).is_err() {
+                continue;
+            }
+            if raw.len() as u64 > budget {
+                tracing::warn!(
+                    entry = %xml_name,
+                    declared,
+                    read_bytes = raw.len(),
+                    budget,
+                    "ODT entry inflated past its declared size — skipping"
+                );
+                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+                    skipped_warnings.push(format!(
+                        "entry inflated past its declared size, not scanned: {xml_name}"
+                    ));
+                }
+                continue;
+            }
+            total_read += raw.len() as u64;
+            text.push_str(&strip_xml_tags(&String::from_utf8_lossy(&raw)));
+            text.push('\n');
         }
     }
 
-    Ok(ExtractionResult::new(text.trim().to_string(), format))
+    let mut result = ExtractionResult::new(text.trim().to_string(), format);
+    for w in skipped_warnings {
+        result = result.with_warning(&w);
+    }
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
