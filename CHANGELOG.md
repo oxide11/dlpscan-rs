@@ -37,6 +37,57 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-09-30 — overrides version token, one guard for both handlers
+
+### siphon-api 2.12.2
+
+- **fix(api): `GET /v1/overrides/content?version=` now calls
+  `is_safe_version_token` explicitly, matching `POST /v1/overrides/revert`.**
+
+  No reachable bug is being fixed, and it is worth being precise about that: the
+  handler composes the backup filename from `nanos`, a parsed `u128`, never from
+  the raw query string, so a token like `../../etc/passwd` fails
+  `parse::<u128>()` and already left with a 400. This is defence in depth.
+
+  What it fixes is a consistency problem with real cost. Two handlers compose a
+  backup path from the same caller-supplied token; one validated it by calling
+  the shared guard and documenting the traversal threat model, the other by a
+  numeric parse several lines further down whose load-bearing role was written
+  nowhere. A refactor that keeps the parse but widens the type stops being safe
+  without looking any different, and an auditor reading the pair has to derive
+  the second handler's safety from scratch.
+
+  The error text for a malformed token changes from
+  `bad version "...": expected 'current' or 'v<nanos>'` to
+  `invalid version "..."; expected 'v<nanos>'` for inputs that fail the token
+  shape. Both are 400s; only the string differs.
+
+- Three tests in a new `version_token_guard_tests` module assert the invariant
+  rather than the behaviour, since the behaviour was already correct: both
+  path-composing handlers must call the guard. The list of handlers is explicit
+  because several `overrides_*` handlers mention a version without ever building
+  a path from one.
+
+  Two of the three exist because of mistakes made writing the first one. The
+  original version searched the raw handler body and so was satisfied by the
+  *comment* explaining why the guard is there — it passed with the call replaced
+  by `if false`, which is the one thing it exists to catch; comment text is now
+  stripped first, and a test covers the stripper. And the body extractor is
+  tested for not running into the following handler, which is the error that made
+  the original audit of this pair ambiguous: a fixed-size window around
+  `overrides_content` reached into `overrides_revert` and reported a guard that
+  was not there.
+
+Originally the one commit in PR #479 worth keeping (`df771ce`), whose other 11
+commits had already reached `main` by other routes. The rest of that commit was
+not carried: its `rustfmt` reflows and its `clippy::manual_range_contains` fix in
+`siphon-core` are both already resolved on `main`, so a cherry-pick would have
+brought conflicts and no change. #479 is closed in favour of this.
+
+Bumps siphon-api 2.12.1 → 2.12.2; Dockerfile.api LABEL, values.yaml
+`api.image.tag` and the docker-compose pin updated in lockstep.
+
+
 ## 2026-09-09 — fail closed: five ways the stack reported safe when it wasn't
 
 Every entry below is one shape of the same bug: a surface that answered
