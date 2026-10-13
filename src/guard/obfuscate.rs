@@ -596,7 +596,9 @@ mod tests {
             .flat_map(|p| [p.sub_category, p.category])
             .collect();
 
-        let source = include_str!("obfuscate.rs");
+        // A CRLF checkout (Windows, core.autocrlf) has no "\n}\n", so the
+        // function-end search below would swallow the rest of the file.
+        let source = include_str!("obfuscate.rs").replace("\r\n", "\n");
         let body_start = source
             .find("pub fn obfuscate_match")
             .expect("obfuscate_match must exist");
