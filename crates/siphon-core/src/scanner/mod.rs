@@ -400,6 +400,28 @@ fn effective_context_required(
     def_context_required || crate::models::is_context_required(sub_category)
 }
 
+/// `true` if an ASCII whitespace run sits between two ASCII digits — the only
+/// shape in which normalization stage 5 joins two numbers into one.
+fn has_whitespace_between_digits(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let mut j = i + 1;
+            while j < bytes.len() && matches!(bytes[j], b' ' | b'\t' | b'\n' | b'\r') {
+                j += 1;
+            }
+            if j > i + 1 && j < bytes.len() && bytes[j].is_ascii_digit() {
+                return true;
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
 /// Substring-search context check for runtime (custom) patterns.
 /// Static patterns use the global Aho-Corasick matcher built from
 /// CONTEXT_KEYWORDS at startup; runtime patterns can't participate in
@@ -542,6 +564,10 @@ struct CompiledPattern {
     ///
     /// See [`requires_stripped_separator`].
     needs_raw_pass: bool,
+    /// Always-run pattern: scanned over the un-normalized text too, whatever
+    /// the normalized pass found. See the second pass in
+    /// [`scan_text_with_config`].
+    always_run: bool,
 }
 
 /// Iterator over a pattern's hits, yielding the span that should be
@@ -740,6 +766,7 @@ static COMPILED: Lazy<Vec<CompiledPattern>> = Lazy::new(|| {
                     regex: re,
                     def: pat,
                     needs_raw_pass: requires_stripped_separator(pat.regex),
+                    always_run: is_always_run(pat.sub_category),
                 });
             }
             Err(e) => {
@@ -1349,13 +1376,43 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     // worst, never a wrong answer. Context is checked against the raw
     // haystack directly (`None` hit index), since the prebuilt index is keyed
     // to normalized positions.
+    //
+    // Always-run patterns that are not context-gated (validated,
+    // high-specificity identifiers — cards, IBANs, keys) take the raw pass
+    // unconditionally. Stage 5 removes
+    // whitespace between any two non-letters, which is what defeats
+    // `4 5 3 2 …` padding — and also what turns a newline-separated list of
+    // cards, or a card followed by a year (`4111111111111111 2026`), into one
+    // over-long digit run that no `\b`-anchored pattern can match. Picking
+    // a run length past which whitespace is "real" would only move the
+    // bypass (split the card 12+4 instead), so both views are scanned
+    // instead. It cannot widen the false-positive surface: an all-ASCII text
+    // with no evasion markers is scanned exactly this way already, because
+    // normalization returns it untouched. Nor can it be gated on the primary
+    // pass finding nothing — a list where one card survives the join (the
+    // last row of a CSV) would hide every other row. Context-gated patterns
+    // keep the old rule: whether their keyword is "near" depends on the
+    // spacing too, and widening them is a separate decision.
     let raw_pass_matches: Vec<Vec<Match>> = if normalized == text {
         Vec::new()
     } else {
+        // The join needs digits on both sides of the whitespace; without one
+        // the always-run patterns have nothing to recover, so skip their cost.
+        let digit_runs_joined = has_whitespace_between_digits(text);
         active_patterns
             .par_iter()
             .enumerate()
-            .filter(|(idx, cp)| cp.needs_raw_pass && per_pattern_matches[*idx].is_empty())
+            .filter(|(idx, cp)| {
+                (digit_runs_joined
+                    && cp.always_run
+                    && !effective_context_required(
+                        cp.def.category,
+                        cp.def.sub_category,
+                        cp.def.context_required,
+                        config.pattern_field_overrides.as_ref(),
+                    ))
+                    || (cp.needs_raw_pass && per_pattern_matches[*idx].is_empty())
+            })
             .map(|(_, cp)| run_pattern(cp, text, &[], None))
             .collect()
     };
@@ -2202,6 +2259,48 @@ mod tests {
                 ms.iter()
                     .map(|m| m.sub_category.as_str())
                     .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Whitespace between two numbers is not padding inside one.
+    ///
+    /// Stage 5 joins digit runs across whitespace, so each of these used to
+    /// normalize into a single over-long run and report nothing — or, for the
+    /// CSV, only the row that survived the join.
+    #[test]
+    fn whitespace_separated_cards_are_each_found() {
+        let cfg = super::ScanConfig::default();
+        for (text, want) in [
+            ("4532015112830366 5105105105105100", 2),
+            ("4532015112830366\n5105105105105100\n378282246310005", 3),
+            ("4532015112830366\t5105105105105100", 2),
+            ("id,card\n1,4532015112830366\n2,5105105105105100", 2),
+            ("4532015112830366 2026", 1),
+            ("4532015112830366 4532015112830366", 2),
+        ] {
+            let ms = super::scan_text_with_config(text, &cfg).unwrap();
+            let cards = ms
+                .iter()
+                .filter(|m| m.category == "Credit Card Numbers")
+                .count();
+            assert_eq!(cards, want, "{text:?} → {ms:?}");
+        }
+    }
+
+    /// Padding inside a single card is still undone by stage 5.
+    #[test]
+    fn padded_card_is_still_joined() {
+        let cfg = super::ScanConfig::default();
+        for text in [
+            "4 5 3 2 0 1 5 1 1 2 8 3 0 3 6 6",
+            "4532 0151 1283 0366",
+            "453201511283 0366",
+        ] {
+            let ms = super::scan_text_with_config(text, &cfg).unwrap();
+            assert!(
+                ms.iter().any(|m| m.category == "Credit Card Numbers"),
+                "{text:?} → {ms:?}"
             );
         }
     }

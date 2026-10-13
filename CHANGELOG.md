@@ -6,6 +6,37 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-13 — whitespace-separated identifiers
+
+### siphon-core 2.9.4
+
+Two cards separated by whitespace were reported as zero cards. Normalization
+stage 5 (`collapse_padding`) removes whitespace between any two non-letters —
+that is what defeats `4 5 3 2 …` padding — so `4532015112830366
+5105105105105100` became one 32-digit run that no `\b`-anchored card pattern
+can match. The same join hid a newline- or tab-separated list of cards, every
+row but the last of a two-column CSV, and a card followed by any number
+(`4532015112830366 2026`). Plain data, not evasion.
+
+- fix(core): always-run patterns that are not context-gated now take the
+  raw-text second pass unconditionally, so the text is scanned with its
+  original spacing as well as normalized. A run-length threshold in stage 5
+  was rejected: it only moves the bypass (split a card 12+4 and it is joined
+  again). The widened pass cannot add a false-positive class — an all-ASCII
+  text with no evasion markers is already scanned exactly this way, because
+  normalization returns it untouched — and dedup across both views keeps a
+  value found twice to one finding. It is gated on the raw text containing a
+  digit–whitespace–digit sequence, the only shape stage 5 joins; on the
+  4.2 KB `measure_raw_pass_cost` document (which has one) a scan goes
+  ~0.45 → ~0.52 ms, and without one the cost is within noise. Context-gated
+  patterns keep the old raw-pass rule: widening them changed `Ticker Symbol`
+  behaviour in the conformance matrix, and that is a separate decision.
+- test: `whitespace_separated_cards_are_each_found` (six list/CSV/suffix
+  shapes) and `padded_card_is_still_joined` (single-digit, 4-4-4-4 and 12+4
+  padding still recovered).
+
+---
+
 ## 2026-10-13 — zero-padding, delimited-base64, sparse-noise evasion
 
 ### siphon-core 2.9.3
