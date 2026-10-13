@@ -6,7 +6,7 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
-## 2026-10-13 — whitespace-separated identifiers
+## 2026-10-13 — whitespace-separated identifiers, sentence-end and split-field evasion
 
 ### siphon-core 2.9.4
 
@@ -31,9 +31,30 @@ row but the last of a two-column CSV, and a card followed by any number
   ~0.45 → ~0.52 ms, and without one the cost is within noise. Context-gated
   patterns keep the old raw-pass rule: widening them changed `Ticker Symbol`
   behaviour in the conformance matrix, and that is a separate decision.
+- fix(core): an encoded card that ends a sentence keeps the full stop glued
+  to it, and three decoders treated that stop as part of the value. Stage 4c's
+  dot guard (which protects JWT/hostname segments) now counts a following `.`
+  only when another segment starts right after it, so `…number NDUz…Ng==.`
+  decodes; the last segment of a dotted element is still caught by the
+  preceding-dot check, and a JWT ending a sentence is still a JWT. The
+  hex-dump decoder lets sentence punctuation close the final pair (`36 36.`)
+  when it ends the token, so `36.5` is still not a pair. The digit-morse
+  decoders also run on the text with one terminal stop removed when it
+  directly follows a morse symbol — digit morse has no single-`.` code, so
+  this cannot change a valid decode.
+- fix(core): two alt-pass recoveries, both Luhn/checksum-gated like the rest
+  of the second pass. `isolate_letter_bounded_digit_blocks()` gives a
+  13–19-digit block glued to letters a word boundary
+  (`XXXXXXXXXX4532015112830366XXXXXXXXXX`, `test_value_4532015112830366`).
+  `join_indexed_split_fields()` rejoins quoted digit values whose keys share
+  a stem with consecutive indices (`part1`/`part2`, `cc_1`…`cc_4`) into a
+  13–19-digit candidate; unrelated numeric fields never share a stem.
 - test: `whitespace_separated_cards_are_each_found` (six list/CSV/suffix
   shapes) and `padded_card_is_still_joined` (single-digit, 4-4-4-4 and 12+4
-  padding still recovered).
+  padding still recovered); evasion tests for split fields, letter-bounded
+  cards, encoded cards before a full stop, and false-positive guards
+  (unrelated numeric fields, non-consecutive indices, a Luhn-invalid glued
+  block, a JWT ending a sentence).
 
 ---
 

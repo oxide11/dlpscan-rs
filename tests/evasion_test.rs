@@ -598,3 +598,78 @@ fn test_sparse_noise_no_false_positive() {
         matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
     );
 }
+
+fn card_found(text: &str) -> bool {
+    siphon::scan_text(text)
+        .unwrap()
+        .iter()
+        .any(|m| m.category == "Credit Card Numbers")
+}
+
+/// A card padded with letters, or glued to an identifier, has no `\b` between
+/// its digits and the letters. The alt pass isolates the digit block.
+#[test]
+fn test_letter_bounded_card_recovered() {
+    for text in [
+        "XXXXXXXXXX4532015112830366XXXXXXXXXX",
+        "test_value_4532015112830366",
+        "card number XXXXXXXXXX5105105105105100XXXXXXXXXX.",
+    ] {
+        assert!(card_found(text), "letter-bounded card missed: {text:?}");
+    }
+}
+
+/// A card split across indexed fields of one JSON record is rejoined.
+#[test]
+fn test_indexed_split_fields_rejoined() {
+    for text in [
+        r#"{"part1": "45320151", "part2": "12830366"}"#,
+        r#"{"cc_1": "4532", "cc_2": "0151", "cc_3": "1283", "cc_4": "0366"}"#,
+        r#"Card number {"part1": "51051051", "part2": "05105100"}."#,
+    ] {
+        assert!(card_found(text), "split-field card missed: {text:?}");
+    }
+}
+
+/// Guard: unrelated numeric fields are never joined, and a letter-glued digit
+/// block that is not Luhn-valid stays quiet.
+#[test]
+fn test_split_and_glued_no_false_positive() {
+    for text in [
+        // different stems — zip + phone concatenate to a Luhn-valid Visa
+        r#"{"zip": "453201", "phone": "5112830366"}"#,
+        // same stem but not consecutive indices
+        r#"{"part1": "45320151", "part3": "12830366"}"#,
+        // glued, card-length, Luhn-invalid
+        "SKU4532015112830367X",
+    ] {
+        assert!(!card_found(text), "spurious card from {text:?}");
+    }
+}
+
+/// An encoded card that ends a sentence keeps the sentence's full stop glued
+/// to it. Base64, digit morse and hex dumps must all still decode.
+#[test]
+fn test_encoded_card_before_full_stop() {
+    for text in [
+        "The card number is NDUzMjAxNTExMjgzMDM2Ng==.",
+        "card number ....-/...../...--/..---/-----/.----/...../.----/.----/..---/---../...--/-----/...--/-..../-.....",
+        "card number ....-\n.....\n...--\n..---\n-----\n.----\n.....\n.----\n.----\n..---\n---..\n...--\n-----\n...--\n-....\n-.....",
+        "with card number 34 35 33 32 30 31 35 31 31 32 38 33 30 33 36 36.",
+    ] {
+        assert!(card_found(text), "card before full stop missed: {text:?}");
+    }
+}
+
+/// Guard: a dotted base64 structure is still left alone, so a JWT at the end
+/// of a sentence is reported as a JWT.
+#[test]
+fn test_jwt_before_full_stop_still_a_jwt() {
+    let text = "token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c.";
+    let matches = siphon::scan_text(text).unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "JWT Token"),
+        "JWT missed: {:?}",
+        matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+    );
+}

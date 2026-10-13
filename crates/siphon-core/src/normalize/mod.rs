@@ -1383,7 +1383,14 @@ fn decode_hex_spaced(input: &str, in_offsets: &[Offset]) -> Option<(String, Offs
                 let has_pair = i + 1 < bytes.len()
                     && bytes[i].is_ascii_hexdigit()
                     && bytes[i + 1].is_ascii_hexdigit();
-                let right_boundary = i + 2 >= bytes.len() || bytes[i + 2] == b' ';
+                // Sentence punctuation may also close the final pair
+                // (`…card number 34 35 … 36 36.`), but only when it ends the
+                // token itself — `36.5` is a decimal, not a pair. The loop
+                // still stops there, since no space follows the pair.
+                let closing_punct = i + 2 < bytes.len()
+                    && matches!(bytes[i + 2], b'.' | b',' | b';' | b':' | b')' | b'!' | b'?')
+                    && (i + 3 >= bytes.len() || bytes[i + 3].is_ascii_whitespace());
+                let right_boundary = i + 2 >= bytes.len() || bytes[i + 2] == b' ' || closing_punct;
                 if has_pair && right_boundary {
                     if let (Some(h), Some(l)) = (hex_val(bytes[i]), hex_val(bytes[i + 1])) {
                         pairs.push((i, (h << 4) | l));
@@ -1798,8 +1805,16 @@ fn decode_encoded_tokens(input: &str, in_offsets: &[Offset]) -> Option<(String, 
             // which breaks the JWT regex). The heuristic: if the byte
             // immediately before or after the token is `.`, it's likely
             // a segment in a dot-delimited protocol element.
+            //
+            // A following `.` only counts when another segment starts right
+            // after it. Otherwise it is the full stop ending a sentence —
+            // `…card number NDUz…Ng==.` — and treating it as structure left
+            // every encoded value at the end of a sentence undecoded. The
+            // last segment of a dotted element is still caught by
+            // `prev_is_dot`.
             let prev_is_dot = start > 0 && bytes[start - 1] == b'.';
-            let next_is_dot = i < bytes.len() && bytes[i] == b'.';
+            let next_is_dot =
+                i + 1 < bytes.len() && bytes[i] == b'.' && is_encoded_char(bytes[i + 1]);
             if prev_is_dot || next_is_dot {
                 for (j, b) in bytes[start..i].iter().enumerate() {
                     out.push(*b);
@@ -2946,6 +2961,138 @@ fn strip_sparse_alpha_noise_variants(text: &str) -> Vec<String> {
     variants
 }
 
+/// Isolate a card-length digit block glued to letters.
+///
+/// `noise_embedded` pads a value with letters (`XXXXXXXXXX4532015112830366XXXXXXXXXX`)
+/// and `overlapping_prefix` glues it to an identifier (`test_value_4532015112830366`,
+/// whose `_` stage 6b strips because a digit is adjacent). Either way the
+/// digits sit inside one alphanumeric run, so no `\b` falls between them and
+/// the letters, and [`strip_sparse_alpha_noise_variants`] declines the run
+/// because its letters are adjacent. For each maximal block of 13–19 digits
+/// bounded by a letter on at least one side we emit the text with the block
+/// standing alone; the alt pass's Luhn/checksum validation is what decides.
+fn isolate_letter_bounded_digit_blocks(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut variants: Vec<String> = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        let end = i;
+        if !(13..=19).contains(&(end - start)) {
+            continue;
+        }
+        let letter_before = start > 0 && bytes[start - 1].is_ascii_alphabetic();
+        let letter_after = end < bytes.len() && bytes[end].is_ascii_alphabetic();
+        if !letter_before && !letter_after {
+            continue; // already a standalone run; the ordinary patterns see it
+        }
+        let mut variant = String::with_capacity(text.len() + 2);
+        variant.push_str(&text[..start]);
+        variant.push(' ');
+        variant.push_str(&text[start..end]);
+        variant.push(' ');
+        variant.push_str(&text[end..]);
+        variants.push(variant);
+        if variants.len() >= 12 {
+            break;
+        }
+    }
+
+    variants
+}
+
+/// Rejoin a value split across indexed fields of one record.
+///
+/// `json_field_split` writes `{"part1": "45320151", "part2": "12830366"}`: each
+/// half is too short for any card pattern and the two are never adjacent in
+/// the text. We join consecutive quoted digit values only when their keys are
+/// visibly *parts of one thing* — the same stem with consecutive trailing
+/// indices (`part1`/`part2`, `cc_1`/`cc_2`/`cc_3`) — and only when the joined
+/// length is card/PAN-plausible (13–19). Two unrelated numeric fields
+/// (`"zip"`, `"phone"`) never share a stem, which is what keeps ordinary
+/// records out; the alt pass still validates whatever is emitted.
+fn join_indexed_split_fields(text: &str) -> Vec<String> {
+    // (stem, index, digits) for every `"key": "digits"` pair, in order.
+    let mut fields: Vec<(&str, u32, &str)> = Vec::new();
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'"' {
+            i += 1;
+            continue;
+        }
+        let key_start = i + 1;
+        let Some(key_len) = text[key_start..].find('"') else {
+            break;
+        };
+        let key = &text[key_start..key_start + key_len];
+        let mut j = key_start + key_len + 1;
+        while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if j >= bytes.len() || bytes[j] != b':' {
+            i = key_start + key_len + 1;
+            continue;
+        }
+        j += 1;
+        while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+            j += 1;
+        }
+        if j >= bytes.len() || bytes[j] != b'"' {
+            i = j;
+            continue;
+        }
+        let val_start = j + 1;
+        let Some(val_len) = text[val_start..].find('"') else {
+            break;
+        };
+        let value = &text[val_start..val_start + val_len];
+        i = val_start + val_len + 1;
+
+        let stem = key.trim_end_matches(|c: char| c.is_ascii_digit());
+        let idx = &key[stem.len()..];
+        if stem.is_empty()
+            || idx.is_empty()
+            || idx.len() > 2
+            || !(2..=10).contains(&value.len())
+            || !value.bytes().all(|b| b.is_ascii_digit())
+        {
+            continue;
+        }
+        if let Ok(n) = idx.parse::<u32>() {
+            fields.push((stem, n, value));
+        }
+    }
+
+    let mut variants: Vec<String> = Vec::new();
+    for w in 0..fields.len() {
+        let mut joined = String::from(fields[w].2);
+        for k in w + 1..fields.len().min(w + 4) {
+            let (prev, cur) = (fields[k - 1], fields[k]);
+            if cur.0 != prev.0 || cur.1 != prev.1 + 1 {
+                break;
+            }
+            joined.push_str(cur.2);
+            if (13..=19).contains(&joined.len()) {
+                variants.push(format!(" {joined} "));
+            }
+        }
+        if variants.len() >= 12 {
+            break;
+        }
+    }
+
+    variants
+}
+
 /// Decode base64/base32/hex blobs that stage 4c's token splitter could not
 /// isolate because they were embedded in a delimited structure.
 ///
@@ -3091,70 +3238,81 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     let leet_decoded = normalize_leet(text);
     push_if_room(leet_decoded, &mut alternatives, &mut total_bytes);
 
-    // Try morse code decode (full alphabet, space/slash/pipe separated)
-    if let Some(decoded) = decode_morse(text) {
-        push_if_room(decoded, &mut alternatives, &mut total_bytes);
-    }
-
-    // Evadex-style digit-only morse: slash-separated, non-digits pass through literally.
-    // Fixes the "-" → 'T' misidentification in the full-alphabet decoder for values
-    // like SSNs ("123-45-6789") where the hyphen separator is not itself morse-encoded.
-    if let Some(decoded) = try_decode_digit_morse_slash(text) {
-        push_if_room(decoded, &mut alternatives, &mut total_bytes);
-    } else if let Some(decoded) = find_embedded_digit_morse_delimited(text, b'/') {
-        // Fallback: slash-morse embedded in surrounding text (filename preamble,
-        // prose prefix) — the whole-input decoder above bails on the first
-        // polluted token, mirroring the nosep embedded fallback below.
-        push_if_room(decoded, &mut alternatives, &mut total_bytes);
-    }
-
-    // Evadex-style digit-only morse: comma-separated (evadex comma_sep variant).
-    if let Some(decoded) = try_decode_digit_morse_comma(text) {
-        push_if_room(decoded, &mut alternatives, &mut total_bytes);
-    } else if let Some(decoded) = find_embedded_digit_morse_delimited(text, b',') {
-        // Fallback: comma-morse embedded in surrounding text.
-        push_if_room(decoded, &mut alternatives, &mut total_bytes);
-    }
-
-    // Pipe-separated digit morse embedded in surrounding text. The full-alphabet
-    // decode_morse() handles bare pipe-morse, but bails on any non-morse prefix;
-    // no whole-input digit decoder covers pipe, so this is the only digit path
-    // that tolerates a preamble for the pipe variant.
-    if let Some(decoded) = find_embedded_digit_morse_delimited(text, b'|') {
-        push_if_room(decoded, &mut alternatives, &mut total_bytes);
-    }
-
-    // Evadex-style digit-only morse: comma-separated (evadex comma_sep variant).
-    if let Some(decoded) = try_decode_digit_morse_comma(text) {
-        push_if_room(decoded, &mut alternatives, &mut total_bytes);
-    }
-
-    // No-separator digit morse. Catches:
-    //   1. Original no-sep encoding (.----..---...)
-    //   2. Space-sep after normalize_text collapses spaces between non-alpha chars
-    //   3. Newline-sep after the same collapse
-    // Only succeeds for pure-digit values (length exactly N×5); mixed values with
-    // embedded literal hyphens produce lengths that are not a multiple of 5, so they
-    // correctly fall through to None rather than producing a garbled decode.
-    if let Some(decoded) = try_decode_digit_morse_nosep(text.as_bytes()) {
-        push_if_room(decoded, &mut alternatives, &mut total_bytes);
-    } else {
-        // Fallback: scan for embedded morse segments within a larger text.
-        // Handles the file-scan path where a filename preamble is prepended to
-        // the text before scanning (pipeline.process_file prepends filename
-        // context words followed by \n, which breaks the pure-bytes check above).
-        if let Some(decoded) = find_embedded_digit_morse_nosep(text.as_bytes()) {
+    // Morse decoders run twice when the text ends in a full stop glued to the
+    // last code (`card number ....-/...../-....` + `.`): the stop turns the final
+    // `-....` into `-.....`, which is no digit, and every decoder bails. Digit
+    // morse has no single-`.` code, so removing one terminal stop that directly
+    // follows a morse symbol cannot change a valid decode.
+    let trimmed = text.trim_end();
+    let without_stop = trimmed
+        .strip_suffix('.')
+        .filter(|s| s.ends_with('.') || s.ends_with('-'));
+    for src in std::iter::once(text).chain(without_stop) {
+        // Try morse code decode (full alphabet, space/slash/pipe separated)
+        if let Some(decoded) = decode_morse(src) {
             push_if_room(decoded, &mut alternatives, &mut total_bytes);
         }
-    }
 
-    // Mixed alpha + nosep digit-morse decoder. Handles IBAN-style values where
-    // non-digit characters (country code letters, bank code) pass through
-    // literally and digit characters are nosep-encoded. After collapse_padding
-    // the space-sep and newline-sep variants collapse to this mixed form:
-    //   "G B---....---W E S T.----..---..." → "GB82WEST12345698765432"
-    if let Some(decoded) = try_decode_mixed_alpha_nosep(text) {
-        push_if_room(decoded, &mut alternatives, &mut total_bytes);
+        // Evadex-style digit-only morse: slash-separated, non-digits pass through literally.
+        // Fixes the "-" → 'T' misidentification in the full-alphabet decoder for values
+        // like SSNs ("123-45-6789") where the hyphen separator is not itself morse-encoded.
+        if let Some(decoded) = try_decode_digit_morse_slash(src) {
+            push_if_room(decoded, &mut alternatives, &mut total_bytes);
+        } else if let Some(decoded) = find_embedded_digit_morse_delimited(src, b'/') {
+            // Fallback: slash-morse embedded in surrounding text (filename preamble,
+            // prose prefix) — the whole-input decoder above bails on the first
+            // polluted token, mirroring the nosep embedded fallback below.
+            push_if_room(decoded, &mut alternatives, &mut total_bytes);
+        }
+
+        // Evadex-style digit-only morse: comma-separated (evadex comma_sep variant).
+        if let Some(decoded) = try_decode_digit_morse_comma(src) {
+            push_if_room(decoded, &mut alternatives, &mut total_bytes);
+        } else if let Some(decoded) = find_embedded_digit_morse_delimited(src, b',') {
+            // Fallback: comma-morse embedded in surrounding text.
+            push_if_room(decoded, &mut alternatives, &mut total_bytes);
+        }
+
+        // Pipe-separated digit morse embedded in surrounding text. The full-alphabet
+        // decode_morse() handles bare pipe-morse, but bails on any non-morse prefix;
+        // no whole-input digit decoder covers pipe, so this is the only digit path
+        // that tolerates a preamble for the pipe variant.
+        if let Some(decoded) = find_embedded_digit_morse_delimited(src, b'|') {
+            push_if_room(decoded, &mut alternatives, &mut total_bytes);
+        }
+
+        // Evadex-style digit-only morse: comma-separated (evadex comma_sep variant).
+        if let Some(decoded) = try_decode_digit_morse_comma(src) {
+            push_if_room(decoded, &mut alternatives, &mut total_bytes);
+        }
+
+        // No-separator digit morse. Catches:
+        //   1. Original no-sep encoding (.----..---...)
+        //   2. Space-sep after normalize_text collapses spaces between non-alpha chars
+        //   3. Newline-sep after the same collapse
+        // Only succeeds for pure-digit values (length exactly N×5); mixed values with
+        // embedded literal hyphens produce lengths that are not a multiple of 5, so they
+        // correctly fall through to None rather than producing a garbled decode.
+        if let Some(decoded) = try_decode_digit_morse_nosep(src.as_bytes()) {
+            push_if_room(decoded, &mut alternatives, &mut total_bytes);
+        } else {
+            // Fallback: scan for embedded morse segments within a larger text.
+            // Handles the file-scan path where a filename preamble is prepended to
+            // the text before scanning (pipeline.process_file prepends filename
+            // context words followed by \n, which breaks the pure-bytes check above).
+            if let Some(decoded) = find_embedded_digit_morse_nosep(src.as_bytes()) {
+                push_if_room(decoded, &mut alternatives, &mut total_bytes);
+            }
+        }
+
+        // Mixed alpha + nosep digit-morse decoder. Handles IBAN-style values where
+        // non-digit characters (country code letters, bank code) pass through
+        // literally and digit characters are nosep-encoded. After collapse_padding
+        // the space-sep and newline-sep variants collapse to this mixed form:
+        //   "G B---....---W E S T.----..---..." → "GB82WEST12345698765432"
+        if let Some(decoded) = try_decode_mixed_alpha_nosep(src) {
+            push_if_room(decoded, &mut alternatives, &mut total_bytes);
+        }
     }
 
     // Two-stage encoding chain: base64 → ROT13.
@@ -3236,6 +3394,17 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     // URL path / dotted host that stage 4c merged with surrounding path words.
     for decoded in decode_delimited_encoded_segments(text) {
         push_if_room(decoded, &mut alternatives, &mut total_bytes);
+    }
+
+    // Letter-padded / identifier-glued card: give the digit block a word
+    // boundary so the card patterns can see it.
+    for variant in isolate_letter_bounded_digit_blocks(text) {
+        push_if_room(variant, &mut alternatives, &mut total_bytes);
+    }
+
+    // A value split across indexed fields of one record (`part1`/`part2`).
+    for joined in join_indexed_split_fields(text) {
+        push_if_room(joined, &mut alternatives, &mut total_bytes);
     }
 
     alternatives
