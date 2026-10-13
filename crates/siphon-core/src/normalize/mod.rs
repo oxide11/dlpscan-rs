@@ -2760,6 +2760,276 @@ fn recover_case_folded_base64_digits(token: &str) -> Vec<String> {
     results
 }
 
+/// Known plausible lengths for zero-padded numeric secrets: 9-digit national
+/// IDs (SSN/SIN) and 13–19-digit card/PAN numbers. Used by
+/// [`strip_zero_padding_variants`] to recover a valid-length number from a
+/// digit run that has been padded past its pattern's length bound.
+const ZERO_STRIP_TARGET_LENS: &[usize] = &[9, 13, 14, 15, 16, 17, 18, 19];
+
+/// Recover numbers hidden by zero-padding.
+///
+/// An adversary can defeat a fixed-length pattern and its check-digit
+/// validation by padding a value with zeros: leading zeros push a card past the
+/// `\b\d{4}…\d{1,7}\b` PAN bound (and past the `\b`-anchored card regexes) while
+/// keeping the run a single word, and a trailing zero shifts every digit's Luhn
+/// parity so the check fails. Leading zeros don't change a value's Luhn residue,
+/// and trailing zeros can simply be removed — so for each over-long ASCII-digit
+/// run we emit alternative strings with the padding stripped (fully, and trimmed
+/// to each known plausible length) for the second-pass scanner to re-validate.
+///
+/// The normalized text handed to the alt pass has already had separators
+/// stripped by the delimiter stages, so a padded card appears as one clean
+/// digit run. Each variant is the full input with a single run replaced, so any
+/// surrounding context (IBAN letters, keywords) is preserved.
+fn strip_zero_padding_variants(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut variants: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        let end = i;
+        let run = &text[start..end];
+        let run_len = run.len();
+
+        // Only long runs are worth stripping. Shorter runs are matched
+        // directly by the ordinary patterns; padded values that matter
+        // (cards, PANs, national IDs) all exceed 10 digits once padded.
+        // The upper bound keeps the candidate fan-out bounded on adversarial
+        // all-digit blobs.
+        if !(10..=40).contains(&run_len) {
+            continue;
+        }
+        let lead = run.bytes().take_while(|&b| b == b'0').count();
+        let trail = run.bytes().rev().take_while(|&b| b == b'0').count();
+        if lead == 0 && trail == 0 {
+            continue;
+        }
+        // An all-zero (or all-but-one-zero) run carries no signal.
+        if lead + trail >= run_len {
+            continue;
+        }
+
+        // Build the set of candidate stripped runs.
+        let mut cand_runs: Vec<String> = Vec::new();
+        let add = |s: &str, v: &mut Vec<String>| {
+            if s.len() >= 8 && !v.iter().any(|e| e.as_str() == s) {
+                v.push(s.to_string());
+            }
+        };
+        // Full strips from each end, and both ends together.
+        if lead > 0 {
+            add(&run[lead..], &mut cand_runs);
+        }
+        if trail > 0 {
+            add(&run[..run_len - trail], &mut cand_runs);
+        }
+        if lead > 0 && trail > 0 {
+            add(&run[lead..run_len - trail], &mut cand_runs);
+        }
+        // Trim to each known plausible length from whichever end has enough
+        // zeros — recovers a 9-digit SIN from `00…` padding without stripping
+        // the significant leading zero of the ID itself.
+        for &tl in ZERO_STRIP_TARGET_LENS {
+            if tl >= run_len {
+                continue;
+            }
+            let drop = run_len - tl;
+            if lead >= drop {
+                add(&run[drop..], &mut cand_runs);
+            }
+            if trail >= drop {
+                add(&run[..run_len - drop], &mut cand_runs);
+            }
+        }
+
+        for cand in cand_runs {
+            let mut variant = String::with_capacity(text.len());
+            variant.push_str(&text[..start]);
+            variant.push_str(&cand);
+            variant.push_str(&text[end..]);
+            if variant != text && seen.insert(variant.clone()) {
+                variants.push(variant);
+            }
+        }
+
+        // Bound the total number of variants across all runs.
+        if variants.len() >= 24 {
+            break;
+        }
+    }
+
+    variants
+}
+
+/// Recover numbers hidden by sparse alphabetic noise.
+///
+/// `noise_embedded` evasion sprinkles isolated letters between the digits of a
+/// value — `4532015112830366` becomes `b45a32e01d51d12c830366`. The dedicated
+/// separator stages only strip a *consistent* delimiter, so single-letter noise
+/// survives. For each alphanumeric run that looks like a digit sequence wearing
+/// letter noise — a plausible card/PAN digit count, a high digit ratio, and no
+/// two adjacent letters (which would signal a real word, not noise) — we emit a
+/// digits-only variant for the second-pass scanner to re-validate.
+///
+/// The guards are deliberately tight: a value that isn't actually check-digit
+/// valid won't survive the alt pass's `validate_match`, and requiring isolated
+/// letters plus a ≥60% digit ratio keeps ordinary alphanumeric identifiers and
+/// prose out of the candidate set.
+fn strip_sparse_alpha_noise_variants(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut variants: Vec<String> = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_alphanumeric() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && bytes[i].is_ascii_alphanumeric() {
+            i += 1;
+        }
+        let end = i;
+        let run = &text[start..end];
+        let run_len = run.len();
+        if !(13..=48).contains(&run_len) {
+            continue;
+        }
+
+        let digit_count = run.bytes().filter(|b| b.is_ascii_digit()).count();
+        let letter_count = run_len - digit_count;
+        // Must be a digit sequence carrying noise: at least one letter (a pure
+        // digit run is handled by the ordinary patterns), a card/PAN-plausible
+        // digit count, and a strong digit majority.
+        if letter_count == 0 || !(13..=19).contains(&digit_count) {
+            continue;
+        }
+        if digit_count * 100 < run_len * 60 {
+            continue;
+        }
+        // Reject runs with two adjacent letters — that is a word/token, not
+        // digit-interleaved noise.
+        let has_adjacent_letters = run
+            .as_bytes()
+            .windows(2)
+            .any(|w| w[0].is_ascii_alphabetic() && w[1].is_ascii_alphabetic());
+        if has_adjacent_letters {
+            continue;
+        }
+
+        let digits_only: String = run
+            .bytes()
+            .filter(u8::is_ascii_digit)
+            .map(char::from)
+            .collect();
+        let mut variant = String::with_capacity(text.len());
+        variant.push_str(&text[..start]);
+        variant.push_str(&digits_only);
+        variant.push_str(&text[end..]);
+        if variant != text {
+            variants.push(variant);
+        }
+        if variants.len() >= 12 {
+            break;
+        }
+    }
+
+    variants
+}
+
+/// Decode base64/base32/hex blobs that stage 4c's token splitter could not
+/// isolate because they were embedded in a delimited structure.
+///
+/// Stage 4c treats `/` (a base64-standard symbol) as part of a token and skips
+/// any run adjacent to a `.` (the JWT/OAuth-segment guard). A base64 payload
+/// sitting in a URL path — `https://host.tld/data/<b64>/view` — is therefore
+/// merged with the surrounding `host`, `data`, and `view` path words *and*
+/// suppressed by the dot guard, so it survives to the alt pass undecoded. Here
+/// we re-split on the structural delimiters that never appear inside a bare
+/// value and try to decode each isolated segment; the second-pass scanner then
+/// validates whatever the decode yields.
+fn decode_delimited_encoded_segments(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let is_delim = |c: char| {
+        matches!(
+            c,
+            '/' | '\\'
+                | '.'
+                | ' '
+                | '\t'
+                | '\n'
+                | '\r'
+                | '"'
+                | '\''
+                | '<'
+                | '>'
+                | '('
+                | ')'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | ','
+                | ';'
+                | ':'
+                | '?'
+                | '&'
+                | '#'
+                | '@'
+                | '|'
+        )
+    };
+    let push = |decoded: String, out: &mut Vec<String>| {
+        if !out.iter().any(|e| e == &decoded) {
+            out.push(decoded);
+        }
+    };
+    let whole = text.trim();
+    for seg in text.split(is_delim) {
+        let seg = seg.trim();
+        // A segment spanning the whole input carries no structure that stage 4c
+        // didn't already see — it owns bare whole-string base64. Only proper
+        // substrings isolated by a structural delimiter are our responsibility.
+        if seg == whole {
+            continue;
+        }
+        // 12 mirrors stage 4c's minimum-token gate; the upper bound keeps a
+        // single adversarial blob from ballooning the alt set.
+        if !(12..=8192).contains(&seg.len()) {
+            continue;
+        }
+        if !seg.is_ascii() {
+            continue;
+        }
+        if let Some(decoded) = try_decode_any(seg) {
+            push(decoded, &mut out);
+            continue;
+        }
+        // The alnum-adjacent-delimiter stages glue a preceding path word onto
+        // the blob (`.../data/<b64>` normalizes to `data<b64>`), so the segment
+        // no longer decodes as a whole. A base64/base32 string is self-
+        // contained, so trimming the glued non-alphabet prefix off the front
+        // recovers it — slide the start forward past a bounded prefix and take
+        // the first offset that yields a clean decode.
+        for start in 1..seg.len().min(17) {
+            if let Some(decoded) = try_decode_any(&seg[start..]) {
+                push(decoded, &mut out);
+                break;
+            }
+        }
+    }
+    out
+}
+
 pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
     if text.len() > MAX_ALTERNATIVE_DECODING_INPUT {
         return Vec::new();
@@ -2948,6 +3218,24 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
         for recovered in recover_case_folded_base64_digits(src) {
             push_if_room(recovered, &mut alternatives, &mut total_bytes);
         }
+    }
+
+    // Zero-padding recovery: strip leading/trailing zero padding from over-long
+    // digit runs so a padded card/PAN/national-ID re-validates on the alt pass.
+    for variant in strip_zero_padding_variants(text) {
+        push_if_room(variant, &mut alternatives, &mut total_bytes);
+    }
+
+    // Sparse-noise recovery: strip isolated letter noise interleaved between the
+    // digits of a card/PAN so the recovered number re-validates on the alt pass.
+    for variant in strip_sparse_alpha_noise_variants(text) {
+        push_if_room(variant, &mut alternatives, &mut total_bytes);
+    }
+
+    // Delimited-structure base64: isolate and decode a base64 blob embedded in a
+    // URL path / dotted host that stage 4c merged with surrounding path words.
+    for decoded in decode_delimited_encoded_segments(text) {
+        push_if_room(decoded, &mut alternatives, &mut total_bytes);
     }
 
     alternatives
