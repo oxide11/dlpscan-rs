@@ -2362,8 +2362,8 @@
     {
       "type": "library",
       "name": "siphon-core",
-      "version": "2.9.3",
-      "purl": "pkg:cargo/siphon-core@2.9.3",
+      "version": "2.9.4",
+      "purl": "pkg:cargo/siphon-core@2.9.4",
       "scope": "required",
       "licenses": [
         {

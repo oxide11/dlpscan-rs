@@ -6,6 +6,80 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-13 — whitespace-separated identifiers, sentence-end and split-field evasion
+
+### siphon-core 2.9.4
+
+Two cards separated by whitespace were reported as zero cards. Normalization
+stage 5 (`collapse_padding`) removes whitespace between any two non-letters —
+that is what defeats `4 5 3 2 …` padding — so `4532015112830366
+5105105105105100` became one 32-digit run that no `\b`-anchored card pattern
+can match. The same join hid a newline- or tab-separated list of cards, every
+row but the last of a two-column CSV, and a card followed by any number
+(`4532015112830366 2026`). Plain data, not evasion.
+
+- fix(core): always-run patterns that are not context-gated now take the
+  raw-text second pass unconditionally, so the text is scanned with its
+  original spacing as well as normalized. A run-length threshold in stage 5
+  was rejected: it only moves the bypass (split a card 12+4 and it is joined
+  again). The widened pass cannot add a false-positive class — an all-ASCII
+  text with no evasion markers is already scanned exactly this way, because
+  normalization returns it untouched — and dedup across both views keeps a
+  value found twice to one finding. It is gated on the raw text containing a
+  digit–whitespace–digit sequence, the only shape stage 5 joins; on the
+  4.2 KB `measure_raw_pass_cost` document (which has one) a scan goes
+  ~0.45 → ~0.52 ms, and without one the cost is within noise. Context-gated
+  patterns keep the old raw-pass rule: widening them changed `Ticker Symbol`
+  behaviour in the conformance matrix, and that is a separate decision.
+- fix(core): an encoded card that ends a sentence keeps the full stop glued
+  to it, and three decoders treated that stop as part of the value. Stage 4c's
+  dot guard (which protects JWT/hostname segments) now counts a following `.`
+  only when another segment starts right after it, so `…number NDUz…Ng==.`
+  decodes; the last segment of a dotted element is still caught by the
+  preceding-dot check, and a JWT ending a sentence is still a JWT. The
+  hex-dump decoder lets sentence punctuation close the final pair (`36 36.`)
+  when it ends the token, so `36.5` is still not a pair. The digit-morse
+  decoders also run on the text with one terminal stop removed when it
+  directly follows a morse symbol — digit morse has no single-`.` code, so
+  this cannot change a valid decode.
+- fix(core): two alt-pass recoveries, both Luhn/checksum-gated like the rest
+  of the second pass. `isolate_letter_bounded_digit_blocks()` gives a
+  13–19-digit block glued to letters a word boundary
+  (`XXXXXXXXXX4532015112830366XXXXXXXXXX`, `test_value_4532015112830366`).
+  `join_indexed_split_fields()` rejoins quoted digit values whose keys share
+  a stem with consecutive indices (`part1`/`part2`, `cc_1`…`cc_4`) into a
+  13–19-digit candidate; unrelated numeric fields never share a stem.
+- fix(core): three more card evasions from the evadex re-baseline.
+  Stage 11 now folds *strong* digit look-alikes — letters that resemble
+  nothing but a digit: `Ƨ`→2, `Ʒ`→3, `Ƽ`→5, `б`→6, `Ȣ`→8 and lowercase
+  forms — and qualifies a card-length run (13–19) holding at least one, so
+  a value with nearly every digit substituted (`4ƼƷƧΟІƼІІƧȢƷΟƷбб`, one
+  real digit) folds; the dense-run rule is unchanged. Stage 5 treats
+  vertical tab, form feed and the U+001C–U+001F information separators as
+  whitespace (as Python's `str.isspace` does), so `barcode_split`
+  (`45320151` U+001E `12830366`) joins like any padded card, and the
+  raw-pass gate counts the same set. A new alt-pass recovery,
+  `decode_digit_prefixed_base64()`, splits a digit prefix from a base64
+  tail in one token (`45320151MTI4MzAzNjY=`) when the tail decodes to
+  digits and the rejoined value is 13–19 long.
+- fix(core): an encoded card followed by prose. The hex-dump decoder
+  consumed the space after the last pair, gluing the decoded value to the
+  next word (`…39 39 on the` → `…99on`, which stage 11 then folded to
+  `…990n`); it now hands that space back. An em dash after digit morse
+  folds to `-` and loses its space, adding one symbol to the last code; the
+  embedded no-separator and delimited morse finders retry a segment or edge
+  token that is exactly one symbol over (digit codes are always 5 symbols).
+- test: `whitespace_separated_cards_are_each_found` (six list/CSV/suffix
+  shapes) and `padded_card_is_still_joined` (single-digit, 4-4-4-4 and 12+4
+  padding still recovered); evasion tests for split fields, letter-bounded
+  cards, encoded cards before a full stop, and false-positive guards
+  (unrelated numeric fields, non-consecutive indices, a Luhn-invalid glued
+  block, a JWT ending a sentence); substituted / partial-base64 /
+  separator cards, with Cyrillic prose and a non-digit base64 tail as
+  guards.
+
+---
+
 ## 2026-10-13 — zero-padding, delimited-base64, sparse-noise evasion
 
 ### siphon-core 2.9.3
