@@ -4489,6 +4489,11 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         "Email Address" | "EDU Email" => is_valid_email(matched_text),
         "SWIFT/BIC" => is_valid_swift(matched_text),
         "CUSIP" => is_valid_cusip(matched_text),
+        // WKN has no check digit; the regex alphabet already excludes I/O.
+        // A real WKN always carries a digit, which keeps capitalised
+        // six-letter words (`BUDGET`, `REPORT`) out even beside "WKN".
+        "WKN" => matched_text.bytes().any(|b| b.is_ascii_digit()),
+        "Reuters RIC" => is_plausible_ric(matched_text),
         "SEDOL" => is_valid_sedol(matched_text),
         "Australia TFN" => is_valid_australia_tfn(matched_text),
         // IBAN — ISO 13616 mod-97 check. Before wiring this, every
@@ -4761,6 +4766,26 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         "IMEI" => is_luhn_valid(matched_text),
         _ => true, // No validator — accept
     }
+}
+
+/// Plausibility gate for a Reuters Instrument Code (`AAPL.O`, `0005.HK`).
+///
+/// The suffix after the dot names the exchange, and only a few dozen are in
+/// use, so it must be one of them: `9.AM` and `A.B` have the RIC shape and
+/// name no exchange. The symbol needs a letter, or four or more digits for
+/// the numeric codes Asian exchanges use (`0005.HK`, `7203.T`).
+pub fn is_plausible_ric(ric: &str) -> bool {
+    const EXCHANGES: &[&str] = &[
+        "O", "OQ", "N", "A", "K", "P", "PK", "L", "TO", "V", "CN", "HK", "T", "OS", "PA", "DE",
+        "F", "AS", "BR", "MI", "MC", "SW", "S", "AX", "NZ", "SI", "KS", "KQ", "SS", "SZ", "BO",
+        "NS", "TW", "J", "SA", "MX", "CO", "ST", "HE", "OL", "IR", "LS", "VI", "WA",
+    ];
+    let Some((symbol, exchange)) = ric.rsplit_once('.') else {
+        return false;
+    };
+    let digits = symbol.bytes().filter(u8::is_ascii_digit).count();
+    EXCHANGES.contains(&exchange)
+        && (symbol.bytes().any(|b| b.is_ascii_alphabetic()) || digits >= 4)
 }
 
 /// Whether `validate_match` checks a real check digit (or checksum) for this

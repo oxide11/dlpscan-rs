@@ -297,6 +297,32 @@ pub static PATTERNS: &[PatternDef] = &[
         context_required: true,
     },
     PatternDef {
+        category: "Securities Identifiers",
+        // German Wertpapierkennnummer: six characters from digits and
+        // capitals without I or O (`865985`, `A1EWWW`). No check digit, so
+        // it only counts beside a WKN keyword, and the validator asks for a
+        // digit so a capitalised six-letter word is never one.
+        sub_category: "WKN",
+        regex: r"\b[0-9A-HJ-NP-Z]{6}\b",
+        case_insensitive: false,
+        specificity: 0.40,
+        // Context-gated (see models::is_context_required).
+        context_required: true,
+    },
+    PatternDef {
+        category: "Securities Identifiers",
+        // Reuters (Refinitiv / LSEG) Instrument Code: the symbol, an
+        // optional lowercase share-class letter, a dot and the exchange
+        // suffix (`AAPL.O`, `RY.TO`, `0005.HK`, `BRKb.N`). Context-gated:
+        // `file.TXT` has the same shape.
+        sub_category: "Reuters RIC",
+        regex: r"\b[A-Z0-9]{1,8}[a-z]?\.[A-Z]{1,3}\b",
+        case_insensitive: false,
+        specificity: 0.40,
+        // Context-gated (see models::is_context_required).
+        context_required: true,
+    },
+    PatternDef {
         category: "Loan and Mortgage Data",
         sub_category: "Loan Number",
         regex: r"\b[A-Z0-9]{8,15}\b",
@@ -4994,8 +5020,8 @@ mod tests {
         // TLP:AMBER+STRICT, TLP:GREEN, TLP:CLEAR, TLP:WHITE) + VALOR + 15
         // Financial Crime Reports (FinCEN SAR/CTR/8300/SAR-Form/confidentiality,
         // FINTRAC STR/LCTR/EFTR/TPR/Regime, AUSTRAC SMR/TTR/Regime, UK NCA SAR,
-        // Reasonable Grounds To Suspect) + Canada BN Root.
-        assert_eq!(PATTERNS.len(), 584);
+        // Reasonable Grounds To Suspect) + Canada BN Root + WKN + Reuters RIC.
+        assert_eq!(PATTERNS.len(), 586);
     }
 
     #[test]

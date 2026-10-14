@@ -965,6 +965,33 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
             distance: 50,
         },
     ),
+    (
+        "Securities Identifiers",
+        "WKN",
+        ContextEntry {
+            keywords: &[
+                "wkn",
+                "wertpapierkennnummer",
+                "wertpapier-kenn-nummer",
+                "german securities identification",
+            ],
+            distance: 50,
+        },
+    ),
+    (
+        "Securities Identifiers",
+        "Reuters RIC",
+        ContextEntry {
+            keywords: &[
+                "ric",
+                "reuters instrument code",
+                "reuters code",
+                "refinitiv",
+                "eikon",
+            ],
+            distance: 50,
+        },
+    ),
     // Loan and Mortgage Data
     (
         "Loan and Mortgage Data",

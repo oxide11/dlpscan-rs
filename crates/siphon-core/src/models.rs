@@ -153,6 +153,8 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
         "LEI" => 0.80,
         "Ticker Symbol" => 0.60, // lowered — $WORD is common in shell/templates; context-gated
         "VALOR" => 0.70,         // Swiss Valorennummer — context-gated; no check digit
+        "WKN" => 0.40,           // German securities ID — context-gated; no check digit
+        "Reuters RIC" => 0.40,   // instrument code — context-gated; `file.TXT` shape
         "Loan Number" => 0.45,
         "MERS MIN" => 0.50,
         "Universal Loan Identifier" => 0.75,
@@ -397,6 +399,8 @@ pub fn is_context_required(sub_category: &str) -> bool {
             | "Ticker Symbol"
             | "CUSIP"
             | "VALOR"
+            | "WKN"
+            | "Reuters RIC"
             | "Australia TFN"
             // HIPAA #8 — MRN is a bare 6-10 digit regex that would
             // match essentially every order number, account ref,

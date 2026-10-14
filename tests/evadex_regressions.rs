@@ -532,3 +532,44 @@ fn cusip_needs_a_securities_keyword_not_a_generic_one() {
         assert!(cats.iter().any(|(s, _)| s == "CUSIP"), "{cats:?} for {t:?}");
     }
 }
+
+#[test]
+fn wkn_and_ric_beside_their_keyword() {
+    for (t, want) in [
+        ("German WKN 865985 — Xetra order entry.", "WKN"),
+        ("Wertpapierkennnummer A1EWWW: trade at EUR 82.40.", "WKN"),
+        (
+            "Reuters RIC AAPL.O — real-time quote on Refinitiv.",
+            "Reuters RIC",
+        ),
+        (
+            "Market data subscription: RIC 0005.HK, tick data.",
+            "Reuters RIC",
+        ),
+    ] {
+        let cats = categories(t);
+        assert!(
+            cats.iter().any(|(s, _)| s == want),
+            "expected {want} in {cats:?} for {t:?}"
+        );
+    }
+}
+
+#[test]
+fn wkn_and_ric_shapes_without_substance_stay_quiet() {
+    for t in [
+        // Six capitals beside "WKN" but no digit: a word, not a WKN.
+        "WKN BUDGET approved.",
+        // RIC shape, but the suffix names no exchange.
+        "The RIC team met at 9.AM on Friday.",
+        "Refinitiv licence renewal for desk A.B costs more.",
+        // RIC shape with no keyword.
+        "Attach report.TXT and AAPL.O notes.",
+    ] {
+        let cats = categories(t);
+        assert!(
+            !cats.iter().any(|(s, _)| s == "WKN" || s == "Reuters RIC"),
+            "{cats:?} for {t:?}"
+        );
+    }
+}
