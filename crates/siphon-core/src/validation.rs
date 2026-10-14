@@ -1585,6 +1585,15 @@ pub fn is_valid_vin(vin: &str) -> bool {
     if bytes.iter().all(|&b| b == bytes[0]) {
         return false;
     }
+    // A VIN carries letters: the manufacturer code and the model-year
+    // position are alphabetic in practice. An all-digit 17-character run
+    // is a filing, account or tracking number that passes the check digit
+    // by chance (1 in 11), and claiming it as a VIN shadowed the rule that
+    // actually described it — `SAR filing number 12345678901234568`
+    // reported a VIN.
+    if !bytes.iter().any(|b| b.is_ascii_alphabetic()) {
+        return false;
+    }
     let mut sum: u32 = 0;
     let weights: [u32; 17] = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2];
     for (i, &b) in bytes.iter().enumerate() {
@@ -6181,6 +6190,8 @@ mod tests {
         assert!(!is_valid_vin("1HGCM82643A004352"));
         // Bumped a non-check digit (changes the sum, breaks the check).
         assert!(!is_valid_vin("1HGCM82633B004352"));
+        // All digits, check digit valid by chance: a filing number, not a VIN.
+        assert!(!is_valid_vin("12345678901234568"));
         // Contains a forbidden character (I, O, or Q).
         assert!(!is_valid_vin("1HGCM82633A004352I"));
         assert!(!is_valid_vin("1HGCM8I633A004352"));

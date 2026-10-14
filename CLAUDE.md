@@ -164,7 +164,7 @@ shape.
 Three properties of the pattern set, none of which were visible before every
 pattern was asked the same questions:
 
-- **57 patterns have no observable example** (72 before the raw-text pass). Most are not a generator
+- **55 patterns have no observable example** (72 before the raw-text pass, 57 before DTI/LTV Ratio could match before a space). Most are not a generator
   failure: they carry a regex *identical* to a sibling's, and deduplication
   keeps only one match per span. Seven US state driver's licence patterns
   share `\b\d{8}\b`; ask for Texas and the scanner reports Arkansas. The
