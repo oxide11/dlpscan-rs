@@ -1680,6 +1680,34 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                         );
                         continue;
                     }
+                    // A value the primary pass already reported under this
+                    // rule is not new information. Under another rule, it is —
+                    // `IBAN Generic` confirming by check digit what only the
+                    // unvalidated `Germany IBAN` found in lowercase — but the
+                    // value is still where the primary pass found it, so the
+                    // finding takes that match's text and span rather than the
+                    // alt's (uppercased, spanning the whole input).
+                    let same_value = |a: &str| {
+                        a.chars()
+                            .filter(char::is_ascii_alphanumeric)
+                            .map(|c| c.to_ascii_uppercase())
+                            .eq(matched_text
+                                .chars()
+                                .filter(char::is_ascii_alphanumeric)
+                                .map(|c| c.to_ascii_uppercase()))
+                    };
+                    if matches
+                        .iter()
+                        .any(|m| m.sub_category == cp.def.sub_category && same_value(&m.text))
+                    {
+                        continue;
+                    }
+                    let (report_text, report_span) = matches
+                        .iter()
+                        .find(|m| same_value(&m.text))
+                        .map_or((matched_text.to_string(), (0, text.len())), |m| {
+                            (m.text.clone(), m.span)
+                        });
                     emit_trace(
                         &config.trace,
                         "alt",
@@ -1693,12 +1721,12 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                         Some("alt decoding match emitted (confidence multiplied by 0.9)"),
                     );
                     matches.push(Match::new(
-                        matched_text.to_string(),
+                        report_text,
                         cp.def.category.to_string(),
                         cp.def.sub_category.to_string(),
                         has_context,
                         confidence * 0.9,
-                        (0, text.len()),
+                        report_span,
                         ctx_required,
                     ));
                 }

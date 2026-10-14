@@ -453,3 +453,58 @@ fn guessed_recoveries_do_not_feed_shape_only_rules() {
     let cats = categories("uae passport: N0003062517");
     assert!(!cats.iter().any(|(s, _)| s == "UAE Passport"), "{cats:?}");
 }
+
+#[test]
+fn lower_and_mixed_case_identifiers_beside_their_keyword() {
+    for (t, want) in [
+        (
+            "Beneficiary account gb82west12345698765432.",
+            "IBAN Generic",
+        ),
+        (
+            "Beneficiary account Gb82WeSt12345698765432.",
+            "IBAN Generic",
+        ),
+        ("ISIN Us0378331005 split 2-for-1.", "ISIN"),
+    ] {
+        let cats = categories(t);
+        assert!(
+            cats.iter().any(|(s, _)| s == want),
+            "expected {want} in {cats:?} for {t:?}"
+        );
+    }
+}
+
+#[test]
+fn digit_lookalikes_fold_in_short_identifiers() {
+    // 130 692 544 and 021000021 with every digit it can spare swapped for a
+    // look-alike (І Ʒ Ο б Ƨ Ƽ).
+    for (t, want) in [
+        (
+            "Social insurance number \u{0406}\u{01B7}\u{039F} \u{0431}9\u{01A7} \u{01BC}44 verified.",
+            "Canada SIN",
+        ),
+        (
+            "Routing number \u{039F}\u{01A7}\u{0406}\u{039F}\u{039F}\u{039F}\u{039F}\u{01A7}\u{0406} on the wire.",
+            "ABA Routing Number",
+        ),
+    ] {
+        let cats = categories(t);
+        assert!(
+            cats.iter().any(|(s, _)| s == want),
+            "expected {want} in {cats:?} for {t:?}"
+        );
+    }
+}
+
+#[test]
+fn everyday_mixed_case_tokens_stay_quiet() {
+    for t in [
+        "Passport photos ready by 10am; covid19 rules no longer apply.",
+        "SSN lookup service v2 deployed on node k8s-prod-3a.",
+        "SIN batch job ran in 4m32s on host db01; ISIN feed lag 3h.",
+    ] {
+        let cats = categories(t);
+        assert!(cats.is_empty(), "{cats:?} for {t:?}");
+    }
+}
