@@ -1399,12 +1399,32 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "funds",
                 "available",
                 "ledger",
+                // Account Balance's compound phrases, repeated here on
+                // purpose. Keyword search is leftmost-longest, so in
+                // "Available balance: USD 12,345.67" the longer phrase is the
+                // only hit recorded and the "balance" inside it never
+                // reaches this pattern. A keyword listed under both patterns
+                // is credited to both. (Searching with overlaps instead fixed
+                // this and broke 48 conformance cases: generic patterns
+                // picked up "email" from inside "edu email" and outranked
+                // the specific one.)
+                "account balance",
+                "available balance",
+                "current balance",
+                "ledger balance",
+                "closing balance",
                 // French / Français
                 "solde",
+                "solde courant",
+                "solde disponible",
+                "solde du compte",
                 // ES/DE/IT/PT
                 "guthaben",
                 "kontostand",
                 "saldo",
+                "saldo da conta",
+                "saldo de cuenta",
+                "saldo del conto",
             ],
             distance: 50,
         },
@@ -5302,6 +5322,23 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "cra business",
                 // French / Français
                 "numéro d'entreprise",
+            ],
+            distance: 50,
+        },
+    ),
+    (
+        "North America - Canada",
+        "Canada BN Root",
+        ContextEntry {
+            keywords: &[
+                "business number",
+                "business no",
+                "canada bn",
+                "cra business",
+                "bn",
+                // French / Français
+                "numéro d'entreprise",
+                "no d'entreprise",
             ],
             distance: 50,
         },

@@ -307,6 +307,7 @@ pub fn pattern_specificity(sub_category: &str) -> f64 {
         // PAN (0.60) so they win dedup when both match the same digits.
         "USA SSN" => 0.70,
         "Canada SIN" => 0.70,
+        "Canada BN Root" => 0.45,
         "India Aadhaar" => 0.65,
         "India PAN" => 0.65,
         "South Africa ID" => 0.65,
@@ -374,6 +375,7 @@ pub fn is_context_required(sub_category: &str) -> bool {
         "USA SSN"
             | "USA ITIN"
             | "Canada SIN"
+            | "Canada BN Root"
             | "Quebec HC"
             | "US Bank Account Number"
             | "ACH Batch Number"

@@ -6,6 +6,141 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-14 — ratios, the printed RAMQ layout, and identifier collisions
+
+### siphon-core 2.9.5
+
+evadex 3.40 scanned every northam seed, unmodified, beside its own context
+keyword. Four rules still failed on plain, correctly labelled values.
+
+- fix(core): `DTI Ratio` and `LTV Ratio` now match a ratio followed by a
+  space or full stop. Both regexes ended in `%\b`, and `%` is not a word
+  character, so the boundary held only when a *letter* followed: `43.5%x`
+  matched, `DTI 43.5% at underwriting.` did not. The detection matrix could
+  not seed either pattern; both now have all five slots.
+- fix(core): `Quebec HC` accepts the layout printed on the card,
+  `BOUD 8503 1512` — one optional space or hyphen after the letters and
+  between the YYMM and DDSS groups. Normalization joins the digit groups but
+  leaves the letter–digit gap, so the printed form never matched. The
+  validator already compacted separators; the month/day guard still applies.
+- fix(core): `is_valid_vin` requires at least one letter. A 17-digit SAR
+  filing number passes the VIN check digit by chance (1 in 11), and the VIN
+  rule (0.70) then shadowed the SAR rule the text named (0.50 with its
+  keyword): `SAR filing number 12345678901234568` reported a VIN. Real VINs
+  carry letters in the manufacturer code.
+- fix(core): when two **national** identifiers from different countries
+  match the identical characters and exactly one has its context keyword
+  nearby, deduplication keeps that one. A 12-digit run is a Newfoundland MCP
+  number and an Indian Aadhaar alike; confidence ranks how distinctive each
+  *format* is, which says nothing about which country the value is from, so
+  `MCP number 987654321012` reported an Aadhaar (0.65) over the health card
+  (0.60). Scoped to `<Region> - <Country>` categories: a first version that
+  applied to any identical-span overlap handed `account number 4532…` to the
+  generic `PAN` rule instead of `Visa`, and is pinned against by a test.
+- fix(core): the raw-text second pass now runs every flagged pattern
+  whenever normalization changed the text, not only those that found
+  nothing. Normalization drops a decimal point (`12,345.67` → `12,34567`),
+  `Balance with Currency Code` then matched the fragment `USD 12`, and that
+  fragment suppressed the pass that finds `USD 12,345.67`. Dedup keeps the
+  longer match. `measure_raw_pass_cost`: 0.475 → 0.486 ms/scan.
+- fix(core): `Balance with Currency Code` also lists Account Balance's
+  compound phrases (`available balance`, `account balance`, …). Keyword
+  search is leftmost-longest, so the longer phrase was the only hit
+  recorded and the `balance` inside it never reached this pattern. Searching
+  with overlaps instead was tried and rejected: it broke 48 conformance
+  cases, because generic patterns picked up `email` from inside `edu email`
+  and outranked the specific one.
+- feat(core): `Canada BN Root` — the 9-digit Business Number without the
+  `RT0001` program suffix `Canada BN` requires, as forms and vendor records
+  quote it. Context-gated, Luhn-validated (`is_valid_canada_bn_root`).
+  584 patterns, 73 validators; `docs/PATTERNS.md` and `docs/KEYWORDS.md`
+  regenerated (which also picked up two entries that were already stale).
+- fix(core): `Manitoba DL` matches the documented 13-character layout,
+  `AKKKKAKXX9XX9` (FMCSA Canadian licence reference): name-derived letters,
+  `*` padding a short surname, two digit positions. The old `[A-Z]{6}\d{6}`
+  matched no documented Manitoba format. Conformance cases regenerated,
+  plus five for `Canada BN Root`.
+- test(conformance): 10 new DTI/LTV cases. The UAE Passport `damaged` case
+  (`uae passport: Y2208699`) only passed because Hong Kong ID shadowed it —
+  the value fits UAE's own `[A-Z]?\d{7,9}` — and fires now that the named
+  country wins; its five cases were regenerated (near miss `N0003062517`).
+  The rest of the table is unchanged: the generator draws different samples
+  each run, so regenerating wholesale would churn every case.
+
+## 2026-10-13 — whitespace-separated identifiers, sentence-end and split-field evasion
+
+### siphon-core 2.9.4
+
+Two cards separated by whitespace were reported as zero cards. Normalization
+stage 5 (`collapse_padding`) removes whitespace between any two non-letters —
+that is what defeats `4 5 3 2 …` padding — so `4532015112830366
+5105105105105100` became one 32-digit run that no `\b`-anchored card pattern
+can match. The same join hid a newline- or tab-separated list of cards, every
+row but the last of a two-column CSV, and a card followed by any number
+(`4532015112830366 2026`). Plain data, not evasion.
+
+- fix(core): always-run patterns that are not context-gated now take the
+  raw-text second pass unconditionally, so the text is scanned with its
+  original spacing as well as normalized. A run-length threshold in stage 5
+  was rejected: it only moves the bypass (split a card 12+4 and it is joined
+  again). The widened pass cannot add a false-positive class — an all-ASCII
+  text with no evasion markers is already scanned exactly this way, because
+  normalization returns it untouched — and dedup across both views keeps a
+  value found twice to one finding. It is gated on the raw text containing a
+  digit–whitespace–digit sequence, the only shape stage 5 joins; on the
+  4.2 KB `measure_raw_pass_cost` document (which has one) a scan goes
+  ~0.45 → ~0.52 ms, and without one the cost is within noise. Context-gated
+  patterns keep the old raw-pass rule: widening them changed `Ticker Symbol`
+  behaviour in the conformance matrix, and that is a separate decision.
+- fix(core): an encoded card that ends a sentence keeps the full stop glued
+  to it, and three decoders treated that stop as part of the value. Stage 4c's
+  dot guard (which protects JWT/hostname segments) now counts a following `.`
+  only when another segment starts right after it, so `…number NDUz…Ng==.`
+  decodes; the last segment of a dotted element is still caught by the
+  preceding-dot check, and a JWT ending a sentence is still a JWT. The
+  hex-dump decoder lets sentence punctuation close the final pair (`36 36.`)
+  when it ends the token, so `36.5` is still not a pair. The digit-morse
+  decoders also run on the text with one terminal stop removed when it
+  directly follows a morse symbol — digit morse has no single-`.` code, so
+  this cannot change a valid decode.
+- fix(core): two alt-pass recoveries, both Luhn/checksum-gated like the rest
+  of the second pass. `isolate_letter_bounded_digit_blocks()` gives a
+  13–19-digit block glued to letters a word boundary
+  (`XXXXXXXXXX4532015112830366XXXXXXXXXX`, `test_value_4532015112830366`).
+  `join_indexed_split_fields()` rejoins quoted digit values whose keys share
+  a stem with consecutive indices (`part1`/`part2`, `cc_1`…`cc_4`) into a
+  13–19-digit candidate; unrelated numeric fields never share a stem.
+- fix(core): three more card evasions from the evadex re-baseline.
+  Stage 11 now folds *strong* digit look-alikes — letters that resemble
+  nothing but a digit: `Ƨ`→2, `Ʒ`→3, `Ƽ`→5, `б`→6, `Ȣ`→8 and lowercase
+  forms — and qualifies a card-length run (13–19) holding at least one, so
+  a value with nearly every digit substituted (`4ƼƷƧΟІƼІІƧȢƷΟƷбб`, one
+  real digit) folds; the dense-run rule is unchanged. Stage 5 treats
+  vertical tab, form feed and the U+001C–U+001F information separators as
+  whitespace (as Python's `str.isspace` does), so `barcode_split`
+  (`45320151` U+001E `12830366`) joins like any padded card, and the
+  raw-pass gate counts the same set. A new alt-pass recovery,
+  `decode_digit_prefixed_base64()`, splits a digit prefix from a base64
+  tail in one token (`45320151MTI4MzAzNjY=`) when the tail decodes to
+  digits and the rejoined value is 13–19 long.
+- fix(core): an encoded card followed by prose. The hex-dump decoder
+  consumed the space after the last pair, gluing the decoded value to the
+  next word (`…39 39 on the` → `…99on`, which stage 11 then folded to
+  `…990n`); it now hands that space back. An em dash after digit morse
+  folds to `-` and loses its space, adding one symbol to the last code; the
+  embedded no-separator and delimited morse finders retry a segment or edge
+  token that is exactly one symbol over (digit codes are always 5 symbols).
+- test: `whitespace_separated_cards_are_each_found` (six list/CSV/suffix
+  shapes) and `padded_card_is_still_joined` (single-digit, 4-4-4-4 and 12+4
+  padding still recovered); evasion tests for split fields, letter-bounded
+  cards, encoded cards before a full stop, and false-positive guards
+  (unrelated numeric fields, non-consecutive indices, a Luhn-invalid glued
+  block, a JWT ending a sentence); substituted / partial-base64 /
+  separator cards, with Cyrillic prose and a non-digit base64 tail as
+  guards.
+
+---
+
 ## 2026-10-13 — zero-padding, delimited-base64, sparse-noise evasion
 
 ### siphon-core 2.9.3

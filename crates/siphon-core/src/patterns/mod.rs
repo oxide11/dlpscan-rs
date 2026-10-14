@@ -325,7 +325,10 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "Loan and Mortgage Data",
         sub_category: "LTV Ratio",
-        regex: r"\b\d{1,3}\.\d{1,2}%\b",
+        // No `\b` after `%`: `%` is not a word character, so a trailing
+        // `\b` matched only when a letter followed (`35.5%x`) and never
+        // before a space or full stop. Same for DTI Ratio.
+        regex: r"\b\d{1,3}\.\d{1,2}%",
         case_insensitive: false,
         specificity: 0.40,
         context_required: true,
@@ -600,7 +603,7 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "Customer Financial Data",
         sub_category: "DTI Ratio",
-        regex: r"\b\d{1,2}\.\d{1,2}%\b",
+        regex: r"\b\d{1,2}\.\d{1,2}%",
         case_insensitive: false,
         specificity: 0.45,
         context_required: true,
@@ -2285,6 +2288,20 @@ pub static PATTERNS: &[PatternDef] = &[
     },
     PatternDef {
         category: "North America - Canada",
+        // The 9-digit Business Number on its own, without the program
+        // account suffix (`RT0001`) `Canada BN` requires. Forms and vendor
+        // records quote it bare. The ninth digit is a Luhn check, as for a
+        // SIN, but a bare Luhn-valid 9-digit run is common enough that it
+        // only counts beside a business-number keyword.
+        sub_category: "Canada BN Root",
+        regex: r"\b\d{3}[-\s]?\d{3}[-\s]?\d{3}\b",
+        case_insensitive: false,
+        specificity: 0.45,
+        // Context-gated (see models::is_context_required).
+        context_required: true,
+    },
+    PatternDef {
+        category: "North America - Canada",
         sub_category: "Canada Passport",
         regex: r"\b[A-Z]{2}\d{6}\b",
         case_insensitive: false,
@@ -2359,7 +2376,14 @@ pub static PATTERNS: &[PatternDef] = &[
         // happens to be 4-letters + 8-digits. A mod-10 check-digit
         // validator is the follow-up to catch the remainder; for
         // now we rely on the structural shape + context gate.
-        regex: r"\b[A-Z]{4}\d{2}(?:0[1-9]|1[0-2]|5[1-9]|6[0-2])(?:0[1-9]|[12]\d|3[01])\d{2}\b",
+        //
+        // The card prints the number in groups — `BOUD 8503 1512` — so a
+        // single space or hyphen is allowed after the letters and between
+        // the YYMM and DDSS groups. Normalization joins the digit groups
+        // but leaves the letter–digit gap, so without the first optional
+        // separator the printed layout never matched; the validator
+        // already compacts separators away.
+        regex: r"\b[A-Z]{4}[ -]?\d{2}(?:0[1-9]|1[0-2]|5[1-9]|6[0-2])[ -]?(?:0[1-9]|[12]\d|3[01])\d{2}\b",
         case_insensitive: false,
         specificity: 0.55,
         // Context-gated (see models::is_context_required). 4-letter
@@ -2419,7 +2443,12 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "North America - Canada",
         sub_category: "Manitoba DL",
-        regex: r"\b[A-Z]{6}\d{6}\b",
+        // 13 characters, `AKKKKAKXX9XX9` per the FMCSA Canadian licence
+        // reference: A a letter, K a letter or `*` (short surnames are
+        // padded), X a letter or digit, 9 a digit; the leading letters derive
+        // from the holder's name. The previous `[A-Z]{6}\d{6}` matched no
+        // documented Manitoba layout.
+        regex: r"\b[A-Z][A-Z*]{4}[A-Z][A-Z*][A-Z0-9]{2}\d[A-Z0-9]{2}\d\b",
         case_insensitive: false,
         specificity: 0.40,
         context_required: false,
@@ -4965,8 +4994,8 @@ mod tests {
         // TLP:AMBER+STRICT, TLP:GREEN, TLP:CLEAR, TLP:WHITE) + VALOR + 15
         // Financial Crime Reports (FinCEN SAR/CTR/8300/SAR-Form/confidentiality,
         // FINTRAC STR/LCTR/EFTR/TPR/Regime, AUSTRAC SMR/TTR/Regime, UK NCA SAR,
-        // Reasonable Grounds To Suspect).
-        assert_eq!(PATTERNS.len(), 583);
+        // Reasonable Grounds To Suspect) + Canada BN Root.
+        assert_eq!(PATTERNS.len(), 584);
     }
 
     #[test]

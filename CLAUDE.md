@@ -164,7 +164,7 @@ shape.
 Three properties of the pattern set, none of which were visible before every
 pattern was asked the same questions:
 
-- **57 patterns have no observable example** (72 before the raw-text pass). Most are not a generator
+- **55 patterns have no observable example** (72 before the raw-text pass, 57 before DTI/LTV Ratio could match before a space). Most are not a generator
   failure: they carry a regex *identical* to a sibling's, and deduplication
   keeps only one match per span. Seven US state driver's licence patterns
   share `\b\d{8}\b`; ask for Texas and the scanner reports Arkansas. The
@@ -291,7 +291,7 @@ The scan path in `crates/siphon-core/src/scanner/mod.rs` is a 10-stage pipeline:
    and no two-phase match; stages 3 and 4 said so for a long time and the
    scanner module doc agreed, but neither was ever true. A `RegexSet` phase-1
    was measured and rejected — see the module doc for why
-5. **Checksum validation** (`validation.rs`) — 72 validators (Luhn, mod-97
+5. **Checksum validation** (`validation.rs`) — 73 validators (Luhn, mod-97
    IBAN, Verhoeff, Base58Check, Bech32, ISO 3779, …)
 6. **Context checking** (`context/`) — Aho-Corasick prefilter on 5,000+
    keywords across 6 languages; context-gated patterns are skipped entirely
