@@ -14,7 +14,7 @@
 //! A `RegexSet` phase 1 was measured before correcting this, in case the doc
 //! described something worth building. It is not:
 //!
-//! - The 583 patterns exceed the regex crate's default 10 MB compile limit
+//! - The 584 patterns exceed the regex crate's default 10 MB compile limit
 //!   outright (`CompiledTooBig`); a set needs `size_limit` raised to 64 MB
 //!   before it will build.
 //! - It would cut cold start from ~310 ms to ~223 ms — but add ~3.5 ms per
@@ -554,7 +554,7 @@ impl ScanConfig {
 
 /// Compiled regex cache: one Regex per pattern, compiled once per process.
 ///
-/// Building this is essentially all of cold start — ~297 ms for 583 patterns
+/// Building this is essentially all of cold start — ~297 ms for 584 patterns
 /// at ~0.51 ms each, against ~13.5 ms for the Aho-Corasick keyword automaton
 /// and ~0.47 ms for a steady-state scan. So the first scan in a process costs
 /// roughly 660x the ones after it.
@@ -1376,13 +1376,18 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     // normalized pass is untouched, so nothing that matches today stops
     // matching.
     //
-    // Two things keep the cost off the common path. The pass only runs when
-    // normalization actually changed something, and only for a flagged
-    // pattern that found *nothing* on the normalized text — so
+    // The pass only runs when normalization actually changed something, so
     // `requires_stripped_separator` being imprecise costs a regex run at
-    // worst, never a wrong answer. Context is checked against the raw
-    // haystack directly (`None` hit index), since the prebuilt index is keyed
-    // to normalized positions.
+    // worst, never a wrong answer. It used to run a flagged pattern only when
+    // that pattern found *nothing* on the normalized text, but a separator
+    // the regex makes optional lets a truncated value match there instead:
+    // stripping the decimal point turns `USD 12,345.67` into `USD 12,34567`,
+    // where the balance rule finds `USD 12`, and that fragment then
+    // suppressed the raw pass that would have found the whole amount. Both
+    // views are scanned and dedup keeps the longer match — the same
+    // reasoning as the always-run rule below. Context is checked against the
+    // raw haystack directly (`None` hit index), since the prebuilt index is
+    // keyed to normalized positions.
     //
     // Always-run patterns that are not context-gated (validated,
     // high-specificity identifiers — cards, IBANs, keys) take the raw pass
@@ -1408,8 +1413,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
         let digit_runs_joined = has_whitespace_between_digits(text);
         active_patterns
             .par_iter()
-            .enumerate()
-            .filter(|(idx, cp)| {
+            .filter(|cp| {
                 (digit_runs_joined
                     && cp.always_run
                     && !effective_context_required(
@@ -1418,9 +1422,9 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                         cp.def.context_required,
                         config.pattern_field_overrides.as_ref(),
                     ))
-                    || (cp.needs_raw_pass && per_pattern_matches[*idx].is_empty())
+                    || cp.needs_raw_pass
             })
-            .map(|(_, cp)| run_pattern(cp, text, &[], None))
+            .map(|cp| run_pattern(cp, text, &[], None))
             .collect()
     };
 

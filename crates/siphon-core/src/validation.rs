@@ -398,6 +398,34 @@ pub fn is_valid_iban(iban: &str) -> bool {
 /// SINs are 9 digits (often formatted `123-456-789`) and use the
 /// standard Luhn algorithm. Also rejects the all-zeros sentinel
 /// which Luhn accepts but which is never a real SIN.
+/// Validate the 9-digit root of a Canadian Business Number: Luhn over all
+/// nine digits, the same check a SIN carries. Unlike a SIN, any leading
+/// digit is issued.
+pub fn is_valid_canada_bn_root(bn: &str) -> bool {
+    let digits: Vec<u32> = bn.chars().filter_map(|c| c.to_digit(10)).collect();
+    if digits.len() != 9 || digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(idx, &d)| {
+            if idx % 2 == 1 {
+                let doubled = d * 2;
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum.is_multiple_of(10)
+}
+
 pub fn is_valid_canada_sin(sin: &str) -> bool {
     let digits: Vec<u32> = sin
         .chars()
@@ -1583,6 +1611,15 @@ pub fn is_valid_vin(vin: &str) -> bool {
     }
     // Reject all-same-character sentinels.
     if bytes.iter().all(|&b| b == bytes[0]) {
+        return false;
+    }
+    // A VIN carries letters: the manufacturer code and the model-year
+    // position are alphabetic in practice. An all-digit 17-character run
+    // is a filing, account or tracking number that passes the check digit
+    // by chance (1 in 11), and claiming it as a VIN shadowed the rule that
+    // actually described it — `SAR filing number 12345678901234568`
+    // reported a VIN.
+    if !bytes.iter().any(|b| b.is_ascii_alphabetic()) {
         return false;
     }
     let mut sum: u32 = 0;
@@ -4464,6 +4501,7 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // 9-digit sequence near a SIN keyword was flagged as a SIN,
         // including obvious sentinels like 000-000-000.
         "Canada SIN" => is_valid_canada_sin(matched_text),
+        "Canada BN Root" => is_valid_canada_bn_root(matched_text),
         // ISIN — modified Luhn on the alphanumeric expansion of
         // positions 1-11 against the digit check at position 12.
         // This closes a nasty category of RAMQ / random-alphanum
@@ -6165,6 +6203,17 @@ mod tests {
     }
 
     #[test]
+    fn test_canada_bn_root() {
+        assert!(is_valid_canada_bn_root("123456782"));
+        assert!(is_valid_canada_bn_root("123 456 782"));
+        // Check digit off by one.
+        assert!(!is_valid_canada_bn_root("123456783"));
+        assert!(!is_valid_canada_bn_root("111222333"));
+        assert!(!is_valid_canada_bn_root("000000000"));
+        assert!(!is_valid_canada_bn_root("12345678"));
+    }
+
+    #[test]
     fn test_vin_valid() {
         // Hand-verified Honda Civic VIN. Position 8 = '3'.
         // Weighted sum = 311; 311 mod 11 = 3.
@@ -6181,6 +6230,8 @@ mod tests {
         assert!(!is_valid_vin("1HGCM82643A004352"));
         // Bumped a non-check digit (changes the sum, breaks the check).
         assert!(!is_valid_vin("1HGCM82633B004352"));
+        // All digits, check digit valid by chance: a filing number, not a VIN.
+        assert!(!is_valid_vin("12345678901234568"));
         // Contains a forbidden character (I, O, or Q).
         assert!(!is_valid_vin("1HGCM82633A004352I"));
         assert!(!is_valid_vin("1HGCM8I633A004352"));

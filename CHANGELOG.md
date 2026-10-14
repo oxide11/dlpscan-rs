@@ -6,6 +6,67 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-14 — ratios, the printed RAMQ layout, and identifier collisions
+
+### siphon-core 2.9.5
+
+evadex 3.40 scanned every northam seed, unmodified, beside its own context
+keyword. Four rules still failed on plain, correctly labelled values.
+
+- fix(core): `DTI Ratio` and `LTV Ratio` now match a ratio followed by a
+  space or full stop. Both regexes ended in `%\b`, and `%` is not a word
+  character, so the boundary held only when a *letter* followed: `43.5%x`
+  matched, `DTI 43.5% at underwriting.` did not. The detection matrix could
+  not seed either pattern; both now have all five slots.
+- fix(core): `Quebec HC` accepts the layout printed on the card,
+  `BOUD 8503 1512` — one optional space or hyphen after the letters and
+  between the YYMM and DDSS groups. Normalization joins the digit groups but
+  leaves the letter–digit gap, so the printed form never matched. The
+  validator already compacted separators; the month/day guard still applies.
+- fix(core): `is_valid_vin` requires at least one letter. A 17-digit SAR
+  filing number passes the VIN check digit by chance (1 in 11), and the VIN
+  rule (0.70) then shadowed the SAR rule the text named (0.50 with its
+  keyword): `SAR filing number 12345678901234568` reported a VIN. Real VINs
+  carry letters in the manufacturer code.
+- fix(core): when two **national** identifiers from different countries
+  match the identical characters and exactly one has its context keyword
+  nearby, deduplication keeps that one. A 12-digit run is a Newfoundland MCP
+  number and an Indian Aadhaar alike; confidence ranks how distinctive each
+  *format* is, which says nothing about which country the value is from, so
+  `MCP number 987654321012` reported an Aadhaar (0.65) over the health card
+  (0.60). Scoped to `<Region> - <Country>` categories: a first version that
+  applied to any identical-span overlap handed `account number 4532…` to the
+  generic `PAN` rule instead of `Visa`, and is pinned against by a test.
+- fix(core): the raw-text second pass now runs every flagged pattern
+  whenever normalization changed the text, not only those that found
+  nothing. Normalization drops a decimal point (`12,345.67` → `12,34567`),
+  `Balance with Currency Code` then matched the fragment `USD 12`, and that
+  fragment suppressed the pass that finds `USD 12,345.67`. Dedup keeps the
+  longer match. `measure_raw_pass_cost`: 0.475 → 0.486 ms/scan.
+- fix(core): `Balance with Currency Code` also lists Account Balance's
+  compound phrases (`available balance`, `account balance`, …). Keyword
+  search is leftmost-longest, so the longer phrase was the only hit
+  recorded and the `balance` inside it never reached this pattern. Searching
+  with overlaps instead was tried and rejected: it broke 48 conformance
+  cases, because generic patterns picked up `email` from inside `edu email`
+  and outranked the specific one.
+- feat(core): `Canada BN Root` — the 9-digit Business Number without the
+  `RT0001` program suffix `Canada BN` requires, as forms and vendor records
+  quote it. Context-gated, Luhn-validated (`is_valid_canada_bn_root`).
+  584 patterns, 73 validators; `docs/PATTERNS.md` and `docs/KEYWORDS.md`
+  regenerated (which also picked up two entries that were already stale).
+- fix(core): `Manitoba DL` matches the documented 13-character layout,
+  `AKKKKAKXX9XX9` (FMCSA Canadian licence reference): name-derived letters,
+  `*` padding a short surname, two digit positions. The old `[A-Z]{6}\d{6}`
+  matched no documented Manitoba format. Conformance cases regenerated,
+  plus five for `Canada BN Root`.
+- test(conformance): 10 new DTI/LTV cases. The UAE Passport `damaged` case
+  (`uae passport: Y2208699`) only passed because Hong Kong ID shadowed it —
+  the value fits UAE's own `[A-Z]?\d{7,9}` — and fires now that the named
+  country wins; its five cases were regenerated (near miss `N0003062517`).
+  The rest of the table is unchanged: the generator draws different samples
+  each run, so regenerating wholesale would churn every case.
+
 ## 2026-10-13 — whitespace-separated identifiers, sentence-end and split-field evasion
 
 ### siphon-core 2.9.4
