@@ -508,3 +508,27 @@ fn everyday_mixed_case_tokens_stay_quiet() {
         assert!(cats.is_empty(), "{cats:?} for {t:?}");
     }
 }
+
+#[test]
+fn cusip_needs_a_securities_keyword_not_a_generic_one() {
+    // "identifier", "position", "holding" and friends used to open the CUSIP
+    // gate, so any 9-character run in an ordinary sentence met a 1-in-10
+    // check digit: 130 692 544 is a SIN, and passed as a CUSIP.
+    for t in [
+        "Dear Customer,\n\nYour account identifier is 130 692 544.\n\nRegards",
+        "Holding reference 130692544 for the asset transfer.",
+    ] {
+        let cats = categories(t);
+        assert!(
+            !cats.iter().any(|(s, _)| s == "CUSIP"),
+            "{cats:?} for {t:?}"
+        );
+    }
+    for t in [
+        "Risk exposure report: CUSIP 037833100 position $2.4M.",
+        "Trade: CINS G0177J108 purchased, 500 shares.",
+    ] {
+        let cats = categories(t);
+        assert!(cats.iter().any(|(s, _)| s == "CUSIP"), "{cats:?} for {t:?}");
+    }
+}

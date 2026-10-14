@@ -6,6 +6,25 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-14 — CUSIP keywords
+
+### siphon-core 2.9.8
+
+- fix(core): the CUSIP context list no longer includes eight generic words:
+  `identifier`, `position`, `holding`, `asset`, `portfolio`, `equity`,
+  `instrument` and `settlement`. Each one let any 9-character run in an
+  ordinary sentence through to a 1-in-10 check digit. On the evadex northam
+  baseline, `Your account identifier is 130 692 544` (a SIN) reported a CUSIP
+  at 0.90, as did the same email template around four other 9-digit IDs.
+  Every evadex CUSIP template still names `CUSIP`, and still detects.
+- fix(core): `cins` and `cusip international numbering` are now CUSIP
+  keywords. CINS is the CUSIP numbering for non-North-American issuers,
+  with the same layout and check digit. Before this, `Trade: CINS G0177J108
+  purchased` was detected only when the sentence happened to contain
+  `security identifier` or `settlement`. Keywords of four or more characters
+  match a word's prefix by design, so `cins` also matches inside the rare
+  `cinsault`.
+
 ## 2026-10-14 — identifiers in lower case or written with digit look-alikes
 
 ### siphon-core 2.9.7

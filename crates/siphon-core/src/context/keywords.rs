@@ -833,28 +833,29 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Securities Identifiers",
         "CUSIP",
         ContextEntry {
+            // Securities-specific terms only. Generic words ("identifier",
+            // "position", "holding", "asset", "portfolio", "equity",
+            // "instrument", "settlement") put every 9-character run in an
+            // ordinary sentence in reach of a 1-in-10 check digit: "your
+            // account identifier is 130 692 544" reported a CUSIP at 0.90.
             keywords: &[
                 "cusip",
                 "committee on uniform securities",
+                // CINS is the CUSIP numbering for non-North-American issuers:
+                // the same 9-character layout and check digit.
+                "cins",
+                "cusip international numbering",
                 "security identifier",
                 "securities identifier",
                 "bond cusip",
                 "cusip number",
-                "settlement",
                 "clearinghouse",
                 "dtcc",
                 "depository trust",
                 "fixed income",
                 "bond",
-                "equity",
                 "securities",
-                "instrument",
                 "ticker",
-                "position",
-                "identifier",
-                "portfolio",
-                "holding",
-                "asset",
                 "issuance",
                 "prospectus",
                 "indenture",
