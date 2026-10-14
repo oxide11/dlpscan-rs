@@ -3729,7 +3729,7 @@ fn fold_unicode_digit(c: char) -> Option<char> {
 /// folding every 'O' → '0' unconditionally would wreck ordinary prose, so the
 /// caller gates on run length and digit density.
 #[inline]
-fn confusable_to_digit(c: char) -> Option<char> {
+pub(super) fn confusable_to_digit(c: char) -> Option<char> {
     match c {
         // zero look-alikes: Latin O/o, Greek omicron Ο/ο, Cyrillic O/о
         'O' | 'o' | '\u{039F}' | '\u{03BF}' | '\u{041E}' | '\u{043E}' => Some('0'),
@@ -3745,7 +3745,7 @@ fn confusable_to_digit(c: char) -> Option<char> {
 /// substitution, not prose — see the second rule in
 /// [`fold_confusable_digit_runs`].
 #[inline]
-fn strong_confusable_to_digit(c: char) -> Option<char> {
+pub(super) fn strong_confusable_to_digit(c: char) -> Option<char> {
     match c {
         '\u{01A7}' | '\u{01A8}' => Some('2'),
         '\u{01B7}' | '\u{0292}' => Some('3'),

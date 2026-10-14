@@ -296,6 +296,101 @@ fn decode_rot13_base64_tokens(text: &str) -> Vec<(String, bool)> {
     out
 }
 
+/// Fold digit look-alikes inside a token back to digits.
+///
+/// `homoglyph_substitution` writes `130 692 544` as `ІƷΟ б9Ƨ Ƽ44`. Stage 11
+/// folds such runs only at card length (13–19), and only when they are
+/// digit-dense or nearly all substituted, so a SIN, a routing number or one
+/// group of an SSN is never folded. A token holding a letter that resembles
+/// nothing but a digit (`Ƨ`, `Ʒ`, `Ƽ`, `б`, `Ȣ`) is a substitution, not a
+/// word, so here it is folded at any length: those letters become their
+/// digits, and then an ambiguous look-alike (`O`, `I`, `l`) becomes a digit
+/// only where it touches one, repeatedly, so `Ʒ4OOOOI3б` folds to `340000136`
+/// while the `O` in `MPOU8` stays a letter.
+fn fold_digit_confusables(text: &str) -> Vec<(String, bool)> {
+    use super::{confusable_to_digit, strong_confusable_to_digit};
+    let member = |c: char| c.is_ascii_alphanumeric() || confusable_to_digit(c).is_some();
+    let mut out = String::with_capacity(text.len());
+    let mut changed_any = false;
+    let mut token: Vec<char> = Vec::new();
+    let flush = |token: &mut Vec<char>, out: &mut String, changed_any: &mut bool| {
+        if token
+            .iter()
+            .any(|&c| strong_confusable_to_digit(c).is_some())
+        {
+            for c in token.iter_mut() {
+                if let Some(d) = strong_confusable_to_digit(*c) {
+                    *c = d;
+                }
+            }
+            loop {
+                let mut changed = false;
+                for i in 0..token.len() {
+                    let Some(d) = confusable_to_digit(token[i]) else {
+                        continue;
+                    };
+                    let touches_digit = (i > 0 && token[i - 1].is_ascii_digit())
+                        || (i + 1 < token.len() && token[i + 1].is_ascii_digit());
+                    if touches_digit {
+                        token[i] = d;
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+            *changed_any = true;
+        }
+        out.extend(token.drain(..));
+    };
+    for c in text.chars() {
+        if member(c) {
+            token.push(c);
+        } else {
+            flush(&mut token, &mut out, &mut changed_any);
+            out.push(c);
+        }
+    }
+    flush(&mut token, &mut out, &mut changed_any);
+    if changed_any && out != text {
+        vec![(out, true)]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Uppercase identifier-shaped tokens written in lower or mixed case.
+///
+/// Identifier patterns are written for capitals (`[A-Z]{2}\d{2}…` for an
+/// IBAN), so `gb82west…` or `Us0378331005` never matches. Only a token that
+/// holds a digit and a lowercase letter is touched, with hyphenated parts
+/// counting as one token (`aml-2024-…`): ordinary words carry no digit, and
+/// uppercasing them would turn prose into letter-only codes — `declined`
+/// beside "SWIFT" reads as a BIC with country code `IN`.
+fn uppercase_mixed_case_tokens(text: &str) -> Vec<(String, bool)> {
+    let mut out = String::with_capacity(text.len());
+    let mut changed = false;
+    for (start, end) in runs(text, |b| b.is_ascii_alphanumeric() || b == b'-') {
+        let token = &text[start..end];
+        out.push_str(&text[out.len()..start]);
+        let has_digit = token.bytes().any(|b| b.is_ascii_digit());
+        let has_lower = token.bytes().any(|b| b.is_ascii_lowercase());
+        if has_digit && has_lower {
+            out.push_str(&token.to_ascii_uppercase());
+            changed = true;
+        } else {
+            out.push_str(token);
+        }
+    }
+    out.push_str(&text[out.len()..]);
+    if changed {
+        vec![(out, true)]
+    } else {
+        Vec::new()
+    }
+}
+
 /// Rejoin a value split across indexed fields of one record.
 ///
 /// `{"part1": "130 6", "part2": "92 544"}` — the card helper joins digit-only
@@ -401,13 +496,15 @@ pub struct Recovery {
 /// the card-length bounds that make the keyword-free alternatives safe.
 pub fn generate_keyword_gated_recoveries(text: &str) -> Vec<Recovery> {
     let mut out: Vec<Recovery> = Vec::new();
-    let helpers: [Helper; 6] = [
+    let helpers: [Helper; 8] = [
         strip_zero_padding,
         isolate_letter_bounded_digits,
         strip_repeated_letter_padding,
         decode_base64_tails,
         decode_rot13_base64_tokens,
         join_indexed_fields,
+        fold_digit_confusables,
+        uppercase_mixed_case_tokens,
     ];
     for helper in helpers {
         for (v, exact) in helper(text) {
@@ -445,6 +542,38 @@ mod tests {
             "iban 00000GB82WEST12345698765432.",
             "iban GB82WEST"
         ));
+    }
+
+    #[test]
+    fn digit_lookalikes_fold_at_any_length() {
+        // SIN 130 692 544, US passport 340000136
+        assert!(recovers(
+            "SIN \u{0406}\u{01B7}\u{039F} \u{0431}9\u{01A7} \u{01BC}44 ok",
+            "SIN 130 692 544 ok"
+        ));
+        assert!(recovers(
+            "passport \u{01B7}4OOOOI\u{01B7}\u{0431}.",
+            "passport 340000136."
+        ));
+        // An O with no digit beside it stays a letter.
+        assert!(recovers("LEI MPOU\u{0222}FG", "LEI MPOU8FG"));
+        // No unambiguous look-alike: nothing to fold.
+        assert!(!recovers("BOOK 1 OF II", "B00K"));
+    }
+
+    #[test]
+    fn mixed_case_identifier_tokens_are_uppercased() {
+        assert!(recovers(
+            "IBAN gb82west12345698765432.",
+            "IBAN GB82WEST12345698765432."
+        ));
+        assert!(recovers(
+            "case aml-2024-12345679 open",
+            "case AML-2024-12345679 open"
+        ));
+        // Words without a digit keep their case.
+        let v = generate_keyword_gated_recoveries("swift transfer declined");
+        assert!(v.is_empty(), "{v:?}");
     }
 
     #[test]

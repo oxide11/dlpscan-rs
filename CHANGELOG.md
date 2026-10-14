@@ -6,6 +6,43 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-14 — identifiers in lower case or written with digit look-alikes
+
+### siphon-core 2.9.7
+
+On the evadex northam baseline, `lowercase` and `mixed_case` evaded 156 of
+167 attempts and `homoglyph_substitution` 165 of 188. Identifier patterns
+are written for capitals, and stage 11 folds digit look-alikes (`Ƨ` for 2,
+`б` for 6) only in card-length runs. A SIN, a routing number or one group of
+an SSN never reached the fold.
+
+- fix(core): two more exact recoveries in `normalize/recovery.rs`. Both use
+  the routes from 2.9.6, so a check digit or a keyword beside the value
+  still has to vouch for the result.
+  - `uppercase_mixed_case_tokens`: uppercases each token, hyphenated parts
+    included, that holds both a digit and a lowercase letter. Words with no
+    digit keep their case. Uppercasing those would turn prose into
+    letter-only codes: `declined` beside "SWIFT" reads as a BIC with country
+    code `IN`.
+  - `fold_digit_confusables`: in a token holding a letter that resembles
+    nothing but a digit, folds those letters to digits at any length. It
+    then folds an ambiguous `O`/`I`/`l` only where it touches a digit, so
+    `Ʒ4OOOOI3б` becomes `340000136` while the `O` in an LEI's `MPOU8`
+    stays a letter. The confusable tables are stage 11's own.
+- fix(core): an alt-pass match on a value the primary pass already reported
+  is now handled by rule:
+  - **Same rule:** the alt match is dropped.
+  - **Different rule:** the new finding takes the primary match's text and
+    span. Alt matches span the whole input, so they used to win dedup and
+    rewrite the finding: a lowercase IBAN that only the unvalidated
+    `Germany IBAN` caught came back uppercased once `IBAN Generic`
+    confirmed it on the case-folded alt. It is now reported as `IBAN Generic`
+    at its real span, in its real case.
+- Measured by replaying the baseline's misses: 0/321 → 243/321 for the three
+  techniques. Of the 78 left, 32 are tickers, RICs, WKNs and MiFID
+  references, which have no rule. The 2.9.6 techniques are unchanged at
+  679/915.
+
 ## 2026-10-14 — card de-evasion for every check-digit identifier
 
 ### siphon-core 2.9.6
