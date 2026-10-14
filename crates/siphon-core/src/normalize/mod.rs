@@ -3,6 +3,9 @@
 //! Handles zero-width character stripping, whitespace normalization,
 //! homoglyph substitution, and leet-speak decoding.
 
+mod recovery;
+pub use recovery::generate_keyword_gated_recoveries;
+
 use once_cell::sync::Lazy;
 use std::collections::{HashMap, HashSet};
 use unicode_normalization::UnicodeNormalization;
