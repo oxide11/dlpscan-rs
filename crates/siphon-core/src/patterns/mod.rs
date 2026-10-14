@@ -2443,7 +2443,12 @@ pub static PATTERNS: &[PatternDef] = &[
     PatternDef {
         category: "North America - Canada",
         sub_category: "Manitoba DL",
-        regex: r"\b[A-Z]{6}\d{6}\b",
+        // 13 characters, `AKKKKAKXX9XX9` per the FMCSA Canadian licence
+        // reference: A a letter, K a letter or `*` (short surnames are
+        // padded), X a letter or digit, 9 a digit; the leading letters derive
+        // from the holder's name. The previous `[A-Z]{6}\d{6}` matched no
+        // documented Manitoba layout.
+        regex: r"\b[A-Z][A-Z*]{4}[A-Z][A-Z*][A-Z0-9]{2}\d[A-Z0-9]{2}\d\b",
         case_insensitive: false,
         specificity: 0.40,
         context_required: false,

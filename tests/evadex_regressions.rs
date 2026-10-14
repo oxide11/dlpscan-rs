@@ -325,3 +325,21 @@ fn bare_business_number_beside_its_keyword() {
     let cats = categories("Business number 123456782RT0001.");
     assert!(cats.iter().any(|(s, _)| s == "Canada BN"), "{cats:?}");
 }
+
+#[test]
+fn manitoba_dl_uses_the_documented_layout() {
+    // `AKKKKAKXX9XX9` (FMCSA Canadian licence reference): name-derived, with
+    // `*` padding a short surname. The old `[A-Z]{6}\d{6}` matched none of it.
+    for t in [
+        "Manitoba driver's licence SMITHJ*AB1CD2 verified by MPI.",
+        "Manitoba DL LI***JMAB1CD2",
+    ] {
+        let cats = categories(t);
+        assert!(
+            cats.iter().any(|(s, _)| s == "Manitoba DL"),
+            "expected Manitoba DL in {cats:?} for {t:?}"
+        );
+    }
+    let cats = categories("Manitoba DL ETYELZ211962");
+    assert!(!cats.iter().any(|(s, _)| s == "Manitoba DL"), "{cats:?}");
+}

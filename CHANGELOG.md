@@ -55,6 +55,11 @@ keyword. Four rules still failed on plain, correctly labelled values.
   quote it. Context-gated, Luhn-validated (`is_valid_canada_bn_root`).
   584 patterns, 73 validators; `docs/PATTERNS.md` and `docs/KEYWORDS.md`
   regenerated (which also picked up two entries that were already stale).
+- fix(core): `Manitoba DL` matches the documented 13-character layout,
+  `AKKKKAKXX9XX9` (FMCSA Canadian licence reference): name-derived letters,
+  `*` padding a short surname, two digit positions. The old `[A-Z]{6}\d{6}`
+  matched no documented Manitoba format. Conformance cases regenerated,
+  plus five for `Canada BN Root`.
 - test(conformance): 10 new DTI/LTV cases. The UAE Passport `damaged` case
   (`uae passport: Y2208699`) only passed because Hong Kong ID shadowed it —
   the value fits UAE's own `[A-Z]?\d{7,9}` — and fires now that the named
