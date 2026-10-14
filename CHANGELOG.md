@@ -49,12 +49,27 @@ row but the last of a two-column CSV, and a card followed by any number
   `join_indexed_split_fields()` rejoins quoted digit values whose keys share
   a stem with consecutive indices (`part1`/`part2`, `cc_1`…`cc_4`) into a
   13–19-digit candidate; unrelated numeric fields never share a stem.
+- fix(core): three more card evasions from the evadex re-baseline.
+  Stage 11 now folds *strong* digit look-alikes — letters that resemble
+  nothing but a digit: `Ƨ`→2, `Ʒ`→3, `Ƽ`→5, `б`→6, `Ȣ`→8 and lowercase
+  forms — and qualifies a card-length run (13–19) holding at least one, so
+  a value with nearly every digit substituted (`4ƼƷƧΟІƼІІƧȢƷΟƷбб`, one
+  real digit) folds; the dense-run rule is unchanged. Stage 5 treats
+  vertical tab, form feed and the U+001C–U+001F information separators as
+  whitespace (as Python's `str.isspace` does), so `barcode_split`
+  (`45320151` U+001E `12830366`) joins like any padded card, and the
+  raw-pass gate counts the same set. A new alt-pass recovery,
+  `decode_digit_prefixed_base64()`, splits a digit prefix from a base64
+  tail in one token (`45320151MTI4MzAzNjY=`) when the tail decodes to
+  digits and the rejoined value is 13–19 long.
 - test: `whitespace_separated_cards_are_each_found` (six list/CSV/suffix
   shapes) and `padded_card_is_still_joined` (single-digit, 4-4-4-4 and 12+4
   padding still recovered); evasion tests for split fields, letter-bounded
   cards, encoded cards before a full stop, and false-positive guards
   (unrelated numeric fields, non-consecutive indices, a Luhn-invalid glued
-  block, a JWT ending a sentence).
+  block, a JWT ending a sentence); substituted / partial-base64 /
+  separator cards, with Cyrillic prose and a non-digit base64 tail as
+  guards.
 
 ---
 

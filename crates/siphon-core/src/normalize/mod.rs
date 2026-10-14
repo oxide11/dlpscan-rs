@@ -694,14 +694,11 @@ fn strip_comments(input: &str, in_offsets: &[Offset]) -> Option<(String, OffsetM
 /// language spacing like `social security number`.
 fn collapse_padding(input: &str, in_offsets: &[Offset]) -> Option<(String, OffsetMap)> {
     let bytes = input.as_bytes();
-    if !bytes
-        .iter()
-        .any(|&b| b == b' ' || b == b'\n' || b == b'\r' || b == b'\t')
-    {
+    if !bytes.iter().any(|&b| is_ascii_ws(b)) {
         return None;
     }
 
-    let is_ws = |c: u8| c == b' ' || c == b'\n' || c == b'\r' || c == b'\t';
+    let is_ws = is_ascii_ws;
 
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut offsets = Vec::with_capacity(bytes.len());
@@ -2479,11 +2476,7 @@ pub fn normalize_text(text: &str) -> (String, OffsetMap) {
     }
 
     // Stage 5: Collapse whitespace padding between non-alpha chars
-    if current
-        .as_bytes()
-        .iter()
-        .any(|&b| b == b' ' || b == b'\n' || b == b'\r' || b == b'\t')
-    {
+    if current.as_bytes().iter().any(|&b| is_ascii_ws(b)) {
         apply_stage!(collapse_padding, current, offsets);
     }
 
@@ -3009,6 +3002,71 @@ fn isolate_letter_bounded_digit_blocks(text: &str) -> Vec<String> {
     variants
 }
 
+/// Recover a value whose tail alone is base64-encoded.
+///
+/// `base64_partial` leaves a plaintext prefix and encodes the rest into the
+/// same token: `45320151` + base64(`12830366`) = `45320151MTI4MzAzNjY=`.
+/// Stage 4c tries the whole token, which decodes to garbage, and neither half
+/// alone is long enough to be a card. For a token that starts with ≥ 2 digits
+/// we try each split point inside that digit prefix, decode the remainder,
+/// and keep the split only when it decodes to digits and the rejoined value
+/// is card/PAN length (13–19); the alt pass then validates it.
+fn decode_digit_prefixed_base64(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let is_b64 = |b: u8| b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'=';
+    let mut variants: Vec<String> = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if !is_b64(bytes[i]) || (i > 0 && is_b64(bytes[i - 1])) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && is_b64(bytes[i]) {
+            i += 1;
+        }
+        let token = &text[start..i];
+        let digit_prefix = token.bytes().take_while(u8::is_ascii_digit).count();
+        if digit_prefix < 2 || digit_prefix == token.len() || token.len() > 64 {
+            continue;
+        }
+        for split in 2..=digit_prefix {
+            let tail = &token[split..];
+            if tail.len() < 8 || !tail.len().is_multiple_of(4) {
+                continue;
+            }
+            // Decoded directly rather than through `try_decode_base64`: its
+            // variety check (≥ 3 distinct chars) rejects digit runs such as
+            // `11111117`, and the all-digits requirement here is stricter.
+            let Ok(raw) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, tail)
+            else {
+                continue;
+            };
+            if raw.is_empty() || !raw.iter().all(u8::is_ascii_digit) {
+                continue;
+            }
+            let decoded = String::from_utf8(raw).unwrap_or_default();
+            let joined_len = split + decoded.len();
+            if !(13..=19).contains(&joined_len) {
+                continue;
+            }
+            let mut variant = String::with_capacity(text.len());
+            variant.push_str(&text[..start]);
+            variant.push_str(&token[..split]);
+            variant.push_str(&decoded);
+            variant.push_str(&text[i..]);
+            variants.push(variant);
+            break;
+        }
+        if variants.len() >= 12 {
+            break;
+        }
+    }
+
+    variants
+}
+
 /// Rejoin a value split across indexed fields of one record.
 ///
 /// `json_field_split` writes `{"part1": "45320151", "part2": "12830366"}`: each
@@ -3407,6 +3465,11 @@ pub fn generate_alternative_decodings(text: &str) -> Vec<String> {
         push_if_room(joined, &mut alternatives, &mut total_bytes);
     }
 
+    // Plaintext prefix + base64 tail in one token (`45320151MTI4MzAzNjY=`).
+    for variant in decode_digit_prefixed_base64(text) {
+        push_if_room(variant, &mut alternatives, &mut total_bytes);
+    }
+
     alternatives
 }
 
@@ -3548,8 +3611,13 @@ fn has_evasion_markers(text: &str) -> bool {
 }
 
 #[inline]
+/// ASCII whitespace for padding purposes: space, tab, CR, LF, plus vertical
+/// tab, form feed and the four information separators (U+001C–U+001F). The
+/// separators are what `barcode_split` puts between the halves of a value
+/// (`45320151` U+001E `12830366`); no prose places them between two digits,
+/// and Python's `str.isspace` already counts them as whitespace.
 fn is_ascii_ws(b: u8) -> bool {
-    b == b' ' || b == b'\n' || b == b'\r' || b == b'\t'
+    matches!(b, b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C | 0x1C..=0x1F)
 }
 
 /// Apply a 1-char → 1-char transform while maintaining byte-level offset map.
@@ -3628,6 +3696,23 @@ fn confusable_to_digit(c: char) -> Option<char> {
         'O' | 'o' | '\u{039F}' | '\u{03BF}' | '\u{041E}' | '\u{043E}' => Some('0'),
         // one look-alikes: Latin l/I/i, bar, Greek Iota Ι, Cyrillic Byelo-Ukr І
         'l' | 'I' | 'i' | '|' | '\u{0399}' | '\u{0406}' => Some('1'),
+        c => strong_confusable_to_digit(c),
+    }
+}
+
+/// Letters whose only resemblance is to a digit: Latin tone two `Ƨ`, ezh `Ʒ`,
+/// tone five `Ƽ`, OU `Ȣ`, Cyrillic be `б` (and lowercase forms). Unlike `O`
+/// or `l` they never stand in for a Latin letter, so a run built from them is
+/// substitution, not prose — see the second rule in
+/// [`fold_confusable_digit_runs`].
+#[inline]
+fn strong_confusable_to_digit(c: char) -> Option<char> {
+    match c {
+        '\u{01A7}' | '\u{01A8}' => Some('2'),
+        '\u{01B7}' | '\u{0292}' => Some('3'),
+        '\u{01BC}' | '\u{01BD}' => Some('5'),
+        '\u{0431}' => Some('6'),
+        '\u{0222}' | '\u{0223}' => Some('8'),
         _ => None,
     }
 }
@@ -3650,8 +3735,16 @@ fn fold_confusable_digit_runs(
     // A run qualifies when it is ≥ 12 chars with ≥ 8 real digits, is more than
     // 60% real digits, and contains at least one confusable to actually fold
     // (otherwise the run is already plain digits).
-    fn qualifies(len: usize, ascii_digits: usize) -> bool {
-        len > ascii_digits && len >= 12 && ascii_digits >= 8 && ascii_digits * 10 > len * 6
+    //
+    // Or, when nearly every digit was substituted (`4ƼƷƧΟІƼІІƧȢƷΟƷбб` keeps one
+    // real digit): a card-length run (13–19) holding at least one *strong*
+    // confusable — a letter that resembles nothing but a digit. One is enough:
+    // a mostly-`1` card (`бΟІІІІІІІІІІІІІ7`) has a single `б`, and prose has no
+    // 13-character run built only from digits, `O`/`I`/`l` and these.
+    fn qualifies(len: usize, ascii_digits: usize, strong: usize) -> bool {
+        let dense = len >= 12 && ascii_digits >= 8 && ascii_digits * 10 > len * 6;
+        let substituted = (13..=19).contains(&len) && strong >= 1;
+        len > ascii_digits && (dense || substituted)
     }
 
     // Detection streams over the input instead of collecting `char_indices()`
@@ -3668,6 +3761,7 @@ fn fold_confusable_digit_runs(
     let mut run_start: Option<usize> = None;
     let mut run_len = 0usize;
     let mut ascii_digits = 0usize;
+    let mut strong = 0usize;
 
     for (idx, ch) in input.chars().enumerate() {
         if is_digit_run_member(ch) {
@@ -3675,20 +3769,23 @@ fn fold_confusable_digit_runs(
                 run_start = Some(idx);
                 run_len = 0;
                 ascii_digits = 0;
+                strong = 0;
             }
             run_len += 1;
             if ch.is_ascii_digit() {
                 ascii_digits += 1;
+            } else if strong_confusable_to_digit(ch).is_some() {
+                strong += 1;
             }
         } else if let Some(s) = run_start.take() {
-            if qualifies(run_len, ascii_digits) {
+            if qualifies(run_len, ascii_digits, strong) {
                 runs.push((s, s + run_len));
             }
         }
     }
     // A run ending at end-of-input is closed here rather than by a separator.
     if let Some(s) = run_start {
-        if qualifies(run_len, ascii_digits) {
+        if qualifies(run_len, ascii_digits, strong) {
             runs.push((s, s + run_len));
         }
     }

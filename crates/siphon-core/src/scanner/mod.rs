@@ -401,14 +401,21 @@ fn effective_context_required(
 }
 
 /// `true` if an ASCII whitespace run sits between two ASCII digits — the only
-/// shape in which normalization stage 5 joins two numbers into one.
+/// shape in which normalization stage 5 joins two numbers into one. The set
+/// matches stage 5's (`is_ascii_ws` in the normalizer), including vertical
+/// tab, form feed and the U+001C–U+001F information separators.
 fn has_whitespace_between_digits(text: &str) -> bool {
     let bytes = text.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i].is_ascii_digit() {
             let mut j = i + 1;
-            while j < bytes.len() && matches!(bytes[j], b' ' | b'\t' | b'\n' | b'\r') {
+            while j < bytes.len()
+                && matches!(
+                    bytes[j],
+                    b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C | 0x1C..=0x1F
+                )
+            {
                 j += 1;
             }
             if j > i + 1 && j < bytes.len() && bytes[j].is_ascii_digit() {

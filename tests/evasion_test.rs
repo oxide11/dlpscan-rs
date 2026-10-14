@@ -673,3 +673,35 @@ fn test_jwt_before_full_stop_still_a_jwt() {
         matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
     );
 }
+
+/// Digit look-alikes that resemble nothing but a digit (`Ƨ Ʒ Ƽ Ȣ б`), with
+/// almost every digit substituted, a plaintext prefix + base64 tail, and an
+/// ASCII record separator between the halves.
+#[test]
+fn test_substituted_partial_and_separator_cards() {
+    for text in [
+        "4ƼƷƧΟІƼІІƧȢƷΟƷбб",
+        "Please charge card number Ʒ7ȢƧȢƧƧ4бƷІΟΟΟƼ for the amount due.",
+        "45320151MTI4MzAzNjY=",
+        "card number 3782822NDYzMTAwMDU=.",
+        "45320151\u{1e}12830366",
+        "card number 51051051\u{1e}05105100.",
+        // mostly-1 Discover: one strong look-alike; low-variety base64 tail
+        "бΟІІІІІІІІІІІІІ7",
+        "60111111MTExMTExMTc=",
+    ] {
+        assert!(card_found(text), "card missed: {text:?}");
+    }
+}
+
+/// Guards: Cyrillic prose (which uses `б` and `о` constantly) and a
+/// digit-prefixed token whose tail does not decode to digits.
+#[test]
+fn test_substitution_guards_no_false_positive() {
+    for text in [
+        "Обоснование бюджета: обработка заявок об оплате будет завершена в 2026 году.",
+        "build 20261013dGVzdGluZw== passed",
+    ] {
+        assert!(!card_found(text), "spurious card from {text:?}");
+    }
+}
