@@ -1466,24 +1466,36 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     // We also pre-filter by config.categories once outside the
     // alt-loop instead of rechecking per-pattern per-alt.
     if matches.len() < 3 && text.len() < 4096 && start.elapsed().as_secs() < MAX_SCAN_SECONDS / 2 {
-        // (alt text, check-digit route only). The gated recoveries relax the
-        // card-length bounds that make the ordinary alternatives safe for
-        // keyword-free patterns, so only the check-digit route may use them.
-        let mut alternatives: Vec<(String, bool)> =
+        // (alt text, keyword-free patterns allowed, exact recovery). The
+        // ordinary alternative decodings allow keyword-free patterns. The
+        // gated recoveries do not: they relax the card-length bounds that
+        // make the ordinary ones safe, so only the keyword-backed routes
+        // below may use them. When both produce the same text it keeps both
+        // properties — the card helper's zero strip and the gated one's often
+        // coincide, and either view alone would drop a route.
+        let mut alternatives: Vec<(String, bool, bool)> =
             normalize::generate_alternative_decodings(&normalized)
                 .into_iter()
-                .map(|a| (a, false))
+                .map(|a| (a, true, false))
                 .collect();
         for gated in normalize::generate_keyword_gated_recoveries(&normalized) {
-            if !alternatives.iter().any(|(a, _)| *a == gated) {
-                alternatives.push((gated, true));
+            match alternatives.iter_mut().find(|(a, _, _)| *a == gated.text) {
+                Some(seen) => seen.2 |= gated.exact,
+                None => alternatives.push((gated.text, false, gated.exact)),
             }
         }
+        // Patterns with a keyword anywhere in the document: the only ones the
+        // keyword route below can use, whether or not they are gated on it.
+        let doc_keyword_hits: HashSet<(&str, &str)> = hit_index
+            .as_ref()
+            .map(|idx| idx.hit_keys().collect())
+            .unwrap_or_default();
         let alt_patterns: Vec<&CompiledPattern> = compiled
             .iter()
             .filter(|cp| {
                 is_always_run(cp.def.sub_category)
                     || crate::validation::has_check_digit(cp.def.sub_category)
+                    || doc_keyword_hits.contains(&(cp.def.category, cp.def.sub_category))
             })
             .filter(|cp| match &config.categories {
                 Some(cats) => cats.contains(cp.def.category),
@@ -1491,7 +1503,8 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
             })
             .collect();
 
-        for (alt_text, check_digit_only) in &alternatives {
+        for &(ref alt_text, keyword_free_ok, exact_recovery) in &alternatives {
+            let check_digit_only = !keyword_free_ok;
             if alt_text.is_empty() {
                 continue;
             }
@@ -1549,7 +1562,23 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                     && is_always_run(cp.def.sub_category)
                     && crate::models::pattern_specificity(cp.def.sub_category)
                         >= SPECIFICITY_THRESHOLD;
-                if !original_route && !crate::validation::has_check_digit(cp.def.sub_category) {
+                //
+                // The third: a pattern with no check digit (an SSN, a health
+                // card, a driver's licence) over an *exact* recovery — the one
+                // candidate a recovery offers for the value it restored,
+                // standing where the evaded value stood. The pattern is held
+                // to the strictest bar the primary pass sets for a plainly
+                // written value: its shape, its structural validator, and its
+                // keyword beside the match, even where the primary pass needs
+                // no keyword. Recoveries that guess (a zero trimmed at a time)
+                // stay with the check-digit route, where arithmetic picks the
+                // right guess.
+                let keyword_route = exact_recovery
+                    && doc_keyword_hits.contains(&(cp.def.category, cp.def.sub_category));
+                if !original_route
+                    && !keyword_route
+                    && !crate::validation::has_check_digit(cp.def.sub_category)
+                {
                     continue;
                 }
 
@@ -1622,7 +1651,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                             alt_span,
                             matched_text,
                             None,
-                            Some("check-digit pattern on alt decoding needs a keyword beside it"),
+                            Some("pattern on a recovered alt decoding needs a keyword beside it"),
                         );
                         continue;
                     }

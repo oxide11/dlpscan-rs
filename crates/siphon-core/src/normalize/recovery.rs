@@ -99,7 +99,7 @@ fn rot13(s: &str) -> String {
 /// trim from one up to the padding length is offered; the check digit picks
 /// the right one. A run of zeros glued to the front of a letter-led value
 /// (`00000GB82WEST…`) is padding of the same kind and is removed outright.
-fn strip_zero_padding(text: &str) -> Vec<String> {
+fn strip_zero_padding(text: &str) -> Vec<(String, bool)> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
     for (start, end) in runs(text, |b| b.is_ascii_digit()) {
@@ -112,18 +112,28 @@ fn strip_zero_padding(text: &str) -> Vec<String> {
         if lead == run.len() {
             // All zeros: padding only when it is glued to a following value.
             if lead >= 3 && glued_before_letter && free_before {
-                out.push(splice(text, start, end, ""));
+                out.push((splice(text, start, end, ""), true));
             }
             continue;
         }
-        if run.len() > 48 {
+        // Padding sits at the edge of a value. A short run is ordinary text
+        // (`fe80::1` is not a padded `fe8`), and zeros with a letter on their
+        // outer side are inside a token (`N0003062517` is not a padded
+        // `N3062517`). One or two trailing zeros are how numbers end, so a
+        // strip only counts as exact once it removes three or more.
+        if !(8..=48).contains(&run.len()) {
             continue;
         }
-        for k in 1..=lead.min(12) {
-            out.push(splice(text, start, start + k, ""));
+        let free_after = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
+        if free_before {
+            for k in 1..=lead.min(12) {
+                out.push((splice(text, start, start + k, ""), k == lead && k >= 3));
+            }
         }
-        for k in 1..=trail.min(12) {
-            out.push(splice(text, end - k, end, ""));
+        if free_after {
+            for k in 1..=trail.min(12) {
+                out.push((splice(text, end - k, end, ""), k == trail && k >= 3));
+            }
         }
         if out.len() >= MAX_VARIANTS_PER_HELPER {
             break;
@@ -137,7 +147,7 @@ fn strip_zero_padding(text: &str) -> Vec<String> {
 ///
 /// `XXXXXXXXXX130692544XXXXXXXXXX` keeps the SIN inside one word, so no `\b`
 /// falls at its edges. The card helper does the same for 13–19 digits only.
-fn isolate_letter_bounded_digits(text: &str) -> Vec<String> {
+fn isolate_letter_bounded_digits(text: &str) -> Vec<(String, bool)> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
     for (start, end) in runs(text, |b| b.is_ascii_digit()) {
@@ -149,11 +159,9 @@ fn isolate_letter_bounded_digits(text: &str) -> Vec<String> {
         if !letter_before && !letter_after {
             continue;
         }
-        out.push(splice(
-            text,
-            start,
-            end,
-            &format!(" {} ", &text[start..end]),
+        out.push((
+            splice(text, start, end, &format!(" {} ", &text[start..end])),
+            true,
         ));
         if out.len() >= MAX_VARIANTS_PER_HELPER {
             break;
@@ -171,7 +179,7 @@ fn isolate_letter_bounded_digits(text: &str) -> Vec<String> {
 /// any of these identifiers begin or end. The run is removed whole and also
 /// with one letter left behind, in case the value starts or ends with the
 /// padding letter itself.
-fn strip_repeated_letter_padding(text: &str) -> Vec<String> {
+fn strip_repeated_letter_padding(text: &str) -> Vec<(String, bool)> {
     const MIN_PAD: usize = 4;
     let mut out = Vec::new();
     for (start, end) in runs(text, |b| b.is_ascii_alphanumeric()) {
@@ -207,7 +215,10 @@ fn strip_repeated_letter_padding(text: &str) -> Vec<String> {
             for &t in trails {
                 let inner = &text[start + l..end - t];
                 if (MIN_VALUE_LEN..=MAX_VALUE_LEN).contains(&inner.len()) {
-                    out.push(splice(text, start, end, &format!(" {inner} ")));
+                    // Only the whole-run strip is one candidate per value;
+                    // leaving a letter behind is a second guess.
+                    let exact = (l == lead || lead < MIN_PAD) && (t == trail || trail < MIN_PAD);
+                    out.push((splice(text, start, end, &format!(" {inner} ")), exact));
                 }
             }
         }
@@ -228,7 +239,7 @@ fn strip_repeated_letter_padding(text: &str) -> Vec<String> {
 /// decodes to identifier characters replaces itself in place. The head may
 /// also sit in an earlier token (`130 6OTIg…` splits at the space), which
 /// needs nothing special: only the tail is rewritten.
-fn decode_base64_tails(text: &str) -> Vec<String> {
+fn decode_base64_tails(text: &str) -> Vec<(String, bool)> {
     let mut out = Vec::new();
     for (start, end) in runs(text, is_b64_byte) {
         let token = &text[start..end];
@@ -249,7 +260,7 @@ fn decode_base64_tails(text: &str) -> Vec<String> {
             if let Some(decoded) = decode_b64_value(tail) {
                 // split == 0 is a whole-token decode; stage 4c owns that.
                 if split > 0 {
-                    out.push(splice(text, start + split, end, &decoded));
+                    out.push((splice(text, start + split, end, &decoded), true));
                 }
                 break;
             }
@@ -268,7 +279,7 @@ fn decode_base64_tails(text: &str) -> Vec<String> {
 /// That is harmless for a pattern that needs no keyword and fatal for one
 /// that does. Here only a token whose rotation decodes to an identifier is
 /// rewritten.
-fn decode_rot13_base64_tokens(text: &str) -> Vec<String> {
+fn decode_rot13_base64_tokens(text: &str) -> Vec<(String, bool)> {
     let mut out = Vec::new();
     for (start, end) in runs(text, is_b64_byte) {
         let token = &text[start..end];
@@ -276,7 +287,7 @@ fn decode_rot13_base64_tokens(text: &str) -> Vec<String> {
             continue;
         }
         if let Some(decoded) = decode_b64_value(&rot13(token)) {
-            out.push(splice(text, start, end, &decoded));
+            out.push((splice(text, start, end, &decoded), true));
         }
         if out.len() >= MAX_VARIANTS_PER_HELPER {
             break;
@@ -292,7 +303,7 @@ fn decode_rot13_base64_tokens(text: &str) -> Vec<String> {
 /// drops the keyword in front of the record. Here alphanumeric values are
 /// joined at any identifier length, and the whole run of fields is rewritten
 /// in place so the record's surroundings survive.
-fn join_indexed_fields(text: &str) -> Vec<String> {
+fn join_indexed_fields(text: &str) -> Vec<(String, bool)> {
     // (stem, index, value, span of the `"key": "value"` pair)
     let mut fields: Vec<(&str, u32, &str, (usize, usize))> = Vec::new();
     let bytes = text.as_bytes();
@@ -357,7 +368,7 @@ fn join_indexed_fields(text: &str) -> Vec<String> {
             joined.push_str(cur.2);
             let compact = joined.bytes().filter(u8::is_ascii_alphanumeric).count();
             if (MIN_VALUE_LEN..=MAX_VALUE_LEN).contains(&compact) {
-                out.push(splice(text, fields[w].3 .0, cur.3 .1, &joined));
+                out.push((splice(text, fields[w].3 .0, cur.3 .1, &joined), true));
             }
         }
         if out.len() >= MAX_VARIANTS_PER_HELPER {
@@ -367,14 +378,30 @@ fn join_indexed_fields(text: &str) -> Vec<String> {
     out
 }
 
-/// Alternatives for the scanner's check-digit route only.
+/// A recovery helper: each variant with whether it is exact.
+type Helper = fn(&str) -> Vec<(String, bool)>;
+
+/// One recovered alternative: the input with an evaded value restored.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Recovery {
+    pub text: String,
+    /// The only candidate this recovery offers for the value it restored —
+    /// all of the padding stripped, the whole base64 tail decoded — rather
+    /// than one of several guesses (a zero trimmed at a time). Inexact
+    /// recoveries rely on a check digit to pick the right guess; an exact one
+    /// stands where the evaded value stood, so a rule may hold it to the bar
+    /// it holds a plainly written value to.
+    pub exact: bool,
+}
+
+/// Alternatives for the scanner's keyword-backed routes only.
 ///
 /// Each is the input with one evaded value recovered in place. The scanner
-/// must not run keyword-free patterns over these: they relax the card-length
-/// bounds that make the keyword-free alternatives safe.
-pub fn generate_keyword_gated_recoveries(text: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let helpers: [fn(&str) -> Vec<String>; 6] = [
+/// must not run keyword-free patterns over these (mod-97 aside): they relax
+/// the card-length bounds that make the keyword-free alternatives safe.
+pub fn generate_keyword_gated_recoveries(text: &str) -> Vec<Recovery> {
+    let mut out: Vec<Recovery> = Vec::new();
+    let helpers: [Helper; 6] = [
         strip_zero_padding,
         isolate_letter_bounded_digits,
         strip_repeated_letter_padding,
@@ -383,9 +410,14 @@ pub fn generate_keyword_gated_recoveries(text: &str) -> Vec<String> {
         join_indexed_fields,
     ];
     for helper in helpers {
-        for v in helper(text) {
-            if v != text && !out.contains(&v) {
-                out.push(v);
+        for (v, exact) in helper(text) {
+            if v == text {
+                continue;
+            }
+            match out.iter_mut().find(|r| r.text == v) {
+                // Two helpers reached the same text; exact if either was.
+                Some(seen) => seen.exact |= exact,
+                None => out.push(Recovery { text: v, exact }),
             }
         }
     }
@@ -399,7 +431,7 @@ mod tests {
     fn recovers(input: &str, needle: &str) -> bool {
         generate_keyword_gated_recoveries(input)
             .iter()
-            .any(|v| v.contains(needle))
+            .any(|v| v.text.contains(needle))
     }
 
     #[test]
@@ -413,6 +445,18 @@ mod tests {
             "iban 00000GB82WEST12345698765432.",
             "iban GB82WEST"
         ));
+    }
+
+    #[test]
+    fn only_the_full_strip_is_exact() {
+        let v = generate_keyword_gated_recoveries("SSN 00000742185503 ok");
+        let exact: Vec<&str> = v
+            .iter()
+            .filter(|r| r.exact)
+            .map(|r| r.text.as_str())
+            .collect();
+        assert_eq!(exact, ["SSN 742185503 ok"], "{v:?}");
+        assert!(v.iter().any(|r| !r.exact && r.text == "SSN 0742185503 ok"));
     }
 
     #[test]
@@ -452,7 +496,7 @@ mod tests {
         let v = generate_keyword_gated_recoveries("Social insurance number ZGZjVQL5ZvN1AQD= ok");
         assert!(
             v.iter()
-                .any(|s| s == "Social insurance number 130 692 544 ok"),
+                .any(|s| s.exact && s.text == "Social insurance number 130 692 544 ok"),
             "{v:?}"
         );
     }
@@ -464,7 +508,7 @@ mod tests {
         );
         assert!(
             v.iter()
-                .any(|s| s == "Social insurance number {130 692 544} ok"),
+                .any(|s| s.exact && s.text == "Social insurance number {130 692 544} ok"),
             "{v:?}"
         );
     }

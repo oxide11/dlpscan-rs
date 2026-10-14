@@ -36,14 +36,31 @@ baseline, 919 of 1,138 non-card misses fell to these techniques, against 0 of
   IBAN, LEI and ULI (`has_mod97_check`): two mod-97 digits are strong enough
   that they match a recovered value with no keyword, as the primary pass
   already does for the plain value.
-- Measured by replaying the baseline's misses for the six techniques on
-  check-digit categories with valid seeds: 0/168 → 162/168. The six left:
+- fix(core): rules with no check digit (SSN, provincial health cards,
+  driver's licences, passports) may match an *exact* recovery, provided
+  their keyword sits beside the value. An exact recovery is the one candidate
+  a recovery offers for the value it restored: all the padding stripped, the
+  whole base64 tail decoded, the fields joined. Guesses, such as trimming
+  zeros one at a time, stay with the check-digit route, where arithmetic
+  picks the right guess. Only rules whose keywords occur in the document are
+  tried, and the keyword is required even for a rule the primary pass runs
+  without one. Zero stripping now skips runs under 8 digits (`fe80::1` is
+  not a padded `fe8`) and zeros glued to a letter on their outer side
+  (`N0003062517` is not a padded `N3062517`). A strip counts as exact only
+  when it removes three or more zeros. Both cases were caught by the
+  detection-quality corpus and the conformance `damaged` slot.
+- Measured by replaying the baseline's misses for the six techniques:
+  - all northam categories: 0/915 → 679/915;
+  - check-digit categories with valid seeds: 0/168 → 162/168.
+
+  Of the 236 still missed, 76 are ticker, RIC, WKN and MiFID references,
+  which have no rule. The six check-digit misses left:
   - a zero-padded BN where the `PAN` rule wins the overlap;
   - a CUSIP with base64 in the middle;
   - a letter-padded IBAN;
   - three letter-padded LEIs. Padded to 40 characters, each also matches
     `AWS Secret Key` (0.90), which wins the overlap.
-- Cost: a short-text scan goes from ~0.32 to ~0.34 ms. Texts of 4 KB or more
+- Cost: a short-text scan goes from ~0.32 to ~0.37 ms. Texts of 4 KB or more
   never reach the alt pass, so they are unaffected.
 
 ## 2026-10-14 — ratios, the printed RAMQ layout, and identifier collisions

@@ -424,3 +424,32 @@ fn recovered_luhn_ids_need_their_keyword() {
     let cats = categories("Social insurance number 00000130 692 545 verified.");
     assert!(!cats.iter().any(|(s, _)| s == "Canada SIN"), "{cats:?}");
 }
+
+#[test]
+fn exact_recovery_feeds_shape_only_rules_beside_their_keyword() {
+    // No check digit, but each recovery yields the one candidate for the
+    // value it restored, and the SSN keyword sits beside it.
+    for t in [
+        "Social security no 00000742-18-5503 pending.",
+        "Social security no XXXXXXXXXX742-18-5503XXXXXXXXXX pending.",
+        "Social security no 742-1OC01NTAz pending.",
+        r#"Social security no {"part1": "742-1", "part2": "8-5503"} pending."#,
+    ] {
+        let cats = categories(t);
+        assert!(
+            cats.iter().any(|(s, _)| s == "USA SSN"),
+            "expected USA SSN in {cats:?} for {t:?}"
+        );
+    }
+}
+
+#[test]
+fn guessed_recoveries_do_not_feed_shape_only_rules() {
+    // Two trailing zeros are how numbers end, not padding: trimming them is
+    // a guess, which only a check digit may confirm.
+    let cats = categories("Social security no 742-18-550300 pending.");
+    assert!(!cats.iter().any(|(s, _)| s == "USA SSN"), "{cats:?}");
+    // Zeros inside a token are not padding either.
+    let cats = categories("uae passport: N0003062517");
+    assert!(!cats.iter().any(|(s, _)| s == "UAE Passport"), "{cats:?}");
+}
