@@ -6,6 +6,44 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-13 — zero-padding, delimited-base64, sparse-noise evasion
+
+### siphon-core 2.9.3
+
+Closes the zero-padding, delimited-base64, and sparse-noise credit-card evasion
+classes surfaced by the evadex replay. All three recoveries
+live in the second-pass alt-decodings, so they run only when the primary scan
+finds little and every candidate is re-validated (Luhn/checksum) before it can
+emit a finding — false-positive risk stays negligible, and the labelled-corpus
+FP/recall counts are unchanged.
+
+- fix(core): `strip_zero_padding_variants()` recovers a card/PAN/national-ID
+  hidden by zero padding. Leading zeros push a number past the `\b`-anchored card
+  regexes and the `\b\d{4}…\d{1,7}\b` PAN length bound (the padded run is a single
+  word, so no interior `\b` lets a valid-length slice match); a trailing zero
+  shifts every digit's Luhn parity so the check fails. For each over-long digit
+  run we emit alternatives with the padding stripped fully and trimmed to each
+  known plausible length (9 / 13–19), which the alt pass re-validates. Recovers
+  `left_pad_zeros`, `right_pad_zeros`, `both_pad`, trailing-zero, and the
+  zero-prefixed 9-digit-ID variants.
+- fix(core): `decode_delimited_encoded_segments()` decodes a base64 blob embedded
+  in a delimited structure that stage 4c could not isolate — a payload in a URL
+  path (`https://host.tld/data/<b64>/view`) is merged with adjacent path words
+  (`/` is a base64 symbol) and suppressed by the dot guard. It re-splits on
+  structural delimiters and, because the alnum-adjacent-delimiter stages glue the
+  preceding path word onto the blob, slides past a bounded non-alphabet prefix to
+  recover the self-contained base64. Bare whole-string base64 is left to stage 4c.
+- fix(core): `strip_sparse_alpha_noise_variants()` recovers a card wearing
+  isolated letter noise (`b45a32e01d51d12c830366`) that the consistent-separator
+  stages don't strip. Gated tightly — a card/PAN-plausible digit count, a ≥60%
+  digit ratio, and no two adjacent letters (a word, not noise) — with Luhn still
+  the final arbiter on the alt pass.
+- test: 5 new evasion regression tests (zero-padding, base64-in-URL, nested
+  base64, sparse noise, and a non-card sparse-noise false-positive guard).
+  Targeted spot-check 6/13 → 12/13; no detection-quality or fp_probe regressions.
+
+---
+
 ## 2026-09-30 — dependency security
 
 ### workspace (lockfile only)

@@ -512,3 +512,89 @@ fn test_corrupted_zip_raw_byte_recovery() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// 5. Zero-padding evasion (Luhn / length-bound bypass)
+// ---------------------------------------------------------------------------
+
+/// A valid Visa test number padded with zeros. Leading zeros push the run past
+/// the `\b`-anchored / PAN length bounds; a trailing zero shifts every digit's
+/// Luhn parity. The zero-padding recovery in the second-pass alt decodings must
+/// strip the padding and re-validate the recovered card.
+#[test]
+fn test_zero_padding_recovers_card() {
+    let cc = "4532015112830366"; // Luhn-valid Visa
+    let cases = [
+        ("left_pad_zeros", format!("0000{cc}")),
+        ("right_pad_zeros", format!("{cc}0000")),
+        ("both_pad", format!("000{cc}000")),
+        ("trailing_single_zero", format!("{cc}0")),
+    ];
+    for (name, text) in cases {
+        let matches = siphon::scan_text(&text).unwrap();
+        assert!(
+            matches.iter().any(|m| m.category == "Credit Card Numbers"),
+            "{name}: zero-padded card should be recovered, got {:?}",
+            matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+        );
+    }
+}
+
+/// A base64-encoded card embedded in a URL path. Stage 4c's token splitter
+/// merges the blob with adjacent path words (`/` is a base64 symbol) and the
+/// dot guard suppresses it, so recovery relies on the delimited-segment decoder
+/// in the alt pass sliding past the glued prefix.
+#[test]
+fn test_base64_card_in_url_path() {
+    // base64("4532015112830366") == "NDUzMjAxNTExMjgzMDM2Ng=="
+    let b64 = "NDUzMjAxNTExMjgzMDM2Ng==";
+    let text = format!("https://example.com/data/{b64}/view");
+    let matches = siphon::scan_text(&text).unwrap();
+    assert!(
+        matches.iter().any(|m| m.category == "Credit Card Numbers"),
+        "base64 card in URL path should be recovered, got {:?}",
+        matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+    );
+}
+
+/// Nested (double / triple) base64 chains must still resolve to the card.
+#[test]
+fn test_nested_base64_chain_recovers_card() {
+    // b64(b64("4532015112830366")) and one more layer.
+    let double = "TkRVek1qQXhOVEV4TWpnek1ETTJOZz09";
+    let matches = siphon::scan_text(double).unwrap();
+    assert!(
+        matches.iter().any(|m| m.category == "Credit Card Numbers"),
+        "double-base64 card should be recovered, got {:?}",
+        matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+    );
+}
+
+/// Sparse letter noise interleaved between the digits of a card. The consistent-
+/// separator stages don't strip single-letter noise, so recovery relies on the
+/// sparse-noise stripper in the alt pass.
+#[test]
+fn test_sparse_noise_embedded_recovers_card() {
+    // "4532015112830366" with isolated letters sprinkled between digit groups.
+    let text = "b45a32e01d51d12c830366";
+    let matches = siphon::scan_text(text).unwrap();
+    assert!(
+        matches.iter().any(|m| m.category == "Credit Card Numbers"),
+        "noise-embedded card should be recovered, got {:?}",
+        matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+    );
+}
+
+/// Guard: an ordinary alphanumeric identifier (interleaved but a real token, not
+/// a Luhn-valid card) must NOT be turned into a spurious card finding.
+#[test]
+fn test_sparse_noise_no_false_positive() {
+    // Not Luhn-valid; the alt pass must reject it after stripping.
+    let text = "a12b34c56d78e90f12g34";
+    let matches = siphon::scan_text(text).unwrap();
+    assert!(
+        !matches.iter().any(|m| m.category == "Credit Card Numbers"),
+        "non-card interleaved token must not become a card finding, got {:?}",
+        matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+    );
+}
