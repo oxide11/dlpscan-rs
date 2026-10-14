@@ -398,6 +398,34 @@ pub fn is_valid_iban(iban: &str) -> bool {
 /// SINs are 9 digits (often formatted `123-456-789`) and use the
 /// standard Luhn algorithm. Also rejects the all-zeros sentinel
 /// which Luhn accepts but which is never a real SIN.
+/// Validate the 9-digit root of a Canadian Business Number: Luhn over all
+/// nine digits, the same check a SIN carries. Unlike a SIN, any leading
+/// digit is issued.
+pub fn is_valid_canada_bn_root(bn: &str) -> bool {
+    let digits: Vec<u32> = bn.chars().filter_map(|c| c.to_digit(10)).collect();
+    if digits.len() != 9 || digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(idx, &d)| {
+            if idx % 2 == 1 {
+                let doubled = d * 2;
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum.is_multiple_of(10)
+}
+
 pub fn is_valid_canada_sin(sin: &str) -> bool {
     let digits: Vec<u32> = sin
         .chars()
@@ -4473,6 +4501,7 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // 9-digit sequence near a SIN keyword was flagged as a SIN,
         // including obvious sentinels like 000-000-000.
         "Canada SIN" => is_valid_canada_sin(matched_text),
+        "Canada BN Root" => is_valid_canada_bn_root(matched_text),
         // ISIN — modified Luhn on the alphanumeric expansion of
         // positions 1-11 against the digit check at position 12.
         // This closes a nasty category of RAMQ / random-alphanum
@@ -6171,6 +6200,17 @@ mod tests {
         assert!(!is_valid_uli("7ZW8QJWVPR4P1J1KQY45A60")); // bumped check
         assert!(!is_valid_uli("ABCDEFGHIJ1234567890")); // too short
         assert!(!is_valid_uli("abcdefghij1234567890123")); // lowercase
+    }
+
+    #[test]
+    fn test_canada_bn_root() {
+        assert!(is_valid_canada_bn_root("123456782"));
+        assert!(is_valid_canada_bn_root("123 456 782"));
+        // Check digit off by one.
+        assert!(!is_valid_canada_bn_root("123456783"));
+        assert!(!is_valid_canada_bn_root("111222333"));
+        assert!(!is_valid_canada_bn_root("000000000"));
+        assert!(!is_valid_canada_bn_root("12345678"));
     }
 
     #[test]

@@ -272,3 +272,56 @@ fn keyword_does_not_hand_a_card_to_a_weaker_rule() {
     let cats = categories("Charge to account number 4532015112830366 today.");
     assert!(cats.iter().any(|(s, _)| s == "Visa"), "{cats:?}");
 }
+
+#[test]
+fn nested_keyword_still_counts_for_its_own_pattern() {
+    // "available balance" is an Account Balance keyword; the "balance" inside
+    // it belongs to Balance with Currency Code. A non-overlapping keyword
+    // search recorded only the longer one, so the currency amount lost its
+    // context.
+    for t in [
+        "Available balance: USD 12,345.67.",
+        "Account balance USD 12,345.67 as of month end.",
+    ] {
+        let cats = categories(t);
+        assert!(
+            cats.iter()
+                .any(|(s, v)| s == "Balance with Currency Code" && v == "USD 12,345.67"),
+            "expected the whole amount in {cats:?} for {t:?}"
+        );
+    }
+}
+
+#[test]
+fn decimal_amount_is_not_truncated_by_normalization() {
+    // Normalization drops the decimal point (`12,345.67` -> `12,34567`) and
+    // the balance rule matched a fragment, `USD 12`, which used to suppress
+    // the raw-text pass that finds the whole amount.
+    let cats = categories("Total funds transferred: USD 12,345.67.");
+    assert!(
+        cats.iter()
+            .any(|(s, v)| s == "Balance with Currency Code" && v == "USD 12,345.67"),
+        "{cats:?}"
+    );
+}
+
+#[test]
+fn bare_business_number_beside_its_keyword() {
+    for t in [
+        "CRA business number 123456782 on the vendor form.",
+        "Business Number (BN): 123 456 782.",
+    ] {
+        let cats = categories(t);
+        assert!(
+            cats.iter().any(|(s, _)| s == "Canada BN Root"),
+            "expected Canada BN Root in {cats:?} for {t:?}"
+        );
+    }
+    // Check digit fails; no keyword; the RT form keeps its own rule.
+    let cats = categories("CRA business number 111222333 on the vendor form.");
+    assert!(!cats.iter().any(|(s, _)| s == "Canada BN Root"), "{cats:?}");
+    let cats = categories("Reference 123456782 attached.");
+    assert!(!cats.iter().any(|(s, _)| s == "Canada BN Root"), "{cats:?}");
+    let cats = categories("Business number 123456782RT0001.");
+    assert!(cats.iter().any(|(s, _)| s == "Canada BN"), "{cats:?}");
+}

@@ -2288,6 +2288,20 @@ pub static PATTERNS: &[PatternDef] = &[
     },
     PatternDef {
         category: "North America - Canada",
+        // The 9-digit Business Number on its own, without the program
+        // account suffix (`RT0001`) `Canada BN` requires. Forms and vendor
+        // records quote it bare. The ninth digit is a Luhn check, as for a
+        // SIN, but a bare Luhn-valid 9-digit run is common enough that it
+        // only counts beside a business-number keyword.
+        sub_category: "Canada BN Root",
+        regex: r"\b\d{3}[-\s]?\d{3}[-\s]?\d{3}\b",
+        case_insensitive: false,
+        specificity: 0.45,
+        // Context-gated (see models::is_context_required).
+        context_required: true,
+    },
+    PatternDef {
+        category: "North America - Canada",
         sub_category: "Canada Passport",
         regex: r"\b[A-Z]{2}\d{6}\b",
         case_insensitive: false,
@@ -4975,8 +4989,8 @@ mod tests {
         // TLP:AMBER+STRICT, TLP:GREEN, TLP:CLEAR, TLP:WHITE) + VALOR + 15
         // Financial Crime Reports (FinCEN SAR/CTR/8300/SAR-Form/confidentiality,
         // FINTRAC STR/LCTR/EFTR/TPR/Regime, AUSTRAC SMR/TTR/Regime, UK NCA SAR,
-        // Reasonable Grounds To Suspect).
-        assert_eq!(PATTERNS.len(), 583);
+        // Reasonable Grounds To Suspect) + Canada BN Root.
+        assert_eq!(PATTERNS.len(), 584);
     }
 
     #[test]

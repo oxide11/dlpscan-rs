@@ -37,6 +37,24 @@ keyword. Four rules still failed on plain, correctly labelled values.
   (0.60). Scoped to `<Region> - <Country>` categories: a first version that
   applied to any identical-span overlap handed `account number 4532…` to the
   generic `PAN` rule instead of `Visa`, and is pinned against by a test.
+- fix(core): the raw-text second pass now runs every flagged pattern
+  whenever normalization changed the text, not only those that found
+  nothing. Normalization drops a decimal point (`12,345.67` → `12,34567`),
+  `Balance with Currency Code` then matched the fragment `USD 12`, and that
+  fragment suppressed the pass that finds `USD 12,345.67`. Dedup keeps the
+  longer match. `measure_raw_pass_cost`: 0.475 → 0.486 ms/scan.
+- fix(core): `Balance with Currency Code` also lists Account Balance's
+  compound phrases (`available balance`, `account balance`, …). Keyword
+  search is leftmost-longest, so the longer phrase was the only hit
+  recorded and the `balance` inside it never reached this pattern. Searching
+  with overlaps instead was tried and rejected: it broke 48 conformance
+  cases, because generic patterns picked up `email` from inside `edu email`
+  and outranked the specific one.
+- feat(core): `Canada BN Root` — the 9-digit Business Number without the
+  `RT0001` program suffix `Canada BN` requires, as forms and vendor records
+  quote it. Context-gated, Luhn-validated (`is_valid_canada_bn_root`).
+  584 patterns, 73 validators; `docs/PATTERNS.md` and `docs/KEYWORDS.md`
+  regenerated (which also picked up two entries that were already stale).
 - test(conformance): 10 new DTI/LTV cases. The UAE Passport `damaged` case
   (`uae passport: Y2208699`) only passed because Hong Kong ID shadowed it —
   the value fits UAE's own `[A-Z]?\d{7,9}` — and fires now that the named
