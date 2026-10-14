@@ -5686,8 +5686,8 @@
     {
       "type": "library",
       "name": "siphon-core",
-      "version": "2.9.5",
-      "purl": "pkg:cargo/siphon-core@2.9.5",
+      "version": "2.9.6",
+      "purl": "pkg:cargo/siphon-core@2.9.6",
       "scope": "required",
       "licenses": [
         {
