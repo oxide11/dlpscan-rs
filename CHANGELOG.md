@@ -62,6 +62,13 @@ row but the last of a two-column CSV, and a card followed by any number
   `decode_digit_prefixed_base64()`, splits a digit prefix from a base64
   tail in one token (`45320151MTI4MzAzNjY=`) when the tail decodes to
   digits and the rejoined value is 13–19 long.
+- fix(core): an encoded card followed by prose. The hex-dump decoder
+  consumed the space after the last pair, gluing the decoded value to the
+  next word (`…39 39 on the` → `…99on`, which stage 11 then folded to
+  `…990n`); it now hands that space back. An em dash after digit morse
+  folds to `-` and loses its space, adding one symbol to the last code; the
+  embedded no-separator and delimited morse finders retry a segment or edge
+  token that is exactly one symbol over (digit codes are always 5 symbols).
 - test: `whitespace_separated_cards_are_each_found` (six list/CSV/suffix
   shapes) and `padded_card_is_still_joined` (single-digit, 4-4-4-4 and 12+4
   padding still recovered); evasion tests for split fields, letter-bounded

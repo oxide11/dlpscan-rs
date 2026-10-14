@@ -1418,6 +1418,13 @@ fn decode_hex_spaced(input: &str, in_offsets: &[Offset]) -> Option<(String, Offs
                     offsets.push(orig_offset(in_offsets, pair_pos));
                 }
                 changed = true;
+                // The loop consumes the space after every pair, including the
+                // one that ends the run. Hand that space back, or the decoded
+                // value is glued to the next word (`…39 39 on` → `…99on`, which
+                // stage 11 then folds to `…990n` and no card survives).
+                if i > run_start && bytes[i - 1] == b' ' {
+                    i -= 1;
+                }
                 continue;
             }
             // Not a valid hex run, rewind and copy literally
@@ -2235,6 +2242,22 @@ fn try_decode_digit_morse_nosep(text: &[u8]) -> Option<String> {
     Some(result)
 }
 
+/// Decode a run of 5-symbol digit-morse codes (4–20 digits), or `None`.
+fn decode_digit_morse_chunks(segment: &[u8]) -> Option<String> {
+    if !segment.len().is_multiple_of(5) || !(4..=20).contains(&(segment.len() / 5)) {
+        return None;
+    }
+    segment
+        .chunks_exact(5)
+        .map(|chunk| {
+            MORSE_DIGITS
+                .iter()
+                .find(|(code, _)| *code == chunk)
+                .map(|&(_, digit)| digit as char)
+        })
+        .collect()
+}
+
 /// Scan text for an embedded no-separator digit-only morse segment.
 ///
 /// Unlike `try_decode_digit_morse_nosep` which requires the ENTIRE input to be
@@ -2255,23 +2278,19 @@ fn find_embedded_digit_morse_nosep(text: &[u8]) -> Option<String> {
                 i += 1;
             }
             let segment = &text[seg_start..i];
-            if segment.len().is_multiple_of(5) {
-                let count = segment.len() / 5;
-                if (4..=20).contains(&count) {
-                    let mut result = String::with_capacity(count);
-                    let mut valid = true;
-                    for chunk in segment.chunks_exact(5) {
-                        match MORSE_DIGITS.iter().find(|(code, _)| *code == chunk) {
-                            Some(&(_, digit)) => result.push(digit as char),
-                            None => {
-                                valid = false;
-                                break;
-                            }
-                        }
-                    }
-                    if valid {
-                        return Some(result);
-                    }
+            if let Some(decoded) = decode_digit_morse_chunks(segment) {
+                return Some(decoded);
+            }
+            // One stray symbol glued on at either end: an em dash after the
+            // value (`… ----- — authorised`) folds to `-` and stage 5 removes
+            // the space, so the last code gains a dash. Digit morse is always
+            // a multiple of 5, so a remainder of exactly 1 can only be that.
+            if segment.len() % 5 == 1 {
+                let n = segment.len();
+                if let Some(decoded) = decode_digit_morse_chunks(&segment[..n - 1])
+                    .or_else(|| decode_digit_morse_chunks(&segment[1..]))
+                {
+                    return Some(decoded);
                 }
             }
         } else {
@@ -2330,8 +2349,25 @@ fn find_embedded_digit_morse_delimited(text: &str, delim: u8) -> Option<String> 
         if (4..=20).contains(&tokens.len()) {
             let mut result = String::with_capacity(tokens.len());
             let mut ok = true;
-            for token in &tokens {
-                match decode_morse_digit_token(token) {
+            let last = tokens.len() - 1;
+            for (idx, token) in tokens.iter().enumerate() {
+                // An edge token may carry one stray symbol from the text
+                // around it — an em dash after the value folds to `-` and
+                // stage 5 drops the space, so `-----` arrives as `------`.
+                // Digit codes are exactly 5 symbols, so only a 6-symbol edge
+                // token is retried, without its outer symbol.
+                let decoded = decode_morse_digit_token(token).or_else(|| {
+                    if token.len() != 6 {
+                        None
+                    } else if idx == last {
+                        decode_morse_digit_token(&token[..5])
+                    } else if idx == 0 {
+                        decode_morse_digit_token(&token[1..])
+                    } else {
+                        None
+                    }
+                });
+                match decoded {
                     Some(ch) => result.push(ch),
                     None => {
                         ok = false;

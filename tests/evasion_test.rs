@@ -705,3 +705,17 @@ fn test_substitution_guards_no_false_positive() {
         assert!(!card_found(text), "spurious card from {text:?}");
     }
 }
+
+/// Prose right after an encoded card: a hex dump followed by a word must not
+/// glue the decoded value to it, and an em dash after morse (which folds to
+/// `-` and loses its space) must not corrupt the last code.
+#[test]
+fn test_encoded_card_followed_by_prose() {
+    for text in [
+        "Recurring payment scheduled for card 36 32 35 30 39 34 31 30 30 36 35 32 38 35 39 39 on the 1st of each month.",
+        "Card on file: ..... .---- ----- ..... .---- ----- ..... .---- ----- ..... .---- ----- ..... .---- ----- ----- — authorised for recurring monthly billing.",
+        "Card on file: ...--/-----/...../-..../----./...--/-----/----./-----/..---/...../----./-----/....- — authorised for recurring monthly billing.",
+    ] {
+        assert!(card_found(text), "card missed: {text:?}");
+    }
+}
