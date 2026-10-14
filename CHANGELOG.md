@@ -6,6 +6,46 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-14 — card de-evasion for every check-digit identifier
+
+### siphon-core 2.9.6
+
+The alt-decoding pass recovers values hidden by zero padding, letter padding,
+a base64 tail (`130 6OTIgNTQ0`), rot13 of base64, and a value split across
+JSON fields. Each recovery worked only for cards: the pass ran only
+always-run patterns that need no context keyword, and each recovery was
+bounded to 13–19 digits. A SIN, ABA routing number, ISIN or IBAN hidden the
+same way was recovered and then never matched. On the evadex northam
+baseline, 919 of 1,138 non-card misses fell to these techniques, against 0 of
+48 for cards.
+
+- fix(core): a pattern with a real check digit (`validation::has_check_digit`
+  — Luhn, mod-11, mod-97, Verhoeff and the like; not structural gates such as
+  the SSN area rule) may match on the alt pass when one of its context
+  keywords sits beside the recovered value. This bar is stricter than the
+  primary pass, which accepts either a keyword or a keyword-free rule. The
+  keyword is looked up with a hit index built over the alt text, so the
+  word-boundary rule for short keywords still applies.
+- fix(core): new `normalize::generate_keyword_gated_recoveries` drops the
+  card-length and digits-only limits. It trims zero padding one digit at a
+  time, separates digit blocks and alphanumeric values from letter padding,
+  decodes a base64 tail after any plaintext head, decodes rot13-of-base64
+  per token (rotating the whole text also rotated the keyword), and rejoins
+  `part1`/`part2` fields in place so the keyword before the record survives.
+  These variants reach only the check-digit route. The one exception is
+  IBAN, LEI and ULI (`has_mod97_check`): two mod-97 digits are strong enough
+  that they match a recovered value with no keyword, as the primary pass
+  already does for the plain value.
+- Measured by replaying the baseline's misses for the six techniques on
+  check-digit categories with valid seeds: 0/168 → 162/168. The six left:
+  - a zero-padded BN where the `PAN` rule wins the overlap;
+  - a CUSIP with base64 in the middle;
+  - a letter-padded IBAN;
+  - three letter-padded LEIs. Padded to 40 characters, each also matches
+    `AWS Secret Key` (0.90), which wins the overlap.
+- Cost: a short-text scan goes from ~0.32 to ~0.34 ms. Texts of 4 KB or more
+  never reach the alt pass, so they are unaffected.
+
 ## 2026-10-14 — ratios, the printed RAMQ layout, and identifier collisions
 
 ### siphon-core 2.9.5

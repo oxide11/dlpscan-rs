@@ -1466,17 +1466,32 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     // We also pre-filter by config.categories once outside the
     // alt-loop instead of rechecking per-pattern per-alt.
     if matches.len() < 3 && text.len() < 4096 && start.elapsed().as_secs() < MAX_SCAN_SECONDS / 2 {
-        let alternatives = normalize::generate_alternative_decodings(&normalized);
+        // (alt text, check-digit route only). The gated recoveries relax the
+        // card-length bounds that make the ordinary alternatives safe for
+        // keyword-free patterns, so only the check-digit route may use them.
+        let mut alternatives: Vec<(String, bool)> =
+            normalize::generate_alternative_decodings(&normalized)
+                .into_iter()
+                .map(|a| (a, false))
+                .collect();
+        for gated in normalize::generate_keyword_gated_recoveries(&normalized) {
+            if !alternatives.iter().any(|(a, _)| *a == gated) {
+                alternatives.push((gated, true));
+            }
+        }
         let alt_patterns: Vec<&CompiledPattern> = compiled
             .iter()
-            .filter(|cp| is_always_run(cp.def.sub_category))
+            .filter(|cp| {
+                is_always_run(cp.def.sub_category)
+                    || crate::validation::has_check_digit(cp.def.sub_category)
+            })
             .filter(|cp| match &config.categories {
                 Some(cats) => cats.contains(cp.def.category),
                 None => true,
             })
             .collect();
 
-        for alt_text in &alternatives {
+        for (alt_text, check_digit_only) in &alternatives {
             if alt_text.is_empty() {
                 continue;
             }
@@ -1486,43 +1501,55 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
             if alt_norm == normalized {
                 continue;
             }
+            let alt_hit_index: std::cell::OnceCell<Option<context::ContextHitIndex>> =
+                std::cell::OnceCell::new();
 
             for cp in &alt_patterns {
-                // Context-required patterns must NOT fire through the
-                // alt path. The alt-decodings pass has no context hit
-                // index (it was built for the primary normalized text,
-                // not the alt text), so we can't verify keyword
-                // proximity. Previously this gap was the source of the
-                // IMEISV false-positive class — IMEISV was context-
-                // required but firing through alt because the check
-                // was missing entirely.
-                if effective_context_required(
+                let ctx_required = effective_context_required(
                     cp.def.category,
                     cp.def.sub_category,
                     cp.def.context_required,
                     config.pattern_field_overrides.as_ref(),
-                ) {
-                    continue;
-                }
-
-                // The alt path also demands more of the pattern itself, for the
-                // same reason: it runs against a *transformed* text with no
-                // context index to corroborate anything, so a loose pattern
-                // firing there has compounded uncertainty.
+                );
+                // Two ways onto the alt path.
                 //
-                // ROT13 is the sharp case. It maps letters onto letters, so for
-                // a letter-shaped pattern it behaves as a generator of
-                // plausible candidates rather than as a decoder: the product
-                // code `AB1-2CD` normalises to `AB12CD`, whose ROT13 is
-                // `NO12PQ` — a structurally valid UK postcode appearing nowhere
-                // in the document. Structural validation cannot catch that,
-                // because the string genuinely is well formed.
+                // The original one: an always-run pattern that needs no
+                // context and sits at or above the specificity threshold. The
+                // alt pass runs against a *transformed* text, so a loose
+                // pattern firing there has compounded uncertainty. ROT13 is
+                // the sharp case. It maps letters onto letters, so for a
+                // letter-shaped pattern it behaves as a generator of plausible
+                // candidates rather than as a decoder: the product code
+                // `AB1-2CD` normalises to `AB12CD`, whose ROT13 is `NO12PQ` — a
+                // structurally valid UK postcode appearing nowhere in the
+                // document. Structural validation cannot catch that, because
+                // the string genuinely is well formed. Context-required
+                // patterns were excluded outright, which closed the IMEISV
+                // false-positive class (it fired through alt with no keyword).
                 //
-                // Decoding earns its keep for high-entropy secrets and
-                // structured identifiers, which sit at or above the always-run
-                // threshold on their own merits. Nobody base64-encodes a
-                // postcode to exfiltrate it.
-                if crate::models::pattern_specificity(cp.def.sub_category) < SPECIFICITY_THRESHOLD {
+                // The second: a pattern with a real check digit, provided one
+                // of its keywords sits beside the recovered value in the alt
+                // text. Without it, every recovery the alt pass performs —
+                // stripped zero padding, letter noise, a base64 tail, a value
+                // split over JSON fields — only ever reached cards, because
+                // cards are the one always-run, keyword-free identifier; an
+                // SSN-adjacent SIN or an IBAN recovered the same way was
+                // dropped. Requiring both the arithmetic and the keyword holds
+                // a recovered match to a stricter bar than the primary pass,
+                // which asks for one or the other. The recovery helpers keep
+                // the surrounding text, so a keyword next to the evaded value
+                // is still next to it in the alt.
+                //
+                // The gated recoveries relax the card-length bounds, so the
+                // keyword-free route over them is limited to the patterns
+                // whose check a manufactured candidate is unlikely to pass.
+                let original_route = (!check_digit_only
+                    || crate::validation::has_mod97_check(cp.def.sub_category))
+                    && !ctx_required
+                    && is_always_run(cp.def.sub_category)
+                    && crate::models::pattern_specificity(cp.def.sub_category)
+                        >= SPECIFICITY_THRESHOLD;
+                if !original_route && !crate::validation::has_check_digit(cp.def.sub_category) {
                     continue;
                 }
 
@@ -1567,13 +1594,48 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                         );
                         continue;
                     }
+                    // Built on first use: most alts never reach this point,
+                    // and the index's word-boundary check is what keeps a
+                    // short keyword from firing inside an ordinary word.
+                    let has_context = !original_route
+                        && alt_hit_index
+                            .get_or_init(|| context::build_hit_index(&alt_norm))
+                            .as_ref()
+                            .is_some_and(|idx| {
+                                context::check_context(
+                                    &alt_norm,
+                                    alt_start,
+                                    alt_end,
+                                    cp.def.category,
+                                    cp.def.sub_category,
+                                    Some(idx),
+                                )
+                            });
+                    if !original_route && !has_context {
+                        emit_trace(
+                            &config.trace,
+                            "alt",
+                            "alt_context",
+                            "drop",
+                            cp.def.category,
+                            cp.def.sub_category,
+                            alt_span,
+                            matched_text,
+                            None,
+                            Some("check-digit pattern on alt decoding needs a keyword beside it"),
+                        );
+                        continue;
+                    }
                     let alt_spec = effective_specificity(
                         cp.def.category,
                         cp.def.sub_category,
                         config.pattern_field_overrides.as_ref(),
                     );
-                    let confidence =
-                        crate::scoring::compute_confidence_with(alt_spec, false, false);
+                    let confidence = crate::scoring::compute_confidence_with(
+                        alt_spec,
+                        has_context,
+                        ctx_required,
+                    );
                     if confidence < config.min_confidence {
                         emit_trace(
                             &config.trace,
@@ -1605,10 +1667,10 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                         matched_text.to_string(),
                         cp.def.category.to_string(),
                         cp.def.sub_category.to_string(),
-                        false,
+                        has_context,
                         confidence * 0.9,
                         (0, text.len()),
-                        false,
+                        ctx_required,
                     ));
                 }
             }

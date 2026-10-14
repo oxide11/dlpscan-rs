@@ -343,3 +343,84 @@ fn manitoba_dl_uses_the_documented_layout() {
     let cats = categories("Manitoba DL ETYELZ211962");
     assert!(!cats.iter().any(|(s, _)| s == "Manitoba DL"), "{cats:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Card-only de-evasion, generalized to check-digit identifiers
+// ---------------------------------------------------------------------------
+
+#[test]
+fn recovered_check_digit_ids_beside_their_keyword() {
+    // Every recovery the alt pass performs (zero padding, letter padding, a
+    // base64 tail, rot13 of base64, a value split over JSON fields) used to
+    // reach cards only. SIN 130 692 544 and ABA 021000021 are Luhn / ABA
+    // valid; each text names the identifier beside the value.
+    for (t, want) in [
+        (
+            "Social insurance number 00000130 692 544 verified.",
+            "Canada SIN",
+        ),
+        (
+            "Social insurance number 130 692 54400000 verified.",
+            "Canada SIN",
+        ),
+        (
+            "Social insurance number XXXXXXXXXX130 692 544XXXXXXXXXX verified.",
+            "Canada SIN",
+        ),
+        (
+            "Social insurance number 130 6OTIgNTQ0 verified.",
+            "Canada SIN",
+        ),
+        (
+            "Social insurance number ZGZjVQL5ZvN1AQD= verified.",
+            "Canada SIN",
+        ),
+        (
+            r#"Social insurance number {"part1": "130 6", "part2": "92 544"} verified."#,
+            "Canada SIN",
+        ),
+        (
+            "Routing number 00000021000021 on the wire.",
+            "ABA Routing Number",
+        ),
+        (
+            "ISIN XXXXXXXXXXUS0378331005XXXXXXXXXX: 2-for-1 split.",
+            "ISIN",
+        ),
+    ] {
+        let cats = categories(t);
+        assert!(
+            cats.iter().any(|(s, _)| s == want),
+            "expected {want} in {cats:?} for {t:?}"
+        );
+    }
+}
+
+#[test]
+fn recovered_iban_needs_no_keyword() {
+    // Two mod-97 check digits vouch for a recovered IBAN as they do for a
+    // plain one, which the primary pass accepts with no keyword.
+    for t in [
+        "Beneficiary account 00000GB82WEST12345698765432.",
+        "Beneficiary account GB82WEST123NDU2OTg3NjU0MzI=.",
+        r#"Beneficiary account {"part1": "GB82WEST123", "part2": "45698765432"}."#,
+    ] {
+        let cats = categories(t);
+        assert!(
+            cats.iter().any(|(s, _)| s == "IBAN Generic"),
+            "expected IBAN Generic in {cats:?} for {t:?}"
+        );
+    }
+}
+
+#[test]
+fn recovered_luhn_ids_need_their_keyword() {
+    // A single Luhn digit passes one manufactured candidate in ten, so a
+    // recovered SIN with no SIN keyword stays quiet...
+    let cats = categories("Reference 00000130 692 544 attached.");
+    assert!(!cats.iter().any(|(s, _)| s == "Canada SIN"), "{cats:?}");
+    // ...and a recovered value that fails its check digit stays quiet even
+    // beside the keyword (130 692 545 is not Luhn-valid).
+    let cats = categories("Social insurance number 00000130 692 545 verified.");
+    assert!(!cats.iter().any(|(s, _)| s == "Canada SIN"), "{cats:?}");
+}

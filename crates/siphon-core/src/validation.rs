@@ -4763,6 +4763,81 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
     }
 }
 
+/// Whether `validate_match` checks a real check digit (or checksum) for this
+/// sub-category, as opposed to a structural or plausibility filter.
+///
+/// The alt-decoding pass uses this to decide which context-gated patterns
+/// may match a *recovered* value — one the scanner reconstructed by stripping
+/// padding or noise, or by decoding part of a token. Recovery manufactures
+/// candidates that never appeared verbatim, so it is only safe where a wrong
+/// candidate is rejected by arithmetic rather than by shape: a structural gate
+/// such as an SSN area-number rule accepts most reconstructed 9-digit runs.
+/// Credit cards are not listed; their category is Luhn-checked as a whole.
+pub fn has_check_digit(sub_category: &str) -> bool {
+    matches!(
+        sub_category,
+        "CUSIP"
+            | "SEDOL"
+            | "Australia TFN"
+            | "IBAN Generic"
+            | "Canada SIN"
+            | "Canada BN Root"
+            | "ISIN"
+            | "DEA Number"
+            | "ICCID"
+            | "LEI"
+            | "Australia Medicare"
+            | "South Africa ID"
+            | "MERS MIN"
+            | "Universal Loan Identifier"
+            | "VIN"
+            | "Germany Tax ID"
+            | "Poland PESEL"
+            | "Belgium NRN"
+            | "ABA Routing Number"
+            | "USA Routing Number"
+            | "Brazil CPF"
+            | "India Aadhaar"
+            | "Japan My Number"
+            | "Italy Codice Fiscale"
+            | "Italy SSN"
+            | "Spain DNI"
+            | "Israel Teudat Zehut"
+            | "British NHS"
+            | "Brazil CNPJ"
+            | "China Resident ID"
+            | "South Korea RRN"
+            | "France NIR"
+            | "Mexico CURP"
+            | "Sweden PIN"
+            | "Argentina CUIL/CUIT"
+            | "Singapore NRIC"
+            | "Singapore FIN"
+            | "Hong Kong ID"
+            | "US NPI"
+            | "UAE Emirates ID"
+            | "Netherlands BSN"
+            | "Chile RUN/RUT"
+            | "PAN"
+            | "IMEI"
+    )
+}
+
+/// Whether the check is two ISO 7064 MOD 97-10 digits, which a wrong value
+/// passes about once in 97 tries rather than once in ten.
+///
+/// A single Luhn-style digit is too weak to vouch for a candidate the scanner
+/// manufactured itself — trimming a run of zeros one at a time offers a dozen
+/// candidates, and one in ten passes. Two mod-97 digits are strong enough that
+/// the alt pass lets these patterns match a recovered value with no keyword,
+/// exactly as the primary pass does for the value written plainly.
+pub fn has_mod97_check(sub_category: &str) -> bool {
+    matches!(
+        sub_category,
+        "IBAN Generic" | "LEI" | "Universal Loan Identifier"
+    )
+}
+
 /// Get BIN metadata for a credit card number (if bin-data feature is enabled).
 /// Returns (brand, card_type, country_code, issuer) or None.
 pub fn get_bin_info(card_number: &str) -> Option<(String, String, String, String)> {
