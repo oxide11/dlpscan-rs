@@ -9,7 +9,7 @@
   checksum-validated matches behind an evasion-resistant normalizer.
 </p>
 
-**584 patterns** across **128 categories**. **73 checksum validators** for
+**586 patterns** across **128 categories**. **73 checksum validators** for
 national IDs, financial identifiers, and crypto addresses. **5,000+ context
 keywords** across English, French, Spanish, German, Italian, and Portuguese.
 **680+ tests** passing across the lib, integration, evasion, forensics, and
@@ -36,7 +36,7 @@ Throughput at 1 MB, median across 4 runs, default build (`cargo build --release`
 `lto = true`, `codegen-units = 1`), measured on a 4-core Intel Xeon @ 2.80 GHz
 with 16 GB RAM under Linux 6.18 / Rust 1.98:
 
-| Scenario | Full (584 patterns) | Baseline (122 patterns) |
+| Scenario | Full (586 patterns) | Baseline (122 patterns) |
 |---|---:|---:|
 | Clean text | ~43 MB/s | ~43 MB/s |
 | Mixed content | ~8.9 MB/s | ~9.1 MB/s |
@@ -319,7 +319,7 @@ let matches = scan_text_with_config("Card: 4532015112830366", &config)?;
 
 siphon detects sensitive data using a two-layer system:
 
-1. **584 regex patterns** match data formats (credit cards, SSNs, IBANs, API keys, etc.)
+1. **586 regex patterns** match data formats (credit cards, SSNs, IBANs, API keys, etc.)
 2. **5,000+ context keywords** (English, French, Spanish, German, Italian, Portuguese) confirm detections via Aho-Corasick proximity matching
 
 Each pattern has a **specificity score** (0.0-1.0) indicating base confidence.
@@ -346,7 +346,7 @@ crédito` / `Kreditkarte` / `carta di credito` / `cartão de crédito`).
 | Geolocation & Postal | 8 | GPS coordinates, geohash, ZIP+4, UK postcode |
 
 Full reference:
-- **[docs/PATTERNS.md](docs/PATTERNS.md)** -- All 584 patterns with regex, specificity scores, and context-required flags
+- **[docs/PATTERNS.md](docs/PATTERNS.md)** -- All 586 patterns with regex, specificity scores, and context-required flags
 - **[docs/KEYWORDS.md](docs/KEYWORDS.md)** -- All 3,100+ context keywords (English + French) with proximity distances
 
 ## Modules
@@ -356,7 +356,7 @@ Full reference:
 | Module | Description |
 |---|---|
 | `scanner` | Core engine — parallel regex matching with Rayon, AC prefilter |
-| `patterns` | 584 compiled regex patterns across 128 categories |
+| `patterns` | 586 compiled regex patterns across 128 categories |
 | `context` | Aho-Corasick keyword proximity matching (5,000+ keywords) |
 | `normalize` | Unicode normalization (zero-width, homoglyphs, whitespace) |
 | `scoring` | Confidence scoring and overlapping match deduplication |
@@ -415,7 +415,7 @@ ingestion or detection:
 ```
                     ┌─────────────────┐
                     │   Siphon-Core   │ ← scanner engine (library)
-                    │  584 patterns,  │
+                    │  586 patterns,  │
                     │ 73 validators   │
                     └────────┬────────┘
     ┌─────────────┬──────────┼──────────┬──────────────┐
@@ -641,7 +641,7 @@ See [docs/enterprise/security.md](docs/enterprise/security.md) for full details.
 | [docs/getting-started/quickstart.md](docs/getting-started/quickstart.md) | Quick start guide with CLI and Rust API examples |
 | [docs/getting-started/configuration.md](docs/getting-started/configuration.md) | Full configuration reference (config file, env vars, CLI, policies) |
 | [docs/getting-started/installation.md](docs/getting-started/installation.md) | Build from source, Docker, feature flags |
-| [docs/PATTERNS.md](docs/PATTERNS.md) | All 584 patterns with regex, specificity, and context flags |
+| [docs/PATTERNS.md](docs/PATTERNS.md) | All 586 patterns with regex, specificity, and context flags |
 | [docs/KEYWORDS.md](docs/KEYWORDS.md) | All 5,000+ context keywords (6 languages) with proximity distances |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Performance analysis and optimization journey |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Version history |

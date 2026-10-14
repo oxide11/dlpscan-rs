@@ -6,6 +6,32 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-14 — WKN and Reuters RIC rules
+
+### siphon-core 2.10.0
+
+Two capital-markets identifiers in the evadex northam tier had no rule, so
+every one of their variants counted as a miss.
+
+- feat(core): `WKN` (German Wertpapierkennnummer). Six characters from
+  digits and capitals without I or O (`865985`, `A1EWWW`). It has no check
+  digit, so it is context-gated on `wkn` / `wertpapierkennnummer`, and the
+  validator requires a digit, so `WKN BUDGET approved.` stays quiet.
+  Specificity 0.40.
+- feat(core): `Reuters RIC`. The symbol, an optional share-class letter, a
+  dot and the exchange suffix (`AAPL.O`, `RY.TO`, `0005.HK`, `BRKb.N`).
+  - Context-gated on `ric`, `reuters instrument code`, `refinitiv` and
+    `eikon`.
+  - `is_plausible_ric` requires the suffix to be a known exchange code and
+    the symbol to hold a letter, or four or more digits.
+  - `9.AM` and `A.B` beside "RIC" stay quiet.
+  - Specificity 0.40.
+- All 32 evadex WKN and RIC template sentences with a keyword now detect. The
+  4 that name no identifier (`Quote: AAPL.O last 148.50…`) are left as misses
+  on purpose: making "quote" a keyword would gate on ordinary prose.
+- 586 patterns (was 584). The validator count stays at 73 checksum
+  validators: these two are plausibility gates, not checksums.
+
 ## 2026-10-14 — CUSIP keywords
 
 ### siphon-core 2.9.8
