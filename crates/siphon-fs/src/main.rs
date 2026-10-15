@@ -32,10 +32,11 @@ use sha2::{Digest, Sha256};
 use siphon::rbac::{role_has_permission, Permission, Role};
 use siphon_core::audit::iso8601_now;
 use siphon_core::findings_ring::{filter_findings, severity_for, FindingRecord, FindingsRing};
+use siphon_core::inspection::{Inspection, Unread};
 use siphon_core::overrides::{
     CompiledList, PatternOverride, PatternOverrides, Regex, RuntimePattern,
 };
-use siphon_core::scanner::{scan_text_with_config, ScanConfig};
+use siphon_core::scanner::{scan_text_inspected, scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -353,9 +354,18 @@ struct ScanResponse {
     parsed_as: String,
     warnings: Vec<String>,
     findings: Vec<ScanFinding>,
-    /// False when extraction failed or extracted text exceeded MAX_INPUT_SIZE;
-    /// in those cases `findings: []` is a coverage gap, not a clean result.
+    /// `inspection.is_complete()`, kept for callers that read the bool.
+    /// False whenever `findings` covers less than the whole upload —
+    /// extraction failed, text exceeded MAX_INPUT_SIZE, an extractor left
+    /// part of the file unread, or a match cap stopped the scanner — so
+    /// `findings: []` beside `scanned: false` is a coverage gap, not a
+    /// clean result.
     scanned: bool,
+    /// What `findings` covers: `{"status": "complete"}` or
+    /// `{"status": "incomplete", "unread": [...]}` with one typed reason per
+    /// unit of content that was not read. `warnings` carries the same
+    /// reasons as text for one release; read this field.
+    inspection: Inspection,
     /// Per-stage trace events — present only when the caller sent
     /// `options={"trace":true}` as a multipart field. Mirrors the shape
     /// siphon-api's /scan returns so the admin console's trace
@@ -613,6 +623,10 @@ async fn scan(
                 warnings: vec![],
                 findings: vec![],
                 scanned: false,
+                inspection: Inspection::new().with_unread(Unread::ReadError {
+                    unit: "file".to_string(),
+                    detail: e.clone(),
+                }),
                 trace: None,
                 error: Some(format!("extraction failed: {e}")),
                 error_code: if is_password {
@@ -649,6 +663,10 @@ async fn scan(
         } else {
             state.sensor.record_unscanned();
         }
+        // Read in full with nothing in it is complete; a reader that left
+        // something unread said so in `warnings`, and that makes the (empty)
+        // verdict incomplete rather than clean.
+        let inspection = coverage(&extract.warnings, None);
         let mut warnings = extract.warnings.clone();
         warnings.push("no extractable text in file".to_string());
         return JsonResponse(ScanResponse {
@@ -660,7 +678,8 @@ async fn scan(
             parsed_as: extract.format.clone(),
             warnings,
             findings: vec![],
-            scanned: true,
+            scanned: inspection.is_complete(),
+            inspection,
             trace: None,
             error: None,
             error_code: None,
@@ -708,6 +727,10 @@ async fn scan(
                 warnings,
                 findings: vec![],
                 scanned: false,
+                inspection: coverage(&extract.warnings, None).with_unread(Unread::Oversize {
+                    unit: "text".to_string(),
+                    limit: Some(siphon_core::validation::MAX_INPUT_SIZE as u64),
+                }),
                 trace: None,
                 error: Some(format!(
                     "extracted text is {} bytes, above the scanner limit of {} bytes; \
@@ -765,8 +788,8 @@ async fn scan(
             config.categories = Some(cats.iter().cloned().collect());
         }
     }
-    let matches = match scan_text_with_config(&extract.text, &config) {
-        Ok(m) => m,
+    let (matches, scan_inspection) = match scan_text_inspected(&extract.text, &config) {
+        Ok(o) => (o.matches, o.inspection),
         Err(e) => {
             warn!(request_id = %request_id, error = %e, "scan failed");
             state.sensor.record_error();
@@ -889,6 +912,12 @@ async fn scan(
     // writes to it mid-pipeline, so unlocking here is race-free.
     let trace = trace_sink.and_then(|s| s.lock().ok().map(|g| g.clone()));
 
+    // Extractor warnings and the scanner's own cap report fold into one
+    // answer. A nested archive the extractor did not open and a match cap
+    // that stopped collection both mean the same thing to the caller: the
+    // findings below are not the whole file.
+    let inspection = coverage(&extract.warnings, Some(scan_inspection));
+
     JsonResponse(ScanResponse {
         request_id,
         filename,
@@ -898,7 +927,8 @@ async fn scan(
         parsed_as: extract.format,
         warnings: extract.warnings,
         findings,
-        scanned: true,
+        scanned: inspection.is_complete(),
+        inspection,
         trace,
         error: None,
         error_code: None,
@@ -1942,6 +1972,85 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c   => tracing::info!(signal = "SIGINT",  "shutdown signal received, draining"),
         _ = terminate => tracing::info!(signal = "SIGTERM", "shutdown signal received, draining"),
+    }
+}
+
+/// What a response's `findings` cover, from the extractor's warnings and
+/// the scanner's own report.
+///
+/// Every non-empty extractor warning counts as content not read: the
+/// extractors only warn when they skipped, truncated or could not open
+/// something (see `docs/architecture/inspection-outcome.md` for the table).
+/// Until they report typed reasons the warning text rides along as
+/// `Unread::Other`, which keeps the signal rather than dropping it on the
+/// way to the verdict — the failure that produced the 2026-09-03 and
+/// 2026-10-15 incidents.
+fn coverage(extractor_warnings: &[String], scan: Option<Inspection>) -> Inspection {
+    let mut inspection = Inspection::new();
+    inspection.absorb_warnings(extractor_warnings);
+    if let Some(scan) = scan {
+        inspection.merge(scan);
+    }
+    inspection
+}
+
+#[cfg(test)]
+mod inspection_tests {
+    use super::*;
+
+    #[test]
+    fn clean_extraction_and_whole_scan_is_complete() {
+        let i = coverage(&[], Some(Inspection::Complete));
+        assert!(i.is_complete());
+    }
+
+    #[test]
+    fn extractor_warning_makes_the_verdict_incomplete() {
+        let i = coverage(&["nested archive not scanned: inner.zip".to_string()], None);
+        assert!(!i.is_complete());
+        assert_eq!(i.unread_reasons().len(), 1);
+        assert!(i.describe()[0].contains("inner.zip"));
+    }
+
+    #[test]
+    fn scanner_cap_makes_the_verdict_incomplete() {
+        let scan = Inspection::new().with_unread(Unread::MatchCapReached);
+        let i = coverage(&[], Some(scan));
+        assert_eq!(i.unread_reasons(), &[Unread::MatchCapReached]);
+    }
+
+    #[test]
+    fn warnings_and_cap_both_survive() {
+        let scan = Inspection::new().with_unread(Unread::MatchCapReached);
+        let i = coverage(
+            &["encrypted entry not scanned: a.docx".to_string()],
+            Some(scan),
+        );
+        assert_eq!(i.unread_reasons().len(), 2);
+    }
+
+    #[test]
+    fn response_scanned_tracks_inspection_on_the_wire() {
+        let inspection = coverage(&["x".to_string()], None);
+        let resp = ScanResponse {
+            request_id: "r".into(),
+            filename: None,
+            content_type: None,
+            bytes: 0,
+            duration_ms: 0.0,
+            parsed_as: "zip".into(),
+            warnings: vec!["x".into()],
+            findings: vec![],
+            scanned: inspection.is_complete(),
+            inspection,
+            trace: None,
+            error: None,
+            error_code: None,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["scanned"], false);
+        assert_eq!(json["inspection"]["status"], "incomplete");
+        assert_eq!(json["inspection"]["unread"][0]["kind"], "other");
     }
 }
 
