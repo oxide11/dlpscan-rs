@@ -25,6 +25,9 @@ pub mod context;
 pub mod edm;
 pub mod errors;
 pub mod findings_ring;
+/// What a verdict covers: complete, or incomplete with typed reasons.
+/// See `docs/architecture/inspection-outcome.md`.
+pub mod inspection;
 pub mod lsh;
 /// MIME message decomposition, shared by the `.eml` extractor and the mail
 /// path so both agree on what a message contains.
@@ -42,6 +45,7 @@ pub mod validation;
 pub mod forensics;
 
 pub use errors::DlpError;
+pub use inspection::{Inspection, Unread};
 pub use models::{Match, PatternDef};
 
 /// Crate version as declared in Cargo.toml, baked in at compile time.
