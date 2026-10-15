@@ -398,6 +398,34 @@ pub fn is_valid_iban(iban: &str) -> bool {
 /// SINs are 9 digits (often formatted `123-456-789`) and use the
 /// standard Luhn algorithm. Also rejects the all-zeros sentinel
 /// which Luhn accepts but which is never a real SIN.
+/// Validate the 9-digit root of a Canadian Business Number: Luhn over all
+/// nine digits, the same check a SIN carries. Unlike a SIN, any leading
+/// digit is issued.
+pub fn is_valid_canada_bn_root(bn: &str) -> bool {
+    let digits: Vec<u32> = bn.chars().filter_map(|c| c.to_digit(10)).collect();
+    if digits.len() != 9 || digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(idx, &d)| {
+            if idx % 2 == 1 {
+                let doubled = d * 2;
+                if doubled > 9 {
+                    doubled - 9
+                } else {
+                    doubled
+                }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum.is_multiple_of(10)
+}
+
 pub fn is_valid_canada_sin(sin: &str) -> bool {
     let digits: Vec<u32> = sin
         .chars()
@@ -1583,6 +1611,15 @@ pub fn is_valid_vin(vin: &str) -> bool {
     }
     // Reject all-same-character sentinels.
     if bytes.iter().all(|&b| b == bytes[0]) {
+        return false;
+    }
+    // A VIN carries letters: the manufacturer code and the model-year
+    // position are alphabetic in practice. An all-digit 17-character run
+    // is a filing, account or tracking number that passes the check digit
+    // by chance (1 in 11), and claiming it as a VIN shadowed the rule that
+    // actually described it — `SAR filing number 12345678901234568`
+    // reported a VIN.
+    if !bytes.iter().any(|b| b.is_ascii_alphabetic()) {
         return false;
     }
     let mut sum: u32 = 0;
@@ -4452,6 +4489,11 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         "Email Address" | "EDU Email" => is_valid_email(matched_text),
         "SWIFT/BIC" => is_valid_swift(matched_text),
         "CUSIP" => is_valid_cusip(matched_text),
+        // WKN has no check digit; the regex alphabet already excludes I/O.
+        // A real WKN always carries a digit, which keeps capitalised
+        // six-letter words (`BUDGET`, `REPORT`) out even beside "WKN".
+        "WKN" => matched_text.bytes().any(|b| b.is_ascii_digit()),
+        "Reuters RIC" => is_plausible_ric(matched_text),
         "SEDOL" => is_valid_sedol(matched_text),
         "Australia TFN" => is_valid_australia_tfn(matched_text),
         // IBAN — ISO 13616 mod-97 check. Before wiring this, every
@@ -4464,6 +4506,7 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         // 9-digit sequence near a SIN keyword was flagged as a SIN,
         // including obvious sentinels like 000-000-000.
         "Canada SIN" => is_valid_canada_sin(matched_text),
+        "Canada BN Root" => is_valid_canada_bn_root(matched_text),
         // ISIN — modified Luhn on the alphanumeric expansion of
         // positions 1-11 against the digit check at position 12.
         // This closes a nasty category of RAMQ / random-alphanum
@@ -4723,6 +4766,101 @@ pub fn validate_match(category: &str, sub_category: &str, matched_text: &str) ->
         "IMEI" => is_luhn_valid(matched_text),
         _ => true, // No validator — accept
     }
+}
+
+/// Plausibility gate for a Reuters Instrument Code (`AAPL.O`, `0005.HK`).
+///
+/// The suffix after the dot names the exchange, and only a few dozen are in
+/// use, so it must be one of them: `9.AM` and `A.B` have the RIC shape and
+/// name no exchange. The symbol needs a letter, or four or more digits for
+/// the numeric codes Asian exchanges use (`0005.HK`, `7203.T`).
+pub fn is_plausible_ric(ric: &str) -> bool {
+    const EXCHANGES: &[&str] = &[
+        "O", "OQ", "N", "A", "K", "P", "PK", "L", "TO", "V", "CN", "HK", "T", "OS", "PA", "DE",
+        "F", "AS", "BR", "MI", "MC", "SW", "S", "AX", "NZ", "SI", "KS", "KQ", "SS", "SZ", "BO",
+        "NS", "TW", "J", "SA", "MX", "CO", "ST", "HE", "OL", "IR", "LS", "VI", "WA",
+    ];
+    let Some((symbol, exchange)) = ric.rsplit_once('.') else {
+        return false;
+    };
+    let digits = symbol.bytes().filter(u8::is_ascii_digit).count();
+    EXCHANGES.contains(&exchange)
+        && (symbol.bytes().any(|b| b.is_ascii_alphabetic()) || digits >= 4)
+}
+
+/// Whether `validate_match` checks a real check digit (or checksum) for this
+/// sub-category, as opposed to a structural or plausibility filter.
+///
+/// The alt-decoding pass uses this to decide which context-gated patterns
+/// may match a *recovered* value — one the scanner reconstructed by stripping
+/// padding or noise, or by decoding part of a token. Recovery manufactures
+/// candidates that never appeared verbatim, so it is only safe where a wrong
+/// candidate is rejected by arithmetic rather than by shape: a structural gate
+/// such as an SSN area-number rule accepts most reconstructed 9-digit runs.
+/// Credit cards are not listed; their category is Luhn-checked as a whole.
+pub fn has_check_digit(sub_category: &str) -> bool {
+    matches!(
+        sub_category,
+        "CUSIP"
+            | "SEDOL"
+            | "Australia TFN"
+            | "IBAN Generic"
+            | "Canada SIN"
+            | "Canada BN Root"
+            | "ISIN"
+            | "DEA Number"
+            | "ICCID"
+            | "LEI"
+            | "Australia Medicare"
+            | "South Africa ID"
+            | "MERS MIN"
+            | "Universal Loan Identifier"
+            | "VIN"
+            | "Germany Tax ID"
+            | "Poland PESEL"
+            | "Belgium NRN"
+            | "ABA Routing Number"
+            | "USA Routing Number"
+            | "Brazil CPF"
+            | "India Aadhaar"
+            | "Japan My Number"
+            | "Italy Codice Fiscale"
+            | "Italy SSN"
+            | "Spain DNI"
+            | "Israel Teudat Zehut"
+            | "British NHS"
+            | "Brazil CNPJ"
+            | "China Resident ID"
+            | "South Korea RRN"
+            | "France NIR"
+            | "Mexico CURP"
+            | "Sweden PIN"
+            | "Argentina CUIL/CUIT"
+            | "Singapore NRIC"
+            | "Singapore FIN"
+            | "Hong Kong ID"
+            | "US NPI"
+            | "UAE Emirates ID"
+            | "Netherlands BSN"
+            | "Chile RUN/RUT"
+            | "PAN"
+            | "IMEI"
+    )
+}
+
+/// Whether the check is two ISO 7064 MOD 97-10 digits, which a wrong value
+/// passes about once in 97 tries rather than once in ten.
+///
+/// A single Luhn-style digit is too weak to vouch for a candidate the scanner
+/// manufactured itself — trimming a run of zeros one at a time offers a dozen
+/// candidates, and one in ten passes. Two mod-97 digits are strong enough that
+/// the alt pass lets these patterns match a recovered value with no keyword,
+/// exactly as the primary pass does for the value written plainly.
+pub fn has_mod97_check(sub_category: &str) -> bool {
+    matches!(
+        sub_category,
+        "IBAN Generic" | "LEI" | "Universal Loan Identifier"
+    )
 }
 
 /// Get BIN metadata for a credit card number (if bin-data feature is enabled).
@@ -6165,6 +6303,17 @@ mod tests {
     }
 
     #[test]
+    fn test_canada_bn_root() {
+        assert!(is_valid_canada_bn_root("123456782"));
+        assert!(is_valid_canada_bn_root("123 456 782"));
+        // Check digit off by one.
+        assert!(!is_valid_canada_bn_root("123456783"));
+        assert!(!is_valid_canada_bn_root("111222333"));
+        assert!(!is_valid_canada_bn_root("000000000"));
+        assert!(!is_valid_canada_bn_root("12345678"));
+    }
+
+    #[test]
     fn test_vin_valid() {
         // Hand-verified Honda Civic VIN. Position 8 = '3'.
         // Weighted sum = 311; 311 mod 11 = 3.
@@ -6181,6 +6330,8 @@ mod tests {
         assert!(!is_valid_vin("1HGCM82643A004352"));
         // Bumped a non-check digit (changes the sum, breaks the check).
         assert!(!is_valid_vin("1HGCM82633B004352"));
+        // All digits, check digit valid by chance: a filing number, not a VIN.
+        assert!(!is_valid_vin("12345678901234568"));
         // Contains a forbidden character (I, O, or Q).
         assert!(!is_valid_vin("1HGCM82633A004352I"));
         assert!(!is_valid_vin("1HGCM8I633A004352"));

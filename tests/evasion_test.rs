@@ -512,3 +512,210 @@ fn test_corrupted_zip_raw_byte_recovery() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// 5. Zero-padding evasion (Luhn / length-bound bypass)
+// ---------------------------------------------------------------------------
+
+/// A valid Visa test number padded with zeros. Leading zeros push the run past
+/// the `\b`-anchored / PAN length bounds; a trailing zero shifts every digit's
+/// Luhn parity. The zero-padding recovery in the second-pass alt decodings must
+/// strip the padding and re-validate the recovered card.
+#[test]
+fn test_zero_padding_recovers_card() {
+    let cc = "4532015112830366"; // Luhn-valid Visa
+    let cases = [
+        ("left_pad_zeros", format!("0000{cc}")),
+        ("right_pad_zeros", format!("{cc}0000")),
+        ("both_pad", format!("000{cc}000")),
+        ("trailing_single_zero", format!("{cc}0")),
+    ];
+    for (name, text) in cases {
+        let matches = siphon::scan_text(&text).unwrap();
+        assert!(
+            matches.iter().any(|m| m.category == "Credit Card Numbers"),
+            "{name}: zero-padded card should be recovered, got {:?}",
+            matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+        );
+    }
+}
+
+/// A base64-encoded card embedded in a URL path. Stage 4c's token splitter
+/// merges the blob with adjacent path words (`/` is a base64 symbol) and the
+/// dot guard suppresses it, so recovery relies on the delimited-segment decoder
+/// in the alt pass sliding past the glued prefix.
+#[test]
+fn test_base64_card_in_url_path() {
+    // base64("4532015112830366") == "NDUzMjAxNTExMjgzMDM2Ng=="
+    let b64 = "NDUzMjAxNTExMjgzMDM2Ng==";
+    let text = format!("https://example.com/data/{b64}/view");
+    let matches = siphon::scan_text(&text).unwrap();
+    assert!(
+        matches.iter().any(|m| m.category == "Credit Card Numbers"),
+        "base64 card in URL path should be recovered, got {:?}",
+        matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+    );
+}
+
+/// Nested (double / triple) base64 chains must still resolve to the card.
+#[test]
+fn test_nested_base64_chain_recovers_card() {
+    // b64(b64("4532015112830366")) and one more layer.
+    let double = "TkRVek1qQXhOVEV4TWpnek1ETTJOZz09";
+    let matches = siphon::scan_text(double).unwrap();
+    assert!(
+        matches.iter().any(|m| m.category == "Credit Card Numbers"),
+        "double-base64 card should be recovered, got {:?}",
+        matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+    );
+}
+
+/// Sparse letter noise interleaved between the digits of a card. The consistent-
+/// separator stages don't strip single-letter noise, so recovery relies on the
+/// sparse-noise stripper in the alt pass.
+#[test]
+fn test_sparse_noise_embedded_recovers_card() {
+    // "4532015112830366" with isolated letters sprinkled between digit groups.
+    let text = "b45a32e01d51d12c830366";
+    let matches = siphon::scan_text(text).unwrap();
+    assert!(
+        matches.iter().any(|m| m.category == "Credit Card Numbers"),
+        "noise-embedded card should be recovered, got {:?}",
+        matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+    );
+}
+
+/// Guard: an ordinary alphanumeric identifier (interleaved but a real token, not
+/// a Luhn-valid card) must NOT be turned into a spurious card finding.
+#[test]
+fn test_sparse_noise_no_false_positive() {
+    // Not Luhn-valid; the alt pass must reject it after stripping.
+    let text = "a12b34c56d78e90f12g34";
+    let matches = siphon::scan_text(text).unwrap();
+    assert!(
+        !matches.iter().any(|m| m.category == "Credit Card Numbers"),
+        "non-card interleaved token must not become a card finding, got {:?}",
+        matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+    );
+}
+
+fn card_found(text: &str) -> bool {
+    siphon::scan_text(text)
+        .unwrap()
+        .iter()
+        .any(|m| m.category == "Credit Card Numbers")
+}
+
+/// A card padded with letters, or glued to an identifier, has no `\b` between
+/// its digits and the letters. The alt pass isolates the digit block.
+#[test]
+fn test_letter_bounded_card_recovered() {
+    for text in [
+        "XXXXXXXXXX4532015112830366XXXXXXXXXX",
+        "test_value_4532015112830366",
+        "card number XXXXXXXXXX5105105105105100XXXXXXXXXX.",
+    ] {
+        assert!(card_found(text), "letter-bounded card missed: {text:?}");
+    }
+}
+
+/// A card split across indexed fields of one JSON record is rejoined.
+#[test]
+fn test_indexed_split_fields_rejoined() {
+    for text in [
+        r#"{"part1": "45320151", "part2": "12830366"}"#,
+        r#"{"cc_1": "4532", "cc_2": "0151", "cc_3": "1283", "cc_4": "0366"}"#,
+        r#"Card number {"part1": "51051051", "part2": "05105100"}."#,
+    ] {
+        assert!(card_found(text), "split-field card missed: {text:?}");
+    }
+}
+
+/// Guard: unrelated numeric fields are never joined, and a letter-glued digit
+/// block that is not Luhn-valid stays quiet.
+#[test]
+fn test_split_and_glued_no_false_positive() {
+    for text in [
+        // different stems — zip + phone concatenate to a Luhn-valid Visa
+        r#"{"zip": "453201", "phone": "5112830366"}"#,
+        // same stem but not consecutive indices
+        r#"{"part1": "45320151", "part3": "12830366"}"#,
+        // glued, card-length, Luhn-invalid
+        "SKU4532015112830367X",
+    ] {
+        assert!(!card_found(text), "spurious card from {text:?}");
+    }
+}
+
+/// An encoded card that ends a sentence keeps the sentence's full stop glued
+/// to it. Base64, digit morse and hex dumps must all still decode.
+#[test]
+fn test_encoded_card_before_full_stop() {
+    for text in [
+        "The card number is NDUzMjAxNTExMjgzMDM2Ng==.",
+        "card number ....-/...../...--/..---/-----/.----/...../.----/.----/..---/---../...--/-----/...--/-..../-.....",
+        "card number ....-\n.....\n...--\n..---\n-----\n.----\n.....\n.----\n.----\n..---\n---..\n...--\n-----\n...--\n-....\n-.....",
+        "with card number 34 35 33 32 30 31 35 31 31 32 38 33 30 33 36 36.",
+    ] {
+        assert!(card_found(text), "card before full stop missed: {text:?}");
+    }
+}
+
+/// Guard: a dotted base64 structure is still left alone, so a JWT at the end
+/// of a sentence is reported as a JWT.
+#[test]
+fn test_jwt_before_full_stop_still_a_jwt() {
+    let text = "token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c.";
+    let matches = siphon::scan_text(text).unwrap();
+    assert!(
+        matches.iter().any(|m| m.sub_category == "JWT Token"),
+        "JWT missed: {:?}",
+        matches.iter().map(|m| &m.sub_category).collect::<Vec<_>>()
+    );
+}
+
+/// Digit look-alikes that resemble nothing but a digit (`Ƨ Ʒ Ƽ Ȣ б`), with
+/// almost every digit substituted, a plaintext prefix + base64 tail, and an
+/// ASCII record separator between the halves.
+#[test]
+fn test_substituted_partial_and_separator_cards() {
+    for text in [
+        "4ƼƷƧΟІƼІІƧȢƷΟƷбб",
+        "Please charge card number Ʒ7ȢƧȢƧƧ4бƷІΟΟΟƼ for the amount due.",
+        "45320151MTI4MzAzNjY=",
+        "card number 3782822NDYzMTAwMDU=.",
+        "45320151\u{1e}12830366",
+        "card number 51051051\u{1e}05105100.",
+        // mostly-1 Discover: one strong look-alike; low-variety base64 tail
+        "бΟІІІІІІІІІІІІІ7",
+        "60111111MTExMTExMTc=",
+    ] {
+        assert!(card_found(text), "card missed: {text:?}");
+    }
+}
+
+/// Guards: Cyrillic prose (which uses `б` and `о` constantly) and a
+/// digit-prefixed token whose tail does not decode to digits.
+#[test]
+fn test_substitution_guards_no_false_positive() {
+    for text in [
+        "Обоснование бюджета: обработка заявок об оплате будет завершена в 2026 году.",
+        "build 20261013dGVzdGluZw== passed",
+    ] {
+        assert!(!card_found(text), "spurious card from {text:?}");
+    }
+}
+
+/// Prose right after an encoded card: a hex dump followed by a word must not
+/// glue the decoded value to it, and an em dash after morse (which folds to
+/// `-` and loses its space) must not corrupt the last code.
+#[test]
+fn test_encoded_card_followed_by_prose() {
+    for text in [
+        "Recurring payment scheduled for card 36 32 35 30 39 34 31 30 30 36 35 32 38 35 39 39 on the 1st of each month.",
+        "Card on file: ..... .---- ----- ..... .---- ----- ..... .---- ----- ..... .---- ----- ..... .---- ----- ----- — authorised for recurring monthly billing.",
+        "Card on file: ...--/-----/...../-..../----./...--/-----/----./-----/..---/...../----./-----/....- — authorised for recurring monthly billing.",
+    ] {
+        assert!(card_found(text), "card missed: {text:?}");
+    }
+}
