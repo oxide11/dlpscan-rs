@@ -5,8 +5,8 @@
 //! primary scan entry points. No file I/O or format-specific
 //! dependencies — operates on `&str` input.
 //!
-//! Ingestion pods (siphon-fs, siphon-api, siphon-ds, siphon-gw)
-//! depend on this crate for detection logic.
+//! Ingestion services (siphon-fs, siphon-api, siphon-icap, siphon-smtp)
+//! and the CLI depend on this crate for detection logic.
 
 // Rust 1.98's clippy added `chunks_exact_to_as_chunks`, which suggests
 // rewriting `chunks_exact(N)` as `as_chunks::<N>().0`. We keep

@@ -1,6 +1,6 @@
 //! All DLP regex patterns, ported from the Python dlpscan codebase.
 //!
-//! Contains 568 pattern definitions covering credit cards, banking, PII,
+//! Contains 586 pattern definitions covering credit cards, banking, PII,
 //! secrets, cryptocurrency, classification labels, cloud providers, code
 //! platforms, payment services, messaging services, and regional identifiers
 //! for North America, Europe, Asia-Pacific, Latin America, Middle East, and

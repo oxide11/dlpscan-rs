@@ -18,7 +18,7 @@ detection-quality harnesses, with a CI-enforced labeled-corpus regression suite
 
 ### Highlights
 
-- **Evasion defense**: 10-stage normalization pipeline defeats percent-encoding,
+- **Evasion defense**: 15-step normalization pipeline defeats percent-encoding,
   HTML entities, zero-width injection, homoglyphs, and NFKC-variant attacks.
   Token-level **base64, base64url, base32, and hex decode** with nested-decode
   support (up to 3 layers) catches obfuscated sensitive data inline.
@@ -456,6 +456,10 @@ for the full pod inventory and deployment topology.
 | `siphon-api`  | HTTP service for text scanning. `/scan` + `/v1/*` surface (patterns, policies, metrics, audit, findings, overrides, capabilities, pipeline stages). |
 | `siphon-fs`   | HTTP service for file uploads. `/scan` accepts multipart `file` + JSON `options`; dispatches through the extractor registry into the core scanner. |
 | `siphon-launcher` | Local-dev process manager. Spawns siphon-api / siphon-fs from a terminal, inherits stdio, reaps + tombstones dead children. k8s users don't need it. |
+| `siphon-icap` | RFC 3507 ICAP server (port 1344) for proxy-based network DLP. |
+| `siphon-smtp` | Sendmail/Postfix milter (port 8894) for SMTP DLP; was `siphon-milter`, old `SIPHON_MILTER_*` variables still work with a warning. |
+| `siphon-mail` | Library: message/part schema, persistence and verdict reconciliation shared by siphon-smtp (writes) and siphon-api (reads). |
+| `siphon-auth` | Library: service identity. One Postgres connector (`DbTls`), one listener builder (`ServerTls`, optional mTLS), API-key store, sensor telemetry. |
 | `siphon` (this crate) | CLI + extractors + libraries shared by all the pods. |
 
 The **analyst console** lives in [`console/`](console/) — a Vite +

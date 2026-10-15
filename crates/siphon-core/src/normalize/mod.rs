@@ -2423,17 +2423,26 @@ fn apply_rot13(input: &str, in_offsets: &[Offset]) -> Option<(String, OffsetMap)
 
 /// Full normalization pipeline with accurate byte-level offset tracking.
 ///
-/// Pipeline:
-///   1. URL percent-decode (double-decode for %25XX)
-///   2. HTML decimal entity decode (&#NNN;)
-///   3. Strip empty CSS/HTML comments
-///   4. Collapse whitespace padding between non-alpha chars
-///   5. Normalize excessive delimiters
-///   6. Decode hex-spaced byte sequences
-///   7. Strip zero-width Unicode characters
-///   8. Normalize exotic Unicode whitespace
-///   9. NFKC normalization
-///  10. Homoglyph map (Cyrillic/Greek → ASCII)
+/// Pipeline, in the order the stages run below. The "Stage N" comments in
+/// the body are the source of truth; keep this list in step with them.
+///
+/// ```text
+///  1   URL percent-decode (double-decode for %25XX)
+///  2   HTML decimal entity decode (&#NNN;)
+///  3   Strip empty CSS/HTML comments
+///  4   Decode hex-spaced byte sequences
+///  4b  Decode \xHH hex-escape sequences
+///  4c  Token-level base64 / base64url / base32 / hex decode (nested <= 3)
+///  5   Collapse whitespace padding between non-alpha chars
+///  6   Normalize excessive delimiters
+///  6b  Strip delimiters between alphanumeric neighbours
+///  6c  Strip a consistent separator repeated between digit groups
+///  7   Strip zero-width Unicode characters
+///  8   Normalize exotic Unicode whitespace
+///  9   NFKC normalization
+/// 10   Homoglyph map (Cyrillic/Greek -> ASCII) with a Unicode Nd digit fallback
+/// 11   Fold digit-confusable letters inside long digit runs
+/// ```
 ///
 /// The returned offset_map maps each byte index in the normalized output back
 /// to the corresponding byte index in the original input. Empty offset_map
