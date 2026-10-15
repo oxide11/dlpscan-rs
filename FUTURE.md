@@ -686,10 +686,14 @@ the premise before building on it.
 
 ### Vectorscan for the matching stage
 
-The clearest unexplored speed lever. The current design — `RegexSet` phase 1 to
-find *which* patterns fire, then per-pattern phase 2 to extract spans — is a
-hand-rolled approximation of what Intel's Hyperscan/Vectorscan does natively in
-a single SIMD pass, including span extraction. It is what Suricata and most
+The clearest unexplored speed lever. The current design runs every pattern
+that survives the Aho-Corasick keyword prefilter as its own `Regex`, in
+parallel under rayon. (Earlier drafts of this section described a `RegexSet`
+phase 1 followed by per-pattern span extraction; no such phase ever existed,
+and when one was measured it cost ~3.5 ms per document against a ~0.47 ms
+scan — see the header of `crates/siphon-core/src/scanner/mod.rs`.) What
+Vectorscan offers is the multi-pattern pass done natively in a single SIMD
+sweep, including span extraction, instead of N independent automata. It is what Suricata and most
 commercial DPI engines use, and Rust bindings exist (`vectorscan-rs`).
 
 Plausibly several times faster on the matching stage. Two caveats: it adds a
