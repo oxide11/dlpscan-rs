@@ -90,12 +90,14 @@ COPY benches/    benches/
 COPY README.md ./
 COPY docs/      docs/
 
-RUN touch crates/siphon-core/src/lib.rs \
-          crates/siphon-api/src/main.rs \
-          crates/siphon-fs/src/main.rs \
-          crates/siphon-launcher/src/main.rs \
-          src/main.rs \
-          src/lib.rs \
+# Touch EVERY workspace source file, not a hand-kept list of entry
+# points. The list used to name six files and omit siphon-auth and
+# siphon-mail; when siphon-auth grew `keys` and `telemetry` modules
+# (2026-09-08) cargo kept the stub rlib from Stage 1a as "fresh" and
+# every release build since failed with `unresolved import
+# siphon_auth::keys`. A crate added to the workspace tomorrow is
+# covered by the find; it would not have been covered by the list.
+RUN find src crates benches -name '*.rs' -exec touch {} + \
  && cargo build --release -p siphon-api --features k8s-roll --locked
 
 # ── Stage 2: runtime image.
