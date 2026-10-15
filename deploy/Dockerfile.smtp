@@ -9,7 +9,7 @@
 # siphon-mail and siphon-smtp broke both of those files, and this one
 # cannot drift the same way. Dockerfile.fs already takes this approach.
 
-FROM rust:1.98-bookworm AS builder
+FROM rust:1.99-bookworm AS builder
 
 # Optional cargo parallelism cap, matching Dockerfile.fs: this crate pulls
 # the root siphon crate for its extractors, so rav1e / arrow / parquet

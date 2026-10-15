@@ -2,7 +2,7 @@
 #
 # Two-pass build to maximise cargo's layer cache.
 
-FROM rust:1.98-bookworm AS builder
+FROM rust:1.99-bookworm AS builder
 
 ARG CARGO_BUILD_JOBS=4
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
