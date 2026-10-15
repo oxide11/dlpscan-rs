@@ -9,7 +9,7 @@
   checksum-validated matches behind an evasion-resistant normalizer.
 </p>
 
-**586 patterns** across **128 categories**. **66 checksum validators** for
+**586 patterns** across **128 categories**. **73 checksum validators** for
 national IDs, financial identifiers, and crypto addresses. **5,000+ context
 keywords** across English, French, Spanish, German, Italian, and Portuguese.
 **680+ tests** passing across the lib, integration, evasion, forensics, and
