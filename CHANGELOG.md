@@ -6,6 +6,36 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-15 — Inspection: what a verdict covers
+
+### siphon-core 2.11.0
+
+Twelve fixes since 2026-09-03 addressed one bug: an ingress reporting
+"clean" for content it never read, each with a different mechanism (a
+warning string, a metadata key, a bool, an `AtomicBool` sink, two per-crate
+enums, an exit code that ignores all of them). This release lifts the rule
+`siphon-mail` already applies — a verdict is complete only when every unit
+of content was read and matched; no units is incomplete, not clean — into
+the crate every ingress depends on. Consumers follow in their own releases;
+the order is in `docs/architecture/inspection-outcome.md`.
+
+- feat(core): `siphon_core::inspection::{Inspection, Unread}`. `Complete`,
+  or `Incomplete { unread }` with typed reasons: `Oversize`, `Truncated`,
+  `Encrypted`, `NestedArchive`, `Unsupported`, `ReadError`,
+  `FormatMismatch`, `MatchCapReached`, and `Other` for producers still on
+  warning strings. It cannot be `Complete` while carrying reasons and cannot
+  return to `Complete` once `Incomplete`; `absorb_warnings` keeps every
+  non-empty string. Serialises as `{"status": "complete"}` or
+  `{"status": "incomplete", "unread": [{"kind": ...}]}`.
+- feat(core): `scan_text_inspected(text, &ScanConfig) -> ScanOutcome {
+  matches, inspection }`. Installs its own truncation sink, threads it
+  through every cap site (per-pattern, total, entropy, EDM, LSH, runtime
+  patterns) and reports `MatchCapReached` when any fired. A sink the caller
+  installed is set alongside. `scan_text_with_config` is unchanged in
+  behaviour.
+- Not a verdict and not a policy: deliver, defer, block and exit codes stay
+  with each ingress.
+
 ## 2026-10-14 — WKN and Reuters RIC rules
 
 ### siphon-core 2.10.0
