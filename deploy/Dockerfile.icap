@@ -51,10 +51,10 @@ COPY benches/ benches/
 COPY README.md ./
 COPY docs/    docs/
 
-RUN touch crates/siphon-core/src/lib.rs \
-          crates/siphon-icap/src/main.rs \
-          src/main.rs \
-          src/lib.rs \
+# Touch every workspace source file so no stub from Stage 1a survives
+# as a "fresh" rlib — see deploy/Dockerfile.api for the siphon-auth
+# incident that a hand-kept list caused.
+RUN find src crates benches -name '*.rs' -exec touch {} + \
  && cargo build --release -p siphon-icap --locked
 
 # ── Stage 2: runtime image.

@@ -1,19 +1,26 @@
 # API Reference
 
+This is the **Rust library** surface: the root crate's package is `siphon-cli`
+but its library target is `siphon`, so `use siphon::...` (the examples below
+were written as `dlpscan::` and have been renamed). The **HTTP** surface of
+`siphon-api` and `siphon-fs` is listed under "siphon-api routes" and
+"siphon-fs routes" in `CLAUDE.md`; `docs/enterprise/api.md` describes the
+older server embedded in the CLI, not `siphon-api`.
+
 ## Core Scanning
 
 | Function | Description |
 |----------|-------------|
-| `dlpscan::scan_text(text)` | Scan text for sensitive data, returns `Result<Vec<Match>>` |
-| `dlpscan::scanner::scan_text_with_config(text, config)` | Scan with custom configuration |
-| `dlpscan::is_luhn_valid(number)` | Validate credit card checksum |
+| `siphon::scan_text(text)` | Scan text for sensitive data, returns `Result<Vec<Match>>` |
+| `siphon::scanner::scan_text_with_config(text, config)` | Scan with custom configuration |
+| `siphon::is_luhn_valid(number)` | Validate credit card checksum |
 
 ## InputGuard
 
 Builder-style API for configuring scan behavior:
 
 ```rust
-use dlpscan::{InputGuard, Action, Preset};
+use siphon::{InputGuard, Action, Preset};
 
 let guard = InputGuard::new()
     .with_action(Action::Redact)
@@ -39,7 +46,7 @@ let result = guard.scan("Card: 4111111111111111");
 Scan large or streaming inputs with configurable buffer and overlap:
 
 ```rust
-use dlpscan::StreamScanner;
+use siphon::StreamScanner;
 
 let scanner = StreamScanner::new(8192, 256); // buffer_size, overlap
 ```
@@ -49,7 +56,7 @@ let scanner = StreamScanner::new(8192, 256); // buffer_size, overlap
 File scanning pipeline:
 
 ```rust
-use dlpscan::Pipeline;
+use siphon::Pipeline;
 
 let pipeline = Pipeline::new();
 ```
@@ -59,7 +66,7 @@ let pipeline = Pipeline::new();
 Generate compliance reports:
 
 ```rust
-use dlpscan::ComplianceReporter;
+use siphon::ComplianceReporter;
 
 let reporter = ComplianceReporter::new("PCI-DSS Audit Report");
 ```
@@ -69,8 +76,8 @@ let reporter = ComplianceReporter::new("PCI-DSS Audit Report");
 Batch scanning for CSV, JSON, and JSONL files:
 
 ```rust
-use dlpscan::batch::BatchScanner;
-use dlpscan::InputGuard;
+use siphon::batch::BatchScanner;
+use siphon::InputGuard;
 
 let guard = InputGuard::new();
 let scanner = BatchScanner::new(guard);
@@ -90,7 +97,7 @@ let scanner = BatchScanner::new(guard);
 Reversible tokenization with HMAC-SHA256:
 
 ```rust
-use dlpscan::guard::TokenVault;
+use siphon::guard::TokenVault;
 
 let vault = TokenVault::new("TOK_", "my-secret");
 ```
@@ -100,7 +107,7 @@ let vault = TokenVault::new("TOK_", "my-secret");
 Role-based access control with server-side role resolution:
 
 ```rust
-use dlpscan::rbac::{Role, Permission, role_has_permission, resolve_role};
+use siphon::rbac::{Role, Permission, role_has_permission, resolve_role};
 
 // Server-side role resolution from API key mapping
 let key_roles = std::collections::HashMap::from([
@@ -122,7 +129,7 @@ assert!(role_has_permission(role, Permission::ManagePatterns));
 Shared HTTP, SSRF, and timestamp utilities:
 
 ```rust
-use dlpscan::http_util::{is_safe_url, is_private_ip, sanitize_url, iso8601_now};
+use siphon::http_util::{is_safe_url, is_private_ip, sanitize_url, iso8601_now};
 
 assert!(is_safe_url("https://api.example.com/webhook"));
 assert!(!is_safe_url("http://127.0.0.1/internal"));
@@ -142,10 +149,10 @@ assert!(!is_safe_url("http://127.0.0.1/internal"));
 
 | Module | Key Items |
 |--------|-----------|
-| `dlpscan::batch` | `BatchScanner` |
-| `dlpscan::siem` | `SplunkHECAdapter`, `ElasticsearchAdapter`, `SyslogAdapter`, `WebhookSIEMAdapter`, `DatadogAdapter` |
-| `dlpscan::compliance` | `ComplianceReporter` |
-| `dlpscan::metrics` | Prometheus metrics (auto-recorded by API) |
-| `dlpscan::rbac` | `Role`, `Permission`, `role_has_permission`, `resolve_role` |
-| `dlpscan::http_util` | `ParsedUrl`, `is_safe_url`, `is_private_ip`, `safe_http_post`, `sanitize_url` |
-| `dlpscan::guard` | `TokenVault` |
+| `siphon::batch` | `BatchScanner` |
+| `siphon::siem` | `SplunkHECAdapter`, `ElasticsearchAdapter`, `SyslogAdapter`, `WebhookSIEMAdapter`, `DatadogAdapter` |
+| `siphon::compliance` | `ComplianceReporter` |
+| `siphon::metrics` | Prometheus metrics (auto-recorded by API) |
+| `siphon::rbac` | `Role`, `Permission`, `role_has_permission`, `resolve_role` |
+| `siphon::http_util` | `ParsedUrl`, `is_safe_url`, `is_private_ip`, `safe_http_post`, `sanitize_url` |
+| `siphon::guard` | `TokenVault` |

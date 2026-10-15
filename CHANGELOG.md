@@ -6,6 +6,426 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-15 — Inspection: what a verdict covers
+
+### siphon-core 2.11.0
+
+Twelve fixes since 2026-09-03 addressed one bug: an ingress reporting
+"clean" for content it never read, each with a different mechanism (a
+warning string, a metadata key, a bool, an `AtomicBool` sink, two per-crate
+enums, an exit code that ignores all of them). This release lifts the rule
+`siphon-mail` already applies — a verdict is complete only when every unit
+of content was read and matched; no units is incomplete, not clean — into
+the crate every ingress depends on. Consumers follow in their own releases;
+the order is in `docs/architecture/inspection-outcome.md`.
+
+- feat(core): `siphon_core::inspection::{Inspection, Unread}`. `Complete`,
+  or `Incomplete { unread }` with typed reasons: `Oversize`, `Truncated`,
+  `Encrypted`, `NestedArchive`, `Unsupported`, `ReadError`,
+  `FormatMismatch`, `MatchCapReached`, and `Other` for producers still on
+  warning strings. It cannot be `Complete` while carrying reasons and cannot
+  return to `Complete` once `Incomplete`; `absorb_warnings` keeps every
+  non-empty string. Serialises as `{"status": "complete"}` or
+  `{"status": "incomplete", "unread": [{"kind": ...}]}`.
+- feat(core): `scan_text_inspected(text, &ScanConfig) -> ScanOutcome {
+  matches, inspection }`. Installs its own truncation sink, threads it
+  through every cap site (per-pattern, total, entropy, EDM, LSH, runtime
+  patterns) and reports `MatchCapReached` when any fired. A sink the caller
+  installed is set alongside. `scan_text_with_config` is unchanged in
+  behaviour.
+- Not a verdict and not a policy: deliver, defer, block and exit codes stay
+  with each ingress.
+
+## 2026-10-14 — WKN and Reuters RIC rules
+
+### siphon-core 2.10.0
+
+Two capital-markets identifiers in the evadex northam tier had no rule, so
+every one of their variants counted as a miss.
+
+- feat(core): `WKN` (German Wertpapierkennnummer). Six characters from
+  digits and capitals without I or O (`865985`, `A1EWWW`). It has no check
+  digit, so it is context-gated on `wkn` / `wertpapierkennnummer`, and the
+  validator requires a digit, so `WKN BUDGET approved.` stays quiet.
+  Specificity 0.40.
+- feat(core): `Reuters RIC`. The symbol, an optional share-class letter, a
+  dot and the exchange suffix (`AAPL.O`, `RY.TO`, `0005.HK`, `BRKb.N`).
+  - Context-gated on `ric`, `reuters instrument code`, `refinitiv` and
+    `eikon`.
+  - `is_plausible_ric` requires the suffix to be a known exchange code and
+    the symbol to hold a letter, or four or more digits.
+  - `9.AM` and `A.B` beside "RIC" stay quiet.
+  - Specificity 0.40.
+- All 32 evadex WKN and RIC template sentences with a keyword now detect. The
+  4 that name no identifier (`Quote: AAPL.O last 148.50…`) are left as misses
+  on purpose: making "quote" a keyword would gate on ordinary prose.
+- 586 patterns (was 584). The validator count stays at 73 checksum
+  validators: these two are plausibility gates, not checksums.
+
+## 2026-10-14 — CUSIP keywords
+
+### siphon-core 2.9.8
+
+- fix(core): the CUSIP context list no longer includes eight generic words:
+  `identifier`, `position`, `holding`, `asset`, `portfolio`, `equity`,
+  `instrument` and `settlement`. Each one let any 9-character run in an
+  ordinary sentence through to a 1-in-10 check digit. On the evadex northam
+  baseline, `Your account identifier is 130 692 544` (a SIN) reported a CUSIP
+  at 0.90, as did the same email template around four other 9-digit IDs.
+  Every evadex CUSIP template still names `CUSIP`, and still detects.
+- fix(core): `cins` and `cusip international numbering` are now CUSIP
+  keywords. CINS is the CUSIP numbering for non-North-American issuers,
+  with the same layout and check digit. Before this, `Trade: CINS G0177J108
+  purchased` was detected only when the sentence happened to contain
+  `security identifier` or `settlement`. Keywords of four or more characters
+  match a word's prefix by design, so `cins` also matches inside the rare
+  `cinsault`.
+
+## 2026-10-14 — identifiers in lower case or written with digit look-alikes
+
+### siphon-core 2.9.7
+
+On the evadex northam baseline, `lowercase` and `mixed_case` evaded 156 of
+167 attempts and `homoglyph_substitution` 165 of 188. Identifier patterns
+are written for capitals, and stage 11 folds digit look-alikes (`Ƨ` for 2,
+`б` for 6) only in card-length runs. A SIN, a routing number or one group of
+an SSN never reached the fold.
+
+- fix(core): two more exact recoveries in `normalize/recovery.rs`. Both use
+  the routes from 2.9.6, so a check digit or a keyword beside the value
+  still has to vouch for the result.
+  - `uppercase_mixed_case_tokens`: uppercases each token, hyphenated parts
+    included, that holds both a digit and a lowercase letter. Words with no
+    digit keep their case. Uppercasing those would turn prose into
+    letter-only codes: `declined` beside "SWIFT" reads as a BIC with country
+    code `IN`.
+  - `fold_digit_confusables`: in a token holding a letter that resembles
+    nothing but a digit, folds those letters to digits at any length. It
+    then folds an ambiguous `O`/`I`/`l` only where it touches a digit, so
+    `Ʒ4OOOOI3б` becomes `340000136` while the `O` in an LEI's `MPOU8`
+    stays a letter. The confusable tables are stage 11's own.
+- fix(core): an alt-pass match on a value the primary pass already reported
+  is now handled by rule:
+  - **Same rule:** the alt match is dropped.
+  - **Different rule:** the new finding takes the primary match's text and
+    span. Alt matches span the whole input, so they used to win dedup and
+    rewrite the finding: a lowercase IBAN that only the unvalidated
+    `Germany IBAN` caught came back uppercased once `IBAN Generic`
+    confirmed it on the case-folded alt. It is now reported as `IBAN Generic`
+    at its real span, in its real case.
+- Measured by replaying the baseline's misses: 0/321 → 243/321 for the three
+  techniques. Of the 78 left, 32 are tickers, RICs, WKNs and MiFID
+  references, which have no rule. The 2.9.6 techniques are unchanged at
+  679/915.
+
+## 2026-10-14 — card de-evasion for every check-digit identifier
+
+### siphon-core 2.9.6
+
+The alt-decoding pass recovers values hidden by zero padding, letter padding,
+a base64 tail (`130 6OTIgNTQ0`), rot13 of base64, and a value split across
+JSON fields. Each recovery worked only for cards: the pass ran only
+always-run patterns that need no context keyword, and each recovery was
+bounded to 13–19 digits. A SIN, ABA routing number, ISIN or IBAN hidden the
+same way was recovered and then never matched. On the evadex northam
+baseline, 919 of 1,138 non-card misses fell to these techniques, against 0 of
+48 for cards.
+
+- fix(core): a pattern with a real check digit (`validation::has_check_digit`
+  — Luhn, mod-11, mod-97, Verhoeff and the like; not structural gates such as
+  the SSN area rule) may match on the alt pass when one of its context
+  keywords sits beside the recovered value. This bar is stricter than the
+  primary pass, which accepts either a keyword or a keyword-free rule. The
+  keyword is looked up with a hit index built over the alt text, so the
+  word-boundary rule for short keywords still applies.
+- fix(core): new `normalize::generate_keyword_gated_recoveries` drops the
+  card-length and digits-only limits. It trims zero padding one digit at a
+  time, separates digit blocks and alphanumeric values from letter padding,
+  decodes a base64 tail after any plaintext head, decodes rot13-of-base64
+  per token (rotating the whole text also rotated the keyword), and rejoins
+  `part1`/`part2` fields in place so the keyword before the record survives.
+  These variants reach only the check-digit route. The one exception is
+  IBAN, LEI and ULI (`has_mod97_check`): two mod-97 digits are strong enough
+  that they match a recovered value with no keyword, as the primary pass
+  already does for the plain value.
+- fix(core): rules with no check digit (SSN, provincial health cards,
+  driver's licences, passports) may match an *exact* recovery, provided
+  their keyword sits beside the value. An exact recovery is the one candidate
+  a recovery offers for the value it restored: all the padding stripped, the
+  whole base64 tail decoded, the fields joined. Guesses, such as trimming
+  zeros one at a time, stay with the check-digit route, where arithmetic
+  picks the right guess. Only rules whose keywords occur in the document are
+  tried, and the keyword is required even for a rule the primary pass runs
+  without one. Zero stripping now skips runs under 8 digits (`fe80::1` is
+  not a padded `fe8`) and zeros glued to a letter on their outer side
+  (`N0003062517` is not a padded `N3062517`). A strip counts as exact only
+  when it removes three or more zeros. Both cases were caught by the
+  detection-quality corpus and the conformance `damaged` slot.
+- Measured by replaying the baseline's misses for the six techniques:
+  - all northam categories: 0/915 → 679/915;
+  - check-digit categories with valid seeds: 0/168 → 162/168.
+
+  Of the 236 still missed, 76 are ticker, RIC, WKN and MiFID references,
+  which have no rule. The six check-digit misses left:
+  - a zero-padded BN where the `PAN` rule wins the overlap;
+  - a CUSIP with base64 in the middle;
+  - a letter-padded IBAN;
+  - three letter-padded LEIs. Padded to 40 characters, each also matches
+    `AWS Secret Key` (0.90), which wins the overlap.
+- Cost: a short-text scan goes from ~0.32 to ~0.37 ms. Texts of 4 KB or more
+  never reach the alt pass, so they are unaffected.
+
+## 2026-10-14 — ratios, the printed RAMQ layout, and identifier collisions
+
+### siphon-core 2.9.5
+
+evadex 3.40 scanned every northam seed, unmodified, beside its own context
+keyword. Four rules still failed on plain, correctly labelled values.
+
+- fix(core): `DTI Ratio` and `LTV Ratio` now match a ratio followed by a
+  space or full stop. Both regexes ended in `%\b`, and `%` is not a word
+  character, so the boundary held only when a *letter* followed: `43.5%x`
+  matched, `DTI 43.5% at underwriting.` did not. The detection matrix could
+  not seed either pattern; both now have all five slots.
+- fix(core): `Quebec HC` accepts the layout printed on the card,
+  `BOUD 8503 1512` — one optional space or hyphen after the letters and
+  between the YYMM and DDSS groups. Normalization joins the digit groups but
+  leaves the letter–digit gap, so the printed form never matched. The
+  validator already compacted separators; the month/day guard still applies.
+- fix(core): `is_valid_vin` requires at least one letter. A 17-digit SAR
+  filing number passes the VIN check digit by chance (1 in 11), and the VIN
+  rule (0.70) then shadowed the SAR rule the text named (0.50 with its
+  keyword): `SAR filing number 12345678901234568` reported a VIN. Real VINs
+  carry letters in the manufacturer code.
+- fix(core): when two **national** identifiers from different countries
+  match the identical characters and exactly one has its context keyword
+  nearby, deduplication keeps that one. A 12-digit run is a Newfoundland MCP
+  number and an Indian Aadhaar alike; confidence ranks how distinctive each
+  *format* is, which says nothing about which country the value is from, so
+  `MCP number 987654321012` reported an Aadhaar (0.65) over the health card
+  (0.60). Scoped to `<Region> - <Country>` categories: a first version that
+  applied to any identical-span overlap handed `account number 4532…` to the
+  generic `PAN` rule instead of `Visa`, and is pinned against by a test.
+- fix(core): the raw-text second pass now runs every flagged pattern
+  whenever normalization changed the text, not only those that found
+  nothing. Normalization drops a decimal point (`12,345.67` → `12,34567`),
+  `Balance with Currency Code` then matched the fragment `USD 12`, and that
+  fragment suppressed the pass that finds `USD 12,345.67`. Dedup keeps the
+  longer match. `measure_raw_pass_cost`: 0.475 → 0.486 ms/scan.
+- fix(core): `Balance with Currency Code` also lists Account Balance's
+  compound phrases (`available balance`, `account balance`, …). Keyword
+  search is leftmost-longest, so the longer phrase was the only hit
+  recorded and the `balance` inside it never reached this pattern. Searching
+  with overlaps instead was tried and rejected: it broke 48 conformance
+  cases, because generic patterns picked up `email` from inside `edu email`
+  and outranked the specific one.
+- feat(core): `Canada BN Root` — the 9-digit Business Number without the
+  `RT0001` program suffix `Canada BN` requires, as forms and vendor records
+  quote it. Context-gated, Luhn-validated (`is_valid_canada_bn_root`).
+  584 patterns, 73 validators; `docs/PATTERNS.md` and `docs/KEYWORDS.md`
+  regenerated (which also picked up two entries that were already stale).
+- fix(core): `Manitoba DL` matches the documented 13-character layout,
+  `AKKKKAKXX9XX9` (FMCSA Canadian licence reference): name-derived letters,
+  `*` padding a short surname, two digit positions. The old `[A-Z]{6}\d{6}`
+  matched no documented Manitoba format. Conformance cases regenerated,
+  plus five for `Canada BN Root`.
+- test(conformance): 10 new DTI/LTV cases. The UAE Passport `damaged` case
+  (`uae passport: Y2208699`) only passed because Hong Kong ID shadowed it —
+  the value fits UAE's own `[A-Z]?\d{7,9}` — and fires now that the named
+  country wins; its five cases were regenerated (near miss `N0003062517`).
+  The rest of the table is unchanged: the generator draws different samples
+  each run, so regenerating wholesale would churn every case.
+
+## 2026-10-13 — whitespace-separated identifiers, sentence-end and split-field evasion
+
+### siphon-core 2.9.4
+
+Two cards separated by whitespace were reported as zero cards. Normalization
+stage 5 (`collapse_padding`) removes whitespace between any two non-letters —
+that is what defeats `4 5 3 2 …` padding — so `4532015112830366
+5105105105105100` became one 32-digit run that no `\b`-anchored card pattern
+can match. The same join hid a newline- or tab-separated list of cards, every
+row but the last of a two-column CSV, and a card followed by any number
+(`4532015112830366 2026`). Plain data, not evasion.
+
+- fix(core): always-run patterns that are not context-gated now take the
+  raw-text second pass unconditionally, so the text is scanned with its
+  original spacing as well as normalized. A run-length threshold in stage 5
+  was rejected: it only moves the bypass (split a card 12+4 and it is joined
+  again). The widened pass cannot add a false-positive class — an all-ASCII
+  text with no evasion markers is already scanned exactly this way, because
+  normalization returns it untouched — and dedup across both views keeps a
+  value found twice to one finding. It is gated on the raw text containing a
+  digit–whitespace–digit sequence, the only shape stage 5 joins; on the
+  4.2 KB `measure_raw_pass_cost` document (which has one) a scan goes
+  ~0.45 → ~0.52 ms, and without one the cost is within noise. Context-gated
+  patterns keep the old raw-pass rule: widening them changed `Ticker Symbol`
+  behaviour in the conformance matrix, and that is a separate decision.
+- fix(core): an encoded card that ends a sentence keeps the full stop glued
+  to it, and three decoders treated that stop as part of the value. Stage 4c's
+  dot guard (which protects JWT/hostname segments) now counts a following `.`
+  only when another segment starts right after it, so `…number NDUz…Ng==.`
+  decodes; the last segment of a dotted element is still caught by the
+  preceding-dot check, and a JWT ending a sentence is still a JWT. The
+  hex-dump decoder lets sentence punctuation close the final pair (`36 36.`)
+  when it ends the token, so `36.5` is still not a pair. The digit-morse
+  decoders also run on the text with one terminal stop removed when it
+  directly follows a morse symbol — digit morse has no single-`.` code, so
+  this cannot change a valid decode.
+- fix(core): two alt-pass recoveries, both Luhn/checksum-gated like the rest
+  of the second pass. `isolate_letter_bounded_digit_blocks()` gives a
+  13–19-digit block glued to letters a word boundary
+  (`XXXXXXXXXX4532015112830366XXXXXXXXXX`, `test_value_4532015112830366`).
+  `join_indexed_split_fields()` rejoins quoted digit values whose keys share
+  a stem with consecutive indices (`part1`/`part2`, `cc_1`…`cc_4`) into a
+  13–19-digit candidate; unrelated numeric fields never share a stem.
+- fix(core): three more card evasions from the evadex re-baseline.
+  Stage 11 now folds *strong* digit look-alikes — letters that resemble
+  nothing but a digit: `Ƨ`→2, `Ʒ`→3, `Ƽ`→5, `б`→6, `Ȣ`→8 and lowercase
+  forms — and qualifies a card-length run (13–19) holding at least one, so
+  a value with nearly every digit substituted (`4ƼƷƧΟІƼІІƧȢƷΟƷбб`, one
+  real digit) folds; the dense-run rule is unchanged. Stage 5 treats
+  vertical tab, form feed and the U+001C–U+001F information separators as
+  whitespace (as Python's `str.isspace` does), so `barcode_split`
+  (`45320151` U+001E `12830366`) joins like any padded card, and the
+  raw-pass gate counts the same set. A new alt-pass recovery,
+  `decode_digit_prefixed_base64()`, splits a digit prefix from a base64
+  tail in one token (`45320151MTI4MzAzNjY=`) when the tail decodes to
+  digits and the rejoined value is 13–19 long.
+- fix(core): an encoded card followed by prose. The hex-dump decoder
+  consumed the space after the last pair, gluing the decoded value to the
+  next word (`…39 39 on the` → `…99on`, which stage 11 then folded to
+  `…990n`); it now hands that space back. An em dash after digit morse
+  folds to `-` and loses its space, adding one symbol to the last code; the
+  embedded no-separator and delimited morse finders retry a segment or edge
+  token that is exactly one symbol over (digit codes are always 5 symbols).
+- test: `whitespace_separated_cards_are_each_found` (six list/CSV/suffix
+  shapes) and `padded_card_is_still_joined` (single-digit, 4-4-4-4 and 12+4
+  padding still recovered); evasion tests for split fields, letter-bounded
+  cards, encoded cards before a full stop, and false-positive guards
+  (unrelated numeric fields, non-consecutive indices, a Luhn-invalid glued
+  block, a JWT ending a sentence); substituted / partial-base64 /
+  separator cards, with Cyrillic prose and a non-digit base64 tail as
+  guards.
+
+---
+
+## 2026-10-13 — zero-padding, delimited-base64, sparse-noise evasion
+
+### siphon-core 2.9.3
+
+Closes the zero-padding, delimited-base64, and sparse-noise credit-card evasion
+classes surfaced by the evadex replay. All three recoveries
+live in the second-pass alt-decodings, so they run only when the primary scan
+finds little and every candidate is re-validated (Luhn/checksum) before it can
+emit a finding — false-positive risk stays negligible, and the labelled-corpus
+FP/recall counts are unchanged.
+
+- fix(core): `strip_zero_padding_variants()` recovers a card/PAN/national-ID
+  hidden by zero padding. Leading zeros push a number past the `\b`-anchored card
+  regexes and the `\b\d{4}…\d{1,7}\b` PAN length bound (the padded run is a single
+  word, so no interior `\b` lets a valid-length slice match); a trailing zero
+  shifts every digit's Luhn parity so the check fails. For each over-long digit
+  run we emit alternatives with the padding stripped fully and trimmed to each
+  known plausible length (9 / 13–19), which the alt pass re-validates. Recovers
+  `left_pad_zeros`, `right_pad_zeros`, `both_pad`, trailing-zero, and the
+  zero-prefixed 9-digit-ID variants.
+- fix(core): `decode_delimited_encoded_segments()` decodes a base64 blob embedded
+  in a delimited structure that stage 4c could not isolate — a payload in a URL
+  path (`https://host.tld/data/<b64>/view`) is merged with adjacent path words
+  (`/` is a base64 symbol) and suppressed by the dot guard. It re-splits on
+  structural delimiters and, because the alnum-adjacent-delimiter stages glue the
+  preceding path word onto the blob, slides past a bounded non-alphabet prefix to
+  recover the self-contained base64. Bare whole-string base64 is left to stage 4c.
+- fix(core): `strip_sparse_alpha_noise_variants()` recovers a card wearing
+  isolated letter noise (`b45a32e01d51d12c830366`) that the consistent-separator
+  stages don't strip. Gated tightly — a card/PAN-plausible digit count, a ≥60%
+  digit ratio, and no two adjacent letters (a word, not noise) — with Luhn still
+  the final arbiter on the alt pass.
+- test: 5 new evasion regression tests (zero-padding, base64-in-URL, nested
+  base64, sparse noise, and a non-card sparse-noise false-positive guard).
+  Targeted spot-check 6/13 → 12/13; no detection-quality or fp_probe regressions.
+
+---
+
+## 2026-09-30 — archive extraction: declared sizes and silent skips
+
+### siphon 2.5.1
+
+- **fix(cli): a ZIP entry that understated its uncompressed size was read in
+  full.** Every guard on the Office-XML extraction path — the per-entry size
+  cap, `zip_entry_is_bomb`'s ratio test, and the cumulative budget — reads
+  `file.size()`, which is a number the archive asserts about itself. The read
+  that followed was `read_to_string`, bounded by nothing. A `.docx` whose
+  central directory declared 1 KB for a `word/document.xml` that inflated to
+  120 MB therefore passed all three checks and was then decompressed whole:
+  **427 KB on disk reaching 339 MB resident and 24 s of CPU**, with the
+  100 MB per-entry cap bypassed by exactly the lie it exists to catch.
+  Declaring the size honestly got the entry skipped; lying about it got the
+  entry read.
+
+  Reads are now bounded by `take(min(declared, remaining_budget) + 1)`, and an
+  entry that delivers more than it claimed is refused with a warning. Bounding
+  by the declaration and not merely by the cap is what makes the three guards
+  mean something again: an entry can never cost more than it claimed, so
+  buying a large read requires claiming a large size, and a large claim against
+  a small compressed size is precisely what `zip_entry_is_bomb` rejects. Same
+  input now peaks at the process baseline with a 1,025-byte read.
+
+  Reachable from `siphon-fs`, which calls `extractors::extract_text` on
+  uploaded files (`crates/siphon-fs/src/main.rs:436`, `:602`), so this was a
+  remote memory-exhaustion vector on an HTTP service and not only a CLI
+  concern. `extract_7z` and the generic-ZIP pass already read through `take`
+  for this reason; the Office-XML and OpenDocument passes did not.
+
+- **fix(cli): the OpenDocument path had the same defect and no cumulative
+  budget at all.** `content.xml`, `meta.xml` and `styles.xml` were each free to
+  inflate to the per-entry cap independently. `total_read` is now tracked
+  across the three.
+
+- **fix(cli): entries skipped by the size and ratio guards vanished without
+  a trace.** Both passes `continue`d in silence, so a document whose body was
+  never examined reported zero findings — for a DLP scanner, an answer
+  indistinguishable from a clean document. They now record a warning, matching
+  what the generic-ZIP pass already did for nested and encrypted entries.
+
+- **fix(cli): `PipelineResult` dropped every extraction warning on the
+  floor.** `extract_text` has always reported unreadable content through
+  `ExtractionResult::warnings`, and `siphon-fs` has always returned those to
+  its callers, but `PipelineResult` had nowhere to put them — so
+  `Pipeline::process_file` discarded them and `siphon scan` printed a bare
+  `Matches: 0`. A `.zip` holding one nested archive with a card number in it
+  scanned to zero findings with no signal at all, on the path an analyst
+  actually runs. `PipelineResult` gains a `warnings: Vec<String>` and the CLI
+  prints an `Unscanned content:` block beside the match count, where it
+  qualifies that count rather than hiding below the matches.
+
+  The field is additive for JSON and CSV consumers (`#[serde(default,
+  skip_serializing_if = "Vec::is_empty")]`, so output for a clean file is
+  byte-identical). It is a struct-literal break for an out-of-tree caller that
+  constructs `PipelineResult` directly; nothing in this workspace does, and the
+  other crates only read it, so this ships as a PATCH per the `fix(cli)` rule
+  in CLAUDE.md.
+
+  `PipelineResult` is now also `#[non_exhaustive]`. The struct grows —
+  `file_entropy` and `entropy_classification` were added after it shipped and
+  `warnings` after those — and every one of those additions was the same
+  out-of-tree struct-literal break. Marking it takes that break once, in the
+  release already taking it, and makes every later field free. No effect inside
+  the crate; the other crates only read the struct.
+
+- Four regression tests in `tests/archive_security_test.rs`, including a
+  helper that crafts a ZIP whose local header and central directory both
+  understate the entry size while the deflate stream carries the full body.
+  Deflated and not stored on purpose: a stored entry is bounded by its declared
+  size on read, so a lie there truncates and proves nothing. Both
+  understatement tests fail against the unfixed extractor with the planted
+  marker visible in the output; the honest-archive test guards against a fix
+  that simply refuses everything.
+
+Bumps siphon 2.5.0 → 2.5.1; `console/package.json` and Chart.yaml
+`appVersion` updated in lockstep. Version-sync script: 26/26 ✓.
+
 ## 2026-09-30 — dependency security
 
 ### workspace (lockfile only)
@@ -36,6 +456,57 @@ independent, so a release block typically moves only the crates that actually
   accepted, so it stops matching once the lockfile lands.
 
 ---
+
+## 2026-09-30 — overrides version token, one guard for both handlers
+
+### siphon-api 2.12.2
+
+- **fix(api): `GET /v1/overrides/content?version=` now calls
+  `is_safe_version_token` explicitly, matching `POST /v1/overrides/revert`.**
+
+  No reachable bug is being fixed, and it is worth being precise about that: the
+  handler composes the backup filename from `nanos`, a parsed `u128`, never from
+  the raw query string, so a token like `../../etc/passwd` fails
+  `parse::<u128>()` and already left with a 400. This is defence in depth.
+
+  What it fixes is a consistency problem with real cost. Two handlers compose a
+  backup path from the same caller-supplied token; one validated it by calling
+  the shared guard and documenting the traversal threat model, the other by a
+  numeric parse several lines further down whose load-bearing role was written
+  nowhere. A refactor that keeps the parse but widens the type stops being safe
+  without looking any different, and an auditor reading the pair has to derive
+  the second handler's safety from scratch.
+
+  The error text for a malformed token changes from
+  `bad version "...": expected 'current' or 'v<nanos>'` to
+  `invalid version "..."; expected 'v<nanos>'` for inputs that fail the token
+  shape. Both are 400s; only the string differs.
+
+- Three tests in a new `version_token_guard_tests` module assert the invariant
+  rather than the behaviour, since the behaviour was already correct: both
+  path-composing handlers must call the guard. The list of handlers is explicit
+  because several `overrides_*` handlers mention a version without ever building
+  a path from one.
+
+  Two of the three exist because of mistakes made writing the first one. The
+  original version searched the raw handler body and so was satisfied by the
+  *comment* explaining why the guard is there — it passed with the call replaced
+  by `if false`, which is the one thing it exists to catch; comment text is now
+  stripped first, and a test covers the stripper. And the body extractor is
+  tested for not running into the following handler, which is the error that made
+  the original audit of this pair ambiguous: a fixed-size window around
+  `overrides_content` reached into `overrides_revert` and reported a guard that
+  was not there.
+
+Originally the one commit in PR #479 worth keeping (`df771ce`), whose other 11
+commits had already reached `main` by other routes. The rest of that commit was
+not carried: its `rustfmt` reflows and its `clippy::manual_range_contains` fix in
+`siphon-core` are both already resolved on `main`, so a cherry-pick would have
+brought conflicts and no change. #479 is closed in favour of this.
+
+Bumps siphon-api 2.12.1 → 2.12.2; Dockerfile.api LABEL, values.yaml
+`api.image.tag` and the docker-compose pin updated in lockstep.
+
 
 ## 2026-09-09 — fail closed: five ways the stack reported safe when it wasn't
 

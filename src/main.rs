@@ -361,6 +361,17 @@ fn main() {
                     println!("Format: {}", result.format_detected);
                     println!("Matches: {}", result.match_count());
                     println!("Duration: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
+                    // Printed next to the match count, not below the matches,
+                    // because it qualifies that count: "Matches: 0" with an
+                    // unread entry in the file is not the same answer as
+                    // "Matches: 0" on a file that was read end to end, and the
+                    // reader has to see both at once to tell them apart.
+                    if !result.warnings.is_empty() {
+                        println!("Unscanned content: {}", result.warnings.len());
+                        for w in &result.warnings {
+                            println!("  ! {w}");
+                        }
+                    }
                     println!();
                     for m in &result.matches {
                         println!(

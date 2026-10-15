@@ -14,7 +14,7 @@
 //! A `RegexSet` phase 1 was measured before correcting this, in case the doc
 //! described something worth building. It is not:
 //!
-//! - The 583 patterns exceed the regex crate's default 10 MB compile limit
+//! - The 584 patterns exceed the regex crate's default 10 MB compile limit
 //!   outright (`CompiledTooBig`); a set needs `size_limit` raised to 64 MB
 //!   before it will build.
 //! - It would cut cold start from ~310 ms to ~223 ms — but add ~3.5 ms per
@@ -39,6 +39,7 @@ use crate::context;
 // so the override layer is consistently applied. Direct imports
 // dropped intentionally — anyone tempted to use them directly should
 // reach for the helpers instead.
+use crate::inspection::{Inspection, Unread};
 use crate::models::{Match, PatternDef};
 use crate::normalize;
 use crate::patterns::PATTERNS;
@@ -106,11 +107,11 @@ fn mark_truncated(sink: &TruncationSink) {
 /// `max_matches`. Routing all of them through one predicate means "we
 /// stopped adding" is recorded the same way wherever it happens, rather
 /// than at whichever sites someone remembered.
-fn room_for_more(len: usize, config: &ScanConfig) -> bool {
-    if len < config.max_matches {
+fn room_for_more(len: usize, max_matches: usize, sink: &TruncationSink) -> bool {
+    if len < max_matches {
         true
     } else {
-        mark_truncated(&config.truncated);
+        mark_truncated(sink);
         false
     }
 }
@@ -400,6 +401,35 @@ fn effective_context_required(
     def_context_required || crate::models::is_context_required(sub_category)
 }
 
+/// `true` if an ASCII whitespace run sits between two ASCII digits — the only
+/// shape in which normalization stage 5 joins two numbers into one. The set
+/// matches stage 5's (`is_ascii_ws` in the normalizer), including vertical
+/// tab, form feed and the U+001C–U+001F information separators.
+fn has_whitespace_between_digits(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let mut j = i + 1;
+            while j < bytes.len()
+                && matches!(
+                    bytes[j],
+                    b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C | 0x1C..=0x1F
+                )
+            {
+                j += 1;
+            }
+            if j > i + 1 && j < bytes.len() && bytes[j].is_ascii_digit() {
+                return true;
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    false
+}
+
 /// Substring-search context check for runtime (custom) patterns.
 /// Static patterns use the global Aho-Corasick matcher built from
 /// CONTEXT_KEYWORDS at startup; runtime patterns can't participate in
@@ -525,7 +555,7 @@ impl ScanConfig {
 
 /// Compiled regex cache: one Regex per pattern, compiled once per process.
 ///
-/// Building this is essentially all of cold start — ~297 ms for 583 patterns
+/// Building this is essentially all of cold start — ~297 ms for 584 patterns
 /// at ~0.51 ms each, against ~13.5 ms for the Aho-Corasick keyword automaton
 /// and ~0.47 ms for a steady-state scan. So the first scan in a process costs
 /// roughly 660x the ones after it.
@@ -542,6 +572,10 @@ struct CompiledPattern {
     ///
     /// See [`requires_stripped_separator`].
     needs_raw_pass: bool,
+    /// Always-run pattern: scanned over the un-normalized text too, whatever
+    /// the normalized pass found. See the second pass in
+    /// [`scan_text_with_config`].
+    always_run: bool,
 }
 
 /// Iterator over a pattern's hits, yielding the span that should be
@@ -740,6 +774,7 @@ static COMPILED: Lazy<Vec<CompiledPattern>> = Lazy::new(|| {
                     regex: re,
                     def: pat,
                     needs_raw_pass: requires_stripped_separator(pat.regex),
+                    always_run: is_always_run(pat.sub_category),
                 });
             }
             Err(e) => {
@@ -946,6 +981,47 @@ pub fn scan_text(text: &str) -> crate::Result<Vec<Match>> {
 ///
 /// Uses parallel iteration over compiled regexes with Rayon for throughput.
 pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<Vec<Match>> {
+    scan_impl(text, config, &config.truncated)
+}
+
+/// A scan's matches together with what they cover.
+///
+/// `inspection` is [`Inspection::Complete`] unless a cap stopped match
+/// collection, in which case it carries [`Unread::MatchCapReached`] and
+/// `matches` is a prefix of what the text holds. See
+/// `docs/architecture/inspection-outcome.md`.
+#[derive(Debug, Clone)]
+pub struct ScanOutcome {
+    pub matches: Vec<Match>,
+    pub inspection: Inspection,
+}
+
+/// [`scan_text_with_config`] that also says whether the result is whole.
+///
+/// The scanner's caps are denial-of-service bounds, not statements about
+/// the document; a caller that only counts findings can ignore them, a
+/// caller that reports "clean" or transforms the text cannot. Until now a
+/// caller had to install a [`TruncationSink`] on its config and remember to
+/// read it; only `InputGuard` did. This installs one, reads it, and reports
+/// the answer as an [`Inspection`], so every ingress gets the same signal
+/// without plumbing of its own. A sink the caller did install is honoured
+/// too: it is set alongside, never cleared.
+pub fn scan_text_inspected(text: &str, config: &ScanConfig) -> crate::Result<ScanOutcome> {
+    let flag = Arc::new(AtomicBool::new(false));
+    let sink: TruncationSink = Some(Arc::clone(&flag));
+    let matches = scan_impl(text, config, &sink)?;
+    let mut inspection = Inspection::new();
+    if flag.load(Ordering::Relaxed) {
+        inspection.unread(Unread::MatchCapReached);
+        mark_truncated(&config.truncated);
+    }
+    Ok(ScanOutcome {
+        matches,
+        inspection,
+    })
+}
+
+fn scan_impl(text: &str, config: &ScanConfig, sink: &TruncationSink) -> crate::Result<Vec<Match>> {
     validate_text_input(text)?;
 
     let start = Instant::now();
@@ -1083,7 +1159,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
 
         for (norm_start, norm_end, matched_text) in reported_matches(active_regex, haystack) {
             if local_matches.len() >= MAX_MATCHES_PER_PATTERN {
-                mark_truncated(&config.truncated);
+                mark_truncated(sink);
                 break;
             }
             let cand_span = (norm_start, norm_end);
@@ -1342,21 +1418,55 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     // normalized pass is untouched, so nothing that matches today stops
     // matching.
     //
-    // Two things keep the cost off the common path. The pass only runs when
-    // normalization actually changed something, and only for a flagged
-    // pattern that found *nothing* on the normalized text — so
+    // The pass only runs when normalization actually changed something, so
     // `requires_stripped_separator` being imprecise costs a regex run at
-    // worst, never a wrong answer. Context is checked against the raw
-    // haystack directly (`None` hit index), since the prebuilt index is keyed
-    // to normalized positions.
+    // worst, never a wrong answer. It used to run a flagged pattern only when
+    // that pattern found *nothing* on the normalized text, but a separator
+    // the regex makes optional lets a truncated value match there instead:
+    // stripping the decimal point turns `USD 12,345.67` into `USD 12,34567`,
+    // where the balance rule finds `USD 12`, and that fragment then
+    // suppressed the raw pass that would have found the whole amount. Both
+    // views are scanned and dedup keeps the longer match — the same
+    // reasoning as the always-run rule below. Context is checked against the
+    // raw haystack directly (`None` hit index), since the prebuilt index is
+    // keyed to normalized positions.
+    //
+    // Always-run patterns that are not context-gated (validated,
+    // high-specificity identifiers — cards, IBANs, keys) take the raw pass
+    // unconditionally. Stage 5 removes
+    // whitespace between any two non-letters, which is what defeats
+    // `4 5 3 2 …` padding — and also what turns a newline-separated list of
+    // cards, or a card followed by a year (`4111111111111111 2026`), into one
+    // over-long digit run that no `\b`-anchored pattern can match. Picking
+    // a run length past which whitespace is "real" would only move the
+    // bypass (split the card 12+4 instead), so both views are scanned
+    // instead. It cannot widen the false-positive surface: an all-ASCII text
+    // with no evasion markers is scanned exactly this way already, because
+    // normalization returns it untouched. Nor can it be gated on the primary
+    // pass finding nothing — a list where one card survives the join (the
+    // last row of a CSV) would hide every other row. Context-gated patterns
+    // keep the old rule: whether their keyword is "near" depends on the
+    // spacing too, and widening them is a separate decision.
     let raw_pass_matches: Vec<Vec<Match>> = if normalized == text {
         Vec::new()
     } else {
+        // The join needs digits on both sides of the whitespace; without one
+        // the always-run patterns have nothing to recover, so skip their cost.
+        let digit_runs_joined = has_whitespace_between_digits(text);
         active_patterns
             .par_iter()
-            .enumerate()
-            .filter(|(idx, cp)| cp.needs_raw_pass && per_pattern_matches[*idx].is_empty())
-            .map(|(_, cp)| run_pattern(cp, text, &[], None))
+            .filter(|cp| {
+                (digit_runs_joined
+                    && cp.always_run
+                    && !effective_context_required(
+                        cp.def.category,
+                        cp.def.sub_category,
+                        cp.def.context_required,
+                        config.pattern_field_overrides.as_ref(),
+                    ))
+                    || cp.needs_raw_pass
+            })
+            .map(|cp| run_pattern(cp, text, &[], None))
             .collect()
     };
 
@@ -1376,7 +1486,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
         .chain(raw_pass_matches.into_iter().flatten())
         .collect();
     if collected.len() > config.max_matches {
-        mark_truncated(&config.truncated);
+        mark_truncated(sink);
     }
     let mut matches: Vec<Match> = collected.into_iter().take(config.max_matches).collect();
 
@@ -1398,17 +1508,45 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     // We also pre-filter by config.categories once outside the
     // alt-loop instead of rechecking per-pattern per-alt.
     if matches.len() < 3 && text.len() < 4096 && start.elapsed().as_secs() < MAX_SCAN_SECONDS / 2 {
-        let alternatives = normalize::generate_alternative_decodings(&normalized);
+        // (alt text, keyword-free patterns allowed, exact recovery). The
+        // ordinary alternative decodings allow keyword-free patterns. The
+        // gated recoveries do not: they relax the card-length bounds that
+        // make the ordinary ones safe, so only the keyword-backed routes
+        // below may use them. When both produce the same text it keeps both
+        // properties — the card helper's zero strip and the gated one's often
+        // coincide, and either view alone would drop a route.
+        let mut alternatives: Vec<(String, bool, bool)> =
+            normalize::generate_alternative_decodings(&normalized)
+                .into_iter()
+                .map(|a| (a, true, false))
+                .collect();
+        for gated in normalize::generate_keyword_gated_recoveries(&normalized) {
+            match alternatives.iter_mut().find(|(a, _, _)| *a == gated.text) {
+                Some(seen) => seen.2 |= gated.exact,
+                None => alternatives.push((gated.text, false, gated.exact)),
+            }
+        }
+        // Patterns with a keyword anywhere in the document: the only ones the
+        // keyword route below can use, whether or not they are gated on it.
+        let doc_keyword_hits: HashSet<(&str, &str)> = hit_index
+            .as_ref()
+            .map(|idx| idx.hit_keys().collect())
+            .unwrap_or_default();
         let alt_patterns: Vec<&CompiledPattern> = compiled
             .iter()
-            .filter(|cp| is_always_run(cp.def.sub_category))
+            .filter(|cp| {
+                is_always_run(cp.def.sub_category)
+                    || crate::validation::has_check_digit(cp.def.sub_category)
+                    || doc_keyword_hits.contains(&(cp.def.category, cp.def.sub_category))
+            })
             .filter(|cp| match &config.categories {
                 Some(cats) => cats.contains(cp.def.category),
                 None => true,
             })
             .collect();
 
-        for alt_text in &alternatives {
+        for &(ref alt_text, keyword_free_ok, exact_recovery) in &alternatives {
+            let check_digit_only = !keyword_free_ok;
             if alt_text.is_empty() {
                 continue;
             }
@@ -1418,43 +1556,71 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
             if alt_norm == normalized {
                 continue;
             }
+            let alt_hit_index: std::cell::OnceCell<Option<context::ContextHitIndex>> =
+                std::cell::OnceCell::new();
 
             for cp in &alt_patterns {
-                // Context-required patterns must NOT fire through the
-                // alt path. The alt-decodings pass has no context hit
-                // index (it was built for the primary normalized text,
-                // not the alt text), so we can't verify keyword
-                // proximity. Previously this gap was the source of the
-                // IMEISV false-positive class — IMEISV was context-
-                // required but firing through alt because the check
-                // was missing entirely.
-                if effective_context_required(
+                let ctx_required = effective_context_required(
                     cp.def.category,
                     cp.def.sub_category,
                     cp.def.context_required,
                     config.pattern_field_overrides.as_ref(),
-                ) {
-                    continue;
-                }
-
-                // The alt path also demands more of the pattern itself, for the
-                // same reason: it runs against a *transformed* text with no
-                // context index to corroborate anything, so a loose pattern
-                // firing there has compounded uncertainty.
+                );
+                // Two ways onto the alt path.
                 //
-                // ROT13 is the sharp case. It maps letters onto letters, so for
-                // a letter-shaped pattern it behaves as a generator of
-                // plausible candidates rather than as a decoder: the product
-                // code `AB1-2CD` normalises to `AB12CD`, whose ROT13 is
-                // `NO12PQ` — a structurally valid UK postcode appearing nowhere
-                // in the document. Structural validation cannot catch that,
-                // because the string genuinely is well formed.
+                // The original one: an always-run pattern that needs no
+                // context and sits at or above the specificity threshold. The
+                // alt pass runs against a *transformed* text, so a loose
+                // pattern firing there has compounded uncertainty. ROT13 is
+                // the sharp case. It maps letters onto letters, so for a
+                // letter-shaped pattern it behaves as a generator of plausible
+                // candidates rather than as a decoder: the product code
+                // `AB1-2CD` normalises to `AB12CD`, whose ROT13 is `NO12PQ` — a
+                // structurally valid UK postcode appearing nowhere in the
+                // document. Structural validation cannot catch that, because
+                // the string genuinely is well formed. Context-required
+                // patterns were excluded outright, which closed the IMEISV
+                // false-positive class (it fired through alt with no keyword).
                 //
-                // Decoding earns its keep for high-entropy secrets and
-                // structured identifiers, which sit at or above the always-run
-                // threshold on their own merits. Nobody base64-encodes a
-                // postcode to exfiltrate it.
-                if crate::models::pattern_specificity(cp.def.sub_category) < SPECIFICITY_THRESHOLD {
+                // The second: a pattern with a real check digit, provided one
+                // of its keywords sits beside the recovered value in the alt
+                // text. Without it, every recovery the alt pass performs —
+                // stripped zero padding, letter noise, a base64 tail, a value
+                // split over JSON fields — only ever reached cards, because
+                // cards are the one always-run, keyword-free identifier; an
+                // SSN-adjacent SIN or an IBAN recovered the same way was
+                // dropped. Requiring both the arithmetic and the keyword holds
+                // a recovered match to a stricter bar than the primary pass,
+                // which asks for one or the other. The recovery helpers keep
+                // the surrounding text, so a keyword next to the evaded value
+                // is still next to it in the alt.
+                //
+                // The gated recoveries relax the card-length bounds, so the
+                // keyword-free route over them is limited to the patterns
+                // whose check a manufactured candidate is unlikely to pass.
+                let original_route = (!check_digit_only
+                    || crate::validation::has_mod97_check(cp.def.sub_category))
+                    && !ctx_required
+                    && is_always_run(cp.def.sub_category)
+                    && crate::models::pattern_specificity(cp.def.sub_category)
+                        >= SPECIFICITY_THRESHOLD;
+                //
+                // The third: a pattern with no check digit (an SSN, a health
+                // card, a driver's licence) over an *exact* recovery — the one
+                // candidate a recovery offers for the value it restored,
+                // standing where the evaded value stood. The pattern is held
+                // to the strictest bar the primary pass sets for a plainly
+                // written value: its shape, its structural validator, and its
+                // keyword beside the match, even where the primary pass needs
+                // no keyword. Recoveries that guess (a zero trimmed at a time)
+                // stay with the check-digit route, where arithmetic picks the
+                // right guess.
+                let keyword_route = exact_recovery
+                    && doc_keyword_hits.contains(&(cp.def.category, cp.def.sub_category));
+                if !original_route
+                    && !keyword_route
+                    && !crate::validation::has_check_digit(cp.def.sub_category)
+                {
                     continue;
                 }
 
@@ -1499,13 +1665,48 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                         );
                         continue;
                     }
+                    // Built on first use: most alts never reach this point,
+                    // and the index's word-boundary check is what keeps a
+                    // short keyword from firing inside an ordinary word.
+                    let has_context = !original_route
+                        && alt_hit_index
+                            .get_or_init(|| context::build_hit_index(&alt_norm))
+                            .as_ref()
+                            .is_some_and(|idx| {
+                                context::check_context(
+                                    &alt_norm,
+                                    alt_start,
+                                    alt_end,
+                                    cp.def.category,
+                                    cp.def.sub_category,
+                                    Some(idx),
+                                )
+                            });
+                    if !original_route && !has_context {
+                        emit_trace(
+                            &config.trace,
+                            "alt",
+                            "alt_context",
+                            "drop",
+                            cp.def.category,
+                            cp.def.sub_category,
+                            alt_span,
+                            matched_text,
+                            None,
+                            Some("pattern on a recovered alt decoding needs a keyword beside it"),
+                        );
+                        continue;
+                    }
                     let alt_spec = effective_specificity(
                         cp.def.category,
                         cp.def.sub_category,
                         config.pattern_field_overrides.as_ref(),
                     );
-                    let confidence =
-                        crate::scoring::compute_confidence_with(alt_spec, false, false);
+                    let confidence = crate::scoring::compute_confidence_with(
+                        alt_spec,
+                        has_context,
+                        ctx_required,
+                    );
                     if confidence < config.min_confidence {
                         emit_trace(
                             &config.trace,
@@ -1521,6 +1722,34 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                         );
                         continue;
                     }
+                    // A value the primary pass already reported under this
+                    // rule is not new information. Under another rule, it is —
+                    // `IBAN Generic` confirming by check digit what only the
+                    // unvalidated `Germany IBAN` found in lowercase — but the
+                    // value is still where the primary pass found it, so the
+                    // finding takes that match's text and span rather than the
+                    // alt's (uppercased, spanning the whole input).
+                    let same_value = |a: &str| {
+                        a.chars()
+                            .filter(char::is_ascii_alphanumeric)
+                            .map(|c| c.to_ascii_uppercase())
+                            .eq(matched_text
+                                .chars()
+                                .filter(char::is_ascii_alphanumeric)
+                                .map(|c| c.to_ascii_uppercase()))
+                    };
+                    if matches
+                        .iter()
+                        .any(|m| m.sub_category == cp.def.sub_category && same_value(&m.text))
+                    {
+                        continue;
+                    }
+                    let (report_text, report_span) = matches
+                        .iter()
+                        .find(|m| same_value(&m.text))
+                        .map_or((matched_text.to_string(), (0, text.len())), |m| {
+                            (m.text.clone(), m.span)
+                        });
                     emit_trace(
                         &config.trace,
                         "alt",
@@ -1534,13 +1763,13 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
                         Some("alt decoding match emitted (confidence multiplied by 0.9)"),
                     );
                     matches.push(Match::new(
-                        matched_text.to_string(),
+                        report_text,
                         cp.def.category.to_string(),
                         cp.def.sub_category.to_string(),
-                        false,
+                        has_context,
                         confidence * 0.9,
-                        (0, text.len()),
-                        false,
+                        report_span,
+                        ctx_required,
                     ));
                 }
             }
@@ -1553,10 +1782,12 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     }
 
     // Entropy-based secret detection (optional)
-    if config.entropy_scan != EntropyMode::Off && room_for_more(matches.len(), config) {
+    if config.entropy_scan != EntropyMode::Off
+        && room_for_more(matches.len(), config.max_matches, sink)
+    {
         let entropy_matches = scan_high_entropy_tokens(text, &normalized, &offset_map, config);
         for em in entropy_matches {
-            if !room_for_more(matches.len(), config) {
+            if !room_for_more(matches.len(), config.max_matches, sink) {
                 break;
             }
             // Skip if already covered by a regex match at the same span
@@ -1573,10 +1804,10 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     // EDM matches are NEVER dominated by regex matches because they represent
     // confirmed known sensitive values, not pattern guesses.
     if let Some(ref edm) = config.edm {
-        if room_for_more(matches.len(), config) {
+        if room_for_more(matches.len(), config.max_matches, sink) {
             let edm_matches = edm.scan(text, config.categories.as_ref());
             for em in edm_matches {
-                if !room_for_more(matches.len(), config) {
+                if !room_for_more(matches.len(), config.max_matches, sink) {
                     break;
                 }
                 {
@@ -1596,10 +1827,10 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
 
     // LSH (Locality-Sensitive Hashing) — check for similar documents
     if let Some(ref lsh) = config.lsh {
-        if room_for_more(matches.len(), config) {
+        if room_for_more(matches.len(), config.max_matches, sink) {
             let sim_matches = lsh.query(text, None);
             for sm in sim_matches {
-                if !room_for_more(matches.len(), config) {
+                if !room_for_more(matches.len(), config.max_matches, sink) {
                     break;
                 }
                 matches.push(Match::new(
@@ -1629,7 +1860,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     if let Some(rps) = config.runtime_patterns.as_ref() {
         for rp in rps.iter() {
             for mat in rp.regex.find_iter(text) {
-                if !room_for_more(matches.len(), config) {
+                if !room_for_more(matches.len(), config.max_matches, sink) {
                     break;
                 }
                 let span = (mat.start(), mat.end());
@@ -2125,6 +2356,50 @@ fn entropy_to_confidence(entropy: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use super::{scan_text_inspected, scan_text_with_config, ScanConfig};
+    use crate::inspection::Unread;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    fn inspected_scan_is_complete_when_nothing_was_capped() {
+        let out =
+            scan_text_inspected("credit card 4532015112830366", &ScanConfig::default()).unwrap();
+        assert!(out.inspection.is_complete());
+        assert!(!out.matches.is_empty());
+    }
+
+    #[test]
+    fn inspected_scan_reports_match_cap() {
+        let text = "card 4532015112830366, card 4916338506082832, card 4485275742308327";
+        let config = ScanConfig::default().with_max_matches(1);
+        let out = scan_text_inspected(text, &config).unwrap();
+        assert_eq!(out.matches.len(), 1);
+        assert!(!out.inspection.is_complete());
+        assert_eq!(out.inspection.unread_reasons(), &[Unread::MatchCapReached]);
+    }
+
+    #[test]
+    fn inspected_scan_also_sets_a_sink_the_caller_installed() {
+        let text = "card 4532015112830366, card 4916338506082832";
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut config = ScanConfig::default().with_max_matches(1);
+        config.truncated = Some(Arc::clone(&flag));
+        let out = scan_text_inspected(text, &config).unwrap();
+        assert!(!out.inspection.is_complete());
+        assert!(flag.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn plain_scan_still_honours_the_callers_sink() {
+        let text = "card 4532015112830366, card 4916338506082832";
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut config = ScanConfig::default().with_max_matches(1);
+        config.truncated = Some(Arc::clone(&flag));
+        let m = scan_text_with_config(text, &config).unwrap();
+        assert_eq!(m.len(), 1);
+        assert!(flag.load(Ordering::Relaxed));
+    }
     /// Cost of the raw-text second pass, measured rather than assumed.
     #[test]
     #[ignore]
@@ -2202,6 +2477,48 @@ mod tests {
                 ms.iter()
                     .map(|m| m.sub_category.as_str())
                     .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// Whitespace between two numbers is not padding inside one.
+    ///
+    /// Stage 5 joins digit runs across whitespace, so each of these used to
+    /// normalize into a single over-long run and report nothing — or, for the
+    /// CSV, only the row that survived the join.
+    #[test]
+    fn whitespace_separated_cards_are_each_found() {
+        let cfg = super::ScanConfig::default();
+        for (text, want) in [
+            ("4532015112830366 5105105105105100", 2),
+            ("4532015112830366\n5105105105105100\n378282246310005", 3),
+            ("4532015112830366\t5105105105105100", 2),
+            ("id,card\n1,4532015112830366\n2,5105105105105100", 2),
+            ("4532015112830366 2026", 1),
+            ("4532015112830366 4532015112830366", 2),
+        ] {
+            let ms = super::scan_text_with_config(text, &cfg).unwrap();
+            let cards = ms
+                .iter()
+                .filter(|m| m.category == "Credit Card Numbers")
+                .count();
+            assert_eq!(cards, want, "{text:?} → {ms:?}");
+        }
+    }
+
+    /// Padding inside a single card is still undone by stage 5.
+    #[test]
+    fn padded_card_is_still_joined() {
+        let cfg = super::ScanConfig::default();
+        for text in [
+            "4 5 3 2 0 1 5 1 1 2 8 3 0 3 6 6",
+            "4532 0151 1283 0366",
+            "453201511283 0366",
+        ] {
+            let ms = super::scan_text_with_config(text, &cfg).unwrap();
+            assert!(
+                ms.iter().any(|m| m.category == "Credit Card Numbers"),
+                "{text:?} → {ms:?}"
             );
         }
     }

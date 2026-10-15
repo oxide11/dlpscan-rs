@@ -48,11 +48,11 @@ jobs:
   evadex-gate:
     name: Run evadex quality gate
     runs-on: ubuntu-latest
-    # Observed runtime is 2h05m–2h34m, essentially all of it re-initialising
-    # the scanner once per test case (see the step below). This bounds a real
-    # hang without cutting off a healthy run; drop it to ~15 min once the
-    # adapter stops paying startup per case.
-    timeout-minutes: 180
+    # Was 180 min when the adapter paid scanner start-up once per test case
+    # (2h05m–2h34m observed). With `batch: true` (evadex 3.41.0) one
+    # `scan-dir` process serves a batch of submissions and the run is
+    # dominated by building DOCX/PDF/XLSX fixtures in Python instead.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout dlpscan-rs
@@ -96,31 +96,40 @@ jobs:
         working-directory: evadex
         run: python -m pytest tests/unit -q --tb=short
 
-      # This step is the entire runtime of the job: 2h05m-2h34m, against ~2
-      # minutes for everything above it.
+      # Until evadex 3.41.0 this step was the entire runtime of the job
+      # (2h05m-2h34m): the adapter spawned one `siphon` per test case and
+      # ~97% of the job was rebuilding the same 583 regexes and the keyword
+      # automaton ~20,000 times (measured: scan-text on 28 bytes 0.395 s, of
+      # which ~10 ms is scanning). `batch: true` below runs one `scan-dir`
+      # over a batch of cases instead; verdicts are identical (720 of 720 on
+      # a seeded comparison) and the job is now bounded by fixture building.
       #
-      # It is not scanning that costs. Measured on the release binary:
+      # `--seed` makes the keyword sentence wrapped around every submission
+      # a pure function of (seed, category, value), so a red run here can
+      # be reproduced locally with the same flag. Change the seed on purpose,
+      # not by accident: it changes which sentences are tested.
       #
-      #   siphon --version                 0.005 s   (process spawn)
-      #   siphon scan-text, 28 bytes       0.395 s
-      #   siphon scan, 10 KB with hits     0.405 s
+      # `--max-fp` is a real measurement as of evadex 3.41.0 (before that it
+      # read a key the scan never wrote and passed unconditionally). The
+      # `entropy` falsepos category submits random high-entropy strings,
+      # which an entropy detector is meant to flag (7 of 10 flagged on
+      # 2.10.0, every structured category at 0%), so the check is scoped to
+      # the structured categories.
       #
-      # Scanning 10 KB costs 10 ms more than scanning 28 bytes. The other
-      # ~390 ms is one-time initialisation — compiling 583 regexes and
-      # building the Aho-Corasick automaton over 5,000+ context keywords —
-      # paid on every process start and discarded on exit. The adapter
-      # spawns one `siphon` per test case, so ~97% of this job is rebuilding
-      # the same automaton some 20,000 times.
+      # `2>&1`: `evadex ci` prints its report to stderr. Without it the
+      # uploaded artifact was a zero-byte file on every run since the
+      # workflow was written.
       #
-      # The CLI already has the fix: one `scan-dir` over a directory of
-      # cases initialises once. Measured on 200 cases:
+      # `set -o pipefail`: without it the step's exit status was `tee`'s,
+      # never evadex's. Every run since the workflow was written printed
+      # "One or more thresholds violated" (31.1% against a 70% threshold
+      # on 2026-10-14) and the job went green. This gate has not gated.
       #
-      #   200 separate invocations   71.3 s
-      #   1 scan-dir invocation       0.4 s   (194x)
-      #
-      # That change belongs in the siphon-cli adapter in tbustenk/evadex,
-      # not here. Until it lands this gate cannot be a merge gate — nothing
-      # waits 2.5 hours — so treat it as a post-merge signal and check it.
+      # `strategy: text`: the DOCX/PDF/XLSX strategies embed the bare value
+      # with no keyword sentence, so context-gated rules cannot fire and
+      # those strategies score 9–20% regardless of the scanner (text scores
+      # 78.8% on the same run). Until evadex wraps file fixtures the same
+      # way it wraps text, gating on them measures the fixture, not Siphon.
       - name: Run evadex quality gate (siphon-cli adapter)
         working-directory: evadex
         env:
@@ -129,16 +138,25 @@ jobs:
           # `evadex ci` selects the scanner from an evadex.yaml (tool + exe)
           # and forwards --config to the underlying `evadex scan`; thresholds
           # are on a 0-100 scale (--min-detection / --max-fp).
+          set -euo pipefail
           cat > evadex.gate.yaml <<YAML
           tool: siphon-cli
           exe: ${SIPHON_BIN}
+          batch: true
+          strategy: text
           YAML
           python -m evadex ci \
             --config evadex.gate.yaml \
             --tier northam \
-            --min-detection 70 \
+            --seed 20261015 \
+            --concurrency 64 \
+            --min-detection 75 \
+            --max-error-rate 2 \
             --max-fp 5 \
-            | tee evadex-gate-report.txt
+            --fp-category credit_card --fp-category ssn --fp-category sin \
+            --fp-category iban --fp-category email --fp-category phone \
+            --fp-category ca_ramq \
+            2>&1 | tee evadex-gate-report.txt
 
       - name: Upload quality gate report
         if: always()

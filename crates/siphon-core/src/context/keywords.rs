@@ -833,28 +833,29 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
         "Securities Identifiers",
         "CUSIP",
         ContextEntry {
+            // Securities-specific terms only. Generic words ("identifier",
+            // "position", "holding", "asset", "portfolio", "equity",
+            // "instrument", "settlement") put every 9-character run in an
+            // ordinary sentence in reach of a 1-in-10 check digit: "your
+            // account identifier is 130 692 544" reported a CUSIP at 0.90.
             keywords: &[
                 "cusip",
                 "committee on uniform securities",
+                // CINS is the CUSIP numbering for non-North-American issuers:
+                // the same 9-character layout and check digit.
+                "cins",
+                "cusip international numbering",
                 "security identifier",
                 "securities identifier",
                 "bond cusip",
                 "cusip number",
-                "settlement",
                 "clearinghouse",
                 "dtcc",
                 "depository trust",
                 "fixed income",
                 "bond",
-                "equity",
                 "securities",
-                "instrument",
                 "ticker",
-                "position",
-                "identifier",
-                "portfolio",
-                "holding",
-                "asset",
                 "issuance",
                 "prospectus",
                 "indenture",
@@ -960,6 +961,33 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "swiss security",
                 "swiss securities",
                 "swissclear",
+            ],
+            distance: 50,
+        },
+    ),
+    (
+        "Securities Identifiers",
+        "WKN",
+        ContextEntry {
+            keywords: &[
+                "wkn",
+                "wertpapierkennnummer",
+                "wertpapier-kenn-nummer",
+                "german securities identification",
+            ],
+            distance: 50,
+        },
+    ),
+    (
+        "Securities Identifiers",
+        "Reuters RIC",
+        ContextEntry {
+            keywords: &[
+                "ric",
+                "reuters instrument code",
+                "reuters code",
+                "refinitiv",
+                "eikon",
             ],
             distance: 50,
         },
@@ -1399,12 +1427,32 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "funds",
                 "available",
                 "ledger",
+                // Account Balance's compound phrases, repeated here on
+                // purpose. Keyword search is leftmost-longest, so in
+                // "Available balance: USD 12,345.67" the longer phrase is the
+                // only hit recorded and the "balance" inside it never
+                // reaches this pattern. A keyword listed under both patterns
+                // is credited to both. (Searching with overlaps instead fixed
+                // this and broke 48 conformance cases: generic patterns
+                // picked up "email" from inside "edu email" and outranked
+                // the specific one.)
+                "account balance",
+                "available balance",
+                "current balance",
+                "ledger balance",
+                "closing balance",
                 // French / Français
                 "solde",
+                "solde courant",
+                "solde disponible",
+                "solde du compte",
                 // ES/DE/IT/PT
                 "guthaben",
                 "kontostand",
                 "saldo",
+                "saldo da conta",
+                "saldo de cuenta",
+                "saldo del conto",
             ],
             distance: 50,
         },
@@ -5302,6 +5350,23 @@ pub static CONTEXT_KEYWORDS: &[(&str, &str, ContextEntry)] = &[
                 "cra business",
                 // French / Français
                 "numéro d'entreprise",
+            ],
+            distance: 50,
+        },
+    ),
+    (
+        "North America - Canada",
+        "Canada BN Root",
+        ContextEntry {
+            keywords: &[
+                "business number",
+                "business no",
+                "canada bn",
+                "cra business",
+                "bn",
+                // French / Français
+                "numéro d'entreprise",
+                "no d'entreprise",
             ],
             distance: 50,
         },

@@ -39,7 +39,14 @@ impl FileJob {
 }
 
 /// Result from processing a single file.
+///
+/// `#[non_exhaustive]` because this struct grows: `file_entropy` and
+/// `entropy_classification` were added after it shipped, and `warnings` after
+/// those. Each addition was a struct-literal break for anyone outside this
+/// crate building one by hand. Marking it takes that break once, now, while
+/// `warnings` is already taking it, and makes every later field free.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct PipelineResult {
     pub file_path: String,
     pub matches: Vec<Match>,
@@ -56,6 +63,19 @@ pub struct PipelineResult {
     /// "compressed_or_encrypted", "likely_encrypted".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entropy_classification: Option<String>,
+    /// Content the extractor saw and could not read: a nested or encrypted
+    /// archive entry, an entry over the size cap, one whose compression ratio
+    /// looked like a bomb, or one that inflated past its declared size.
+    ///
+    /// `extract_text` has always produced these and siphon-fs has always
+    /// returned them to its callers, but this struct had nowhere to put them,
+    /// so `process_file` dropped them on the floor: a `.zip` holding one
+    /// encrypted `secrets.txt` scanned to zero matches and `siphon scan`
+    /// printed nothing but `Matches: 0`. For a DLP scanner that is the worst
+    /// available answer — indistinguishable from a clean file, on a file
+    /// nobody read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 impl PipelineResult {
@@ -77,6 +97,7 @@ impl PipelineResult {
             extracted_text_length: 0,
             file_entropy: None,
             entropy_classification: None,
+            warnings: vec![],
         }
     }
 
@@ -196,6 +217,7 @@ impl Pipeline {
                     extracted_text_length: 0,
                     file_entropy: None,
                     entropy_classification: None,
+                    warnings: vec![],
                 };
             }
             if self.block_unreadable {
@@ -214,6 +236,7 @@ impl Pipeline {
                             extracted_text_length: 0,
                             file_entropy: None,
                             entropy_classification: None,
+                            warnings: vec![],
                         };
                     }
                 }
@@ -234,6 +257,7 @@ impl Pipeline {
                     extracted_text_length: 0,
                     file_entropy: None,
                     entropy_classification: None,
+                    warnings: vec![],
                 };
             }
         };
@@ -255,6 +279,7 @@ impl Pipeline {
                 extracted_text_length: 0,
                 file_entropy: None,
                 entropy_classification: None,
+                warnings: vec![],
             };
         }
 
@@ -273,13 +298,18 @@ impl Pipeline {
                 extracted_text_length: 0,
                 file_entropy: None,
                 entropy_classification: None,
+                warnings: vec![],
             };
         }
 
         // Try extractor first (handles DOCX, XLSX, PDF, EML, etc.), fall back to plain text
         let file_path_str = path.display().to_string();
+        let mut extraction_warnings: Vec<String> = Vec::new();
         let (text, format) = match crate::extractors::extract_text(&file_path_str) {
-            Ok(result) => (result.text, result.format),
+            Ok(result) => {
+                extraction_warnings = result.warnings;
+                (result.text, result.format)
+            }
             Err(_) => {
                 // Extractor failed, try reading as plain text
                 match fs::read_to_string(path) {
@@ -304,6 +334,7 @@ impl Pipeline {
                                         extracted_text_length: 0,
                                         file_entropy: None,
                                         entropy_classification: None,
+                                        warnings: vec![],
                                     };
                                 }
                                 (text, "binary-strings".into())
@@ -319,6 +350,7 @@ impl Pipeline {
                                     extracted_text_length: 0,
                                     file_entropy: None,
                                     entropy_classification: None,
+                                    warnings: vec![],
                                 };
                             }
                         }
@@ -374,6 +406,7 @@ impl Pipeline {
                     extracted_text_length: text_len,
                     file_entropy: None,
                     entropy_classification: None,
+                    warnings: vec![],
                 };
             }
         };
@@ -411,6 +444,7 @@ impl Pipeline {
             extracted_text_length: text_len,
             file_entropy,
             entropy_classification,
+            warnings: extraction_warnings,
         }
     }
 

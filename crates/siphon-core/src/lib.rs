@@ -5,8 +5,8 @@
 //! primary scan entry points. No file I/O or format-specific
 //! dependencies — operates on `&str` input.
 //!
-//! Ingestion pods (siphon-fs, siphon-api, siphon-ds, siphon-gw)
-//! depend on this crate for detection logic.
+//! Ingestion services (siphon-fs, siphon-api, siphon-icap, siphon-smtp)
+//! and the CLI depend on this crate for detection logic.
 
 // Rust 1.98's clippy added `chunks_exact_to_as_chunks`, which suggests
 // rewriting `chunks_exact(N)` as `as_chunks::<N>().0`. We keep
@@ -25,6 +25,9 @@ pub mod context;
 pub mod edm;
 pub mod errors;
 pub mod findings_ring;
+/// What a verdict covers: complete, or incomplete with typed reasons.
+/// See `docs/architecture/inspection-outcome.md`.
+pub mod inspection;
 pub mod lsh;
 /// MIME message decomposition, shared by the `.eml` extractor and the mail
 /// path so both agree on what a message contains.
@@ -42,6 +45,7 @@ pub mod validation;
 pub mod forensics;
 
 pub use errors::DlpError;
+pub use inspection::{Inspection, Unread};
 pub use models::{Match, PatternDef};
 
 /// Crate version as declared in Cargo.toml, baked in at compile time.

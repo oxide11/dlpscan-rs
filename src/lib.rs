@@ -1,7 +1,8 @@
 //! Polygon Siphon — High-performance DLP scanner for detecting, redacting, and protecting sensitive data.
 //!
-//! Designed for maximum throughput using RegexSet two-phase matching, zero-copy
-//! scanning, and rayon parallelism.
+//! After Aho-Corasick context narrowing, every surviving pattern runs as its
+//! own `Regex` in parallel under rayon. There is no `RegexSet` phase; one was
+//! measured and rejected — see `siphon-core/src/scanner/mod.rs`.
 
 // See the matching note in siphon-core/src/lib.rs — `chunks_exact` is kept
 // deliberately over Rust 1.98 clippy's `as_chunks` suggestion (here the call

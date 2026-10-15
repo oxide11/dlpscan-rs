@@ -164,7 +164,7 @@ shape.
 Three properties of the pattern set, none of which were visible before every
 pattern was asked the same questions:
 
-- **57 patterns have no observable example** (72 before the raw-text pass). Most are not a generator
+- **55 patterns have no observable example** (72 before the raw-text pass, 57 before DTI/LTV Ratio could match before a space). Most are not a generator
   failure: they carry a regex *identical* to a sibling's, and deduplication
   keeps only one match per span. Seven US state driver's licence patterns
   share `\b\d{8}\b`; ask for Texas and the scanner reports Arkansas. The
@@ -278,10 +278,16 @@ merged past is not a gate.
 The scan path in `crates/siphon-core/src/scanner/mod.rs` is a 10-stage pipeline:
 
 1. **Input validation** — reject > 30 MB (`MAX_INPUT_SIZE`) or empty inputs
-2. **Normalization** (`normalize/mod.rs`) — 10 evasion-defeat stages:
-   zero-width stripping → HTML entity decode → percent-decode → homoglyph
-   substitution (Cyrillic/Greek/mathematical → ASCII) → leet-speak → NFKC →
-   nested base64/base64url/base32/hex decode (up to 3 layers) → whitespace normalize
+2. **Normalization** (`normalize/mod.rs`) — 15 steps, numbered 1–11 with
+   4b/4c/6b/6c inserted between: percent-decode → HTML entities → empty
+   comments → hex-spaced bytes → `\xHH` escapes → token-level
+   base64/base64url/base32/hex (nested ≤ 3) → whitespace padding →
+   excessive delimiters → delimiters between alphanumerics → consistent
+   digit-group separators → zero-width → exotic whitespace → NFKC →
+   homoglyph map with Nd digit fallback → digit-confusable letters in digit
+   runs. The "Stage N" comments in `normalize_text` are the source of truth;
+   `docs/architecture/normalization.md` describes each. Leet-speak is **not**
+   a stage (`normalize_leet` feeds the alternative-decodings pass).
 3. **Pattern narrowing** — category filter, `baseline_only`, and the
    Aho-Corasick context prefilter (stage 6's keyword index, consulted early):
    a context-gated pattern whose keywords appear nowhere in the text or the
@@ -291,7 +297,7 @@ The scan path in `crates/siphon-core/src/scanner/mod.rs` is a 10-stage pipeline:
    and no two-phase match; stages 3 and 4 said so for a long time and the
    scanner module doc agreed, but neither was ever true. A `RegexSet` phase-1
    was measured and rejected — see the module doc for why
-5. **Checksum validation** (`validation.rs`) — 72 validators (Luhn, mod-97
+5. **Checksum validation** (`validation.rs`) — 73 validators (Luhn, mod-97
    IBAN, Verhoeff, Base58Check, Bech32, ISO 3779, …)
 6. **Context checking** (`context/`) — Aho-Corasick prefilter on 5,000+
    keywords across 6 languages; context-gated patterns are skipped entirely
@@ -743,12 +749,9 @@ Four things that are load-bearing:
 
 ## Open PRs
 
-| PR | Branch | Summary |
-|---|---|---|
-The findings-persistence wave (#312–#321), the retention/export/EDM/LSH/evadex
-work, the admin-console endpoints (#345: categories/explain/detailed-health),
-the kube 4.0 bump (#330), and the 2.3.1 hardening + 2.4.0 record (#362/#360)
-have all merged to `main` — see CHANGELOG `siphon-api 2.3.0`–`2.4.0`.
+Tracked on GitHub (`gh pr list`), not here: a table in this file listed them
+once and was stale within a week. `HANDOFF.md` carries the ones that matter at
+the time of its last update.
 
 ### siphon-fs routes
 
@@ -1134,7 +1137,11 @@ Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`, `breaking`
 
 ## Branches
 
-Feature work goes on a branch; main is protected. Never force-push to `main`.
+Feature work goes on a branch. Never force-push to `main`. Whether `main`
+is protected is a repository setting to check, not a fact to assume: on
+2026-10-15 the branch-protection API answered 404 and the rulesets list was
+empty for a non-admin collaborator, and the evadex quality gate is not a
+required check.
 
 ## CI expectations
 
@@ -1148,7 +1155,12 @@ cargo test --test integration_test
 cargo test --test evasion_test
 ```
 
-CI mirrors these in `.github/workflows/ci.yml`.
+These are the minimum. `.github/workflows/ci.yml` runs every suite in
+`tests/` (13 as of 2026-10-15: integration, evasion, evadex_regressions,
+detection_quality, public_records, fp_probe, conformance, forensics,
+encoding_diag, held_out_recall, archive_security, match_cap_fail_closed,
+audit_spec) plus the per-crate suites (`siphon-auth` mtls, `siphon-fs`
+auth), CodeQL with `--locked`, `cargo audit`, and `scripts/check-version-sync.sh`.
 
 ## Bill of materials
 

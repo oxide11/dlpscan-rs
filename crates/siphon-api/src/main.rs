@@ -4219,7 +4219,31 @@ async fn overrides_content(
     let (target_path, label) = if q.version == "current" {
         (path.to_path_buf(), "current".to_string())
     } else {
-        // Expect "v<nanos>"; look up the sibling backup file.
+        // `q.version` is caller-supplied. The parse below already makes a
+        // traversal impossible: the filename is composed from `nanos`, a
+        // `u128`, and never from the raw string, so "../../etc/passwd" fails
+        // `parse::<u128>()` and leaves with a 400. This guard is defence in
+        // depth, not a fix for a reachable bug.
+        //
+        // It is here because `overrides_revert` validates the same parameter by
+        // calling `is_safe_version_token`, and documents the traversal threat
+        // model where a reader will find it. Two handlers that compose a backup
+        // path from the same caller-supplied token should not arrive at safety
+        // by two different routes: the next person to refactor this one has to
+        // rediscover that the numeric parse is load-bearing, and a refactor that
+        // keeps the parse but widens the type stops being safe without looking
+        // any different.
+        if !siphon_core::path_guard::is_safe_version_token(&q.version) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: format!("invalid version {:?}; expected 'v<nanos>'", q.version),
+                }),
+            ));
+        }
+        // Expect "v<nanos>"; look up the sibling backup file. The parse still
+        // bounds the value; after the guard it cannot fail for anything shaped
+        // like a traversal.
         let nanos = q
             .version
             .strip_prefix('v')
@@ -8864,6 +8888,120 @@ mod csv_export_tests {
         // must not re-expose the formula lead.
         let out = csv_field_safe("=1,2");
         assert_eq!(out, "\"'=1,2\"");
+    }
+}
+
+#[cfg(test)]
+mod version_token_guard_tests {
+    /// Both handlers that compose a backup filename from a caller-supplied
+    /// version token must call `is_safe_version_token`.
+    ///
+    /// Neither has a reachable traversal: each composes the path from a parsed
+    /// `u128` rather than from the raw string, so a token like
+    /// `../../etc/passwd` fails the parse and leaves with a 400. The guard is
+    /// defence in depth. What this test protects is the *consistency* — which is
+    /// the thing that actually rotted. `overrides_revert` called the guard and
+    /// `overrides_content` did not, and the only reason the second one was safe
+    /// was a numeric parse several lines further down whose load-bearing role
+    /// was not written anywhere. A refactor that keeps the parse but widens the
+    /// type stops being safe without looking any different.
+    ///
+    /// The list is explicit rather than "every `overrides_*` handler", because
+    /// several of them mention a version without ever building a path from one
+    /// and would fail this for no reason. Add a handler here when it starts
+    /// composing a path from caller input.
+    const PATH_COMPOSING_HANDLERS: &[&str] = &["overrides_content", "overrides_revert"];
+
+    /// Returns the body of a top-level `async fn <name>`, from its signature to
+    /// the first line that closes it at column 0.
+    fn handler_body<'a>(source: &'a str, name: &str) -> &'a str {
+        let needle = format!("\nasync fn {name}(");
+        let start = source
+            .find(&needle)
+            .unwrap_or_else(|| panic!("handler {name} not found in this file"));
+        let rest = &source[start + 1..];
+        let end = rest.find("\n}\n").map(|i| i + 2).unwrap_or(rest.len());
+        &rest[..end]
+    }
+
+    /// Drops comment text, so that *writing about* the guard does not read as
+    /// calling it.
+    ///
+    /// Learned the hard way: the first version of this test searched the raw
+    /// body, and the comment in `overrides_content` explaining why the guard is
+    /// there satisfied it. The test passed with the call itself replaced by
+    /// `if false`, which is the one thing it exists to notice.
+    ///
+    /// Only line comments are stripped, which is all this file uses inside these
+    /// handlers, and `//` inside a string literal would be stripped too — there
+    /// is none here, and the cost of being wrong is a false failure that the
+    /// next line of the diff explains, not a false pass.
+    fn code_only(body: &str) -> String {
+        body.lines()
+            .map(|line| match line.find("//") {
+                Some(i) => &line[..i],
+                None => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn both_backup_path_handlers_call_the_version_guard() {
+        // Normalised, so the column-0 brace search below does not depend on
+        // whether this file was checked out with CRLF.
+        let source = include_str!("main.rs").replace("\r\n", "\n");
+
+        let missing: Vec<&str> = PATH_COMPOSING_HANDLERS
+            .iter()
+            .copied()
+            .filter(|name| {
+                !code_only(handler_body(&source, name)).contains("is_safe_version_token(")
+            })
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "these handlers compose a backup path from a caller-supplied version \
+             but do not call is_safe_version_token: {missing:?}"
+        );
+    }
+
+    /// The extractor has to actually isolate one handler, or the test above
+    /// passes on a neighbour's guard call and proves nothing. This is the bug
+    /// that made the original audit of this pair ambiguous: a fixed-size window
+    /// around `overrides_content` reached into `overrides_revert` and reported a
+    /// guard that was not there.
+    #[test]
+    fn the_body_extractor_does_not_run_into_the_next_handler() {
+        let source = include_str!("main.rs").replace("\r\n", "\n");
+        let body = handler_body(&source, "overrides_content");
+        assert!(
+            body.starts_with("async fn overrides_content("),
+            "extraction did not start at the signature: {:?}",
+            &body[..body.len().min(60)]
+        );
+        assert!(
+            !body.contains("async fn overrides_revert("),
+            "extraction ran past the end of overrides_content into the next handler"
+        );
+    }
+
+    /// `code_only` has to remove the thing that fooled the first version of
+    /// this test, and keep the thing that should satisfy it.
+    #[test]
+    fn code_only_drops_prose_and_keeps_calls() {
+        let stripped =
+            code_only("        // calls is_safe_version_token(x) one day\n        let y = 1;");
+        assert!(
+            !stripped.contains("is_safe_version_token("),
+            "a mention in a comment must not count as a call: {stripped:?}"
+        );
+        let kept = code_only("        if !path_guard::is_safe_version_token(&q.version) {");
+        assert!(
+            kept.contains("is_safe_version_token("),
+            "an actual call must survive stripping: {kept:?}"
+        );
     }
 }
 
