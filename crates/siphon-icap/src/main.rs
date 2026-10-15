@@ -27,6 +27,7 @@
 //! | `SIPHON_ICAP_MAX_CONNECTIONS` | 256 | Max concurrent connections; extras are dropped immediately |
 
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
+use siphon_core::{Inspection, Unread};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
@@ -190,7 +191,8 @@ struct IcapRequest {
     /// Extracted HTTP body bytes (from req-body or res-body), if any
     body: Vec<u8>,
     /// True when the body exceeded `max_body_bytes` and was partially drained
-    /// without storing. Scanning would be incomplete; `handle_scan` returns 204.
+    /// without storing. Scanning would be incomplete; `handle_scan` reports it
+    /// as `Unread::Oversize` and lets `SIPHON_ICAP_ON_UNSCANNABLE` decide.
     body_truncated: bool,
 }
 
@@ -533,7 +535,11 @@ fn response_flagged(req: &IcapRequest, finding_count: usize, categories: &str) -
 /// were not read. The headers keep the response a 204, so no proxy changes
 /// behaviour on upgrade, while giving anything that logs ICAP responses the
 /// difference between the two.
-fn response_204_unscanned(reason: &str) -> Vec<u8> {
+///
+/// `X-DLP-Reason` is the inspection's `describe()` lines joined with `; `,
+/// one per thing that went unread — the same text every other ingress prints
+/// for the same reason, rather than a slug this crate alone knew how to read.
+fn response_204_unscanned(inspection: &Inspection) -> Vec<u8> {
     format!(
         "ICAP/1.0 204 No Content\r\n\
          ISTag: {}\r\n\
@@ -543,16 +549,24 @@ fn response_204_unscanned(reason: &str) -> Vec<u8> {
          \r\n",
         istag(),
         icap_date(),
-        reason,
+        reason_line(inspection),
     )
     .into_bytes()
+}
+
+/// The one-line form of an inspection for a header or an audit action. The
+/// reasons this crate builds (`Oversize`, `Unsupported`) describe themselves
+/// without a CR or LF, so joining them keeps the header a single field.
+fn reason_line(inspection: &Inspection) -> String {
+    inspection.describe().join("; ")
 }
 
 /// Block-mode response for content that could not be read, as opposed to
 /// content that was read and found to carry sensitive data. The distinction
 /// matters to whoever gets the page: "we could not inspect this" is a
 /// different thing to explain than "this contained a card number".
-fn response_blocked_unscanned(reason: &str) -> Vec<u8> {
+fn response_blocked_unscanned(inspection: &Inspection) -> Vec<u8> {
+    let reason = reason_line(inspection);
     let body = format!(
         "<html><head><title>Access Blocked by DLP</title></head>\
          <body><h1>Access Blocked</h1>\
@@ -700,15 +714,26 @@ async fn handle_connection(stream: TcpStream, peer: SocketAddr, state: Arc<AppSt
 /// read, not about what was allowed — and the reason travels into both the
 /// audit record and the ICAP response, so "passed unread" is never
 /// indistinguishable from "scanned clean".
+///
+/// The reason is a `siphon_core::Inspection`, the type every ingress is
+/// converging on (`docs/architecture/inspection-outcome.md`), rather than a
+/// string this crate made up. It says what the verdict *covers*; the
+/// `Unscannable` policy says what to do about the gap, and the two stay
+/// separate so a proxy can be told "not read" in the same words as a CLI.
 fn unscannable_verdict(
     state: &AppState,
     req: &IcapRequest,
     client_ip: &str,
     start: Instant,
-    reason: &'static str,
+    inspection: &Inspection,
 ) -> Vec<u8> {
+    debug_assert!(
+        !inspection.is_complete(),
+        "an unscannable verdict needs a reason the content went unread"
+    );
     state.sensor.record_unscanned();
     let duration_ms = start.elapsed().as_millis();
+    let reason = reason_line(inspection);
     match state.on_unscannable {
         Unscannable::Pass => {
             emit_audit(
@@ -718,7 +743,7 @@ fn unscannable_verdict(
                 &format!("pass-unscanned:{reason}"),
                 duration_ms,
             );
-            response_204_unscanned(reason)
+            response_204_unscanned(inspection)
         }
         Unscannable::Block => {
             emit_audit(
@@ -728,7 +753,7 @@ fn unscannable_verdict(
                 &format!("block-unscanned:{reason}"),
                 duration_ms,
             );
-            response_blocked_unscanned(reason)
+            response_blocked_unscanned(inspection)
         }
     }
 }
@@ -780,11 +805,22 @@ async fn handle_scan(req: &IcapRequest, state: &AppState, client_ip: &str) -> Ve
             policy = ?state.on_unscannable,
             "icap: body exceeded limit and was not scanned"
         );
-        return unscannable_verdict(state, req, client_ip, start, "body-exceeds-limit");
+        // `Oversize` rather than `Truncated`: the body went past a configured
+        // byte limit and the limit is known, so the reason can name it — a
+        // proxy log reading "exceeds the 10485760-byte limit" tells the
+        // operator which knob to turn.
+        let inspection = Inspection::new().with_unread(Unread::Oversize {
+            unit: "body".into(),
+            limit: Some(state.max_body_bytes as u64),
+        });
+        return unscannable_verdict(state, req, client_ip, start, &inspection);
     }
 
     if looks_binary(&req.body) {
-        return unscannable_verdict(state, req, client_ip, start, "binary-body");
+        let inspection = Inspection::new().with_unread(Unread::Unsupported {
+            unit: "body".into(),
+        });
+        return unscannable_verdict(state, req, client_ip, start, &inspection);
     }
 
     let config = ScanConfig {
@@ -1153,31 +1189,91 @@ mod tests {
         assert_eq!(Unscannable::parse("  BLOCK ").unwrap(), Unscannable::Block);
     }
 
+    fn oversize_body(limit: usize) -> Inspection {
+        Inspection::new().with_unread(Unread::Oversize {
+            unit: "body".into(),
+            limit: Some(limit as u64),
+        })
+    }
+
+    fn binary_body() -> Inspection {
+        Inspection::new().with_unread(Unread::Unsupported {
+            unit: "body".into(),
+        })
+    }
+
     /// The bug: a body over the limit got a bare 204, which on the wire is
     /// the same answer as "we read it and it was clean". A proxy logging ICAP
     /// responses could not tell an unread transfer from an inspected one.
     #[test]
     fn a_pass_through_says_it_was_not_read() {
-        let out = String::from_utf8(response_204_unscanned("body-exceeds-limit")).unwrap();
+        let out = String::from_utf8(response_204_unscanned(&oversize_body(10_485_760))).unwrap();
         assert!(out.starts_with("ICAP/1.0 204"), "still a 204: {out}");
         assert!(out.contains("X-DLP-Action: unscanned"), "{out}");
-        assert!(out.contains("X-DLP-Reason: body-exceeds-limit"), "{out}");
+        assert!(
+            out.contains("X-DLP-Reason: body exceeds the ")
+                && out.contains("-byte limit; not read"),
+            "{out}"
+        );
         // A plain 204 carries neither, which is what made the two identical.
         let plain = String::from_utf8(response_204()).unwrap();
         assert!(!plain.contains("X-DLP-Action"));
+    }
+
+    /// The reason names the limit the body went past, so a proxy log line is
+    /// enough to know which knob the operator would turn. The figure is the
+    /// configured one, not a constant somebody once copied into a test.
+    #[test]
+    fn the_oversize_reason_carries_the_configured_limit() {
+        for limit in [4096usize, 10_485_760] {
+            let reason = reason_line(&oversize_body(limit));
+            assert_eq!(
+                reason,
+                format!("body exceeds the {limit}-byte limit; not read")
+            );
+            let out = String::from_utf8(response_204_unscanned(&oversize_body(limit))).unwrap();
+            assert!(
+                out.contains(&format!("X-DLP-Reason: {reason}\r\n")),
+                "{out}"
+            );
+        }
     }
 
     /// Blocking unread content explains itself as unread, not as a finding —
     /// whoever reads the page has a different problem to solve.
     #[test]
     fn blocking_unread_content_does_not_claim_a_finding() {
-        let out = String::from_utf8(response_blocked_unscanned("binary-body")).unwrap();
+        let out = String::from_utf8(response_blocked_unscanned(&binary_body())).unwrap();
         assert!(out.contains("403 Forbidden"), "{out}");
         assert!(out.contains("X-DLP-Action: blocked-unscanned"), "{out}");
         assert!(out.contains("could not inspect"), "{out}");
         assert!(
+            out.contains("X-DLP-Reason: body is not a readable format; not read"),
+            "{out}"
+        );
+        // The same words reach the person who gets the page.
+        assert!(
+            out.contains(
+                "could not inspect this content (body is not a readable format; not read)"
+            ),
+            "{out}"
+        );
+        assert!(
             !out.contains("X-DLP-Findings"),
             "a block for unread content must not report findings: {out}"
+        );
+    }
+
+    /// Two reasons travel as one header field: `describe()` yields one line
+    /// per reason and the join keeps a header a header.
+    #[test]
+    fn several_reasons_join_into_one_header_line() {
+        let both = oversize_body(512).with_unread(Unread::Unsupported {
+            unit: "body".into(),
+        });
+        assert_eq!(
+            reason_line(&both),
+            "body exceeds the 512-byte limit; not read; body is not a readable format; not read"
         );
     }
 

@@ -6,8 +6,8 @@
     "component": {
       "type": "application",
       "name": "siphon-icap",
-      "version": "0.3.0",
-      "purl": "pkg:cargo/siphon-icap@0.3.0"
+      "version": "0.4.0",
+      "purl": "pkg:cargo/siphon-icap@0.4.0"
     },
     "properties": [
       {
