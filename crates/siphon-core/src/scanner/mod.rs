@@ -39,6 +39,7 @@ use crate::context;
 // so the override layer is consistently applied. Direct imports
 // dropped intentionally — anyone tempted to use them directly should
 // reach for the helpers instead.
+use crate::inspection::{Inspection, Unread};
 use crate::models::{Match, PatternDef};
 use crate::normalize;
 use crate::patterns::PATTERNS;
@@ -106,11 +107,11 @@ fn mark_truncated(sink: &TruncationSink) {
 /// `max_matches`. Routing all of them through one predicate means "we
 /// stopped adding" is recorded the same way wherever it happens, rather
 /// than at whichever sites someone remembered.
-fn room_for_more(len: usize, config: &ScanConfig) -> bool {
-    if len < config.max_matches {
+fn room_for_more(len: usize, max_matches: usize, sink: &TruncationSink) -> bool {
+    if len < max_matches {
         true
     } else {
-        mark_truncated(&config.truncated);
+        mark_truncated(sink);
         false
     }
 }
@@ -980,6 +981,47 @@ pub fn scan_text(text: &str) -> crate::Result<Vec<Match>> {
 ///
 /// Uses parallel iteration over compiled regexes with Rayon for throughput.
 pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<Vec<Match>> {
+    scan_impl(text, config, &config.truncated)
+}
+
+/// A scan's matches together with what they cover.
+///
+/// `inspection` is [`Inspection::Complete`] unless a cap stopped match
+/// collection, in which case it carries [`Unread::MatchCapReached`] and
+/// `matches` is a prefix of what the text holds. See
+/// `docs/architecture/inspection-outcome.md`.
+#[derive(Debug, Clone)]
+pub struct ScanOutcome {
+    pub matches: Vec<Match>,
+    pub inspection: Inspection,
+}
+
+/// [`scan_text_with_config`] that also says whether the result is whole.
+///
+/// The scanner's caps are denial-of-service bounds, not statements about
+/// the document; a caller that only counts findings can ignore them, a
+/// caller that reports "clean" or transforms the text cannot. Until now a
+/// caller had to install a [`TruncationSink`] on its config and remember to
+/// read it; only `InputGuard` did. This installs one, reads it, and reports
+/// the answer as an [`Inspection`], so every ingress gets the same signal
+/// without plumbing of its own. A sink the caller did install is honoured
+/// too: it is set alongside, never cleared.
+pub fn scan_text_inspected(text: &str, config: &ScanConfig) -> crate::Result<ScanOutcome> {
+    let flag = Arc::new(AtomicBool::new(false));
+    let sink: TruncationSink = Some(Arc::clone(&flag));
+    let matches = scan_impl(text, config, &sink)?;
+    let mut inspection = Inspection::new();
+    if flag.load(Ordering::Relaxed) {
+        inspection.unread(Unread::MatchCapReached);
+        mark_truncated(&config.truncated);
+    }
+    Ok(ScanOutcome {
+        matches,
+        inspection,
+    })
+}
+
+fn scan_impl(text: &str, config: &ScanConfig, sink: &TruncationSink) -> crate::Result<Vec<Match>> {
     validate_text_input(text)?;
 
     let start = Instant::now();
@@ -1117,7 +1159,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
 
         for (norm_start, norm_end, matched_text) in reported_matches(active_regex, haystack) {
             if local_matches.len() >= MAX_MATCHES_PER_PATTERN {
-                mark_truncated(&config.truncated);
+                mark_truncated(sink);
                 break;
             }
             let cand_span = (norm_start, norm_end);
@@ -1444,7 +1486,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
         .chain(raw_pass_matches.into_iter().flatten())
         .collect();
     if collected.len() > config.max_matches {
-        mark_truncated(&config.truncated);
+        mark_truncated(sink);
     }
     let mut matches: Vec<Match> = collected.into_iter().take(config.max_matches).collect();
 
@@ -1740,10 +1782,12 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     }
 
     // Entropy-based secret detection (optional)
-    if config.entropy_scan != EntropyMode::Off && room_for_more(matches.len(), config) {
+    if config.entropy_scan != EntropyMode::Off
+        && room_for_more(matches.len(), config.max_matches, sink)
+    {
         let entropy_matches = scan_high_entropy_tokens(text, &normalized, &offset_map, config);
         for em in entropy_matches {
-            if !room_for_more(matches.len(), config) {
+            if !room_for_more(matches.len(), config.max_matches, sink) {
                 break;
             }
             // Skip if already covered by a regex match at the same span
@@ -1760,10 +1804,10 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     // EDM matches are NEVER dominated by regex matches because they represent
     // confirmed known sensitive values, not pattern guesses.
     if let Some(ref edm) = config.edm {
-        if room_for_more(matches.len(), config) {
+        if room_for_more(matches.len(), config.max_matches, sink) {
             let edm_matches = edm.scan(text, config.categories.as_ref());
             for em in edm_matches {
-                if !room_for_more(matches.len(), config) {
+                if !room_for_more(matches.len(), config.max_matches, sink) {
                     break;
                 }
                 {
@@ -1783,10 +1827,10 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
 
     // LSH (Locality-Sensitive Hashing) — check for similar documents
     if let Some(ref lsh) = config.lsh {
-        if room_for_more(matches.len(), config) {
+        if room_for_more(matches.len(), config.max_matches, sink) {
             let sim_matches = lsh.query(text, None);
             for sm in sim_matches {
-                if !room_for_more(matches.len(), config) {
+                if !room_for_more(matches.len(), config.max_matches, sink) {
                     break;
                 }
                 matches.push(Match::new(
@@ -1816,7 +1860,7 @@ pub fn scan_text_with_config(text: &str, config: &ScanConfig) -> crate::Result<V
     if let Some(rps) = config.runtime_patterns.as_ref() {
         for rp in rps.iter() {
             for mat in rp.regex.find_iter(text) {
-                if !room_for_more(matches.len(), config) {
+                if !room_for_more(matches.len(), config.max_matches, sink) {
                     break;
                 }
                 let span = (mat.start(), mat.end());
@@ -2312,6 +2356,50 @@ fn entropy_to_confidence(entropy: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use super::{scan_text_inspected, scan_text_with_config, ScanConfig};
+    use crate::inspection::Unread;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    #[test]
+    fn inspected_scan_is_complete_when_nothing_was_capped() {
+        let out =
+            scan_text_inspected("credit card 4532015112830366", &ScanConfig::default()).unwrap();
+        assert!(out.inspection.is_complete());
+        assert!(!out.matches.is_empty());
+    }
+
+    #[test]
+    fn inspected_scan_reports_match_cap() {
+        let text = "card 4532015112830366, card 4916338506082832, card 4485275742308327";
+        let config = ScanConfig::default().with_max_matches(1);
+        let out = scan_text_inspected(text, &config).unwrap();
+        assert_eq!(out.matches.len(), 1);
+        assert!(!out.inspection.is_complete());
+        assert_eq!(out.inspection.unread_reasons(), &[Unread::MatchCapReached]);
+    }
+
+    #[test]
+    fn inspected_scan_also_sets_a_sink_the_caller_installed() {
+        let text = "card 4532015112830366, card 4916338506082832";
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut config = ScanConfig::default().with_max_matches(1);
+        config.truncated = Some(Arc::clone(&flag));
+        let out = scan_text_inspected(text, &config).unwrap();
+        assert!(!out.inspection.is_complete());
+        assert!(flag.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn plain_scan_still_honours_the_callers_sink() {
+        let text = "card 4532015112830366, card 4916338506082832";
+        let flag = Arc::new(AtomicBool::new(false));
+        let mut config = ScanConfig::default().with_max_matches(1);
+        config.truncated = Some(Arc::clone(&flag));
+        let m = scan_text_with_config(text, &config).unwrap();
+        assert_eq!(m.len(), 1);
+        assert!(flag.load(Ordering::Relaxed));
+    }
     /// Cost of the raw-text second pass, measured rather than assumed.
     #[test]
     #[ignore]

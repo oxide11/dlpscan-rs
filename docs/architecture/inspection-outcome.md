@@ -1,6 +1,6 @@
 # One inspection outcome for every ingress
 
-Status: **type landed in siphon-core; ingress adoption pending** (2026-10-15).
+Status: **type and `scan_text_inspected` landed in siphon-core; ingress adoption pending** (2026-10-15).
 Companion to `siphon_core::inspection` (the code) and the "Security audit
 log" in `BACKLOG.md` (the incidents).
 
@@ -64,18 +64,21 @@ Invariants the type holds that strings and flags could not:
 Each step is a PR on its own, each shrinks the per-crate mechanism it
 replaces, and none changes a wire format without saying so.
 
-### 1. siphon-core: `scan_text_inspected`
+### 1. siphon-core: `scan_text_inspected` — **landed with this document**
 
-`scan_text_with_config` returns a bare `Vec<Match>`; truncation is an
-opt-in `AtomicBool` only `InputGuard` reads. Add
+`scan_text_with_config` returns a bare `Vec<Match>`; truncation was an
+opt-in `AtomicBool` only `InputGuard` read. Now
 
 ```rust
 pub struct ScanOutcome { pub matches: Vec<Match>, pub inspection: Inspection }
 pub fn scan_text_inspected(text: &str, cfg: &ScanConfig) -> Result<ScanOutcome>
 ```
 
-which installs its own sink and reports `Unread::MatchCapReached` when it
-fired. The old function stays, implemented on top, so nothing breaks.
+installs its own sink and reports `Unread::MatchCapReached` when any cap
+fired (per-pattern, total, entropy, EDM, LSH, runtime patterns — the sink is
+threaded through `scan_impl`, so every cap site reports the same way). A
+sink the caller installed is set alongside, never cleared.
+`scan_text_with_config` is unchanged in behaviour and is now a thin wrapper.
 
 ### 2. CLI (`src/pipeline`, `src/main.rs`) — after PR #494 merges
 
