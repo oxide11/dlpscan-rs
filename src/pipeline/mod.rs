@@ -41,9 +41,10 @@ impl FileJob {
 
 /// Result from processing a single file.
 ///
-/// `#[non_exhaustive]` because this struct grows: `file_entropy` and
+/// `#[non_exhaustive]` because this struct changes shape: `file_entropy` and
 /// `entropy_classification` were added after it shipped, `warnings` after
-/// those, and `inspection` after that. Each addition was a struct-literal
+/// those, `inspection` after that, and `warnings` was then removed once
+/// `inspection` carried everything it had. Each change was a struct-literal
 /// break for anyone outside this crate building one by hand. Marking it takes
 /// that break once and makes every later field free.
 #[derive(Debug, Clone, Serialize)]
@@ -76,13 +77,10 @@ pub struct PipelineResult {
     /// existed `siphon scan` printed the same `Matches: 0` for both.
     ///
     /// Serialises as `{"status": "complete"}` or
-    /// `{"status": "incomplete", "unread": [{"kind": ...}, ...]}`.
+    /// `{"status": "incomplete", "unread": [{"kind": ...}, ...]}`. The
+    /// `warnings` array that used to sit beside it (one line per reason) is
+    /// gone as of siphon-cli 2.7.0; `inspection.describe()` is the same text.
     pub inspection: Inspection,
-    /// `inspection.describe()`: one line per reason, for readers still on
-    /// strings. Always derived from `inspection`, never written separately.
-    /// Goes away with step 6 of `docs/architecture/inspection-outcome.md`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub warnings: Vec<String>,
 }
 
 impl PipelineResult {
@@ -99,7 +97,6 @@ impl PipelineResult {
             file_entropy: None,
             entropy_classification: None,
             inspection: Inspection::new(),
-            warnings: vec![],
         }
     }
 
@@ -108,18 +105,15 @@ impl PipelineResult {
         self
     }
 
-    /// Record content that was not read; `warnings` follows.
+    /// Record content that was not read.
     fn with_unread(mut self, reason: Unread) -> Self {
         self.inspection.unread(reason);
-        self.warnings = self.inspection.describe();
         self
     }
 
-    /// Fold an inspection in (an extractor's, the scanner's); `warnings`
-    /// follows.
+    /// Fold an inspection in (an extractor's, the scanner's).
     fn with_inspection(mut self, inspection: Inspection) -> Self {
         self.inspection.merge(inspection);
-        self.warnings = self.inspection.describe();
         self
     }
 
@@ -309,7 +303,7 @@ impl Pipeline {
 
         // Try the extractor first (DOCX, XLSX, PDF, EML, ...). What it could
         // not read travels in `result.inspection`; the pipeline carries that
-        // forward instead of reading `warnings` and dropping the rest.
+        // forward whole.
         let file_path_str = path.display().to_string();
         let mut inspection = Inspection::new();
         let (text, format) = match crate::extractors::extract_text(&file_path_str) {
@@ -466,7 +460,6 @@ impl Pipeline {
             }
         };
 
-        let warnings = inspection.describe();
         PipelineResult {
             file_path,
             matches,
@@ -478,7 +471,6 @@ impl Pipeline {
             file_entropy,
             entropy_classification,
             inspection,
-            warnings,
         }
     }
 

@@ -6,6 +6,90 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-16 — Inspection: delete what it replaced
+
+Step 6, the last, of `docs/architecture/inspection-outcome.md`. Every
+ingress has reported what its verdict covers through `siphon_core::Inspection`
+since 2026-10-15; this release removes the strings, bools and metadata keys
+that carried the same facts beside it. Nothing changes in what is detected
+or decided — each deleted field was derived from `inspection` at every
+write, so the typed field already said everything the deleted ones did.
+
+### siphon-cli 2.7.0
+
+- **feat(cli)!: `ExtractionResult.warnings` and `PipelineResult.warnings`
+  are removed.** `inspection` is the only coverage field; `describe()` gives
+  the same one-line-per-reason text the arrays held. `siphon scan` and
+  `scan-dir` print "Unscanned content:" from it, unchanged on screen. In
+  `--format json` the `warnings` array is gone from each result (it was
+  already omitted whenever empty). Scripts that read it should read
+  `inspection.unread[]` — typed, and carrying the unit and the limit where
+  the string had only a sentence.
+- **feat(cli)!: `metadata["format_mismatch"]` is removed.** A file whose
+  bytes contradict its name carries `Unread::FormatMismatch { declared,
+  detected }` on `inspection`, as it has since 2.6.0; the metadata key was
+  the same fact a second time. `SIPHON_ON_FORMAT_MISMATCH` and all three
+  policies behave as before.
+- `ExtractionResult::with_warning` stays (it records `Unread::Other`), as
+  does `note()`, now documented as the one entry point for a reason that
+  is not a gap.
+- Conformance: the `clean` and `structural` slots assert `inspection`
+  complete instead of `warnings` empty; the `disguise` capability asserts
+  the typed mismatch instead of the metadata key. `tests/archive_security_test.rs`
+  and `tests/inspection_outcome_test.rs` follow, and the latter pins that
+  `warnings` is absent from the JSON.
+
+### siphon-fs 1.7.0
+
+- **feat(fs)!: `scanned` and `warnings` are removed from the `POST /scan`
+  response.** `scanned` was `inspection.status == "complete"` and `warnings`
+  the reasons as text, both for one release (1.6.0). Read `inspection`.
+- fix(fs): the extractor's inspection now merges into the response whole,
+  instead of its `warnings` being re-typed as `Unread::Other`. A nested
+  archive the extractor did not open arrives as `{"kind":
+  "nested_archive", "unit": "entry inner.zip"}`, an encrypted entry as
+  `encrypted`, a declared-size lie as `read_error` — the same typed reasons
+  the CLI reports — rather than a sentence under `other`. The
+  "no extractable text in file" line that rode along in `warnings` has no
+  successor: an empty complete inspection beside `findings: []` already
+  says it, and it was never a coverage gap.
+- fix(fs): a format mismatch under the `flag` policy now reaches the HTTP
+  caller as `format_mismatch` on `inspection`; before this release
+  siphon-fs read `warnings`, which `note()` never wrote to, so the
+  contradiction was logged and otherwise dropped on this ingress. The
+  sensor's counters are unchanged: a file read by content was scanned, and
+  only a reason other than `format_mismatch` counts it `unscanned`.
+
+### siphon-smtp 0.3.1
+
+- fix(smtp): `extract_attachment` reads the extractor's `inspection`
+  instead of its deleted `warnings`. A part is faithful when the inspection
+  carries no reason other than `Unread::FormatMismatch` and the format is
+  not `unparsed`. That is the decision step 2 deferred to this step: **a
+  misnamed attachment that was read by content is inspected and its
+  verdict stands; it does not defer.** The old string channel gave the same
+  answer by omission (`note()` never wrote a warning); it is now stated. An
+  operator who wants misnamed attachments refused has
+  `SIPHON_ON_FORMAT_MISMATCH=reject`, which arrives as an extraction `Err`
+  and defers through the ordinary path. Pinned by
+  `a_misnamed_attachment_that_was_read_is_not_a_gap` (new `zip`
+  dev-dependency to build the fixture; no shipped artifact changes).
+- The MIME walker's structural warnings still arrive as strings and are
+  still absorbed as `Unread::Other`; it is the one producer left on
+  `absorb_warnings`.
+
+### Not moved
+
+- siphon-icap: its reason strings went in 0.4.0 (step 4); nothing here to
+  delete.
+- siphon-core: unchanged. The two extraction paths the ADR left silent on
+  purpose — non-text archive members, unopened Office XML trees — are
+  recorded in `BACKLOG.md` with what would change them (a reason the
+  ingresses can treat as informational; reading the trees), neither of
+  which is a deletion.
+
+---
+
 ## 2026-10-16 — dependency: zip 9
 
 ### workspace (lockfile and manifests only)

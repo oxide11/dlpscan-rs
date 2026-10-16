@@ -161,9 +161,12 @@ mod archives {
 
         let out = siphon::extract_text(outer_path.to_str().unwrap()).expect("outer zip extracts");
         assert!(
-            out.warnings.iter().any(|w| w.contains("nested archive")),
-            "nested archive should produce a warning, got: {:?}",
-            out.warnings
+            out.inspection
+                .describe()
+                .iter()
+                .any(|w| w.contains("nested archive")),
+            "nested archive should be reported unread, got: {:?}",
+            out.inspection
         );
     }
 
@@ -245,11 +248,12 @@ mod archives {
             out.text
         );
         assert!(
-            out.warnings
+            out.inspection
+                .describe()
                 .iter()
                 .any(|w| w.contains("inflated past its declared size")),
             "an entry refused for lying about its size must say so, got: {:?}",
-            out.warnings
+            out.inspection
         );
     }
 
@@ -271,11 +275,12 @@ mod archives {
             out.text
         );
         assert!(
-            out.warnings
+            out.inspection
+                .describe()
                 .iter()
                 .any(|w| w.contains("inflated past its declared size")),
             "an ODF entry refused for lying about its size must say so, got: {:?}",
-            out.warnings
+            out.inspection
         );
     }
 
@@ -306,20 +311,20 @@ mod archives {
             out.text
         );
         assert!(
-            out.warnings.is_empty(),
-            "an honest archive should raise no warnings, got: {:?}",
-            out.warnings
+            out.inspection.is_complete(),
+            "an honest archive should be read in full, got: {:?}",
+            out.inspection
         );
     }
 
-    /// `extract_text` has always reported unreadable content through
-    /// `warnings`, and siphon-fs has always returned them, but `PipelineResult`
-    /// had nowhere to put them — so `process_file` dropped them and
-    /// `siphon scan` printed a bare `Matches: 0` for an archive whose payload
-    /// nobody had opened. The CLI and the HTTP service have to agree about
-    /// what was not read.
+    /// `extract_text` has always reported unreadable content (once as
+    /// `warnings`, now as `inspection`), and siphon-fs has always returned
+    /// it, but `PipelineResult` had nowhere to put it — so `process_file`
+    /// dropped it and `siphon scan` printed a bare `Matches: 0` for an
+    /// archive whose payload nobody had opened. The CLI and the HTTP service
+    /// have to agree about what was not read.
     #[test]
-    fn pipeline_result_carries_extraction_warnings() {
+    fn pipeline_result_carries_the_extractors_inspection() {
         use std::io::Write;
         let tmp = tempfile::tempdir().unwrap();
 
@@ -348,9 +353,13 @@ mod archives {
             "nested entry is deliberately not recursed"
         );
         assert!(
-            result.warnings.iter().any(|w| w.contains("nested archive")),
-            "PipelineResult must carry the extractor's warnings, got: {:?}",
-            result.warnings
+            result
+                .inspection
+                .describe()
+                .iter()
+                .any(|w| w.contains("nested archive")),
+            "PipelineResult must carry the extractor's inspection, got: {:?}",
+            result.inspection
         );
     }
 }

@@ -4,7 +4,7 @@
 //! A `PipelineResult` with zero matches used to be the same object for a file
 //! read end to end and for an archive whose only entry nobody opened. These
 //! tests pin the difference: `inspection` is `Incomplete` with a typed reason
-//! whenever content went unread, `warnings` is its one-line form, and
+//! whenever content went unread, `describe()` is its one-line form, and
 //! `--on-incomplete fail` turns that into exit code 3 — for `scan` and for
 //! `scan-dir`, which never set a non-zero exit code before.
 
@@ -70,18 +70,17 @@ fn a_nested_archive_makes_the_verdict_incomplete_with_a_typed_reason() {
         "{:?}",
         result.inspection
     );
-    // `warnings` is `describe()`, nothing else.
-    assert_eq!(result.warnings, result.inspection.describe());
-    assert!(result.warnings[0].contains("nested archive"));
+    // The one-line form is the type's own, nothing else.
+    assert!(result.inspection.describe()[0].contains("nested archive"));
 }
 
 #[test]
-fn a_file_read_end_to_end_is_complete_and_has_no_warnings() {
+fn a_file_read_end_to_end_is_complete() {
     let tmp = tempfile::tempdir().unwrap();
     let result = Pipeline::new().process_file(&honest_zip(tmp.path()));
     assert!(result.error.is_none());
     assert_eq!(result.inspection, Inspection::Complete);
-    assert!(result.warnings.is_empty());
+    assert!(result.inspection.describe().is_empty());
     assert!(
         result.match_count() >= 1,
         "the card is readable: {result:?}"
@@ -153,6 +152,12 @@ fn the_json_output_carries_the_inspection() {
     assert_eq!(inspection["status"], "incomplete");
     assert_eq!(inspection["unread"][0]["kind"], "nested_archive");
     assert_eq!(inspection["unread"][0]["unit"], "entry inner.zip");
+    // Step 6 of the ADR: the string form is no longer on the wire.
+    assert!(
+        json[0].get("warnings").is_none(),
+        "`warnings` was removed from the JSON output: {}",
+        json[0]
+    );
 }
 
 // ── the binary ─────────────────────────────────────────────────────────────────

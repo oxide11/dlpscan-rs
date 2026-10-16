@@ -6,8 +6,8 @@
     "component": {
       "type": "application",
       "name": "siphon-smtp",
-      "version": "0.3.0",
-      "purl": "pkg:cargo/siphon-smtp@0.3.0"
+      "version": "0.3.1",
+      "purl": "pkg:cargo/siphon-smtp@0.3.1"
     },
     "properties": [
       {
@@ -5660,8 +5660,8 @@
     {
       "type": "library",
       "name": "siphon-cli",
-      "version": "2.6.0",
-      "purl": "pkg:cargo/siphon-cli@2.6.0",
+      "version": "2.7.0",
+      "purl": "pkg:cargo/siphon-cli@2.7.0",
       "scope": "required",
       "licenses": [
         {

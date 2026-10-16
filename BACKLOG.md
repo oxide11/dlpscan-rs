@@ -1,6 +1,6 @@
 # Siphon Backlog
 
-Last updated: 2026-09-30
+Last updated: 2026-10-16
 
 ## Security audit log
 
@@ -142,6 +142,33 @@ maintained alternative exists and the migration risk is low.
 | `zip` 8.6.0 (via `calamine`) | yanked 2026-10-16, no advisory | Every zip 8.x release was yanked; the workspace moved to zip 9 the same day. `calamine` 0.36.1 (latest) still requires `^8.6`, so a second copy stays in the graph under a `deny.toml` ignore. Bump `calamine` and delete the ignore the day it ships on zip 9. |
 
 ## Security debt — operational correctness
+
+### Two extraction paths that are still silent (inspection ADR, step 6)
+
+`docs/architecture/inspection-outcome.md` is complete as of 2026-10-16:
+every ingress reports what its verdict covers through one type, and the
+strings, bools and metadata keys it replaced are gone. Two paths were left
+silent on purpose, recorded there and here so they are not mistaken for
+oversights:
+
+- **Non-text members of a plain archive** (an image, a binary) are skipped
+  without a reason. Typing them `Unread::Unsupported` is true, but under
+  the milter's fail-closed default it would defer every message carrying a
+  zipped `.png`, and `policy::action_for` cannot tell that `Unsupported`
+  from a text part it could not decode. Needs a reason the ingresses can
+  treat as informational — a distinct `Unread` variant (core MINOR), with
+  the milter and siphon-fs's `unscanned` counter taught to read it — before
+  the reader can say it.
+- **Office XML trees the extractor does not open.** `extract_office` reads
+  every `word/*.xml` for docx (so headers, footers, footnotes and comments
+  are covered there), but only `xl/worksheets/*` + `sharedStrings` for xlsx
+  and only `ppt/slides/*` for pptx: cell comments (`xl/comments*.xml`),
+  drawing text boxes (`xl/drawings/*`), speaker notes
+  (`ppt/notesSlides/*`), presentation comments, and embedded objects under
+  `*/embeddings/` in all three can carry text and are never read. This is
+  a *reading* gap, not a reporting one — the fix is to read them (and then
+  report what is still left), not to type the silence. Worth a conformance
+  `structural` case per format once it lands.
 
 ### EDM salt stability (`SIPHON_EDM_SALT_HEX`)
 

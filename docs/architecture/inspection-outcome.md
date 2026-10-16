@@ -1,6 +1,6 @@
 # One inspection outcome for every ingress
 
-Status: **type landed in siphon-core (2.11.0); CLI (step 2, siphon-cli 2.6.0), siphon-fs (step 3, 1.6.0), siphon-icap (step 4, 0.4.0) and siphon-smtp/siphon-mail (step 5, 0.3.0 / 0.2.0) adopted; step 6 (delete what they replaced) pending** (2026-10-16).
+Status: **complete.** Type landed in siphon-core (2.11.0); CLI (step 2, siphon-cli 2.6.0), siphon-fs (step 3, 1.6.0), siphon-icap (step 4, 0.4.0) and siphon-smtp/siphon-mail (step 5, 0.3.0 / 0.2.0) adopted; the mechanisms they replaced deleted (step 6, siphon-cli 2.7.0 / siphon-fs 1.7.0 / siphon-smtp 0.3.1) on 2026-10-16.
 Companion to `siphon_core::inspection` (the code) and the "Security audit
 log" in `BACKLOG.md` (the incidents).
 
@@ -159,11 +159,46 @@ inspection, since the core type carries its reasons. The MIME walker's
 warnings are absorbed as `Unread::Other` until it is typed. Nothing on the
 wire or in `message_parts` changed.
 
-### 6. Delete what it replaced
+### 6. Delete what it replaced — **landed, siphon-cli 2.7.0 / siphon-fs 1.7.0 / siphon-smtp 0.3.1**
 
-`ExtractionResult.warnings`, `ScanResponse.scanned`, the ICAP reason
-strings, and `metadata["format_mismatch"]`. The `TruncationSink` stays as
-the mechanism inside core; `scan_text_inspected` is its only consumer.
+Gone: `ExtractionResult.warnings`, `PipelineResult.warnings` (and the
+`warnings` array in `siphon scan --format json`), `ScanResponse.scanned`
+and `ScanResponse.warnings` in siphon-fs, `metadata["format_mismatch"]`,
+and siphon-fs's `coverage()` re-typing extractor strings as `Unread::Other`
+— the extractor's `inspection` now merges in whole, so a nested archive
+arrives at the HTTP caller as `nested_archive`, not `other`. The ICAP reason
+strings had already gone in step 4 (`X-DLP-Reason` is `describe()`), so
+siphon-icap did not move. The `TruncationSink` stays as the mechanism inside
+core; `scan_text_inspected` is its only consumer. `Inspection::absorb_warnings`
+stays for the one producer still on strings, the MIME walker's structural
+warnings in siphon-smtp.
+
+Two decisions this step owed:
+
+- **A misnamed attachment that was read does not defer.** Under the default
+  `flag` policy `Unread::FormatMismatch` means the bytes were read as what
+  they are and only the name lied; the verdict over that content stands.
+  The milter's `extract_attachment` treats a part as faithful when its
+  inspection carries no reason *other than* `FormatMismatch` (and the format
+  is not `unparsed`), which is the same answer the old string channel gave
+  — `note()` never wrote to `warnings` — now stated in the type rather than
+  by omission. An operator who wants misnamed files refused has
+  `SIPHON_ON_FORMAT_MISMATCH=reject`, which arrives as an extraction `Err`
+  and defers through the ordinary path. The CLI still exits 3 on it under
+  `--on-incomplete fail`, and siphon-fs reports it `incomplete`: for those
+  two the reader is a person or a script that asked to be told, not an MTA
+  holding ordinary mail.
+- **Non-text archive members and unopened Office XML trees stay silent.**
+  Typing them as `Unsupported` would be true and would defer every message
+  carrying a zipped `.png` under the milter's fail-closed default, with no
+  way for `policy::action_for` to tell that reason from a text part it could
+  not decode — both are `Unsupported`. The honest fix is not a quieter
+  reader but a reason the ingresses can treat as informational (a distinct
+  variant, which is a core change) or, for the Office trees, reading more:
+  cell comments, speaker notes, text boxes and embedded objects carry text,
+  and an extractor that reads the slides and says nothing about the notes
+  is a reading gap, not a reporting one. Both are in `BACKLOG.md`; neither belongs in a
+  deletion step.
 
 ## What this does not do
 
@@ -172,6 +207,6 @@ the mechanism inside core; `scan_text_inspected` is its only consumer.
 - It does not make an extractor read more. An Office extractor that reads
   three XML trees still reads three; it now *says* it left the rest.
 - It does not replace the conformance matrix's `damaged` slot; it is what
-  that slot will assert on once step 2 lands (`inspection.is_complete()`
-  must be `false` for every damaged fixture, which is a sharper test than
-  "no clean read").
+  that slot asserts on (`inspection.is_complete()` must be `false` for every
+  damaged fixture, which is a sharper test than "no clean read"), and the
+  `clean` slots assert the converse — a well-formed file reads `Complete`.
