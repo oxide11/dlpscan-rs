@@ -433,7 +433,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.smtp
-    image: siphon-smtp:0.2.1
+    image: siphon-smtp:0.3.0
     profiles: [auth]
     environment:
       # CIDRs whose connections the milter accepts. Default is loopback-
