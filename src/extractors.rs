@@ -9,6 +9,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
+use siphon_core::inspection::{Inspection, Unread};
+
 /// Maximum file size for extraction (100 MB).
 pub const MAX_EXTRACT_SIZE: usize = 100 * 1024 * 1024;
 
@@ -84,9 +86,26 @@ fn archive_entry_is_nested_archive(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Cap on how many distinct nested-archive warnings we record for one file, so
-/// a container packed with 10k inner archives can't produce 10k warning lines.
+/// Cap on how many distinct unread reasons we record for one file, so a
+/// container packed with 10k refused entries can't produce 10k lines. The
+/// inspection is incomplete after the first one either way.
 const MAX_NESTED_ARCHIVE_WARNINGS: usize = 20;
+
+/// A text member of a RAR or 7z larger than this is not read. Two walkers
+/// carried this as a bare `1_048_576`; one name so the reason they report
+/// can quote it.
+const ARCHIVE_TEXT_MEMBER_CAP: u64 = 1_048_576;
+
+/// Characters kept from a RAR or 7z text member. Content past it was never
+/// scanned, and until step 2 of inspection-outcome.md nothing said so.
+const ARCHIVE_TEXT_CHAR_CAP: usize = 100_000;
+
+/// The first `cap` characters of `s`, and whether anything was left behind.
+fn take_chars(s: &str, cap: usize) -> (String, bool) {
+    let mut chars = s.chars();
+    let kept: String = chars.by_ref().take(cap).collect();
+    (kept, chars.next().is_some())
+}
 
 /// Check whether a ZIP entry's declared size vs. its compressed size
 /// exceeds the configured bomb threshold. Returns true if the entry
@@ -133,8 +152,21 @@ pub struct ExtractionResult {
     pub format: String,
     #[serde(default)]
     pub metadata: HashMap<String, String>,
+    /// One line per reason in `inspection`, kept for readers still on
+    /// strings (siphon-fs's `coverage`, the milter's `faithful` test). Every
+    /// entry here is also a typed reason below; nothing is written to one
+    /// without the other. Goes away with step 6 of
+    /// `docs/architecture/inspection-outcome.md`.
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// What `text` covers. `Complete` when the extractor read every unit of
+    /// content it could see; `Incomplete` with a typed reason for each one it
+    /// did not: an entry over a cap, an encrypted member, a nested archive it
+    /// does not descend into, a parse it gave up on and replaced with raw
+    /// bytes, a row or barcode cap. A caller that scans `text` and finds
+    /// nothing has to read this before it says "clean".
+    #[serde(default)]
+    pub inspection: Inspection,
 }
 
 impl ExtractionResult {
@@ -144,11 +176,73 @@ impl ExtractionResult {
             format: format.to_string(),
             metadata: HashMap::new(),
             warnings: Vec::new(),
+            inspection: Inspection::new(),
         }
     }
 
+    /// Record content that was not read, with the reason as free text. For
+    /// producers that have not been typed yet; prefer [`with_unread`].
+    ///
+    /// [`with_unread`]: Self::with_unread
     pub fn with_warning(mut self, warning: &str) -> Self {
-        self.warnings.push(warning.to_string());
+        self.unread(Unread::Other {
+            detail: warning.to_string(),
+        });
+        self
+    }
+
+    /// Record content that was not read. The reason goes into `inspection`
+    /// typed and into `warnings` as its one-line description, so the two
+    /// cannot disagree about what was left out.
+    pub fn with_unread(mut self, reason: Unread) -> Self {
+        self.unread(reason);
+        self
+    }
+
+    /// In-place form of [`with_unread`](Self::with_unread).
+    pub fn unread(&mut self, reason: Unread) {
+        self.warnings.push(reason.to_string());
+        self.inspection.unread(reason);
+    }
+
+    /// Record a reason that came from a nested read (an attachment inside a
+    /// message), naming the container in the unit so the line still says
+    /// *where* the unread content sits once it is one of many.
+    pub fn unread_within(&mut self, context: &str, reason: Unread) {
+        let placed = match reason {
+            Unread::Oversize { unit, limit } => Unread::Oversize {
+                unit: format!("{context}: {unit}"),
+                limit,
+            },
+            Unread::Truncated { unit } => Unread::Truncated {
+                unit: format!("{context}: {unit}"),
+            },
+            Unread::Encrypted { unit } => Unread::Encrypted {
+                unit: format!("{context}: {unit}"),
+            },
+            Unread::NestedArchive { unit } => Unread::NestedArchive {
+                unit: format!("{context}: {unit}"),
+            },
+            Unread::Unsupported { unit } => Unread::Unsupported {
+                unit: format!("{context}: {unit}"),
+            },
+            Unread::ReadError { unit, detail } => Unread::ReadError {
+                unit: format!("{context}: {unit}"),
+                detail,
+            },
+            other => Unread::Other {
+                detail: format!("{context}: {other}"),
+            },
+        };
+        self.unread(placed);
+    }
+
+    /// Record a fact about coverage that is *not* a warning. Used for a
+    /// format mismatch under the `flag` policy: the file was read, correctly,
+    /// as what its bytes are, so no content went unread and the milter must
+    /// not defer on it — but the verdict should still say the name lied.
+    pub fn note(mut self, reason: Unread) -> Self {
+        self.inspection.unread(reason);
         self
     }
 
@@ -351,7 +445,15 @@ pub fn extract_text_with_policy(
                     if on_mismatch == OnFormatMismatch::Ignore {
                         r
                     } else {
+                        // `note`, not `with_unread`: the content *was* read, as
+                        // what it is, so this is not a gap for the milter to
+                        // defer on. It is a typed reason the CLI and siphon-fs
+                        // now see without reading `metadata`.
                         r.with_metadata("format_mismatch", &mismatch)
+                            .note(Unread::FormatMismatch {
+                                declared: e.to_string(),
+                                detected: a.name().to_string(),
+                            })
                     }
                 });
             }
@@ -374,6 +476,28 @@ pub fn extract_text_with_policy(
         } else {
             extract_unparsed_binary(file_path)
         }
+    }
+}
+
+/// The declared extension and the content family it contradicts, when they
+/// disagree; `None` when they agree, when the name claims nothing, or when the
+/// bytes prove nothing.
+///
+/// For a caller that only has the `Err` [`extract_text`] returns under
+/// `SIPHON_ON_FORMAT_MISMATCH=reject` and has to say *why* the file was not
+/// read, as a typed `Unread::FormatMismatch` rather than by parsing the error
+/// string.
+pub fn format_mismatch(file_path: &str) -> Option<(String, String)> {
+    let ext = Path::new(file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())?;
+    let actual = sniff_family(file_path)?;
+    let detected = actual.name().to_string();
+    if declared_family(&ext) == Some(actual) {
+        None
+    } else {
+        Some((ext, detected))
     }
 }
 
@@ -993,8 +1117,10 @@ fn extract_eml(file_path: &str) -> Result<ExtractionResult, String> {
                 text.push_str(&format!("\n[attachment: {name}]\n"));
                 text.push_str(&sub.text);
                 text.push('\n');
-                for w in &sub.warnings {
-                    result = result.with_warning(&format!("{name}: {w}"));
+                // The attachment's own gaps, placed: "attachment x.zip: entry
+                // inner.zip is a nested archive; not read".
+                for reason in sub.inspection.unread_reasons() {
+                    result.unread_within(&format!("attachment {name}"), reason.clone());
                 }
             }
             // Nothing readable in it — an image with no barcode, an empty
@@ -1003,10 +1129,10 @@ fn extract_eml(file_path: &str) -> Result<ExtractionResult, String> {
             Err(e) => {
                 // Content exists that this pass did not read. Say so: an
                 // extraction failure must not leave the message looking clean.
-                result = result.with_warning(&format!(
-                    "attachment not scanned: {name} ({}, {} bytes): {e}",
-                    a.content_type, a.size
-                ));
+                result.unread(Unread::ReadError {
+                    unit: format!("attachment {name} ({}, {} bytes)", a.content_type, a.size),
+                    detail: e,
+                });
             }
         }
     }
@@ -1060,21 +1186,26 @@ fn extract_attachment_bytes(bytes: &[u8], name: &str) -> Result<Option<Extractio
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("bin");
-    let dir = std::env::temp_dir().join(format!(
-        "siphon-att-{}-{:x}",
-        std::process::id(),
-        bytes.len()
-    ));
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join(format!("part.{ext}"));
+    // A directory of its own, not one named by process id and byte length:
+    // two attachments of the same size extracted on two threads of one
+    // process (every parallel test run, any concurrent server) shared a
+    // directory, and whichever finished first deleted the other's file. The
+    // conformance `eml` case failed one CI run in several on exactly this,
+    // reporting the base64 attachment as a live bypass.
+    let dir = tempfile::Builder::new()
+        .prefix("siphon-att-")
+        .tempdir()
+        .map_err(|e| e.to_string())?;
+    let path = dir.path().join(format!("part.{ext}"));
     std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
 
     DEPTH.with(|d| d.set(depth + 1));
     let out = extract_text(path.to_str().unwrap_or_default());
     DEPTH.with(|d| d.set(depth));
 
-    // Best-effort cleanup; a leftover temp file must not fail a scan.
-    std::fs::remove_dir_all(&dir).ok();
+    // Removed when `dir` drops; `TempDir`'s Drop swallows a failure there,
+    // and a leftover temp file must not fail a scan.
+    drop(dir);
 
     match out {
         Ok(r) if r.text.trim().is_empty() => Ok(None),
@@ -1106,8 +1237,10 @@ fn extract_pdf(file_path: &str) -> Result<ExtractionResult, String> {
         // treats the part as uninspected rather than empty.
         Err(e) => {
             let mut r = extract_unparsed_binary(file_path)?;
-            r.warnings
-                .push(format!("PDF parse failed ({e}); read as raw bytes instead"));
+            r.unread(Unread::ReadError {
+                unit: "PDF".into(),
+                detail: format!("parse failed ({e}); read as raw bytes instead"),
+            });
             Ok(r)
         }
     }
@@ -1129,10 +1262,12 @@ fn extract_unparsed_binary(file_path: &str) -> Result<ExtractionResult, String> 
         .unwrap_or("unknown")
         .to_lowercase();
     Ok(
-        ExtractionResult::new(text, "unparsed").with_warning(&format!(
-            "content did not match any known format; declared .{declared} was read as raw bytes, \
-         so structured content in it was not inspected"
-        )),
+        ExtractionResult::new(text, "unparsed").with_unread(Unread::ReadError {
+            unit: format!(".{declared} file"),
+            detail: "content did not match any known format; read as raw bytes, so \
+                     structured content in it was not inspected"
+                .into(),
+        }),
     )
 }
 
@@ -1154,10 +1289,14 @@ fn extract_zip_based(file_path: &str) -> Result<ExtractionResult, String> {
                     "ZIP central directory corrupted and no printable text recoverable".to_string(),
                 );
             }
-            let mut result = ExtractionResult::new(text, "zip-recovered");
-            result =
-                result.with_warning("ZIP central directory corrupted — extracted from raw bytes");
-            Ok(result)
+            Ok(
+                ExtractionResult::new(text, "zip-recovered").with_unread(Unread::ReadError {
+                    unit: "archive".into(),
+                    detail: "central directory corrupted; printable strings extracted from \
+                             raw bytes instead"
+                        .into(),
+                }),
+            )
         }
     }
 }
@@ -1223,13 +1362,19 @@ fn extract_zip_archive(
     let mut total_read: u64 = 0;
     let mut entry_count: usize = 0;
 
-    // Entries this pass could not read. An analyst has to be told that content
-    // was present and skipped, because the alternative — a document whose body
-    // was never examined, reported as zero findings — is indistinguishable
-    // from a clean document. The generic-ZIP pass below already does this for
-    // nested and encrypted entries; the size and ratio guards here used to
-    // `continue` in silence.
-    let mut skipped_warnings: Vec<String> = Vec::new();
+    // Entries this pass could not read, typed. An analyst has to be told that
+    // content was present and skipped, because the alternative — a document
+    // whose body was never examined, reported as zero findings — is
+    // indistinguishable from a clean document. Capped at
+    // MAX_NESTED_ARCHIVE_WARNINGS so a container packed with ten thousand
+    // refused entries does not produce ten thousand lines; the inspection is
+    // incomplete after the first one either way.
+    let mut unread: Vec<Unread> = Vec::new();
+    let note = |unread: &mut Vec<Unread>, reason: Unread| {
+        if unread.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+            unread.push(reason);
+        }
+    };
 
     for xml_path in xml_paths {
         if entry_count >= MAX_EXTRACT_FILE_COUNT {
@@ -1238,11 +1383,13 @@ fn extract_zip_archive(
         if let Ok(mut file) = archive.by_name(&xml_path) {
             // Skip entries larger than the per-entry limit
             if file.size() > MAX_EXTRACT_ENTRY_SIZE {
-                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-                    skipped_warnings.push(format!(
-                        "entry exceeds per-entry size cap, not scanned: {xml_path}"
-                    ));
-                }
+                note(
+                    &mut unread,
+                    Unread::Oversize {
+                        unit: format!("entry {xml_path}"),
+                        limit: Some(MAX_EXTRACT_ENTRY_SIZE),
+                    },
+                );
                 continue;
             }
             // Zip-bomb defense: reject entries whose uncompressed size
@@ -1258,21 +1405,25 @@ fn extract_zip_archive(
                     ratio_cap = MAX_ZIP_COMPRESSION_RATIO,
                     "ZIP entry exceeds compression ratio cap — skipping"
                 );
-                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-                    skipped_warnings.push(format!(
-                        "entry exceeds compression ratio cap, not scanned: {xml_path}"
-                    ));
-                }
+                note(
+                    &mut unread,
+                    Unread::ReadError {
+                        unit: format!("entry {xml_path}"),
+                        detail: format!(
+                            "compression ratio exceeds the {MAX_ZIP_COMPRESSION_RATIO}:1 cap"
+                        ),
+                    },
+                );
                 continue;
             }
             // Check total budget before reading
             if total_read + file.size() > MAX_EXTRACT_TOTAL_SIZE {
-                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-                    skipped_warnings.push(
-                        "extraction size budget exhausted; remaining entries not scanned"
-                            .to_string(),
-                    );
-                }
+                note(
+                    &mut unread,
+                    Unread::Truncated {
+                        unit: "archive (extraction size budget exhausted)".into(),
+                    },
+                );
                 break;
             }
             use std::io::Read;
@@ -1309,20 +1460,21 @@ fn extract_zip_archive(
                 // its declared uncompressed size") before handing the bytes
                 // back; zip 8 handed them back and left that check to the
                 // branch below. Either way the entry was not read and the
-                // reader has to say so. This `continue` used to be silent,
-                // which under zip 9 turned the size-lie regression tests into
-                // "no warning at all" — the exact failure they exist to catch.
-                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-                    let lied =
-                        raw.len() as u64 >= budget || e.kind() == std::io::ErrorKind::InvalidData;
-                    skipped_warnings.push(if lied {
-                        format!(
-                            "entry inflated past its declared size, not scanned: {xml_path} ({e})"
-                        )
-                    } else {
-                        format!("entry could not be read, not scanned: {xml_path}: {e}")
-                    });
-                }
+                // reader has to say so — as a typed reason whose detail still
+                // names the lie, which the size-lie regression tests look for.
+                let lied =
+                    raw.len() as u64 >= budget || e.kind() == std::io::ErrorKind::InvalidData;
+                note(
+                    &mut unread,
+                    Unread::ReadError {
+                        unit: format!("entry {xml_path}"),
+                        detail: if lied {
+                            format!("inflated past its declared size ({e})")
+                        } else {
+                            e.to_string()
+                        },
+                    },
+                );
                 continue;
             }
             if raw.len() as u64 > budget {
@@ -1333,11 +1485,13 @@ fn extract_zip_archive(
                     budget,
                     "ZIP entry inflated past its declared size — skipping"
                 );
-                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-                    skipped_warnings.push(format!(
-                        "entry inflated past its declared size, not scanned: {xml_path}"
-                    ));
-                }
+                note(
+                    &mut unread,
+                    Unread::ReadError {
+                        unit: format!("entry {xml_path}"),
+                        detail: "inflated past its declared size".into(),
+                    },
+                );
                 continue;
             }
             // Lossy rather than `read_to_string`, which dropped an entry whole
@@ -1365,7 +1519,6 @@ fn extract_zip_archive(
     // Entries are read into memory by name, never written to disk, so archive
     // path traversal ("zip slip") is not a write risk on this path; the guards
     // below are about resource exhaustion, matching the Office branch.
-    let mut nested_warnings: Vec<String> = Vec::new();
     if format == "zip" {
         use std::io::Read;
         for i in 0..archive.len() {
@@ -1382,24 +1535,48 @@ fn extract_zip_archive(
             // zero findings with no signal. Surface a warning so an analyst
             // knows unscanned content is present.
             if archive_entry_is_nested_archive(&name) {
-                if nested_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-                    nested_warnings.push(format!("nested archive not scanned: {name}"));
-                }
+                note(
+                    &mut unread,
+                    Unread::NestedArchive {
+                        unit: format!("entry {name}"),
+                    },
+                );
                 continue;
             }
             // An encrypted entry cannot be read without the password. Same
             // reasoning: flag it rather than skip in silence.
             if file.encrypted() {
-                if nested_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-                    nested_warnings.push(format!("encrypted entry not scanned: {name}"));
-                }
+                note(
+                    &mut unread,
+                    Unread::Encrypted {
+                        unit: format!("entry {name}"),
+                    },
+                );
                 continue;
             }
+            // A member without a text extension (an image, a binary) is
+            // deliberately not reported here. Nearly every real archive has
+            // one, and siphon-smtp treats any unread unit as grounds to defer
+            // the message under its fail-closed default — so typing this one
+            // would defer ordinary mail for a .png. That is a decision for the
+            // ingress, not for this reader; see the step-2 notes in
+            // docs/architecture/inspection-outcome.md.
             if !archive_entry_is_text(&name) {
                 continue;
             }
+            // The guards below used to `continue` or `break` in silence; the
+            // Office pass above has reported the same refusals since
+            // 2026-09-30, and a text member refused for its size is as unread
+            // as a document.xml refused for its size.
             let size = file.size();
             if size > MAX_EXTRACT_ENTRY_SIZE {
+                note(
+                    &mut unread,
+                    Unread::Oversize {
+                        unit: format!("entry {name}"),
+                        limit: Some(MAX_EXTRACT_ENTRY_SIZE),
+                    },
+                );
                 continue;
             }
             if zip_entry_is_bomb(size, file.compressed_size()) {
@@ -1410,31 +1587,54 @@ fn extract_zip_archive(
                     ratio_cap = MAX_ZIP_COMPRESSION_RATIO,
                     "ZIP entry exceeds compression ratio cap — skipping"
                 );
+                note(
+                    &mut unread,
+                    Unread::ReadError {
+                        unit: format!("entry {name}"),
+                        detail: format!(
+                            "compression ratio exceeds the {MAX_ZIP_COMPRESSION_RATIO}:1 cap"
+                        ),
+                    },
+                );
                 continue;
             }
             if total_read + size > MAX_EXTRACT_TOTAL_SIZE {
+                note(
+                    &mut unread,
+                    Unread::Truncated {
+                        unit: "archive (extraction size budget exhausted)".into(),
+                    },
+                );
                 break;
             }
             // Bound the read by the per-entry cap regardless of the
             // header-declared `size`, which is attacker-controlled: a lying
             // header must not turn into an unbounded read.
             let mut buf = Vec::new();
-            if (&mut file)
+            match (&mut file)
                 .take(MAX_EXTRACT_ENTRY_SIZE)
                 .read_to_end(&mut buf)
-                .is_ok()
             {
-                total_read += buf.len() as u64;
-                entry_count += 1;
-                text.push_str(&String::from_utf8_lossy(&buf));
-                text.push('\n');
+                Ok(_) => {
+                    total_read += buf.len() as u64;
+                    entry_count += 1;
+                    text.push_str(&String::from_utf8_lossy(&buf));
+                    text.push('\n');
+                }
+                Err(e) => note(
+                    &mut unread,
+                    Unread::ReadError {
+                        unit: format!("entry {name}"),
+                        detail: e.to_string(),
+                    },
+                ),
             }
         }
     }
 
     let mut result = ExtractionResult::new(text.trim().to_string(), format);
-    for w in skipped_warnings.into_iter().chain(nested_warnings) {
-        result = result.with_warning(&w);
+    for reason in unread {
+        result = result.with_unread(reason);
     }
     Ok(result)
 }
@@ -2485,16 +2685,23 @@ fn extract_opendocument(file_path: &str) -> Result<ExtractionResult, String> {
     // cumulative budget at all — three entries, each free to inflate to the
     // per-entry cap — so `total_read` is now tracked across them.
     let mut total_read: u64 = 0;
-    let mut skipped_warnings: Vec<String> = Vec::new();
+    let mut unread: Vec<Unread> = Vec::new();
+    let note = |unread: &mut Vec<Unread>, reason: Unread| {
+        if unread.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+            unread.push(reason);
+        }
+    };
     for xml_name in &["content.xml", "meta.xml", "styles.xml"] {
         if let Ok(mut file) = archive.by_name(xml_name) {
             // Skip entries larger than 100MB
             if file.size() > MAX_EXTRACT_ENTRY_SIZE {
-                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-                    skipped_warnings.push(format!(
-                        "entry exceeds per-entry size cap, not scanned: {xml_name}"
-                    ));
-                }
+                note(
+                    &mut unread,
+                    Unread::Oversize {
+                        unit: format!("entry {xml_name}"),
+                        limit: Some(MAX_EXTRACT_ENTRY_SIZE),
+                    },
+                );
                 continue;
             }
             // Zip-bomb defense: reject entries whose compression ratio
@@ -2507,20 +2714,24 @@ fn extract_opendocument(file_path: &str) -> Result<ExtractionResult, String> {
                     ratio_cap = MAX_ZIP_COMPRESSION_RATIO,
                     "ODT entry exceeds compression ratio cap — skipping"
                 );
-                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-                    skipped_warnings.push(format!(
-                        "entry exceeds compression ratio cap, not scanned: {xml_name}"
-                    ));
-                }
+                note(
+                    &mut unread,
+                    Unread::ReadError {
+                        unit: format!("entry {xml_name}"),
+                        detail: format!(
+                            "compression ratio exceeds the {MAX_ZIP_COMPRESSION_RATIO}:1 cap"
+                        ),
+                    },
+                );
                 continue;
             }
             if total_read + file.size() > MAX_EXTRACT_TOTAL_SIZE {
-                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-                    skipped_warnings.push(
-                        "extraction size budget exhausted; remaining entries not scanned"
-                            .to_string(),
-                    );
-                }
+                note(
+                    &mut unread,
+                    Unread::Truncated {
+                        unit: "archive (extraction size budget exhausted)".into(),
+                    },
+                );
                 break;
             }
             use std::io::Read;
@@ -2535,20 +2746,21 @@ fn extract_opendocument(file_path: &str) -> Result<ExtractionResult, String> {
                 // its declared uncompressed size") before handing the bytes
                 // back; zip 8 handed them back and left that check to the
                 // branch below. Either way the entry was not read and the
-                // reader has to say so. This `continue` used to be silent,
-                // which under zip 9 turned the size-lie regression tests into
-                // "no warning at all" — the exact failure they exist to catch.
-                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-                    let lied =
-                        raw.len() as u64 >= budget || e.kind() == std::io::ErrorKind::InvalidData;
-                    skipped_warnings.push(if lied {
-                        format!(
-                            "entry inflated past its declared size, not scanned: {xml_name} ({e})"
-                        )
-                    } else {
-                        format!("entry could not be read, not scanned: {xml_name}: {e}")
-                    });
-                }
+                // reader has to say so — as a typed reason whose detail still
+                // names the lie, which the size-lie regression tests look for.
+                let lied =
+                    raw.len() as u64 >= budget || e.kind() == std::io::ErrorKind::InvalidData;
+                note(
+                    &mut unread,
+                    Unread::ReadError {
+                        unit: format!("entry {xml_name}"),
+                        detail: if lied {
+                            format!("inflated past its declared size ({e})")
+                        } else {
+                            e.to_string()
+                        },
+                    },
+                );
                 continue;
             }
             if raw.len() as u64 > budget {
@@ -2559,11 +2771,13 @@ fn extract_opendocument(file_path: &str) -> Result<ExtractionResult, String> {
                     budget,
                     "ODT entry inflated past its declared size — skipping"
                 );
-                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-                    skipped_warnings.push(format!(
-                        "entry inflated past its declared size, not scanned: {xml_name}"
-                    ));
-                }
+                note(
+                    &mut unread,
+                    Unread::ReadError {
+                        unit: format!("entry {xml_name}"),
+                        detail: "inflated past its declared size".into(),
+                    },
+                );
                 continue;
             }
             total_read += raw.len() as u64;
@@ -2573,8 +2787,8 @@ fn extract_opendocument(file_path: &str) -> Result<ExtractionResult, String> {
     }
 
     let mut result = ExtractionResult::new(text.trim().to_string(), format);
-    for w in skipped_warnings {
-        result = result.with_warning(&w);
+    for reason in unread {
+        result = result.with_unread(reason);
     }
     Ok(result)
 }
@@ -2639,7 +2853,23 @@ fn extract_msg(file_path: &str) -> Result<ExtractionResult, String> {
         }
     }
 
-    Ok(ExtractionResult::new(text.trim().to_string(), "msg"))
+    let mut result = ExtractionResult::new(text.trim().to_string(), "msg");
+
+    // Attachments live in `__attach_version1.0_#NNNNNNNN` storages and this
+    // extractor reads none of them — only the header and body properties
+    // above. That has always been true; what is new is saying so, so a
+    // message whose payload is in the attachment is not reported as a clean
+    // read of the whole message.
+    let attachments = comp
+        .read_root_storage()
+        .filter(|e| e.is_storage() && e.name().starts_with("__attach_version1.0_"))
+        .count();
+    if attachments > 0 {
+        result.unread(Unread::Unsupported {
+            unit: format!("{attachments} MSG attachment(s) (this reader covers headers and body)"),
+        });
+    }
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -2683,12 +2913,23 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
     let mut cursor = archive;
     let mut total_extracted_size: u64 = 0;
     let mut extracted_count: usize = 0;
+    // Everything this walk saw and did not read, typed; the four `skip()`
+    // branches below used to be silent.
+    let mut unread: Vec<Unread> = Vec::new();
+    let note = |unread: &mut Vec<Unread>, reason: Unread| {
+        if unread.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+            unread.push(reason);
+        }
+    };
+    let mut rejected_names = 0u32;
+    let mut capped = false;
     while let Ok(Some(header)) = cursor.read_header() {
         let entry = header.entry();
         let name = entry.filename.to_string_lossy().to_string();
 
         // Check file count limit
         if extracted_count >= MAX_EXTRACT_FILE_COUNT {
+            capped = true;
             match header.skip() {
                 Ok(next) => {
                     cursor = next;
@@ -2705,6 +2946,7 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
             .any(|c| matches!(c, std::path::Component::ParentDir))
             || name_path.is_absolute();
         if has_traversal {
+            rejected_names += 1;
             match header.skip() {
                 Ok(next) => {
                     cursor = next;
@@ -2716,6 +2958,7 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
 
         // Check total extracted size limit
         if total_extracted_size + entry.unpacked_size > MAX_EXTRACT_TOTAL_SIZE {
+            capped = true;
             match header.skip() {
                 Ok(next) => {
                     cursor = next;
@@ -2734,6 +2977,7 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
         if text_extensions.contains(&ext.as_str()) {
             // Validate path BEFORE extraction to prevent TOCTOU
             if sanitize_archive_path(tmp_dir.path(), &name).is_none() {
+                rejected_names += 1;
                 match header.skip() {
                     Ok(next) => {
                         cursor = next;
@@ -2754,24 +2998,57 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
                         let on_disk = std::fs::metadata(&dest)
                             .map(|m| m.len())
                             .unwrap_or(u64::MAX);
-                        if on_disk >= 1_048_576 {
+                        if on_disk >= ARCHIVE_TEXT_MEMBER_CAP {
+                            note(
+                                &mut unread,
+                                Unread::Oversize {
+                                    unit: format!("entry {name}"),
+                                    limit: Some(ARCHIVE_TEXT_MEMBER_CAP),
+                                },
+                            );
                             continue;
                         }
                         total_extracted_size += on_disk;
                         if total_extracted_size > MAX_EXTRACT_TOTAL_SIZE {
+                            capped = true;
                             break;
                         }
-                        if let Ok(content) = std::fs::read_to_string(&dest) {
-                            text.push_str(&format!("\n--- {name} ---\n"));
-                            let content: String = content.chars().take(100_000).collect();
-                            text.push_str(&content);
-                            text.push('\n');
+                        match std::fs::read_to_string(&dest) {
+                            Ok(content) => {
+                                text.push_str(&format!("\n--- {name} ---\n"));
+                                let (kept, cut) = take_chars(&content, ARCHIVE_TEXT_CHAR_CAP);
+                                if cut {
+                                    note(
+                                        &mut unread,
+                                        Unread::Truncated {
+                                            unit: format!("entry {name}"),
+                                        },
+                                    );
+                                }
+                                text.push_str(&kept);
+                                text.push('\n');
+                            }
+                            Err(e) => note(
+                                &mut unread,
+                                Unread::ReadError {
+                                    unit: format!("entry {name}"),
+                                    detail: e.to_string(),
+                                },
+                            ),
                         }
                     }
                 }
                 Err(e) => {
                     // Try to continue despite error
                     text.push_str(&format!("\n--- {name} (extraction error: {e}) ---\n"));
+                    note(
+                        &mut unread,
+                        Unread::ReadError {
+                            unit: format!("entry {name}"),
+                            detail: e.to_string(),
+                        },
+                    );
+                    capped = true;
                     break;
                 }
             }
@@ -2783,18 +3060,42 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
         }
     }
 
+    if capped {
+        note(
+            &mut unread,
+            Unread::Truncated {
+                unit: "archive (entry count or size budget exhausted)".into(),
+            },
+        );
+    }
+    if rejected_names > 0 {
+        note(
+            &mut unread,
+            Unread::ReadError {
+                unit: format!(
+                    "{rejected_names} entr{}",
+                    if rejected_names == 1 { "y" } else { "ies" }
+                ),
+                detail: "name rejected (path traversal)".into(),
+            },
+        );
+    }
     let mut result = ExtractionResult::new(text.trim().to_string(), "rar");
     result = result.with_metadata("file_count", &file_count.to_string());
     // Nested archives inside the RAR are not recursed (bomb-amplification
-    // risk); warn so they are not a silent gap, matching the ZIP/7z walkers.
-    let mut nested_seen = 0usize;
+    // risk); say so, matching the ZIP/7z walkers.
     for name in &file_names {
         if archive_entry_is_nested_archive(name) {
-            if nested_seen < MAX_NESTED_ARCHIVE_WARNINGS {
-                result = result.with_warning(&format!("nested archive not scanned: {name}"));
-            }
-            nested_seen += 1;
+            note(
+                &mut unread,
+                Unread::NestedArchive {
+                    unit: format!("entry {name}"),
+                },
+            );
         }
+    }
+    for reason in unread {
+        result = result.with_unread(reason);
     }
     Ok(result)
 }
@@ -2953,7 +3254,24 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
     }
 
     // Extract text from small text files (with path traversal guard)
-    let mut nested_warnings: Vec<String> = Vec::new();
+    let mut unread: Vec<Unread> = Vec::new();
+    let note = |unread: &mut Vec<Unread>, reason: Unread| {
+        if unread.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+            unread.push(reason);
+        }
+    };
+    if traversal_blocked > 0 {
+        note(
+            &mut unread,
+            Unread::ReadError {
+                unit: format!(
+                    "{traversal_blocked} entr{}",
+                    if traversal_blocked == 1 { "y" } else { "ies" }
+                ),
+                detail: "name rejected (path traversal)".into(),
+            },
+        );
+    }
     for f in &files {
         // Ensure file is actually under the temp dir using canonicalize
         if let Ok(canonical) = f.canonicalize() {
@@ -2970,33 +3288,70 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
             .unwrap_or("")
             .to_lowercase();
 
+        let rel = f.strip_prefix(tmp_dir.path()).unwrap_or(f);
         if text_extensions.contains(&ext.as_str()) {
-            if let Ok(meta) = f.metadata() {
-                if meta.len() < 1_048_576 {
-                    if let Ok(content) = std::fs::read_to_string(f) {
-                        let rel = f.strip_prefix(tmp_dir.path()).unwrap_or(f);
-                        text.push_str(&format!("\n--- {} ---\n", rel.display()));
-                        let content: String = content.chars().take(100_000).collect();
-                        text.push_str(&content);
-                        text.push('\n');
-                    }
-                }
+            // The size skip and the 100k-character cut used to be silent; a
+            // text member refused for its size is unread content like any
+            // other.
+            let Ok(meta) = f.metadata() else {
+                note(
+                    &mut unread,
+                    Unread::ReadError {
+                        unit: format!("entry {}", rel.display()),
+                        detail: "metadata unavailable".into(),
+                    },
+                );
+                continue;
+            };
+            if meta.len() >= ARCHIVE_TEXT_MEMBER_CAP {
+                note(
+                    &mut unread,
+                    Unread::Oversize {
+                        unit: format!("entry {}", rel.display()),
+                        limit: Some(ARCHIVE_TEXT_MEMBER_CAP),
+                    },
+                );
+                continue;
             }
-        } else if NESTED_ARCHIVE_EXTENSIONS.contains(&ext.as_str())
-            && nested_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS
-        {
+            match std::fs::read_to_string(f) {
+                Ok(content) => {
+                    text.push_str(&format!("\n--- {} ---\n", rel.display()));
+                    let (kept, cut) = take_chars(&content, ARCHIVE_TEXT_CHAR_CAP);
+                    if cut {
+                        note(
+                            &mut unread,
+                            Unread::Truncated {
+                                unit: format!("entry {}", rel.display()),
+                            },
+                        );
+                    }
+                    text.push_str(&kept);
+                    text.push('\n');
+                }
+                Err(e) => note(
+                    &mut unread,
+                    Unread::ReadError {
+                        unit: format!("entry {}", rel.display()),
+                        detail: e.to_string(),
+                    },
+                ),
+            }
+        } else if NESTED_ARCHIVE_EXTENSIONS.contains(&ext.as_str()) {
             // Nested archive: not recursed (bomb-amplification risk), but
-            // surfaced as a warning so it is not a silent gap. Matches the
-            // ZIP/RAR walkers.
-            let rel = f.strip_prefix(tmp_dir.path()).unwrap_or(f);
-            nested_warnings.push(format!("nested archive not scanned: {}", rel.display()));
+            // reported so it is not a silent gap. Matches the ZIP/RAR walkers.
+            note(
+                &mut unread,
+                Unread::NestedArchive {
+                    unit: format!("entry {}", rel.display()),
+                },
+            );
         }
     }
 
     let mut result = ExtractionResult::new(text.trim().to_string(), "7z");
     result = result.with_metadata("file_count", &file_count.to_string());
-    for w in nested_warnings {
-        result = result.with_warning(&w);
+    for reason in unread {
+        result = result.with_unread(reason);
     }
     Ok(result)
 }
@@ -3037,13 +3392,17 @@ fn extract_parquet(file_path: &str) -> Result<ExtractionResult, String> {
     let iter = RowIter::from_file_into(Box::new(reader));
 
     let mut row_count = 0usize;
+    let mut undecodable = 0usize;
     for row in iter {
         if row_count >= max_rows {
             break;
         }
         let row = match row {
             Ok(r) => r,
-            Err(_) => continue,
+            Err(_) => {
+                undecodable += 1;
+                continue;
+            }
         };
         // Use Row's Display implementation which formats all fields
         let row_str: Vec<String> = row
@@ -3058,6 +3417,19 @@ fn extract_parquet(file_path: &str) -> Result<ExtractionResult, String> {
     let mut result = ExtractionResult::new(text.trim().to_string(), "parquet");
     result = result.with_metadata("num_rows", &num_rows.to_string());
     result = result.with_metadata("num_columns", &fields.len().to_string());
+    // The row cap and the per-row decode failures were silent: a file with
+    // 10,001 rows scanned as if it had 10,000.
+    if num_rows > max_rows as i64 {
+        result.unread(Unread::Truncated {
+            unit: format!("rows after the first {max_rows} (of {num_rows})"),
+        });
+    }
+    if undecodable > 0 {
+        result.unread(Unread::ReadError {
+            unit: format!("{undecodable} row(s)"),
+            detail: "could not be decoded".into(),
+        });
+    }
     Ok(result)
 }
 
@@ -3091,9 +3463,13 @@ fn extract_sqlite(file_path: &str) -> Result<ExtractionResult, String> {
         .filter_map(|r| r.ok())
         .collect();
 
+    let mut unread: Vec<Unread> = Vec::new();
     for table in &tables {
         // Reject table names with control characters or excessive length
         if table.len() > 256 || table.chars().any(|c| c.is_control()) {
+            unread.push(Unread::Unsupported {
+                unit: "a table whose name holds control characters or exceeds 256 bytes".into(),
+            });
             continue;
         }
 
@@ -3121,18 +3497,31 @@ fn extract_sqlite(file_path: &str) -> Result<ExtractionResult, String> {
         let col_count = columns.len();
 
         let mut rows = select_stmt.query([]).map_err(|e| e.to_string())?;
+        let mut read_rows = 0usize;
         while let Some(row) = rows.next().map_err(|e| e.to_string())? {
             let values: Vec<String> = (0..col_count)
                 .map(|i| row.get::<_, String>(i).unwrap_or_default())
                 .collect();
             text.push_str(&values.join("\t"));
             text.push('\n');
+            read_rows += 1;
         }
         text.push('\n');
+        // LIMIT hides whether there was an (N+1)th row; reaching the cap is
+        // the only signal, and a table that is exactly at the cap is reported
+        // as possibly cut rather than silently taken as whole.
+        if read_rows >= max_rows_per_table {
+            unread.push(Unread::Truncated {
+                unit: format!("table {table} after {max_rows_per_table} rows"),
+            });
+        }
     }
 
     let mut result = ExtractionResult::new(text.trim().to_string(), "sqlite");
     result = result.with_metadata("table_count", &tables.len().to_string());
+    for reason in unread {
+        result = result.with_unread(reason);
+    }
     Ok(result)
 }
 
@@ -3202,6 +3591,7 @@ pub fn extract_barcode(file_path: &str) -> Result<ExtractionResult, String> {
 
     let mut text_parts = Vec::new();
     let mut formats_found = Vec::new();
+    let mut text_cut = 0usize;
 
     for result in results.iter().take(MAX_BARCODES_PER_IMAGE) {
         let format_name = match result.getBarcodeFormat() {
@@ -3226,6 +3616,7 @@ pub fn extract_barcode(file_path: &str) -> Result<ExtractionResult, String> {
             text_parts.push(decoded.to_string());
         } else {
             text_parts.push(decoded[..MAX_BARCODE_TEXT_LEN].to_string());
+            text_cut += 1;
         }
     }
 
@@ -3233,6 +3624,20 @@ pub fn extract_barcode(file_path: &str) -> Result<ExtractionResult, String> {
     let mut result = ExtractionResult::new(text, "barcode");
     result = result.with_metadata("barcode_count", &results.len().to_string());
     result = result.with_metadata("formats", &formats_found.join(", "));
+    // Both caps are deliberate resource limits, and both used to be silent.
+    if results.len() > MAX_BARCODES_PER_IMAGE {
+        result.unread(Unread::Truncated {
+            unit: format!(
+                "barcodes after the first {MAX_BARCODES_PER_IMAGE} (of {})",
+                results.len()
+            ),
+        });
+    }
+    if text_cut > 0 {
+        result.unread(Unread::Truncated {
+            unit: format!("{text_cut} barcode(s) past {MAX_BARCODE_TEXT_LEN} bytes of text"),
+        });
+    }
     Ok(result)
 }
 
