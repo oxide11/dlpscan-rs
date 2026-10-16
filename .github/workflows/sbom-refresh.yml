@@ -57,12 +57,28 @@ jobs:
       # not rebase on its own; a lockfile that merges cleanly with a newer
       # main can still describe a different closure than the merge result.
       # Bring main in first so the SBOMs match what would actually ship.
+      # A conflict confined to sbom/ is not a conflict: every file there is
+      # regenerated two steps down, so either side is a fine starting point.
+      # It happens on the second refresh of one PR — the branch already
+      # carries regenerated SBOMs and main has since changed its own (#522
+      # on 2026-10-16, after #520 added two). A conflict anywhere else
+      # (Cargo.lock itself) is a real one and fails the job.
       - name: Merge main into the PR branch
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
-          git merge --no-edit origin/main
+          if ! git merge --no-edit origin/main; then
+            conflicts=$(git diff --name-only --diff-filter=U)
+            others=$(echo "$conflicts" | grep -v '^sbom/' || true)
+            if [ -n "$others" ]; then
+              echo "::error::conflicts outside sbom/ need a human: $others"
+              exit 1
+            fi
+            git checkout --theirs -- sbom/
+            git add sbom/
+            git commit --no-edit
+          fi
 
       - name: Regenerate sbom/
         run: scripts/generate-sbom.sh
