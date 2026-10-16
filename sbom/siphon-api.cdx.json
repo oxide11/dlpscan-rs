@@ -464,8 +464,8 @@
     {
       "type": "library",
       "name": "clap",
-      "version": "4.6.6",
-      "purl": "pkg:cargo/clap@4.6.6",
+      "version": "4.6.7",
+      "purl": "pkg:cargo/clap@4.6.7",
       "scope": "required",
       "licenses": [
         {
@@ -482,8 +482,8 @@
     {
       "type": "library",
       "name": "clap_builder",
-      "version": "4.6.6",
-      "purl": "pkg:cargo/clap_builder@4.6.6",
+      "version": "4.6.7",
+      "purl": "pkg:cargo/clap_builder@4.6.7",
       "scope": "required",
       "licenses": [
         {
@@ -500,8 +500,8 @@
     {
       "type": "library",
       "name": "clap_derive",
-      "version": "4.6.4",
-      "purl": "pkg:cargo/clap_derive@4.6.4",
+      "version": "4.6.7",
+      "purl": "pkg:cargo/clap_derive@4.6.7",
       "scope": "required",
       "licenses": [
         {
@@ -1444,8 +1444,8 @@
     {
       "type": "library",
       "name": "hyper",
-      "version": "1.11.1",
-      "purl": "pkg:cargo/hyper@1.11.1",
+      "version": "1.12.0",
+      "purl": "pkg:cargo/hyper@1.12.0",
       "scope": "required",
       "licenses": [
         {
@@ -1464,8 +1464,8 @@
     {
       "type": "library",
       "name": "hyper-util",
-      "version": "0.1.20",
-      "purl": "pkg:cargo/hyper-util@0.1.20",
+      "version": "0.1.21",
+      "purl": "pkg:cargo/hyper-util@0.1.21",
       "scope": "required",
       "licenses": [
         {
@@ -1614,8 +1614,8 @@
     {
       "type": "library",
       "name": "libc",
-      "version": "0.2.189",
-      "purl": "pkg:cargo/libc@0.2.189",
+      "version": "0.2.190",
+      "purl": "pkg:cargo/libc@0.2.190",
       "scope": "required",
       "licenses": [
         {
@@ -1686,8 +1686,8 @@
     {
       "type": "library",
       "name": "mail-parser",
-      "version": "0.11.8",
-      "purl": "pkg:cargo/mail-parser@0.11.8",
+      "version": "0.11.9",
+      "purl": "pkg:cargo/mail-parser@0.11.9",
       "scope": "required",
       "licenses": [
         {
@@ -2160,8 +2160,8 @@
     {
       "type": "library",
       "name": "rand",
-      "version": "0.10.2",
-      "purl": "pkg:cargo/rand@0.10.2",
+      "version": "0.10.3",
+      "purl": "pkg:cargo/rand@0.10.3",
       "scope": "required",
       "licenses": [
         {
@@ -2522,8 +2522,8 @@
     {
       "type": "library",
       "name": "serde_json",
-      "version": "1.0.151",
-      "purl": "pkg:cargo/serde_json@1.0.151",
+      "version": "1.0.154",
+      "purl": "pkg:cargo/serde_json@1.0.154",
       "scope": "required",
       "licenses": [
         {
@@ -2558,8 +2558,8 @@
     {
       "type": "library",
       "name": "serde_spanned",
-      "version": "1.1.1",
-      "purl": "pkg:cargo/serde_spanned@1.1.1",
+      "version": "1.1.2",
+      "purl": "pkg:cargo/serde_spanned@1.1.2",
       "scope": "required",
       "licenses": [
         {
@@ -2594,8 +2594,8 @@
     {
       "type": "library",
       "name": "sha2",
-      "version": "0.11.0",
-      "purl": "pkg:cargo/sha2@0.11.0",
+      "version": "0.11.1",
+      "purl": "pkg:cargo/sha2@0.11.1",
       "scope": "required",
       "licenses": [
         {
@@ -3070,8 +3070,8 @@
     {
       "type": "library",
       "name": "tokio",
-      "version": "1.53.1",
-      "purl": "pkg:cargo/tokio@1.53.1",
+      "version": "1.53.2",
+      "purl": "pkg:cargo/tokio@1.53.2",
       "scope": "required",
       "licenses": [
         {
@@ -3154,8 +3154,8 @@
     {
       "type": "library",
       "name": "tokio-rustls",
-      "version": "0.26.5",
-      "purl": "pkg:cargo/tokio-rustls@0.26.5",
+      "version": "0.26.6",
+      "purl": "pkg:cargo/tokio-rustls@0.26.6",
       "scope": "required",
       "licenses": [
         {
@@ -3212,8 +3212,8 @@
     {
       "type": "library",
       "name": "toml",
-      "version": "1.1.5+spec-1.1.0",
-      "purl": "pkg:cargo/toml@1.1.5+spec-1.1.0",
+      "version": "1.1.8+spec-1.1.0",
+      "purl": "pkg:cargo/toml@1.1.8+spec-1.1.0",
       "scope": "required",
       "licenses": [
         {
@@ -3230,8 +3230,8 @@
     {
       "type": "library",
       "name": "toml_datetime",
-      "version": "1.1.1+spec-1.1.0",
-      "purl": "pkg:cargo/toml_datetime@1.1.1+spec-1.1.0",
+      "version": "1.1.2+spec-1.1.0",
+      "purl": "pkg:cargo/toml_datetime@1.1.2+spec-1.1.0",
       "scope": "required",
       "licenses": [
         {
@@ -3248,8 +3248,8 @@
     {
       "type": "library",
       "name": "toml_parser",
-      "version": "1.1.3+spec-1.1.0",
-      "purl": "pkg:cargo/toml_parser@1.1.3+spec-1.1.0",
+      "version": "1.1.5+spec-1.1.0",
+      "purl": "pkg:cargo/toml_parser@1.1.5+spec-1.1.0",
       "scope": "required",
       "licenses": [
         {
@@ -3266,8 +3266,8 @@
     {
       "type": "library",
       "name": "toml_writer",
-      "version": "1.1.2+spec-1.1.0",
-      "purl": "pkg:cargo/toml_writer@1.1.2+spec-1.1.0",
+      "version": "1.1.3+spec-1.1.0",
+      "purl": "pkg:cargo/toml_writer@1.1.3+spec-1.1.0",
       "scope": "required",
       "licenses": [
         {
@@ -3636,8 +3636,8 @@
     {
       "type": "library",
       "name": "uuid",
-      "version": "1.26.0",
-      "purl": "pkg:cargo/uuid@1.26.0",
+      "version": "1.28.0",
+      "purl": "pkg:cargo/uuid@1.28.0",
       "scope": "required",
       "licenses": [
         {
@@ -3748,8 +3748,8 @@
     {
       "type": "library",
       "name": "zeroize",
-      "version": "1.9.0",
-      "purl": "pkg:cargo/zeroize@1.9.0",
+      "version": "1.9.1",
+      "purl": "pkg:cargo/zeroize@1.9.1",
       "scope": "required",
       "licenses": [
         {

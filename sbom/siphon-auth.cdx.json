@@ -700,8 +700,8 @@
     {
       "type": "library",
       "name": "libc",
-      "version": "0.2.189",
-      "purl": "pkg:cargo/libc@0.2.189",
+      "version": "0.2.190",
+      "purl": "pkg:cargo/libc@0.2.190",
       "scope": "required",
       "licenses": [
         {
@@ -1030,8 +1030,8 @@
     {
       "type": "library",
       "name": "rand",
-      "version": "0.10.2",
-      "purl": "pkg:cargo/rand@0.10.2",
+      "version": "0.10.3",
+      "purl": "pkg:cargo/rand@0.10.3",
       "scope": "required",
       "licenses": [
         {
@@ -1224,8 +1224,8 @@
     {
       "type": "library",
       "name": "serde_json",
-      "version": "1.0.151",
-      "purl": "pkg:cargo/serde_json@1.0.151",
+      "version": "1.0.154",
+      "purl": "pkg:cargo/serde_json@1.0.154",
       "scope": "required",
       "licenses": [
         {
@@ -1242,8 +1242,8 @@
     {
       "type": "library",
       "name": "sha2",
-      "version": "0.11.0",
-      "purl": "pkg:cargo/sha2@0.11.0",
+      "version": "0.11.1",
+      "purl": "pkg:cargo/sha2@0.11.1",
       "scope": "required",
       "licenses": [
         {
@@ -1442,8 +1442,8 @@
     {
       "type": "library",
       "name": "tokio",
-      "version": "1.53.1",
-      "purl": "pkg:cargo/tokio@1.53.1",
+      "version": "1.53.2",
+      "purl": "pkg:cargo/tokio@1.53.2",
       "scope": "required",
       "licenses": [
         {
@@ -1500,8 +1500,8 @@
     {
       "type": "library",
       "name": "tokio-rustls",
-      "version": "0.26.5",
-      "purl": "pkg:cargo/tokio-rustls@0.26.5",
+      "version": "0.26.6",
+      "purl": "pkg:cargo/tokio-rustls@0.26.6",
       "scope": "required",
       "licenses": [
         {
@@ -1770,8 +1770,8 @@
     {
       "type": "library",
       "name": "zeroize",
-      "version": "1.9.0",
-      "purl": "pkg:cargo/zeroize@1.9.0",
+      "version": "1.9.1",
+      "purl": "pkg:cargo/zeroize@1.9.1",
       "scope": "required",
       "licenses": [
         {
