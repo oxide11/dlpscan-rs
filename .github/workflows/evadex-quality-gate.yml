@@ -46,8 +46,46 @@ concurrency:
 
 jobs:
   evadex-gate:
-    name: Run evadex quality gate
+    # One job per submission strategy, each against its own threshold.
+    #
+    # The thresholds are each ~3.5 points under the figure the same scanner
+    # measured on 2026-10-15/16 (siphon-core 2.11.0, evadex 3.41.1, this
+    # seed): text 78.8%, docx 76.8%, xlsx 75.4%, pdf 63.3%, all with 0
+    # errors. They are regression floors, not targets: a change that drops a
+    # strategy below its floor has cost detection on that path and should say
+    # why. Raise a floor when the number it guards has moved up and stayed.
+    #
+    # PDF sits 13-15 points below the other three on the same scanner.
+    # Whether that is pdf-extract, the fpdf fixture (which falls back to a
+    # Latin-1 font when DejaVu is missing, mangling non-ASCII variants before
+    # Siphon sees them) or both has not been separated yet, so its floor is
+    # set from its own measurement rather than borrowed from text.
+    #
+    # The false-positive check runs once, on the text job: `evadex falsepos`
+    # submits text whatever the strategy, so repeating it three more times
+    # would measure the same thing.
+    name: Run evadex quality gate (${{ matrix.strategy }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - strategy: text
+            min_detection: 75
+            fp_args: >-
+              --max-fp 5
+              --fp-category credit_card --fp-category ssn --fp-category sin
+              --fp-category iban --fp-category email --fp-category phone
+              --fp-category ca_ramq
+          - strategy: docx
+            min_detection: 73
+            fp_args: ""
+          - strategy: pdf
+            min_detection: 60
+            fp_args: ""
+          - strategy: xlsx
+            min_detection: 72
+            fp_args: ""
     # Was 180 min when the adapter paid scanner start-up once per test case
     # (2h05m–2h34m observed). With `batch: true` (evadex 3.41.0) one
     # `scan-dir` process serves a batch of submissions and the run is
@@ -125,11 +163,15 @@ jobs:
       # "One or more thresholds violated" (31.1% against a 70% threshold
       # on 2026-10-14) and the job went green. This gate has not gated.
       #
-      # `strategy: text`: the DOCX/PDF/XLSX strategies embed the bare value
-      # with no keyword sentence, so context-gated rules cannot fire and
-      # those strategies score 9–20% regardless of the scanner (text scores
-      # 78.8% on the same run). Until evadex wraps file fixtures the same
-      # way it wraps text, gating on them measures the fixture, not Siphon.
+      # `strategy:` comes from the matrix. Before evadex 3.41.0 the file
+      # strategies embedded the bare value with no keyword sentence, so
+      # context-gated rules could not fire and DOCX/PDF/XLSX scored 9–20%
+      # regardless of the scanner; the fixtures carry the sentence now and
+      # the three file paths are gated on their own floors (see the job
+      # comment). evadex 3.41.1 also leaves out of a DOCX/XLSX run the one
+      # variant per category whose value XML cannot carry (`barcode_split`'s
+      # U+001E marker) instead of recording 185 errors per strategy, which
+      # is what `--max-error-rate 2` would otherwise be reading.
       - name: Run evadex quality gate (siphon-cli adapter)
         working-directory: evadex
         env:
@@ -143,26 +185,24 @@ jobs:
           tool: siphon-cli
           exe: ${SIPHON_BIN}
           batch: true
-          strategy: text
+          strategy: ${{ matrix.strategy }}
           YAML
+          # shellcheck disable=SC2086 — fp_args is a deliberate word list.
           python -m evadex ci \
             --config evadex.gate.yaml \
             --tier northam \
             --seed 20261015 \
             --concurrency 64 \
-            --min-detection 75 \
+            --min-detection ${{ matrix.min_detection }} \
             --max-error-rate 2 \
-            --max-fp 5 \
-            --fp-category credit_card --fp-category ssn --fp-category sin \
-            --fp-category iban --fp-category email --fp-category phone \
-            --fp-category ca_ramq \
+            ${{ matrix.fp_args }} \
             2>&1 | tee evadex-gate-report.txt
 
       - name: Upload quality gate report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: evadex-quality-gate-report
+          name: evadex-quality-gate-report-${{ matrix.strategy }}
           path: evadex/evadex-gate-report.txt
           if-no-files-found: ignore
           retention-days: 30
