@@ -1130,6 +1130,19 @@ are immutable — never re-point.
 4. Open PR; CI runs.
 5. After merge to `main`, push the per-crate tag(s) on the merge commit.
 
+**Lockstep PRs conflict with each other, by construction.** Every one of
+them appends a section to the current CHANGELOG.md block, bumps a version
+in Cargo.lock and rewrites the SBOMs that list that version, so two open at
+once are mergeable only until the first lands — then the second is dirty
+(five in a row on 2026-10-16). Open one version-bumping PR at a time, or
+rebase the next one the moment the previous merges: CHANGELOG keeps both
+sides (`.gitattributes` marks it `merge=union`, so a local rebase does this
+on its own; GitHub's merge button does not read merge drivers), then
+`scripts/generate-sbom.sh` and commit the result. Dependabot's lockfile PRs
+are the same problem from the other side — a new Cargo.lock with stale
+SBOMs — and `.github/workflows/sbom-refresh.yml` regenerates and pushes for
+them; a human PR that touches Cargo.lock still regenerates by hand.
+
 ### Tooling
 
 - `scripts/bump-version.sh <target> <bump>` — touches every file the lockstep
