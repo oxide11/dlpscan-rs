@@ -193,11 +193,13 @@ extension.
 
 ### 3.2 The lie is itself the signal
 
-A contradiction is recorded in `metadata["format_mismatch"]` and logged at
-warn level with structured fields. Deliberately **not** in `warnings`, which
-means "content we did not read" and makes the milter defer — a renamed file
-that we then read correctly *was* read, and conflating the two would defer
-every message carrying a misnamed attachment.
+A contradiction is recorded as a typed `Unread::FormatMismatch` on the
+extraction's `inspection` and logged at warn level with structured fields.
+It is the one reason that does not mean "content we did not read": a renamed
+file that we then read correctly *was* read, and the milter does not defer
+on it — conflating the two would defer every message carrying a misnamed
+attachment. (Until siphon-cli 2.7.0 it was a `metadata["format_mismatch"]`
+key, kept out of `warnings` for the same reason.)
 
 What to do about it is a policy, because both answers are defensible. A
 misnamed file is the shape of deliberate exfiltration; it is also what a
@@ -270,14 +272,17 @@ Our `Raw` sheet now yields one value per line.
 
 ### 4.2 The contract every extractor owes its caller
 
-`ExtractionResult` carries `text`, `format`, `metadata` and `warnings`. The
-last is the load-bearing one:
+`ExtractionResult` carries `text`, `format`, `metadata` and `inspection`
+(`siphon_core::Inspection`). The last is the load-bearing one:
 
-> **A warning means: content exists here that this pass did not read.**
+> **An unread reason means: content exists here that this pass did not
+> read.**
 
 That is what lets a caller fail closed. The milter treats a part as
-uninspected when `warnings` is non-empty or `format == "unparsed"`, and an
-uninspected part cannot reconcile to clean.
+uninspected when its inspection carries any reason other than
+`FormatMismatch`, or `format == "unparsed"`, and an uninspected part cannot
+reconcile to clean. (`warnings: Vec<String>` carried the same lines until
+siphon-cli 2.7.0; `inspection.describe()` is that text now.)
 
 The failure mode this guards against is an extractor that returns `Ok("")`
 for a file it could not parse. Then the scanner reports "no findings" for
@@ -583,9 +588,9 @@ they mean entirely different things.
 
 | # | Meaning | How you can tell |
 |---|---|---|
-| 1 | **Read in full, nothing in it.** | `warnings` empty, `format` is a real reader, text non-empty. |
-| 2 | **Read in full, and there was no text.** An image with no barcode; an empty part. | `warnings` empty, text empty. Genuinely inspected. |
-| 3 | **Not read — and it said so.** Corrupt archive, unparseable PDF, exceeded the scanner cap. | `warnings` non-empty, or `format == "unparsed"`, or `Err`. Never reconciles to clean on the mail path. |
+| 1 | **Read in full, nothing in it.** | `inspection` complete, `format` is a real reader, text non-empty. |
+| 2 | **Read in full, and there was no text.** An image with no barcode; an empty part. | `inspection` complete, text empty. Genuinely inspected. |
+| 3 | **Not read — and it said so.** Corrupt archive, unparseable PDF, exceeded the scanner cap. | `inspection` incomplete with a typed reason, or `format == "unparsed"`, or `Err`. Never reconciles to clean on the mail path. |
 | 4 | **Not read, and it did not say so.** | *There is no signal.* This is the bug class. |
 
 Everything in §4.2 exists to keep row 4 empty. The `damaged` slot of the

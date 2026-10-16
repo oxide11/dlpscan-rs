@@ -152,19 +152,17 @@ pub struct ExtractionResult {
     pub format: String,
     #[serde(default)]
     pub metadata: HashMap<String, String>,
-    /// One line per reason in `inspection`, kept for readers still on
-    /// strings (siphon-fs's `coverage`, the milter's `faithful` test). Every
-    /// entry here is also a typed reason below; nothing is written to one
-    /// without the other. Goes away with step 6 of
-    /// `docs/architecture/inspection-outcome.md`.
-    #[serde(default)]
-    pub warnings: Vec<String>,
     /// What `text` covers. `Complete` when the extractor read every unit of
     /// content it could see; `Incomplete` with a typed reason for each one it
     /// did not: an entry over a cap, an encrypted member, a nested archive it
     /// does not descend into, a parse it gave up on and replaced with raw
     /// bytes, a row or barcode cap. A caller that scans `text` and finds
     /// nothing has to read this before it says "clean".
+    ///
+    /// This is the only channel. The `warnings: Vec<String>` that preceded
+    /// it, and the `metadata["format_mismatch"]` key, were removed in step 6
+    /// of `docs/architecture/inspection-outcome.md`; a reader that wants
+    /// one line per reason calls `inspection.describe()`.
     #[serde(default)]
     pub inspection: Inspection,
 }
@@ -175,7 +173,6 @@ impl ExtractionResult {
             text,
             format: format.to_string(),
             metadata: HashMap::new(),
-            warnings: Vec::new(),
             inspection: Inspection::new(),
         }
     }
@@ -191,9 +188,7 @@ impl ExtractionResult {
         self
     }
 
-    /// Record content that was not read. The reason goes into `inspection`
-    /// typed and into `warnings` as its one-line description, so the two
-    /// cannot disagree about what was left out.
+    /// Record content that was not read, typed.
     pub fn with_unread(mut self, reason: Unread) -> Self {
         self.unread(reason);
         self
@@ -201,7 +196,6 @@ impl ExtractionResult {
 
     /// In-place form of [`with_unread`](Self::with_unread).
     pub fn unread(&mut self, reason: Unread) {
-        self.warnings.push(reason.to_string());
         self.inspection.unread(reason);
     }
 
@@ -237,10 +231,15 @@ impl ExtractionResult {
         self.unread(placed);
     }
 
-    /// Record a fact about coverage that is *not* a warning. Used for a
-    /// format mismatch under the `flag` policy: the file was read, correctly,
-    /// as what its bytes are, so no content went unread and the milter must
-    /// not defer on it — but the verdict should still say the name lied.
+    /// Record a fact about coverage. Kept apart from [`with_unread`] in name
+    /// only, for the one reason that is not a gap: a format mismatch under
+    /// the `flag` policy. The file was read, correctly, as what its bytes
+    /// are, so the verdict says the name lied without claiming content was
+    /// skipped — and each ingress reads `Unread::FormatMismatch` with that in
+    /// mind (the milter does not defer on it; the CLI exits 3 under
+    /// `--on-incomplete fail`).
+    ///
+    /// [`with_unread`]: Self::with_unread
     pub fn note(mut self, reason: Unread) -> Self {
         self.inspection.unread(reason);
         self
@@ -402,10 +401,12 @@ pub fn extract_text_with_policy(
     //   no proof   the extension is used, exactly as before. Text has no
     //              signature, so this is the common path and it is unchanged
     //
-    // Recorded in `metadata`, not `warnings`: a warning means "content we did
-    // not read", and the milter defers on it. A renamed file that we then
-    // read correctly *was* read. Conflating the two would defer every message
-    // carrying a misnamed attachment.
+    // Recorded as a typed `Unread::FormatMismatch` on the inspection, through
+    // `note` rather than `with_unread`: the other reasons mean "content we
+    // did not read", and the milter defers on those. A renamed file that we
+    // then read correctly *was* read, and the milter reads the variant with
+    // that in mind. Conflating the two would defer every message carrying a
+    // misnamed attachment.
     // ---------------------------------------------------------------------
     let ext = Path::new(file_path)
         .extension()
@@ -447,13 +448,12 @@ pub fn extract_text_with_policy(
                     } else {
                         // `note`, not `with_unread`: the content *was* read, as
                         // what it is, so this is not a gap for the milter to
-                        // defer on. It is a typed reason the CLI and siphon-fs
-                        // now see without reading `metadata`.
-                        r.with_metadata("format_mismatch", &mismatch)
-                            .note(Unread::FormatMismatch {
-                                declared: e.to_string(),
-                                detected: a.name().to_string(),
-                            })
+                        // defer on. It is a typed reason the CLI, siphon-fs
+                        // and the milter all see in the same field.
+                        r.note(Unread::FormatMismatch {
+                            declared: e.to_string(),
+                            detected: a.name().to_string(),
+                        })
                     }
                 });
             }
@@ -577,8 +577,9 @@ pub fn supported_extensions() -> Vec<String> {
 /// the extractor. Set with `SIPHON_ON_FORMAT_MISMATCH`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum OnFormatMismatch {
-    /// Read by content, record the contradiction in
-    /// `metadata["format_mismatch"]`, log it at warn level, and carry on.
+    /// Read by content, record the contradiction as a typed
+    /// `Unread::FormatMismatch` on the inspection, log it at warn level, and
+    /// carry on.
     ///
     /// The default, because it is the one that cannot cause an outage. The
     /// file is still scanned — better than before the arbitration existed,
@@ -3850,10 +3851,14 @@ mod tests {
             flagged.text.contains("4111111111111111"),
             "the payload must be read: reading it by name found nothing at all"
         );
-        assert_eq!(
-            flagged.metadata.get("format_mismatch").map(String::as_str),
-            Some("declared .txt, content is zip"),
-            "the contradiction is the most interesting fact about this file"
+        assert!(
+            flagged.inspection.unread_reasons().iter().any(|r| matches!(
+                r,
+                Unread::FormatMismatch { declared, detected }
+                    if declared == "txt" && detected == "zip"
+            )),
+            "the contradiction is the most interesting fact about this file: {:?}",
+            flagged.inspection
         );
 
         let rejected = super::extract_text_with_policy(path, super::OnFormatMismatch::Reject);
@@ -3869,8 +3874,9 @@ mod tests {
             "ignore suppresses the report, never the scan — the bypass stays closed"
         );
         assert!(
-            ignored.metadata.get("format_mismatch").is_none(),
-            "ignore records nothing"
+            ignored.inspection.is_complete(),
+            "ignore records nothing: {:?}",
+            ignored.inspection
         );
     }
 
@@ -3892,9 +3898,9 @@ mod tests {
             super::extract_text_with_policy(path.to_str().unwrap(), super::OnFormatMismatch::Flag)
                 .unwrap();
         assert!(
-            r.metadata.get("format_mismatch").is_none(),
+            r.inspection.is_complete(),
             "a signature weak enough to fire here fires on ordinary documents: {:?}",
-            r.metadata
+            r.inspection
         );
         assert!(r.text.contains("4111111111111111"));
     }
@@ -3936,10 +3942,10 @@ mod tests {
             .expect("a decodable image with no barcode is not an extraction failure");
         assert!(r.text.is_empty(), "nothing was encoded in it");
         assert!(
-            r.warnings.is_empty(),
-            "a warning here is indistinguishable from an unreadable image, \
+            r.inspection.is_complete(),
+            "a gap here is indistinguishable from an unreadable image, \
              which is the case actually worth reporting: {:?}",
-            r.warnings
+            r.inspection
         );
     }
 
@@ -4175,7 +4181,8 @@ mod tests {
         let result = ExtractionResult::new("test".to_string(), "txt")
             .with_warning("test warning")
             .with_metadata("key", "value");
-        assert_eq!(result.warnings.len(), 1);
+        assert_eq!(result.inspection.unread_reasons().len(), 1);
+        assert_eq!(result.inspection.describe(), vec!["test warning"]);
         assert_eq!(result.metadata.get("key"), Some(&"value".to_string()));
     }
 
@@ -4680,6 +4687,10 @@ mod tests {
         std::fs::write(f.path(), &data).unwrap();
         let result = extract_dat(f.path().to_str().unwrap()).unwrap();
         assert!(result.text.contains("4532015112830366"));
-        assert!(result.warnings.iter().any(|w| w.contains("Binary")));
+        assert!(result
+            .inspection
+            .describe()
+            .iter()
+            .any(|w| w.contains("Binary")));
     }
 }

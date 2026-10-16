@@ -407,9 +407,10 @@ fn main() {
                     // unread entry in the file is not the same answer as
                     // "Matches: 0" on a file that was read end to end, and the
                     // reader has to see both at once to tell them apart.
-                    if !result.warnings.is_empty() {
-                        println!("Unscanned content: {}", result.warnings.len());
-                        for w in &result.warnings {
+                    let unread = result.inspection.describe();
+                    if !unread.is_empty() {
+                        println!("Unscanned content: {}", unread.len());
+                        for w in &unread {
                             println!("  ! {w}");
                         }
                     }
@@ -482,7 +483,7 @@ fn main() {
                         // it. Name the gap next to the matches, as `scan` does.
                         if r.error.is_none() && !r.inspection.is_complete() {
                             println!("{}: not fully scanned", r.file_path);
-                            for w in &r.warnings {
+                            for w in r.inspection.describe() {
                                 println!("  ! {w}");
                             }
                         }

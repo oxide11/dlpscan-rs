@@ -237,12 +237,14 @@ dispatch and two copies drift — the one that used to live in
 `detect_and_extract` already had, accepting 6 of SQLite's 16 bytes and
 knowing nothing about images at all.
 
-A contradiction is recorded in `metadata["format_mismatch"]`, as a typed
-`Unread::FormatMismatch` on the extraction's `inspection`, and logged at warn
-level with structured fields — **not** in `warnings`, which means "content we
-did not read" and makes the milter defer. A renamed file that we then read
-correctly *was* read; the CLI reports the mismatch and, under
-`--on-incomplete fail`, exits 3 on it.
+A contradiction is recorded as a typed `Unread::FormatMismatch` on the
+extraction's `inspection` and logged at warn level with structured fields.
+It is the one `Unread` reason that is **not** a gap: the others mean "content
+we did not read" and make the milter defer, while a renamed file that we then
+read correctly *was* read. So the milter scans the content and does not defer
+on the mismatch alone; the CLI reports it and, under `--on-incomplete fail`,
+exits 3 on it; siphon-fs reports it `incomplete`. (It was also a
+`metadata["format_mismatch"]` key until siphon-cli 2.7.0.)
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -834,8 +836,8 @@ the findings back.) File formats supported
   by content (a plain `.zip` of a `.txt` is no longer a bypass); a *nested*
   archive or an encrypted entry is not recursed into but is reported as a
   typed `Unread::NestedArchive` / `Unread::Encrypted` on the extraction's
-  `inspection` (`entry inner.zip is a nested archive; not read` in
-  `warnings`) rather than skipped silently
+  `inspection` (`entry inner.zip is a nested archive; not read` is its
+  `describe()` line) rather than skipped silently
 - Parquet/SQLite (`data-formats`) — arrow + rusqlite
 - PNG/JPG/GIF/BMP/TIFF/WebP barcode & QR (`barcode`) — rxing + image
 - Outlook MSG (`msg`) — cfb OLE2
@@ -937,8 +939,9 @@ encrypted entry, an attachment that would not open, a match cap, a file whose
 bytes contradict its name. `scan-dir` applies the same codes across every
 file (1 wins over 3). Every `PipelineResult` carries `inspection`
 (`siphon_core::Inspection`, in `--format json` as `{"status": ...}`), which is
-what the exit code reads; `warnings` is its one-line form and is on its way
-out (`docs/architecture/inspection-outcome.md`).
+what the exit code reads; `inspection.describe()` is its one-line form. The
+`warnings` array that carried those lines is gone since siphon-cli 2.7.0
+(`docs/architecture/inspection-outcome.md`, step 6).
 
 ### Feature flags
 

@@ -5053,7 +5053,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-cli"
-version = "2.6.0"
+version = "2.7.0"
 dependencies = [
  "aho-corasick",
  "arrow",
@@ -5133,7 +5133,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-fs"
-version = "1.6.0"
+version = "1.7.0"
 dependencies = [
  "axum",
  "axum-server",
@@ -5198,7 +5198,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-smtp"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "deadpool-postgres",
  "sha2 0.11.1",
@@ -5212,6 +5212,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zip 9.0.4",
 ]
 
 [[package]]
