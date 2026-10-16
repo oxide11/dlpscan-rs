@@ -31,7 +31,9 @@ use policy::{action_for, verdict_headers, OnIndeterminate, PolicyError, Verdict}
 use protocol::{Command, Decoder, Response};
 use siphon_core::mime::{parse_message_with_limits, MimeLimits, PartKind};
 use siphon_core::scanner::{scan_text_with_config, ScanConfig};
-use siphon_mail::{Direction, Inspection, MessageRecord, PartOutcome, PartRecord, PartStatus};
+use siphon_mail::{
+    Direction, Inspection, MessageRecord, PartOutcome, PartRecord, PartStatus, Unread,
+};
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::net::IpAddr;
@@ -548,10 +550,12 @@ fn scan_message(raw: &[u8], min_confidence: f64) -> ScanOutcome {
     // up, so there is content we never even enumerated. That cannot leave a
     // message clean, and it is an incompleteness in its own right — the
     // verdict bump alone was invisible to the policy as soon as any part
-    // produced a finding.
+    // produced a finding. The MIME walker still speaks in strings, so they
+    // are absorbed as `Unread::Other` rather than dropped; every non-empty
+    // warning becomes a reason.
     if !parsed.warnings.is_empty() {
         verdict = verdict.max(Verdict::Indeterminate);
-        inspection = Inspection::Incomplete;
+        inspection.absorb_warnings(&parsed.warnings);
     }
 
     ScanOutcome {
@@ -573,7 +577,12 @@ fn finish_part(
 ) {
     outcomes.push(match scanned_verdict {
         Some(v) => PartOutcome::scanned(v),
-        None => PartOutcome::uninspected(record.status),
+        // Named by its MIME path, with the same detail the row carries, so
+        // the inspection says which part went unread and why in the log —
+        // not just that one did.
+        None => {
+            PartOutcome::uninspected_at(record.status, &record.mime_path, record.detail.clone())
+        }
     });
     parts.push(record);
 }
@@ -716,17 +725,27 @@ async fn handle_connection(
                             scan_started.elapsed().as_millis() as u64,
                         );
                     }
-                    let action =
-                        action_for(outcome.verdict, outcome.inspection, config.on_indeterminate);
+                    let action = action_for(
+                        outcome.verdict,
+                        &outcome.inspection,
+                        config.on_indeterminate,
+                    );
                     let scan_id = uuid::Uuid::new_v4().to_string();
 
                     tracing::info!(
                         verdict = outcome.verdict.as_str(),
+                        inspection = %outcome.inspection,
                         findings = outcome.finding_count,
                         ingest_key = session.ingest_key().unwrap_or("-"),
                         scan_id = %scan_id,
                         "milter_verdict"
                     );
+                    // One line per unread part, so the postmaster reading a
+                    // deferred queue can see which attachment held it up
+                    // without opening the database.
+                    for reason in outcome.inspection.describe() {
+                        tracing::info!(scan_id = %scan_id, %reason, "milter_unread");
+                    }
 
                     // Headers first, then the final action. §1: the verdict
                     // is stamped even when the message is delivered.
@@ -822,7 +841,10 @@ async fn persist(config: &Config, session: &Session, outcome: &ScanOutcome) {
 /// Run the scan under the deadline, failing towards indeterminate.
 async fn decide(session: &Session, config: &Config) -> ScanOutcome {
     if session.oversize {
-        return indeterminate();
+        return indeterminate(Unread::Oversize {
+            unit: "message".into(),
+            limit: Some(config.max_message_bytes as u64),
+        });
     }
 
     let raw = session.raw_message();
@@ -835,22 +857,28 @@ async fn decide(session: &Session, config: &Config) -> ScanOutcome {
         // finish looking, which is indeterminate — never clean.
         Ok(Err(e)) => {
             tracing::warn!(error = %e, "milter_scan_panicked");
-            indeterminate()
+            indeterminate(Unread::Other {
+                detail: "scan did not complete".into(),
+            })
         }
         Err(_) => {
             tracing::warn!(
                 deadline_secs = config.deadline.as_secs(),
                 "milter_scan_timeout"
             );
-            indeterminate()
+            indeterminate(Unread::Other {
+                detail: format!("scan exceeded the {}s deadline", config.deadline.as_secs()),
+            })
         }
     }
 }
 
-fn indeterminate() -> ScanOutcome {
+/// The outcome for a message we never finished looking at. `why` is the one
+/// reason the whole message carries, since no part was reached to carry it.
+fn indeterminate(why: Unread) -> ScanOutcome {
     ScanOutcome {
         verdict: Verdict::Indeterminate,
-        inspection: Inspection::Incomplete,
+        inspection: Inspection::new().with_unread(why),
         categories: Vec::new(),
         finding_count: 0,
         // No part rows: we never got far enough to enumerate them. An empty

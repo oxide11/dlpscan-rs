@@ -1,6 +1,6 @@
 # One inspection outcome for every ingress
 
-Status: **type landed in siphon-core (2.11.0); CLI (step 2, siphon-cli 2.6.0) and siphon-fs (step 3, 1.6.0) adopted; siphon-icap (step 4) and siphon-smtp/mail (step 5) in review; step 6 pending** (2026-10-16).
+Status: **type landed in siphon-core (2.11.0); CLI (step 2, siphon-cli 2.6.0), siphon-fs (step 3, 1.6.0), siphon-icap (step 4, 0.4.0) and siphon-smtp/siphon-mail (step 5, 0.3.0 / 0.2.0) adopted; step 6 (delete what they replaced) pending** (2026-10-16).
 Companion to `siphon_core::inspection` (the code) and the "Security audit
 log" in `BACKLOG.md` (the incidents).
 
@@ -137,7 +137,7 @@ with HTTP 200 (today: 200, `scanned:false`); empty text with warnings →
 with the existing 422. `format_mismatch` finally reaches the caller, as a
 typed reason instead of a metadata key that is never serialised.
 
-### 4. siphon-icap
+### 4. siphon-icap — **landed, siphon-icap 0.4.0**
 
 `unscannable_verdict(reason: &str)` takes an `Inspection`; `body_truncated`
 is `Unread::Truncated { unit: "body" }`, `looks_binary` is
@@ -145,15 +145,19 @@ is `Unread::Truncated { unit: "body" }`, `looks_binary` is
 `describe().join("; ")`. The `Unscannable { Pass, Block }` policy enum
 stays — it is the *decision*, which this document leaves alone.
 
-### 5. siphon-smtp / siphon-mail
+### 5. siphon-smtp / siphon-mail — **landed (siphon-mail 0.2.0, siphon-smtp 0.3.0)**
 
-`siphon_mail::Inspection` becomes a re-export of the core type;
+`siphon_mail::Inspection` is a re-export of the core type;
 `PartStatus → Unread` is a one-arm-per-variant mapping
 (`SkippedOversize → Oversize{unit: "part <path>"}`, `SkippedEncrypted →
 Encrypted`, `SkippedNestedArchive → NestedArchive`, `SkippedUnsupported →
-Unsupported`, `Error → ReadError`). `policy::action_for` is unchanged: it
-already takes an inspection and a verdict separately, which is the design
-the rest of the workspace is converging on.
+Unsupported`, `Error → ReadError`, `Pending → Other`), done in
+`PartOutcome::unread()`. `policy::action_for` is unchanged in what it
+decides: it already took an inspection and a verdict separately, which is the
+design the rest of the workspace is converging on; it now borrows the
+inspection, since the core type carries its reasons. The MIME walker's
+warnings are absorbed as `Unread::Other` until it is typed. Nothing on the
+wire or in `message_parts` changed.
 
 ### 6. Delete what it replaced
 

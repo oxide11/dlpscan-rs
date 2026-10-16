@@ -2772,8 +2772,8 @@
     {
       "type": "library",
       "name": "siphon-mail",
-      "version": "0.1.1",
-      "purl": "pkg:cargo/siphon-mail@0.1.1",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/siphon-mail@0.2.0",
       "scope": "required",
       "licenses": [
         {

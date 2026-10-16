@@ -25,8 +25,8 @@ members and report that false picture; `cargo tree -p` does not.
 | `siphon-api` | 204 | 199 |
 | `siphon-icap` | 186 | 183 |
 | `siphon-launcher` | 116 | 114 |
+| `siphon-mail` | 109 | 107 |
 | `siphon-auth` | 96 | 95 |
-| `siphon-mail` | 71 | 70 |
 | `siphon-core` | 70 | 69 |
 
 ## Components with native code
@@ -58,21 +58,21 @@ Across all third-party components in all artifacts, counted per artifact.
 
 | Licence | Occurrences |
 |---|---|
-| `MIT OR Apache-2.0` | 1010 |
-| `MIT` | 340 |
-| `Apache-2.0 OR MIT` | 153 |
+| `MIT OR Apache-2.0` | 1037 |
+| `MIT` | 343 |
+| `Apache-2.0 OR MIT` | 158 |
 | `Apache-2.0` | 80 |
 | `Unicode-3.0` | 54 |
-| `Unlicense OR MIT` | 28 |
+| `Unlicense OR MIT` | 29 |
 | `BSD-3-Clause` | 20 |
 | `MIT OR Apache-2.0 OR Zlib` | 18 |
 | `Zlib OR Apache-2.0 OR MIT` | 18 |
 | `ISC` | 12 |
 | `(MIT OR Apache-2.0) AND Unicode-3.0` | 9 |
 | `BSD-2-Clause` | 9 |
+| `(Apache-2.0 OR MIT) AND BSD-3-Clause` | 8 |
 | `Apache-2.0 OR ISC OR MIT` | 8 |
 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | 8 |
-| `(Apache-2.0 OR MIT) AND BSD-3-Clause` | 7 |
 | `Zlib` | 7 |
 | `Apache-2.0 OR BSL-1.0` | 6 |
 | `Apache-2.0 OR BSL-1.0 OR MIT` | 6 |
