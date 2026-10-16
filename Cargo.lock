@@ -5186,17 +5186,19 @@ dependencies = [
 
 [[package]]
 name = "siphon-mail"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "chrono",
  "deadpool-postgres",
+ "serde_json",
+ "siphon-core",
  "tokio-postgres",
  "uuid",
 ]
 
 [[package]]
 name = "siphon-smtp"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "deadpool-postgres",
  "sha2 0.11.1",

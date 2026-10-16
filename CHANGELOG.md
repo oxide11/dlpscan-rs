@@ -182,6 +182,50 @@ had said "encrypted entry not scanned" and `process_file` dropped the string.
   file; JSON shape; `scan` and `scan-dir` exit codes under both policies.
   The conformance matrix's `damaged` slot now asserts on
   `inspection.is_complete()`, as the ADR said it would.
+### siphon-mail 0.2.0
+
+The mail model had the right rule before anyone else — a message with an
+unread part is not fully inspected, however clean the rest was — but it kept
+it in a private two-state enum that could say *that* something went unread
+and never *what* or *why*. The milter's log line said `indeterminate` and
+the postmaster opened the database to find out which attachment.
+
+- feat(mail): `siphon_mail::Inspection` is now a re-export of
+  `siphon_core::inspection::Inspection`, alongside `Unread`. One type across
+  every ingress; `is_complete()` means what it meant.
+- feat(mail): `inspection(parts)` maps each uninspected part to a typed
+  reason, one arm per `PartStatus`: `SkippedOversize → Oversize` (with the
+  scanner cap as the limit), `SkippedEncrypted → Encrypted`,
+  `SkippedNestedArchive → NestedArchive`, `SkippedUnsupported →
+  Unsupported`, `Error → ReadError` (carrying the part's recorded detail),
+  `Pending → Other`. No parts is `nothing_to_inspect("message")`, still
+  incomplete, still not clean.
+- feat(mail): `PartOutcome` carries `unit` and `detail` so a reason can name
+  its part (`"part 1.2"`); `PartOutcome::uninspected_at(status, mime_path,
+  detail)` builds one. `scanned` and `uninspected` are unchanged.
+  `reconcile_from_db` reads `mime_path` and `detail` back so the
+  distributed path names parts too. `PartOutcome` is no longer `Copy`.
+- The crate now depends on `siphon-core` (no default features; every
+  consumer already linked it). Still no HTTP stack.
+- Nothing in Postgres changes: `message_parts.status` strings, both CHECK
+  constraints and every statement are as they were. `SELECT_PART_OUTCOMES_SQL`
+  selects two more existing columns.
+
+### siphon-smtp 0.3.0
+
+- feat(smtp): the milter's inspection is the shared core type. A MIME
+  walker warning is absorbed as `Unread::Other` rather than collapsing to a
+  bare "incomplete"; an oversize message, a timed-out scan and a panicked
+  scan each carry their own reason instead of sharing one.
+- feat(smtp): `milter_verdict` logs `inspection`, and each unread reason is
+  logged as its own `milter_unread` line with the scan id — which part, and
+  why — so a deferred queue can be read without a database session.
+- `policy::action_for` takes `&Inspection` (the core type holds a `Vec`);
+  the decision it makes is unchanged: anything short of complete consults
+  `SIPHON_SMTP_ON_INDETERMINATE`, a verdict that already stops the message
+  is left alone.
+- Nothing on the wire changes: the `X-Siphon-*` headers, the SMTP reply
+  codes and the rows written to `messages` / `message_parts` are identical.
 
 ## 2026-10-14 — WKN and Reuters RIC rules
 
