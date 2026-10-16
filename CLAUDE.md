@@ -237,10 +237,12 @@ dispatch and two copies drift — the one that used to live in
 `detect_and_extract` already had, accepting 6 of SQLite's 16 bytes and
 knowing nothing about images at all.
 
-A contradiction is recorded in `metadata["format_mismatch"]` and logged at
-warn level with structured fields — **not** in `warnings`, which means
-"content we did not read" and makes the milter defer. A renamed file that we
-then read correctly *was* read.
+A contradiction is recorded in `metadata["format_mismatch"]`, as a typed
+`Unread::FormatMismatch` on the extraction's `inspection`, and logged at warn
+level with structured fields — **not** in `warnings`, which means "content we
+did not read" and makes the milter defer. A renamed file that we then read
+correctly *was* read; the CLI reports the mismatch and, under
+`--on-incomplete fail`, exits 3 on it.
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -830,9 +832,10 @@ the findings back.) File formats supported
 - ZIP/RAR/7Z (`archives`) — 10k file limit, 500 MB total, 100:1 compression
   ratio bomb detection, path traversal sanitized. Text-like entries are scanned
   by content (a plain `.zip` of a `.txt` is no longer a bypass); a *nested*
-  archive or an encrypted entry is not recursed into but is surfaced as a
-  `nested archive not scanned` / `encrypted entry not scanned` warning rather
-  than skipped silently
+  archive or an encrypted entry is not recursed into but is reported as a
+  typed `Unread::NestedArchive` / `Unread::Encrypted` on the extraction's
+  `inspection` (`entry inner.zip is a nested archive; not read` in
+  `warnings`) rather than skipped silently
 - Parquet/SQLite (`data-formats`) — arrow + rusqlite
 - PNG/JPG/GIF/BMP/TIFF/WebP barcode & QR (`barcode`) — rxing + image
 - Outlook MSG (`msg`) — cfb OLE2
@@ -925,7 +928,17 @@ forensics <files…>      metadata extraction + author attribution (feature: for
 ```
 
 Global flags: `--format {text,json,csv,sarif}`, `--min-confidence`,
-`--require-context`, `--categories`.
+`--require-context`, `--categories`, `--on-incomplete {report,fail}`.
+
+Exit codes: `0` the scan ran and (under `report`, the default) whatever it
+could not read is printed under "Unscanned content:"; `1` the scan itself
+failed; `3` under `--on-incomplete fail`, something was not read — an
+encrypted entry, an attachment that would not open, a match cap, a file whose
+bytes contradict its name. `scan-dir` applies the same codes across every
+file (1 wins over 3). Every `PipelineResult` carries `inspection`
+(`siphon_core::Inspection`, in `--format json` as `{"status": ...}`), which is
+what the exit code reads; `warnings` is its one-line form and is on its way
+out (`docs/architecture/inspection-outcome.md`).
 
 ### Feature flags
 

@@ -120,6 +120,68 @@ string where every other ingress is now a typed `Inspection`.
   `Truncated` is for a reader that stopped without a limit to name.
 - Normal flagged and clean responses are unchanged: no new headers, and the
   scan still runs through `scan_text_with_config`.
+### siphon-cli 2.6.0
+
+Step 2 of the adoption order above: the CLI says what its verdict covers.
+`siphon scan` on a `.zip` holding one encrypted `secrets.txt` used to print
+`Matches: 0` and exit 0, exactly as it does for an empty file; the extractor
+had said "encrypted entry not scanned" and `process_file` dropped the string.
+#494 made the string survive. This release makes it a type.
+
+- feat(cli): `PipelineResult.inspection: siphon_core::Inspection`, serialised
+  as `{"status": "complete"}` or `{"status": "incomplete", "unread": [{"kind":
+  ...}]}` in `--format json` output. `warnings` is now `inspection.describe()`
+  — one line per reason, never written separately — and stays for one
+  release.
+- feat(cli): `ExtractionResult.inspection`, with every extractor reason
+  typed: `Oversize` (an archive entry over the per-entry cap, a RAR/7z text
+  member over 1 MB), `Truncated` (the extraction budget, the 10,000-row
+  Parquet and 5,000-row SQLite caps, the 100 k-character cut on RAR/7z
+  members, the 100-barcode and 4 KB-per-barcode caps — all of which were
+  silent), `Encrypted`, `NestedArchive`, `ReadError` (a parse that fell back
+  to raw bytes, an entry that lied about its size or its compression ratio,
+  a rejected entry name, an attachment the registry could not open),
+  `Unsupported` (the attachments an Outlook `.msg` carries, which this reader
+  has never opened and now says so), and `FormatMismatch` under the `flag`
+  policy — recorded in the inspection but *not* as a warning, because the
+  file was read correctly as what it is and the milter must not defer on it.
+  `with_warning` still works and maps to `Unread::Other`.
+- fix(cli): an extractor `Err` is `Unread::ReadError`, not a fall-through to
+  `read_to_string` reported as a faithful read. The bytes are still scanned
+  (a value that survives in them is still worth reporting), but the verdict
+  says it covers only what that pass could see. Under
+  `SIPHON_ON_FORMAT_MISMATCH=reject` the refusal is `Unread::FormatMismatch`
+  and nothing is scanned.
+- feat(cli): `scan_text_inspected` replaces `scan_text_with_config` in the
+  pipeline, so a match cap reaches the output as `MatchCapReached` instead of
+  a "redacted" result that stopped early and said nothing.
+- feat(cli): `--on-incomplete {report,fail}` (global). `report`, the default,
+  prints "Unscanned content:" and exits 0 as before, so no script breaks on
+  the day this lands. `fail` exits **3** when anything was not read — a code
+  distinct from 1 (the scan itself failed) because the two call for different
+  responses. `scan-dir` honours exit codes for the first time: under `fail`,
+  1 if any file errored, else 3 if any was not fully read; its text output
+  names each partially read file ("not fully scanned") beside the match
+  lines and the summary counts them.
+- fix(cli): EML attachments were extracted in a temp directory named by
+  process id and byte length, so two same-sized attachments on two threads of
+  one process shared it and the first to finish deleted the other's file. The
+  conformance `eml` case failed one CI run in several on this (the base64
+  attachment "reached the scanner still encoded"). Each attachment now gets
+  its own `TempDir`.
+- fix(cli): `siphon --version` reported `2.1.0`, a literal that had not moved
+  in five releases; it now reports the crate version.
+- Deliberately **not** typed in this step, each a decision for its ingress
+  rather than for the reader: a non-text member of a plain archive (an image,
+  a binary) and the Office XML trees the extractor does not open. Nearly
+  every real archive has one, and siphon-smtp treats any unread unit as
+  grounds to defer under its fail-closed default, so reporting them here
+  would defer ordinary mail for a `.png`. Listed in the ADR's step-2 notes.
+- tests: `tests/inspection_outcome_test.rs` (new, 9): typed reasons through
+  the pipeline for a nested archive, an extractor failure and a renamed
+  file; JSON shape; `scan` and `scan-dir` exit codes under both policies.
+  The conformance matrix's `damaged` slot now asserts on
+  `inspection.is_complete()`, as the ADR said it would.
 
 ## 2026-10-14 — WKN and Reuters RIC rules
 

@@ -66,7 +66,10 @@ pub use errors::{DlpError, Result};
 pub use guard::{Action, InputGuard, Mode, Preset, ScanResult};
 pub use models::{Match, PatternDef};
 pub use pipeline::{FileJob, Pipeline, PipelineResult};
+// What a verdict covers, shared with every other ingress (see
+// docs/architecture/inspection-outcome.md).
 pub use scanner::{scan_text, ScanConfig};
+pub use siphon_core::{Inspection, Unread};
 pub use streaming::StreamScanner;
 
 // Module re-exports
