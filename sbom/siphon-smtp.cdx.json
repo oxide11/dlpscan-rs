@@ -7497,6 +7497,26 @@
     },
     {
       "type": "library",
+      "name": "zip",
+      "version": "9.0.4",
+      "purl": "pkg:cargo/zip@9.0.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/zip-rs/zip2"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "zlib-rs",
       "version": "0.6.7",
       "purl": "pkg:cargo/zlib-rs@0.6.7",

@@ -3790,8 +3790,8 @@
     {
       "type": "library",
       "name": "zip",
-      "version": "8.6.0",
-      "purl": "pkg:cargo/zip@8.6.0",
+      "version": "9.0.4",
+      "purl": "pkg:cargo/zip@9.0.4",
       "scope": "required",
       "licenses": [
         {

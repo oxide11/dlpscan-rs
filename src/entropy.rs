@@ -343,7 +343,8 @@ impl RecursiveExtractor {
                 continue;
             }
 
-            let safe_name = Path::new(entry.name())
+            let entry_name = crate::extractors::zip_entry_name(&entry);
+            let safe_name = Path::new(&entry_name)
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")

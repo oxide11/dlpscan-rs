@@ -61,6 +61,20 @@ const NESTED_ARCHIVE_EXTENSIONS: &[&str] = &[
     "zst", "zstd", "arj", "lha", "lzh",
 ];
 
+/// A ZIP entry's name as a `String`, lossily.
+///
+/// zip 9 returns `Err` for a name that is not valid UTF-8 (and not flagged
+/// CP437). Every caller here uses the name to decide whether to read the
+/// entry and to say which entry it is talking about, and for both of those a
+/// lossy string is the right answer: refusing to name an entry is how it
+/// would go unread without a word.
+pub(crate) fn zip_entry_name<R: std::io::Read + ?Sized>(f: &zip::read::ZipFile<'_, R>) -> String {
+    match f.name() {
+        Ok(n) => n.into_owned(),
+        Err(_) => String::from_utf8_lossy(f.name_raw()).into_owned(),
+    }
+}
+
 /// Whether an archive entry is itself a nested archive/container.
 fn archive_entry_is_nested_archive(name: &str) -> bool {
     std::path::Path::new(name)
@@ -1158,19 +1172,19 @@ fn extract_zip_archive(
     let is_docx = (0..archive.len()).any(|i| {
         archive
             .by_index(i)
-            .map(|f| f.name().starts_with("word/"))
+            .map(|f| zip_entry_name(&f).starts_with("word/"))
             .unwrap_or(false)
     });
     let is_xlsx = (0..archive.len()).any(|i| {
         archive
             .by_index(i)
-            .map(|f| f.name().starts_with("xl/"))
+            .map(|f| zip_entry_name(&f).starts_with("xl/"))
             .unwrap_or(false)
     });
     let is_pptx = (0..archive.len()).any(|i| {
         archive
             .by_index(i)
-            .map(|f| f.name().starts_with("ppt/"))
+            .map(|f| zip_entry_name(&f).starts_with("ppt/"))
             .unwrap_or(false)
     });
 
@@ -1188,7 +1202,7 @@ fn extract_zip_archive(
     let xml_paths: Vec<String> = (0..archive.len())
         .filter_map(|i| {
             let file = archive.by_index(i).ok()?;
-            let name = file.name().to_string();
+            let name = zip_entry_name(&file);
             if name.ends_with(".xml") {
                 match format {
                     "docx" if name.starts_with("word/") => Some(name),
@@ -1289,7 +1303,26 @@ fn extract_zip_archive(
                 .min(MAX_EXTRACT_ENTRY_SIZE)
                 .min(MAX_EXTRACT_TOTAL_SIZE - total_read);
             let mut raw = Vec::new();
-            if (&mut file).take(budget + 1).read_to_end(&mut raw).is_err() {
+            if let Err(e) = (&mut file).take(budget + 1).read_to_end(&mut raw) {
+                // zip 9 checks the stream against the declared size itself
+                // and fails the read with `InvalidData` ("File is larger than
+                // its declared uncompressed size") before handing the bytes
+                // back; zip 8 handed them back and left that check to the
+                // branch below. Either way the entry was not read and the
+                // reader has to say so. This `continue` used to be silent,
+                // which under zip 9 turned the size-lie regression tests into
+                // "no warning at all" — the exact failure they exist to catch.
+                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+                    let lied =
+                        raw.len() as u64 >= budget || e.kind() == std::io::ErrorKind::InvalidData;
+                    skipped_warnings.push(if lied {
+                        format!(
+                            "entry inflated past its declared size, not scanned: {xml_path} ({e})"
+                        )
+                    } else {
+                        format!("entry could not be read, not scanned: {xml_path}: {e}")
+                    });
+                }
                 continue;
             }
             if raw.len() as u64 > budget {
@@ -1342,7 +1375,7 @@ fn extract_zip_archive(
             let Ok(mut file) = archive.by_index(i) else {
                 continue;
             };
-            let name = file.name().to_string();
+            let name = zip_entry_name(&file);
             // A nested archive is not recursed into — deep recursion is where
             // zip-bomb amplification lives — but it must not vanish silently
             // either: a sensitive file one layer deep would otherwise scan to
@@ -2496,7 +2529,26 @@ fn extract_opendocument(file_path: &str) -> Result<ExtractionResult, String> {
                 .min(MAX_EXTRACT_ENTRY_SIZE)
                 .min(MAX_EXTRACT_TOTAL_SIZE - total_read);
             let mut raw = Vec::new();
-            if (&mut file).take(budget + 1).read_to_end(&mut raw).is_err() {
+            if let Err(e) = (&mut file).take(budget + 1).read_to_end(&mut raw) {
+                // zip 9 checks the stream against the declared size itself
+                // and fails the read with `InvalidData` ("File is larger than
+                // its declared uncompressed size") before handing the bytes
+                // back; zip 8 handed them back and left that check to the
+                // branch below. Either way the entry was not read and the
+                // reader has to say so. This `continue` used to be silent,
+                // which under zip 9 turned the size-lie regression tests into
+                // "no warning at all" — the exact failure they exist to catch.
+                if skipped_warnings.len() < MAX_NESTED_ARCHIVE_WARNINGS {
+                    let lied =
+                        raw.len() as u64 >= budget || e.kind() == std::io::ErrorKind::InvalidData;
+                    skipped_warnings.push(if lied {
+                        format!(
+                            "entry inflated past its declared size, not scanned: {xml_name} ({e})"
+                        )
+                    } else {
+                        format!("entry could not be read, not scanned: {xml_name}: {e}")
+                    });
+                }
                 continue;
             }
             if raw.len() as u64 > budget {
