@@ -6,6 +6,40 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-16 — dependency: zip 9
+
+### workspace (lockfile and manifests only)
+
+- chore(deps): `zip` 8.6.0 → 9.0.4 in the root crate and `siphon-core`.
+  Every zip 8.x release was yanked on 2026-10-16 (the 9.x line is the
+  replacement), which turned `cargo deny` (`yanked = "deny"`) red on every
+  branch in the repository, including ones that touch no Rust. zip 9's
+  `ZipFile::name()` returns a `Result` — an entry name that is not valid
+  UTF-8 is an error rather than a lossy string — so the three archive
+  extractors and the entropy walker go through one `zip_entry_name` helper
+  that falls back to a lossy rendering of the raw bytes: refusing to name an
+  entry is how it would go unread without a word.
+- zip 9 also checks an entry's stream against its declared uncompressed size
+  itself and fails the read once the entry inflates past it, where zip 8
+  handed the bytes back and left that check to the extractor. The
+  read-failure `continue` in the Office and OpenDocument passes was silent,
+  so under zip 9 a `.docx` lying about `word/document.xml`'s size was refused
+  *with no warning* — `tests/archive_security_test.rs` caught it. The branch
+  now reports the entry ("inflated past its declared size" when the reader
+  rejected the stream as `InvalidData` or it ran past the declared length,
+  otherwise the reader's error).
+- `deny.toml`: `zip@8.6.0` is ignored with a reason. It stays in the graph
+  because `calamine` 0.36.1 — the newest release — still requires `zip ^8.6`,
+  and nothing short of a calamine release changes that. The yank carries no
+  advisory; remove the entry when calamine ships on zip 9 (tracked in
+  BACKLOG.md).
+- No crate version bump, per the `chore(deps)` rule: no public API changes
+  and the only behavioural change is the warning above. SBOMs regenerated;
+  `cargo deny check` passes locally and `cargo build --workspace --locked`
+  is green.
+
+---
+
 ## 2026-10-15 — Inspection: what a verdict covers
 
 ### siphon-core 2.11.0

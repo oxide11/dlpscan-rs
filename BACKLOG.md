@@ -139,6 +139,7 @@ maintained alternative exists and the migration risk is low.
 | `ttf-parser` | RUSTSEC-2026-0249 | Font parsing pulled in by the PDF extraction chain. No maintained drop-in; revisit when the PDF dep tree updates. |
 | `paste` | RUSTSEC-2026-0251 | Proc-macro helper; used only at compile time, no runtime attack surface. Prefer inlining or switching to std `concat_idents!` / `format_ident!` (from `syn`) when the using code is next touched. |
 | `proc-macro-error2` | RUSTSEC-2026-0252 | Build-time only (proc-macro support). No exploitable runtime surface; track the originating crate's migration to `proc-macro-error` v2 or `syn` diagnostics. |
+| `zip` 8.6.0 (via `calamine`) | yanked 2026-10-16, no advisory | Every zip 8.x release was yanked; the workspace moved to zip 9 the same day. `calamine` 0.36.1 (latest) still requires `^8.6`, so a second copy stays in the graph under a `deny.toml` ignore. Bump `calamine` and delete the ignore the day it ships on zip 9. |
 
 ## Security debt — operational correctness
 
