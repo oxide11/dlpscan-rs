@@ -1,6 +1,6 @@
 # One inspection outcome for every ingress
 
-Status: **type and `scan_text_inspected` landed in siphon-core; ingress adoption pending** (2026-10-15).
+Status: **type landed in siphon-core (2.11.0); CLI (step 2, siphon-cli 2.6.0) and siphon-fs (step 3, 1.6.0) adopted; siphon-icap (step 4) and siphon-smtp/mail (step 5) in review; step 6 pending** (2026-10-16).
 Companion to `siphon_core::inspection` (the code) and the "Security audit
 log" in `BACKLOG.md` (the incidents).
 
@@ -80,7 +80,7 @@ threaded through `scan_impl`, so every cap site reports the same way). A
 sink the caller installed is set alongside, never cleared.
 `scan_text_with_config` is unchanged in behaviour and is now a thin wrapper.
 
-### 2. CLI (`src/pipeline`, `src/main.rs`) — after PR #494 merges
+### 2. CLI (`src/pipeline`, `src/main.rs`) — **landed, siphon-cli 2.6.0**
 
 - `ExtractionResult` gains `inspection: Inspection`; each extractor sets
   typed reasons where it currently pushes a warning string or `continue`s
@@ -102,7 +102,32 @@ sink the caller installed is set alongside, never cleared.
   script breaks on the day this lands. `scan-dir` starts honouring exit
   codes at all.
 
-### 3. siphon-fs
+Notes from landing it:
+
+- Two silent paths are still silent, on purpose: a non-text member of a
+  plain archive (an image, a binary) and the Office XML trees the extractor
+  does not open. Nearly every real archive has one, and step 5's milter
+  defers on any unread unit under its fail-closed default, so typing them
+  here would defer ordinary mail carrying a `.png`. Each ingress has to
+  decide what an unread image means before the reader reports it; that
+  decision is step 6's, with the deletions.
+- `FormatMismatch` under the `flag` policy goes into `inspection` but not
+  into `warnings` (`ExtractionResult::note`). The file *was* read, as what
+  its bytes are, so the string channel the milter still reads must not call
+  it a gap. Once siphon-smtp is on the typed inspection (step 5) it will see
+  the reason and `policy::action_for` decides what to do with it — which is
+  the moment to say whether a misnamed attachment defers.
+- An extractor `Err` still scans the raw bytes, as the old fall-through
+  did, because a value that survives in them is worth reporting; the
+  difference is that the verdict now says what it covers. The ADR text
+  above says "not a fall-through to `read_to_string`" and means the
+  *claim*, not the scan.
+- `ExtractionResult.warnings` is derived from `inspection` at every write
+  (`unread`, `with_unread`, `unread_within`), and `PipelineResult.warnings`
+  is `inspection.describe()`. Neither is written on its own any more, so
+  step 6 deletes them without a behaviour change.
+
+### 3. siphon-fs — **landed, siphon-fs 1.6.0**
 
 `ScanResponse.scanned: bool` becomes `inspection.is_complete()`, and an
 `inspection` object joins the response beside `warnings`. The three cases

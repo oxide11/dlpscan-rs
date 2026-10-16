@@ -14,11 +14,11 @@ use std::process;
 use std::time::Instant;
 
 use siphon::guard::{Action, InputGuard, Mode, Preset};
-use siphon::pipeline::{self, Pipeline};
+use siphon::pipeline::{self, Pipeline, PipelineResult};
 use siphon::scanner;
 
 #[derive(Parser)]
-#[command(name = "siphon", version = "2.1.0")]
+#[command(name = "siphon", version)]
 #[command(
     about = "Polygon Siphon — high-performance DLP scanner to detect, redact, and protect sensitive data"
 )]
@@ -41,6 +41,43 @@ struct Cli {
     /// Only scan these categories (comma-separated)
     #[arg(long, global = true)]
     categories: Option<String>,
+
+    /// What to do when the verdict does not cover the whole input: an
+    /// encrypted archive entry, an attachment the extractor could not open,
+    /// a match cap, a file whose bytes contradict its name. `report` prints
+    /// what went unread and exits 0, as before; `fail` exits 3 so a script
+    /// cannot take a partial verdict for a clean one.
+    #[arg(long, value_enum, default_value = "report", global = true)]
+    on_incomplete: OnIncomplete,
+}
+
+/// Exit code for a verdict that does not cover the whole input. Distinct from
+/// 1 (the scan itself failed) because the two call for different responses:
+/// an error is retried or fixed, an incomplete verdict is decided on.
+const EXIT_INCOMPLETE: i32 = 3;
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum OnIncomplete {
+    /// Print what was not read; exit 0 (the default, so nothing breaks on
+    /// the day this lands).
+    Report,
+    /// Exit 3 when anything was not read; exit 1 when any file errored.
+    Fail,
+}
+
+/// Apply `--on-incomplete` to a finished scan. `scan-dir` never set a non-zero
+/// exit code at all before this; under `fail` an errored file is 1 and a
+/// partially read one is 3, errors first because they are the more severe.
+fn exit_for_coverage(policy: OnIncomplete, results: &[PipelineResult]) {
+    if policy != OnIncomplete::Fail {
+        return;
+    }
+    if results.iter().any(|r| r.error.is_some()) {
+        process::exit(1);
+    }
+    if results.iter().any(|r| !r.inspection.is_complete()) {
+        process::exit(EXIT_INCOMPLETE);
+    }
 }
 
 #[derive(Clone, ValueEnum)]
@@ -350,11 +387,15 @@ fn main() {
                 OutputFormat::Json => {
                     println!(
                         "{}",
-                        pipeline::results_to_json(&[result], true).unwrap_or_default()
+                        pipeline::results_to_json(std::slice::from_ref(&result), true)
+                            .unwrap_or_default()
                     );
                 }
                 OutputFormat::Csv => {
-                    print!("{}", pipeline::results_to_csv(&[result]));
+                    print!(
+                        "{}",
+                        pipeline::results_to_csv(std::slice::from_ref(&result))
+                    );
                 }
                 _ => {
                     println!("File: {}", result.file_path);
@@ -387,6 +428,7 @@ fn main() {
                     }
                 }
             }
+            exit_for_coverage(cli.on_incomplete, std::slice::from_ref(&result));
         }
 
         Commands::ScanDir { dir, recursive } => {
@@ -405,6 +447,10 @@ fn main() {
             let total_matches: usize = results.iter().map(|r| r.match_count()).sum();
             let total_files = results.len();
             let errors: usize = results.iter().filter(|r| r.error.is_some()).count();
+            let incomplete: usize = results
+                .iter()
+                .filter(|r| r.error.is_none() && !r.inspection.is_complete())
+                .count();
 
             match cli.format {
                 OutputFormat::Json => {
@@ -431,14 +477,25 @@ fn main() {
                                 );
                             }
                         }
+                        // A file with nothing to report and something unread
+                        // used to look exactly like a file with nothing in
+                        // it. Name the gap next to the matches, as `scan` does.
+                        if r.error.is_none() && !r.inspection.is_complete() {
+                            println!("{}: not fully scanned", r.file_path);
+                            for w in &r.warnings {
+                                println!("  ! {w}");
+                            }
+                        }
                     }
                     println!();
                     println!(
-                        "Scanned {total_files} files, found {total_matches} matches in {:.2}s ({errors} errors)",
+                        "Scanned {total_files} files, found {total_matches} matches in {:.2}s \
+                         ({errors} errors, {incomplete} not fully scanned)",
                         elapsed.as_secs_f64()
                     );
                 }
             }
+            exit_for_coverage(cli.on_incomplete, &results);
         }
 
         Commands::ScanText { text } => {

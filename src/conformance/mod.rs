@@ -346,7 +346,7 @@ pub fn run_case(c: &Case) -> Result<(), String> {
     match &c.expect {
         Expect::NotSilentlyClean => match &extracted {
             Err(_) => Ok(()),
-            Ok(r) if !r.warnings.is_empty() => Ok(()),
+            Ok(r) if !r.inspection.is_complete() => Ok(()),
             Ok(r) if r.format == "unparsed" => Ok(()),
             Ok(r) => Err(format!(
                 "{}\n  a damaged file read as faithfully parsed \
