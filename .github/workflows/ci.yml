@@ -114,9 +114,17 @@ jobs:
       # kind until 2026-09-02, while CLAUDE.md and the nginx config both said
       # it did — and nginx omits its Authelia gate for /fs/ on the strength of
       # that claim. These tests keep the claim true.
-      - name: siphon-fs auth tests
+      # The whole package, not just `--test auth_test`. That one target was
+      # all CI ran, so the bin's own unit tests had never executed here:
+      # `findings_redaction_tests`, which asserts a PCI or PII value never
+      # leaves this service in the clear, and `size_limit_tests`, which had a
+      # real race that went unseen for exactly this reason (two tests driving
+      # the same process-global env on parallel threads — 41 failures in 60
+      # runs once anyone looked). A redaction suite that never runs is not
+      # coverage. Both are fast and need no services.
+      - name: siphon-fs tests
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
-        run: cargo test -p siphon-fs --test auth_test
+        run: cargo test -p siphon-fs
       # siphon-auth mTLS. The crate exists to decide who may talk to the
       # database and to this stack, and `tests/mtls.rs` is the only suite
       # anywhere that drives a real rustls handshake — it admits a peer
