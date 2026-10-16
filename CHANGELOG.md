@@ -89,6 +89,37 @@ First ingress on the shared inspection outcome (step 3 of the ADR).
   so a match cap reaches the caller as `MatchCapReached` instead of
   vanishing.
 - HTTP status codes are unchanged (200 / 422 / 500 as before).
+### siphon-icap 0.4.0
+
+Step 4 of the adoption order above. The unscannable path carried its own
+vocabulary: `unscannable_verdict` took a `&'static str`, and the two call
+sites passed `body-exceeds-limit` and `binary-body` — slugs this crate alone
+knew how to read, that said nothing about *which* limit, and that no other
+ingress would ever print for the same gap. The decision was already right
+(an unread body was tagged `unscanned`, never `clean`); the reason was a
+string where every other ingress is now a typed `Inspection`.
+
+- feat(icap): `unscannable_verdict` takes a `siphon_core::Inspection`. A
+  body over `SIPHON_ICAP_MAX_BODY_BYTES` is `Unread::Oversize { unit:
+  "body", limit }` with the configured limit; a body `looks_binary` rejects
+  is `Unread::Unsupported { unit: "body" }`. The `Unscannable { Pass, Block }`
+  policy is untouched — it is the decision, this is what the decision
+  covers.
+- **Wire change:** `X-DLP-Reason` on the 204 and the blocked 403 now carries
+  `inspection.describe().join("; ")` — `body exceeds the 10485760-byte
+  limit; not read` or `body is not a readable format; not read` — instead of
+  the `body-exceeds-limit` / `binary-body` slugs. Anything matching the old
+  slugs in a proxy log or SIEM rule needs updating. `X-DLP-Action:
+  unscanned` / `blocked-unscanned` are unchanged, so a rule keyed on the
+  action keeps working; the 403 page quotes the same text. The audit
+  `action` field (`pass-unscanned:<reason>` / `block-unscanned:<reason>`)
+  carries the same text after the colon.
+- The ADR names `Truncated { unit: "body" }` for this case. `Oversize` was
+  chosen instead because the body went past a configured byte limit whose
+  value is known, and `Oversize` is the variant that can say so;
+  `Truncated` is for a reader that stopped without a limit to name.
+- Normal flagged and clean responses are unchanged: no new headers, and the
+  scan still runs through `scan_text_with_config`.
 
 ## 2026-10-14 — WKN and Reuters RIC rules
 
