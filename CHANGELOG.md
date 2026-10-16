@@ -70,6 +70,26 @@ the order is in `docs/architecture/inspection-outcome.md`.
 - Not a verdict and not a policy: deliver, defer, block and exit codes stay
   with each ingress.
 
+### siphon-fs 1.6.0
+
+First ingress on the shared inspection outcome (step 3 of the ADR).
+
+- feat(fs): `POST /scan` responses carry `inspection`:
+  `{"status": "complete"}` or `{"status": "incomplete", "unread": [...]}`
+  with one typed reason per unit of content not read. `scanned` is now
+  derived from it and is **false in two cases it was true before**: a file
+  that parsed to empty text while the extractor warned (a container holding
+  only a nested or encrypted archive), and a successful scan whose extractor
+  left part of the file unread or whose match cap stopped collection. In
+  both, `findings` was never the whole file, and the bool now says so.
+  `warnings` is unchanged and carries the same reasons as text for one
+  release.
+- Extraction failure reports `ReadError`, oversize text reports `Oversize`
+  with the scanner limit, and the scan runs through `scan_text_inspected`
+  so a match cap reaches the caller as `MatchCapReached` instead of
+  vanishing.
+- HTTP status codes are unchanged (200 / 422 / 500 as before).
+
 ## 2026-10-14 — WKN and Reuters RIC rules
 
 ### siphon-core 2.10.0
