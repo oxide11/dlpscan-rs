@@ -55,11 +55,19 @@ jobs:
     # strategy below its floor has cost detection on that path and should say
     # why. Raise a floor when the number it guards has moved up and stayed.
     #
-    # PDF sits 13-15 points below the other three on the same scanner.
-    # Whether that is pdf-extract, the fpdf fixture (which falls back to a
-    # Latin-1 font when DejaVu is missing, mangling non-ASCII variants before
-    # Siphon sees them) or both has not been separated yet, so its floor is
-    # set from its own measurement rather than borrowed from text.
+    # PDF sat 13-15 points below the other three on the same scanner, and
+    # that was the fixture, not pdf-extract: evadex's PDF builder asked for
+    # a font fpdf2 does not ship and fell back to Helvetica with Latin-1
+    # `errors="replace"`, so every regional digit, zero-width character and
+    # homoglyph reached Siphon as `?` (2,980 of the 3,534 variants detected
+    # in text and missed in PDF on the 2026-10-15 run). evadex 3.42.0 embeds
+    # the TrueType fonts it finds on the runner and leaves out of the pdf run
+    # any variant no font can draw, counted under
+    # `meta.skipped_unrepresentable`. The fonts step below is what gives it
+    # something to find; without it the pdf job measures Latin-1 only. The
+    # pdf floor (60) still dates from the broken fixture: re-derive it from
+    # the first run on evadex >= 3.42.0 (expect the rate up and the total
+    # down by the skipped variants), then raise it.
     #
     # The false-positive check runs once, on the text job: `evadex falsepos`
     # submits text whatever the strategy, so repeating it three more times
@@ -126,6 +134,21 @@ jobs:
           python-version: '3.11'
           cache: pip
 
+      # Fonts for the PDF fixture (evadex >= 3.42.0,
+      # `evadex.adapters.dlpscan.pdf_fonts`). DejaVu Sans covers Latin,
+      # Greek, Cyrillic, Arabic, Armenian, Georgian, Lao and N'Ko; GNU
+      # FreeFont adds Devanagari, Bengali, Thai and more; Noto core adds the
+      # rest of what the regional-digit techniques use that those two lack.
+      # A script none of them covers is skipped for pdf and listed in the
+      # report, never submitted as `?`. Cheap (a few MB) and only the pdf job
+      # needs it, but the install is unconditional so the four jobs stay the
+      # same image.
+      - name: Install fonts for the PDF fixture
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            fonts-dejavu-core fonts-freefont-ttf fonts-noto-core
+
       - name: Install evadex
         working-directory: evadex
         run: pip install -e ".[dev]"
@@ -171,7 +194,10 @@ jobs:
       # comment). evadex 3.41.1 also leaves out of a DOCX/XLSX run the one
       # variant per category whose value XML cannot carry (`barcode_split`'s
       # U+001E marker) instead of recording 185 errors per strategy, which
-      # is what `--max-error-rate 2` would otherwise be reading.
+      # is what `--max-error-rate 2` would otherwise be reading. evadex
+      # 3.42.0 does the same for the pdf run with any variant the fixture
+      # fonts cannot draw, and for tabs and control characters, which no
+      # font can; the summary names the techniques.
       - name: Run evadex quality gate (siphon-cli adapter)
         working-directory: evadex
         env:
