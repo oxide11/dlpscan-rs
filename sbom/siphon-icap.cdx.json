@@ -2044,8 +2044,8 @@
     {
       "type": "library",
       "name": "rustls",
-      "version": "0.23.45",
-      "purl": "pkg:cargo/rustls@0.23.45",
+      "version": "0.23.46",
+      "purl": "pkg:cargo/rustls@0.23.46",
       "scope": "required",
       "licenses": [
         {
@@ -2700,8 +2700,8 @@
     {
       "type": "library",
       "name": "tokio",
-      "version": "1.53.2",
-      "purl": "pkg:cargo/tokio@1.53.2",
+      "version": "1.53.3",
+      "purl": "pkg:cargo/tokio@1.53.3",
       "scope": "required",
       "licenses": [
         {
