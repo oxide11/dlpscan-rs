@@ -158,16 +158,21 @@ oversights:
   treat as informational — a distinct `Unread` variant (core MINOR), with
   the milter and siphon-fs's `unscanned` counter taught to read it — before
   the reader can say it.
-- **Office XML trees the extractor does not open.** `extract_office` reads
-  every `word/*.xml` for docx (so headers, footers, footnotes and comments
-  are covered there), but only `xl/worksheets/*` + `sharedStrings` for xlsx
-  and only `ppt/slides/*` for pptx: cell comments (`xl/comments*.xml`),
-  drawing text boxes (`xl/drawings/*`), speaker notes
-  (`ppt/notesSlides/*`), presentation comments, and embedded objects under
-  `*/embeddings/` in all three can carry text and are never read. This is
-  a *reading* gap, not a reporting one — the fix is to read them (and then
-  report what is still left), not to type the silence. Worth a conformance
-  `structural` case per format once it lands.
+- **Embedded objects that are not OOXML packages.** Since siphon-cli 2.8.0
+  the OOXML reader opens every part that carries text — cell and threaded
+  comments, drawings, speaker notes, review comments, SmartArt — and reads
+  an embedded `.docx`/`.xlsx`/`.pptx` one level deep, reporting a package
+  inside that as `Unread::NestedArchive`. What it still passes over in
+  silence is an embedded object it cannot open as a package: an OLE `.bin`
+  from an older Office, an embedded PDF or image under `*/embeddings/`.
+  That is the same decision as the non-text archive member above, for the
+  same reason — a docx with a pasted picture is ordinary mail — and it
+  takes the same informational `Unread` variant to say it. Also unread by
+  design: `xl/charts/*` (the data cache repeats cells already read, and its
+  unseparated numeric runs would invent digit patterns) and slide layouts
+  and masters (template placeholders). `tests/office_parts_test.rs` is the
+  record of what is read; the conformance matrix's one-case-per-slot rule
+  is why those assertions live there and not in a sixth `structural` case.
 
 ### EDM salt stability (`SIPHON_EDM_SALT_HEX`)
 

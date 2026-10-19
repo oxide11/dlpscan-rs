@@ -1278,7 +1278,7 @@ fn extract_unparsed_binary(file_path: &str) -> Result<ExtractionResult, String> 
 fn extract_zip_based(file_path: &str) -> Result<ExtractionResult, String> {
     let file = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
     match zip::ZipArchive::new(file) {
-        Ok(mut archive) => extract_zip_archive(&mut archive),
+        Ok(mut archive) => extract_zip_archive(&mut archive, 0),
         Err(_) => {
             // Central directory is corrupted — fall back to raw byte scanning.
             // The payload may still be present as uncompressed or partially
@@ -1302,9 +1302,38 @@ fn extract_zip_based(file_path: &str) -> Result<ExtractionResult, String> {
     }
 }
 
+/// True for an embedded object that is itself an OOXML package, which this
+/// reader can open: Word, Excel and PowerPoint documents, macro-enabled or
+/// not, and their templates. Office names them by what they are
+/// (`Microsoft_Excel_Worksheet1.xlsx`), so the extension is reliable here.
+fn embedded_ooxml_extension(name: &str) -> bool {
+    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "docx"
+            | "docm"
+            | "dotx"
+            | "dotm"
+            | "xlsx"
+            | "xlsm"
+            | "xltx"
+            | "xltm"
+            | "pptx"
+            | "pptm"
+            | "potx"
+            | "potm"
+    )
+}
+
 /// Extract from a valid ZIP archive.
-fn extract_zip_archive(
-    archive: &mut zip::ZipArchive<std::fs::File>,
+///
+/// `depth` is 0 for the file on disk and 1 for an OOXML package embedded in
+/// it (`word/embeddings/Microsoft_Excel_Worksheet1.xlsx`). The embedded read
+/// does not descend further: an object inside an object is reported as a
+/// nested archive, which is what it is, rather than opened.
+fn extract_zip_archive<R: std::io::Read + std::io::Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    depth: u8,
 ) -> Result<ExtractionResult, String> {
     let mut text = String::new();
 
@@ -1338,27 +1367,79 @@ fn extract_zip_archive(
         "zip"
     };
 
-    // Extract XML content from relevant files
+    // Extract XML content from the parts that carry document text.
+    //
+    // Which parts those are is the whole question. Until 2026-10-19 xlsx
+    // read `xl/worksheets/*` and the shared-string table, pptx read
+    // `ppt/slides/*`, and everything else in the package was invisible: a
+    // cell comment, a text box floating over a sheet, a slide's speaker
+    // notes, a review comment, the text inside a SmartArt diagram. Each is
+    // a place a value can sit in a file that opens as an ordinary document,
+    // and each read as clean. docx was already whole: every `word/*.xml` is
+    // read, which takes in headers, footers, footnotes, comments and
+    // diagrams there.
+    //
+    // Left out on purpose: `xl/charts/*` (a chart's data cache repeats the
+    // cells the worksheet pass already read, and its unseparated numeric
+    // runs would match digit patterns that are in no cell), slide layouts
+    // and masters (template placeholders, not content), and the `_rels` and
+    // `.vml` parts, which hold no text. Embedded objects are the pass below.
+    let is_text_part = |name: &str| -> bool {
+        if !name.ends_with(".xml") {
+            return false;
+        }
+        match format {
+            "docx" => name.starts_with("word/"),
+            "xlsx" => {
+                name.starts_with("xl/worksheets/")
+                    || name.contains("sharedStrings")
+                    // Cell comments: `xl/comments1.xml`, one part per sheet.
+                    || name.starts_with("xl/comments")
+                    // Threaded comments (Excel 2019+): the same text, newer part.
+                    || name.starts_with("xl/threadedComments/")
+                    // Text boxes and shapes drawn over a sheet.
+                    || name.starts_with("xl/drawings/")
+            }
+            "pptx" => {
+                name.starts_with("ppt/slides/")
+                    // Speaker notes, one part per slide that has them.
+                    || name.starts_with("ppt/notesSlides/")
+                    // Review comments, legacy (`comment1.xml`) and modern
+                    // (`modernComment_*.xml`) alike.
+                    || name.starts_with("ppt/comments/")
+                    // SmartArt text lives in the diagram data, not the slide.
+                    || name.starts_with("ppt/diagrams/")
+            }
+            _ => false,
+        }
+    };
     let xml_paths: Vec<String> = (0..archive.len())
         .filter_map(|i| {
             let file = archive.by_index(i).ok()?;
             let name = zip_entry_name(&file);
-            if name.ends_with(".xml") {
-                match format {
-                    "docx" if name.starts_with("word/") => Some(name),
-                    "xlsx"
-                        if name.starts_with("xl/worksheets/") || name.contains("sharedStrings") =>
-                    {
-                        Some(name)
-                    }
-                    "pptx" if name.starts_with("ppt/slides/") => Some(name),
-                    _ => None,
-                }
-            } else {
-                None
-            }
+            is_text_part(&name).then_some(name)
         })
         .collect();
+
+    // Objects embedded in the document — an Excel table pasted into a Word
+    // file, a Word document dropped onto a slide — live under
+    // `*/embeddings/`. One that is itself an OOXML package is opened and
+    // read with this same function, one level deep. One that is not (an OLE
+    // `.bin` from an older Office, a PDF, an image) is skipped without a
+    // reason, exactly as a non-text member of a plain archive is: the typed
+    // reason for that gap is still the ingresses' decision, recorded in
+    // BACKLOG.md.
+    let embedded_paths: Vec<String> = if format == "zip" {
+        Vec::new()
+    } else {
+        (0..archive.len())
+            .filter_map(|i| {
+                let file = archive.by_index(i).ok()?;
+                let name = zip_entry_name(&file);
+                (name.contains("/embeddings/") && embedded_ooxml_extension(&name)).then_some(name)
+            })
+            .collect()
+    };
 
     let mut total_read: u64 = 0;
     let mut entry_count: usize = 0;
@@ -1376,6 +1457,9 @@ fn extract_zip_archive(
             unread.push(reason);
         }
     };
+    // Reasons an embedded package reported about itself, placed under the
+    // entry that held it when the result is built.
+    let mut nested_unread: Vec<(String, Unread)> = Vec::new();
 
     for xml_path in xml_paths {
         if entry_count >= MAX_EXTRACT_FILE_COUNT {
@@ -1504,6 +1588,117 @@ fn extract_zip_archive(
             // Simple XML text extraction: strip tags
             text.push_str(&strip_xml_tags(&xml_content));
             text.push('\n');
+        }
+    }
+
+    // Embedded OOXML objects, read as documents in their own right, under
+    // the same guards as the XML pass: the archive's claims about an entry
+    // bound nothing, so the read is cut at the budget and a lie is reported.
+    for path in embedded_paths {
+        if entry_count >= MAX_EXTRACT_FILE_COUNT {
+            break;
+        }
+        if depth > 0 {
+            note(
+                &mut unread,
+                Unread::NestedArchive {
+                    unit: format!("entry {path}"),
+                },
+            );
+            continue;
+        }
+        let Ok(mut file) = archive.by_name(&path) else {
+            continue;
+        };
+        if file.size() > MAX_EXTRACT_ENTRY_SIZE {
+            note(
+                &mut unread,
+                Unread::Oversize {
+                    unit: format!("entry {path}"),
+                    limit: Some(MAX_EXTRACT_ENTRY_SIZE),
+                },
+            );
+            continue;
+        }
+        if zip_entry_is_bomb(file.size(), file.compressed_size()) {
+            note(
+                &mut unread,
+                Unread::ReadError {
+                    unit: format!("entry {path}"),
+                    detail: format!(
+                        "compression ratio exceeds the {MAX_ZIP_COMPRESSION_RATIO}:1 cap"
+                    ),
+                },
+            );
+            continue;
+        }
+        if total_read + file.size() > MAX_EXTRACT_TOTAL_SIZE {
+            note(
+                &mut unread,
+                Unread::Truncated {
+                    unit: "archive (extraction size budget exhausted)".into(),
+                },
+            );
+            break;
+        }
+        use std::io::Read;
+        let budget = file
+            .size()
+            .min(MAX_EXTRACT_ENTRY_SIZE)
+            .min(MAX_EXTRACT_TOTAL_SIZE - total_read);
+        let mut raw = Vec::new();
+        if let Err(e) = (&mut file).take(budget + 1).read_to_end(&mut raw) {
+            note(
+                &mut unread,
+                Unread::ReadError {
+                    unit: format!("entry {path}"),
+                    detail: e.to_string(),
+                },
+            );
+            continue;
+        }
+        if raw.len() as u64 > budget {
+            note(
+                &mut unread,
+                Unread::ReadError {
+                    unit: format!("entry {path}"),
+                    detail: "inflated past its declared size".into(),
+                },
+            );
+            continue;
+        }
+        total_read += raw.len() as u64;
+        entry_count += 1;
+        let mut inner = match zip::ZipArchive::new(std::io::Cursor::new(raw)) {
+            Ok(inner) => inner,
+            Err(e) => {
+                note(
+                    &mut unread,
+                    Unread::ReadError {
+                        unit: format!("entry {path}"),
+                        detail: format!("embedded package did not open: {e}"),
+                    },
+                );
+                continue;
+            }
+        };
+        match extract_zip_archive(&mut inner, depth + 1) {
+            Ok(nested) => {
+                if !nested.text.is_empty() {
+                    text.push_str(&nested.text);
+                    text.push('\n');
+                }
+                for reason in nested.inspection.unread_reasons() {
+                    nested_unread.push((path.clone(), reason.clone()));
+                }
+            }
+            Err(e) => note(
+                &mut unread,
+                Unread::ReadError {
+                    unit: format!("entry {path}"),
+                    detail: e,
+                },
+            ),
         }
     }
 
@@ -1637,6 +1832,9 @@ fn extract_zip_archive(
     for reason in unread {
         result = result.with_unread(reason);
     }
+    for (path, reason) in nested_unread {
+        result.unread_within(&format!("entry {path}"), reason);
+    }
     Ok(result)
 }
 
@@ -1665,11 +1863,14 @@ const XML_BREAK_TAGS: &[&str] = &[
     "w:tr",
     "w:tc",
     "w:br",
-    "w:tab", // SpreadsheetML: cell, row
+    "w:tab", // SpreadsheetML: cell, row, cell comment (legacy and threaded)
     "c",
-    "row", // DrawingML (pptx): paragraph, break
+    "row",
+    "comment",
+    "threadedComment", // DrawingML: paragraph, break; PresentationML: review comment
     "a:p",
-    "a:br", // OpenDocument: paragraph, heading, line break, row, cell
+    "a:br",
+    "p:cm", // OpenDocument: paragraph, heading, line break, row, cell
     "text:p",
     "text:h",
     "text:line-break",
