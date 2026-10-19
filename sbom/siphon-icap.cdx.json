@@ -892,24 +892,6 @@
     {
       "type": "library",
       "name": "getrandom",
-      "version": "0.3.4",
-      "purl": "pkg:cargo/getrandom@0.3.4",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/rust-random/getrandom"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "getrandom",
       "version": "0.4.3",
       "purl": "pkg:cargo/getrandom@0.4.3",
       "scope": "required",
@@ -2086,8 +2068,8 @@
     {
       "type": "library",
       "name": "rustls",
-      "version": "0.23.45",
-      "purl": "pkg:cargo/rustls@0.23.45",
+      "version": "0.23.46",
+      "purl": "pkg:cargo/rustls@0.23.46",
       "scope": "required",
       "licenses": [
         {
@@ -2760,8 +2742,8 @@
     {
       "type": "library",
       "name": "tokio",
-      "version": "1.53.2",
-      "purl": "pkg:cargo/tokio@1.53.2",
+      "version": "1.53.3",
+      "purl": "pkg:cargo/tokio@1.53.3",
       "scope": "required",
       "licenses": [
         {

@@ -205,6 +205,46 @@
     },
     {
       "type": "library",
+      "name": "alloc-no-stdlib",
+      "version": "2.0.4",
+      "purl": "pkg:cargo/alloc-no-stdlib@2.0.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dropbox/rust-alloc-no-stdlib"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "alloc-stdlib",
+      "version": "0.2.4",
+      "purl": "pkg:cargo/alloc-stdlib@0.2.4",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dropbox/rust-alloc-no-stdlib"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "anstream",
       "version": "1.0.0",
       "purl": "pkg:cargo/anstream@1.0.0",
@@ -360,8 +400,8 @@
     {
       "type": "library",
       "name": "arrow",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/arrow@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -380,8 +420,8 @@
     {
       "type": "library",
       "name": "arrow-arith",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/arrow-arith@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-arith@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -400,8 +440,8 @@
     {
       "type": "library",
       "name": "arrow-array",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/arrow-array@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-array@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -418,8 +458,8 @@
     {
       "type": "library",
       "name": "arrow-buffer",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/arrow-buffer@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-buffer@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -438,8 +478,28 @@
     {
       "type": "library",
       "name": "arrow-cast",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/arrow-cast@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-cast@60.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow-cmp",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-cmp@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -458,8 +518,8 @@
     {
       "type": "library",
       "name": "arrow-data",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/arrow-data@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-data@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -478,8 +538,8 @@
     {
       "type": "library",
       "name": "arrow-ipc",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/arrow-ipc@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-ipc@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -498,8 +558,8 @@
     {
       "type": "library",
       "name": "arrow-ord",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/arrow-ord@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-ord@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -518,8 +578,8 @@
     {
       "type": "library",
       "name": "arrow-row",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/arrow-row@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-row@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -538,8 +598,8 @@
     {
       "type": "library",
       "name": "arrow-schema",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/arrow-schema@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-schema@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -558,8 +618,8 @@
     {
       "type": "library",
       "name": "arrow-select",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/arrow-select@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-select@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -578,8 +638,8 @@
     {
       "type": "library",
       "name": "arrow-string",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/arrow-string@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-string@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -598,8 +658,8 @@
     {
       "type": "library",
       "name": "atoi",
-      "version": "2.0.0",
-      "purl": "pkg:cargo/atoi@2.0.0",
+      "version": "3.1.1",
+      "purl": "pkg:cargo/atoi@3.1.1",
       "scope": "required",
       "licenses": [
         {
@@ -891,6 +951,24 @@
     },
     {
       "type": "library",
+      "name": "brotli-decompressor",
+      "version": "5.0.3",
+      "purl": "pkg:cargo/brotli-decompressor@5.0.3",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/dropbox/rust-brotli-decompressor"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "bumpalo",
       "version": "3.20.3",
       "purl": "pkg:cargo/bumpalo@3.20.3",
@@ -1040,8 +1118,8 @@
     {
       "type": "library",
       "name": "cfb",
-      "version": "0.14.0",
-      "purl": "pkg:cargo/cfb@0.14.0",
+      "version": "0.15.0",
+      "purl": "pkg:cargo/cfb@0.15.0",
       "scope": "required",
       "licenses": [
         {
@@ -1358,8 +1436,8 @@
     {
       "type": "library",
       "name": "comfy-table",
-      "version": "7.2.2",
-      "purl": "pkg:cargo/comfy-table@7.2.2",
+      "version": "8.0.1",
+      "purl": "pkg:cargo/comfy-table@8.0.1",
       "scope": "required",
       "licenses": [
         {
@@ -2854,8 +2932,8 @@
     {
       "type": "library",
       "name": "lopdf",
-      "version": "0.44.0",
-      "purl": "pkg:cargo/lopdf@0.44.0",
+      "version": "0.45.0",
+      "purl": "pkg:cargo/lopdf@0.45.0",
       "scope": "required",
       "licenses": [
         {
@@ -3492,8 +3570,8 @@
     {
       "type": "library",
       "name": "parquet",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/parquet@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/parquet@60.0.0",
       "scope": "required",
       "licenses": [
         {
