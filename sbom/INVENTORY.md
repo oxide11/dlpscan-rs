@@ -19,9 +19,9 @@ members and report that false picture; `cargo tree -p` does not.
 
 | Artifact | Components | Third-party |
 |---|---|---|
-| `siphon-fs` | 417 | 413 |
-| `siphon-smtp` | 396 | 391 |
-| `siphon-cli` | 312 | 310 |
+| `siphon-fs` | 423 | 419 |
+| `siphon-smtp` | 402 | 397 |
+| `siphon-cli` | 318 | 316 |
 | `siphon-api` | 204 | 199 |
 | `siphon-icap` | 186 | 183 |
 | `siphon-launcher` | 115 | 113 |
@@ -61,7 +61,7 @@ Across all third-party components in all artifacts, counted per artifact.
 | `MIT OR Apache-2.0` | 1036 |
 | `MIT` | 343 |
 | `Apache-2.0 OR MIT` | 158 |
-| `Apache-2.0` | 80 |
+| `Apache-2.0` | 95 |
 | `Unicode-3.0` | 54 |
 | `Unlicense OR MIT` | 29 |
 | `BSD-3-Clause` | 20 |
@@ -74,6 +74,7 @@ Across all third-party components in all artifacts, counted per artifact.
 | `Apache-2.0 OR ISC OR MIT` | 8 |
 | `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` | 8 |
 | `Zlib` | 7 |
+| `Apache-2.0 AND MIT` | 6 |
 | `Apache-2.0 OR BSL-1.0` | 6 |
 | `Apache-2.0 OR BSL-1.0 OR MIT` | 6 |
 | `BSD-2-Clause OR Apache-2.0 OR MIT` | 6 |
@@ -84,7 +85,6 @@ Across all third-party components in all artifacts, counted per artifact.
 | `ISC AND (Apache-2.0 OR ISC)` | 5 |
 | `ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)` | 5 |
 | `0BSD OR MIT OR Apache-2.0` | 3 |
-| `Apache-2.0 AND MIT` | 3 |
 | `CC0-1.0 OR Apache-2.0` | 3 |
 | `MIT AND BSD-3-Clause` | 3 |
 | `CC0-1.0` | 1 |
