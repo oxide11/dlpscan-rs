@@ -49,25 +49,29 @@ jobs:
     # One job per submission strategy, each against its own threshold.
     #
     # The thresholds are each ~3.5 points under the figure the same scanner
-    # measured on 2026-10-15/16 (siphon-core 2.11.0, evadex 3.41.1, this
-    # seed): text 78.8%, docx 76.8%, xlsx 75.4%, pdf 63.3%, all with 0
-    # errors. They are regression floors, not targets: a change that drops a
-    # strategy below its floor has cost detection on that path and should say
-    # why. Raise a floor when the number it guards has moved up and stayed.
+    # measured with this seed: text 78.8%, docx 76.8% and xlsx 75.4% on
+    # 2026-10-15/16 (siphon-core 2.11.0, evadex 3.41.1), pdf 75.2% on
+    # 2026-10-19 (same core, evadex 3.42.0, the first run with the fonts
+    # step below), all with 0 errors. They are regression floors, not
+    # targets: a change that drops a strategy below its floor has cost
+    # detection on that path and should say why. Raise a floor when the
+    # number it guards has moved up and stayed.
     #
-    # PDF sat 13-15 points below the other three on the same scanner, and
-    # that was the fixture, not pdf-extract: evadex's PDF builder asked for
-    # a font fpdf2 does not ship and fell back to Helvetica with Latin-1
-    # `errors="replace"`, so every regional digit, zero-width character and
-    # homoglyph reached Siphon as `?` (2,980 of the 3,534 variants detected
-    # in text and missed in PDF on the 2026-10-15 run). evadex 3.42.0 embeds
-    # the TrueType fonts it finds on the runner and leaves out of the pdf run
-    # any variant no font can draw, counted under
+    # PDF sat 13-15 points below the other three on the same scanner (63.3%
+    # on 2026-10-15), and that was the fixture, not pdf-extract: evadex's
+    # PDF builder asked for a font fpdf2 does not ship and fell back to
+    # Helvetica with Latin-1 `errors="replace"`, so every regional digit,
+    # zero-width character and homoglyph reached Siphon as `?` (2,980 of
+    # the 3,534 variants detected in text and missed in PDF on that run).
+    # evadex 3.42.0 embeds the TrueType fonts it finds on the runner and
+    # leaves out of the pdf run any variant no font can draw, counted under
     # `meta.skipped_unrepresentable`. The fonts step below is what gives it
-    # something to find; without it the pdf job measures Latin-1 only. The
-    # pdf floor (60) still dates from the broken fixture: re-derive it from
-    # the first run on evadex >= 3.42.0 (expect the rate up and the total
-    # down by the skipped variants), then raise it.
+    # something to find; without it the pdf job measures Latin-1 only. With
+    # both in place the pdf job submits 20,221 of the 21,805 variants the
+    # text job does (1,584 left out as unrepresentable) and detected 75.2%
+    # of them on 2026-10-19, within two points of docx and xlsx on the same
+    # core; the pdf floor follows the other three from there (it was 60
+    # while the fixture was broken).
     #
     # The false-positive check runs once, on the text job: `evadex falsepos`
     # submits text whatever the strategy, so repeating it three more times
@@ -89,7 +93,7 @@ jobs:
             min_detection: 73
             fp_args: ""
           - strategy: pdf
-            min_detection: 60
+            min_detection: 71
             fp_args: ""
           - strategy: xlsx
             min_detection: 72
