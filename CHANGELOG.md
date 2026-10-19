@@ -6,6 +6,44 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-19 — Office: the parts that are not the body
+
+### siphon-cli 2.8.0
+
+- **feat(cli): read the Office parts that are not the body.** The OOXML
+  reader opened `xl/worksheets/*` plus the shared-string table for a
+  workbook and `ppt/slides/*` for a deck, and nothing else in the package.
+  A cell comment, a text box drawn over a sheet, a slide's speaker notes, a
+  review comment, the text inside a SmartArt diagram: each is a place a
+  value sits in a file that opens as an ordinary document, and each read as
+  clean. Now read: `xl/comments*.xml` and `xl/threadedComments/*` (cell
+  comments, legacy and threaded), `xl/drawings/*` (text boxes and shapes),
+  `ppt/notesSlides/*` (speaker notes), `ppt/comments/*` (review comments,
+  legacy and modern) and `ppt/diagrams/*` (SmartArt data). docx was already
+  whole — every `word/*.xml` is read — and is unchanged.
+- **feat(cli): read embedded Office objects.** An OOXML package under
+  `*/embeddings/` (an Excel table pasted into a Word document, a Word
+  document dropped onto a slide) is opened and read as a document in its
+  own right, one level deep, under the same size, ratio and budget guards
+  as the host's own parts. An object inside an embedded object is reported
+  as `Unread::NestedArchive` under the entry that held it rather than
+  opened; an embedded entry named as a package that does not open is a
+  `ReadError`. An embedded object that is not an OOXML package (an OLE
+  `.bin`, a PDF, an image) is still skipped without a reason, as a non-text
+  member of a plain archive is — the typed reason for that gap stays with
+  the ingresses (BACKLOG.md).
+- A comment boundary is a line boundary in the extracted text (`comment`,
+  `threadedComment`, `p:cm` join the block-level tag list), so two adjacent
+  comments cannot run a value's last digit into the next comment's first
+  letter.
+- Left unread on purpose: `xl/charts/*` (a chart's data cache repeats the
+  cells the worksheet pass already read, and its unseparated numeric runs
+  would match digit patterns that are in no cell), slide layouts and
+  masters (template placeholders). `tests/office_parts_test.rs` plants a
+  value in each part that is read, and in the chart cache that is not.
+
+---
+
 ## 2026-10-16 — Inspection: delete what it replaced
 
 Step 6, the last, of `docs/architecture/inspection-outcome.md`. Every

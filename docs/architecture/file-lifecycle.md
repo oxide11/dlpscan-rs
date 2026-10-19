@@ -222,9 +222,14 @@ Nothing is recorded.
 `extract_zip_archive`. For an XLSX the reader:
 
 1. Detects the OOXML flavour by looking for a `xl/` prefix among the entries.
-2. Selects the parts worth reading: `xl/worksheets/*.xml` and
-   `sharedStrings`. Not everything in the container — a `.docx`'s theme XML
-   is not content.
+2. Selects the parts that carry text: `xl/worksheets/*.xml` and
+   `sharedStrings`, and since siphon-cli 2.8.0 the cell comments
+   (`xl/comments*.xml`, `xl/threadedComments/*`) and the drawings
+   (`xl/drawings/*`, where text boxes live). A deck likewise reads its
+   speaker notes, review comments and SmartArt data beside the slides. Not
+   everything in the container — a theme, a layout, a chart's cached copy of
+   cells already read — is content. An embedded `.docx`/`.xlsx`/`.pptx`
+   under `*/embeddings/` is opened and read the same way, one level deep.
 3. Applies four independent resource guards per entry, because an archive is
    attacker-controlled and a scanner that OOMs is a scanner that is off:
 
