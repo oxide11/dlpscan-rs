@@ -829,6 +829,24 @@
     },
     {
       "type": "library",
+      "name": "der",
+      "version": "0.8.2",
+      "purl": "pkg:cargo/der@0.8.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/formats"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "der_derive",
       "version": "0.7.3",
       "purl": "pkg:cargo/der_derive@0.7.3",
@@ -842,6 +860,30 @@
         {
           "type": "vcs",
           "url": "https://github.com/RustCrypto/formats/tree/master/der/derive"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "der_derive",
+      "version": "0.8.0",
+      "purl": "pkg:cargo/der_derive@0.8.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/formats"
         }
       ],
       "properties": [
@@ -2865,6 +2907,24 @@
     },
     {
       "type": "library",
+      "name": "spki",
+      "version": "0.8.1",
+      "purl": "pkg:cargo/spki@0.8.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/formats"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "stringprep",
       "version": "0.1.5",
       "purl": "pkg:cargo/stringprep@0.1.5",
@@ -3742,6 +3802,24 @@
         {
           "type": "vcs",
           "url": "https://github.com/RustCrypto/formats/tree/master/x509-cert"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "x509-cert",
+      "version": "0.3.0",
+      "purl": "pkg:cargo/x509-cert@0.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/formats"
         }
       ]
     },
