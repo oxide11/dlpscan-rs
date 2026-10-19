@@ -417,9 +417,47 @@
     },
     {
       "type": "library",
+      "name": "arrow-array",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-array@60.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 AND MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "arrow-buffer",
       "version": "59.3.0",
       "purl": "pkg:cargo/arrow-buffer@59.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow-buffer",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-buffer@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -457,6 +495,26 @@
     },
     {
       "type": "library",
+      "name": "arrow-cmp",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-cmp@60.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "arrow-data",
       "version": "59.3.0",
       "purl": "pkg:cargo/arrow-data@59.3.0",
@@ -477,9 +535,29 @@
     },
     {
       "type": "library",
+      "name": "arrow-data",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-data@60.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "arrow-ipc",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/arrow-ipc@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-ipc@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -557,9 +635,49 @@
     },
     {
       "type": "library",
+      "name": "arrow-schema",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-schema@60.0.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "arrow-select",
       "version": "59.3.0",
       "purl": "pkg:cargo/arrow-select@59.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/apache/arrow-rs"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "arrow-select",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/arrow-select@60.0.0",
       "scope": "required",
       "licenses": [
         {
@@ -3492,8 +3610,8 @@
     {
       "type": "library",
       "name": "parquet",
-      "version": "59.3.0",
-      "purl": "pkg:cargo/parquet@59.3.0",
+      "version": "60.0.0",
+      "purl": "pkg:cargo/parquet@60.0.0",
       "scope": "required",
       "licenses": [
         {
