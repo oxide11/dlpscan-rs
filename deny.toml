@@ -45,16 +45,6 @@ ignore = [
     # printpdf → lopdf → owned_ttf_parser). Workspace code never calls
     # ttf-parser APIs directly. Tracked in BACKLOG.md.
     { id = "RUSTSEC-2026-0192", reason = "transitive-only via printpdf font chain; no workspace crate calls ttf-parser APIs directly. Tracked in BACKLOG.md." },
-
-    # zip 8.6.0 — every zip 8.x release was yanked on 2026-10-16 (the 9.x
-    # line is the replacement). The workspace's own crates moved to zip 9
-    # the same day; this copy stays in the graph only because calamine
-    # 0.36.1, the newest release, still requires `zip ^8.6`, and nothing
-    # short of a calamine release can change what calamine requires. The
-    # yank carries no advisory: it is the publisher retiring a line, not
-    # a vulnerability. Remove this entry when calamine ships on zip 9.
-    # Tracked in BACKLOG.md.
-    { crate = "zip@8.6.0", reason = "yanked line; held in the graph by calamine 0.36.1 (latest) requiring zip ^8.6. Workspace crates are on zip 9. Remove when calamine moves. Tracked in BACKLOG.md." },
 ]
 
 [licenses]
