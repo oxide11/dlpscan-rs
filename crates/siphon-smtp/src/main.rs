@@ -608,15 +608,32 @@ fn extract_attachment(filename: Option<&str>, data: &[u8]) -> Option<Extracted> 
     tmp.flush().ok()?;
     let path = tmp.path().to_string_lossy().to_string();
     let r = siphon::extractors::extract_text(&path).ok()?;
-    // The extractors already say when a parse was not faithful; the mail path
-    // simply has to stop discarding that. `format: "unparsed"` and any
-    // warning both mean the same thing here: what was scanned is not what the
-    // file claims to contain.
-    let faithful = r.warnings.is_empty() && r.format != "unparsed";
+    // The extractors say what they did not read, typed, on `inspection`;
+    // the mail path simply has to stop discarding that. `format: "unparsed"`
+    // and any unread unit both mean the same thing here: what was scanned is
+    // not the whole of what the file contains.
+    //
+    // One reason is not a gap. `Unread::FormatMismatch` under the default
+    // `flag` policy means the attachment was read, correctly, as what its
+    // bytes are — only its name lied. The content was inspected and its
+    // verdict stands; deferring every message whose export job misnamed a
+    // file would be a self-inflicted outage, and the operator who wants a
+    // misnamed attachment refused has `SIPHON_ON_FORMAT_MISMATCH=reject`,
+    // which arrives here as an extraction `Err` and defers through the
+    // ordinary path. The mismatch itself is logged at warn level where it
+    // is detected.
+    let gaps: Vec<String> = r
+        .inspection
+        .unread_reasons()
+        .iter()
+        .filter(|u| !matches!(u, Unread::FormatMismatch { .. }))
+        .map(ToString::to_string)
+        .collect();
+    let faithful = gaps.is_empty() && r.format != "unparsed";
     Some(Extracted {
         text: r.text,
         faithful,
-        why: r.warnings.first().cloned(),
+        why: gaps.into_iter().next(),
     })
 }
 
@@ -1180,8 +1197,8 @@ mod tests {
     /// This test failed when the milter first shipped. `extract_text` returned
     /// `Ok` for a PDF it could not parse, having fallen back to reading raw
     /// bytes, and the milter had no way to tell that from a real parse. The
-    /// extractors always carried the signal in `warnings`; the mail path was
-    /// discarding it.
+    /// extractors always carried the signal (as `warnings` then, as the typed
+    /// `inspection` now); the mail path was discarding it.
     #[test]
     fn an_attachment_that_did_not_parse_is_not_clean() {
         // Carries the %PDF magic, so the real parser is invoked, and then
@@ -1202,6 +1219,36 @@ mod tests {
             Verdict::Indeterminate,
             "an attachment that did not parse as its declared format must never \
              be reported clean",
+        );
+    }
+
+    /// Step 6 of `docs/architecture/inspection-outcome.md`: an attachment
+    /// whose name lies about its format is read by content and its verdict
+    /// stands. `Unread::FormatMismatch` says the name lied; it does not say
+    /// anything went unread, so under the fail-closed default it must not
+    /// defer the message.
+    #[test]
+    fn a_misnamed_attachment_that_was_read_is_not_a_gap() {
+        let mut archive = Vec::new();
+        {
+            let mut z = zip::ZipWriter::new(std::io::Cursor::new(&mut archive));
+            z.start_file::<_, ()>("a.txt", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            z.write_all(b"card 4111111111111111").unwrap();
+            z.finish().unwrap();
+        }
+        // Under the default `flag` policy. `reject` would make this an
+        // extraction error instead, which defers through the ordinary path.
+        let r = extract_attachment(Some("notes.txt"), &archive).expect("the archive extracts");
+        assert!(
+            r.faithful,
+            "read correctly as a zip; the mismatch is a note, not a gap: {:?}",
+            r.why
+        );
+        assert!(
+            r.text.contains("4111111111111111"),
+            "the payload was read: {:?}",
+            r.text
         );
     }
 
@@ -1299,14 +1346,10 @@ mod tests {
 
     /// An attachment carrying no decoded bytes was not inspected.
     ///
-    /// Narrower than it looks, and deliberately so. `extract_text` returning
-    /// `Ok` does **not** mean the content was understood: a `.docx` whose
-    /// bytes are not a zip falls back to plain-text extraction and returns
-    /// `Ok` with `format_detected: "docx"`, so a caller cannot tell a
-    /// faithful parse from a fallback. Until `ExtractionResult` carries that
-    /// signal, the milter cannot treat a corrupt Office file as uninspected —
-    /// which is a real fail-open, tracked separately, and affects siphon-fs
-    /// and the CLI in the same way.
+    /// This only checks the fixture's shape. The verdict side — a fallback
+    /// read is not a faithful parse — is `an_attachment_that_did_not_parse_
+    /// is_not_clean` above, which `ExtractionResult.inspection` made
+    /// answerable.
     #[test]
     fn an_attachment_with_no_decoded_bytes_is_indeterminate() {
         let raw = "From: a@b.example\r\nSubject: Report\r\n\

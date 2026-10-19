@@ -1,6 +1,6 @@
 [package]
 name = "siphon-smtp"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "Polygon Siphon milter — Sendmail/Postfix mail filter for SMTP DLP"
 license = "MIT"
@@ -69,3 +69,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # The Postgres connector — one implementation with siphon-api and siphon-fs,
 # so the milter presents the same client identity to the database they do.
 siphon-auth = { path = "../siphon-auth", features = ["telemetry-client"] }
+
+[dev-dependencies]
+# For the misnamed-attachment test: a zip renamed .txt must be read, not deferred.
+zip = { version = "9", default-features = false, features = ["deflate"] }
