@@ -3872,8 +3872,8 @@
     {
       "type": "library",
       "name": "lopdf",
-      "version": "0.45.0",
-      "purl": "pkg:cargo/lopdf@0.45.0",
+      "version": "0.46.0",
+      "purl": "pkg:cargo/lopdf@0.46.0",
       "scope": "required",
       "licenses": [
         {
