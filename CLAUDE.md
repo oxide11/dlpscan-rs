@@ -1143,8 +1143,14 @@ sides (`.gitattributes` marks it `merge=union`, so a local rebase does this
 on its own; GitHub's merge button does not read merge drivers), then
 `scripts/generate-sbom.sh` and commit the result. Dependabot's lockfile PRs
 are the same problem from the other side — a new Cargo.lock with stale
-SBOMs — and `.github/workflows/sbom-refresh.yml` regenerates and pushes for
-them; a human PR that touches Cargo.lock still regenerates by hand.
+SBOMs — and are folded by hand into **one lockfile PR per wave** (#535,
+#542): branch from `main`, cherry-pick each Dependabot commit as-is (its
+author stays `dependabot[bot]`), run `scripts/generate-sbom.sh` once,
+verify with `--locked`, and close the originals into it. A workflow that
+did this in CI (`sbom-refresh.yml`, 2026-10-16 to 2026-10-27) was removed:
+a push made with `GITHUB_TOKEN` starts no checks, and once anyone but
+Dependabot has pushed to its branch Dependabot refuses to rebase it, so the
+PR it "fixed" could neither go green nor be brought up to date (#537).
 
 ### Tooling
 
