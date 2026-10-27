@@ -270,8 +270,8 @@
     {
       "type": "library",
       "name": "ctutils",
-      "version": "0.4.2",
-      "purl": "pkg:cargo/ctutils@0.4.2",
+      "version": "0.4.6",
+      "purl": "pkg:cargo/ctutils@0.4.6",
       "scope": "required",
       "licenses": [
         {
@@ -510,8 +510,8 @@
     {
       "type": "library",
       "name": "libc",
-      "version": "0.2.190",
-      "purl": "pkg:cargo/libc@0.2.190",
+      "version": "0.2.191",
+      "purl": "pkg:cargo/libc@0.2.191",
       "scope": "required",
       "licenses": [
         {
@@ -1262,12 +1262,12 @@
     {
       "type": "library",
       "name": "unicode-normalization",
-      "version": "0.1.25",
-      "purl": "pkg:cargo/unicode-normalization@0.1.25",
+      "version": "0.1.26",
+      "purl": "pkg:cargo/unicode-normalization@0.1.26",
       "scope": "required",
       "licenses": [
         {
-          "expression": "MIT OR Apache-2.0"
+          "expression": "(MIT OR Apache-2.0) AND Unicode-3.0"
         }
       ],
       "externalReferences": [

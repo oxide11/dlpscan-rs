@@ -58,17 +58,17 @@ Across all third-party components in all artifacts, counted per artifact.
 
 | Licence | Occurrences |
 |---|---|
-| `MIT OR Apache-2.0` | 1033 |
+| `MIT OR Apache-2.0` | 1024 |
 | `MIT` | 337 |
 | `Apache-2.0 OR MIT` | 178 |
 | `Apache-2.0` | 83 |
 | `Unicode-3.0` | 54 |
 | `Unlicense OR MIT` | 29 |
 | `BSD-3-Clause` | 24 |
+| `(MIT OR Apache-2.0) AND Unicode-3.0` | 18 |
 | `MIT OR Apache-2.0 OR Zlib` | 18 |
 | `Zlib OR Apache-2.0 OR MIT` | 18 |
 | `ISC` | 12 |
-| `(MIT OR Apache-2.0) AND Unicode-3.0` | 9 |
 | `BSD-2-Clause` | 9 |
 | `(Apache-2.0 OR MIT) AND BSD-3-Clause` | 8 |
 | `Apache-2.0 OR ISC OR MIT` | 8 |
