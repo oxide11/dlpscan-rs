@@ -1,45 +1,55 @@
 # Siphon — Handoff Notes
 
-Last updated: 2026-10-15
+Last updated: 2026-10-27
 
 Companion doc to `CLAUDE.md` (architecture/conventions), `BACKLOG.md`
 (work queue) and `FUTURE.md` (roadmap). This file is the "resume here after
-a break" quick-start. The previous version of it was dated 2026-07-04 and
-named versions, PRs and a crate list that were three months stale; treat
-anything here older than the date above with the same suspicion.
+a break" quick-start. Treat anything here older than the date above with
+suspicion: the 2026-07-04 version of this file named versions and PRs three
+months stale, and the 2026-10-15 one was overtaken within a fortnight.
 
 ## Current state
 
 - **Versions** (per-crate SemVer — see `CLAUDE.md` "Versioning"), read from
   each `Cargo.toml` on the date above:
-  - `siphon` (root CLI, package `siphon-cli`) — **2.5.0**
-  - `siphon-core` — **2.10.0**
-  - `siphon-api` — **2.12.1**
-  - `siphon-fs` — **1.5.0**
+  - `siphon` (root CLI, package `siphon-cli`) — **2.9.0**
+  - `siphon-core` — **2.12.0**
+  - `siphon-api` — **2.12.2**
+  - `siphon-fs` — **1.8.0**
   - `siphon-launcher` — **2.1.2**
-  - `siphon-icap` — **0.3.0** · `siphon-smtp` — **0.2.1** · `siphon-mail` — **0.1.1** · `siphon-auth` — **0.1.0**
-- **CI on `main`: green** (CI, CodeQL, audit, DevSkim, evadex quality gate).
-  **`release` has been red since 2026-09-05**: `deploy/Dockerfile.api`'s
-  stub-build touch list omitted `siphon-auth`, so cargo linked the stub rlib
-  once `keys`/`telemetry` were added. Fix is PR #510. No siphon-api image has
-  been published since.
-- **Detection baseline** (evadex, northam tier, 21,805 submissions, HTTP
-  transport, 2026-10-14): **80.4%**, up 3.9 points from 2.9.5. Weakest:
-  morse 65% bypass, capital markets 39%, unicode whitespace 34.6%,
-  structural 34.6%. Per-category numbers are noisy; evadex 3.41.0 adds
-  `--seed` so a run can be repeated exactly.
+  - `siphon-icap` — **0.4.0** · `siphon-smtp` — **0.4.0** · `siphon-mail` — **0.2.0** · `siphon-auth` — **0.1.0**
+- **CI on `main`: green** on every workflow (CI, CodeQL, audit, DevSkim,
+  release, release-tags, evadex quality gate). `release` was red from
+  2026-09-05 to 2026-10-15 (#510); images have published since.
+- **Inspection ADR complete** (`docs/architecture/inspection-outcome.md`,
+  steps 1–7). Every ingress reports what its verdict covers through
+  `siphon_core::Inspection`; the strings and bools it replaced are gone
+  (step 6); the members a reader passes over — an image in a zip, an OLE
+  object in a docx — are named as the informational `Unread::NotText`, and
+  fail-closed consumers read `Inspection::has_gap()` (step 7). The next
+  reading gap is embedded PDFs under `*/embeddings/`: named, not opened.
+- **Detection baseline** (evadex, northam tier, 21,805 submissions, 2026-10-14,
+  siphon-core 2.10.0): **80.4%**, up 3.9 points from 2.9.5. The gate measures
+  the same tier per strategy on every detection-bearing PR: text 78.8% ·
+  docx 76.8% · xlsx 75.4% · pdf 75.2% (2026-10-19, seed 20261015, evadex
+  3.42.0) against floors 75 / 73 / 72 / 71. Weakest techniques on the
+  baseline: morse 65% bypass, capital markets 39%, unicode whitespace 34.6%,
+  structural 34.6%. Per-category numbers are noisy; `--seed` fixes the
+  sentences but not the sample size.
+- **Dependabot** lockfile PRs are folded by hand into one PR per wave
+  (`CLAUDE.md` "Lockstep PRs"; #535, #542). `sbom-refresh.yml` was removed
+  (#545, #537).
 
-## Open PRs (2026-10-15)
+## Open PRs (2026-10-27)
 
 | PR | Branch | State | Notes |
 |---|---|---|---|
-| #510 | `fix/dockerfile-stub-touch-list` | ready | unbreaks `release`; verified when `build siphon-api` goes green on the merge commit |
-| #497 | `fix/overrides-content-version-guard` | ready, clean | one version-token guard for both overrides handlers |
-| #494 | `fix/security-audit-round9` | ready | archive extraction trusted declared sizes; `main` merged in 2026-10-15, CHANGELOG resolved |
-| #496 | `fix/test-integrity` | conflict | hidden env-var race in siphon-fs + three Windows failures; `src/guard/obfuscate.rs` conflict is two copies of the same CRLF fix — take `main`'s |
-| #480 | `fix/security-audit-round8` | **do not merge as-is** | 22 commits; its normalizer half (zero-padding, `noise_embedded`, `base64_partial`, б→6) was re-implemented on `main` in the Oct 13–14 wave under different names; its service half (api/fs/icap/smtp fixes, and PRs #490/#492 merged *into* it) needs the author to rebase onto `main` and drop the core commits |
+| #480 | `fix/security-audit-round8` | **do not merge as-is**, untouched since September | 22 commits; its normalizer half (zero-padding, `noise_embedded`, `base64_partial`, б→6) was re-implemented on `main` in the Oct 13–14 wave under different names; its service half (api/fs/icap/smtp fixes, and PRs #490/#492 merged *into* it) needs the author to rebase onto `main` and drop the core commits |
 | #495 | `fix/icap-encapsulated-framing` | stacked on #480 | retarget to `main` after #480 is dealt with |
-| #498, #500, #481–#485 | dependabot | | `Cargo.lock` must be refreshed and committed with any `Cargo.toml` change or CodeQL (`--locked`) goes red |
+
+Open issue: **#515** — make the four `Run evadex quality gate (…)` jobs
+required status checks on `main`. #544 made them run-or-skip on every PR;
+the flip itself needs an `oxide11/dlpscan-rs` admin.
 
 ## To resume work
 
@@ -90,17 +100,19 @@ cargo build --release --features full          # everything
 
 ## Biggest remaining gaps
 
-1. **"Clean verdict for unread content" keeps recurring** (nine audit rounds:
-   extractors returning `Ok("")`, ICAP framing with no body, oversize files,
-   uninspected mail parts, stream ring). `siphon_mail::inspection()` has the
-   right shape — a strict `Scanned` allowlist, "no parts = Incomplete" — but
-   only mail uses it. One typed inspection outcome in `siphon-core`, consumed
-   by the CLI exit code, siphon-fs, ICAP and the milter, would close the class.
-2. **The evadex gate cannot catch a regression**: threshold 70% against an
-   80% baseline, 2.5 h per run, not required, and its uploaded report was
-   always empty (`tee` on stdout while `evadex ci` prints to stderr).
-   evadex 3.41.0 (`batch`, `--seed`, real `--max-fp`) is what fixes the
-   runtime; the threshold, `2>&1` and required-check settings are on this side.
+1. **Reading gaps the inspection now names but does not close.** Embedded
+   PDFs and other non-OOXML objects under `*/embeddings/` are listed as
+   `not_text` and passed over; so are non-text archive members. Opening an
+   embedded PDF with the PDF reader, one level deep under the host's budget,
+   is the next step of the Office reader (#538 read the hidden text parts;
+   this would read the hidden documents). The "clean verdict for unread
+   content" class itself is closed: ADR steps 1–7 landed 2026-10-15 → 10-27.
+2. **The evadex gate is not yet a required check** (#515). Everything on this
+   side is done — per-strategy floors near the measured baseline, batched
+   transport, seeded sentences, `2>&1 | tee`, run-or-skip on every PR
+   (#544) — and the remaining step is a branch-protection setting only an
+   `oxide11/dlpscan-rs` admin can flip. Until then a PR that drops detection
+   below a floor can still be squash-merged red.
 3. **Normalizer accretion**: seven `fix(core): recover …` commits on Oct 13–14,
    each a counter to one evadex template, in a linear rewrite pipeline where a
    global stage can break a pattern class (6c vs ZIP+4) and a compensating pass
@@ -115,9 +127,14 @@ cargo build --release --features full          # everything
 
 ## Resumption checklist
 
-1. Merge #510, confirm `release` → `build siphon-api` is green.
-2. Merge #497 and #494; resolve #496 (take `main`'s `obfuscate.rs`); ask the
-   author to rebase #480 onto `main` without its normalizer commits.
-3. Merge evadex #30/#31/#32, then update `evadex-quality-gate.yml`
-   (`batch: true`, `--seed`, `--fp-category`, `2>&1 | tee`, threshold ≈ baseline − 3).
-4. Start the inspection-outcome type (gap 1).
+1. `git fetch && git log --oneline -5 origin/main` — confirm the versions
+   above are what `main` carries; if a lockstep PR landed since, the
+   CHANGELOG's top block names it.
+2. Ask an `oxide11/dlpscan-rs` admin to flip #515; ask the author of #480 to
+   rebase it onto `main` without its normalizer commits.
+3. Next feature: open embedded PDFs under `*/embeddings/` (gap 1), with
+   `tests/office_parts_test.rs` cases and a conformance `structural` fixture.
+4. Next measurement: a local pdf re-baseline on evadex 3.42.0 to attribute
+   the remaining pdf-vs-text gap per technique (≈20 min with `--batch`), and
+   a repeat-run variance figure (evadex BACKLOG) so a rate change has an
+   error bar.
