@@ -1638,8 +1638,8 @@
     {
       "type": "library",
       "name": "libc",
-      "version": "0.2.190",
-      "purl": "pkg:cargo/libc@0.2.190",
+      "version": "0.2.191",
+      "purl": "pkg:cargo/libc@0.2.191",
       "scope": "required",
       "licenses": [
         {
@@ -3112,8 +3112,8 @@
     {
       "type": "library",
       "name": "tokio",
-      "version": "1.53.3",
-      "purl": "pkg:cargo/tokio@1.53.3",
+      "version": "1.54.1",
+      "purl": "pkg:cargo/tokio@1.54.1",
       "scope": "required",
       "licenses": [
         {
@@ -3604,12 +3604,12 @@
     {
       "type": "library",
       "name": "unicode-normalization",
-      "version": "0.1.25",
-      "purl": "pkg:cargo/unicode-normalization@0.1.25",
+      "version": "0.1.26",
+      "purl": "pkg:cargo/unicode-normalization@0.1.26",
       "scope": "required",
       "licenses": [
         {
-          "expression": "MIT OR Apache-2.0"
+          "expression": "(MIT OR Apache-2.0) AND Unicode-3.0"
         }
       ],
       "externalReferences": [
@@ -3678,8 +3678,8 @@
     {
       "type": "library",
       "name": "uuid",
-      "version": "1.28.0",
-      "purl": "pkg:cargo/uuid@1.28.0",
+      "version": "1.29.0",
+      "purl": "pkg:cargo/uuid@1.29.0",
       "scope": "required",
       "licenses": [
         {
@@ -3714,8 +3714,8 @@
     {
       "type": "library",
       "name": "webpki-roots",
-      "version": "1.0.9",
-      "purl": "pkg:cargo/webpki-roots@1.0.9",
+      "version": "1.0.11",
+      "purl": "pkg:cargo/webpki-roots@1.0.11",
       "scope": "required",
       "licenses": [
         {
@@ -3850,8 +3850,8 @@
     {
       "type": "library",
       "name": "zip",
-      "version": "9.0.4",
-      "purl": "pkg:cargo/zip@9.0.4",
+      "version": "9.0.5",
+      "purl": "pkg:cargo/zip@9.0.5",
       "scope": "required",
       "licenses": [
         {
