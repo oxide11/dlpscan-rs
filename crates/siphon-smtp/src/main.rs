@@ -613,20 +613,24 @@ fn extract_attachment(filename: Option<&str>, data: &[u8]) -> Option<Extracted> 
     // and any unread unit both mean the same thing here: what was scanned is
     // not the whole of what the file contains.
     //
-    // One reason is not a gap. `Unread::FormatMismatch` under the default
-    // `flag` policy means the attachment was read, correctly, as what its
-    // bytes are — only its name lied. The content was inspected and its
-    // verdict stands; deferring every message whose export job misnamed a
-    // file would be a self-inflicted outage, and the operator who wants a
-    // misnamed attachment refused has `SIPHON_ON_FORMAT_MISMATCH=reject`,
-    // which arrives here as an extraction `Err` and defers through the
-    // ordinary path. The mismatch itself is logged at warn level where it
-    // is detected.
+    // Two kinds of reason are not gaps. `Unread::FormatMismatch` under the
+    // default `flag` policy means the attachment was read, correctly, as
+    // what its bytes are — only its name lied. The content was inspected
+    // and its verdict stands; deferring every message whose export job
+    // misnamed a file would be a self-inflicted outage, and the operator
+    // who wants a misnamed attachment refused has
+    // `SIPHON_ON_FORMAT_MISMATCH=reject`, which arrives here as an
+    // extraction `Err` and defers through the ordinary path. The mismatch
+    // itself is logged at warn level where it is detected. And an
+    // informational reason (`Unread::is_informational`: a photo inside a
+    // zipped attachment, an OLE object in a docx) names a member the
+    // extractor does not open for text; it is in the inspection so nobody
+    // has to guess, and it is exactly the thing that must not defer mail.
     let gaps: Vec<String> = r
         .inspection
         .unread_reasons()
         .iter()
-        .filter(|u| !matches!(u, Unread::FormatMismatch { .. }))
+        .filter(|u| !matches!(u, Unread::FormatMismatch { .. }) && !u.is_informational())
         .map(ToString::to_string)
         .collect();
     let faithful = gaps.is_empty() && r.format != "unparsed";
@@ -1250,6 +1254,29 @@ mod tests {
             "the payload was read: {:?}",
             r.text
         );
+    }
+
+    /// A zipped attachment with a photo beside the text is ordinary mail.
+    /// The extractor names the photo (`Unread::NotText`), the text is read,
+    /// and the attachment is faithful: the inspection is for the log, not a
+    /// reason to defer. An encrypted member in the same archive is a gap.
+    #[test]
+    fn an_archive_attachment_with_an_image_in_it_is_faithful() {
+        let mut archive = Vec::new();
+        {
+            let mut z = zip::ZipWriter::new(std::io::Cursor::new(&mut archive));
+            z.start_file::<_, ()>("a.txt", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            z.write_all(b"card 4111111111111111").unwrap();
+            z.start_file::<_, ()>("photo.png", zip::write::SimpleFileOptions::default())
+                .unwrap();
+            z.write_all(b"\x89PNG\r\n\x1a\n not really").unwrap();
+            z.finish().unwrap();
+        }
+        let r = extract_attachment(Some("bundle.zip"), &archive).expect("the archive extracts");
+        assert!(r.faithful, "a passed-over image is not a gap: {:?}", r.why);
+        assert!(r.text.contains("4111111111111111"));
+        assert!(r.why.is_none(), "no gap to explain: {:?}", r.why);
     }
 
     /// SMTP wraps addresses in angle brackets, and a bounce carries a null

@@ -48,6 +48,24 @@ fn honest_zip(dir: &Path) -> std::path::PathBuf {
     path
 }
 
+/// A zip with one text entry and one photo: the photo is passed over and
+/// named, the text is read.
+fn zip_with_a_photo(dir: &Path) -> std::path::PathBuf {
+    let path = dir.join("bundle.zip");
+    let f = std::fs::File::create(&path).unwrap();
+    let mut z = zip::ZipWriter::new(f);
+    z.start_file::<_, ()>("notes.txt", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    z.write_all(b"credit card 4532015112830366 on file")
+        .unwrap();
+    z.start_file::<_, ()>("photo.png", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    z.write_all(b"\x89PNG\r\n\x1a\n not really a picture")
+        .unwrap();
+    z.finish().unwrap();
+    path
+}
+
 fn siphon() -> Command {
     Command::new(env!("CARGO_BIN_EXE_siphon"))
 }
@@ -72,6 +90,41 @@ fn a_nested_archive_makes_the_verdict_incomplete_with_a_typed_reason() {
     );
     // The one-line form is the type's own, nothing else.
     assert!(result.inspection.describe()[0].contains("nested archive"));
+}
+
+/// The informational reason, end to end: a member the reader does not open
+/// is named (`not_text`), the inspection is incomplete, and it is not a gap
+/// — so `--on-incomplete fail` exits 0 on it where it exits 3 on a nested
+/// archive.
+#[test]
+fn a_passed_over_member_is_named_and_is_not_a_gap() {
+    let tmp = tempfile::tempdir().unwrap();
+    let result = Pipeline::new().process_file(&zip_with_a_photo(tmp.path()));
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert!(
+        result.match_count() >= 1,
+        "the text member was read: {result:?}"
+    );
+    assert!(!result.inspection.is_complete());
+    assert!(!result.inspection.has_gap(), "{:?}", result.inspection);
+    assert!(
+        matches!(
+            result.inspection.unread_reasons(),
+            [Unread::NotText { unit }] if unit == "entry photo.png"
+        ),
+        "{:?}",
+        result.inspection
+    );
+
+    let out = siphon()
+        .args(["scan", "--on-incomplete", "fail"])
+        .arg(zip_with_a_photo(tmp.path()))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Unscanned content: 1"), "{stdout}");
+    assert!(stdout.contains("photo.png"), "{stdout}");
 }
 
 #[test]

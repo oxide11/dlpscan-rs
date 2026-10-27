@@ -347,11 +347,13 @@ pub fn run_case(c: &Case) -> Result<(), String> {
     match &c.expect {
         Expect::NotSilentlyClean => match &extracted {
             Err(_) => Ok(()),
-            Ok(r) if !r.inspection.is_complete() => Ok(()),
+            // A gap, not merely an informational note: an unopened image
+            // in a damaged archive says nothing about the damage.
+            Ok(r) if r.inspection.has_gap() => Ok(()),
             Ok(r) if r.format == "unparsed" => Ok(()),
             Ok(r) => Err(format!(
                 "{}\n  a damaged file read as faithfully parsed \
-                 (format={}, {} chars of text, complete inspection)\n  \
+                 (format={}, {} chars of text, no gap in the inspection)\n  \
                  a caller that fails closed has nothing to act on",
                 c.note,
                 r.format,
@@ -360,7 +362,7 @@ pub fn run_case(c: &Case) -> Result<(), String> {
         },
         Expect::NoFindings => {
             let r = extracted.map_err(|e| format!("{}\n  extraction failed: {e}", c.note))?;
-            if !r.inspection.is_complete() {
+            if r.inspection.has_gap() {
                 return Err(format!(
                     "{}\n  a well-formed file was not read in full: {:?}",
                     c.note,
@@ -435,7 +437,7 @@ pub fn run_case(c: &Case) -> Result<(), String> {
         }
         Expect::NoFindingsExcept(allowed) => {
             let r = extracted.map_err(|e| format!("{}\n  extraction failed: {e}", c.note))?;
-            if !r.inspection.is_complete() {
+            if r.inspection.has_gap() {
                 return Err(format!(
                     "{}\n  a well-formed file was not read in full: {:?}",
                     c.note,

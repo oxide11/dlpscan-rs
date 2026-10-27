@@ -654,13 +654,15 @@ async fn scan(
         // Read in full and empty is a completed scan with nothing in it, so
         // it counts as one; a gap means part of it was not read, which is
         // the seen-but-not-read count instead. A format mismatch alone is
-        // not a gap — the file was read, as what its bytes are — so it does
-        // not move the coverage figure, only the response's `inspection`.
+        // not a gap — the file was read, as what its bytes are — and neither
+        // is an informational reason (a zip of photos, each named as
+        // `not_text`): both stay in the response's `inspection` and neither
+        // moves the coverage figure.
         let read_in_full = extract
             .inspection
             .unread_reasons()
             .iter()
-            .all(|u| matches!(u, Unread::FormatMismatch { .. }));
+            .all(|u| matches!(u, Unread::FormatMismatch { .. }) || u.is_informational());
         if read_in_full {
             state
                 .sensor
@@ -1998,6 +2000,23 @@ mod inspection_tests {
         assert!(!i.is_complete());
         assert_eq!(i.unread_reasons().len(), 1);
         assert!(i.describe()[0].contains("inner.zip"));
+    }
+
+    /// An image the extractor passed over reaches the HTTP caller as
+    /// `not_text` — incomplete, so nobody reads `findings: []` as "the photo
+    /// was looked at" — and is not a gap, so the coverage counter and a
+    /// fail-closed caller reading `has_gap` both let it through.
+    #[test]
+    fn a_passed_over_image_is_reported_and_is_not_a_gap() {
+        let photo = Inspection::new().with_unread(Unread::NotText {
+            unit: "entry photo.png".into(),
+        });
+        let i = coverage(photo, Some(Inspection::Complete));
+        assert!(!i.is_complete());
+        assert!(!i.has_gap());
+        let json = serde_json::to_value(&i).unwrap();
+        assert_eq!(json["status"], "incomplete");
+        assert_eq!(json["unread"][0]["kind"], "not_text");
     }
 
     #[test]
