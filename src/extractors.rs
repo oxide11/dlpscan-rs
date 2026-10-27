@@ -91,6 +91,24 @@ fn archive_entry_is_nested_archive(name: &str) -> bool {
 /// inspection is incomplete after the first one either way.
 const MAX_NESTED_ARCHIVE_WARNINGS: usize = 20;
 
+/// Record a reason an archive walker did not read an entry, capped.
+///
+/// Gaps and informational notes (`Unread::is_informational`) have a budget of
+/// MAX_NESTED_ARCHIVE_WARNINGS lines *each*: a zip holding a thousand photos
+/// must not use up the lines that would have named the one encrypted member
+/// after them. The inspection is incomplete after the first reason either
+/// way; the cap is about how many lines a reader has to look at.
+fn note_unread(unread: &mut Vec<Unread>, reason: Unread) {
+    let informational = reason.is_informational();
+    let same_kind = unread
+        .iter()
+        .filter(|u| u.is_informational() == informational)
+        .count();
+    if same_kind < MAX_NESTED_ARCHIVE_WARNINGS {
+        unread.push(reason);
+    }
+}
+
 /// A text member of a RAR or 7z larger than this is not read. Two walkers
 /// carried this as a bare `1_048_576`; one name so the reason they report
 /// can quote it.
@@ -1425,10 +1443,9 @@ fn extract_zip_archive<R: std::io::Read + std::io::Seek>(
     // file, a Word document dropped onto a slide — live under
     // `*/embeddings/`. One that is itself an OOXML package is opened and
     // read with this same function, one level deep. One that is not (an OLE
-    // `.bin` from an older Office, a PDF, an image) is skipped without a
-    // reason, exactly as a non-text member of a plain archive is: the typed
-    // reason for that gap is still the ingresses' decision, recorded in
-    // BACKLOG.md.
+    // `.bin` from an older Office, a PDF, an image) is listed below as
+    // `Unread::NotText`, the informational reason: the host is read in full,
+    // and the object is named rather than passed over in silence.
     let embedded_paths: Vec<String> = if format == "zip" {
         Vec::new()
     } else {
@@ -1447,19 +1464,43 @@ fn extract_zip_archive<R: std::io::Read + std::io::Seek>(
     // Entries this pass could not read, typed. An analyst has to be told that
     // content was present and skipped, because the alternative — a document
     // whose body was never examined, reported as zero findings — is
-    // indistinguishable from a clean document. Capped at
-    // MAX_NESTED_ARCHIVE_WARNINGS so a container packed with ten thousand
-    // refused entries does not produce ten thousand lines; the inspection is
-    // incomplete after the first one either way.
+    // indistinguishable from a clean document. `note_unread` caps the lines
+    // so a container packed with ten thousand refused entries does not
+    // produce ten thousand of them; the inspection is incomplete after the
+    // first one either way.
     let mut unread: Vec<Unread> = Vec::new();
-    let note = |unread: &mut Vec<Unread>, reason: Unread| {
-        if unread.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-            unread.push(reason);
-        }
-    };
+    let note = note_unread;
     // Reasons an embedded package reported about itself, placed under the
     // entry that held it when the result is built.
     let mut nested_unread: Vec<(String, Unread)> = Vec::new();
+
+    // Embedded objects this reader does not open — an OLE `.bin` from an
+    // older Office, a PDF, an image dropped in as an object — are named as
+    // `Unread::NotText`. It is informational (`Inspection::has_gap` leaves it
+    // out), because a docx with a pasted picture is ordinary mail; it is
+    // listed because an analyst reading `findings: []` should not have to
+    // open the package to learn there was an object in it. The document's
+    // own artwork under `*/media/` is not an object and is not listed, nor
+    // are the trees left unread by design (charts, layouts, masters).
+    if format != "zip" {
+        for i in 0..archive.len() {
+            let Ok(file) = archive.by_index(i) else {
+                continue;
+            };
+            if file.is_dir() {
+                continue;
+            }
+            let name = zip_entry_name(&file);
+            if name.contains("/embeddings/") && !embedded_ooxml_extension(&name) {
+                note(
+                    &mut unread,
+                    Unread::NotText {
+                        unit: format!("entry {name}"),
+                    },
+                );
+            }
+        }
+    }
 
     for xml_path in xml_paths {
         if entry_count >= MAX_EXTRACT_FILE_COUNT {
@@ -1750,14 +1791,23 @@ fn extract_zip_archive<R: std::io::Read + std::io::Seek>(
                 );
                 continue;
             }
-            // A member without a text extension (an image, a binary) is
-            // deliberately not reported here. Nearly every real archive has
-            // one, and siphon-smtp treats any unread unit as grounds to defer
-            // the message under its fail-closed default — so typing this one
-            // would defer ordinary mail for a .png. That is a decision for the
-            // ingress, not for this reader; see the step-2 notes in
-            // docs/architecture/inspection-outcome.md.
+            // A member without a text extension (an image, a binary) is not
+            // opened. It used to be passed over in silence, because naming it
+            // with a gap-class reason would have deferred ordinary mail for a
+            // `.png` under siphon-smtp's fail-closed default. `Unread::NotText`
+            // is the reason that says what happened without being a gap: the
+            // ingresses read `Inspection::has_gap`, which leaves it out, and
+            // an analyst reading the inspection sees the member by name.
+            if file.is_dir() {
+                continue;
+            }
             if !archive_entry_is_text(&name) {
+                note(
+                    &mut unread,
+                    Unread::NotText {
+                        unit: format!("entry {name}"),
+                    },
+                );
                 continue;
             }
             // The guards below used to `continue` or `break` in silence; the
@@ -2888,11 +2938,7 @@ fn extract_opendocument(file_path: &str) -> Result<ExtractionResult, String> {
     // per-entry cap — so `total_read` is now tracked across them.
     let mut total_read: u64 = 0;
     let mut unread: Vec<Unread> = Vec::new();
-    let note = |unread: &mut Vec<Unread>, reason: Unread| {
-        if unread.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-            unread.push(reason);
-        }
-    };
+    let note = note_unread;
     for xml_name in &["content.xml", "meta.xml", "styles.xml"] {
         if let Ok(mut file) = archive.by_name(xml_name) {
             // Skip entries larger than 100MB
@@ -3118,11 +3164,7 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
     // Everything this walk saw and did not read, typed; the four `skip()`
     // branches below used to be silent.
     let mut unread: Vec<Unread> = Vec::new();
-    let note = |unread: &mut Vec<Unread>, reason: Unread| {
-        if unread.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-            unread.push(reason);
-        }
-    };
+    let note = note_unread;
     let mut rejected_names = 0u32;
     let mut capped = false;
     while let Ok(Some(header)) = cursor.read_header() {
@@ -3255,6 +3297,17 @@ fn extract_rar(file_path: &str) -> Result<ExtractionResult, String> {
                 }
             }
         } else {
+            // Not a text member: named as the informational reason, as the
+            // ZIP and 7z walkers do, unless it is a nested archive the loop
+            // above has already reported, or a directory.
+            if !entry.is_directory() && !NESTED_ARCHIVE_EXTENSIONS.contains(&ext.as_str()) {
+                note(
+                    &mut unread,
+                    Unread::NotText {
+                        unit: format!("entry {name}"),
+                    },
+                );
+            }
             match header.skip() {
                 Ok(next) => cursor = next,
                 Err(_) => break,
@@ -3457,11 +3510,7 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
 
     // Extract text from small text files (with path traversal guard)
     let mut unread: Vec<Unread> = Vec::new();
-    let note = |unread: &mut Vec<Unread>, reason: Unread| {
-        if unread.len() < MAX_NESTED_ARCHIVE_WARNINGS {
-            unread.push(reason);
-        }
-    };
+    let note = note_unread;
     if traversal_blocked > 0 {
         note(
             &mut unread,
@@ -3544,6 +3593,15 @@ fn extract_7z(file_path: &str) -> Result<ExtractionResult, String> {
             note(
                 &mut unread,
                 Unread::NestedArchive {
+                    unit: format!("entry {}", rel.display()),
+                },
+            );
+        } else if f.is_file() {
+            // Not a text member: named, informational. Matches the ZIP/RAR
+            // walkers.
+            note(
+                &mut unread,
+                Unread::NotText {
                     unit: format!("entry {}", rel.display()),
                 },
             );

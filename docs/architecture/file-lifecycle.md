@@ -285,7 +285,9 @@ Our `Raw` sheet now yields one value per line.
 
 That is what lets a caller fail closed. The milter treats a part as
 uninspected when its inspection carries any reason other than
-`FormatMismatch`, or `format == "unparsed"`, and an uninspected part cannot
+`FormatMismatch` or the informational `NotText` (a member the reader does
+not open for text, such as an image in a zip; `Inspection::has_gap` is the
+predicate), or `format == "unparsed"`, and an uninspected part cannot
 reconcile to clean. (`warnings: Vec<String>` carried the same lines until
 siphon-cli 2.7.0; `inspection.describe()` is that text now.)
 
@@ -597,6 +599,13 @@ they mean entirely different things.
 | 2 | **Read in full, and there was no text.** An image with no barcode; an empty part. | `inspection` complete, text empty. Genuinely inspected. |
 | 3 | **Not read — and it said so.** Corrupt archive, unparseable PDF, exceeded the scanner cap. | `inspection` incomplete with a typed reason, or `format == "unparsed"`, or `Err`. Never reconciles to clean on the mail path. |
 | 4 | **Not read, and it did not say so.** | *There is no signal.* This is the bug class. |
+
+A fifth shape sits between rows 2 and 3: **passed over, and it said so.** An
+image inside a zip, an OLE object inside a docx — a member the reader does
+not open for text — is listed as `not_text` on the inspection, so the
+inspection is incomplete, and it is informational, so `has_gap()` is false
+and no policy defers, fails or counts a coverage gap on it. It is row 3's
+honesty with row 2's consequences.
 
 Everything in §4.2 exists to keep row 4 empty. The `damaged` slot of the
 conformance matrix is the standing test that it stays that way.

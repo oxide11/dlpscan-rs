@@ -54,9 +54,18 @@ pub enum Unread {
     Encrypted { unit: String },
     /// An archive inside an archive that the reader does not descend into.
     NestedArchive { unit: String },
-    /// A format or MIME type the reader has no extractor for, or an entry it
-    /// deliberately does not read (a non-text zip member, a binary body).
+    /// A format or MIME type the reader has no extractor for: a document
+    /// nobody could open, a binary body on a proxy. A gap.
     Unsupported { unit: String },
+    /// A member the reader passes over because, by its name, it is not
+    /// something this reader opens for text: an image or a binary inside a
+    /// plain archive, an OLE object or an embedded PDF under an Office
+    /// package's `embeddings/`. Nearly every real archive and document
+    /// carries one, so this reason is *informational*: it is listed, so a
+    /// reader can see what was passed over, and [`Inspection::has_gap`]
+    /// does not count it. Contrast [`Unread::Unsupported`], which is a
+    /// document in a format no reader handles — that is a gap.
+    NotText { unit: String },
     /// The reader tried and failed; `detail` is the error text.
     ReadError { unit: String, detail: String },
     /// The bytes did not match the format the name or type claimed.
@@ -79,9 +88,24 @@ impl Unread {
             | Unread::Encrypted { unit }
             | Unread::NestedArchive { unit }
             | Unread::Unsupported { unit }
+            | Unread::NotText { unit }
             | Unread::ReadError { unit, .. } => Some(unit),
             Unread::FormatMismatch { .. } | Unread::MatchCapReached | Unread::Other { .. } => None,
         }
+    }
+
+    /// Whether this reason is a note rather than a gap.
+    ///
+    /// A gap is content that may hold a value and was not read: a fail-closed
+    /// consumer acts on it. An informational reason says the reader passed
+    /// over a member it does not open for text at all (an image in a zip, an
+    /// OLE object in a docx); it is reported so nobody has to guess, and
+    /// acting on it would defer ordinary mail for a `.png`. Today only
+    /// [`Unread::NotText`] is informational; a consumer should call this
+    /// rather than match the variant, so a second informational reason does
+    /// not have to be taught to every ingress.
+    pub fn is_informational(&self) -> bool {
+        matches!(self, Unread::NotText { .. })
     }
 }
 
@@ -101,6 +125,12 @@ impl fmt::Display for Unread {
             Unread::Encrypted { unit } => write!(f, "{unit} is encrypted; not read"),
             Unread::NestedArchive { unit } => write!(f, "{unit} is a nested archive; not read"),
             Unread::Unsupported { unit } => write!(f, "{unit} is not a readable format; not read"),
+            Unread::NotText { unit } => {
+                write!(
+                    f,
+                    "{unit} is not a text member this reader opens; passed over"
+                )
+            }
             Unread::ReadError { unit, detail } => write!(f, "{unit} could not be read: {detail}"),
             Unread::FormatMismatch { declared, detected } => {
                 write!(f, "content is {detected}, not the declared {declared}")
@@ -196,6 +226,32 @@ impl Inspection {
 
     pub fn is_complete(&self) -> bool {
         matches!(self, Inspection::Complete)
+    }
+
+    /// Whether anything that may hold a value went unread.
+    ///
+    /// This is the question a fail-closed consumer asks. [`is_complete`]
+    /// answers the stricter one — was *everything* read — and stays `false`
+    /// when the only reasons are informational ([`Unread::is_informational`]),
+    /// because a verdict over an archive with an unopened image in it does
+    /// not cover the image, and the reader should not pretend otherwise. But
+    /// an image is not a gap a policy should defer mail over, so the milter,
+    /// siphon-fs's coverage counter and the CLI's `--on-incomplete fail` read
+    /// this method, not `is_complete`. The two invariants still hold: there
+    /// is no way to be `Complete` and carry reasons, and no way to have a
+    /// gap and not be `Incomplete`.
+    ///
+    /// [`is_complete`]: Inspection::is_complete
+    pub fn has_gap(&self) -> bool {
+        self.gaps().next().is_some()
+    }
+
+    /// The reasons that are gaps, in the order they were recorded; the
+    /// informational ones are left out. `unread_reasons` has all of them.
+    pub fn gaps(&self) -> impl Iterator<Item = &Unread> {
+        self.unread_reasons()
+            .iter()
+            .filter(|u| !u.is_informational())
     }
 
     /// The reasons, empty when complete.
@@ -332,5 +388,77 @@ mod tests {
             limit: None,
         };
         assert_eq!(r.to_string(), "body exceeds size limit; not read");
+    }
+
+    /// An informational reason is reported, makes the inspection incomplete
+    /// (the image was not read, and the type does not pretend it was), and
+    /// is not a gap: a fail-closed consumer reading `has_gap` lets it pass.
+    #[test]
+    fn an_informational_reason_is_incomplete_but_not_a_gap() {
+        let i = Inspection::new().with_unread(Unread::NotText {
+            unit: "entry photo.png".into(),
+        });
+        assert!(!i.is_complete());
+        assert!(!i.has_gap());
+        assert_eq!(i.gaps().count(), 0);
+        assert_eq!(i.unread_reasons().len(), 1);
+        assert_eq!(
+            i.describe(),
+            vec!["entry photo.png is not a text member this reader opens; passed over"]
+        );
+        assert_eq!(i.unread_reasons()[0].unit(), Some("entry photo.png"));
+        let json = serde_json::to_string(&i).unwrap();
+        assert!(json.contains("\"kind\":\"not_text\""), "{json}");
+    }
+
+    /// One gap among any number of notes is still a gap, and `gaps()` hands
+    /// back exactly the reasons a policy should act on.
+    #[test]
+    fn a_gap_beside_informational_reasons_is_still_a_gap() {
+        let i = Inspection::new()
+            .with_unread(Unread::NotText {
+                unit: "entry a.png".into(),
+            })
+            .with_unread(Unread::Encrypted {
+                unit: "entry b.txt".into(),
+            })
+            .with_unread(Unread::NotText {
+                unit: "entry c.gif".into(),
+            });
+        assert!(i.has_gap());
+        let gaps: Vec<_> = i.gaps().collect();
+        assert_eq!(gaps.len(), 1);
+        assert!(matches!(gaps[0], Unread::Encrypted { unit } if unit == "entry b.txt"));
+        assert_eq!(i.unread_reasons().len(), 3);
+    }
+
+    /// Every reason that is not the informational one is a gap. Pinned so a
+    /// new variant has to say which side it is on.
+    #[test]
+    fn every_other_reason_is_a_gap() {
+        let reasons = [
+            Unread::Oversize {
+                unit: "u".into(),
+                limit: None,
+            },
+            Unread::Truncated { unit: "u".into() },
+            Unread::Encrypted { unit: "u".into() },
+            Unread::NestedArchive { unit: "u".into() },
+            Unread::Unsupported { unit: "u".into() },
+            Unread::ReadError {
+                unit: "u".into(),
+                detail: "d".into(),
+            },
+            Unread::FormatMismatch {
+                declared: "a".into(),
+                detected: "b".into(),
+            },
+            Unread::MatchCapReached,
+            Unread::Other { detail: "d".into() },
+        ];
+        for r in reasons {
+            assert!(!r.is_informational(), "{r:?}");
+            assert!(Inspection::new().with_unread(r).has_gap());
+        }
     }
 }

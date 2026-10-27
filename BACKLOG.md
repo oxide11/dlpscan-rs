@@ -1,6 +1,6 @@
 # Siphon Backlog
 
-Last updated: 2026-10-16
+Last updated: 2026-10-27
 
 ## Security audit log
 
@@ -142,37 +142,27 @@ maintained alternative exists and the migration risk is low.
 
 ## Security debt — operational correctness
 
-### Two extraction paths that are still silent (inspection ADR, step 6)
+### Extraction paths that were silent — closed (inspection ADR, step 7)
 
-`docs/architecture/inspection-outcome.md` is complete as of 2026-10-16:
-every ingress reports what its verdict covers through one type, and the
-strings, bools and metadata keys it replaced are gone. Two paths were left
-silent on purpose, recorded there and here so they are not mistaken for
-oversights:
+`docs/architecture/inspection-outcome.md` is complete as of 2026-10-27.
+The two paths step 6 left silent on purpose — a non-text member of a plain
+archive, an embedded object under `*/embeddings/` that is not an OOXML
+package — are named since siphon-core 2.12.0 / siphon-cli 2.9.0 as
+`Unread::NotText`, the informational reason: `is_complete()` is `false`
+for it (the member was not read) and `has_gap()` is `false` too, which is
+what the milter (siphon-smtp 0.4.0), siphon-fs's coverage counter (1.8.0),
+the CLI's `--on-incomplete fail` and the conformance matrix now read.
+Still unread by design, and still not listed: `xl/charts/*` (the data
+cache repeats cells already read, and its unseparated numeric runs would
+invent digit patterns), slide layouts and masters (template placeholders),
+and a document's own artwork under `*/media/`. `tests/office_parts_test.rs`
+is the record of what is read and what is named.
 
-- **Non-text members of a plain archive** (an image, a binary) are skipped
-  without a reason. Typing them `Unread::Unsupported` is true, but under
-  the milter's fail-closed default it would defer every message carrying a
-  zipped `.png`, and `policy::action_for` cannot tell that `Unsupported`
-  from a text part it could not decode. Needs a reason the ingresses can
-  treat as informational — a distinct `Unread` variant (core MINOR), with
-  the milter and siphon-fs's `unscanned` counter taught to read it — before
-  the reader can say it.
-- **Embedded objects that are not OOXML packages.** Since siphon-cli 2.8.0
-  the OOXML reader opens every part that carries text — cell and threaded
-  comments, drawings, speaker notes, review comments, SmartArt — and reads
-  an embedded `.docx`/`.xlsx`/`.pptx` one level deep, reporting a package
-  inside that as `Unread::NestedArchive`. What it still passes over in
-  silence is an embedded object it cannot open as a package: an OLE `.bin`
-  from an older Office, an embedded PDF or image under `*/embeddings/`.
-  That is the same decision as the non-text archive member above, for the
-  same reason — a docx with a pasted picture is ordinary mail — and it
-  takes the same informational `Unread` variant to say it. Also unread by
-  design: `xl/charts/*` (the data cache repeats cells already read, and its
-  unseparated numeric runs would invent digit patterns) and slide layouts
-  and masters (template placeholders). `tests/office_parts_test.rs` is the
-  record of what is read; the conformance matrix's one-case-per-slot rule
-  is why those assertions live there and not in a sixth `structural` case.
+What the informational reason does *not* do is read the object. An embedded
+PDF under `word/embeddings/` may carry text; today it is named and passed
+over. Opening embedded PDFs with the PDF reader (under the host's budget,
+one level deep, as the OOXML embeddings are) is the next reading gap worth
+closing, and it is a reading change, not a reporting one.
 
 ### EDM salt stability (`SIPHON_EDM_SALT_HEX`)
 
