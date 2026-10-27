@@ -25,7 +25,8 @@ name: evadex quality gate
 # filtering is a job, not a `paths:` key, because this check is meant to be
 # *required* on `main` (#515): a `paths:`-filtered workflow is absent on a
 # PR that does not touch them, and an absent required check leaves the
-# merge button pending forever, while a skipped job satisfies it.)
+# merge button pending forever, while a job that ran and skipped every step
+# reports success under its name and satisfies it.)
 on:
   push:
     branches: [main]
@@ -55,9 +56,13 @@ jobs:
     # Did this PR touch anything that can move a rate the gate measures?
     # `push` and `workflow_dispatch` always run the gate; a `pull_request`
     # runs it only when the diff against the merge base touches the paths
-    # listed at the top of this file. The four matrix jobs are *skipped*,
-    # not absent, when it did not — see the trigger comment for why that
-    # distinction is the whole point.
+    # listed at the top of this file. When it did not, the four matrix jobs
+    # still *run* — every step in them is skipped on this output, and each
+    # leg finishes green in seconds under its own name. The condition is on
+    # the steps, not the job, on purpose: a matrix job skipped at job level
+    # is reported once, under the unexpanded name `Run evadex quality gate
+    # (${{ matrix.strategy }})` (seen on #547), so a required check named
+    # `(text)` would still be absent and the merge button still pending.
     name: Detection paths changed?
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -94,7 +99,6 @@ jobs:
 
   evadex-gate:
     needs: changes
-    if: needs.changes.outputs.gate == 'true'
     # One job per submission strategy, each against its own threshold.
     #
     # The thresholds are each ~3.5 points under the figure the same scanner
@@ -155,9 +159,11 @@ jobs:
 
     steps:
       - name: Checkout dlpscan-rs
+        if: needs.changes.outputs.gate == 'true'
         uses: actions/checkout@v7
 
       - name: Checkout evadex
+        if: needs.changes.outputs.gate == 'true'
         uses: actions/checkout@v7
         with:
           repository: tbustenk/evadex
@@ -165,9 +171,11 @@ jobs:
           token: ${{ secrets.GH_PAT || github.token }}
 
       - name: Set up Rust
+        if: needs.changes.outputs.gate == 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust build artifacts
+        if: needs.changes.outputs.gate == 'true'
         uses: actions/cache@v6
         with:
           path: |
@@ -179,9 +187,11 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build Siphon CLI (release)
+        if: needs.changes.outputs.gate == 'true'
         run: cargo build --release --bin siphon
 
       - name: Set up Python
+        if: needs.changes.outputs.gate == 'true'
         uses: actions/setup-python@v7
         with:
           python-version: '3.11'
@@ -197,16 +207,19 @@ jobs:
       # needs it, but the install is unconditional so the four jobs stay the
       # same image.
       - name: Install fonts for the PDF fixture
+        if: needs.changes.outputs.gate == 'true'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
             fonts-dejavu-core fonts-freefont-ttf fonts-noto-core
 
       - name: Install evadex
+        if: needs.changes.outputs.gate == 'true'
         working-directory: evadex
         run: pip install -e ".[dev]"
 
       - name: Run evadex unit tests
+        if: needs.changes.outputs.gate == 'true'
         working-directory: evadex
         run: python -m pytest tests/unit -q --tb=short
 
@@ -252,6 +265,7 @@ jobs:
       # fonts cannot draw, and for tabs and control characters, which no
       # font can; the summary names the techniques.
       - name: Run evadex quality gate (siphon-cli adapter)
+        if: needs.changes.outputs.gate == 'true'
         working-directory: evadex
         env:
           SIPHON_BIN: ${{ github.workspace }}/target/release/siphon
@@ -278,7 +292,7 @@ jobs:
             2>&1 | tee evadex-gate-report.txt
 
       - name: Upload quality gate report
-        if: always()
+        if: always() && needs.changes.outputs.gate == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: evadex-quality-gate-report-${{ matrix.strategy }}
