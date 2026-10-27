@@ -368,8 +368,8 @@
     {
       "type": "library",
       "name": "ctutils",
-      "version": "0.4.2",
-      "purl": "pkg:cargo/ctutils@0.4.2",
+      "version": "0.4.6",
+      "purl": "pkg:cargo/ctutils@0.4.6",
       "scope": "required",
       "licenses": [
         {
