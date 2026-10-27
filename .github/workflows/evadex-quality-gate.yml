@@ -12,8 +12,20 @@ name: evadex quality gate
 #
 # `scoring.rs` is included for the same reason — the gate asserts on
 # confidence thresholds, and scoring is what produces the confidences.
-# (Duplicated rather than shared via a YAML anchor: GitHub Actions does not
-# resolve anchors in workflow files. Keep the two lists in step.)
+#
+# `src/extractors.rs` and `src/pipeline/**` are included because three of
+# the four jobs measure a *file* path: a docx, pdf or xlsx submission goes
+# through the extractor before the scanner sees a byte, so a change there
+# can move those three rates without touching siphon-core at all. The
+# Office hidden-parts reader (#538, 2026-10-19) shipped without a gate run
+# for exactly that reason.
+#
+# The list appears twice: here for `push`, and as a regex in the `changes`
+# job below for `pull_request`. Keep the two in step. (On `pull_request` the
+# filtering is a job, not a `paths:` key, because this check is meant to be
+# *required* on `main` (#515): a `paths:`-filtered workflow is absent on a
+# PR that does not touch them, and an absent required check leaves the
+# merge button pending forever, while a skipped job satisfies it.)
 on:
   push:
     branches: [main]
@@ -24,17 +36,11 @@ on:
       - 'crates/siphon-core/src/context/**'
       - 'crates/siphon-core/src/validation.rs'
       - 'crates/siphon-core/src/scoring.rs'
+      - 'src/extractors.rs'
+      - 'src/pipeline/**'
       - '.github/workflows/evadex-quality-gate.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'crates/siphon-core/src/normalize/**'
-      - 'crates/siphon-core/src/patterns/**'
-      - 'crates/siphon-core/src/scanner/**'
-      - 'crates/siphon-core/src/context/**'
-      - 'crates/siphon-core/src/validation.rs'
-      - 'crates/siphon-core/src/scoring.rs'
-      - '.github/workflows/evadex-quality-gate.yml'
   workflow_dispatch:
 
 # One run per ref. Without this every push started another ~2.5 h run and
@@ -45,7 +51,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    # Did this PR touch anything that can move a rate the gate measures?
+    # `push` and `workflow_dispatch` always run the gate; a `pull_request`
+    # runs it only when the diff against the merge base touches the paths
+    # listed at the top of this file. The four matrix jobs are *skipped*,
+    # not absent, when it did not — see the trigger comment for why that
+    # distinction is the whole point.
+    name: Detection paths changed?
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      gate: ${{ steps.filter.outputs.gate }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "gate=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          merge_base="$(git merge-base "$BASE" "$HEAD")"
+          changed="$(git diff --name-only "$merge_base" "$HEAD")"
+          printf 'changed:\n%s\n' "$changed"
+          # Keep in step with the `push.paths` list at the top of the file.
+          pattern='^(crates/siphon-core/src/(normalize|patterns|scanner|context)/|crates/siphon-core/src/(validation|scoring)\.rs$|src/extractors\.rs$|src/pipeline/|\.github/workflows/evadex-quality-gate\.yml$)'
+          if printf '%s\n' "$changed" | grep -Eq "$pattern"; then
+            echo "gate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "gate=false" >> "$GITHUB_OUTPUT"
+            echo "no detection-bearing path changed; the gate jobs are skipped (which satisfies a required check)"
+          fi
+
   evadex-gate:
+    needs: changes
+    if: needs.changes.outputs.gate == 'true'
     # One job per submission strategy, each against its own threshold.
     #
     # The thresholds are each ~3.5 points under the figure the same scanner
