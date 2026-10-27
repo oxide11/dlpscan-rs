@@ -6,6 +6,75 @@ independent, so a release block typically moves only the crates that actually
 
 ---
 
+## 2026-10-27 — Inspection: the reason that is not a gap
+
+Step 7, the last, of `docs/architecture/inspection-outcome.md`. Step 6
+left two extraction paths silent on purpose — a non-text member of a plain
+archive, an embedded object in an Office package that is not itself a
+package — because the only reasons the type had were gaps, and a gap defers
+mail under the milter's fail-closed default. This release gives the type
+one reason that is not a gap, has the readers use it, and has the ingresses
+tell it apart. Nothing is read that was not read before; what was passed
+over in silence is now named.
+
+### siphon-core 2.12.0
+
+- **feat(core): `Unread::NotText { unit }`**, the informational reason: a
+  member the reader passes over because, by its name, it is not something
+  it opens for text (an image or a binary in an archive, an OLE object or
+  a PDF under an Office package's `embeddings/`). Serde tag `not_text`.
+  `Unread::is_informational()` is `true` for it and for nothing else.
+- **feat(core): `Inspection::has_gap()` and `Inspection::gaps()`** — the
+  unread reasons with the informational ones left out. `has_gap` is the
+  question a fail-closed consumer asks; `is_complete()` is unchanged and
+  stays `false` when the only reasons are informational, because the
+  member was not read and the type does not pretend otherwise. The two
+  invariants: there is no way to be `Complete` and carry reasons, and no
+  way to have a gap and not be `Incomplete`.
+- The `Unsupported` doc no longer claims non-text zip members; it is a
+  document in a format no reader handles, and a gap.
+
+### siphon-cli 2.9.0
+
+- **feat(cli): archive walkers name the members they do not open.** The
+  generic-ZIP, RAR and 7z walkers record `Unread::NotText` for a member
+  without a text extension (directories excepted) instead of passing it
+  over in silence; the OOXML reader records it for an object under
+  `*/embeddings/` that is not an OOXML package. A document's own artwork
+  under `*/media/` is not an object and is not listed; `xl/charts/*`,
+  slide layouts and masters stay unread by design and unlisted.
+- fix(cli): notes and gaps have separate line budgets (`note_unread`,
+  20 each): a zip of a thousand photos cannot use up the lines that would
+  have named the one encrypted member after them.
+- **`--on-incomplete fail` exits 3 on a gap, not on any unread reason.** A
+  zip with a photo in it prints `Unscanned content: 1` with the photo
+  named, as it must, and exits 0, because a script that fails on every
+  archive holding an image has no use for the flag. `scan-dir`'s "not
+  fully scanned" count still includes it.
+- The conformance matrix asserts `has_gap()`: a `clean` fixture may carry
+  informational reasons; a `damaged` one must carry a gap.
+
+### siphon-fs 1.8.0
+
+- **feat(fs): the `POST /scan` response names passed-over members.** A zip
+  of photos arrives as `inspection.status: incomplete` with one
+  `{"kind": "not_text", "unit": "entry photo.png"}` per member. The
+  seen-but-not-read coverage counter does not move for it (nor, as
+  before, for `format_mismatch`); a caller that fails closed should read
+  `has_gap`, which is `false` here.
+
+### siphon-smtp 0.4.0
+
+- **feat(smtp): an informational reason does not defer.** `policy::action_for`
+  consults the operator's fail-closed setting on `Inspection::has_gap()`,
+  not `is_complete()`, and `extract_attachment` treats an attachment as
+  faithful when its only reasons are `FormatMismatch` and informational
+  ones. A zipped attachment holding a `.txt` and a `.png` is read, the
+  photo is named in the inspection, and the message is delivered; the
+  same archive with an encrypted member still defers.
+
+---
+
 ## 2026-10-19 — Office: the parts that are not the body
 
 ### siphon-cli 2.8.0
