@@ -47,14 +47,21 @@ clean (`src/pipeline/mod.rs:283-327`).
 `siphon_core::inspection::Inspection` is that rule, lifted into the crate
 every ingress already depends on, with the reasons typed
 (`Unread::{Oversize, Truncated, Encrypted, NestedArchive, Unsupported,
-ReadError, FormatMismatch, MatchCapReached, Other}`). It is deliberately
-**not** a verdict: it says what the verdict covers, and each ingress keeps
-deciding what to do about a gap, because a proxy, a mail filter and a CLI
-should not do the same thing.
+NotText, ReadError, FormatMismatch, MatchCapReached, Other}`). It is
+deliberately **not** a verdict: it says what the verdict covers, and each
+ingress keeps deciding what to do about a gap, because a proxy, a mail
+filter and a CLI should not do the same thing.
+
+One reason is a note rather than a gap. `NotText` (step 7) names a member
+the reader does not open for text — an image in a zip, an OLE object in a
+docx — and `Unread::is_informational` says so; `Inspection::has_gap` is
+`is_complete` with those left out, and it is the question a fail-closed
+consumer asks.
 
 Invariants the type holds that strings and flags could not:
 
-- there is no way to be `Complete` and carry reasons;
+- there is no way to be `Complete` and carry reasons, and no way to have a
+  gap and not be `Incomplete`;
 - once `Incomplete`, merging in a clean member cannot undo it;
 - `absorb_warnings` keeps every non-empty warning, so a producer that is
   still on strings cannot lose one on the way to the verdict.
@@ -104,9 +111,10 @@ sink the caller installed is set alongside, never cleared.
 
 Notes from landing it:
 
-- Two silent paths are still silent, on purpose: a non-text member of a
-  plain archive (an image, a binary) and the Office XML trees the extractor
-  does not open. Nearly every real archive has one, and step 5's milter
+- Two silent paths were still silent at this step, on purpose (the Office
+  trees were read in siphon-cli 2.8.0; the non-text member is step 7): a
+  non-text member of a plain archive (an image, a binary) and the Office
+  XML trees the extractor did not open. Nearly every real archive has one, and step 5's milter
   defers on any unread unit under its fail-closed default, so typing them
   here would defer ordinary mail carrying a `.png`. Each ingress has to
   decide what an unread image means before the reader reports it; that
@@ -197,8 +205,44 @@ Two decisions this step owed:
   variant, which is a core change) or, for the Office trees, reading more:
   cell comments, speaker notes, text boxes and embedded objects carry text,
   and an extractor that reads the slides and says nothing about the notes
-  is a reading gap, not a reporting one. Both are in `BACKLOG.md`; neither belongs in a
-  deletion step.
+  is a reading gap, not a reporting one. Neither belonged in a deletion
+  step: the Office trees were read in siphon-cli 2.8.0, and the
+  informational reason is step 7.
+
+### 7. The informational reason — **landed, siphon-core 2.12.0 / siphon-cli 2.9.0 / siphon-fs 1.8.0 / siphon-smtp 0.4.0**
+
+The one path step 6 left silent, closed the way step 6 said it should be:
+not a quieter reader, a reason the ingresses can tell from a gap.
+
+- **`Unread::NotText { unit }`** (core MINOR). A member the reader passes
+  over because, by its name, it is not something it opens for text: an
+  image or a binary inside a plain archive (ZIP, RAR, 7z), an embedded
+  object under an Office package's `*/embeddings/` that is not an OOXML
+  package (an OLE `.bin`, a PDF, an image). `Unread::is_informational` is
+  `true` for it and for nothing else; `Inspection::has_gap` and
+  `Inspection::gaps` are the reasons with the informational ones left out.
+  `is_complete` is unchanged and stays `false` for it — the member was not
+  read, and the type does not pretend otherwise. Serde tag: `not_text`.
+- **The readers name it.** The generic-ZIP, RAR and 7z walkers and the
+  OOXML embeddings pass each record `NotText` for the members they used to
+  pass over. Notes and gaps have separate line budgets in
+  `src/extractors.rs::note_unread`, so a zip of a thousand photos cannot
+  use up the lines that would have named the one encrypted member after
+  them. Still not listed, by design: a document's own artwork under
+  `*/media/` (not an object), `xl/charts/*`, slide layouts and masters.
+- **The ingresses read `has_gap`.** The milter's `policy::action_for` and
+  `extract_attachment` (an attachment is faithful when its only reasons are
+  `FormatMismatch` and informational ones), siphon-fs's seen-but-not-read
+  counter, the CLI's `--on-incomplete fail` exit code, and the conformance
+  matrix's `clean` and `damaged` assertions. The reason still reaches
+  every reader: `siphon scan` prints it under "Unscanned content", the
+  siphon-fs response carries it under `inspection.unread`, scan-dir's
+  "not fully scanned" count includes it. What changed is that nothing
+  defers, fails or counts a coverage gap on it.
+- Pinned by `tests/office_parts_test.rs` (an OLE object is named and is not
+  a gap; artwork is not listed), `tests/inspection_outcome_test.rs` (a zip
+  with a photo: `not_text`, exit 0 under `fail`), the siphon-smtp policy
+  and attachment tests, and the siphon-fs coverage test.
 
 ## What this does not do
 

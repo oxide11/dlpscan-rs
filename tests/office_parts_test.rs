@@ -358,13 +358,39 @@ fn embedded_object_inside_an_embedded_object_is_reported_not_opened() {
 }
 
 #[test]
-fn embedded_object_that_is_not_a_package_is_not_an_error() {
-    // An OLE `.bin` is not something this reader opens; it is skipped the
-    // way a non-text archive member is, with the host still read in full.
+fn embedded_object_that_is_not_a_package_is_named_and_is_not_a_gap() {
+    // An OLE `.bin` is not something this reader opens. The host is read in
+    // full; the object is named as `NotText`, the informational reason, so
+    // the inspection is incomplete (the object was not read) and has no gap
+    // (nothing a fail-closed ingress should act on).
     let bytes = docx_with(&[(
         "word/embeddings/oleObject1.bin",
         b"\xd0\xcf\x11\xe0 not a zip",
     )]);
+    let result = extract(&bytes, ".docx");
+    assert!(result.text.contains("Quarterly summary"));
+    assert!(!result.inspection.is_complete());
+    assert!(
+        !result.inspection.has_gap(),
+        "a passed-over object is not a gap: {}",
+        result.inspection.describe().join("\n")
+    );
+    assert!(
+        matches!(
+            result.inspection.unread_reasons(),
+            [siphon::Unread::NotText { unit }] if unit == "entry word/embeddings/oleObject1.bin"
+        ),
+        "{:?}",
+        result.inspection
+    );
+}
+
+#[test]
+fn document_artwork_is_not_listed() {
+    // A picture under `word/media/` is the document's own artwork, not an
+    // object pasted into it; listing it would make every illustrated docx
+    // incomplete for no one's benefit.
+    let bytes = docx_with(&[("word/media/image1.png", b"\x89PNG not really")]);
     let result = extract(&bytes, ".docx");
     assert!(result.text.contains("Quarterly summary"));
     assert_complete(&result);

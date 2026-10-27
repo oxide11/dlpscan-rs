@@ -150,13 +150,17 @@ pub fn action_for(
         Verdict::Indeterminate => incomplete_action(on_indeterminate),
     };
 
-    if inspection.is_complete() {
+    if !inspection.has_gap() {
         return by_verdict;
     }
 
-    // Something in this message was not read. The operator's fail-closed
-    // setting is about exactly that, and it must not be skipped because
-    // something *else* in the message was found.
+    // Something in this message that could hold a value was not read. The
+    // operator's fail-closed setting is about exactly that, and it must not
+    // be skipped because something *else* in the message was found. An
+    // informational reason (`Unread::is_informational` — an image inside a
+    // zipped attachment) is not a gap: it is in the inspection for the log,
+    // and deferring ordinary mail over it is the outcome the variant exists
+    // to avoid.
     //
     // Severity ranks `Flagged` above `Indeterminate`, which is the right
     // label — a confirmed finding is the more actionable statement — but it
@@ -208,8 +212,8 @@ mod tests {
     use super::*;
     use siphon_mail::Unread;
 
-    /// Any incomplete inspection. The policy reads only `is_complete()`;
-    /// which part went unread and why is for the log, not the decision.
+    /// Any inspection with a gap. The policy reads only `has_gap()`; which
+    /// part went unread and why is for the log, not the decision.
     fn incomplete() -> Inspection {
         Inspection::new().with_unread(Unread::Encrypted {
             unit: "part 2".into(),
@@ -356,6 +360,38 @@ mod tests {
                 "{reason:?} must defer under the default policy"
             );
         }
+    }
+
+    /// The one reason that is not a gap. A zipped attachment with a photo in
+    /// it is ordinary mail; the inspection says the photo was passed over,
+    /// and the fail-closed default delivers anyway. A gap beside it still
+    /// defers.
+    #[test]
+    fn an_informational_reason_does_not_defer() {
+        let photo = Unread::NotText {
+            unit: "entry photo.png".into(),
+        };
+        let inspection = Inspection::new().with_unread(photo.clone());
+        assert!(
+            !inspection.is_complete(),
+            "the photo was not read, and the type says so"
+        );
+        assert_eq!(
+            action_for(Verdict::Clean, &inspection, OnIndeterminate::Defer),
+            Action::Accept
+        );
+        assert_eq!(
+            action_for(Verdict::Flagged, &inspection, OnIndeterminate::Quarantine),
+            Action::Accept
+        );
+        let with_gap = inspection.with_unread(Unread::Encrypted {
+            unit: "entry secrets.txt".into(),
+        });
+        assert_eq!(
+            action_for(Verdict::Clean, &with_gap, OnIndeterminate::Defer),
+            Action::Defer
+        );
+        assert!(photo.is_informational());
     }
 
     /// A verdict that already stops the message is at least as restrictive

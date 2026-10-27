@@ -46,7 +46,9 @@ struct Cli {
     /// encrypted archive entry, an attachment the extractor could not open,
     /// a match cap, a file whose bytes contradict its name. `report` prints
     /// what went unread and exits 0, as before; `fail` exits 3 so a script
-    /// cannot take a partial verdict for a clean one.
+    /// cannot take a partial verdict for a clean one. An informational
+    /// reason — an image or a binary the reader does not open, listed as
+    /// `not_text` — is printed under both and fails under neither.
     #[arg(long, value_enum, default_value = "report", global = true)]
     on_incomplete: OnIncomplete,
 }
@@ -68,6 +70,10 @@ enum OnIncomplete {
 /// Apply `--on-incomplete` to a finished scan. `scan-dir` never set a non-zero
 /// exit code at all before this; under `fail` an errored file is 1 and a
 /// partially read one is 3, errors first because they are the more severe.
+/// "Partially read" is `Inspection::has_gap`, not `!is_complete`: a zip with
+/// a photo in it is listed as not fully scanned, which is true, and exits 0,
+/// because a script that fails on every archive holding an image has no use
+/// for the flag.
 fn exit_for_coverage(policy: OnIncomplete, results: &[PipelineResult]) {
     if policy != OnIncomplete::Fail {
         return;
@@ -75,7 +81,7 @@ fn exit_for_coverage(policy: OnIncomplete, results: &[PipelineResult]) {
     if results.iter().any(|r| r.error.is_some()) {
         process::exit(1);
     }
-    if results.iter().any(|r| !r.inspection.is_complete()) {
+    if results.iter().any(|r| r.inspection.has_gap()) {
         process::exit(EXIT_INCOMPLETE);
     }
 }

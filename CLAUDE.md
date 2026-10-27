@@ -837,7 +837,9 @@ the findings back.) File formats supported
   archive or an encrypted entry is not recursed into but is reported as a
   typed `Unread::NestedArchive` / `Unread::Encrypted` on the extraction's
   `inspection` (`entry inner.zip is a nested archive; not read` is its
-  `describe()` line) rather than skipped silently
+  `describe()` line) rather than skipped silently; a member the walker does
+  not open for text (an image, a binary) is listed as `Unread::NotText`,
+  the informational reason `Inspection::has_gap` leaves out
 - Parquet/SQLite (`data-formats`) — arrow + rusqlite
 - PNG/JPG/GIF/BMP/TIFF/WebP barcode & QR (`barcode`) — rxing + image
 - Outlook MSG (`msg`) — cfb OLE2
