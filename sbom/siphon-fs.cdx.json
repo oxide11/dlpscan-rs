@@ -6,8 +6,8 @@
     "component": {
       "type": "application",
       "name": "siphon-fs",
-      "version": "1.7.0",
-      "purl": "pkg:cargo/siphon-fs@1.7.0"
+      "version": "1.8.0",
+      "purl": "pkg:cargo/siphon-fs@1.8.0"
     },
     "properties": [
       {
@@ -6114,8 +6114,8 @@
     {
       "type": "library",
       "name": "siphon-cli",
-      "version": "2.8.0",
-      "purl": "pkg:cargo/siphon-cli@2.8.0",
+      "version": "2.9.0",
+      "purl": "pkg:cargo/siphon-cli@2.9.0",
       "scope": "required",
       "licenses": [
         {
@@ -6140,8 +6140,8 @@
     {
       "type": "library",
       "name": "siphon-core",
-      "version": "2.11.0",
-      "purl": "pkg:cargo/siphon-core@2.11.0",
+      "version": "2.12.0",
+      "purl": "pkg:cargo/siphon-core@2.12.0",
       "scope": "required",
       "licenses": [
         {

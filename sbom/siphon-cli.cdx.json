@@ -6,8 +6,8 @@
     "component": {
       "type": "application",
       "name": "siphon-cli",
-      "version": "2.8.0",
-      "purl": "pkg:cargo/siphon-cli@2.8.0"
+      "version": "2.9.0",
+      "purl": "pkg:cargo/siphon-cli@2.9.0"
     },
     "properties": [
       {
@@ -4776,8 +4776,8 @@
     {
       "type": "library",
       "name": "siphon-core",
-      "version": "2.11.0",
-      "purl": "pkg:cargo/siphon-core@2.11.0",
+      "version": "2.12.0",
+      "purl": "pkg:cargo/siphon-core@2.12.0",
       "scope": "required",
       "licenses": [
         {
