@@ -49,6 +49,44 @@ spec:
               value: /etc/siphon/overrides.json
             - name: RUST_LOG
               value: info
+            {{- if .Values.postgres.enabled }}
+            # Bundled Postgres — same URL shape as siphon-api so the same
+            # migration schema is shared.  Password is in a separate env var
+            # that the driver appends; the URL carries no credentials in plain.
+            - name: SIPHON_DATABASE_URL
+              value: {{ printf "postgres://%s@%s:%v/%s"
+                .Values.postgres.username
+                (include "siphon.componentName" (dict "root" . "component" "postgres"))
+                .Values.postgres.service.port
+                .Values.postgres.database | quote }}
+            - name: SIPHON_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "postgres.secretName is required when postgres.enabled is true" .Values.postgres.secretName }}
+                  key: password
+            - name: SIPHON_DATABASE_TLS
+              value: {{ .Values.postgres.sslMode | quote }}
+            {{- with .Values.postgres.caFile }}
+            - name: SIPHON_DATABASE_CA_FILE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- else if .Values.externalPostgres.enabled }}
+            - name: SIPHON_DATABASE_URL
+              {{- if and .Values.externalPostgres.urlSecretRef.name .Values.externalPostgres.urlSecretRef.key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalPostgres.urlSecretRef.name }}
+                  key: {{ .Values.externalPostgres.urlSecretRef.key }}
+              {{- else }}
+              value: {{ required "externalPostgres.url or externalPostgres.urlSecretRef must be set when externalPostgres.enabled is true" .Values.externalPostgres.url | quote }}
+              {{- end }}
+            - name: SIPHON_DATABASE_TLS
+              value: {{ .Values.externalPostgres.sslMode | quote }}
+            {{- with .Values.externalPostgres.caFile }}
+            - name: SIPHON_DATABASE_CA_FILE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.tls.internal.enabled }}
             # siphon-fs served plaintext and relied on the mesh. Uploads are
             # the data the scanner exists to find; they now cross the pod

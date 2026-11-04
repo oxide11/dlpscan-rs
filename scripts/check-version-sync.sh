@@ -47,6 +47,42 @@ cargo_version() {
     ' "$1"
 }
 
+cargo_name() {
+    # The package's own name, anchored past the section break for the same
+    # reason cargo_version is: a [dependencies] entry must not shadow it.
+    awk '
+        /^\[package\]/ { in_pkg = 1; next }
+        /^\[/ { in_pkg = 0 }
+        in_pkg && /^name[[:space:]]*=/ {
+            gsub(/^name[[:space:]]*=[[:space:]]*"|"[[:space:]]*$/, "")
+            print
+            exit
+        }
+    ' "$1"
+}
+
+# The version Cargo.lock records for a workspace member. Workspace members
+# appear as an ordinary [[package]] block carrying no checksum, so this is a
+# plain lookup of the version line inside the block whose name matches.
+lock_version() {
+    awk -v want="$1" '
+        $0 == "[[package]]" { n = ""; next }
+        /^name[[:space:]]*=/ {
+            n = $0
+            gsub(/^name[[:space:]]*=[[:space:]]*"|"[[:space:]]*$/, "", n)
+            next
+        }
+        /^version[[:space:]]*=/ {
+            if (n == want) {
+                v = $0
+                gsub(/^version[[:space:]]*=[[:space:]]*"|"[[:space:]]*$/, "", v)
+                print v
+                exit
+            }
+        }
+    ' Cargo.lock
+}
+
 check() {
     local label="$1" expected="$2" actual="$3"
     checks=$((checks + 1))
@@ -207,6 +243,41 @@ auth_ver="$(cargo_version crates/siphon-auth/Cargo.toml)"
 echo "siphon-core ${core_ver} (standalone)"
 echo "siphon-launcher ${launcher_ver} (standalone)"
 echo "siphon-auth ${auth_ver} (standalone)"
+
+# ---------------------------------------------------------------------------
+# Cargo.lock agrees with the manifests it locks
+# ---------------------------------------------------------------------------
+# The gap that let main carry a stale lockfile. Nothing compared the
+# lockfile's workspace members against the crates' own Cargo.toml, so
+# siphon-auth sat at 0.1.0 in Cargo.lock while its manifest said 0.1.1, and
+# siphon-launcher at 2.1.2 against a manifest saying 2.1.4.
+#
+# Neither existing gate could see it. The checks above compare manifests
+# against Dockerfiles, Helm values and compose, and never read Cargo.lock;
+# generate-sbom.sh --check compares the SBOMs against Cargo.lock, and those
+# agreed, because both were stale together. The SBOMs then published
+# pkg:cargo/siphon-auth@0.1.0 for a crate that had not been 0.1.0 for some
+# time — in the one artifact whose whole job is saying what shipped.
+#
+# `cargo check` or any other resolve fixes this silently, which is why it
+# survived: the drift only exists in the committed file, and the first local
+# build repairs the working tree without telling anyone.
+echo
+echo "Cargo.lock vs manifests"
+for manifest in Cargo.toml crates/*/Cargo.toml; do
+    [[ -f "${manifest}" ]] || continue
+    pkg_name="$(cargo_name "${manifest}")"
+    [[ -n "${pkg_name}" ]] || continue
+    manifest_ver="$(cargo_version "${manifest}")"
+    locked_ver="$(lock_version "${pkg_name}")"
+    if [[ -z "${locked_ver}" ]]; then
+        # A workspace member absent from Cargo.lock entirely: the lockfile
+        # predates the crate. Report it rather than passing on an empty match.
+        check "  Cargo.lock ${pkg_name}" "${manifest_ver}" "(absent)"
+    else
+        check "  Cargo.lock ${pkg_name}" "${manifest_ver}" "${locked_ver}"
+    fi
+done
 
 # ---------------------------------------------------------------------------
 echo

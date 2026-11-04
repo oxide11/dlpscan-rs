@@ -488,16 +488,21 @@ impl KeyStore {
         };
         let rec = Arc::new(record.clone());
         let mut cache = self.cache.write().unwrap_or_else(|e| e.into_inner());
-        // The old current becomes previous; anything older than that is gone.
+        // The current secret becomes previous (grace window = `until`).
+        // Any older previous entry is dropped outright — it predates this
+        // rotation's grace window and should not inherit a new deadline.
+        // Replacing an already-Previous entry's record pointer with `rec`
+        // (which carries `previous_valid_until = until`) would silently extend
+        // a superseded secret's validity on a second rotation.
+        cache
+            .by_hash
+            .retain(|_, (r, which)| !(r.id == id && *which == Which::Previous));
         for (r, which) in cache.by_hash.values_mut() {
-            if r.id == id {
+            if r.id == id && *which == Which::Current {
                 *which = Which::Previous;
                 *r = rec.clone();
             }
         }
-        cache.by_hash.retain(|_, (r, which)| {
-            !(r.id == id && *which == Which::Previous && r.previous_valid_until.is_none())
-        });
         cache
             .by_hash
             .insert(hash_token(&token), (rec.clone(), Which::Current));

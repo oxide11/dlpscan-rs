@@ -305,6 +305,34 @@ async fn start_process(State(state): State<AppState>, Json(req): Json<StartReque
     };
     let bind = req.bind.unwrap_or_else(|| default_bind.to_string());
 
+    // req.bind bypasses the BLOCKED_ENV_KEYS check: the launcher sets
+    // SIPHON_BIND / SIPHON_FS_BIND directly from this value, so a caller
+    // that passes "0.0.0.0:8080" can expose siphon-api on all interfaces
+    // even though SIPHON_BIND is in the blocked set.  The launcher assumes
+    // same-machine trust (loopback-only), so enforce that assumption on the
+    // child's bind address too.
+    {
+        let addr: std::net::SocketAddr = match bind.parse() {
+            Ok(a) => a,
+            Err(_) => {
+                return err(
+                    StatusCode::BAD_REQUEST,
+                    format!("bind {:?} is not a valid socket address", bind),
+                );
+            }
+        };
+        if !addr.ip().is_loopback() {
+            return err(
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "bind {:?} is not a loopback address; siphon-launcher is a local-dev tool \
+                     and only spawns services on 127.0.0.1 or ::1",
+                    bind
+                ),
+            );
+        }
+    }
+
     // Pick the spawn strategy:
     //   1. Prebuilt binary in SIPHON_BIN_DIR — fastest start, normal
     //      workflow when the analyst has already run `cargo build`.
@@ -797,6 +825,23 @@ mod env_filter_tests {
             "RUST_BACKTRACE",
         ] {
             assert!(env_key_permitted(key), "{key} should be permitted");
+        }
+    }
+
+    /// req.bind is used to set SIPHON_BIND / SIPHON_FS_BIND on the child,
+    /// bypassing the env-key blocklist. The only safe values are loopback
+    /// addresses — the launcher's own security model is "loopback-only".
+    #[test]
+    fn bind_address_loopback_check() {
+        let non_loopback = ["0.0.0.0:8080", "192.168.1.1:8080", "10.0.0.1:1344"];
+        for addr in non_loopback {
+            let parsed: std::net::SocketAddr = addr.parse().unwrap();
+            assert!(!parsed.ip().is_loopback(), "{addr} should be non-loopback");
+        }
+        let loopback = ["127.0.0.1:8080", "127.0.0.1:8081", "[::1]:8080"];
+        for addr in loopback {
+            let parsed: std::net::SocketAddr = addr.parse().unwrap();
+            assert!(parsed.ip().is_loopback(), "{addr} should be loopback");
         }
     }
 }

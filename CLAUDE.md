@@ -1018,7 +1018,7 @@ and revs independently. A bug fixed only in `siphon-fs` produces a new
 | `siphon-icap` | `crates/siphon-icap/Cargo.toml` | `deploy/Dockerfile.icap`, `siphon-icap` Docker tag |
 | `siphon-launcher` | `crates/siphon-launcher/Cargo.toml` | local-dev tool only |
 | Helm chart structure | `deploy/helm/siphon/Chart.yaml` `version:` | upgrade-path semantics for the chart itself (PVC migrations, RBAC reshuffles) |
-| Stack release label | `deploy/helm/siphon/Chart.yaml` `appVersion:` | a meta-label for the bundled release; equals the highest component version moved in this wave |
+| Stack release label | `deploy/helm/siphon/Chart.yaml` `appVersion:` | a meta-label for the bundled release; **equals the root `siphon` crate version**, which is what `scripts/check-version-sync.sh` enforces |
 
 ### What bumps when
 
@@ -1054,8 +1054,25 @@ When you bump `crates/<name>/Cargo.toml` `[package].version = "X.Y.Z"`, in the
 3. `deploy/docker-compose.yml` — the matching `image: <name>:X.Y.Z` line.
 4. `CHANGELOG.md` — add a `## <name> X.Y.Z — YYYY-MM-DD` heading.
 
-When you bump the Helm chart's own `version:`, also update its `appVersion:`
-to match the highest crate version moved in this release wave.
+`Cargo.lock` carries the version too, and `scripts/check-version-sync.sh`
+checks it against every workspace manifest — which nothing did until
+2026-11-04. `main` had been carrying siphon-auth 0.1.0 and siphon-launcher
+2.1.2 in the lockfile against manifests saying otherwise, and the nine SBOM
+documents inherited it, publishing `pkg:cargo/siphon-auth@0.1.0` for a crate
+that had not been 0.1.0 for some time. Neither existing gate could see it:
+the lockstep checks never read the lockfile, and `generate-sbom.sh --check`
+compares the SBOMs *to* the lockfile, so both being stale together passed.
+Any local `cargo` resolve repairs the working tree silently, which is why it
+survived — the drift only ever existed in the committed file.
+
+When you bump the Helm chart's own `version:`, also set its `appVersion:` to
+the **root `siphon` crate's** version. This line used to say "the highest
+crate version moved in this release wave", which is not what is enforced:
+`scripts/check-version-sync.sh` checks `appVersion` against the root crate,
+and the two coincide only when the root crate happens to be the highest. On
+2026-11-04 that wording produced a red gate — `appVersion` was set to
+siphon-api's 2.12.3 while the root crate was at 2.10.0. The script is the
+authority; `scripts/bump-version.sh chart` already does the right thing.
 
 ### Core MAJOR cascades
 
