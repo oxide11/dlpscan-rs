@@ -393,7 +393,7 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.icap
-    image: siphon-icap:0.3.2
+    image: siphon-icap:0.3.3
     profiles: [auth]
     environment:
       # CIDRs whose connections the ICAP server accepts. Default is

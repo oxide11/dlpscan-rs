@@ -79,8 +79,23 @@ copies anything, rejects a zero length, `parse_command` bounds-checks every
 fixed-width field, and `nul_list` terminates on every input including a
 leading NUL and a missing terminator.
 
-Still not reviewed: the ICAP `Encapsulated` offset handling beyond its
-existing 1 MiB per-section cap.
+### 2026-09-30 — the ICAP Encapsulated header
+
+The pass the entry below deferred, and the same class a fifth time. Four
+findings in `Encapsulated` parsing, all fixed in siphon-icap 0.3.3 — a missing
+header, a last section naming no body, decreasing offsets, and an unparseable
+offset each produced an empty body with `truncated` false, which `handle_scan`
+answers with a clean 204 while the payload stays unread in the socket. All four
+now return 400, which also closes the connection, so unconsumed bytes cannot be
+read as the next request on a keep-alive connection. See the CHANGELOG entry
+for siphon-icap 0.3.3.
+
+The 1 MiB per-section cap itself was re-checked and is sound: it is applied to
+every non-final section before the allocation, and the final section is either
+chunked (separately bounded by `max_body` with a truncation flag) or
+`null-body`.
+
+Previously recorded as outstanding here, now closed.
 
 ## Security debt — unmaintained dependencies
 
