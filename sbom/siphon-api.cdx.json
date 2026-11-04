@@ -1906,8 +1906,8 @@
     {
       "type": "library",
       "name": "notify",
-      "version": "8.2.0",
-      "purl": "pkg:cargo/notify@8.2.0",
+      "version": "8.2.1",
+      "purl": "pkg:cargo/notify@8.2.1",
       "scope": "required",
       "licenses": [
         {
@@ -3532,8 +3532,8 @@
     {
       "type": "library",
       "name": "typed-path",
-      "version": "0.12.3",
-      "purl": "pkg:cargo/typed-path@0.12.3",
+      "version": "0.13.0",
+      "purl": "pkg:cargo/typed-path@0.13.0",
       "scope": "required",
       "licenses": [
         {
@@ -3850,8 +3850,8 @@
     {
       "type": "library",
       "name": "zip",
-      "version": "9.0.5",
-      "purl": "pkg:cargo/zip@9.0.5",
+      "version": "9.1.3",
+      "purl": "pkg:cargo/zip@9.1.3",
       "scope": "required",
       "licenses": [
         {
