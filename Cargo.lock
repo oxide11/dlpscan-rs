@@ -5083,7 +5083,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-auth"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "deadpool-postgres",
@@ -5222,7 +5222,7 @@ dependencies = [
 
 [[package]]
 name = "siphon-launcher"
-version = "2.1.2"
+version = "2.1.3"
 dependencies = [
  "axum",
  "libc",
