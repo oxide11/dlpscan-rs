@@ -101,7 +101,7 @@ impl ServerTls {
         use x509_cert::der::Decode as _;
         let leaf = self.certs.first()?;
         let cert = x509_cert::Certificate::from_der(leaf).ok()?;
-        let t = cert.tbs_certificate.validity.not_after.to_system_time();
+        let t = cert.tbs_certificate().validity().not_after.to_system_time();
         Some(chrono::DateTime::<chrono::Utc>::from(t))
     }
 

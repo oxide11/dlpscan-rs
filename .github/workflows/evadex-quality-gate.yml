@@ -12,8 +12,21 @@ name: evadex quality gate
 #
 # `scoring.rs` is included for the same reason — the gate asserts on
 # confidence thresholds, and scoring is what produces the confidences.
-# (Duplicated rather than shared via a YAML anchor: GitHub Actions does not
-# resolve anchors in workflow files. Keep the two lists in step.)
+#
+# `src/extractors.rs` and `src/pipeline/**` are included because three of
+# the four jobs measure a *file* path: a docx, pdf or xlsx submission goes
+# through the extractor before the scanner sees a byte, so a change there
+# can move those three rates without touching siphon-core at all. The
+# Office hidden-parts reader (#538, 2026-10-19) shipped without a gate run
+# for exactly that reason.
+#
+# The list appears twice: here for `push`, and as a regex in the `changes`
+# job below for `pull_request`. Keep the two in step. (On `pull_request` the
+# filtering is a job, not a `paths:` key, because this check is meant to be
+# *required* on `main` (#515): a `paths:`-filtered workflow is absent on a
+# PR that does not touch them, and an absent required check leaves the
+# merge button pending forever, while a job that ran and skipped every step
+# reports success under its name and satisfies it.)
 on:
   push:
     branches: [main]
@@ -24,17 +37,11 @@ on:
       - 'crates/siphon-core/src/context/**'
       - 'crates/siphon-core/src/validation.rs'
       - 'crates/siphon-core/src/scoring.rs'
+      - 'src/extractors.rs'
+      - 'src/pipeline/**'
       - '.github/workflows/evadex-quality-gate.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'crates/siphon-core/src/normalize/**'
-      - 'crates/siphon-core/src/patterns/**'
-      - 'crates/siphon-core/src/scanner/**'
-      - 'crates/siphon-core/src/context/**'
-      - 'crates/siphon-core/src/validation.rs'
-      - 'crates/siphon-core/src/scoring.rs'
-      - '.github/workflows/evadex-quality-gate.yml'
   workflow_dispatch:
 
 # One run per ref. Without this every push started another ~2.5 h run and
@@ -45,20 +52,118 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  evadex-gate:
-    name: Run evadex quality gate
+  changes:
+    # Did this PR touch anything that can move a rate the gate measures?
+    # `push` and `workflow_dispatch` always run the gate; a `pull_request`
+    # runs it only when the diff against the merge base touches the paths
+    # listed at the top of this file. When it did not, the four matrix jobs
+    # still *run* — every step in them is skipped on this output, and each
+    # leg finishes green in seconds under its own name. The condition is on
+    # the steps, not the job, on purpose: a matrix job skipped at job level
+    # is reported once, under the unexpanded name `Run evadex quality gate
+    # (${{ matrix.strategy }})` (seen on #547), so a required check named
+    # `(text)` would still be absent and the merge button still pending.
+    name: Detection paths changed?
     runs-on: ubuntu-latest
-    # Observed runtime is 2h05m–2h34m, essentially all of it re-initialising
-    # the scanner once per test case (see the step below). This bounds a real
-    # hang without cutting off a healthy run; drop it to ~15 min once the
-    # adapter stops paying startup per case.
-    timeout-minutes: 180
+    timeout-minutes: 5
+    outputs:
+      gate: ${{ steps.filter.outputs.gate }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: filter
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "gate=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          merge_base="$(git merge-base "$BASE" "$HEAD")"
+          changed="$(git diff --name-only "$merge_base" "$HEAD")"
+          printf 'changed:\n%s\n' "$changed"
+          # Keep in step with the `push.paths` list at the top of the file.
+          pattern='^(crates/siphon-core/src/(normalize|patterns|scanner|context)/|crates/siphon-core/src/(validation|scoring)\.rs$|src/extractors\.rs$|src/pipeline/|\.github/workflows/evadex-quality-gate\.yml$)'
+          if printf '%s\n' "$changed" | grep -Eq "$pattern"; then
+            echo "gate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "gate=false" >> "$GITHUB_OUTPUT"
+            echo "no detection-bearing path changed; the gate jobs are skipped (which satisfies a required check)"
+          fi
+
+  evadex-gate:
+    needs: changes
+    # One job per submission strategy, each against its own threshold.
+    #
+    # The thresholds are each ~3.5 points under the figure the same scanner
+    # measured with this seed: text 78.8%, docx 76.8% and xlsx 75.4% on
+    # 2026-10-15/16 (siphon-core 2.11.0, evadex 3.41.1), pdf 75.2% on
+    # 2026-10-19 (same core, evadex 3.42.0, the first run with the fonts
+    # step below), all with 0 errors. They are regression floors, not
+    # targets: a change that drops a strategy below its floor has cost
+    # detection on that path and should say why. Raise a floor when the
+    # number it guards has moved up and stayed.
+    #
+    # PDF sat 13-15 points below the other three on the same scanner (63.3%
+    # on 2026-10-15), and that was the fixture, not pdf-extract: evadex's
+    # PDF builder asked for a font fpdf2 does not ship and fell back to
+    # Helvetica with Latin-1 `errors="replace"`, so every regional digit,
+    # zero-width character and homoglyph reached Siphon as `?` (2,980 of
+    # the 3,534 variants detected in text and missed in PDF on that run).
+    # evadex 3.42.0 embeds the TrueType fonts it finds on the runner and
+    # leaves out of the pdf run any variant no font can draw, counted under
+    # `meta.skipped_unrepresentable`. The fonts step below is what gives it
+    # something to find; without it the pdf job measures Latin-1 only. With
+    # both in place the pdf job submits 20,221 of the 21,805 variants the
+    # text job does (1,584 left out as unrepresentable) and detected 75.2%
+    # of them on 2026-10-19, within two points of docx and xlsx on the same
+    # core; the pdf floor follows the other three from there (it was 60
+    # while the fixture was broken).
+    #
+    # The false-positive check runs once, on the text job: `evadex falsepos`
+    # submits text whatever the strategy, so repeating it three more times
+    # would measure the same thing.
+    name: Run evadex quality gate (${{ matrix.strategy }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - strategy: text
+            min_detection: 75
+            fp_args: >-
+              --max-fp 5
+              --fp-category credit_card --fp-category ssn --fp-category sin
+              --fp-category iban --fp-category email --fp-category phone
+              --fp-category ca_ramq
+          - strategy: docx
+            min_detection: 73
+            fp_args: ""
+          - strategy: pdf
+            min_detection: 71
+            fp_args: ""
+          - strategy: xlsx
+            min_detection: 72
+            fp_args: ""
+    # Was 180 min when the adapter paid scanner start-up once per test case
+    # (2h05m–2h34m observed). With `batch: true` (evadex 3.41.0) one
+    # `scan-dir` process serves a batch of submissions and the run is
+    # dominated by building DOCX/PDF/XLSX fixtures in Python instead.
+    timeout-minutes: 60
 
     steps:
       - name: Checkout dlpscan-rs
+        if: needs.changes.outputs.gate == 'true'
         uses: actions/checkout@v7
 
       - name: Checkout evadex
+        if: needs.changes.outputs.gate == 'true'
         uses: actions/checkout@v7
         with:
           repository: tbustenk/evadex
@@ -66,9 +171,11 @@ jobs:
           token: ${{ secrets.GH_PAT || github.token }}
 
       - name: Set up Rust
+        if: needs.changes.outputs.gate == 'true'
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust build artifacts
+        if: needs.changes.outputs.gate == 'true'
         uses: actions/cache@v6
         with:
           path: |
@@ -80,48 +187,85 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build Siphon CLI (release)
+        if: needs.changes.outputs.gate == 'true'
         run: cargo build --release --bin siphon
 
       - name: Set up Python
+        if: needs.changes.outputs.gate == 'true'
         uses: actions/setup-python@v7
         with:
           python-version: '3.11'
           cache: pip
 
+      # Fonts for the PDF fixture (evadex >= 3.42.0,
+      # `evadex.adapters.dlpscan.pdf_fonts`). DejaVu Sans covers Latin,
+      # Greek, Cyrillic, Arabic, Armenian, Georgian, Lao and N'Ko; GNU
+      # FreeFont adds Devanagari, Bengali, Thai and more; Noto core adds the
+      # rest of what the regional-digit techniques use that those two lack.
+      # A script none of them covers is skipped for pdf and listed in the
+      # report, never submitted as `?`. Cheap (a few MB) and only the pdf job
+      # needs it, but the install is unconditional so the four jobs stay the
+      # same image.
+      - name: Install fonts for the PDF fixture
+        if: needs.changes.outputs.gate == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            fonts-dejavu-core fonts-freefont-ttf fonts-noto-core
+
       - name: Install evadex
+        if: needs.changes.outputs.gate == 'true'
         working-directory: evadex
         run: pip install -e ".[dev]"
 
       - name: Run evadex unit tests
+        if: needs.changes.outputs.gate == 'true'
         working-directory: evadex
         run: python -m pytest tests/unit -q --tb=short
 
-      # This step is the entire runtime of the job: 2h05m-2h34m, against ~2
-      # minutes for everything above it.
+      # Until evadex 3.41.0 this step was the entire runtime of the job
+      # (2h05m-2h34m): the adapter spawned one `siphon` per test case and
+      # ~97% of the job was rebuilding the same 583 regexes and the keyword
+      # automaton ~20,000 times (measured: scan-text on 28 bytes 0.395 s, of
+      # which ~10 ms is scanning). `batch: true` below runs one `scan-dir`
+      # over a batch of cases instead; verdicts are identical (720 of 720 on
+      # a seeded comparison) and the job is now bounded by fixture building.
       #
-      # It is not scanning that costs. Measured on the release binary:
+      # `--seed` makes the keyword sentence wrapped around every submission
+      # a pure function of (seed, category, value), so a red run here can
+      # be reproduced locally with the same flag. Change the seed on purpose,
+      # not by accident: it changes which sentences are tested.
       #
-      #   siphon --version                 0.005 s   (process spawn)
-      #   siphon scan-text, 28 bytes       0.395 s
-      #   siphon scan, 10 KB with hits     0.405 s
+      # `--max-fp` is a real measurement as of evadex 3.41.0 (before that it
+      # read a key the scan never wrote and passed unconditionally). The
+      # `entropy` falsepos category submits random high-entropy strings,
+      # which an entropy detector is meant to flag (7 of 10 flagged on
+      # 2.10.0, every structured category at 0%), so the check is scoped to
+      # the structured categories.
       #
-      # Scanning 10 KB costs 10 ms more than scanning 28 bytes. The other
-      # ~390 ms is one-time initialisation — compiling 583 regexes and
-      # building the Aho-Corasick automaton over 5,000+ context keywords —
-      # paid on every process start and discarded on exit. The adapter
-      # spawns one `siphon` per test case, so ~97% of this job is rebuilding
-      # the same automaton some 20,000 times.
+      # `2>&1`: `evadex ci` prints its report to stderr. Without it the
+      # uploaded artifact was a zero-byte file on every run since the
+      # workflow was written.
       #
-      # The CLI already has the fix: one `scan-dir` over a directory of
-      # cases initialises once. Measured on 200 cases:
+      # `set -o pipefail`: without it the step's exit status was `tee`'s,
+      # never evadex's. Every run since the workflow was written printed
+      # "One or more thresholds violated" (31.1% against a 70% threshold
+      # on 2026-10-14) and the job went green. This gate has not gated.
       #
-      #   200 separate invocations   71.3 s
-      #   1 scan-dir invocation       0.4 s   (194x)
-      #
-      # That change belongs in the siphon-cli adapter in tbustenk/evadex,
-      # not here. Until it lands this gate cannot be a merge gate — nothing
-      # waits 2.5 hours — so treat it as a post-merge signal and check it.
+      # `strategy:` comes from the matrix. Before evadex 3.41.0 the file
+      # strategies embedded the bare value with no keyword sentence, so
+      # context-gated rules could not fire and DOCX/PDF/XLSX scored 9–20%
+      # regardless of the scanner; the fixtures carry the sentence now and
+      # the three file paths are gated on their own floors (see the job
+      # comment). evadex 3.41.1 also leaves out of a DOCX/XLSX run the one
+      # variant per category whose value XML cannot carry (`barcode_split`'s
+      # U+001E marker) instead of recording 185 errors per strategy, which
+      # is what `--max-error-rate 2` would otherwise be reading. evadex
+      # 3.42.0 does the same for the pdf run with any variant the fixture
+      # fonts cannot draw, and for tabs and control characters, which no
+      # font can; the summary names the techniques.
       - name: Run evadex quality gate (siphon-cli adapter)
+        if: needs.changes.outputs.gate == 'true'
         working-directory: evadex
         env:
           SIPHON_BIN: ${{ github.workspace }}/target/release/siphon
@@ -129,22 +273,29 @@ jobs:
           # `evadex ci` selects the scanner from an evadex.yaml (tool + exe)
           # and forwards --config to the underlying `evadex scan`; thresholds
           # are on a 0-100 scale (--min-detection / --max-fp).
+          set -euo pipefail
           cat > evadex.gate.yaml <<YAML
           tool: siphon-cli
           exe: ${SIPHON_BIN}
+          batch: true
+          strategy: ${{ matrix.strategy }}
           YAML
+          # shellcheck disable=SC2086 — fp_args is a deliberate word list.
           python -m evadex ci \
             --config evadex.gate.yaml \
             --tier northam \
-            --min-detection 70 \
-            --max-fp 5 \
-            | tee evadex-gate-report.txt
+            --seed 20261015 \
+            --concurrency 64 \
+            --min-detection ${{ matrix.min_detection }} \
+            --max-error-rate 2 \
+            ${{ matrix.fp_args }} \
+            2>&1 | tee evadex-gate-report.txt
 
       - name: Upload quality gate report
-        if: always()
+        if: always() && needs.changes.outputs.gate == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: evadex-quality-gate-report
+          name: evadex-quality-gate-report-${{ matrix.strategy }}
           path: evadex/evadex-gate-report.txt
           if-no-files-found: ignore
           retention-days: 30

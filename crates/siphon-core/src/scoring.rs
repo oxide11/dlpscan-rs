@@ -87,7 +87,39 @@ pub fn compute_confidence_with(specificity: f64, has_context: bool, context_requ
     (confidence * 100.0).round() / 100.0
 }
 
+/// Region prefixes of the national-identifier categories
+/// (`North America - Canada`, `Asia-Pacific - India`, …).
+const NATIONAL_REGIONS: &[&str] = &[
+    "Africa - ",
+    "Asia-Pacific - ",
+    "Europe - ",
+    "Latin America - ",
+    "Middle East - ",
+    "North America - ",
+];
+
+fn is_national(category: &str) -> bool {
+    NATIONAL_REGIONS.iter().any(|r| category.starts_with(r))
+}
+
+/// Both categories are national identifiers, and of different countries.
+fn is_cross_border_collision(a: &str, b: &str) -> bool {
+    a != b && is_national(a) && is_national(b)
+}
+
 /// Remove overlapping matches, keeping the highest-confidence one.
+///
+/// Before the tiebreakers: two national identifiers from *different
+/// countries* matching the identical characters are a format collision —
+/// a 12-digit run is a Newfoundland MCP number and an Indian Aadhaar
+/// number alike — and the prose naming one country is the only evidence
+/// that tells them apart. When exactly one of the two has its context
+/// keyword nearby, it wins. Confidence cannot decide this: it ranks how
+/// distinctive each *format* is, which says nothing about which country
+/// this value is from, so `MCP number 987654321012` reported an Aadhaar
+/// (0.65) over the health card (0.60) the text named. Scoped to national
+/// categories (`<Region> - <Country>`) so a card brand, a secret type or
+/// any other overlap keeps the tiebreakers below.
 ///
 /// Tiebreakers, in order:
 ///   1. Higher confidence wins.
@@ -124,6 +156,15 @@ pub fn deduplicate_overlapping(matches: &mut Vec<Match>) {
     for m in matches.drain(..) {
         if let Some(prev) = result.last_mut() {
             if m.span.0 < prev.span.1 {
+                if m.span == prev.span
+                    && m.has_context != prev.has_context
+                    && is_cross_border_collision(&m.category, &prev.category)
+                {
+                    if m.has_context {
+                        *prev = m;
+                    }
+                    continue;
+                }
                 // Overlapping — apply the four-step tiebreaker.
                 if m.confidence > prev.confidence {
                     *prev = m;
@@ -308,5 +349,77 @@ mod tests {
         deduplicate_overlapping(&mut matches);
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].text, "longer match");
+    }
+
+    fn same_span(category: &str, sub: &str, has_context: bool, confidence: f64) -> Match {
+        Match::new(
+            "987654321012".into(),
+            category.into(),
+            sub.into(),
+            has_context,
+            confidence,
+            (10, 22),
+            false,
+        )
+    }
+
+    fn winner(mut matches: Vec<Match>) -> String {
+        deduplicate_overlapping(&mut matches);
+        assert_eq!(matches.len(), 1);
+        matches.remove(0).sub_category
+    }
+
+    #[test]
+    fn test_dedup_cross_border_collision_goes_to_the_named_country() {
+        // `MCP number 987654321012`: Aadhaar 0.65 bare vs NL HC 0.60 with
+        // its keyword. Either order of arrival.
+        let aadhaar = || same_span("Asia-Pacific - India", "India Aadhaar", false, 0.65);
+        let nl = || same_span("North America - Canada", "Newfoundland HC", true, 0.60);
+        assert_eq!(winner(vec![aadhaar(), nl()]), "Newfoundland HC");
+        assert_eq!(winner(vec![nl(), aadhaar()]), "Newfoundland HC");
+        // Neither named: confidence decides, as before.
+        let nl_bare = || same_span("North America - Canada", "Newfoundland HC", false, 0.60);
+        assert_eq!(winner(vec![aadhaar(), nl_bare()]), "India Aadhaar");
+    }
+
+    #[test]
+    fn test_dedup_keyword_rule_is_only_for_national_ids() {
+        // `account number 4532…`: PAN (0.60 + keyword) must not take a
+        // Visa (0.95) just because the prose said "account number".
+        let visa = || same_span("Credit Card Numbers", "Visa", false, 0.95);
+        let pan = || same_span("Primary Account Numbers", "PAN", true, 0.80);
+        assert_eq!(winner(vec![visa(), pan()]), "Visa");
+        assert_eq!(winner(vec![pan(), visa()]), "Visa");
+        // Same country is not a cross-border collision either.
+        let on = || same_span("North America - Canada", "Ontario DL", false, 0.70);
+        let qc = || same_span("North America - Canada", "Quebec DL", true, 0.60);
+        assert_eq!(winner(vec![on(), qc()]), "Ontario DL");
+    }
+
+    #[test]
+    fn test_dedup_partial_overlap_ignores_keyword_rule() {
+        let mut matches = vec![
+            Match::new(
+                "a".into(),
+                "Asia-Pacific - India".into(),
+                "Bare".into(),
+                false,
+                0.70,
+                (0, 12),
+                false,
+            ),
+            Match::new(
+                "b".into(),
+                "North America - Canada".into(),
+                "Described".into(),
+                true,
+                0.50,
+                (5, 17),
+                false,
+            ),
+        ];
+        deduplicate_overlapping(&mut matches);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].sub_category, "Bare");
     }
 }

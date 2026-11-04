@@ -355,18 +355,19 @@ fn epoch_to_parts(epoch: u64) -> (u64, u64, u64, u64, u64, u64) {
     let mut days = epoch / 86400;
     let mut year = 1970u64;
     loop {
-        let yd = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
-            366
-        } else {
-            365
-        };
+        let yd =
+            if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) {
+                366
+            } else {
+                365
+            };
         if days < yd {
             break;
         }
         days -= yd;
         year += 1;
     }
-    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
     let mdays = [
         31,
         if leap { 29 } else { 28 },

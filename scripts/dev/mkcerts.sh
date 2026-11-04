@@ -57,6 +57,27 @@ done
 
 command -v openssl >/dev/null || { echo "openssl is required" >&2; exit 1; }
 
+# Git Bash and MSYS2 rewrite any argument that looks like a Unix path into a
+# Windows one before the child process sees it, which turns openssl's
+# `-subj "/O=Siphon/CN=..."` into
+# `C:/Program Files/Git/O=Siphon/CN=Siphon internal CA` and makes every
+# `openssl req` below exit 1 with "subject name is expected to be in the
+# format /type0=value0/...". The script sends openssl's stderr to /dev/null, so
+# the only symptom is a silent failure and no certificates -- which takes the
+# whole siphon-auth mtls suite with it on a Windows checkout.
+#
+# Excluding only arguments that begin with `/O=` and not disabling conversion
+# wholesale: `MSYS_NO_PATHCONV=1` fixes the subject and then breaks the next
+# call along, because the CSR and extension files come from `mktemp` as
+# absolute `/tmp/...` paths that native openssl cannot open unless they *are*
+# converted. The narrow exclusion leaves those alone and is inert on any other
+# platform.
+case "${OSTYPE:-}" in
+  msys* | cygwin*)
+    export MSYS2_ARG_CONV_EXCL='/O='
+    ;;
+esac
+
 say() { [[ $QUIET -eq 1 ]] || printf '%s\n' "$*"; }
 
 mkdir -p "$OUT"

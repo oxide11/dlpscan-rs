@@ -1,6 +1,6 @@
 [package]
 name = "siphon-mail"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 description = "Polygon Siphon mail model — message/part schema, persistence and verdict reconciliation"
 license = "MIT"
@@ -21,8 +21,15 @@ name = "siphon_mail"
 path = "src/lib.rs"
 
 [dependencies]
-# Postgres only. Deliberately no siphon-core and no HTTP stack: this crate is
-# the message model, not a scanner and not a service.
+# No HTTP stack: this crate is the message model, not a service. It used to
+# carry no siphon-core either, on the grounds that it is not a scanner — and
+# it still is not one. siphon-core is where the shared `Inspection` type
+# lives, by design (docs/architecture/inspection-outcome.md): one answer to
+# "did the verdict cover everything?" for every ingress, so a mail filter, a
+# proxy and the CLI cannot drift apart on what "clean" is allowed to mean.
+# Every consumer of this crate (siphon-smtp, siphon-api) already links
+# siphon-core, and it has no default features, so nothing new reaches them.
+siphon-core = { path = "../siphon-core" }
 tokio-postgres = { version = "0.7", features = [
     "with-uuid-1",
     "with-chrono-0_4",
@@ -30,3 +37,8 @@ tokio-postgres = { version = "0.7", features = [
 deadpool-postgres = "0.14"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+# For the test that pins each `PartStatus` to its `Unread` kind by the
+# serde tag, which is the one stable name a variant has outside siphon-core.
+serde_json = "1.0"

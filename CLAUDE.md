@@ -164,7 +164,7 @@ shape.
 Three properties of the pattern set, none of which were visible before every
 pattern was asked the same questions:
 
-- **57 patterns have no observable example** (72 before the raw-text pass). Most are not a generator
+- **55 patterns have no observable example** (72 before the raw-text pass, 57 before DTI/LTV Ratio could match before a space). Most are not a generator
   failure: they carry a regex *identical* to a sibling's, and deduplication
   keeps only one match per span. Seven US state driver's licence patterns
   share `\b\d{8}\b`; ask for Texas and the scanner reports Arkansas. The
@@ -237,10 +237,14 @@ dispatch and two copies drift — the one that used to live in
 `detect_and_extract` already had, accepting 6 of SQLite's 16 bytes and
 knowing nothing about images at all.
 
-A contradiction is recorded in `metadata["format_mismatch"]` and logged at
-warn level with structured fields — **not** in `warnings`, which means
-"content we did not read" and makes the milter defer. A renamed file that we
-then read correctly *was* read.
+A contradiction is recorded as a typed `Unread::FormatMismatch` on the
+extraction's `inspection` and logged at warn level with structured fields.
+It is the one `Unread` reason that is **not** a gap: the others mean "content
+we did not read" and make the milter defer, while a renamed file that we then
+read correctly *was* read. So the milter scans the content and does not defer
+on the mismatch alone; the CLI reports it and, under `--on-incomplete fail`,
+exits 3 on it; siphon-fs reports it `incomplete`. (It was also a
+`metadata["format_mismatch"]` key until siphon-cli 2.7.0.)
 
 | Variable | Default | Notes |
 |---|---|---|
@@ -278,10 +282,16 @@ merged past is not a gate.
 The scan path in `crates/siphon-core/src/scanner/mod.rs` is a 10-stage pipeline:
 
 1. **Input validation** — reject > 30 MB (`MAX_INPUT_SIZE`) or empty inputs
-2. **Normalization** (`normalize/mod.rs`) — 10 evasion-defeat stages:
-   zero-width stripping → HTML entity decode → percent-decode → homoglyph
-   substitution (Cyrillic/Greek/mathematical → ASCII) → leet-speak → NFKC →
-   nested base64/base64url/base32/hex decode (up to 3 layers) → whitespace normalize
+2. **Normalization** (`normalize/mod.rs`) — 15 steps, numbered 1–11 with
+   4b/4c/6b/6c inserted between: percent-decode → HTML entities → empty
+   comments → hex-spaced bytes → `\xHH` escapes → token-level
+   base64/base64url/base32/hex (nested ≤ 3) → whitespace padding →
+   excessive delimiters → delimiters between alphanumerics → consistent
+   digit-group separators → zero-width → exotic whitespace → NFKC →
+   homoglyph map with Nd digit fallback → digit-confusable letters in digit
+   runs. The "Stage N" comments in `normalize_text` are the source of truth;
+   `docs/architecture/normalization.md` describes each. Leet-speak is **not**
+   a stage (`normalize_leet` feeds the alternative-decodings pass).
 3. **Pattern narrowing** — category filter, `baseline_only`, and the
    Aho-Corasick context prefilter (stage 6's keyword index, consulted early):
    a context-gated pattern whose keywords appear nowhere in the text or the
@@ -291,7 +301,7 @@ The scan path in `crates/siphon-core/src/scanner/mod.rs` is a 10-stage pipeline:
    and no two-phase match; stages 3 and 4 said so for a long time and the
    scanner module doc agreed, but neither was ever true. A `RegexSet` phase-1
    was measured and rejected — see the module doc for why
-5. **Checksum validation** (`validation.rs`) — 72 validators (Luhn, mod-97
+5. **Checksum validation** (`validation.rs`) — 73 validators (Luhn, mod-97
    IBAN, Verhoeff, Base58Check, Bech32, ISO 3779, …)
 6. **Context checking** (`context/`) — Aho-Corasick prefilter on 5,000+
    keywords across 6 languages; context-gated patterns are skipped entirely
@@ -743,12 +753,9 @@ Four things that are load-bearing:
 
 ## Open PRs
 
-| PR | Branch | Summary |
-|---|---|---|
-The findings-persistence wave (#312–#321), the retention/export/EDM/LSH/evadex
-work, the admin-console endpoints (#345: categories/explain/detailed-health),
-the kube 4.0 bump (#330), and the 2.3.1 hardening + 2.4.0 record (#362/#360)
-have all merged to `main` — see CHANGELOG `siphon-api 2.3.0`–`2.4.0`.
+Tracked on GitHub (`gh pr list`), not here: a table in this file listed them
+once and was stale within a week. `HANDOFF.md` carries the ones that matter at
+the time of its last update.
 
 ### siphon-fs routes
 
@@ -827,9 +834,12 @@ the findings back.) File formats supported
 - ZIP/RAR/7Z (`archives`) — 10k file limit, 500 MB total, 100:1 compression
   ratio bomb detection, path traversal sanitized. Text-like entries are scanned
   by content (a plain `.zip` of a `.txt` is no longer a bypass); a *nested*
-  archive or an encrypted entry is not recursed into but is surfaced as a
-  `nested archive not scanned` / `encrypted entry not scanned` warning rather
-  than skipped silently
+  archive or an encrypted entry is not recursed into but is reported as a
+  typed `Unread::NestedArchive` / `Unread::Encrypted` on the extraction's
+  `inspection` (`entry inner.zip is a nested archive; not read` is its
+  `describe()` line) rather than skipped silently; a member the walker does
+  not open for text (an image, a binary) is listed as `Unread::NotText`,
+  the informational reason `Inspection::has_gap` leaves out
 - Parquet/SQLite (`data-formats`) — arrow + rusqlite
 - PNG/JPG/GIF/BMP/TIFF/WebP barcode & QR (`barcode`) — rxing + image
 - Outlook MSG (`msg`) — cfb OLE2
@@ -922,7 +932,18 @@ forensics <files…>      metadata extraction + author attribution (feature: for
 ```
 
 Global flags: `--format {text,json,csv,sarif}`, `--min-confidence`,
-`--require-context`, `--categories`.
+`--require-context`, `--categories`, `--on-incomplete {report,fail}`.
+
+Exit codes: `0` the scan ran and (under `report`, the default) whatever it
+could not read is printed under "Unscanned content:"; `1` the scan itself
+failed; `3` under `--on-incomplete fail`, something was not read — an
+encrypted entry, an attachment that would not open, a match cap, a file whose
+bytes contradict its name. `scan-dir` applies the same codes across every
+file (1 wins over 3). Every `PipelineResult` carries `inspection`
+(`siphon_core::Inspection`, in `--format json` as `{"status": ...}`), which is
+what the exit code reads; `inspection.describe()` is its one-line form. The
+`warnings` array that carried those lines is gone since siphon-cli 2.7.0
+(`docs/architecture/inspection-outcome.md`, step 6).
 
 ### Feature flags
 
@@ -1114,6 +1135,25 @@ are immutable — never re-point.
 4. Open PR; CI runs.
 5. After merge to `main`, push the per-crate tag(s) on the merge commit.
 
+**Lockstep PRs conflict with each other, by construction.** Every one of
+them appends a section to the current CHANGELOG.md block, bumps a version
+in Cargo.lock and rewrites the SBOMs that list that version, so two open at
+once are mergeable only until the first lands — then the second is dirty
+(five in a row on 2026-10-16). Open one version-bumping PR at a time, or
+rebase the next one the moment the previous merges: CHANGELOG keeps both
+sides (`.gitattributes` marks it `merge=union`, so a local rebase does this
+on its own; GitHub's merge button does not read merge drivers), then
+`scripts/generate-sbom.sh` and commit the result. Dependabot's lockfile PRs
+are the same problem from the other side — a new Cargo.lock with stale
+SBOMs — and are folded by hand into **one lockfile PR per wave** (#535,
+#542): branch from `main`, cherry-pick each Dependabot commit as-is (its
+author stays `dependabot[bot]`), run `scripts/generate-sbom.sh` once,
+verify with `--locked`, and close the originals into it. A workflow that
+did this in CI (`sbom-refresh.yml`, 2026-10-16 to 2026-10-27) was removed:
+a push made with `GITHUB_TOKEN` starts no checks, and once anyone but
+Dependabot has pushed to its branch Dependabot refuses to rebase it, so the
+PR it "fixed" could neither go green nor be brought up to date (#537).
+
 ### Tooling
 
 - `scripts/bump-version.sh <target> <bump>` — touches every file the lockstep
@@ -1134,7 +1174,11 @@ Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`, `breaking`
 
 ## Branches
 
-Feature work goes on a branch; main is protected. Never force-push to `main`.
+Feature work goes on a branch. Never force-push to `main`. Whether `main`
+is protected is a repository setting to check, not a fact to assume: on
+2026-10-15 the branch-protection API answered 404 and the rulesets list was
+empty for a non-admin collaborator, and the evadex quality gate is not a
+required check.
 
 ## CI expectations
 
@@ -1148,7 +1192,12 @@ cargo test --test integration_test
 cargo test --test evasion_test
 ```
 
-CI mirrors these in `.github/workflows/ci.yml`.
+These are the minimum. `.github/workflows/ci.yml` runs every suite in
+`tests/` (13 as of 2026-10-15: integration, evasion, evadex_regressions,
+detection_quality, public_records, fp_probe, conformance, forensics,
+encoding_diag, held_out_recall, archive_security, match_cap_fail_closed,
+audit_spec) plus the per-crate suites (`siphon-auth` mtls, `siphon-fs`
+auth), CodeQL with `--locked`, `cargo audit`, and `scripts/check-version-sync.sh`.
 
 ## Bill of materials
 

@@ -1,8 +1,64 @@
 # Siphon Backlog
 
-Last updated: 2026-09-30
+Last updated: 2026-10-27
 
 ## Security audit log
+
+### 2026-09-30 — archive extraction, and who gets told what went unread
+
+Round 9. Audited the file-extraction surface (`src/extractors.rs`, 4.1k lines,
+reachable from the `siphon-fs` upload edge) plus a sweep over auth, SQL,
+outbound HTTP and the audit record. Four findings, all in extraction, all
+fixed in siphon 2.5.1 — see the CHANGELOG entry.
+
+The shape of all four is the recurring one in this codebase: **content that was
+seen and not read must never be reported as clean.** Three of them were the
+size/ratio guards trusting `file.size()`, a number the archive asserts about
+itself, and then reading without a bound; the fourth was `PipelineResult`
+having no field for the warnings `extract_text` was already producing, so the
+CLI path discarded them.
+
+Worth recording that the project already had the right fix written down twice:
+`extract_7z` carries the comment *"`entry.size()` is attacker-supplied header
+metadata, so a lying header must not become an unbounded read"*, and the
+generic-ZIP pass reads through `take` for the same stated reason. The
+Office-XML and OpenDocument passes were simply never brought in line. Checking
+whether a known fix has been applied **everywhere** it applies turned out to be
+worth more than looking for novel bug classes.
+
+Checked and clean, recorded so the next round starts from here:
+
+- **SQL.** Every statement in `crates/siphon-api/src/db.rs` is a static string
+  with `$1`-style bound parameters. No interpolated identifiers, no
+  interpolated `ORDER BY`.
+- **Key comparison.** No constant-time compare anywhere, and none needed:
+  `siphon_auth::keys::resolve` hashes the presented token and looks the hash up
+  in a map, so no secret is ever compared byte by byte. The comment claiming
+  "constant work regardless of outcome: one hash, one lookup" is accurate.
+- **Redaction.** The webhook payload carries `redacted_match: m.redacted_text()`,
+  not the matched value, and `crates/siphon-core/src/audit.rs` stores no raw
+  matched text at all. Nothing in the finding path writes a sensitive value to
+  disk or to an outbound request.
+- **Outbound HTTP.** `webhooks.rs` and `siem.rs` both go through
+  `http_util::safe_http_post`, which owns DNS resolution, SSRF validation and
+  CRLF sanitisation. Not re-audited here beyond confirming there is no second
+  path around it.
+- **Panics on the request path.** The only `unwrap`/`expect` in
+  `crates/siphon-api/src/main.rs` outside tests are lock-poison expects (which
+  require an earlier panic) and two signal-handler installs at startup. No
+  input-driven unwrap, slice index or integer cast in a handler.
+- **Archive path traversal.** `sanitize_archive_path` keeps only
+  `Component::Normal`, which drops `..`, roots and Windows prefixes, and then
+  re-checks `starts_with(base)`. Correct, and already covered by tests.
+
+Still not reviewed, carried forward from round 8 and still open: **the ICAP
+`Encapsulated` offset handling.** It was audited this round and does have a
+finding, but the fix belongs on top of PR #480 rather than on `main` — the
+round-8 parser work in `crates/siphon-icap/src/main.rs` is still unmerged, so
+`main`'s copy of that file is 164 lines behind the code the finding was found
+in. Tracked separately; `src/extractors.rs` is byte-identical on both branches,
+which is why this round's fixes could go to `main` on their own.
+
 
 ### 2026-09-30 — rustls advisory + first pass over the four new crates
 
@@ -115,6 +171,29 @@ maintained alternative exists and the migration risk is low.
 ## Security debt — operational correctness
 
 ### ~~EDM salt stability (`SIPHON_EDM_SALT_HEX`)~~ ✓ implemented
+### Extraction paths that were silent — closed (inspection ADR, step 7)
+
+`docs/architecture/inspection-outcome.md` is complete as of 2026-10-27.
+The two paths step 6 left silent on purpose — a non-text member of a plain
+archive, an embedded object under `*/embeddings/` that is not an OOXML
+package — are named since siphon-core 2.12.0 / siphon-cli 2.9.0 as
+`Unread::NotText`, the informational reason: `is_complete()` is `false`
+for it (the member was not read) and `has_gap()` is `false` too, which is
+what the milter (siphon-smtp 0.4.0), siphon-fs's coverage counter (1.8.0),
+the CLI's `--on-incomplete fail` and the conformance matrix now read.
+Still unread by design, and still not listed: `xl/charts/*` (the data
+cache repeats cells already read, and its unseparated numeric runs would
+invent digit patterns), slide layouts and masters (template placeholders),
+and a document's own artwork under `*/media/`. `tests/office_parts_test.rs`
+is the record of what is read and what is named.
+
+What the informational reason does *not* do is read the object. An embedded
+PDF under `word/embeddings/` may carry text; today it is named and passed
+over. Opening embedded PDFs with the PDF reader (under the host's budget,
+one level deep, as the OOXML embeddings are) is the next reading gap worth
+closing, and it is a reading change, not a reporting one.
+
+### EDM salt stability (`SIPHON_EDM_SALT_HEX`)
 
 `SIPHON_EDM_SALT_HEX` env var added. Parsed at startup (fail-closed on invalid
 hex or < 32 bytes; warn if unset). Stored in `AppState.edm_salt` and wired into
@@ -174,6 +253,11 @@ serde_json runs. Registered in the router between `security_headers` and
 - [x] Morse delimited-preamble bypass — fixed: comma/slash/pipe digit-morse embedded in surrounding text (filename preamble on the file-scan path, or a prose prefix like `card `) now decoded via `find_embedded_digit_morse_delimited`, the delimited analogue of the nosep embedded scan (PR #336). Preamble/prefix spot checks 0/6 → 6/6; bare-separator variants stay 5/5 (PR #367; siphon-core 2.1.7)
 - [ ] Morse code remaining bypass — remaining failures are context-required IDs (SSN/SIN/AU_TFN/DE_TAX_ID/FR_INSEE) skipped by the morse alt-decode path *by design*: the alt-decoding emits bare digits without the surrounding context keyword, so context-gated patterns don't fire. Luhn/checksum-gated values (cards, IBAN, routing) are now covered across all separators incl. embedded-in-text. Closing the context-required class needs the alt-decoder to carry surrounding context — a larger change weighed against FP risk. Target <30%; re-baseline with evadex before deciding.
 - [ ] Remaining credit_card gaps (evadex fast/northam 2026-09-13, siphon_post_fixes.json; 96.0% detection rate) — still bypassing: zero-padding (`right_pad_zeros` 7/28, `left_pad_zeros` 6/28), `base64_partial` 7/28 (these all detect when tested directly; consistent evadex scan discrepancy — suspected asyncio-on-Windows race in evadex, not a scanner bug), `noise_embedded` 4/28, nested/partial base64 chains (`base64_no_padding` 5/24, `base64_double` 4/28, `url_of_base64` 4/28, `base64_of_base64`/`base64_of_hex` 2/28 each, `base64_of_rot13`/`hex_of_base64` 1/28 each), morse stragglers (`morse_no_sep` 3/28, `morse_space_sep` 2/28, `morse_slash_sep`/`morse_newline_sep` 1/28 each), `barcode_split` 6/14, `base32_standard` 3/28. `homoglyph_substitution` fully closed (0/28, 61c82c5); base64_partial improved 21→7 (validate_decoded quality gate bypass, 4928295).
+- [x] Credit_card zero-padding / delimited-base64 / sparse-noise — fixed: `strip_zero_padding_variants` (left/right/both pad + trailing-zero + zero-prefixed 9-digit IDs), `decode_delimited_encoded_segments` (base64 blob embedded in a URL path that stage 4c merged with path words + dot-guard-suppressed; slides past the glued prefix), and `strip_sparse_alpha_noise_variants` (isolated letter noise between digits, Luhn-gated). All in the second-pass alt-decodings, re-validated before emit. Targeted spot-check 6/13 → 12/13; no detection-quality/fp_probe regressions (siphon-core 2.9.3). Nested/partial base64 (`base64_double`/`_triple`/`_partial`/in-JSON/in-XML) already covered by stage 4c.
+- [x] Whitespace-separated cards — fixed: a newline/space/tab-separated list of cards, a CSV, or a card followed by any number reported zero (or only the last) cards because stage 5 joins digit runs across whitespace; non-context-gated always-run patterns now also scan the raw text (siphon-core 2.9.4).
+- [x] Credit_card sentence-end / glued / split-field evasion — fixed: base64, hex-dump and digit-morse values followed by a full stop; letter-padded and identifier-glued cards (`noise_embedded`, `overlapping_prefix`); values split across indexed JSON fields (`json_field_split`) (siphon-core 2.9.4).
+- [x] Credit_card homoglyph / partial-base64 / record-separator evasion — fixed: strong digit look-alikes (`Ƨ Ʒ Ƽ б Ȣ`) fold in card-length runs, a digit prefix + base64 tail is rejoined, and U+001C–U+001F separate like whitespace (siphon-core 2.9.4).
+- [x] Credit_card evasion — evadex re-baseline 2026-10-14 (siphon-core 2.9.4, `credit_card`, text, sentence-wrapped, category-relevant detection per evadex #20): 845/845 target variants detected, 846/887 overall. The 41 misses are `partial_*` (a truncated card is not a card) and `reversed_*` (reversal was removed from the alt pass for its false positives) — not targets. Main before this wave: 721/845.
 - [x] Unicode digit-script + confusable-digit folding — fixed: Stage 10 gained a Unicode `Nd` fallback (`fold_unicode_digit`) folding all decimal-digit scripts (Devanagari/Bengali/Gujarati/Tamil/math-bold/… ~60 scripts) to ASCII; new Stage 11 (`fold_confusable_digit_runs`) folds letter-shaped digit confusables (O→0, l/I→1, Greek/Cyrillic O→0) inside long digit-dense runs. Closes leet_aggressive / greek_omicron / Devanagari-digit gaps; run-gated + Luhn-gated so prose is untouched (PR #366; siphon-core 2.1.6)
 - [x] Regional digits — Thai (U+0E50), Extended Arabic-Indic (U+06F0), Arabic-Indic (U+0660) now detected via HOMOGLYPH_MAP; Thai-digit card regression locked in (PR #359); verified PASS in the evadex suite
 

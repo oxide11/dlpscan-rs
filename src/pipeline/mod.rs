@@ -10,6 +10,7 @@ use std::time::Instant;
 use crate::allowlist::Allowlist;
 use crate::models::Match;
 use crate::scanner::{self, ScanConfig};
+use siphon_core::{Inspection, Unread};
 
 /// Default maximum file size (100 MB).
 pub const DEFAULT_MAX_FILE_SIZE: usize = 100 * 1024 * 1024;
@@ -39,7 +40,15 @@ impl FileJob {
 }
 
 /// Result from processing a single file.
+///
+/// `#[non_exhaustive]` because this struct changes shape: `file_entropy` and
+/// `entropy_classification` were added after it shipped, `warnings` after
+/// those, `inspection` after that, and `warnings` was then removed once
+/// `inspection` carried everything it had. Each change was a struct-literal
+/// break for anyone outside this crate building one by hand. Marking it takes
+/// that break once and makes every later field free.
 #[derive(Debug, Clone, Serialize)]
+#[non_exhaustive]
 pub struct PipelineResult {
     pub file_path: String,
     pub matches: Vec<Match>,
@@ -56,9 +65,58 @@ pub struct PipelineResult {
     /// "compressed_or_encrypted", "likely_encrypted".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entropy_classification: Option<String>,
+    /// What `matches` covers.
+    ///
+    /// `Complete` only when every unit of the file was read and matched to
+    /// the end. Anything less — an encrypted archive entry, an attachment the
+    /// extractor could not open, a format whose parser gave up and read raw
+    /// bytes instead, a match cap that stopped the scanner early, a file whose
+    /// bytes contradict its name — is `Incomplete`, with a typed reason for
+    /// each gap. Zero `matches` with an incomplete inspection is not a clean
+    /// file; it is a file nobody finished reading, and until this field
+    /// existed `siphon scan` printed the same `Matches: 0` for both.
+    ///
+    /// Serialises as `{"status": "complete"}` or
+    /// `{"status": "incomplete", "unread": [{"kind": ...}, ...]}`. The
+    /// `warnings` array that used to sit beside it (one line per reason) is
+    /// gone as of siphon-cli 2.7.0; `inspection.describe()` is the same text.
+    pub inspection: Inspection,
 }
 
 impl PipelineResult {
+    /// A result with no matches and a complete inspection, to be qualified.
+    fn blank(file_path: String, format: &str, duration_ms: f64, file_size: u64) -> Self {
+        Self {
+            file_path,
+            matches: vec![],
+            format_detected: format.to_string(),
+            duration_ms,
+            error: None,
+            file_size_bytes: file_size,
+            extracted_text_length: 0,
+            file_entropy: None,
+            entropy_classification: None,
+            inspection: Inspection::new(),
+        }
+    }
+
+    fn with_error(mut self, error: String) -> Self {
+        self.error = Some(error);
+        self
+    }
+
+    /// Record content that was not read.
+    fn with_unread(mut self, reason: Unread) -> Self {
+        self.inspection.unread(reason);
+        self
+    }
+
+    /// Fold an inspection in (an extractor's, the scanner's).
+    fn with_inspection(mut self, inspection: Inspection) -> Self {
+        self.inspection.merge(inspection);
+        self
+    }
+
     /// Create an error result with no matches.
     pub fn error_result(
         file_path: String,
@@ -67,17 +125,7 @@ impl PipelineResult {
         elapsed_secs: f64,
         file_size: u64,
     ) -> Self {
-        Self {
-            file_path,
-            matches: vec![],
-            format_detected: format.to_string(),
-            duration_ms: elapsed_secs * 1000.0,
-            error: Some(error),
-            file_size_bytes: file_size,
-            extracted_text_length: 0,
-            file_entropy: None,
-            entropy_classification: None,
-        }
+        Self::blank(file_path, format, elapsed_secs * 1000.0, file_size).with_error(error)
     }
 
     pub fn success(&self) -> bool {
@@ -172,11 +220,17 @@ impl Pipeline {
     /// Process a single file.
     pub fn process_file(&self, path: &Path) -> PipelineResult {
         let start = Instant::now();
+        let ms = |start: &Instant| start.elapsed().as_secs_f64() * 1000.0;
         // Resolve symlinks before blocking check to prevent bypass via safe-named symlinks
         let resolved = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let file_path = path.display().to_string();
 
         // Check blocked extensions on RESOLVED path (checks ALL extensions, not just last)
+        //
+        // Every refusal below carries both an `error` (the CLI exits 1 on it,
+        // as it always has) and a typed reason in `inspection`: a file the
+        // pipeline declined to open is a file it did not read, whatever the
+        // policy that declined it.
         {
             let resolved_str = resolved.display().to_string();
             let blocked_refs: Vec<&str> =
@@ -185,36 +239,23 @@ impl Pipeline {
                 let ext = path
                     .extension()
                     .and_then(|e| e.to_str())
-                    .unwrap_or("unknown");
-                return PipelineResult {
-                    file_path,
-                    matches: vec![],
-                    format_detected: "blocked".into(),
-                    duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                    error: Some(format!("Blocked file type in path: {}", ext.to_lowercase())),
-                    file_size_bytes: 0,
-                    extracted_text_length: 0,
-                    file_entropy: None,
-                    entropy_classification: None,
-                };
+                    .unwrap_or("unknown")
+                    .to_lowercase();
+                return PipelineResult::blank(file_path, "blocked", ms(&start), 0)
+                    .with_unread(Unread::Unsupported {
+                        unit: format!("file (blocked type .{ext})"),
+                    })
+                    .with_error(format!("Blocked file type in path: {ext}"));
             }
             if self.block_unreadable {
                 if let Some(ext) = resolved.extension().and_then(|e| e.to_str()) {
                     if crate::extractors::is_unreadable_extension(ext) {
-                        return PipelineResult {
-                            file_path,
-                            matches: vec![],
-                            format_detected: "blocked".into(),
-                            duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                            error: Some(format!(
-                                "Unreadable/encrypted file type: .{}",
-                                ext.to_lowercase()
-                            )),
-                            file_size_bytes: 0,
-                            extracted_text_length: 0,
-                            file_entropy: None,
-                            entropy_classification: None,
-                        };
+                        let ext = ext.to_lowercase();
+                        return PipelineResult::blank(file_path, "blocked", ms(&start), 0)
+                            .with_unread(Unread::Unsupported {
+                                unit: format!("file (unreadable or encrypted type .{ext})"),
+                            })
+                            .with_error(format!("Unreadable/encrypted file type: .{ext}"));
                     }
                 }
             }
@@ -224,17 +265,12 @@ impl Pipeline {
         let metadata = match fs::metadata(path) {
             Ok(m) => m,
             Err(e) => {
-                return PipelineResult {
-                    file_path,
-                    matches: vec![],
-                    format_detected: "unknown".into(),
-                    duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                    error: Some(format!("Cannot read file: {e}")),
-                    file_size_bytes: 0,
-                    extracted_text_length: 0,
-                    file_entropy: None,
-                    entropy_classification: None,
-                };
+                return PipelineResult::blank(file_path, "unknown", ms(&start), 0)
+                    .with_unread(Unread::ReadError {
+                        unit: "file".into(),
+                        detail: e.to_string(),
+                    })
+                    .with_error(format!("Cannot read file: {e}"));
             }
         };
 
@@ -245,43 +281,69 @@ impl Pipeline {
         // below. fs::metadata follows symlinks, so a symlink pointing
         // at /dev/zero is also caught here.
         if !metadata.file_type().is_file() {
-            return PipelineResult {
-                file_path,
-                matches: vec![],
-                format_detected: "unknown".into(),
-                duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                error: Some("Not a regular file".into()),
-                file_size_bytes: 0,
-                extracted_text_length: 0,
-                file_entropy: None,
-                entropy_classification: None,
-            };
+            return PipelineResult::blank(file_path, "unknown", ms(&start), 0)
+                .with_unread(Unread::Unsupported {
+                    unit: "non-regular file".into(),
+                })
+                .with_error("Not a regular file".into());
         }
 
         if metadata.len() as usize > self.max_file_size {
-            return PipelineResult {
-                file_path,
-                matches: vec![],
-                format_detected: "unknown".into(),
-                duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                error: Some(format!(
+            return PipelineResult::blank(file_path, "unknown", ms(&start), metadata.len())
+                .with_unread(Unread::Oversize {
+                    unit: "file".into(),
+                    limit: Some(self.max_file_size as u64),
+                })
+                .with_error(format!(
                     "File too large: {} bytes (max {})",
                     metadata.len(),
                     self.max_file_size
-                )),
-                file_size_bytes: metadata.len(),
-                extracted_text_length: 0,
-                file_entropy: None,
-                entropy_classification: None,
-            };
+                ));
         }
 
-        // Try extractor first (handles DOCX, XLSX, PDF, EML, etc.), fall back to plain text
+        // Try the extractor first (DOCX, XLSX, PDF, EML, ...). What it could
+        // not read travels in `result.inspection`; the pipeline carries that
+        // forward whole.
         let file_path_str = path.display().to_string();
+        let mut inspection = Inspection::new();
         let (text, format) = match crate::extractors::extract_text(&file_path_str) {
-            Ok(result) => (result.text, result.format),
-            Err(_) => {
-                // Extractor failed, try reading as plain text
+            Ok(result) => {
+                inspection.merge(result.inspection);
+                (result.text, result.format)
+            }
+            Err(e) => {
+                // Under `SIPHON_ON_FORMAT_MISMATCH=reject` the extractor
+                // refused the file because its bytes contradict its name. That
+                // is the operator's instruction not to read it, so nothing
+                // below runs: no raw-byte pass, no matches, and a verdict that
+                // says why it covers nothing.
+                if crate::extractors::OnFormatMismatch::from_env()
+                    == crate::extractors::OnFormatMismatch::Reject
+                {
+                    if let Some((declared, detected)) =
+                        crate::extractors::format_mismatch(&file_path_str)
+                    {
+                        return PipelineResult::blank(
+                            file_path,
+                            "refused",
+                            ms(&start),
+                            metadata.len(),
+                        )
+                        .with_unread(Unread::FormatMismatch { declared, detected });
+                    }
+                }
+
+                // The extractor tried and failed. This used to fall through to
+                // `read_to_string` and report whatever that found as a
+                // faithful read of the file — the exact shape of bug the
+                // audit log in docs/architecture/inspection-outcome.md lists
+                // twelve times over. The bytes are still scanned below, as a
+                // last resort for a value that survives in them, but the
+                // verdict now says it covers only what that pass could see.
+                inspection.unread(Unread::ReadError {
+                    unit: "file".into(),
+                    detail: e,
+                });
                 match fs::read_to_string(path) {
                     Ok(t) => (t, detect_format(path)),
                     Err(_) => {
@@ -294,32 +356,26 @@ impl Pipeline {
                                 let text =
                                     crate::extractors::extract_printable_strings_public(&bytes, 12);
                                 if text.is_empty() {
-                                    return PipelineResult {
+                                    return PipelineResult::blank(
                                         file_path,
-                                        matches: vec![],
-                                        format_detected: "binary".into(),
-                                        duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                                        error: Some("Binary file with no extractable text".into()),
-                                        file_size_bytes: metadata.len(),
-                                        extracted_text_length: 0,
-                                        file_entropy: None,
-                                        entropy_classification: None,
-                                    };
+                                        "binary",
+                                        ms(&start),
+                                        metadata.len(),
+                                    )
+                                    .with_inspection(inspection)
+                                    .with_error("Binary file with no extractable text".into());
                                 }
                                 (text, "binary-strings".into())
                             }
                             _ => {
-                                return PipelineResult {
+                                return PipelineResult::blank(
                                     file_path,
-                                    matches: vec![],
-                                    format_detected: "binary".into(),
-                                    duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                                    error: Some("Cannot read binary file".into()),
-                                    file_size_bytes: metadata.len(),
-                                    extracted_text_length: 0,
-                                    file_entropy: None,
-                                    entropy_classification: None,
-                                };
+                                    "binary",
+                                    ms(&start),
+                                    metadata.len(),
+                                )
+                                .with_inspection(inspection)
+                                .with_error("Cannot read binary file".into());
                             }
                         }
                     }
@@ -355,26 +411,29 @@ impl Pipeline {
             ..Default::default()
         };
 
-        // Scan with filename context prepended
+        // Scan with filename context prepended. `scan_text_inspected` reports
+        // a match cap the same way the extractor reports an unread entry, so
+        // a "redacted" output that stopped early says so.
         let context_offset = if !filename_context.is_empty() {
             filename_context.len() + 1 // +1 for the \n separator
         } else {
             0
         };
-        let mut matches = match scanner::scan_text_with_config(&text_with_context, &config) {
-            Ok(m) => m,
+        let mut matches = match scanner::scan_text_inspected(&text_with_context, &config) {
+            Ok(outcome) => {
+                inspection.merge(outcome.inspection);
+                outcome.matches
+            }
             Err(e) => {
-                return PipelineResult {
-                    file_path,
-                    matches: vec![],
-                    format_detected: format,
-                    duration_ms: start.elapsed().as_secs_f64() * 1000.0,
-                    error: Some(format!("Scan error: {e}")),
-                    file_size_bytes: metadata.len(),
-                    extracted_text_length: text_len,
-                    file_entropy: None,
-                    entropy_classification: None,
-                };
+                let mut r = PipelineResult::blank(file_path, &format, ms(&start), metadata.len())
+                    .with_inspection(inspection)
+                    .with_unread(Unread::ReadError {
+                        unit: "text".into(),
+                        detail: format!("scan error: {e}"),
+                    })
+                    .with_error(format!("Scan error: {e}"));
+                r.extracted_text_length = text_len;
+                return r;
             }
         };
 
@@ -405,12 +464,13 @@ impl Pipeline {
             file_path,
             matches,
             format_detected: format,
-            duration_ms: start.elapsed().as_secs_f64() * 1000.0,
+            duration_ms: ms(&start),
             error: None,
             file_size_bytes: metadata.len(),
             extracted_text_length: text_len,
             file_entropy,
             entropy_classification,
+            inspection,
         }
     }
 

@@ -9,7 +9,7 @@
   checksum-validated matches behind an evasion-resistant normalizer.
 </p>
 
-**583 patterns** across **128 categories**. **72 checksum validators** for
+**586 patterns** across **128 categories**. **73 checksum validators** for
 national IDs, financial identifiers, and crypto addresses. **5,000+ context
 keywords** across English, French, Spanish, German, Italian, and Portuguese.
 **680+ tests** passing across the lib, integration, evasion, forensics, and
@@ -18,7 +18,7 @@ detection-quality harnesses, with a CI-enforced labeled-corpus regression suite
 
 ### Highlights
 
-- **Evasion defense**: 10-stage normalization pipeline defeats percent-encoding,
+- **Evasion defense**: 15-step normalization pipeline defeats percent-encoding,
   HTML entities, zero-width injection, homoglyphs, and NFKC-variant attacks.
   Token-level **base64, base64url, base32, and hex decode** with nested-decode
   support (up to 3 layers) catches obfuscated sensitive data inline.
@@ -36,7 +36,7 @@ Throughput at 1 MB, median across 4 runs, default build (`cargo build --release`
 `lto = true`, `codegen-units = 1`), measured on a 4-core Intel Xeon @ 2.80 GHz
 with 16 GB RAM under Linux 6.18 / Rust 1.98:
 
-| Scenario | Full (583 patterns) | Baseline (122 patterns) |
+| Scenario | Full (586 patterns) | Baseline (122 patterns) |
 |---|---:|---:|
 | Clean text | ~43 MB/s | ~43 MB/s |
 | Mixed content | ~8.9 MB/s | ~9.1 MB/s |
@@ -319,7 +319,7 @@ let matches = scan_text_with_config("Card: 4532015112830366", &config)?;
 
 siphon detects sensitive data using a two-layer system:
 
-1. **583 regex patterns** match data formats (credit cards, SSNs, IBANs, API keys, etc.)
+1. **586 regex patterns** match data formats (credit cards, SSNs, IBANs, API keys, etc.)
 2. **5,000+ context keywords** (English, French, Spanish, German, Italian, Portuguese) confirm detections via Aho-Corasick proximity matching
 
 Each pattern has a **specificity score** (0.0-1.0) indicating base confidence.
@@ -346,7 +346,7 @@ crédito` / `Kreditkarte` / `carta di credito` / `cartão de crédito`).
 | Geolocation & Postal | 8 | GPS coordinates, geohash, ZIP+4, UK postcode |
 
 Full reference:
-- **[docs/PATTERNS.md](docs/PATTERNS.md)** -- All 583 patterns with regex, specificity scores, and context-required flags
+- **[docs/PATTERNS.md](docs/PATTERNS.md)** -- All 586 patterns with regex, specificity scores, and context-required flags
 - **[docs/KEYWORDS.md](docs/KEYWORDS.md)** -- All 3,100+ context keywords (English + French) with proximity distances
 
 ## Modules
@@ -356,7 +356,7 @@ Full reference:
 | Module | Description |
 |---|---|
 | `scanner` | Core engine — parallel regex matching with Rayon, AC prefilter |
-| `patterns` | 583 compiled regex patterns across 128 categories |
+| `patterns` | 586 compiled regex patterns across 128 categories |
 | `context` | Aho-Corasick keyword proximity matching (5,000+ keywords) |
 | `normalize` | Unicode normalization (zero-width, homoglyphs, whitespace) |
 | `scoring` | Confidence scoring and overlapping match deduplication |
@@ -415,8 +415,8 @@ ingestion or detection:
 ```
                     ┌─────────────────┐
                     │   Siphon-Core   │ ← scanner engine (library)
-                    │  583 patterns,  │
-                    │ 72 validators   │
+                    │  586 patterns,  │
+                    │ 73 validators   │
                     └────────┬────────┘
     ┌─────────────┬──────────┼──────────┬──────────────┐
     │             │          │          │              │
@@ -456,6 +456,10 @@ for the full pod inventory and deployment topology.
 | `siphon-api`  | HTTP service for text scanning. `/scan` + `/v1/*` surface (patterns, policies, metrics, audit, findings, overrides, capabilities, pipeline stages). |
 | `siphon-fs`   | HTTP service for file uploads. `/scan` accepts multipart `file` + JSON `options`; dispatches through the extractor registry into the core scanner. |
 | `siphon-launcher` | Local-dev process manager. Spawns siphon-api / siphon-fs from a terminal, inherits stdio, reaps + tombstones dead children. k8s users don't need it. |
+| `siphon-icap` | RFC 3507 ICAP server (port 1344) for proxy-based network DLP. |
+| `siphon-smtp` | Sendmail/Postfix milter (port 8894) for SMTP DLP; was `siphon-milter`, old `SIPHON_MILTER_*` variables still work with a warning. |
+| `siphon-mail` | Library: message/part schema, persistence and verdict reconciliation shared by siphon-smtp (writes) and siphon-api (reads). |
+| `siphon-auth` | Library: service identity. One Postgres connector (`DbTls`), one listener builder (`ServerTls`, optional mTLS), API-key store, sensor telemetry. |
 | `siphon` (this crate) | CLI + extractors + libraries shared by all the pods. |
 
 The **analyst console** lives in [`console/`](console/) — a Vite +
@@ -501,7 +505,7 @@ Input text
   │   └── context-gated patterns (only run if keywords present)
   │
   ├── Parallel regex matching (Rayon par_iter over active patterns)
-  │   ├── Structural validation (72 checksum validators — Luhn,
+  │   ├── Structural validation (73 checksum validators — Luhn,
   │   │   mod-97, Verhoeff, Base58Check, Bech32 polymod, ISO 3779)
   │   ├── Context proximity check (AC hit index lookup)
   │   └── Confidence scoring (base + context boost)
@@ -641,7 +645,7 @@ See [docs/enterprise/security.md](docs/enterprise/security.md) for full details.
 | [docs/getting-started/quickstart.md](docs/getting-started/quickstart.md) | Quick start guide with CLI and Rust API examples |
 | [docs/getting-started/configuration.md](docs/getting-started/configuration.md) | Full configuration reference (config file, env vars, CLI, policies) |
 | [docs/getting-started/installation.md](docs/getting-started/installation.md) | Build from source, Docker, feature flags |
-| [docs/PATTERNS.md](docs/PATTERNS.md) | All 583 patterns with regex, specificity, and context flags |
+| [docs/PATTERNS.md](docs/PATTERNS.md) | All 586 patterns with regex, specificity, and context flags |
 | [docs/KEYWORDS.md](docs/KEYWORDS.md) | All 5,000+ context keywords (6 languages) with proximity distances |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Performance analysis and optimization journey |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Version history |

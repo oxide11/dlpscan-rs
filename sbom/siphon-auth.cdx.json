@@ -314,8 +314,8 @@
     {
       "type": "library",
       "name": "ctutils",
-      "version": "0.4.2",
-      "purl": "pkg:cargo/ctutils@0.4.2",
+      "version": "0.4.6",
+      "purl": "pkg:cargo/ctutils@0.4.6",
       "scope": "required",
       "licenses": [
         {
@@ -403,6 +403,24 @@
     },
     {
       "type": "library",
+      "name": "der",
+      "version": "0.8.2",
+      "purl": "pkg:cargo/der@0.8.2",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/formats"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "der_derive",
       "version": "0.7.3",
       "purl": "pkg:cargo/der_derive@0.7.3",
@@ -416,6 +434,30 @@
         {
           "type": "vcs",
           "url": "https://github.com/RustCrypto/formats/tree/master/der/derive"
+        }
+      ],
+      "properties": [
+        {
+          "name": "siphon:proc-macro",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "der_derive",
+      "version": "0.8.0",
+      "purl": "pkg:cargo/der_derive@0.8.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/formats"
         }
       ],
       "properties": [
@@ -592,24 +634,6 @@
     {
       "type": "library",
       "name": "getrandom",
-      "version": "0.3.4",
-      "purl": "pkg:cargo/getrandom@0.3.4",
-      "scope": "required",
-      "licenses": [
-        {
-          "expression": "MIT OR Apache-2.0"
-        }
-      ],
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/rust-random/getrandom"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "name": "getrandom",
       "version": "0.4.3",
       "purl": "pkg:cargo/getrandom@0.4.3",
       "scope": "required",
@@ -700,8 +724,8 @@
     {
       "type": "library",
       "name": "libc",
-      "version": "0.2.189",
-      "purl": "pkg:cargo/libc@0.2.189",
+      "version": "0.2.191",
+      "purl": "pkg:cargo/libc@0.2.191",
       "scope": "required",
       "licenses": [
         {
@@ -1030,8 +1054,8 @@
     {
       "type": "library",
       "name": "rand",
-      "version": "0.10.2",
-      "purl": "pkg:cargo/rand@0.10.2",
+      "version": "0.10.3",
+      "purl": "pkg:cargo/rand@0.10.3",
       "scope": "required",
       "licenses": [
         {
@@ -1090,8 +1114,8 @@
     {
       "type": "library",
       "name": "rustls",
-      "version": "0.23.45",
-      "purl": "pkg:cargo/rustls@0.23.45",
+      "version": "0.23.46",
+      "purl": "pkg:cargo/rustls@0.23.46",
       "scope": "required",
       "licenses": [
         {
@@ -1224,8 +1248,8 @@
     {
       "type": "library",
       "name": "serde_json",
-      "version": "1.0.151",
-      "purl": "pkg:cargo/serde_json@1.0.151",
+      "version": "1.0.154",
+      "purl": "pkg:cargo/serde_json@1.0.154",
       "scope": "required",
       "licenses": [
         {
@@ -1242,8 +1266,8 @@
     {
       "type": "library",
       "name": "sha2",
-      "version": "0.11.0",
-      "purl": "pkg:cargo/sha2@0.11.0",
+      "version": "0.11.1",
+      "purl": "pkg:cargo/sha2@0.11.1",
       "scope": "required",
       "licenses": [
         {
@@ -1326,6 +1350,24 @@
         {
           "type": "vcs",
           "url": "https://github.com/RustCrypto/formats/tree/master/spki"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "spki",
+      "version": "0.8.1",
+      "purl": "pkg:cargo/spki@0.8.1",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/formats"
         }
       ]
     },
@@ -1442,8 +1484,8 @@
     {
       "type": "library",
       "name": "tokio",
-      "version": "1.53.1",
-      "purl": "pkg:cargo/tokio@1.53.1",
+      "version": "1.54.1",
+      "purl": "pkg:cargo/tokio@1.54.1",
       "scope": "required",
       "licenses": [
         {
@@ -1500,8 +1542,8 @@
     {
       "type": "library",
       "name": "tokio-rustls",
-      "version": "0.26.5",
-      "purl": "pkg:cargo/tokio-rustls@0.26.5",
+      "version": "0.26.6",
+      "purl": "pkg:cargo/tokio-rustls@0.26.6",
       "scope": "required",
       "licenses": [
         {
@@ -1658,12 +1700,12 @@
     {
       "type": "library",
       "name": "unicode-normalization",
-      "version": "0.1.25",
-      "purl": "pkg:cargo/unicode-normalization@0.1.25",
+      "version": "0.1.26",
+      "purl": "pkg:cargo/unicode-normalization@0.1.26",
       "scope": "required",
       "licenses": [
         {
-          "expression": "MIT OR Apache-2.0"
+          "expression": "(MIT OR Apache-2.0) AND Unicode-3.0"
         }
       ],
       "externalReferences": [
@@ -1714,8 +1756,8 @@
     {
       "type": "library",
       "name": "webpki-roots",
-      "version": "1.0.9",
-      "purl": "pkg:cargo/webpki-roots@1.0.9",
+      "version": "1.0.11",
+      "purl": "pkg:cargo/webpki-roots@1.0.11",
       "scope": "required",
       "licenses": [
         {
@@ -1769,9 +1811,27 @@
     },
     {
       "type": "library",
+      "name": "x509-cert",
+      "version": "0.3.0",
+      "purl": "pkg:cargo/x509-cert@0.3.0",
+      "scope": "required",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/RustCrypto/formats"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "name": "zeroize",
-      "version": "1.9.0",
-      "purl": "pkg:cargo/zeroize@1.9.0",
+      "version": "1.9.1",
+      "purl": "pkg:cargo/zeroize@1.9.1",
       "scope": "required",
       "licenses": [
         {

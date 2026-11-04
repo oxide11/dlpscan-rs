@@ -83,14 +83,17 @@ impl fmt::Display for PolicyError {
 
 impl std::error::Error for PolicyError {}
 
-/// The message-level verdict.
+/// The message-level verdict, and what it covers.
 ///
-/// Re-exported from `siphon-mail` rather than redefined. It was briefly
-/// duplicated here, when the model lived inside siphon-api's binary crate and
-/// there was nothing to depend on — two enums and two `as_str` tables writing
-/// the same strings into the same column, with only a test holding them
-/// together. Sharing the crate removes the possibility of drift instead of
-/// testing for it.
+/// Re-exported from `siphon-mail` rather than redefined. `Verdict` was
+/// briefly duplicated here, when the model lived inside siphon-api's binary
+/// crate and there was nothing to depend on — two enums and two `as_str`
+/// tables writing the same strings into the same column, with only a test
+/// holding them together. Sharing the crate removes the possibility of drift
+/// instead of testing for it. `Inspection` is one step further along the
+/// same road: siphon-mail itself re-exports it from siphon-core, so the
+/// milter, the CLI, siphon-fs and siphon-icap all answer "did the verdict
+/// cover everything?" with one type.
 pub use siphon_mail::{Inspection, Verdict};
 
 /// What the milter should do about a message, once the verdict is known.
@@ -137,7 +140,7 @@ impl Action {
 /// what to do is a deployment decision rather than a property of the message.
 pub fn action_for(
     verdict: Verdict,
-    inspection: Inspection,
+    inspection: &Inspection,
     on_indeterminate: OnIndeterminate,
 ) -> Action {
     let by_verdict = match verdict {
@@ -147,13 +150,17 @@ pub fn action_for(
         Verdict::Indeterminate => incomplete_action(on_indeterminate),
     };
 
-    if inspection.is_complete() {
+    if !inspection.has_gap() {
         return by_verdict;
     }
 
-    // Something in this message was not read. The operator's fail-closed
-    // setting is about exactly that, and it must not be skipped because
-    // something *else* in the message was found.
+    // Something in this message that could hold a value was not read. The
+    // operator's fail-closed setting is about exactly that, and it must not
+    // be skipped because something *else* in the message was found. An
+    // informational reason (`Unread::is_informational` — an image inside a
+    // zipped attachment) is not a gap: it is in the inspection for the log,
+    // and deferring ordinary mail over it is the outcome the variant exists
+    // to avoid.
     //
     // Severity ranks `Flagged` above `Indeterminate`, which is the right
     // label — a confirmed finding is the more actionable statement — but it
@@ -203,6 +210,15 @@ pub fn verdict_headers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use siphon_mail::Unread;
+
+    /// Any inspection with a gap. The policy reads only `has_gap()`; which
+    /// part went unread and why is for the log, not the decision.
+    fn incomplete() -> Inspection {
+        Inspection::new().with_unread(Unread::Encrypted {
+            unit: "part 2".into(),
+        })
+    }
 
     #[test]
     fn the_default_is_fail_closed() {
@@ -210,7 +226,7 @@ mod tests {
         assert_eq!(
             action_for(
                 Verdict::Indeterminate,
-                Inspection::Incomplete,
+                &incomplete(),
                 OnIndeterminate::default()
             ),
             Action::Defer
@@ -242,7 +258,7 @@ mod tests {
             (OnIndeterminate::Deliver, Action::Accept),
         ] {
             assert_eq!(
-                action_for(Verdict::Indeterminate, Inspection::Incomplete, policy),
+                action_for(Verdict::Indeterminate, &incomplete(), policy),
                 expected
             );
         }
@@ -257,10 +273,10 @@ mod tests {
             OnIndeterminate::Quarantine,
             OnIndeterminate::Deliver,
         ] {
-            let done = Inspection::Complete;
-            assert_eq!(action_for(Verdict::Clean, done, policy), Action::Accept);
-            assert_eq!(action_for(Verdict::Flagged, done, policy), Action::Accept);
-            assert_eq!(action_for(Verdict::Block, done, policy), Action::Reject);
+            let done = Inspection::new();
+            assert_eq!(action_for(Verdict::Clean, &done, policy), Action::Accept);
+            assert_eq!(action_for(Verdict::Flagged, &done, policy), Action::Accept);
+            assert_eq!(action_for(Verdict::Block, &done, policy), Action::Reject);
         }
     }
 
@@ -269,11 +285,7 @@ mod tests {
     #[test]
     fn flagged_still_delivers() {
         assert_eq!(
-            action_for(
-                Verdict::Flagged,
-                Inspection::Complete,
-                OnIndeterminate::Defer
-            ),
+            action_for(Verdict::Flagged, &Inspection::new(), OnIndeterminate::Defer),
             Action::Accept
         );
     }
@@ -288,32 +300,98 @@ mod tests {
     #[test]
     fn a_finding_does_not_excuse_an_uninspected_part() {
         assert_eq!(
-            action_for(
-                Verdict::Flagged,
-                Inspection::Incomplete,
-                OnIndeterminate::Defer
-            ),
+            action_for(Verdict::Flagged, &incomplete(), OnIndeterminate::Defer),
             Action::Defer,
             "flagged plus unread must defer, not deliver"
         );
         assert_eq!(
-            action_for(
-                Verdict::Clean,
-                Inspection::Incomplete,
-                OnIndeterminate::Defer
-            ),
+            action_for(Verdict::Clean, &incomplete(), OnIndeterminate::Defer),
             Action::Defer
         );
         // Fail-open is still fail-open: an operator who chose `deliver` gets
         // delivery, and the header still says what happened.
         assert_eq!(
-            action_for(
-                Verdict::Flagged,
-                Inspection::Incomplete,
-                OnIndeterminate::Deliver
-            ),
+            action_for(Verdict::Flagged, &incomplete(), OnIndeterminate::Deliver),
             Action::Accept
         );
+    }
+
+    /// The policy is about completeness, not about the reason. Every kind of
+    /// gap — a cap, a cipher, a parse failure, a warning string nobody has
+    /// typed yet — gets the same fail-closed treatment, so a new `Unread`
+    /// variant cannot arrive as an exemption.
+    #[test]
+    fn every_unread_reason_is_treated_the_same() {
+        let reasons = [
+            Unread::Oversize {
+                unit: "part 1".into(),
+                limit: None,
+            },
+            Unread::Truncated {
+                unit: "part 1".into(),
+            },
+            Unread::Encrypted {
+                unit: "part 1".into(),
+            },
+            Unread::NestedArchive {
+                unit: "part 1".into(),
+            },
+            Unread::Unsupported {
+                unit: "part 1".into(),
+            },
+            Unread::ReadError {
+                unit: "part 1".into(),
+                detail: "boom".into(),
+            },
+            Unread::FormatMismatch {
+                declared: "pdf".into(),
+                detected: "zip".into(),
+            },
+            Unread::MatchCapReached,
+            Unread::Other {
+                detail: "part limit reached".into(),
+            },
+        ];
+        for reason in reasons {
+            let inspection = Inspection::new().with_unread(reason.clone());
+            assert_eq!(
+                action_for(Verdict::Clean, &inspection, OnIndeterminate::Defer),
+                Action::Defer,
+                "{reason:?} must defer under the default policy"
+            );
+        }
+    }
+
+    /// The one reason that is not a gap. A zipped attachment with a photo in
+    /// it is ordinary mail; the inspection says the photo was passed over,
+    /// and the fail-closed default delivers anyway. A gap beside it still
+    /// defers.
+    #[test]
+    fn an_informational_reason_does_not_defer() {
+        let photo = Unread::NotText {
+            unit: "entry photo.png".into(),
+        };
+        let inspection = Inspection::new().with_unread(photo.clone());
+        assert!(
+            !inspection.is_complete(),
+            "the photo was not read, and the type says so"
+        );
+        assert_eq!(
+            action_for(Verdict::Clean, &inspection, OnIndeterminate::Defer),
+            Action::Accept
+        );
+        assert_eq!(
+            action_for(Verdict::Flagged, &inspection, OnIndeterminate::Quarantine),
+            Action::Accept
+        );
+        let with_gap = inspection.with_unread(Unread::Encrypted {
+            unit: "entry secrets.txt".into(),
+        });
+        assert_eq!(
+            action_for(Verdict::Clean, &with_gap, OnIndeterminate::Defer),
+            Action::Defer
+        );
+        assert!(photo.is_informational());
     }
 
     /// A verdict that already stops the message is at least as restrictive
@@ -326,11 +404,11 @@ mod tests {
             OnIndeterminate::Deliver,
         ] {
             assert_eq!(
-                action_for(Verdict::Block, Inspection::Incomplete, policy),
+                action_for(Verdict::Block, &incomplete(), policy),
                 Action::Reject
             );
             assert_eq!(
-                action_for(Verdict::Quarantine, Inspection::Incomplete, policy),
+                action_for(Verdict::Quarantine, &incomplete(), policy),
                 Action::Quarantine("siphon: content policy".into())
             );
         }

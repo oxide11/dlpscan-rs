@@ -85,17 +85,29 @@ or dedup — it is the only check that will notice a silent recall loss.
 ### evadex quality gate (`evadex-quality-gate.yml`)
 
 Path-filtered to the detection path — `normalize/`, `patterns/`, `scanner/`,
-`validation/` under `crates/siphon-core/src/`. Builds the CLI, checks out the
-external [`evadex`](https://github.com/tbustenk/evadex) adversarial harness,
-and enforces thresholds on the `northam` tier:
+`context/`, `validation.rs` and `scoring.rs` under `crates/siphon-core/src/`,
+plus the workflow itself. Builds the CLI, checks out the external
+[`evadex`](https://github.com/tbustenk/evadex) adversarial harness, and runs
+`evadex ci` on the `northam` tier once per submission strategy, each against
+its own floor (seed `20261015`, `--batch`, `--max-error-rate 2`):
 
-- `--min-detection 70` (0–100 scale)
-- `--max-fp 5`
+| Strategy | `--min-detection` | Measured 2026-10-16 (siphon-core 2.11.0, evadex 3.41.1) |
+|---|---|---|
+| text | 75 | 78.8% |
+| docx | 73 | 76.8% |
+| xlsx | 72 | 75.4% |
+| pdf | 60 | 63.3% |
 
-The report uploads as the `evadex-quality-gate-report` artifact, retained 30
-days, even on failure. Because it is path-filtered, a change to scoring or
-context matching that lands outside those four directories will not trigger
-it — run it manually via dispatch if you touch detection from elsewhere.
+The false-positive check (`--max-fp 5`, structured categories only) runs on
+the text job; `evadex falsepos` submits text whatever the strategy. A run
+whose error rate exceeds 2% exits 2 — inconclusive, not red — so a flaky
+transport cannot read as a scanner regression. The floors are regression
+floors ~3.5 points under the measured figure; raise one when its number has
+moved up and stayed.
+
+Each job uploads `evadex-quality-gate-report-<strategy>`, retained 30 days,
+even on failure. Because it is path-filtered, a change to detection that
+lands outside those paths will not trigger it — run it via dispatch.
 
 ---
 

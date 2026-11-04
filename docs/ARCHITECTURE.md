@@ -67,8 +67,9 @@ input text
         │  reject empty, reject > 10 MB
         ▼
 [C] NORMALIZATION                 normalize_text
-        │  10 stages + token-level encoded-data decode (base64,
-        │  base64url, base32, hex — nested up to 3 iterations)
+        │  15 steps (1–11 plus 4b, 4c, 6b, 6c) including token-level
+        │  encoded-data decode (base64, base64url, base32, hex — nested
+        │  up to 3 iterations); see architecture/normalization.md
         │  builds offset_map: normalized byte → original byte
         ▼
 [D] CONTEXT HIT-INDEX BUILD       build_hit_index
@@ -138,7 +139,7 @@ input file
 ```
 
 Text-only inputs (API calls, stdin, stream messages) skip stage A
-entirely. This is what makes `siphon-api`, `siphon-ds`, and `siphon-gw`
+entirely. This is what makes `siphon-api`, `siphon-icap` and `siphon-smtp`
 possible without the heavy extractor dependencies.
 
 ## Workspace layout
@@ -171,12 +172,17 @@ polygon-siphon/
 │   │   ├── extractors → siphon-core scanner
 │   │   └── shares findings_ring + overrides shape with siphon-api
 │   │
-│   └── siphon-launcher/          # local-dev process manager
-│       ├── GET  /health, /v1/manage/list
-│       ├── POST /v1/manage/start, /stop
-│       └── spawns siphon-api / siphon-fs subprocesses with
-│           inherited env + stdio; tombstones dead children so the
-│           admin console sees exit codes
+│   ├── siphon-launcher/          # local-dev process manager
+│   │   ├── GET  /health, /v1/manage/list
+│   │   ├── POST /v1/manage/start, /stop
+│   │   └── spawns siphon-api / siphon-fs subprocesses with
+│   │       inherited env + stdio; tombstones dead children so the
+│   │       admin console sees exit codes
+│   │
+│   ├── siphon-icap/              # RFC 3507 ICAP server, port 1344
+│   ├── siphon-smtp/              # Sendmail/Postfix milter, port 8894
+│   ├── siphon-mail/              # lib: message/part schema + persistence
+│   └── siphon-auth/              # lib: DB/listener TLS, API keys, telemetry
 │
 ├── docs/wireframes/
 │   └── siphon-c2.html            # single-file React admin console;
@@ -234,11 +240,11 @@ Key design points:
 |---|---|
 | **[architecture/microservices.md](architecture/microservices.md)** | The pod architecture: Siphon-Core + FS/API/DS/GW, detector pods (ML/Vision/Classify), Siphon-C2 management plane, unified finding wire format, K8s deployment, migration path. |
 | **[architecture/pipeline.md](architecture/pipeline.md)** | Stage-by-stage walkthrough of `scan_text_with_config`. Read this first if you want to understand what runs in what order and why. |
-| **[architecture/normalization.md](architecture/normalization.md)** | The 10 normalization stages, what each one defends against, the offset-map invariant, and the known `collapse_padding` over-reach gotcha. |
+| **[architecture/normalization.md](architecture/normalization.md)** | The normalization steps (15 as of siphon-core 2.10.0), what each one defends against, the offset-map invariant, and the known `collapse_padding` over-reach gotcha. |
 | **[architecture/context-matching.md](architecture/context-matching.md)** | The Aho-Corasick prefilter, the keyword hit index, why `MatchKind::LeftmostLongest` matters, and the shared-keyword fan-out fix. |
 | **[architecture/validation.md](architecture/validation.md)** | Pattern validation: how `validate_match` is wired, the always-run vs context-gated split, the validator inventory, and the labeled-corpus regression harness. |
 | **[architecture/extending.md](architecture/extending.md)** | "I want to add X" cookbook: new pattern, new validator, new corpus test, new keyword set, new file extractor. |
-| **[architecture/data-path.html](architecture/data-path.html)** | *Interactive — open in a browser.* Clickable component map of the four ingest routes, and the ten-stage scan pipeline with sample candidates you can send through to see which stage drops them. Counts are a snapshot of the tree at the time of writing. |
+| **[architecture/data-path.html](architecture/data-path.html)** | *Interactive — open in a browser.* Clickable component map of the four ingest routes, and the scan pipeline with sample candidates you can send through to see which stage drops them. Counts are a snapshot of the tree at the time of writing. |
 | **[architecture/email-dlp.md](architecture/email-dlp.md)** | *Design, not yet built.* The mail path: annotate-don't-block via milter X-headers, the message/parts tree (MIME paths, not indices), the context envelope that keeps the 174 context-gated patterns working when a message is split into parts, verdict aggregation including `indeterminate`, and why cross-message content dedup has to go. |
 
 ## Cross-cutting concerns

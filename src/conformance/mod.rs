@@ -54,6 +54,7 @@ pub mod detections_data;
 pub mod formats;
 
 use crate::scanner::{scan_text_with_config, ScanConfig};
+use crate::Unread;
 
 // ---------------------------------------------------------------------------
 // Planted values
@@ -152,7 +153,7 @@ pub enum Expect {
     DetectsSubCategory(&'static str),
     /// The filename contradicts the content, and both halves must hold: the
     /// content won (the planted value is reported) *and* the contradiction
-    /// was recorded in `metadata["format_mismatch"]`.
+    /// was recorded as `Unread::FormatMismatch` on the inspection.
     ///
     /// Recording it is not decoration. A container renamed into the text
     /// family is the shape of deliberate exfiltration, so reading it
@@ -346,11 +347,13 @@ pub fn run_case(c: &Case) -> Result<(), String> {
     match &c.expect {
         Expect::NotSilentlyClean => match &extracted {
             Err(_) => Ok(()),
-            Ok(r) if !r.warnings.is_empty() => Ok(()),
+            // A gap, not merely an informational note: an unopened image
+            // in a damaged archive says nothing about the damage.
+            Ok(r) if r.inspection.has_gap() => Ok(()),
             Ok(r) if r.format == "unparsed" => Ok(()),
             Ok(r) => Err(format!(
                 "{}\n  a damaged file read as faithfully parsed \
-                 (format={}, {} chars of text, no warnings)\n  \
+                 (format={}, {} chars of text, no gap in the inspection)\n  \
                  a caller that fails closed has nothing to act on",
                 c.note,
                 r.format,
@@ -359,10 +362,11 @@ pub fn run_case(c: &Case) -> Result<(), String> {
         },
         Expect::NoFindings => {
             let r = extracted.map_err(|e| format!("{}\n  extraction failed: {e}", c.note))?;
-            if !r.warnings.is_empty() {
+            if r.inspection.has_gap() {
                 return Err(format!(
-                    "{}\n  a well-formed file produced warnings: {:?}",
-                    c.note, r.warnings
+                    "{}\n  a well-formed file was not read in full: {:?}",
+                    c.note,
+                    r.inspection.describe()
                 ));
             }
             let matches = scan(&r.text)?;
@@ -383,14 +387,18 @@ pub fn run_case(c: &Case) -> Result<(), String> {
         Expect::DisguisedButFound(needle) | Expect::NoMismatchAndFound(needle) => {
             let want_mismatch = matches!(c.expect, Expect::DisguisedButFound(_));
             let r = extracted.map_err(|e| format!("{}\n  extraction failed: {e}", c.note))?;
-            let recorded = r.metadata.get("format_mismatch");
+            let recorded = r
+                .inspection
+                .unread_reasons()
+                .iter()
+                .find(|u| matches!(u, Unread::FormatMismatch { .. }));
 
             match (want_mismatch, recorded) {
                 (true, None) => {
                     return Err(format!(
                         "{}\n  the name contradicts the content and nothing was \
-                         recorded — read as {}, metadata carries no \
-                         format_mismatch",
+                         recorded — read as {}, the inspection carries no \
+                         format mismatch",
                         c.note, r.format
                     ))
                 }
@@ -429,10 +437,11 @@ pub fn run_case(c: &Case) -> Result<(), String> {
         }
         Expect::NoFindingsExcept(allowed) => {
             let r = extracted.map_err(|e| format!("{}\n  extraction failed: {e}", c.note))?;
-            if !r.warnings.is_empty() {
+            if r.inspection.has_gap() {
                 return Err(format!(
-                    "{}\n  a well-formed file produced warnings: {:?}",
-                    c.note, r.warnings
+                    "{}\n  a well-formed file was not read in full: {:?}",
+                    c.note,
+                    r.inspection.describe()
                 ));
             }
             let matches = scan(&r.text)?;

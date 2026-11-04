@@ -256,15 +256,11 @@ pub mod app {
             },
             Screen::Config => match key {
                 KeyCode::Esc | KeyCode::Char('q') => app.screen = Screen::MainMenu,
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if app.config_index > 0 {
-                        app.config_index -= 1;
-                    }
+                KeyCode::Up | KeyCode::Char('k') if app.config_index > 0 => {
+                    app.config_index -= 1;
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if app.config_index < 7 {
-                        app.config_index += 1;
-                    }
+                KeyCode::Down | KeyCode::Char('j') if app.config_index < 7 => {
+                    app.config_index += 1;
                 }
                 _ => {}
             },

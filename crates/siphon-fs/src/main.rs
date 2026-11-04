@@ -32,10 +32,11 @@ use sha2::{Digest, Sha256};
 use siphon::rbac::{role_has_permission, Permission, Role};
 use siphon_core::audit::iso8601_now;
 use siphon_core::findings_ring::{filter_findings, severity_for, FindingRecord, FindingsRing};
+use siphon_core::inspection::{Inspection, Unread};
 use siphon_core::overrides::{
     CompiledList, PatternOverride, PatternOverrides, Regex, RuntimePattern,
 };
-use siphon_core::scanner::{scan_text_with_config, ScanConfig};
+use siphon_core::scanner::{scan_text_inspected, scan_text_with_config, ScanConfig};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
@@ -351,11 +352,20 @@ struct ScanResponse {
     bytes: usize,
     duration_ms: f64,
     parsed_as: String,
-    warnings: Vec<String>,
     findings: Vec<ScanFinding>,
-    /// False when extraction failed or extracted text exceeded MAX_INPUT_SIZE;
-    /// in those cases `findings: []` is a coverage gap, not a clean result.
-    scanned: bool,
+    /// What `findings` covers: `{"status": "complete"}` or
+    /// `{"status": "incomplete", "unread": [...]}` with one typed reason per
+    /// unit of content that was not read — extraction failed, text exceeded
+    /// MAX_INPUT_SIZE, an extractor left part of the file unread, a match
+    /// cap stopped the scanner, or the file's bytes contradict its name.
+    /// `findings: []` beside an incomplete inspection is a coverage gap, not
+    /// a clean result.
+    ///
+    /// The `scanned: bool` and `warnings: [...]` fields that used to sit
+    /// beside it were removed in siphon-fs 1.7.0 (step 6 of
+    /// `docs/architecture/inspection-outcome.md`); `scanned` was
+    /// `status == "complete"` and `warnings` the reasons as text.
+    inspection: Inspection,
     /// Per-stage trace events — present only when the caller sent
     /// `options={"trace":true}` as a multipart field. Mirrors the shape
     /// siphon-api's /scan returns so the admin console's trace
@@ -620,9 +630,11 @@ async fn scan(
                 bytes: file_len,
                 duration_ms: start.elapsed().as_secs_f64() * 1000.0,
                 parsed_as: "unknown".to_string(),
-                warnings: vec![],
                 findings: vec![],
-                scanned: false,
+                inspection: Inspection::new().with_unread(Unread::ReadError {
+                    unit: "file".to_string(),
+                    detail: e.clone(),
+                }),
                 trace: None,
                 error: {
                     tracing::warn!(error = %e, "fs: extraction failed");
@@ -646,24 +658,31 @@ async fn scan(
     // denies an attacker a trivial way to make the endpoint 500 by uploading
     // an empty-but-valid container.
     if extract.text.trim().is_empty() {
-        // Preserve any extraction warnings (e.g. "nested archive not scanned")
-        // — for a container holding only a nested or encrypted archive the text
-        // is empty but that warning is the whole point: it is the only signal
-        // that unscanned sensitive content may be present. Dropping it here
-        // would turn a flagged gap back into a silent one.
+        // Preserve the extractor's inspection — for a container holding only
+        // a nested or encrypted archive the text is empty but that reason is
+        // the whole point: it is the only signal that unscanned sensitive
+        // content may be present. Dropping it here would turn a flagged gap
+        // back into a silent one.
         //
         // Read in full and empty is a completed scan with nothing in it, so
-        // it counts as one; a warning means part of it was not read, which
-        // is the seen-but-not-read count instead.
-        if extract.warnings.is_empty() {
+        // it counts as one; a gap means part of it was not read, which is
+        // the seen-but-not-read count instead. A format mismatch alone is
+        // not a gap — the file was read, as what its bytes are — and neither
+        // is an informational reason (a zip of photos, each named as
+        // `not_text`): both stay in the response's `inspection` and neither
+        // moves the coverage figure.
+        let read_in_full = extract
+            .inspection
+            .unread_reasons()
+            .iter()
+            .all(|u| matches!(u, Unread::FormatMismatch { .. }) || u.is_informational());
+        if read_in_full {
             state
                 .sensor
                 .record_scan(0, file_len as u64, start.elapsed().as_millis() as u64);
         } else {
             state.sensor.record_unscanned();
         }
-        let mut warnings = extract.warnings.clone();
-        warnings.push("no extractable text in file".to_string());
         return JsonResponse(ScanResponse {
             request_id,
             filename,
@@ -671,9 +690,8 @@ async fn scan(
             bytes: file_len,
             duration_ms: start.elapsed().as_secs_f64() * 1000.0,
             parsed_as: extract.format.clone(),
-            warnings,
             findings: vec![],
-            scanned: true,
+            inspection: extract.inspection,
             trace: None,
             error: None,
             error_code: None,
@@ -695,12 +713,6 @@ async fn scan(
     // rather than a failed upload. `findings: []` here must never be read as
     // "clean".
     if extract.text.len() > siphon_core::validation::MAX_INPUT_SIZE {
-        let mut warnings = extract.warnings.clone();
-        warnings.push(format!(
-            "extracted {} MB of text, above the {} MB scanner limit — file was NOT scanned",
-            extract.text.len() / (1024 * 1024),
-            siphon_core::validation::MAX_INPUT_SIZE / (1024 * 1024)
-        ));
         warn!(
             request_id = %request_id,
             filename = %filename.clone().unwrap_or_else(|| "<none>".into()),
@@ -718,9 +730,11 @@ async fn scan(
                 bytes: file_len,
                 duration_ms: start.elapsed().as_secs_f64() * 1000.0,
                 parsed_as: extract.format.clone(),
-                warnings,
                 findings: vec![],
-                scanned: false,
+                inspection: extract.inspection.with_unread(Unread::Oversize {
+                    unit: "text".to_string(),
+                    limit: Some(siphon_core::validation::MAX_INPUT_SIZE as u64),
+                }),
                 trace: None,
                 error: Some(format!(
                     "extracted text is {} bytes, above the scanner limit of {} bytes; \
@@ -778,8 +792,8 @@ async fn scan(
             config.categories = Some(cats.iter().cloned().collect());
         }
     }
-    let matches = match scan_text_with_config(&extract.text, &config) {
-        Ok(m) => m,
+    let (matches, scan_inspection) = match scan_text_inspected(&extract.text, &config) {
+        Ok(o) => (o.matches, o.inspection),
         Err(e) => {
             warn!(request_id = %request_id, error = %e, "scan failed");
             state.sensor.record_error();
@@ -902,6 +916,12 @@ async fn scan(
     // writes to it mid-pipeline, so unlocking here is race-free.
     let trace = trace_sink.and_then(|s| s.lock().ok().map(|g| g.clone()));
 
+    // The extractor's inspection and the scanner's own cap report fold into
+    // one answer. A nested archive the extractor did not open and a match cap
+    // that stopped collection both mean the same thing to the caller: the
+    // findings below are not the whole file.
+    let inspection = coverage(extract.inspection, Some(scan_inspection));
+
     JsonResponse(ScanResponse {
         request_id,
         filename,
@@ -909,9 +929,8 @@ async fn scan(
         bytes: file_len,
         duration_ms,
         parsed_as: extract.format,
-        warnings: extract.warnings,
         findings,
-        scanned: true,
+        inspection,
         trace,
         error: None,
         error_code: None,
@@ -1958,17 +1977,151 @@ async fn shutdown_signal() {
     }
 }
 
+/// What a response's `findings` cover, from the extractor's inspection and
+/// the scanner's own report.
+///
+/// A container is complete only when every member was, so the two fold
+/// into one by `merge`. Nothing is re-typed on the way: the extractors
+/// report typed reasons (`docs/architecture/inspection-outcome.md`), and
+/// dropping one here is the failure that produced the 2026-09-03 and
+/// 2026-10-15 incidents.
+fn coverage(extraction: Inspection, scan: Option<Inspection>) -> Inspection {
+    let mut inspection = extraction;
+    if let Some(scan) = scan {
+        inspection.merge(scan);
+    }
+    inspection
+}
+
+#[cfg(test)]
+mod inspection_tests {
+    use super::*;
+
+    fn nested(unit: &str) -> Inspection {
+        Inspection::new().with_unread(Unread::NestedArchive { unit: unit.into() })
+    }
+
+    #[test]
+    fn clean_extraction_and_whole_scan_is_complete() {
+        let i = coverage(Inspection::Complete, Some(Inspection::Complete));
+        assert!(i.is_complete());
+    }
+
+    #[test]
+    fn an_extractor_gap_makes_the_verdict_incomplete() {
+        let i = coverage(nested("entry inner.zip"), None);
+        assert!(!i.is_complete());
+        assert_eq!(i.unread_reasons().len(), 1);
+        assert!(i.describe()[0].contains("inner.zip"));
+    }
+
+    /// An image the extractor passed over reaches the HTTP caller as
+    /// `not_text` — incomplete, so nobody reads `findings: []` as "the photo
+    /// was looked at" — and is not a gap, so the coverage counter and a
+    /// fail-closed caller reading `has_gap` both let it through.
+    #[test]
+    fn a_passed_over_image_is_reported_and_is_not_a_gap() {
+        let photo = Inspection::new().with_unread(Unread::NotText {
+            unit: "entry photo.png".into(),
+        });
+        let i = coverage(photo, Some(Inspection::Complete));
+        assert!(!i.is_complete());
+        assert!(!i.has_gap());
+        let json = serde_json::to_value(&i).unwrap();
+        assert_eq!(json["status"], "incomplete");
+        assert_eq!(json["unread"][0]["kind"], "not_text");
+    }
+
+    #[test]
+    fn scanner_cap_makes_the_verdict_incomplete() {
+        let scan = Inspection::new().with_unread(Unread::MatchCapReached);
+        let i = coverage(Inspection::Complete, Some(scan));
+        assert_eq!(i.unread_reasons(), &[Unread::MatchCapReached]);
+    }
+
+    #[test]
+    fn extractor_gap_and_cap_both_survive() {
+        let scan = Inspection::new().with_unread(Unread::MatchCapReached);
+        let i = coverage(
+            Inspection::new().with_unread(Unread::Encrypted {
+                unit: "entry a.docx".into(),
+            }),
+            Some(scan),
+        );
+        assert_eq!(i.unread_reasons().len(), 2);
+    }
+
+    /// Step 6 of the ADR: `inspection` is the only coverage field on the
+    /// wire. `scanned` and `warnings` are gone, and the typed reason the
+    /// extractor produced arrives as itself, not re-typed as `other`.
+    #[test]
+    fn the_inspection_is_the_only_coverage_field_on_the_wire() {
+        let resp = ScanResponse {
+            request_id: "r".into(),
+            filename: None,
+            content_type: None,
+            bytes: 0,
+            duration_ms: 0.0,
+            parsed_as: "zip".into(),
+            findings: vec![],
+            inspection: coverage(nested("entry inner.zip"), None),
+            trace: None,
+            error: None,
+            error_code: None,
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(json.get("scanned").is_none(), "{json}");
+        assert!(json.get("warnings").is_none(), "{json}");
+        assert_eq!(json["inspection"]["status"], "incomplete");
+        assert_eq!(json["inspection"]["unread"][0]["kind"], "nested_archive");
+        assert_eq!(json["inspection"]["unread"][0]["unit"], "entry inner.zip");
+    }
+}
+
 #[cfg(test)]
 mod size_limit_tests {
     use super::*;
 
-    // Serial-ish by construction: each test sets the vars it reads and clears
-    // them again, so ordering between them does not matter.
+    /// Serialises the tests in this module against the process environment.
+    ///
+    /// The previous comment here read "serial-ish by construction: each test
+    /// sets the vars it reads and clears them again, so ordering between them
+    /// does not matter." Ordering does not, but **concurrency** does: the
+    /// harness runs these on parallel threads of one process and they drive the
+    /// same two globals, so one test's `set_var` lands inside another's
+    /// section. `per_file_default_follows_a_raised_body_limit` read 100 MB —
+    /// the neighbouring test's number — where it had set 250 MB. Each test
+    /// clearing up after itself cannot fix that, because the clash happens
+    /// while both are still running.
+    ///
+    /// Poisoning is recovered rather than propagated: a panic in one test has
+    /// to fail that test, not every test that follows it.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Puts the variables back when the section ends, panic included. Without
+    /// this a failing assertion leaks its value into whichever test acquires
+    /// the lock next, turning one real failure into several confusing ones.
+    struct EnvRestore<'a>(Vec<(&'a str, Option<String>)>);
+
+    impl Drop for EnvRestore<'_> {
+        fn drop(&mut self) {
+            for (k, v) in &self.0 {
+                match v {
+                    Some(v) => std::env::set_var(k, v),
+                    None => std::env::remove_var(k),
+                }
+            }
+        }
+    }
+
     fn with_env<F: FnOnce()>(pairs: &[(&str, Option<&str>)], f: F) {
-        let saved: Vec<_> = pairs
-            .iter()
-            .map(|(k, _)| (*k, std::env::var(k).ok()))
-            .collect();
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _restore = EnvRestore(
+            pairs
+                .iter()
+                .map(|(k, _)| (*k, std::env::var(k).ok()))
+                .collect(),
+        );
         for (k, v) in pairs {
             match v {
                 Some(v) => std::env::set_var(k, v),
@@ -1976,12 +2129,6 @@ mod size_limit_tests {
             }
         }
         f();
-        for (k, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
-        }
     }
 
     /// The per-file streaming cap defaulted to 500 MB against a 100 MB body

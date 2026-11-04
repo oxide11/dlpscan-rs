@@ -34,6 +34,18 @@
 
 use uuid::Uuid;
 
+/// What a verdict covers, and why anything was left out.
+///
+/// Re-exported from `siphon-core` rather than defined here. This crate had
+/// its own two-state `Inspection` first — it is where the rule "a verdict is
+/// complete only when every part was read; no parts is incomplete, not
+/// clean" was written down — and the core type is that rule lifted into the
+/// crate every ingress depends on, with the reasons typed. Keeping a private
+/// copy would have meant two types answering the same question, which is the
+/// drift `docs/architecture/inspection-outcome.md` exists to end. The name
+/// is kept so `siphon_mail::Inspection` keeps meaning what it meant.
+pub use siphon_core::{Inspection, Unread};
+
 /// This crate's schema, exported so `siphon-api`'s migration runner can
 /// register it without a cross-crate `include_str!` path.
 ///
@@ -173,7 +185,7 @@ impl Verdict {
 }
 
 /// One part's contribution to the message verdict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PartOutcome {
     pub status: PartStatus,
     /// The verdict policy assigned to this part's findings.
@@ -183,6 +195,16 @@ pub struct PartOutcome {
     /// the caller — this module maxes verdicts, it does not decide what a
     /// credit-card number is worth.
     pub scanned_verdict: Option<Verdict>,
+    /// What to call this part when it has to be named: `"part 1.2"` for a
+    /// part at that MIME path, or just `"part"` when the caller did not say.
+    /// It becomes the `unit` of the [`Unread`] reason an uninspected part
+    /// contributes, so an operator reading a log line can tell *which*
+    /// attachment nobody opened.
+    pub unit: String,
+    /// Why, in the words of whoever gave up — the same text that goes into
+    /// `message_parts.detail`. Carried into [`Unread::ReadError`]; the other
+    /// skip reasons are self-describing.
+    pub detail: Option<String>,
 }
 
 impl PartOutcome {
@@ -190,61 +212,103 @@ impl PartOutcome {
         Self {
             status: PartStatus::Scanned,
             scanned_verdict: Some(verdict),
+            unit: "part".to_string(),
+            detail: None,
         }
     }
 
+    /// An uninspected part with no name. Prefer [`uninspected_at`] when the
+    /// MIME path is to hand, which it always is on the write side.
+    ///
+    /// [`uninspected_at`]: Self::uninspected_at
     pub fn uninspected(status: PartStatus) -> Self {
         Self {
             status,
             scanned_verdict: None,
+            unit: "part".to_string(),
+            detail: None,
+        }
+    }
+
+    /// An uninspected part at `mime_path`, with the recorded `detail`.
+    pub fn uninspected_at(status: PartStatus, mime_path: &str, detail: Option<String>) -> Self {
+        Self {
+            status,
+            scanned_verdict: None,
+            unit: format!("part {mime_path}"),
+            detail,
         }
     }
 
     /// This part alone, as a verdict.
-    fn verdict(self) -> Verdict {
+    fn verdict(&self) -> Verdict {
         if self.status.is_inspected() {
             self.scanned_verdict.unwrap_or(Verdict::Clean)
         } else {
             Verdict::Indeterminate
         }
     }
+
+    /// Why this part was not read, or `None` if it was.
+    ///
+    /// One arm per [`PartStatus`], so a status added to the enum has to say
+    /// here what kind of gap it is — the match is exhaustive, and there is
+    /// no catch-all to hide behind. The status strings in `message_parts`
+    /// are unchanged; this is the same fact in the vocabulary every other
+    /// ingress now uses.
+    pub fn unread(&self) -> Option<Unread> {
+        let unit = self.unit.clone();
+        Some(match self.status {
+            PartStatus::Scanned => return None,
+            // Recorded and never reached — a pod died, a retry has not come
+            // yet. There is no typed reason for "not yet", and `Other` is
+            // the variant for exactly that.
+            PartStatus::Pending => Unread::Other {
+                detail: format!("{unit} was recorded but never scanned"),
+            },
+            // The one cap this crate knows: `SkippedOversize` is defined as
+            // extracted text past the scanner's input size.
+            PartStatus::SkippedOversize => Unread::Oversize {
+                unit,
+                limit: Some(siphon_core::validation::MAX_INPUT_SIZE as u64),
+            },
+            PartStatus::SkippedEncrypted => Unread::Encrypted { unit },
+            PartStatus::SkippedNestedArchive => Unread::NestedArchive { unit },
+            PartStatus::SkippedUnsupported => Unread::Unsupported { unit },
+            PartStatus::Error => Unread::ReadError {
+                unit,
+                detail: self
+                    .detail
+                    .clone()
+                    .unwrap_or_else(|| "extraction or scan failed".to_string()),
+            },
+        })
+    }
 }
 
-/// Whether every part of a message was actually inspected.
+/// Did every part get inspected, and if not, which ones were not and why?
 ///
 /// Deliberately not a `Verdict`. Completeness and severity are two different
 /// facts, and collapsing them into one ordinal is what let a flagged part
 /// hide an unread one: `Flagged` outranks `Indeterminate` on the severity
 /// ladder, which is correct for the *label* a message carries and wrong as
-/// the gate deciding whether the message may be delivered.
+/// the gate deciding whether the message may be delivered. The ladder still
+/// answers "what is the most severe thing true of this message"; this
+/// answers "did we finish looking", and a fail-closed policy needs the
+/// second question.
 ///
-/// The ladder still answers "what is the most severe thing true of this
-/// message". This answers "did we finish looking". A caller enforcing a
-/// fail-closed policy needs the second question, and until this existed it
-/// only had the first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Inspection {
-    Complete,
-    Incomplete,
-}
-
-impl Inspection {
-    pub fn is_complete(self) -> bool {
-        self == Inspection::Complete
-    }
-}
-
-/// Did every part get inspected?
-///
-/// An empty part list is `Incomplete`, for the same reason it reconciles to
+/// An empty part list is incomplete, for the same reason it reconciles to
 /// `Indeterminate`: a message we produced no parts for is one we did not
 /// look at.
 pub fn inspection(parts: &[PartOutcome]) -> Inspection {
-    if parts.is_empty() || parts.iter().any(|p| !p.status.is_inspected()) {
-        Inspection::Incomplete
-    } else {
-        Inspection::Complete
+    if parts.is_empty() {
+        return Inspection::nothing_to_inspect("message");
     }
+    let mut inspection = Inspection::new();
+    for reason in parts.iter().filter_map(PartOutcome::unread) {
+        inspection.unread(reason);
+    }
+    inspection
 }
 
 /// Reconcile part outcomes into one message verdict: the maximum severity.
@@ -321,7 +385,7 @@ pub const UPSERT_PART_SQL: &str = "INSERT INTO message_parts \
 
 /// Read back every part's status and verdict inputs, for reconciliation.
 pub const SELECT_PART_OUTCOMES_SQL: &str =
-    "SELECT status, finding_count, max_confidence FROM message_parts \
+    "SELECT status, finding_count, max_confidence, mime_path, detail FROM message_parts \
      WHERE message_uuid = $1 ORDER BY mime_path";
 
 /// Write the reconciled verdict, recomputing `parts_completed` from the parts
@@ -495,7 +559,9 @@ where
                 let max_confidence: Option<f32> = r.get(2);
                 PartOutcome::scanned(verdict_for(finding_count, max_confidence))
             } else {
-                PartOutcome::uninspected(status)
+                let mime_path: &str = r.get(3);
+                let detail: Option<String> = r.get(4);
+                PartOutcome::uninspected_at(status, mime_path, detail)
             }
         })
         .collect();
@@ -547,17 +613,99 @@ mod tests {
         // The label is the more severe of the two, which is correct...
         assert_eq!(reconcile(&mixed), Verdict::Flagged);
         // ...and says nothing about whether we finished looking.
-        assert_eq!(inspection(&mixed), Inspection::Incomplete);
+        let mixed_inspection = inspection(&mixed);
+        assert!(!mixed_inspection.is_complete());
+        assert_eq!(
+            mixed_inspection.unread_reasons(),
+            &[Unread::Encrypted {
+                unit: "part".into()
+            }]
+        );
 
         let all_read = [
             PartOutcome::scanned(Verdict::Flagged),
             PartOutcome::scanned(Verdict::Clean),
         ];
-        assert_eq!(inspection(&all_read), Inspection::Complete);
+        assert!(inspection(&all_read).is_complete());
 
         // No parts at all is not a clean bill of health.
-        assert_eq!(inspection(&[]), Inspection::Incomplete);
+        assert!(!inspection(&[]).is_complete());
         assert_eq!(reconcile(&[]), Verdict::Indeterminate);
+    }
+
+    /// The reasons name the part. A message with three attachments and one
+    /// the filter could not open should say which one, in the same words
+    /// every other ingress uses.
+    #[test]
+    fn an_uninspected_part_is_named_by_its_mime_path() {
+        let parts = [
+            PartOutcome::scanned(Verdict::Clean),
+            PartOutcome::uninspected_at(
+                PartStatus::Error,
+                "1.2",
+                Some("content did not parse as its declared format".into()),
+            ),
+            PartOutcome::uninspected_at(PartStatus::SkippedOversize, "1.3", None),
+        ];
+        let i = inspection(&parts);
+        assert!(!i.is_complete());
+        assert_eq!(
+            i.unread_reasons(),
+            &[
+                Unread::ReadError {
+                    unit: "part 1.2".into(),
+                    detail: "content did not parse as its declared format".into(),
+                },
+                Unread::Oversize {
+                    unit: "part 1.3".into(),
+                    limit: Some(siphon_core::validation::MAX_INPUT_SIZE as u64),
+                },
+            ]
+        );
+        let lines = i.describe();
+        assert!(lines[0].contains("part 1.2"), "{lines:?}");
+        assert!(lines[1].contains("part 1.3"), "{lines:?}");
+    }
+
+    /// One arm per status. Every status other than `Scanned` maps to exactly
+    /// one `Unread` kind, and `Scanned` to none — a new `PartStatus` cannot
+    /// compile without saying what kind of gap it is.
+    #[test]
+    fn every_uninspected_status_maps_to_one_unread_kind() {
+        assert_eq!(
+            PartOutcome::scanned(Verdict::Clean).unread(),
+            None,
+            "a scanned part has nothing unread"
+        );
+        let cases = [
+            (PartStatus::Pending, "other"),
+            (PartStatus::SkippedOversize, "oversize"),
+            (PartStatus::SkippedEncrypted, "encrypted"),
+            (PartStatus::SkippedNestedArchive, "nested_archive"),
+            (PartStatus::SkippedUnsupported, "unsupported"),
+            (PartStatus::Error, "read_error"),
+        ];
+        for (status, kind) in cases {
+            let part = PartOutcome::uninspected_at(status, "2", None);
+            let reason = part
+                .unread()
+                .unwrap_or_else(|| panic!("{status:?} must yield an unread reason"));
+            // The serde tag is the kind's wire name, and the one stable
+            // handle on the variant from outside siphon-core.
+            let json = serde_json::to_value(&reason).unwrap();
+            assert_eq!(json["kind"], kind, "{status:?} mapped to {reason:?}");
+            if status != PartStatus::Pending {
+                assert_eq!(
+                    reason.unit(),
+                    Some("part 2"),
+                    "{status:?} should name the part"
+                );
+            }
+            // And through `inspection()`, the same single reason.
+            let i = inspection(&[part]);
+            assert!(!i.is_complete());
+            assert_eq!(i.unread_reasons(), std::slice::from_ref(&reason));
+        }
     }
     use super::*;
 
@@ -649,6 +797,8 @@ mod tests {
         let part = PartOutcome {
             status: PartStatus::Scanned,
             scanned_verdict: None,
+            unit: "part 1".into(),
+            detail: None,
         };
         assert_eq!(reconcile(&[part]), Verdict::Clean);
     }

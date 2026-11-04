@@ -43,14 +43,16 @@ maps file extensions to extractor functions:
 > `SIPHON_ON_FORMAT_MISMATCH`. See
 > [`file-lifecycle.md` §3](file-lifecycle.md#3-identification--what-is-this-file-actually).
 
-Each extractor returns an `ExtractionResult { text, source, warnings,
-metadata }`. The `text` field is the UTF-8 blob that enters the
+Each extractor returns an `ExtractionResult { text, format, metadata,
+inspection }`. The `text` field is the UTF-8 blob that enters the
 scanner. Everything after this point is format-agnostic.
 
-`warnings` is load-bearing rather than informational: it means *content
-exists here that this pass did not read*, and it is what lets a caller fail
-closed. An extractor returning `Ok("")` for a file it could not parse makes
-every caller downstream report clean for content nobody opened.
+`inspection` (`siphon_core::Inspection`) is load-bearing rather than
+informational: an unread reason means *content exists here that this pass
+did not read*, and it is what lets a caller fail closed. An extractor
+returning `Ok("")` for a file it could not parse makes every caller
+downstream report clean for content nobody opened. (It replaced a
+`warnings: Vec<String>`; see `inspection-outcome.md`.)
 
 **Key implication:** a credit card number inside a QR code on a PNG
 image goes through the full Luhn + BIN check path like any other PAN.

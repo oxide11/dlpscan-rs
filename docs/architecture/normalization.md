@@ -34,7 +34,33 @@ they came from.
 The stages are implemented via the `apply_stage!` macro (line ~1021)
 which threads `(current_text, current_offsets)` through each stage.
 
-## The 10 stages
+## The stages
+
+The normalizer is 15 steps, numbered 1–11 with 4b, 4c, 6b and 6c
+inserted where later work had to land between existing stages:
+
+| Step | What it undoes |
+|---|---|
+| 1 | URL percent-decode (two passes, for `%25XX`) |
+| 2 | HTML decimal entity decode |
+| 3 | Strip empty CSS/HTML comments |
+| 4 | Decode hex-spaced byte sequences |
+| 4b | Decode `\xHH` hex escapes |
+| 4c | Token-level base64 / base64url / base32 / hex decode, nested up to 3 layers |
+| 5 | Collapse whitespace padding between non-alpha characters |
+| 6 | Normalize excessive delimiters |
+| 6b | Strip delimiter characters between alphanumeric neighbours (`BBG0-00BP-HV59`) |
+| 6c | Strip a consistent separator repeated between digit groups (`4532*0151*1283*0366`) |
+| 7 | Strip zero-width characters |
+| 8 | Normalize exotic Unicode whitespace |
+| 9 | NFKC normalization |
+| 10 | Homoglyph map, with a Unicode decimal-digit (Nd) fallback so every digit script folds to ASCII |
+| 11 | Fold digit-confusable letters inside a long digit-dense run (`4532O151l283O366`) |
+
+Steps 7–10 run only when non-ASCII remains; step 11 runs regardless, because
+the letters it folds are themselves ASCII. Separate from all of this is the
+alternative-decodings second pass and the raw-text second pass for patterns
+whose regex mandates a separator stage 6c would have removed.
 
 Each stage is gated by a cheap check (e.g., `current.contains('%')`)
 so clean ASCII text skips most of them. Stages 7-10 only run if the
@@ -144,6 +170,21 @@ been implemented yet.
 Collapses runs of repeated hyphens or dots between alphanumeric
 characters: `123--45` → `123-45`.
 
+### Stage 6b: Strip delimiters between alphanumeric neighbours
+
+Resolves delimiter-injection inside alphanumeric identifiers (`D123-4567` →
+`D1234567`, `BBG0-00BP-HV59` → `BBG000BPHV59`). Runs after stage 6 so a
+doubled delimiter has already collapsed to one character.
+
+### Stage 6c: Strip a consistent separator between digit groups
+
+Covers the separator families the earlier stages do not (`|`, `,`, `:`, `;`,
+`~`, `+`, `=`, and non-ASCII such as U+00B7) when the same one repeats three
+or more times across 12–40 digits (`4532*0151*1283*0366`). This is the stage
+that removes the hyphen a `\b\d{5}-\d{4}\b` pattern insists on, which is
+why the scanner also runs separator-mandating patterns over the raw text
+(see CLAUDE.md, "The raw-text second pass").
+
 ### Stage 7: Strip zero-width characters
 
 **Function:** `remap_strip_zero_width`
@@ -179,6 +220,15 @@ characters with their ASCII equivalents:
 
 **Defends against:** Visually identical text that differs at the byte
 level.
+
+### Stage 11: Fold digit-confusable letters inside digit runs
+
+Latin, Greek and Cyrillic letters that read as digits (`O`→`0`, `l`→`1`, …)
+are folded when they sit inside a long, digit-dense run: `4532O151l283O366`.
+Runs outside the non-ASCII guard that covers stages 7–10, because the
+substituted letters are themselves ASCII and stage 10 would never see them.
+Stage 10 also carries a Unicode decimal-digit (Nd) fallback, so every digit
+script folds to ASCII rather than only the scripts in `HOMOGLYPH_MAP`.
 
 ## Alternative decodings (separate from normalization)
 

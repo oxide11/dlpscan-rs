@@ -1,0 +1,9 @@
+# CHANGELOG.md grows by appending a section to the current release block, so
+# two branches that each add one land their insertions on the same line and
+# every concurrent lockstep PR conflicted there (five in a row on
+# 2026-10-16). `union` keeps both sides in order, which is the resolution a
+# human made each time. It only applies to local merges and rebases — GitHub's
+# merge button does not read merge drivers — so the rule in CLAUDE.md is to
+# rebase the next PR after each merge; with this, that rebase is
+# conflict-free.
+CHANGELOG.md merge=union
