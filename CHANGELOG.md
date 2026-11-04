@@ -3,17 +3,52 @@
 All notable, user-visible changes to the Siphon stack are recorded here. Each
 release block is dated and contains per-crate sub-sections — bumps are
 independent, so a release block typically moves only the crates that actually
+changed.
 
 ---
 
-## 2026-09-30 — the parsers on the untrusted edge
+## 2026-11-04 — the security-audit wave, landed
 
-Both services that read attacker-shaped bytes off a socket, audited for the
-first time since they were split out. Three of the four findings are the same
-shape as the ones above: a cap that was checked but not enforced, and a
-surface that reported a clean body it had not finished reading.
+The work of PR #480, which sat open for seven weeks while `main` moved 85
+commits ahead. Merging it meant resolving 23 conflicts, and re-labelling
+these entries: the branch had chosen siphon-icap 0.3.2/0.3.3 and
+siphon-smtp 0.2.3, but `main` had independently reached 0.4.0 for both, so
+those three version numbers never shipped and the fixes land here instead.
+The prose is the branch's own.
 
-### siphon-icap 0.3.2
+Two findings came out of the merge rather than the audit. `Cargo.lock`
+recorded siphon-auth 0.1.0 and siphon-launcher 2.1.2 against manifests
+saying otherwise, and the nine SBOM documents had inherited it — publishing
+`pkg:cargo/siphon-auth@0.1.0` for a crate that had not been 0.1.0 for some
+time. And seven crates in this wave carried code changes with no version
+bump at all, which no gate could see.
+
+### siphon-api 2.12.3
+
+- **fix(api): four handlers returned database error strings to callers.**
+  `findings_export`, `findings_prune`, `create_baseline_snapshot` and the
+  `scan_stream` SSE frame each interpolated the error verbatim, disclosing
+  Postgres schema details, table and constraint names and scanner internals
+  to any authenticated caller (CWE-209). All four now answer with a fixed
+  generic string and log the real error at `warn`/`debug`.
+- **fix(api): `POST /scan/stream` had no tenant scope.** It was the one scan
+  endpoint with neither an `AuthContextExt` extractor nor a `tenant_scope()`
+  call, so a tenant-bound key could stream scans outside its tenant
+  (CWE-284). It now applies the same check as every other scan route, and a
+  contradicting `X-Siphon-Tenant` is refused with 403 before the stream
+  opens.
+- **fix(api): streaming findings never reached the `FindingsRing`.** Results
+  from `/scan/stream` were invisible to `GET /v1/findings` — a scan that
+  found something recorded nothing a responder could see. Each finding is now
+  pushed as it is emitted, with `tenant_id` set as the batch and single-scan
+  paths set it.
+- **fix(api): `BatchItem.id` and `SnapshotBody.label` were unbounded.** Batch
+  IDs land in ring record IDs and structured log lines, snapshot labels in
+  the database and the audit log. IDs over 256 characters are now rejected
+  with 400; labels are truncated at the nearest character boundary at or
+  below 200 bytes.
+
+### siphon-icap 0.4.1
 
 - **fix(icap): line caps now bound the allocation instead of reporting it.**
   `MAX_HEADER_LINE_BYTES` was checked after `read_line` returned, so an
@@ -27,87 +62,130 @@ surface that reported a clean body it had not finished reading.
   line above it, which was still an uncapped `read_line`. The 60 s
   connection timeout limits how long a peer can grow that buffer, not how
   far.
-- **fix(icap): a chunk size that would not parse ended the body early and
-  called it clean.** `usize::from_str_radix(..).unwrap_or(0)` turned an
-  unreadable chunk header into `0` — the end-of-body marker — so the body
-  stopped there, `truncated` stayed false, and whatever had arrived was
-  scanned as if it were the whole message. An empty one scanned clean and
-  the request was allowed, which is the outcome
-  `SIPHON_ICAP_ON_UNSCANNABLE` exists to prevent and never saw. Framing the
-  sensor cannot follow is now unread content, and so is a stream that ends
-  before its terminating zero chunk.
-
-### siphon-smtp 0.2.3
-
-- **fix(smtp): a queue ID of invalid bytes panicked the connection task.**
-  The 128-byte cap added on 2026-09-13 sliced the string at a byte offset.
-  Macro values are decoded with `from_utf8_lossy`, so every invalid byte the
-  MTA sends becomes a three-byte U+FFFD: 43 of them make a 129-byte string
-  whose byte 128 is inside the last character, and slicing there panics.
-  Reachable from anything able to write to the milter socket. Truncation now
-  walks back to a character boundary.
-
-The milter framing itself was audited and left alone: `next_packet` checks
-the declared length against `MAX_PACKET_SIZE` before it reserves or copies
-anything, rejects a zero length, and `parse_command` bounds-checks every
-fixed-width field. Not re-reviewed: the ICAP `Encapsulated` offset handling
-beyond its existing 1 MiB per-section cap.
-
----
-
-## 2026-09-30 — ICAP Encapsulated framing
-
-### siphon-icap 0.3.3
-
 - **fix(icap): a REQMOD or RESPMOD whose `Encapsulated` header named no body
-  section was answered with a clean 204 and its payload left unread.** Only the
-  last-section branch of the parse loop reads a body, and only for a section
-  named `null-body` or ending in `-body`. Three shapes therefore came out of
-  that loop with an empty body and `truncated` false, which `handle_scan` reads
-  as "nothing to scan" and answers `204 No Content`:
+  section was answered with a clean 204 and its payload left unread.** Only
+  the last-section branch of the parse loop reads a body, and only for a
+  section named `null-body` or ending in `-body`. Three shapes therefore came
+  out of that loop with an empty body and `truncated` false, which
+  `handle_scan` reads as "nothing to scan":
 
-  - no `Encapsulated` header at all, leaving the section list empty and the loop
-    body unexecuted;
+  - no `Encapsulated` header at all, leaving the section list empty and the
+    loop body unexecuted;
   - a last section that is neither `*-body` nor `null-body` — a bare
-    `req-hdr=0`, say — so every earlier section was consumed from the socket and
-    the payload was not;
+    `req-hdr=0`, say — so every earlier section was consumed from the socket
+    and the payload was not;
   - offsets that do not increase, where `next - this` goes negative and
     `saturating_sub` turns it into a zero-length read, skipping a section
-    without reading it. RFC 3507 §4.4.1 requires increasing offsets and nothing
-    here checked.
+    without reading it. RFC 3507 §4.4.1 requires increasing offsets and
+    nothing here checked.
 
   Separately, an unparseable offset (`req-body=abc`) was dropped by a
   `filter_map`, which turned the message into a header-only one and its body
   into something nobody read.
 
   All four are now refused with `400 Bad Request`, which also closes the
-  connection — `handle_connection` breaks out of its keep-alive loop on a parse
-  error. The close matters as much as the verdict: once the sensor and the peer
-  disagree about where a message ends, the bytes left unconsumed would
-  otherwise be parsed as the next request on the same connection.
+  connection — `handle_connection` breaks out of its keep-alive loop on a
+  parse error. The close matters as much as the verdict: once the sensor and
+  the peer disagree about where a message ends, the bytes left unconsumed
+  would otherwise be parsed as the next request on the same connection.
 
-  This is the `Encapsulated` offset handling that the round-8 audit entry
-  recorded as still unreviewed. It is the same class as the four fixes in
-  0.3.2 — content that was seen and not read must never be reported as clean —
-  and the fifth instance of it in this crate.
+  Reaching the ICAP port requires being inside `SIPHON_ICAP_ALLOWED_NETS`,
+  and a compliant proxy does not emit any of these shapes, so the realistic
+  threat is a buggy or compromised proxy rather than a client behind one.
+  Fixed on the invariant rather than on the reachability: a sensor that
+  cannot frame a message must not vouch for it.
+- Regression tests for each, including one asserting that what a compliant
+  proxy actually sends — REQMOD with a chunked body, REQMOD with
+  `null-body`, and OPTIONS — still parses, so the guards cannot become a
+  denial of service against the real deployment.
 
-  Reaching the ICAP port requires being inside `SIPHON_ICAP_ALLOWED_NETS`, and
-  a compliant proxy does not emit any of these shapes, so the realistic threat
-  is a buggy or compromised proxy rather than a client behind one. Fixed on the
-  invariant rather than on the reachability: a sensor that cannot frame a
-  message must not vouch for it.
+### siphon-smtp 0.4.1
 
-- Five regression tests. Three fail with the method-gated validation
-  neutralised; the fourth is covered by the section-parsing change; the fifth
-  asserts the shapes a compliant proxy actually sends — REQMOD with a chunked
-  body, REQMOD with `null-body`, and OPTIONS — still parse, so the guard cannot
-  become a denial of service against the real deployment.
+- **fix(smtp): a queue ID of invalid bytes panicked the connection task.**
+  The 128-byte cap sliced the string at a byte offset. Macro values are
+  decoded with `from_utf8_lossy`, so every invalid byte the MTA sends becomes
+  a three-byte U+FFFD: 43 of them make a 129-byte string whose byte 128 is
+  inside the last character, and slicing there panics. Reachable from
+  anything able to write to the milter socket. Truncation now walks back to a
+  character boundary.
+- **fix(smtp): the sender path was unbounded** and now caps at 512 bytes —
+  the longest valid RFC 5321 path is 256 octets of local part plus domain, so
+  this bounds what reaches the database and the log lines without touching
+  anything real.
+- **fix(smtp): a scan failure put the error string in the stored record.**
+  Now a generic detail, with the real error logged.
 
-Bumps siphon-icap 0.3.2 → 0.3.3; `deploy/Dockerfile.icap` LABEL and the
-`docker-compose.yml` image pin updated in lockstep. Note that
-`scripts/check-version-sync.sh` does not cover siphon-icap — its own comment
-says so and calls the omission out as archaeology-in-waiting — so those two
-were checked by hand.
+The milter framing itself was audited and left alone: `next_packet` checks
+the declared length against `MAX_PACKET_SIZE` before it reserves or copies
+anything, rejects a zero length, and `parse_command` bounds-checks every
+fixed-width field.
+
+### siphon-auth 0.1.2
+
+- **fix(auth): a second rotation silently extended a superseded secret.** On
+  rotation the current secret becomes the previous one and inherits the grace
+  window. An entry that was *already* previous had its record pointer
+  replaced with the new record — which carries the new
+  `previous_valid_until` — so a secret two rotations old kept being accepted
+  until the fresh deadline. Stale previous entries are now dropped outright
+  rather than re-dated.
+
+### siphon-fs 1.8.1
+
+- **fix(fs): multipart `filename` and `content_type` were unbounded**, going
+  straight into log lines and stored records. Capped at 512 and 256 bytes.
+- **fix(fs): tempfile and extraction errors were returned to the caller.**
+  Replaced with generic strings, the real error logged.
+
+### siphon-launcher 2.1.4
+
+- **fix(launcher): `POST /start` could bind a spawned service to any
+  interface.** The env passthrough blocks `SIPHON_BIND` and `SIPHON_FS_BIND`,
+  but the request's own `bind` field is used to set exactly those variables
+  on the child, so a caller could pass `0.0.0.0:8080` and expose siphon-api
+  on every interface — through the one component that has no authentication
+  at all and is loopback-only by design. The address is now parsed and
+  refused with 400 unless it is a loopback address, which is the assumption
+  the rest of the launcher's security model already made.
+
+### siphon-core 2.12.1
+
+- **fix(core): override-loading diagnostics went to stderr.** Six
+  `eprintln!` calls became `tracing::warn!` with structured fields, so a
+  failed overrides file, an unparseable `<cat>/<sub>` key or a regex that
+  will not compile is visible to whatever collects the service's logs
+  instead of only to a terminal nobody is watching.
+
+### siphon-cli 2.10.0, console 2.10.0
+
+- **feat(console): scan a file from the console.** `scanFile` posts
+  multipart to `/fs/scan`, so the console exercises siphon-fs rather than
+  only the text path.
+- **feat(console): the assurance surface is wired to real data** — evadex run
+  stats and history, baseline deltas and the audit ring, with skeleton
+  loading states and `since`/`until` filtering. It had been a placeholder.
+
+### chart 3.1.0
+
+- **feat(chart): external managed Postgres.** `externalPostgres.enabled`
+  points siphon-api and siphon-fs at RDS, Cloud SQL, Neon or anything else
+  speaking Postgres, taking the URL from `urlSecretRef` (preferred) or
+  inline, with `sslMode` and an optional CA file. The bundled Postgres stays
+  the default.
+
+### Tooling
+
+- **`scripts/check-version-sync.sh` now checks `Cargo.lock` against the
+  manifests it locks.** This is the gap that let the drift above survive:
+  the existing checks compare manifests against Dockerfiles, Helm values and
+  compose, and never read the lockfile, while `generate-sbom.sh --check`
+  compares the SBOMs against the lockfile — and those agreed, because both
+  were stale together. Any resolve repairs the working tree silently, so the
+  drift only ever existed in the committed file. Nine workspace members
+  checked; a member missing from the lockfile is reported rather than passed
+  over as an empty match.
+
+---
 
 ## 2026-10-27 — Inspection: the reason that is not a gap
 
