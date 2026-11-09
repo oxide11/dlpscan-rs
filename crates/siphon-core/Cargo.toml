@@ -35,7 +35,7 @@ lopdf = { version = "0.46", optional = true, default-features = false }
 # streams). Already in the dep graph via the root crate's `msg`
 # feature; optional here so non-forensics builds skip it.
 cfb = { version = "0.15", optional = true }
-mail-parser = { version = "0.11.8", default-features = false, features = ["full_encoding"] }
+mail-parser = { version = "1.0.1", default-features = false, features = ["full_encoding"] }
 
 [features]
 bin-data = []
